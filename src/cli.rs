@@ -51,6 +51,11 @@ pub enum Commands {
         /// Amount in satoshis
         satoshis: u64,
     },
+    /// Send all spendable funds to one address (no change)
+    Drain {
+        /// Destination address
+        address: String,
+    },
     /// Internalize a BEEF transaction (receive funds)
     Fund {
         /// BEEF transaction in hex (standard or AtomicBEEF)

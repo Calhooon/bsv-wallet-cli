@@ -3,6 +3,7 @@ pub mod address;
 pub mod balance;
 pub mod compact;
 pub mod daemon;
+pub mod drain;
 pub mod fund;
 pub mod identity;
 pub mod init;
