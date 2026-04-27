@@ -115,4 +115,10 @@ pub enum Commands {
         #[arg(long)]
         to: Option<std::path::PathBuf>,
     },
+    /// Fetch BEEFs from WhatsOnChain for every unspent UTXO and write them as files
+    ExportBeefs {
+        /// Output directory (will be created if missing)
+        #[arg(long)]
+        to: std::path::PathBuf,
+    },
 }
