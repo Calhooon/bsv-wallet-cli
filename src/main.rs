@@ -90,6 +90,9 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::compact::run(&ctx).await?;
         }
+        Commands::Backup { to } => {
+            commands::backup::run(&cli.db, to.clone()).await?;
+        }
     }
 
     Ok(())
