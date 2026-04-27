@@ -7,6 +7,7 @@ pub mod fund;
 pub mod identity;
 pub mod init;
 pub mod outputs;
+pub mod receive;
 pub mod send;
 pub mod serve;
 pub mod services;
