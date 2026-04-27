@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::sync::run(&ctx).await?;
         }
+        Commands::Tick => {
+            commands::tick::run(&cli).await?;
+        }
         Commands::Daemon => {
             commands::daemon::run(&cli).await?;
         }

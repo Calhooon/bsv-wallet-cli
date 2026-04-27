@@ -89,6 +89,8 @@ pub enum Commands {
     },
     /// Scan WhatsOnChain for unspent UTXOs at our deposit address and internalize new ones
     Sync,
+    /// Run all monitor tasks once and exit (one-shot equivalent of `daemon`)
+    Tick,
     /// Run monitor + HTTP server (foreground)
     Daemon,
     /// Run HTTP server only (no monitor)
