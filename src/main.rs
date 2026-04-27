@@ -61,6 +61,10 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::actions::run(&ctx, label.as_deref()).await?;
         }
+        Commands::Sync => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::sync::run(&ctx).await?;
+        }
         Commands::Daemon => {
             commands::daemon::run(&cli).await?;
         }

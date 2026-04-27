@@ -12,4 +12,5 @@ pub mod send;
 pub mod serve;
 pub mod services;
 pub mod split;
+pub mod sync;
 pub mod ui;
