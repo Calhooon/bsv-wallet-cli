@@ -97,6 +97,10 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::export_beefs::run(&ctx, to.clone()).await?;
         }
+        Commands::CleanupAbandoned { execute } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::cleanup_abandoned::run(&ctx, &cli.db, *execute).await?;
+        }
     }
 
     Ok(())

@@ -121,4 +121,10 @@ pub enum Commands {
         #[arg(long)]
         to: std::path::PathBuf,
     },
+    /// Find unproven txs that aren't on chain, mark failed, restore their inputs
+    CleanupAbandoned {
+        /// Apply changes (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+    },
 }
