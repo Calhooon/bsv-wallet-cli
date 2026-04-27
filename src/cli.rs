@@ -82,6 +82,8 @@ pub enum Commands {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Scan WhatsOnChain for unspent UTXOs at our deposit address and internalize new ones
+    Sync,
     /// Run monitor + HTTP server (foreground)
     Daemon,
     /// Run HTTP server only (no monitor)
