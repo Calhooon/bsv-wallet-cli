@@ -1,3 +1,4 @@
+mod brc29;
 mod cli;
 mod commands;
 mod context;

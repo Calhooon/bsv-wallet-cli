@@ -1,10 +1,8 @@
 use anyhow::Result;
 use bsv_sdk::wallet::{InternalizeActionArgs, InternalizeOutput, WalletInterface, WalletPayment};
 
+use crate::brc29;
 use crate::context::WalletContext;
-
-const DEFAULT_DERIVATION_PREFIX: &str = "SfKxPIJNgdI=";
-const DEFAULT_DERIVATION_SUFFIX: &str = "NaGLC6fMH50=";
 
 pub async fn run(ctx: &WalletContext, beef_hex: &str, vout: u32) -> Result<()> {
     let beef_bytes = hex::decode(beef_hex)?;
@@ -18,8 +16,8 @@ pub async fn run(ctx: &WalletContext, beef_hex: &str, vout: u32) -> Result<()> {
             output_index: vout,
             protocol: "wallet payment".to_string(),
             payment_remittance: Some(WalletPayment {
-                derivation_prefix: DEFAULT_DERIVATION_PREFIX.to_string(),
-                derivation_suffix: DEFAULT_DERIVATION_SUFFIX.to_string(),
+                derivation_prefix: brc29::DEFAULT_DERIVATION_PREFIX.to_string(),
+                derivation_suffix: brc29::DEFAULT_DERIVATION_SUFFIX.to_string(),
                 sender_identity_key,
             }),
             insertion_remittance: None,

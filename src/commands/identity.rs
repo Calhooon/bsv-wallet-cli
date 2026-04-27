@@ -1,8 +1,9 @@
+use crate::brc29;
 use crate::context::WalletContext;
 use anyhow::Result;
 
 pub async fn run(ctx: &WalletContext) -> Result<()> {
-    let address = ctx.root_key.public_key().to_address();
+    let address = brc29::deposit_address(&ctx.root_key, ctx.chain)?;
 
     if ctx.json_output {
         println!(
