@@ -93,6 +93,10 @@ async fn main() -> Result<()> {
         Commands::Backup { to } => {
             commands::backup::run(&cli.db, to.clone()).await?;
         }
+        Commands::ExportBeefs { to } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::export_beefs::run(&ctx, to.clone()).await?;
+        }
     }
 
     Ok(())
