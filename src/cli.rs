@@ -109,4 +109,10 @@ pub enum Commands {
     },
     /// Compact stored BEEF blobs to reduce transaction proof sizes
     Compact,
+    /// Bundle .env + wallet.db into a tar.gz for off-machine backup
+    Backup {
+        /// Output path (default: ./bsv-wallet-backup-<timestamp>.tar.gz)
+        #[arg(long)]
+        to: Option<std::path::PathBuf>,
+    },
 }
