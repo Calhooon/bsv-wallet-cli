@@ -40,13 +40,13 @@ axum = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+reqwest = { version = "0.12", features = ["json"] }
 
 [features]
 default = []
 tls = ["axum-server"]
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 
 

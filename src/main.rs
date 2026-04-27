@@ -1,3 +1,4 @@
+mod atomic_beef;
 mod brc29;
 mod cli;
 mod commands;
@@ -47,6 +48,10 @@ async fn main() -> Result<()> {
         Commands::Fund { beef_hex, vout } => {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::fund::run(&ctx, beef_hex, *vout).await?;
+        }
+        Commands::Receive { txid, vout } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::receive::run(&ctx, txid, *vout).await?;
         }
         Commands::Outputs { basket, tag } => {
             let ctx = context::WalletContext::load(&cli).await?;

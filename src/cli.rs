@@ -53,11 +53,19 @@ pub enum Commands {
     },
     /// Internalize a BEEF transaction (receive funds)
     Fund {
-        /// BEEF transaction in hex
+        /// BEEF transaction in hex (standard or AtomicBEEF)
         beef_hex: String,
         /// Output index to internalize (default: 0)
         #[arg(long, default_value_t = 0)]
         vout: u32,
+    },
+    /// Fetch a tx by txid from WhatsOnChain and internalize it
+    Receive {
+        /// Transaction id (hex)
+        txid: String,
+        /// Output index; if omitted, auto-selects the vout matching our deposit address
+        #[arg(long)]
+        vout: Option<u32>,
     },
     /// List unspent outputs
     Outputs {
