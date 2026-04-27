@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_toolbox::{
-    Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
+    ArcConfig, Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
 };
 
 use crate::cli::Cli;
@@ -38,6 +38,12 @@ impl WalletContext {
             };
             if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
                 opts = opts.with_chaintracks_url(url);
+            }
+            if let Ok(key) = std::env::var("TAAL_API_KEY") {
+                if !key.is_empty() {
+                    let arc_url = opts.arc_url.clone();
+                    opts = opts.with_arc(arc_url, Some(ArcConfig::with_api_key(key)));
+                }
             }
             Services::with_options(chain, opts)?
         };
