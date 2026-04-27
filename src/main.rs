@@ -25,8 +25,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match &cli.command {
-        Commands::Init { key } => {
-            commands::init::run(&cli.db, key.as_deref()).await?;
+        Commands::Init { key, force } => {
+            commands::init::run(&cli.db, key.as_deref(), *force).await?;
         }
         Commands::Identity => {
             let ctx = context::WalletContext::load(&cli).await?;

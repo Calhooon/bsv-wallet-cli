@@ -34,6 +34,9 @@ pub enum Commands {
         /// Import existing root key (hex)
         #[arg(long)]
         key: Option<String>,
+        /// Overwrite existing .env (DESTROYS the existing wallet's key)
+        #[arg(long)]
+        force: bool,
     },
     /// Show public key and address
     Identity,

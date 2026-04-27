@@ -1,10 +1,18 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletStorageWriter};
 
 use crate::brc29;
 
-pub async fn run(db_path: &str, key: Option<&str>) -> Result<()> {
+pub async fn run(db_path: &str, key: Option<&str>, force: bool) -> Result<()> {
+    if std::path::Path::new(".env").exists() && !force {
+        return Err(anyhow!(
+            ".env already exists in this directory. Refusing to overwrite — \
+             running init here would destroy the existing wallet's ROOT_KEY. \
+             If you really want to wipe it, pass --force (and back up .env first)."
+        ));
+    }
+
     let private_key = if let Some(hex) = key {
         PrivateKey::from_hex(hex)?
     } else {
