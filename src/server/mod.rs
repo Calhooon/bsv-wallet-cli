@@ -186,6 +186,7 @@ pub fn make_wallet_state(wallet: Wallet<StorageSqlx, Services>) -> WalletState {
 /// balance, same UTXO set. Avoids opening a second `Wallet` handle against
 /// the same SQLite DB (which would work via busy_timeout but adds write
 /// contention and a second instance of any in-memory caches).
+#[allow(dead_code)] // public API for external callers; not used inside this binary
 pub fn make_wallet_state_from_arc(wallet: Arc<Wallet<StorageSqlx, Services>>) -> WalletState {
     wallet
 }

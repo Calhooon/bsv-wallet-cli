@@ -26,7 +26,11 @@ pub async fn run(ctx: &WalletContext, address: &str) -> Result<()> {
 
     let lock = P2PKH::lock_from_address(address)?;
     let args = CreateActionArgs {
-        description: format!("Drain {} sats to {}", send_amount, &address[..8.min(address.len())]),
+        description: format!(
+            "Drain {} sats to {}",
+            send_amount,
+            &address[..8.min(address.len())]
+        ),
         input_beef: None,
         inputs: Some(vec![]),
         outputs: Some(vec![CreateActionOutput {

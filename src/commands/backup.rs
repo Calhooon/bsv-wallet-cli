@@ -47,7 +47,11 @@ pub async fn run(db_path: &str, to: Option<PathBuf>) -> Result<()> {
     println!("SHA256: {}", digest);
     println!();
     println!("This tarball is plaintext. Encrypt it at rest before storing, e.g.:");
-    println!("  age -p -o {}.age {}", out_path.display(), out_path.display());
+    println!(
+        "  age -p -o {}.age {}",
+        out_path.display(),
+        out_path.display()
+    );
     println!("Or store inside an encrypted vault (1Password, encrypted disk image, etc.).");
 
     Ok(())

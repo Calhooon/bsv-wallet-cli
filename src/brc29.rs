@@ -11,8 +11,16 @@ pub fn deposit_address(root_key: &PrivateKey, chain: Chain) -> Result<String> {
     let deriver = KeyDeriver::new(Some(root_key.clone()));
     let (_, anyone_pubkey) = KeyDeriver::anyone_key();
     let protocol = Protocol::new(SecurityLevel::Counterparty, PROTOCOL);
-    let key_id = format!("{} {}", DEFAULT_DERIVATION_PREFIX, DEFAULT_DERIVATION_SUFFIX);
-    let derived = deriver.derive_public_key(&protocol, &key_id, &Counterparty::Other(anyone_pubkey), true)?;
+    let key_id = format!(
+        "{} {}",
+        DEFAULT_DERIVATION_PREFIX, DEFAULT_DERIVATION_SUFFIX
+    );
+    let derived = deriver.derive_public_key(
+        &protocol,
+        &key_id,
+        &Counterparty::Other(anyone_pubkey),
+        true,
+    )?;
     Ok(match chain {
         Chain::Test => derived.to_address_with_prefix(0x6f),
         Chain::Main => derived.to_address(),
