@@ -79,7 +79,12 @@ pub async fn run(cli: &Cli) -> Result<()> {
         for (task, res) in &entries {
             total_proc += res.items_processed;
             total_err += res.errors.len();
-            let line = format!("{:<24} processed={:<5} errors={}", task.to_string(), res.items_processed, res.errors.len());
+            let line = format!(
+                "{:<24} processed={:<5} errors={}",
+                task.to_string(),
+                res.items_processed,
+                res.errors.len()
+            );
             if !res.errors.is_empty() {
                 println!("{}", line);
                 for e in &res.errors {
@@ -90,7 +95,12 @@ pub async fn run(cli: &Cli) -> Result<()> {
             }
         }
         println!("---");
-        println!("total: {} task(s), {} processed, {} error(s)", entries.len(), total_proc, total_err);
+        println!(
+            "total: {} task(s), {} processed, {} error(s)",
+            entries.len(),
+            total_proc,
+            total_err
+        );
     }
 
     Ok(())

@@ -17,7 +17,10 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         println!("No unproven transactions found.");
         return Ok(());
     }
-    println!("Found {} unproven transaction(s); checking WoC...", rows.len());
+    println!(
+        "Found {} unproven transaction(s); checking WoC...",
+        rows.len()
+    );
 
     let base = receive::woc_base(ctx.chain);
     let client = reqwest::Client::new();
@@ -71,8 +74,14 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     println!();
     println!("Applied:");
     println!("  Transactions marked failed: {}", failed);
-    println!("  Inputs restored to spendable: {} ({} sats)", restored.0, restored.1);
-    println!("  Phantom outputs unspendable: {} ({} sats)", phantoms.0, phantoms.1);
+    println!(
+        "  Inputs restored to spendable: {} ({} sats)",
+        restored.0, restored.1
+    );
+    println!(
+        "  Phantom outputs unspendable: {} ({} sats)",
+        phantoms.0, phantoms.1
+    );
     println!();
     println!(
         "Net balance delta: {:+} sats. Restart the daemon to refresh its in-memory view.",
@@ -87,12 +96,10 @@ async fn restore_inputs(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<(u64, u6
     let mut sats = 0u64;
     let mut tx = pool.begin().await?;
     for id in ids {
-        let restored = sqlx::query(
-            "SELECT output_id, satoshis FROM outputs WHERE spent_by = ?",
-        )
-        .bind(id)
-        .fetch_all(&mut *tx)
-        .await?;
+        let restored = sqlx::query("SELECT output_id, satoshis FROM outputs WHERE spent_by = ?")
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await?;
         for r in &restored {
             count += 1;
             sats += r.get::<i64, _>("satoshis") as u64;
