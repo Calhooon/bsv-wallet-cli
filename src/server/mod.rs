@@ -80,18 +80,33 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
 
     Router::new()
         // Existing 5 endpoints
-        .route("/isAuthenticated", get(handlers::is_authenticated))
+        // Status endpoints accept BOTH GET and POST: @bsv/sdk's HTTPWalletJSON substrate
+        // POSTs every method (incl. these), while curl/CLI clients GET them. Supporting
+        // both makes the server wire-compatible with browser WalletClient connections.
+        .route(
+            "/isAuthenticated",
+            get(handlers::is_authenticated).post(handlers::is_authenticated),
+        )
         .route("/getPublicKey", post(handlers::get_public_key))
         .route("/createSignature", post(handlers::create_signature))
         .route("/createAction", post(handlers::create_action))
         .route("/internalizeAction", post(handlers::internalize_action))
-        // Batch 1: Status (GET)
-        .route("/getHeight", get(handlers::get_height))
-        .route("/getNetwork", get(handlers::get_network))
-        .route("/getVersion", get(handlers::get_version))
+        // Batch 1: Status (GET + POST for HTTPWalletJSON compat)
+        .route(
+            "/getHeight",
+            get(handlers::get_height).post(handlers::get_height),
+        )
+        .route(
+            "/getNetwork",
+            get(handlers::get_network).post(handlers::get_network),
+        )
+        .route(
+            "/getVersion",
+            get(handlers::get_version).post(handlers::get_version),
+        )
         .route(
             "/waitForAuthentication",
-            get(handlers::wait_for_authentication),
+            get(handlers::wait_for_authentication).post(handlers::wait_for_authentication),
         )
         // Batch 2: Header
         .route("/getHeaderForHeight", post(handlers::get_header_for_height))
