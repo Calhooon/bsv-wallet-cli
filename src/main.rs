@@ -23,7 +23,12 @@ async fn main() -> Result<()> {
         EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("bsv_wallet=info,tower_http=info"))
     };
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // Logs go to stderr so stdout stays clean machine-parseable output
+    // (notably `--json`): tooling/agents can read stdout without log pollution.
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
 
     match &cli.command {
         Commands::Init { key, force } => {

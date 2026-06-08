@@ -99,9 +99,14 @@ pub async fn run(
     if satoshis < 1 {
         return Err(anyhow!("gift amount must be at least 1 satoshi"));
     }
-    if fee_utxo < 1000 {
+    // The claim is ~1.5KB at the 101 sat/KB network floor, so its miner fee is
+    // ~155 sats almost regardless of gift size. The bundled fee-utxo must exceed
+    // that or the recipient can't self-fund the claim and the covenant is left
+    // unspendable. Floor at 500 for margin; default/recommended is 1000.
+    if fee_utxo < 500 {
         return Err(anyhow!(
-            "fee-utxo {fee_utxo} is too small to cover the ~1.4KB claim's fee (use >= 1500)"
+            "fee-utxo {fee_utxo} is too small: the claim costs ~155 sats, so the bundled \
+             fee-utxo must be >= 500 (default 1000 recommended)"
         ));
     }
 

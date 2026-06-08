@@ -41,13 +41,35 @@ or email. Your private key never leaves your machine.
 
 ## Sending a gift (giver)
 
+A gift is **not** a normal "send BSV to an address." `gift-send` builds a
+**covenant** — a custom script that bakes in the recipient's pubkey *and* the
+unlock date — which is the whole reason the coins can't be spent early. You can
+only create it with this tool; sending plain BSV to someone's address gives them
+coins they can spend immediately (no time-lock).
+
+**Step 1 — fund your own wallet** (this part you can do from *any* wallet —
+exchange, HandCash, hardware, MetaNet):
+
+```bash
+bsv-wallet address     # your funding address — send BSV here from anywhere
+bsv-wallet sync        # pull the received coins into your spendable balance
+bsv-wallet balance     # confirm it arrived
+```
+
+**Step 2 — send the gift** (must be this tool — it builds the covenant):
+
 ```bash
 bsv-wallet gift-send <recipient-pubkey> <sats> --unlock 2026-12-25
-#   --unlock accepts a date (YYYY-MM-DD), an RFC-3339 timestamp, or a unix time
-#   --fee-utxo N  (default 3000) bundles a small recipient-owned UTXO so the
-#                 recipient can pay the claim fee without needing any funds
+#   <recipient-pubkey>  the recipient's `pubkey (for receiving gifts)` line —
+#                       a 33-byte compressed pubkey, NOT an address
+#   --unlock  accepts a date (YYYY-MM-DD), an RFC-3339 timestamp, a unix time,
+#             or a relative offset like +3mo / +90d / +1y
+#   --fee-utxo N  (default 1000, minimum 500) bundles a small recipient-owned
+#             UTXO so the recipient can pay the ~155-sat claim fee with no funds
+#             of their own. Keep the default unless you have a reason not to.
 ```
-This prints the gift transaction id. Give it to the recipient.
+This prints the gift transaction id. Give it to the recipient. (Always confirm it
+landed: `https://whatsonchain.com/tx/<txid>`.)
 
 ## Seeing your gift (recipient) — no claiming
 
@@ -57,6 +79,12 @@ bsv-wallet gift-inspect <gift-txid>
 Shows that it's locked to **your** key, proves your signature can open it, the
 unlock time, and an **estimated claimable block height** — without broadcasting
 anything.
+
+> You do **not** need to "receive", import, or internalize the gift before
+> inspecting or claiming it. `gift-inspect` and `gift-claim` read the gift
+> straight from the chain by its txid. The only "internalize" step is
+> `bsv-wallet sync` *after* you claim — that's what turns the freed coins into
+> normal spendable balance.
 
 ## Claiming after unlock
 

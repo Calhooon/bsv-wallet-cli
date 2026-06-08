@@ -25,6 +25,10 @@ const TX_VERSION: u32 = 1;
 const COVENANT_VOUT: usize = 0;
 const FEE_VOUT: usize = 1;
 const NON_FINAL_SEQUENCE: u32 = 0xffff_fffe;
+/// Fee rate in sats per 1000 bytes. Matches the wallet/toolbox default
+/// (`DEFAULT_FEE_RATE_SAT_PER_KB = 101`) so the claim pays the same ~100 sat/KB
+/// network floor as every other tx instead of overpaying ~10x.
+const FEE_RATE_SAT_PER_KB: u64 = 101;
 
 pub struct ClaimPlan {
     pub deposit_txid: String,
@@ -168,7 +172,10 @@ pub fn build_claim_tx(deposit_raw: &[u8], key: &PrivateKey, lock_time: u32) -> R
     inputs[1].script = vec![0u8; 108];
     let est = serialize_tx(TX_VERSION, &inputs, &outputs, lock_time).len() as u64;
     inputs[1].script = vec![];
-    let fee = (est * 11) / 10 + 50; // ~1.1 sat/byte + buffer
+    // fee = ceil(size_bytes * rate / 1000) at the network floor (101 sat/KB), with
+    // a 1-sat buffer. The 108B fee-unlock reservation slightly over-estimates the
+    // real ~107B unlock, so `est` (and thus the fee) is never under the true size.
+    let fee = (est * FEE_RATE_SAT_PER_KB).div_ceil(1000) + 1;
     if fee_out.satoshis <= fee {
         return Err(format!(
             "fee utxo {} is too small for the ~{fee}-sat claim fee",

@@ -61,7 +61,7 @@ pub enum Commands {
         #[arg(long)]
         unlock: String,
         /// Recipient-owned fee UTXO (sats) bundled so the claim self-funds its fee
-        #[arg(long, default_value_t = 3000)]
+        #[arg(long, default_value_t = 1000)]
         fee_utxo: u64,
     },
     /// Inspect a time-locked gift (prove it's yours + when it unlocks; no claim)
