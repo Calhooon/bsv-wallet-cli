@@ -45,6 +45,23 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::send::run(&ctx, address, *satoshis).await?;
         }
+        Commands::GiftSend {
+            recipient,
+            satoshis,
+            unlock,
+            fee_utxo,
+        } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::gift_send::run(&ctx, recipient, *satoshis, unlock, *fee_utxo).await?;
+        }
+        Commands::GiftInspect { txid } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::gift_inspect::run(&ctx, txid).await?;
+        }
+        Commands::GiftClaim { txid, force } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::gift_claim::run(&ctx, txid, *force).await?;
+        }
         Commands::Drain { address } => {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::drain::run(&ctx, address).await?;

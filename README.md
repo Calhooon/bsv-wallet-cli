@@ -92,9 +92,20 @@ Swap storage backends, add HSM key management, put it behind your corporate prox
 | `outputs` | List unspent outputs |
 | `actions` | List transaction history |
 | `split --count N` | Split UTXOs for concurrent spending |
+| `gift-send <pubkey> <sats> --unlock <date>` | Send a time-locked BSV gift |
+| `gift-inspect <txid>` | See a gift, prove it's yours + when it unlocks |
+| `gift-claim <txid>` | Claim a time-locked gift after its unlock time |
 | `daemon` | Run monitor + HTTP server (production) |
 | `serve` | Run HTTP server only (dev mode) |
 | `services` | Show blockchain service status |
+
+### Time-locked gifts
+
+Pay someone such that they own the key immediately but **can't spend until a date
+you set** (`--unlock +3mo`, `2026-12-25`, or a unix timestamp). See
+**[GIFT.md](GIFT.md)** for the full flow. Note: unlock dates are supported through
+**Jan 2038**; later dates use a code path not yet mainnet-proven — `gift-send`
+warns and you should pick an earlier date for real value.
 
 ## HTTP Server
 

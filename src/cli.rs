@@ -51,6 +51,32 @@ pub enum Commands {
         /// Amount in satoshis
         satoshis: u64,
     },
+    /// Send a time-locked BSV gift to a recipient's public key
+    GiftSend {
+        /// Recipient's 33-byte compressed public key (hex)
+        recipient: String,
+        /// Gift amount in satoshis
+        satoshis: u64,
+        /// Unlock time: unix timestamp, YYYY-MM-DD, or RFC-3339
+        #[arg(long)]
+        unlock: String,
+        /// Recipient-owned fee UTXO (sats) bundled so the claim self-funds its fee
+        #[arg(long, default_value_t = 3000)]
+        fee_utxo: u64,
+    },
+    /// Inspect a time-locked gift (prove it's yours + when it unlocks; no claim)
+    GiftInspect {
+        /// The gift (deposit) transaction id
+        txid: String,
+    },
+    /// Claim a time-locked gift after its unlock time
+    GiftClaim {
+        /// The gift (deposit) transaction id
+        txid: String,
+        /// Pre-broadcast before unlock (sits unconfirmed, auto-confirms at unlock)
+        #[arg(long)]
+        force: bool,
+    },
     /// Send all spendable funds to one address (no change)
     Drain {
         /// Destination address
