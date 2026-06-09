@@ -232,9 +232,25 @@ pub async fn create_signature(
 ) -> Result<Json<McCreateSignatureRes>, AppError> {
     let originator = extract_originator(&headers)?;
 
+    // ts-sdk sends exactly one of `data` (hash-then-sign) or
+    // `hashToDirectlySign` (sign the 32-byte digest as-is).
+    let hash_to_directly_sign = req
+        .hash_to_directly_sign
+        .map(|h| {
+            <[u8; 32]>::try_from(h.as_slice()).map_err(|_| {
+                AppError::from_wallet_error("Validation error: hashToDirectlySign must be 32 bytes")
+            })
+        })
+        .transpose()?;
+    if req.data.is_none() && hash_to_directly_sign.is_none() {
+        return Err(AppError::from_wallet_error(
+            "Validation error: one of data or hashToDirectlySign is required",
+        ));
+    }
+
     let args = CreateSignatureArgs {
-        data: Some(req.data),
-        hash_to_directly_sign: None,
+        data: req.data,
+        hash_to_directly_sign,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
         key_id: req.key_id,
         counterparty: Some(parse_counterparty(&req.counterparty)?),

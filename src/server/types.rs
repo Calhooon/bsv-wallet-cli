@@ -27,7 +27,13 @@ pub struct McGetPublicKeyRes {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McCreateSignatureReq {
-    pub data: Vec<u8>,
+    /// Raw data to hash-then-sign. Mutually exclusive with
+    /// `hash_to_directly_sign` (ts-sdk sends exactly one of the two).
+    #[serde(default)]
+    pub data: Option<Vec<u8>>,
+    /// A 32-byte digest to sign as-is (ts-sdk `hashToDirectlySign`).
+    #[serde(default)]
+    pub hash_to_directly_sign: Option<Vec<u8>>,
     #[serde(alias = "protocolID")]
     pub protocol_id: serde_json::Value,
     #[serde(alias = "keyID")]
