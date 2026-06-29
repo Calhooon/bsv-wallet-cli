@@ -17,6 +17,7 @@ use bsv_sdk::wallet::{
     // Core types
     Counterparty,
     CreateActionArgs,
+    CreateActionInput,
     CreateActionOptions,
     CreateActionOutput,
     CreateHmacArgs,
@@ -44,6 +45,7 @@ use bsv_sdk::wallet::{
     // Output types
     ListOutputsArgs,
     ListOutputsResult,
+    Outpoint,
     Protocol,
     ProveCertificateArgs,
     ProveCertificateResult,
@@ -57,6 +59,7 @@ use bsv_sdk::wallet::{
     SecurityLevel,
     SignActionArgs,
     SignActionResult,
+    TrustSelf,
     VerifyHmacArgs,
     VerifySignatureArgs,
     WalletCertificate,
@@ -297,12 +300,40 @@ pub async fn create_action(
         })
         .transpose()?;
 
+    // Map caller-provided explicit inputs (e.g. a covenant spend carrying a full
+    // unlockingScript). An absent/empty list stays `Some(vec![])` so the wallet
+    // auto-selects its own funding UTXOs — the prior behaviour for plain sends.
+    // Before this, the handler discarded `inputs`/`inputBEEF`/`lockTime`, so any
+    // covenant input was silently dropped and the tx was funded from change.
+    let inputs = match req.inputs {
+        Some(reqs) if !reqs.is_empty() => {
+            let mut mapped = Vec::with_capacity(reqs.len());
+            for i in reqs {
+                let outpoint = Outpoint::from_string(&i.outpoint)
+                    .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
+                let unlocking_script = match i.unlocking_script {
+                    Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
+                    None => None,
+                };
+                mapped.push(CreateActionInput {
+                    outpoint,
+                    input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
+                    unlocking_script,
+                    unlocking_script_length: i.unlocking_script_length,
+                    sequence_number: i.sequence_number,
+                });
+            }
+            Some(mapped)
+        }
+        _ => Some(vec![]),
+    };
+
     let args = CreateActionArgs {
         description: req.description,
-        input_beef: None,
-        inputs: Some(vec![]),
+        input_beef: req.input_beef,
+        inputs,
         outputs,
-        lock_time: None,
+        lock_time: req.lock_time,
         version: None,
         labels: req.labels,
         options: req.options.map(|o| CreateActionOptions {
@@ -310,6 +341,10 @@ pub async fn create_action(
             randomize_outputs: o.randomize_outputs,
             sign_and_process: o.sign_and_process,
             no_send: o.no_send,
+            trust_self: match o.trust_self.as_deref() {
+                Some("known") => Some(TrustSelf::Known),
+                _ => None,
+            },
             ..Default::default()
         }),
     };

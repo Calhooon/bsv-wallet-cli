@@ -120,6 +120,19 @@ pub async fn run(cli: &Cli) -> Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(3);
     let check_wallet = wallet_state.clone();
+    // Auto-reconcile abandoned transactions (#18): a never-landed `unproven` tx's
+    // change must not be selected to fund — and orphan — a new transaction. Each
+    // tick we WoC-check unproven txs older than RECONCILE_ABANDONED_MIN_AGE_SECS
+    // (default 1h, so an in-flight tx still propagating is never mis-classified)
+    // and fail the ones missing on chain. Toggle off with RECONCILE_ABANDONED=0.
+    let reconcile_chain = chain;
+    let reconcile_enabled = std::env::var("RECONCILE_ABANDONED")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(true);
+    let reconcile_min_age_secs: i64 = std::env::var("RECONCILE_ABANDONED_MIN_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3600);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
         loop {
@@ -155,6 +168,34 @@ pub async fn run(cli: &Cli) -> Result<()> {
                 }
                 Err(e) => {
                     tracing::debug!("UTXO check failed: {}", e);
+                }
+            }
+
+            // Auto-reconcile abandoned (never-landed) transactions (#18).
+            if reconcile_enabled {
+                match crate::commands::cleanup_abandoned::reconcile(
+                    check_wallet.storage().pool(),
+                    reconcile_chain,
+                    reconcile_min_age_secs,
+                    true,
+                )
+                .await
+                {
+                    Ok(r) if r.applied => {
+                        tracing::warn!(
+                            failed = r.failed,
+                            restored_count = r.restored_count,
+                            restored_sats = r.restored_sats,
+                            phantom_count = r.phantom_count,
+                            phantom_sats = r.phantom_sats,
+                            "auto-reconciled abandoned tx(s): marked {} failed, restored {} input(s) ({} sats), invalidated {} phantom output(s) ({} sats)",
+                            r.failed, r.restored_count, r.restored_sats, r.phantom_count, r.phantom_sats
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::debug!("abandoned-tx reconcile skipped: {}", e);
+                    }
                 }
             }
         }

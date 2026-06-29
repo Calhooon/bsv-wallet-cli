@@ -52,12 +52,43 @@ pub struct McCreateSignatureRes {
 #[serde(rename_all = "camelCase")]
 pub struct McCreateActionReq {
     pub description: String,
+    /// Caller-provided explicit inputs (covenant spends carry a full
+    /// unlockingScript). Absent/empty => wallet auto-selects its own UTXOs.
+    #[serde(default)]
+    pub inputs: Option<Vec<McCreateActionInput>>,
+    /// BEEF (Byte[]) of the input transactions' source txs/ancestry, so the
+    /// wallet can validate explicit external inputs. `@bsv/sdk` sends this key
+    /// as `inputBEEF` (not camelCase `inputBeef`), as a raw JSON byte array.
+    #[serde(default, rename = "inputBEEF")]
+    pub input_beef: Option<Vec<u8>>,
     #[serde(default)]
     pub outputs: Option<Vec<McCreateActionOutput>>,
+    /// nLockTime for the spending tx (required by CLTV-gated covenants).
+    #[serde(default)]
+    pub lock_time: Option<u32>,
     #[serde(default)]
     pub options: Option<McCreateActionOptions>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+}
+
+/// A single caller-provided input for createAction.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McCreateActionInput {
+    /// "txid.vout"
+    pub outpoint: String,
+    /// Fully-provided unlocking script (hex). Use this OR unlocking_script_length.
+    #[serde(default)]
+    pub unlocking_script: Option<String>,
+    /// Length of a to-be-signed unlocking script (deferred-signing flow).
+    #[serde(default)]
+    pub unlocking_script_length: Option<u32>,
+    #[serde(default)]
+    pub input_description: Option<String>,
+    /// nSequence for this input (e.g. 0xfffffffe to make a covenant timeLock non-final).
+    #[serde(default)]
+    pub sequence_number: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +116,11 @@ pub struct McCreateActionOptions {
     pub sign_and_process: Option<bool>,
     #[serde(default)]
     pub no_send: Option<bool>,
+    /// "known" => input source txs may omit validity proofs for TXIDs the wallet
+    /// already knows (needed when spending a self-created covenant output whose
+    /// inputBEEF is proof-incomplete).
+    #[serde(default)]
+    pub trust_self: Option<String>,
 }
 
 /// MetaNet Client response for createAction
