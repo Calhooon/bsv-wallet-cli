@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "bsv-wallet-cli"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "MIT"
 authors = ["John Calhoun"]
@@ -23,7 +23,7 @@ name = "bsv-wallet"
 path = "src/main.rs"
 
 [dependencies]
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.41", features = ["sqlite"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.42", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "0.3.4", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
