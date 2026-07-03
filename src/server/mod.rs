@@ -8,7 +8,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet};
+use bsv_wallet_toolbox::{Chain, Services, StorageSqlx, Wallet};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -41,6 +41,9 @@ pub struct ServerConfig {
     pub auth_token: Option<String>,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
+    /// Network the served wallet is on. Drives post-broadcast verification
+    /// (which ARC / WoC endpoints to probe). Defaults to `Main`.
+    pub chain: Chain,
 }
 
 /// Auth middleware — checks Bearer token if configured.
@@ -77,6 +80,10 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
     let cors = CorsLayer::very_permissive();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
+    // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
+    // silently dropped an immediate broadcast (e.g. 465 fee-too-low on a deep
+    // unconfirmed BEEF) instead of returning a phantom txid.
+    let verifier = crate::broadcast_verify::BroadcastVerifier::from_env(config.chain);
 
     Router::new()
         // Existing 5 endpoints
@@ -152,6 +159,7 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         .layer(middleware::from_fn(auth_middleware))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
+        .layer(axum::Extension(verifier))
         .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(wallet)

@@ -1,5 +1,6 @@
 mod atomic_beef;
 mod brc29;
+mod broadcast_verify;
 mod cli;
 mod commands;
 mod context;

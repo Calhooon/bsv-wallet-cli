@@ -18,6 +18,7 @@ pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
     let config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
         tls,
+        chain: ctx.chain,
     };
     let wallet_state = server::make_wallet_state(ctx.wallet);
     server::run(wallet_state, port, config).await?;

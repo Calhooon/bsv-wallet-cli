@@ -112,6 +112,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
         tls,
+        chain,
     };
 
     // Periodic UTXO count check — warn if below threshold

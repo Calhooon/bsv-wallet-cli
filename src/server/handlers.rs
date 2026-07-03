@@ -152,6 +152,22 @@ impl AppError {
             message,
         }
     }
+
+    /// A broadcast that `create_action` reported as `Ok`, but which the network
+    /// confirms never landed (silently dropped — typically ARC 465 fee-too-low
+    /// on a deep unconfirmed BEEF). Surfaced as a gateway error so callers see a
+    /// failure instead of a phantom txid.
+    fn broadcast_rejected(txid: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            code: "BROADCAST_REJECTED",
+            message: format!(
+                "broadcast rejected: transaction {txid} is not present on the network. \
+                 The broadcaster (ARC) dropped it — most likely error 465 \"fee too low\" \
+                 on a deep unconfirmed BEEF. The funds were NOT sent."
+            ),
+        }
+    }
 }
 
 impl From<anyhow::Error> for AppError {
@@ -277,10 +293,24 @@ pub async fn create_signature(
 pub async fn create_action(
     State(wallet): State<WalletState>,
     axum::Extension(spending_lock): axum::Extension<super::SpendingLock>,
+    axum::Extension(verifier): axum::Extension<crate::broadcast_verify::BroadcastVerifier>,
     headers: HeaderMap,
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
+
+    // Whether this request performs an immediate broadcast (vs. no-send /
+    // delayed / external-signing). Only immediate broadcasts are verified.
+    let (opt_no_send, opt_accept_delayed) = req
+        .options
+        .as_ref()
+        .map(|o| {
+            (
+                o.no_send.unwrap_or(false),
+                o.accept_delayed_broadcast.unwrap_or(false),
+            )
+        })
+        .unwrap_or((false, false));
 
     let outputs = req
         .outputs
@@ -394,6 +424,23 @@ pub async fn create_action(
         }
         _ => result.tx.clone(),
     };
+
+    // Fail loud if an immediate broadcast was silently dropped. `create_action`
+    // returns Ok with a txid even when ARC rejected the tx (e.g. 465 fee-too-low
+    // on a deep unconfirmed BEEF), because the toolbox misclassifies a 465 as a
+    // transient service error. Only immediate broadcasts (not no-send / delayed /
+    // external-signing) are verified. A definitive network absence → 502, so the
+    // caller sees a failure instead of a phantom (never-mined) txid.
+    if !opt_no_send && !opt_accept_delayed && result.signable_transaction.is_none() {
+        if let Some(txid_bytes) = result.txid.as_ref() {
+            let txid_hex = to_hex(txid_bytes);
+            if verifier.verify(&txid_hex).await
+                == crate::broadcast_verify::BroadcastVerification::Rejected
+            {
+                return Err(AppError::broadcast_rejected(&txid_hex));
+            }
+        }
+    }
 
     Ok(Json(McCreateActionRes {
         txid: result.txid.map(|t| to_hex(&t)),
