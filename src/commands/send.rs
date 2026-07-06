@@ -42,6 +42,16 @@ pub async fn run(ctx: &WalletContext, address: &str, satoshis: u64) -> Result<()
     let txid = result.txid.expect("Expected txid in result");
     let txid_hex = to_hex(&txid);
 
+    // Fail loudly if the broadcast was silently dropped. `create_action` returns
+    // Ok with a txid even when ARC rejected the tx with error 465 ("fee too low"
+    // on a deep unconfirmed BEEF), because the toolbox misclassifies a 465 as a
+    // transient service error. Confirm the tx actually reached the network before
+    // reporting success, so a phantom (never-mined) txid is never printed + exit 0.
+    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+        .verify(&txid_hex)
+        .await
+        .into_send_result(&txid_hex)?;
+
     // Build AtomicBEEF hex from result for direct wallet-to-wallet transfers
     let beef_hex = result.beef.as_ref().and_then(|beef_bytes| {
         Beef::from_binary(beef_bytes)

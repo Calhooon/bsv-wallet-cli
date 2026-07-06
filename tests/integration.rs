@@ -2080,6 +2080,7 @@ async fn test_auth_token_enforcement() {
     let config = ServerConfig {
         auth_token: Some("test-secret-token".to_string()),
         tls: None,
+        ..Default::default()
     };
     let app = server::make_router(state, config);
 

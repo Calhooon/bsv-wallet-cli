@@ -152,6 +152,32 @@ impl AppError {
             message,
         }
     }
+
+    fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Append an operator-facing recovery hint to the error message.
+    fn with_hint(mut self, hint: &str) -> Self {
+        self.message = format!("{} (hint: {})", self.message, hint);
+        self
+    }
+
+    /// A broadcast that `create_action` reported as `Ok`, but which the network
+    /// confirms never landed (silently dropped — typically ARC 465 fee-too-low
+    /// on a deep unconfirmed BEEF). Surfaced as a gateway error so callers see a
+    /// failure instead of a phantom txid.
+    fn broadcast_rejected(txid: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            code: "BROADCAST_REJECTED",
+            message: format!(
+                "broadcast rejected: transaction {txid} is not present on the network. \
+                 The broadcaster (ARC) dropped it — most likely error 465 \"fee too low\" \
+                 on a deep unconfirmed BEEF. The funds were NOT sent."
+            ),
+        }
+    }
 }
 
 impl From<anyhow::Error> for AppError {
@@ -277,10 +303,24 @@ pub async fn create_signature(
 pub async fn create_action(
     State(wallet): State<WalletState>,
     axum::Extension(spending_lock): axum::Extension<super::SpendingLock>,
+    axum::Extension(verifier): axum::Extension<crate::broadcast_verify::BroadcastVerifier>,
     headers: HeaderMap,
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
+
+    // Whether this request performs an immediate broadcast (vs. no-send /
+    // delayed / external-signing). Only immediate broadcasts are verified.
+    let (opt_no_send, opt_accept_delayed) = req
+        .options
+        .as_ref()
+        .map(|o| {
+            (
+                o.no_send.unwrap_or(false),
+                o.accept_delayed_broadcast.unwrap_or(false),
+            )
+        })
+        .unwrap_or((false, false));
 
     let outputs = req
         .outputs
@@ -394,6 +434,23 @@ pub async fn create_action(
         }
         _ => result.tx.clone(),
     };
+
+    // Fail loud if an immediate broadcast was silently dropped. `create_action`
+    // returns Ok with a txid even when ARC rejected the tx (e.g. 465 fee-too-low
+    // on a deep unconfirmed BEEF), because the toolbox misclassifies a 465 as a
+    // transient service error. Only immediate broadcasts (not no-send / delayed /
+    // external-signing) are verified. A definitive network absence → 502, so the
+    // caller sees a failure instead of a phantom (never-mined) txid.
+    if !opt_no_send && !opt_accept_delayed && result.signable_transaction.is_none() {
+        if let Some(txid_bytes) = result.txid.as_ref() {
+            let txid_hex = to_hex(txid_bytes);
+            if verifier.verify(&txid_hex).await
+                == crate::broadcast_verify::BroadcastVerification::Rejected
+            {
+                return Err(AppError::broadcast_rejected(&txid_hex));
+            }
+        }
+    }
 
     Ok(Json(McCreateActionRes {
         txid: result.txid.map(|t| to_hex(&t)),
@@ -722,10 +779,22 @@ pub async fn abort_action(
     Json(args): Json<AbortActionArgs>,
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
-    let result = wallet
-        .abort_action(args, &originator)
-        .await
-        .map_err(AppError::from_wallet_error)?;
+    let result = wallet.abort_action(args, &originator).await.map_err(|e| {
+        // The toolbox (correctly) refuses to abort a broadcast tx blindly — it
+        // could be on-chain, and failing it here would fabricate a phantom
+        // double-spend. The sanctioned recovery for a broadcast-lie is the
+        // chain-checked sweep: point the operator at it.
+        let mut err = AppError::from_wallet_error(e);
+        if err.message().contains("unproven") {
+            err = err.with_hint(
+                "an 'unproven' tx may already be on-chain; if its broadcast \
+                 never landed, run `bsv-wallet cleanup-abandoned --execute` \
+                 (verifies chain absence before restoring inputs) or wait for \
+                 the daemon's auto-reconcile tick",
+            );
+        }
+        err
+    })?;
     Ok(Json(result))
 }
 
