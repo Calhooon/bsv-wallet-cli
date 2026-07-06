@@ -48,17 +48,7 @@ pub async fn reconcile(
 ) -> Result<ReconcileReport> {
     let mut report = ReconcileReport::default();
 
-    // `datetime('now', '-N seconds')`: only consider txs at least N seconds old.
-    // min_age_secs == 0 -> '-0 seconds' == now, i.e. no effective age guard
-    // (the CLI command's historical behavior).
-    let age_modifier = format!("-{} seconds", min_age_secs.max(0));
-    let rows = sqlx::query(
-        "SELECT transaction_id, txid FROM transactions \
-         WHERE status='unproven' AND created_at <= datetime('now', ?)",
-    )
-    .bind(&age_modifier)
-    .fetch_all(pool)
-    .await?;
+    let rows = select_stale_unproven(pool, min_age_secs).await?;
 
     report.checked = rows.len();
     if rows.is_empty() {
@@ -101,6 +91,32 @@ pub async fn reconcile(
     report.phantom_count = phantoms.0;
     report.phantom_sats = phantoms.1;
     Ok(report)
+}
+
+/// `unproven` transactions at least `min_age_secs` old.
+///
+/// `created_at` is written by the toolbox as ISO-8601 (`…T…+00:00`) but by
+/// this module's own UPDATEs as `CURRENT_TIMESTAMP` (space-separated), and a
+/// bare string comparison against `datetime('now')` never matches the ISO form
+/// (`'T' > ' '`), which silently disabled this sweep for every toolbox-written
+/// row. `datetime(created_at)` normalizes BOTH forms (and applies the +00:00
+/// offset) before comparing.
+///
+/// `min_age_secs == 0` -> `'-0 seconds'` == now, i.e. no effective age guard
+/// (the CLI command's historical behavior); the guard exists so a freshly-
+/// broadcast tx that hasn't propagated to WoC yet is never mis-classified.
+async fn select_stale_unproven(
+    pool: &sqlx::SqlitePool,
+    min_age_secs: i64,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+    let age_modifier = format!("-{} seconds", min_age_secs.max(0));
+    Ok(sqlx::query(
+        "SELECT transaction_id, txid FROM transactions \
+         WHERE status='unproven' AND datetime(created_at) <= datetime('now', ?)",
+    )
+    .bind(&age_modifier)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()> {
@@ -229,4 +245,73 @@ async fn mark_failed(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<u64> {
     }
     tx.commit().await?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Row;
+
+    async fn mem_pool_with(rows: &[(&str, &str, &str)]) -> sqlx::SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE transactions (
+                transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                txid TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (txid, status, created_at) in rows {
+            sqlx::query("INSERT INTO transactions (txid, status, created_at) VALUES (?,?,?)")
+                .bind(txid)
+                .bind(status)
+                .bind(created_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool
+    }
+
+    /// The regression: toolbox-written rows use ISO-8601 `…T…+00:00`, which a
+    /// bare string compare against `datetime('now')` NEVER matches ('T' > ' ')
+    /// — the sweep silently found nothing, forever. Both formats must match.
+    #[tokio::test]
+    async fn selects_iso8601_and_space_format_rows() {
+        let pool = mem_pool_with(&[
+            ("aa".repeat(32).leak(), "unproven", "2020-01-01T00:00:00.123456+00:00"),
+            ("bb".repeat(32).leak(), "unproven", "2020-01-02 00:00:00"),
+            ("cc".repeat(32).leak(), "failed", "2020-01-01T00:00:00+00:00"), // wrong status
+        ])
+        .await;
+        let rows = select_stale_unproven(&pool, 0).await.unwrap();
+        let txids: Vec<String> = rows.iter().map(|r| r.get("txid")).collect();
+        assert_eq!(txids.len(), 2, "both timestamp formats must be swept: {txids:?}");
+        assert!(txids.contains(&"aa".repeat(32)));
+        assert!(txids.contains(&"bb".repeat(32)));
+    }
+
+    /// The min-age guard still filters: a just-created row (either format)
+    /// must NOT be selected with a 5-minute guard, and a 0-second guard is
+    /// the no-guard historical behavior.
+    #[tokio::test]
+    async fn min_age_guard_respected_across_formats() {
+        // "now" in both formats via SQLite itself
+        let pool = mem_pool_with(&[]).await;
+        sqlx::query(
+            "INSERT INTO transactions (txid, status, created_at) VALUES
+             ('fresh_iso', 'unproven', strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+             ('fresh_sp',  'unproven', datetime('now')),
+             ('old_iso',   'unproven', '2020-01-01T00:00:00+00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let guarded = select_stale_unproven(&pool, 300).await.unwrap();
+        let txids: Vec<String> = guarded.iter().map(|r| r.get("txid")).collect();
+        assert_eq!(txids, vec!["old_iso".to_string()], "fresh rows must be age-guarded");
+        let unguarded = select_stale_unproven(&pool, 0).await.unwrap();
+        assert_eq!(unguarded.len(), 3, "0-second guard selects everything");
+    }
 }

@@ -153,6 +153,16 @@ impl AppError {
         }
     }
 
+    fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Append an operator-facing recovery hint to the error message.
+    fn with_hint(mut self, hint: &str) -> Self {
+        self.message = format!("{} (hint: {})", self.message, hint);
+        self
+    }
+
     /// A broadcast that `create_action` reported as `Ok`, but which the network
     /// confirms never landed (silently dropped — typically ARC 465 fee-too-low
     /// on a deep unconfirmed BEEF). Surfaced as a gateway error so callers see a
@@ -769,10 +779,22 @@ pub async fn abort_action(
     Json(args): Json<AbortActionArgs>,
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
-    let result = wallet
-        .abort_action(args, &originator)
-        .await
-        .map_err(AppError::from_wallet_error)?;
+    let result = wallet.abort_action(args, &originator).await.map_err(|e| {
+        // The toolbox (correctly) refuses to abort a broadcast tx blindly — it
+        // could be on-chain, and failing it here would fabricate a phantom
+        // double-spend. The sanctioned recovery for a broadcast-lie is the
+        // chain-checked sweep: point the operator at it.
+        let mut err = AppError::from_wallet_error(e);
+        if err.message().contains("unproven") {
+            err = err.with_hint(
+                "an 'unproven' tx may already be on-chain; if its broadcast \
+                 never landed, run `bsv-wallet cleanup-abandoned --execute` \
+                 (verifies chain absence before restoring inputs) or wait for \
+                 the daemon's auto-reconcile tick",
+            );
+        }
+        err
+    })?;
     Ok(Json(result))
 }
 
