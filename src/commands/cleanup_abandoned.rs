@@ -280,14 +280,26 @@ mod tests {
     #[tokio::test]
     async fn selects_iso8601_and_space_format_rows() {
         let pool = mem_pool_with(&[
-            ("aa".repeat(32).leak(), "unproven", "2020-01-01T00:00:00.123456+00:00"),
+            (
+                "aa".repeat(32).leak(),
+                "unproven",
+                "2020-01-01T00:00:00.123456+00:00",
+            ),
             ("bb".repeat(32).leak(), "unproven", "2020-01-02 00:00:00"),
-            ("cc".repeat(32).leak(), "failed", "2020-01-01T00:00:00+00:00"), // wrong status
+            (
+                "cc".repeat(32).leak(),
+                "failed",
+                "2020-01-01T00:00:00+00:00",
+            ), // wrong status
         ])
         .await;
         let rows = select_stale_unproven(&pool, 0).await.unwrap();
         let txids: Vec<String> = rows.iter().map(|r| r.get("txid")).collect();
-        assert_eq!(txids.len(), 2, "both timestamp formats must be swept: {txids:?}");
+        assert_eq!(
+            txids.len(),
+            2,
+            "both timestamp formats must be swept: {txids:?}"
+        );
         assert!(txids.contains(&"aa".repeat(32)));
         assert!(txids.contains(&"bb".repeat(32)));
     }
@@ -310,7 +322,11 @@ mod tests {
         .unwrap();
         let guarded = select_stale_unproven(&pool, 300).await.unwrap();
         let txids: Vec<String> = guarded.iter().map(|r| r.get("txid")).collect();
-        assert_eq!(txids, vec!["old_iso".to_string()], "fresh rows must be age-guarded");
+        assert_eq!(
+            txids,
+            vec!["old_iso".to_string()],
+            "fresh rows must be age-guarded"
+        );
         let unguarded = select_stale_unproven(&pool, 0).await.unwrap();
         assert_eq!(unguarded.len(), 3, "0-second guard selects everything");
     }

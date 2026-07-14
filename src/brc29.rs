@@ -17,7 +17,10 @@ pub fn deposit_keypair(root_key: &PrivateKey) -> Result<(PrivateKey, PublicKey)>
     let deriver = KeyDeriver::new(Some(root_key.clone()));
     let (_, anyone_pubkey) = KeyDeriver::anyone_key();
     let protocol = Protocol::new(SecurityLevel::Counterparty, PROTOCOL);
-    let key_id = format!("{} {}", DEFAULT_DERIVATION_PREFIX, DEFAULT_DERIVATION_SUFFIX);
+    let key_id = format!(
+        "{} {}",
+        DEFAULT_DERIVATION_PREFIX, DEFAULT_DERIVATION_SUFFIX
+    );
     let priv_key =
         deriver.derive_private_key(&protocol, &key_id, &Counterparty::Other(anyone_pubkey))?;
     let pub_key = priv_key.public_key();
@@ -57,7 +60,13 @@ mod tests {
         // identity asserted below holds for any valid root key.
         let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
         let (priv_key, pub_key) = deposit_keypair(&root).unwrap();
-        assert_eq!(priv_key.public_key().to_compressed(), pub_key.to_compressed());
-        assert_eq!(pub_key.to_address(), deposit_address(&root, Chain::Main).unwrap());
+        assert_eq!(
+            priv_key.public_key().to_compressed(),
+            pub_key.to_compressed()
+        );
+        assert_eq!(
+            pub_key.to_address(),
+            deposit_address(&root, Chain::Main).unwrap()
+        );
     }
 }

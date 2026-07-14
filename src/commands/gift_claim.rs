@@ -102,8 +102,14 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
     } else {
         let pre = now < params.lock_until;
         println!("🔓 Gift claim broadcast");
-        println!("   amount:     {} sats → your address", plan.covenant.amount);
-        println!("   fee:        {} sats (change {} sats back to you)", plan.fee, plan.change);
+        println!(
+            "   amount:     {} sats → your address",
+            plan.covenant.amount
+        );
+        println!(
+            "   fee:        {} sats (change {} sats back to you)",
+            plan.fee, plan.change
+        );
         println!("   unlocks:    {unlock_human}");
         println!("   claim txid: {claim_txid}");
         println!("   View:       https://whatsonchain.com/tx/{claim_txid}");

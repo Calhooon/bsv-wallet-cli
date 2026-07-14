@@ -2,15 +2,14 @@ use anyhow::{Context, Result};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::{ListOutputsArgs, WalletInterface};
 use bsv_wallet_toolbox::{
-    services::providers::ArcConfig, Chain, Monitor, Services, ServicesOptions, StorageSqlx, Wallet,
+    ArcadeMonitorConfig, Chain, Monitor, MonitorOptions, Services, StorageSqlx, Wallet,
     WalletStorageWriter,
 };
-// Hardcoded TAAL API endpoint for clarity in the override below.
-const TAAL_ARC_URL: &str = "https://arc.taal.com";
 use std::sync::Arc;
 
 use crate::cli::Cli;
 use crate::server::{self, ServerConfig, TlsConfig};
+use crate::services_env;
 
 pub async fn run(cli: &Cli) -> Result<()> {
     let root_key_hex =
@@ -32,35 +31,22 @@ pub async fn run(cli: &Cli) -> Result<()> {
         .await
         .ok();
 
+    // Shared env-driven services config (CHAINTRACKS_URL, ARC_URL,
+    // ARC_MODE=arcade, TAAL keys, callback token) — see services_env.rs.
+    let db_path = cli.db.clone();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
-        let mut opts = match chain {
-            Chain::Main => ServicesOptions::mainnet(),
-            Chain::Test => ServicesOptions::testnet(),
-        };
-        if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-            opts = opts.with_chaintracks_url(url);
-        }
-        // Optionally authenticate TAAL broadcasts via MAIN_TAAL_API_KEY env.
-        // TAAL accepts `Authorization: <key>` WITHOUT the "Bearer " prefix
-        // that the toolbox's ArcConfig.api_key would generate, so we pass
-        // the header directly via additional_headers. TAAL is now the first
-        // post_beef provider in bsv-wallet-toolbox-rs 0.3.37+, so setting
-        // this key lets the first broadcast attempt use authenticated TAAL.
-        if let Ok(api_key) = std::env::var("MAIN_TAAL_API_KEY") {
-            if !api_key.is_empty() {
-                let mut headers = std::collections::HashMap::new();
-                headers.insert("Authorization".to_string(), api_key);
-                opts = opts.with_arc(
-                    TAAL_ARC_URL,
-                    Some(ArcConfig {
-                        headers: Some(headers),
-                        ..Default::default()
-                    }),
-                );
-            }
-        }
+        let opts = services_env::services_options_from_env(chain, &db_path)?;
         Ok(Services::with_options(chain, opts)?)
     };
+
+    // Arcade V2 runtime (None in classic ARC mode).
+    let arcade_rt = services_env::arcade_runtime(&cli.db)?;
+    if let Some(ref rt) = arcade_rt {
+        eprintln!("Arcade V2 mode: {} (SSE status stream enabled)", rt.url);
+        if let Some(ref cb) = rt.public_callback_url {
+            eprintln!("Arcade webhook: {} (X-CallbackUrl on submits)", cb);
+        }
+    }
 
     let services = make_services(chain)?;
 
@@ -72,8 +58,18 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let storage_arc = Arc::new(storage);
     let services_arc = Arc::new(services);
 
-    // Start the monitor (12 background tasks)
-    let monitor = Monitor::new(storage_arc.clone(), services_arc.clone());
+    // Start the monitor. In Arcade mode this additionally starts the
+    // arcade_events task: outbound SSE subscription for push statuses
+    // (SEEN_ON_NETWORK spendability gate) and event-driven proof fetch on
+    // MINED — no schedule polling.
+    let mut monitor_opts = MonitorOptions::default();
+    if let Some(ref rt) = arcade_rt {
+        monitor_opts.arcade = Some(ArcadeMonitorConfig {
+            url: rt.url.clone(),
+            callback_token: rt.callback_token.clone(),
+        });
+    }
+    let monitor = Monitor::with_options(storage_arc.clone(), services_arc.clone(), monitor_opts);
     monitor
         .start()
         .await
@@ -109,10 +105,30 @@ pub async fn run(cli: &Cli) -> Result<()> {
         }),
         _ => None,
     };
+    // /arc-callback is enabled when a callback token exists: always in Arcade
+    // mode, or via explicit CALLBACK_TOKEN env with classic ARC.
+    let callback_token = arcade_rt
+        .as_ref()
+        .map(|rt| rt.callback_token.clone())
+        .or_else(|| {
+            std::env::var("CALLBACK_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty())
+        });
+
+    // BIND_ADDR=0.0.0.0 for the tunnel/public-webhook case; default stays
+    // loopback-only.
+    let bind_addr: std::net::IpAddr = std::env::var("BIND_ADDR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]));
+
     let config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
         tls,
         chain,
+        bind_addr,
+        callback_token,
     };
 
     // Periodic UTXO count check — warn if below threshold
@@ -201,6 +217,80 @@ pub async fn run(cli: &Cli) -> Result<()> {
             }
         }
     });
+
+    // Proof-delivery ladder rung (c): drain a bsv-wallet-relay queue.
+    // RELAY_URL points at a shared public callback receiver; we poll OUTBOUND
+    // with our callback token and push each queued ARC/Arcade payload through
+    // the same ingest path as the direct /arc-callback webhook.
+    if let Ok(relay_url) = std::env::var("RELAY_URL") {
+        if !relay_url.is_empty() {
+            if let Some(relay_token) = config.callback_token.clone() {
+                let relay_wallet = wallet_state.clone();
+                let poll_secs: u64 = std::env::var("RELAY_POLL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(10);
+                let relay_base = relay_url.trim_end_matches('/').to_string();
+                eprintln!("Relay polling enabled: {relay_base} (every {poll_secs}s)");
+                tokio::spawn(async move {
+                    let client = reqwest::Client::new();
+                    let mut last_id: i64 = 0;
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(poll_secs));
+                    loop {
+                        interval.tick().await;
+                        let url = format!(
+                            "{}/pull?token={}&after={}&ack={}",
+                            relay_base, relay_token, last_id, last_id
+                        );
+                        match client.get(&url).send().await {
+                            Ok(resp) if resp.status().is_success() => {
+                                match resp.json::<Vec<serde_json::Value>>().await {
+                                    Ok(items) => {
+                                        for item in items {
+                                            let id = item
+                                                .get("id")
+                                                .and_then(|v| v.as_i64())
+                                                .unwrap_or(last_id);
+                                            if let Some(payload) = item.get("payload") {
+                                                match crate::arc_ingest::ingest_arc_payload(
+                                                    relay_wallet.storage(),
+                                                    payload,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(action) => tracing::info!(
+                                                        ?action,
+                                                        "relay: payload ingested"
+                                                    ),
+                                                    Err(e) => tracing::warn!(
+                                                        error = %e,
+                                                        "relay: payload ingest failed"
+                                                    ),
+                                                }
+                                            }
+                                            last_id = last_id.max(id);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(error = %e, "relay: pull parse failed")
+                                    }
+                                }
+                            }
+                            Ok(resp) => {
+                                tracing::debug!(status = %resp.status(), "relay: pull failed")
+                            }
+                            Err(e) => tracing::debug!(error = %e, "relay: pull failed"),
+                        }
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "RELAY_URL set but no callback token available — relay polling disabled"
+                );
+            }
+        }
+    }
 
     // Run HTTP server (blocks until shutdown signal)
     let server_handle = tokio::spawn(server::run(wallet_state, cli.port, config));

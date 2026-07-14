@@ -1,7 +1,8 @@
 use anyhow::Result;
-use bsv_wallet_toolbox::{Chain, Services, ServicesOptions, WalletServices};
+use bsv_wallet_toolbox::{Chain, Services, WalletServices};
 
 use crate::cli::Cli;
+use crate::services_env;
 
 pub async fn run(cli: &Cli) -> Result<()> {
     let chain = if cli.testnet {
@@ -10,14 +11,9 @@ pub async fn run(cli: &Cli) -> Result<()> {
         Chain::Main
     };
 
+    // Shared env-driven services config — see services_env.rs.
     let services = {
-        let mut opts = match chain {
-            Chain::Main => ServicesOptions::mainnet(),
-            Chain::Test => ServicesOptions::testnet(),
-        };
-        if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-            opts = opts.with_chaintracks_url(url);
-        }
+        let opts = services_env::services_options_from_env(chain, &cli.db)?;
         Services::with_options(chain, opts)?
     };
 

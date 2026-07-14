@@ -50,7 +50,9 @@ fn parse_relative(s: &str) -> Option<u64> {
         "d" | "day" | "days" => now + chrono::Duration::days(n as i64),
         "w" | "wk" | "wks" | "week" | "weeks" => now + chrono::Duration::weeks(n as i64),
         "mo" | "mos" | "month" | "months" => now.checked_add_months(chrono::Months::new(n))?,
-        "y" | "yr" | "yrs" | "year" | "years" => now.checked_add_months(chrono::Months::new(n * 12))?,
+        "y" | "yr" | "yrs" | "year" | "years" => {
+            now.checked_add_months(chrono::Months::new(n * 12))?
+        }
         _ => return None,
     };
     Some(dt.timestamp() as u64)
@@ -159,7 +161,9 @@ pub async fn run(
     };
 
     let result = ctx.wallet.create_action(args, "bsv-wallet-cli").await?;
-    let txid = result.txid.ok_or_else(|| anyhow!("wallet returned no txid"))?;
+    let txid = result
+        .txid
+        .ok_or_else(|| anyhow!("wallet returned no txid"))?;
     let txid_hex = to_hex(&txid);
 
     let beef_hex = result.beef.as_ref().and_then(|b| {

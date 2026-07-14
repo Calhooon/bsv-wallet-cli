@@ -58,7 +58,11 @@ fn push_num(n: u64) -> Vec<u8> {
 /// compiler. `recipient` must be a 33-byte compressed public key. `lock_until` is
 /// a unix timestamp (>= 500_000_000); `amount` is the satoshis paid to the
 /// recipient on claim.
-pub fn build_locking_script(recipient: &[u8], lock_until: u64, amount: u64) -> Result<Vec<u8>, String> {
+pub fn build_locking_script(
+    recipient: &[u8],
+    lock_until: u64,
+    amount: u64,
+) -> Result<Vec<u8>, String> {
     if recipient.len() != 33 {
         return Err(format!(
             "recipient must be a 33-byte compressed pubkey, got {} bytes",
@@ -89,9 +93,11 @@ pub struct CovenantParams {
 /// Decode a minimal-pushed non-negative integer at `script[i..]`, returning
 /// (value, next_index). Inverse of `push_num`.
 fn read_push_num(script: &[u8], i: usize) -> Result<(u64, usize), String> {
-    let op = *script.get(i).ok_or("unexpected end of script reading push")?;
+    let op = *script
+        .get(i)
+        .ok_or("unexpected end of script reading push")?;
     match op {
-        0x00 => Ok((0, i + 1)),                       // OP_0
+        0x00 => Ok((0, i + 1)),                         // OP_0
         0x51..=0x60 => Ok(((op - 0x50) as u64, i + 1)), // OP_1 ..= OP_16
         0x01..=0x4b => {
             let len = op as usize;
@@ -144,10 +150,7 @@ pub fn parse_locking_script(script: &[u8]) -> Result<CovenantParams, String> {
         return Err("expected 33-byte pubkey push after prefix".into());
     }
     i += 1;
-    let recipient = script
-        .get(i..i + 33)
-        .ok_or("pubkey out of range")?
-        .to_vec();
+    let recipient = script.get(i..i + 33).ok_or("pubkey out of range")?.to_vec();
     i += 33;
     let (lock_until, ni) = read_push_num(script, i)?;
     i = ni;
@@ -175,7 +178,10 @@ mod tests {
         assert_eq!(script_num_unsigned(0x7f), vec![0x7f]);
         assert_eq!(script_num_unsigned(0x80), vec![0x80, 0x00]); // sign byte appended
         assert_eq!(script_num_unsigned(0xff), vec![0xff, 0x00]);
-        assert_eq!(script_num_unsigned(0x1122_3344), vec![0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(
+            script_num_unsigned(0x1122_3344),
+            vec![0x44, 0x33, 0x22, 0x11]
+        );
         assert_eq!(push_data(&script_num_unsigned(1)), vec![0x51]); // OP_1
         assert_eq!(push_data(&script_num_unsigned(16)), vec![0x60]); // OP_16
         assert_eq!(push_data(&script_num_unsigned(17)), vec![0x01, 0x11]); // direct push
@@ -190,8 +196,8 @@ mod tests {
     /// output across every fixture vector.
     #[test]
     fn parity_with_scrypt_compiler() {
-        let fixtures: Value =
-            serde_json::from_str(include_str!("covenant_vectors.json")).expect("valid fixtures json");
+        let fixtures: Value = serde_json::from_str(include_str!("covenant_vectors.json"))
+            .expect("valid fixtures json");
         let vectors = fixtures["vectors"].as_array().expect("vectors array");
         let mut checked = 0usize;
         for v in vectors {
@@ -207,7 +213,10 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 100, "expected >=100 fixture vectors, got {checked}");
+        assert!(
+            checked >= 100,
+            "expected >=100 fixture vectors, got {checked}"
+        );
         eprintln!("✅ Rust covenant byte-identical to sCrypt over {checked} vectors");
     }
 
@@ -215,8 +224,7 @@ mod tests {
     /// right recipient/lockUntil/amount straight from chain).
     #[test]
     fn parse_roundtrips_build() {
-        let fixtures: Value =
-            serde_json::from_str(include_str!("covenant_vectors.json")).unwrap();
+        let fixtures: Value = serde_json::from_str(include_str!("covenant_vectors.json")).unwrap();
         for v in fixtures["vectors"].as_array().unwrap() {
             let pub_hex = v["pub"].as_str().unwrap();
             let lock: u64 = v["lockUntil"].as_str().unwrap().parse().unwrap();

@@ -34,7 +34,7 @@ pub struct TlsConfig {
 }
 
 /// Server configuration (auth, TLS, etc.)
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Optional bearer token. When set, all requests must include
     /// `Authorization: Bearer <token>`. When None, auth is disabled.
@@ -44,10 +44,37 @@ pub struct ServerConfig {
     /// Network the served wallet is on. Drives post-broadcast verification
     /// (which ARC / WoC endpoints to probe). Defaults to `Main`.
     pub chain: Chain,
+    /// Address to bind (default `127.0.0.1`). Set `BIND_ADDR=0.0.0.0` for the
+    /// tunnel/public-webhook case (`POST /arc-callback` behind cloudflared /
+    /// tailscale funnel / direct TLS).
+    pub bind_addr: std::net::IpAddr,
+    /// Per-wallet ARC/Arcade callback token. When set, `POST /arc-callback`
+    /// is enabled, authenticated by THIS token (`Authorization: Bearer` or
+    /// `X-CallbackToken`) and EXEMPT from the wallet bearer auth above.
+    pub callback_token: Option<String>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            auth_token: None,
+            tls: None,
+            chain: Chain::Main,
+            bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
+            callback_token: None,
+        }
+    }
 }
 
 /// Auth middleware — checks Bearer token if configured.
 async fn auth_middleware(headers: HeaderMap, request: Request, next: Next) -> Response {
+    // /arc-callback is EXEMPT from wallet bearer auth: it is authenticated by
+    // the per-wallet callback token inside its own handler (ARC/Arcade call it
+    // with `Authorization: Bearer <callback-token>`, not the wallet token).
+    if request.uri().path() == "/arc-callback" {
+        return next.run(request).await;
+    }
+
     // Extract config from request extensions
     let token = request
         .extensions()
@@ -154,6 +181,9 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
             "/revealSpecificKeyLinkage",
             post(handlers::reveal_specific_key_linkage),
         )
+        // ARC/Arcade proof-delivery webhook (callback-token auth, exempt from
+        // wallet bearer auth — see auth_middleware).
+        .route("/arc-callback", post(arc_callback))
         // Layer ordering: CORS (outermost) → auth → trace → body limit
         .layer(cors)
         .layer(middleware::from_fn(auth_middleware))
@@ -165,10 +195,90 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         .with_state(wallet)
 }
 
+/// `POST /arc-callback` — ARC/Arcade status webhook receiving push status
+/// updates and (on MINED) the merkle path, straight into wallet storage.
+///
+/// Authenticated by the per-wallet callback token: ARC-convention
+/// `Authorization: Bearer <callback-token>` or an `X-CallbackToken` header
+/// (both accepted — broadcaster implementations vary). Returns 404 when no
+/// callback token is configured (route effectively disabled).
+async fn arc_callback(
+    axum::extract::State(wallet): axum::extract::State<WalletState>,
+    request: Request,
+) -> Response {
+    let expected = request
+        .extensions()
+        .get::<ServerConfig>()
+        .and_then(|c| c.callback_token.clone());
+    let Some(expected) = expected else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "CALLBACK_DISABLED", "message": "no callback token configured"})),
+        )
+            .into_response();
+    };
+
+    let headers = request.headers().clone();
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get("x-callbacktoken")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        });
+
+    if provided.as_deref() != Some(expected.as_str()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "UNAUTHORIZED", "message": "invalid or missing callback token"})),
+        )
+            .into_response();
+    }
+
+    let bytes = match axum::body::to_bytes(request.into_body(), 1_000_000).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(json!({"code": "TOO_LARGE", "message": "payload too large"})),
+            )
+                .into_response();
+        }
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"code": "BAD_JSON", "message": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    match crate::arc_ingest::ingest_arc_payload(wallet.storage(), &payload).await {
+        Ok(action) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "action": format!("{:?}", action)})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "BAD_PAYLOAD", "message": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result<()> {
     let tls = config.tls.clone();
+    let bind_addr = config.bind_addr;
     let app = make_router(wallet, config);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from((bind_addr, port));
 
     #[cfg(feature = "tls")]
     if let Some(tls_cfg) = tls {

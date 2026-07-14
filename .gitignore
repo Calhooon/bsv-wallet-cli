@@ -3,6 +3,8 @@
 *.db
 *.db-wal
 *.db-shm
+# Per-wallet ARC/Arcade callback token (secret), persisted next to the db
+*.callback-token
 .env
 *.pem
 *.log

@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_toolbox::{
-    ArcConfig, Chain, Monitor, Services, ServicesOptions, StorageSqlx, WalletStorageProvider,
-    WalletStorageWriter,
+    Chain, Monitor, Services, StorageSqlx, WalletStorageProvider, WalletStorageWriter,
 };
 use std::sync::Arc;
 
 use crate::cli::Cli;
+use crate::services_env;
 
 pub async fn run(cli: &Cli) -> Result<()> {
     let root_key_hex =
@@ -26,20 +26,9 @@ pub async fn run(cli: &Cli) -> Result<()> {
         .await
         .ok();
 
+    // Shared env-driven services config — see services_env.rs.
     let services = {
-        let mut opts = match chain {
-            Chain::Main => ServicesOptions::mainnet(),
-            Chain::Test => ServicesOptions::testnet(),
-        };
-        if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-            opts = opts.with_chaintracks_url(url);
-        }
-        if let Ok(key) = std::env::var("TAAL_API_KEY") {
-            if !key.is_empty() {
-                let arc_url = opts.arc_url.clone();
-                opts = opts.with_arc(arc_url, Some(ArcConfig::with_api_key(key)));
-            }
-        }
+        let opts = services_env::services_options_from_env(chain, &cli.db)?;
         Services::with_options(chain, opts)?
     };
     if let Some(ref ct) = services.chaintracks {

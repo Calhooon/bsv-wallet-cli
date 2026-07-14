@@ -97,9 +97,16 @@ fn txid_display(raw: &[u8]) -> String {
 
 /// Build a fully-signed claim. `key` MUST be the covenant recipient's key.
 /// `lock_time` is the nLockTime to set (use `covenant.lock_until` for a real claim).
-pub fn build_claim_tx(deposit_raw: &[u8], key: &PrivateKey, lock_time: u32) -> Result<ClaimPlan, String> {
+pub fn build_claim_tx(
+    deposit_raw: &[u8],
+    key: &PrivateKey,
+    lock_time: u32,
+) -> Result<ClaimPlan, String> {
     let dep = parse_transaction(deposit_raw).map_err(|e| format!("parse deposit tx: {e}"))?;
-    let cov_out = dep.outputs.get(COVENANT_VOUT).ok_or("deposit has no vout 0")?;
+    let cov_out = dep
+        .outputs
+        .get(COVENANT_VOUT)
+        .ok_or("deposit has no vout 0")?;
     let fee_out = dep
         .outputs
         .get(FEE_VOUT)
@@ -162,7 +169,9 @@ pub fn build_claim_tx(deposit_raw: &[u8], key: &PrivateKey, lock_time: u32) -> R
         };
         (build_sighash_preimage(&p), compute_sighash_for_signing(&p))
     };
-    let cov_sig = key.sign(&cov_sighash).map_err(|e| format!("covenant sign: {e}"))?;
+    let cov_sig = key
+        .sign(&cov_sighash)
+        .map_err(|e| format!("covenant sign: {e}"))?;
     let cov_txsig = TransactionSignature::new(cov_sig, cov_scope).to_low_s();
     let mut cov_unlock = push_bytes(&cov_txsig.to_checksig_format());
     cov_unlock.extend_from_slice(&push_bytes(&preimage));
@@ -204,7 +213,9 @@ pub fn build_claim_tx(deposit_raw: &[u8], key: &PrivateKey, lock_time: u32) -> R
         };
         compute_sighash_for_signing(&p)
     };
-    let fee_sig = key.sign(&fee_sighash).map_err(|e| format!("fee sign: {e}"))?;
+    let fee_sig = key
+        .sign(&fee_sighash)
+        .map_err(|e| format!("fee sign: {e}"))?;
     let fee_txsig = TransactionSignature::new(fee_sig, fee_scope).to_low_s();
     let mut fee_unlock = push_bytes(&fee_txsig.to_checksig_format());
     fee_unlock.extend_from_slice(&push_bytes(&our_pub));

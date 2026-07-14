@@ -50,7 +50,10 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
     let deposit_raw = hex::decode(raw_hex.trim())
         .map_err(|e| anyhow!("WhatsOnChain returned non-hex for {txid}: {e}"))?;
     let dep = parse_transaction(&deposit_raw).map_err(|e| anyhow!("parse deposit: {e}"))?;
-    let cov_out = dep.outputs.first().ok_or_else(|| anyhow!("{txid} has no vout 0"))?;
+    let cov_out = dep
+        .outputs
+        .first()
+        .ok_or_else(|| anyhow!("{txid} has no vout 0"))?;
     let params = parse_locking_script(&cov_out.script)
         .map_err(|e| anyhow!("{txid} vout 0 is not a TimeLockedGift covenant: {e}"))?;
 
@@ -109,7 +112,11 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
     println!("   locked to key:  {}", hex::encode(&params.recipient));
     println!(
         "   that's YOU:     {}",
-        if locked_to_me { "✅ yes — this gift is yours" } else { "❌ no — locked to a different key" }
+        if locked_to_me {
+            "✅ yes — this gift is yours"
+        } else {
+            "❌ no — locked to a different key"
+        }
     );
     println!(
         "   you can open it:{}",
@@ -131,7 +138,9 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
     if claimable_now {
         println!("   status:         🔓 CLAIMABLE NOW");
         println!("\n   Claim it:  bsv-wallet gift-claim {txid}");
-        println!("   …then it lands in your wallet; `bsv-wallet sync` + `bsv-wallet send` to spend.");
+        println!(
+            "   …then it lands in your wallet; `bsv-wallet sync` + `bsv-wallet send` to spend."
+        );
     } else {
         println!(
             "   status:         🔒 LOCKED — claimable ~{} (≈ block {}, ~{} blocks away)",
@@ -139,10 +148,11 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
             est_height,
             est_blocks
         );
+        println!("\n   Note: the network won't confirm a claim until its block's median-time-past");
         println!(
-            "\n   Note: the network won't confirm a claim until its block's median-time-past"
+            "   passes the unlock time, which lags real time by ~{}h.",
+            mtp_lag / 3600
         );
-        println!("   passes the unlock time, which lags real time by ~{}h.", mtp_lag / 3600);
     }
 
     Ok(())

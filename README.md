@@ -170,8 +170,98 @@ All configuration is via environment variables:
 | `TLS_CERT_PATH` | No | TLS certificate path (requires `--features tls`) |
 | `TLS_KEY_PATH` | No | TLS private key path (requires `--features tls`) |
 | `MIN_UTXOS` | No | Low UTXO warning threshold in daemon mode (default: 3) |
+| `ARC_URL` | No | Override the broadcaster URL (classic ARC, or the Arcade endpoint in Arcade mode) |
+| `ARC_MODE=arcade` / `ARCADE=1` | No | Arcade V2 mode: EF-only submit, SSE push statuses, push proofs |
+| `CALLBACK_TOKEN` | No | Override the per-wallet callback token (auto-generated + persisted as `<db>.callback-token` otherwise) |
+| `PUBLIC_CALLBACK_URL` | No | Public HTTPS URL for Arcade status webhooks (`X-CallbackUrl`), pointing at this daemon's `/arc-callback` |
+| `BIND_ADDR` | No | HTTP server bind address (default `127.0.0.1`; set `0.0.0.0` for the tunnel/webhook case) |
+| `RELAY_URL` / `RELAY_POLL_SECS` | No | Drain a `bsv-wallet-relay` queue (see proof-delivery ladder) |
+| `TAAL_API_KEY` / `MAIN_TAAL_API_KEY` | No | TAAL ARC auth (Bearer / raw `Authorization` respectively) |
 
 Port is set via `--port` CLI flag (default: 3322), not an environment variable.
+
+## Broadcasting: Arcade V2 mode
+
+By default the wallet broadcasts through classic ARC (TAAL → GorillaPool →
+Bitails → WoC failover) and the Monitor discovers merkle proofs by polling.
+Setting `ARC_MODE=arcade` (or `ARCADE=1`) switches the primary broadcaster to
+**Arcade V2**, the Teranode-native broadcaster
+(`https://arcade-v2-us-1.bsvblockchain.tech` unless `ARC_URL` overrides):
+
+- **EF-only submit** — Arcade rejects BEEF; every unmined ancestor in a
+  transaction's BEEF is converted to Extended Format (BRC-30) and batch-posted
+  as binary concat to `POST /txs` (Arcade dedupes re-submitted ancestors).
+- **Always-async statuses** — submit returns `202`; the Monitor's
+  `arcade_events` task subscribes **outbound** to the per-wallet SSE stream
+  (`GET /events?callbackToken=…`) and gates spendability on `SEEN_ON_NETWORK`
+  (~3s, reliable). Fatal verdicts (`REJECTED`, `DOUBLE_SPEND_ATTEMPTED`) mark
+  the transaction so it is never re-broadcast.
+- **Failover preserved** — classic ARC providers stay behind Arcade in the
+  postBeef chain, so a transient Arcade outage never blocks a broadcast.
+
+Each wallet db gets its own callback token (auto-generated, persisted as
+`<db>.callback-token`, never logged), so any number of concurrent wallets
+(e.g. `:3322`, `:3382`) get independent status streams.
+
+## Proof delivery: the acquisition ladder
+
+Merkle proofs (BUMPs) complete a transaction (`unproven → completed`). The
+wallet acquires them by the best available rung — god-tier when possible,
+never blocked:
+
+**(a) Direct webhook — god-tier, zero polling.** When the daemon can present
+public HTTPS, Arcade pushes the `MINED` webhook — which carries the
+`merklePath` — straight into wallet storage via the daemon's own
+`POST /arc-callback` route. Two ways to be publicly reachable:
+
+```bash
+# TLS directly (public IP + cert):
+TLS_CERT_PATH=/path/cert.pem TLS_KEY_PATH=/path/key.pem \
+PUBLIC_CALLBACK_URL=https://wallet.example.com:3322/arc-callback \
+ARC_MODE=arcade bsv-wallet daemon        # built with --features tls
+
+# Or a tunnel (cloudflared shown; tailscale funnel works the same way):
+cloudflared tunnel --url http://localhost:3322   # gives https://<name>.trycloudflare.com
+PUBLIC_CALLBACK_URL=https://<name>.trycloudflare.com/arc-callback \
+ARC_MODE=arcade bsv-wallet daemon
+```
+
+`/arc-callback` is authenticated by the per-wallet callback token
+(`Authorization: Bearer <token>` or `X-CallbackToken`) and is **exempt** from
+the wallet `AUTH_TOKEN` bearer — the broadcaster doesn't know your wallet
+token. Invalid proofs are validated against the ChainTracker and rejected,
+never stored. Note Arcade's webhook target is SSRF-guarded: it must be public
+HTTPS — plain localhost can never receive it, which is why the SSE rung below
+is the default.
+
+**(b) SSE-triggered fetch — the always-works default.** On a `MINED` SSE event
+the Monitor immediately fetches the BUMP through its existing services stack
+(WhatsOnChain/Bitails/ARC) and ingests it through the same validated path.
+Event-driven, no schedule polling, fully local — works from a laptop behind
+NAT with zero setup. (The 2-hourly polling sync remains as the final safety
+net, exactly as before.)
+
+**(c) `bsv-wallet-relay` — one public receiver for fleets.** A small
+store-and-forward companion binary (ships in this repo): Arcade posts
+callbacks to the relay; wallet daemons poll their queue **outbound** by
+callback token and ingest through the same path — connect/disconnect at will.
+
+```bash
+# On the public box:
+RELAY_PORT=3390 bsv-wallet-relay          # sqlite queue in relay.db
+
+# Each wallet daemon (can be localhost-only):
+ARC_MODE=arcade \
+PUBLIC_CALLBACK_URL=https://relay.example.com/arc-callback \
+RELAY_URL=https://relay.example.com \
+bsv-wallet daemon
+```
+
+Relay design: a token is auto-registered on first `/pull` (wallets poll from
+boot, before any submit); callbacks with unknown tokens are rejected, and
+tokens are high-entropy so a guessed token reads nothing. Set
+`RELAY_ADMIN_TOKEN` + `RELAY_REQUIRE_REGISTER=1` to require explicit
+`POST /register` instead.
 
 ## MCP Server
 

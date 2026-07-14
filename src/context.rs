@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use bsv_sdk::primitives::PrivateKey;
-use bsv_wallet_toolbox::{
-    ArcConfig, Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
-};
+use bsv_wallet_toolbox::{Chain, Services, StorageSqlx, Wallet, WalletStorageWriter};
 
 use crate::cli::Cli;
+use crate::services_env;
 
 pub struct WalletContext {
     pub wallet: Wallet<StorageSqlx, Services>,
@@ -12,6 +11,8 @@ pub struct WalletContext {
     pub root_key: PrivateKey,
     pub chain: Chain,
     pub json_output: bool,
+    /// Wallet database path (also anchors the persisted callback token).
+    pub db_path: String,
 }
 
 impl WalletContext {
@@ -31,20 +32,10 @@ impl WalletContext {
         let storage = StorageSqlx::open(&cli.db).await?;
         storage.make_available().await?;
 
+        // Shared env-driven services config (CHAINTRACKS_URL, ARC_URL,
+        // ARC_MODE=arcade, TAAL keys, callback token) — see services_env.rs.
         let services = {
-            let mut opts = match chain {
-                Chain::Main => ServicesOptions::mainnet(),
-                Chain::Test => ServicesOptions::testnet(),
-            };
-            if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-                opts = opts.with_chaintracks_url(url);
-            }
-            if let Ok(key) = std::env::var("TAAL_API_KEY") {
-                if !key.is_empty() {
-                    let arc_url = opts.arc_url.clone();
-                    opts = opts.with_arc(arc_url, Some(ArcConfig::with_api_key(key)));
-                }
-            }
+            let opts = services_env::services_options_from_env(chain, &cli.db)?;
             Services::with_options(chain, opts)?
         };
 
@@ -61,6 +52,7 @@ impl WalletContext {
             root_key,
             chain,
             json_output: cli.json,
+            db_path: cli.db.clone(),
         })
     }
 }
