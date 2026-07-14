@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "bsv-wallet-cli"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 license = "MIT"
 authors = ["John Calhoun"]
@@ -29,7 +29,7 @@ name = "bsv-wallet-relay"
 path = "src/bin/bsv-wallet-relay.rs"
 
 [dependencies]
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.46", features = ["sqlite"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.47", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "0.3.4", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
@@ -55,16 +55,3 @@ tls = ["axum-server"]
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-
-# RELEASE: remove — dev-only path override so the CLI builds against the
-# locally modified toolbox (Arcade V2 + ingest_merkle_proof). At release time
-# the orchestrator publishes bsv-wallet-toolbox-rs first, bumps the version
-# requirement above, and deletes this [patch.crates-io] section.
-[patch.crates-io]
-bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }
-
-
-
-
-
-
