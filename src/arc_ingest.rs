@@ -97,13 +97,20 @@ pub async fn ingest_arc_payload(
         }
     } else {
         // Status-only payload — identical mapping to the Monitor's SSE task.
-        // (No Monitor proof-trigger flag here: a MINED webhook without a
-        // merklePath is picked up by the SSE task / polling fallback.)
+        // Arcade V2's webhooks never carry merklePath (unlike classic ARC):
+        // a MINED webhook lands here and the proof is fetched by the SSE
+        // task's trigger / the polling fallback.
         let trigger = AtomicBool::new(false);
         let updated =
             ArcadeEventsTask::<StorageSqlx>::apply_status_event(storage, txid, tx_status, &trigger)
                 .await
                 .map_err(|e| anyhow!("apply_status_event: {}", e))?;
+        tracing::info!(
+            txid = %txid,
+            status = %tx_status,
+            updated,
+            "arc-callback: status webhook received"
+        );
         if updated {
             Ok(IngestAction::StatusApplied)
         } else {

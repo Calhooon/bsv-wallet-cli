@@ -232,6 +232,14 @@ async fn arc_callback(
         });
 
     if provided.as_deref() != Some(expected.as_str()) {
+        // Arcade authenticates its webhook POSTs as `Authorization: Bearer
+        // <X-CallbackToken>` — a 401 here means a token mismatch and Arcade
+        // will burn its (~10) retries, then permanently drop the submission.
+        tracing::warn!(
+            has_authorization = headers.contains_key("authorization"),
+            has_x_callbacktoken = headers.contains_key("x-callbacktoken"),
+            "arc-callback: rejected POST with invalid/missing callback token"
+        );
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"code": "UNAUTHORIZED", "message": "invalid or missing callback token"})),
