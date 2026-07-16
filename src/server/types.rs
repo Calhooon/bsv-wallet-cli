@@ -161,6 +161,8 @@ pub struct McInternalizeActionReq {
     pub tx: Vec<u8>,
     pub outputs: Vec<McInternalizeOutput>,
     pub description: String,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]

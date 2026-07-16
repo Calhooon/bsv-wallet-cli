@@ -504,7 +504,7 @@ pub async fn internalize_action(
             })
             .collect(),
         description: req.description,
-        labels: None,
+        labels: req.labels,
         seek_permission: None,
     };
 
