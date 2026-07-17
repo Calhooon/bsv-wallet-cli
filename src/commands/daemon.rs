@@ -69,6 +69,20 @@ pub async fn run(cli: &Cli) -> Result<()> {
             callback_token: rt.callback_token.clone(),
         });
     }
+    // A coin internalized from ANOTHER wallet's broadcast is not on this
+    // daemon's Arcade SSE stream, so its spendability waits for the polling
+    // check_for_proofs task (default: 60s interval, first run at t+60s) —
+    // callers spending freshly internalized 0-conf coins wait 0-60s of pure
+    // timer. Opt-in override for latency-sensitive deployments; the default
+    // cadence is unchanged when the env var is absent.
+    if let Some(secs) = std::env::var("MONITOR_CHECK_PROOFS_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|s| *s > 0)
+    {
+        monitor_opts.tasks.check_for_proofs.interval = std::time::Duration::from_secs(secs);
+        monitor_opts.tasks.check_for_proofs.start_immediately = true;
+    }
     let monitor = Monitor::with_options(storage_arc.clone(), services_arc.clone(), monitor_opts);
     monitor
         .start()
