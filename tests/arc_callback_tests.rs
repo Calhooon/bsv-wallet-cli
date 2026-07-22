@@ -375,3 +375,223 @@ async fn callback_disabled_without_token_config() {
         .unwrap();
     assert_eq!(resp.status(), 404);
 }
+
+// =============================================================================
+// arcade v0.10.1 production-fixture tests (#259/#260 consumption campaign)
+//
+// Captured live 2026-07-22 from arcade-v2-us-1 (v0.10.1-alpha.1):
+// `GET /tx/{txid}` for the campaign probe tx after block 959,011 mined it.
+// The block merkle root is cross-checked against WhatsOnChain's block header —
+// so these tests exercise the exact bytes production arcade pushes on MINED
+// SSE frames and webhook callbacks, not synthetic vectors.
+// =============================================================================
+
+const PROBE_TXID: &str = "104be47e38ae90d7d3ca7804823bd07170cb964bfdc38306df47456ef8939d01";
+const PROBE_HEIGHT: u32 = 959_011;
+const PROBE_BLOCK_HASH: &str = "00000000000000001044d72145b6986a5778d33094841b986907c8b453546643";
+/// Block 959,011's merkle root per WhatsOnChain (independent of arcade).
+const PROBE_BLOCK_MERKLE_ROOT: &str =
+    "7ec0ebe06c8f4956369ea5e7fc6ee66e642fcce38866a0b85bfd1c41dbbfb131";
+/// The BRC-74 BUMP exactly as served/pushed by arcade v0.10.1.
+const PROBE_MERKLE_PATH_HEX: &str = "fe23a20e000b023d02019d93f86e4547df0683c3fd4b96cb7071d03b820478cad3d790ae387ee44b103c009bb4bf617a1afdb045f7e1381120856c24e16114c2133d9b37f03ac76528ba86011f006a509c76fc529037078b683b1c19683dd1af8c00d286b8442f8441ea457c0576010e001c73319bf6272d1fe9a4fa62afc8ee112cd14a812956fe0d50bcdaecfee0888301060074df620703883f9f3ba538abbc05a8de30750cdaf6f802bc5cb011a8cb25ccee01020074f9ea21e36f08ef06ffe2b36492bec3f652a4dc1ebaa0b357d954bb1ef8c92401000016ccdba8d1e69a1dfe9d38dd34b13cec2bdc01c472caa476156203a4001d41200101007fba9bf8a9aec9aee46b7871672086a4c0a50b13b518281c553e113e1de505300101009806315c33bb607b5cf2684f872a491cd4cb78a211daf3259c4ed31a7999955101010024a960be0c782aec7773308785c18d09eeeaf291e97cf4d4d3354eb71d0ac47d0101003d7127e87becd268466fd08900113e0430d8fa97e290615f1d0635389e4632650101004c3f71da7a45399a39e2fc0f37d36ace62e5c612ad64c75197ff5ce31de38e97";
+
+/// The production BUMP must compute to the block's TRUE merkle root for the
+/// probe txid — proving parser + root computation against real chain data.
+#[test]
+fn production_fixture_bump_computes_true_block_root() {
+    let bytes = hex::decode(PROBE_MERKLE_PATH_HEX).expect("fixture hex");
+    let bump = MerklePath::from_binary(&bytes).expect("BUMP parse");
+    let root = bump.compute_root(Some(PROBE_TXID)).expect("root");
+    assert_eq!(root, PROBE_BLOCK_MERKLE_ROOT, "must match WoC block header");
+}
+
+/// Webhook lane with the REAL enriched payload: ingested, records completed.
+#[tokio::test]
+async fn production_fixture_webhook_ingests_proof() {
+    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
+
+    let (base, client, pool, _tmp) = setup_with_callback(
+        Some(Arc::new(tracker)),
+        Some((PROBE_TXID, "unmined", "unproven")),
+    )
+    .await;
+
+    let resp = client
+        .post(format!("{base}/arc-callback"))
+        .header("Authorization", format!("Bearer {CB_TOKEN}"))
+        .json(&json!({
+            "txid": PROBE_TXID,
+            "txStatus": "MINED",
+            "blockHeight": PROBE_HEIGHT,
+            "blockHash": PROBE_BLOCK_HASH,
+            "merklePath": PROBE_MERKLE_PATH_HEX,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["action"], "ProofIngested");
+    assert_eq!(req_status(&pool, PROBE_TXID).await, "completed");
+    assert_eq!(tx_status(&pool, PROBE_TXID).await, "completed");
+}
+
+/// A single flipped byte in the REAL path must be rejected by the SPV gate
+/// and never stored — push is a hint, not truth.
+#[tokio::test]
+async fn production_fixture_tampered_path_rejected() {
+    let mut tampered = PROBE_MERKLE_PATH_HEX.to_string();
+    // Flip a nibble deep in the path (past the varint header).
+    let mid = tampered.len() / 2;
+    let orig = tampered.as_bytes()[mid] as char;
+    let flipped = if orig == '0' { '1' } else { '0' };
+    tampered.replace_range(mid..mid + 1, &flipped.to_string());
+
+    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
+
+    let (base, client, pool, _tmp) = setup_with_callback(
+        Some(Arc::new(tracker)),
+        Some((PROBE_TXID, "unmined", "unproven")),
+    )
+    .await;
+
+    let resp = client
+        .post(format!("{base}/arc-callback"))
+        .header("Authorization", format!("Bearer {CB_TOKEN}"))
+        .json(&json!({
+            "txid": PROBE_TXID,
+            "txStatus": "MINED",
+            "blockHeight": PROBE_HEIGHT,
+            "blockHash": PROBE_BLOCK_HASH,
+            "merklePath": tampered,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["action"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("ProofRejected"));
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proven_txs WHERE txid = ?")
+        .bind(PROBE_TXID)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "tampered proof must never be stored");
+    assert_eq!(req_status(&pool, PROBE_TXID).await, "unmined");
+}
+
+/// THE NEW LANE (#259): an enriched MINED SSE frame latches the verified
+/// proof inline — no webhook, no fetch-through-services. The fetch trigger
+/// must stay UNSET (proving the fallback was not needed), records complete,
+/// and the stored proof is the production BUMP.
+#[tokio::test]
+async fn sse_inline_proof_latches_without_webhook_or_fetch() {
+    use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
+    use bsv_wallet_toolbox::services::providers::arcade::ArcadeStatusEvent;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Direct storage harness (no HTTP server — this is the SSE task's path).
+    let tmp = TempDir::new().expect("temp dir");
+    let storage = StorageSqlx::open(tmp.path().join("sse.db").to_str().unwrap())
+        .await
+        .expect("open db");
+    let key = PrivateKey::random();
+    let identity_key = key.public_key().to_hex();
+    storage
+        .migrate("bsv-wallet-test", &identity_key)
+        .await
+        .expect("migrate");
+    storage.make_available().await.expect("available");
+    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
+    storage.set_chain_tracker(Arc::new(tracker)).await;
+    let pool = storage.pool().clone();
+    let (user, _) = storage
+        .find_or_insert_user(&identity_key)
+        .await
+        .expect("user");
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "INSERT INTO proven_tx_reqs (txid, status, attempts, history, notified, notify, raw_tx, created_at, updated_at) \
+         VALUES (?, 'unmined', 0, '{}', 0, '{}', X'01000000', ?, ?)",
+    )
+    .bind(PROBE_TXID)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("seed req");
+    sqlx::query(
+        "INSERT INTO transactions (user_id, txid, status, reference, description, satoshis, \
+         version, lock_time, raw_tx, is_outgoing, created_at, updated_at) \
+         VALUES (?, ?, 'unproven', 'ref-sse', 'sse inline test', -500, 1, 0, X'01000000', 1, ?, ?)",
+    )
+    .bind(user.user_id)
+    .bind(PROBE_TXID)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("seed tx");
+
+    // The enriched frame exactly as arcade v0.10.1 pushes it.
+    let ev = ArcadeStatusEvent {
+        txid: PROBE_TXID.to_string(),
+        tx_status: "MINED".to_string(),
+        timestamp: Some("2026-07-22T19:06:51.907Z".to_string()),
+        block_hash: Some(PROBE_BLOCK_HASH.to_string()),
+        block_height: Some(PROBE_HEIGHT),
+        merkle_path: Some(PROBE_MERKLE_PATH_HEX.to_string()),
+        event_id: None,
+    };
+    let trigger = AtomicBool::new(false);
+    let updated = ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &ev, &trigger)
+        .await
+        .expect("apply_event");
+
+    assert!(updated, "inline ingest must report an update");
+    assert!(
+        !trigger.load(Ordering::SeqCst),
+        "fetch fallback must NOT fire when the inline proof latches"
+    );
+    let (count, stored_path): (i64, Vec<u8>) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(MAX(merkle_path), X'') FROM proven_txs WHERE txid = ?",
+    )
+    .bind(PROBE_TXID)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        hex::encode(stored_path),
+        PROBE_MERKLE_PATH_HEX,
+        "stored proof must be the production BUMP byte-for-byte"
+    );
+    assert_eq!(req_status(&pool, PROBE_TXID).await, "completed");
+    assert_eq!(tx_status(&pool, PROBE_TXID).await, "completed");
+
+    // And the legacy-frame fallback still works: a status-only MINED event
+    // for an unknown txid sets the fetch trigger (pre-v0.10.1 behavior).
+    let legacy = ArcadeStatusEvent {
+        txid: "e".repeat(64),
+        tx_status: "MINED".to_string(),
+        timestamp: None,
+        block_hash: None,
+        block_height: None,
+        merkle_path: None,
+        event_id: None,
+    };
+    let trigger2 = AtomicBool::new(false);
+    ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &legacy, &trigger2)
+        .await
+        .expect("legacy apply");
+    assert!(
+        trigger2.load(Ordering::SeqCst),
+        "legacy MINED frame must fall back to the fetch trigger"
+    );
+}
