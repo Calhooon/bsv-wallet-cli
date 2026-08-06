@@ -1,62 +1,117 @@
-//! Post-broadcast verification — fail loudly when a broadcast was silently dropped.
+//! Post-broadcast verification — fail loudly when a broadcast was silently
+//! dropped, and **never** when it was not.
 //!
-//! # The silent-data-loss bug this closes
+//! # Bug 1 — the silent data loss this module was built to close
 //!
 //! A `send` (CLI `send` or the served `/createAction` endpoint) delegates to
-//! `Wallet::create_action`, which signs the tx and broadcasts it through ARC.
-//! For a **monitor-less served wallet** (the LOW e2e runs `bsv-wallet serve`
-//! with no chain monitor / chaintracks) the wallet has never fetched merkle
-//! proofs for its *confirmed* ancestors, so the BEEF it hands ARC carries the
-//! whole unconfirmed chain. ARC then charges the fee for the **entire package**
-//! and rejects the tx with **error 465 "fee too low"**.
+//! `Wallet::create_action`, which signs the tx and broadcasts it. For a
+//! **monitor-less served wallet** (no chain monitor / chaintracks) the wallet
+//! has never fetched merkle proofs for its *confirmed* ancestors, so the BEEF it
+//! hands ARC carries the whole unconfirmed chain. ARC then charges the fee for
+//! the **entire package** and rejects the tx with **error 465 "fee too low"**.
 //!
 //! In `bsv-wallet-toolbox-rs`, an ARC 465 is tagged `service_error = true`, so
 //! `classify_broadcast_results` treats it as a *transient* `ServiceError`
 //! (retryable) rather than a permanent `InvalidTx`. `create_action` therefore
-//! returns `Ok` with a txid — a **phantom txid that never propagates**
-//! (WhatsOnChain 404 forever). The send path reported success and exit 0 while
-//! the funds were never sent. That stranded funds in a LOW mainnet e2e rebalance.
+//! returns `Ok` with a txid — a **phantom txid that never propagates**. The send
+//! path reported success and exit 0 while the funds were never sent.
 //!
-//! # What this module does (part 1 — fail loud)
+//! # Bug 2 — the false negative this module *introduced* (fixed here)
 //!
-//! After a broadcast, ask the network whether the txid actually exists. We only
-//! declare a **`Rejected`** (hard failure) when a broadcaster/indexer that would
-//! hold the tx *if it had been accepted* affirmatively reports it **absent**,
-//! and **no** source reports it present. If we cannot reach any source we return
-//! `Inconclusive` and callers preserve prior behaviour — so a down confirmation
-//! service never turns a real send into a false failure (zero added flakiness).
+//! The first cut of this module polled a **hardcoded** source list and never
+//! looked at which broadcaster the wallet had actually been configured to use.
+//! It was plane-blind, and every one of its sources was marked authoritative for
+//! absence. Three separate defects fell out of that:
 //!
-//! A legitimately-accepted tx is present on ARC immediately (ARC keeps recently
-//! submitted txs queryable) and indexed by WoC within seconds, so the happy path
-//! short-circuits to `Confirmed` on the first probe — no meaningful added latency
-//! for a wallet whose ancestors are already proven/shallow.
+//! 1. **The plane that actually holds the answer was never asked.** A wallet in
+//!    Arcade V2 mode (`ARC_MODE=arcade`) submits to the Arcade endpoint, and the
+//!    verifier never queried it — so the one store that is *guaranteed* to have
+//!    a record of our own submission contributed nothing.
+//! 2. **`arc.gorillapool.io` was trusted for absence unconditionally.** It is a
+//!    submission-scoped metamorph store, **not a chain index**: it answers 404
+//!    for transactions that are mined with hundreds of thousands of
+//!    confirmations. (Verified directly: `GET
+//!    https://arc.gorillapool.io/v1/tx/<genesis coinbase txid>` → `404
+//!    {"extraInfo":"transaction not found"}`.) Its 404 carries no information
+//!    about a transaction it was never handed.
+//! 3. **Only WhatsOnChain could ever vote `Present`, inside a ~7.5 s window.**
+//!    So the verdict reduced to a coin flip on WoC's mempool-indexing latency.
+//!
+//! The module's own comment asserted that "ARC keeps recently submitted txs
+//! queryable … so all default sources are authoritative here". That is true only
+//! of the ARC instance you actually submitted to. That unchecked proposition was
+//! the root cause: in the dHouse funder's entire history, all four `Rejected`
+//! verdicts were **false negatives** — every one of those transactions was on
+//! chain.
+//!
+//! # The model this module now implements
+//!
+//! Doctrine (`CLAUDE.md`): *"2xx is never success — truth = visible in our own
+//! index / on chain"*; a **positive** answer may be trusted, an **absence** must
+//! be chain-verified. Applied to the verifier itself: **absence from the wrong
+//! plane is not truth.**
+//!
+//! * **Presence is trusted from anybody.** A 200 from any store means that store
+//!   holds the transaction. A freshly-minted txid we just created cannot be
+//!   known to a third party unless it really propagated. So any `Present` →
+//!   `Confirmed`, immediately.
+//! * **Absence is trusted from almost nobody.** See [`AbsenceAuthority`]: a 404
+//!   is evidence only from the broadcaster we personally submitted through
+//!   (scope) or from a real chain+mempool index after its indexing window has
+//!   elapsed (time) — and we require **both** before declaring `Rejected`.
+//! * **The broadcaster we used is consulted first**, so the happy path
+//!   short-circuits to `Confirmed` on a single request.
+//! * If we cannot satisfy that bar we return `Inconclusive`, and callers preserve
+//!   prior behaviour — a down (or unidentifiable) confirmation service never
+//!   turns a real send into a false failure.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use bsv_wallet_toolbox::Chain;
+use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain};
 use reqwest::Client;
 
-/// Default number of probe rounds before declaring a definitive absence.
-const DEFAULT_ATTEMPTS: u32 = 6;
-/// Default delay between probe rounds (ms). Only rejected txs pay the full cost;
-/// an accepted tx short-circuits on the first `Present`.
-const DEFAULT_DELAY_MS: u64 = 1500;
-/// Per-request timeout for a single status probe.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default number of probe rounds before an absence may become definitive.
+///
+/// # Why not the original 6 × 1500 ms (~7.5 s)?
+///
+/// 7.5 s was never defensible as a *mempool-index* window. It is plenty for the
+/// broadcaster we submitted through — that store knows about our submission the
+/// instant it 200s our POST — but an independent index like WhatsOnChain only
+/// learns of the transaction once it propagates to WoC's own node and WoC's
+/// mempool ingestion picks it up. Normally that is a few seconds; under network
+/// load, a provider hiccup, or an ARC→network relay delay it is routinely tens
+/// of seconds. Declaring "the funds were NOT sent" on a 7.5 s WoC miss is
+/// declaring a verdict on indexing latency, and that is exactly how the four
+/// observed false negatives happened.
+///
+/// 12 rounds × 2500 ms ≈ 27.5 s of wall clock gives the independent index a
+/// realistic chance to catch up before its silence is treated as evidence.
+///
+/// The cost is paid **only by transactions that really are absent everywhere**:
+/// the happy path returns on the very first probe of the broadcaster, and the
+/// caller's spending lock is already released before verification runs, so a
+/// longer window does not serialize anything.
+const DEFAULT_ATTEMPTS: u32 = 12;
+/// Default delay between probe rounds (ms). See [`DEFAULT_ATTEMPTS`].
+const DEFAULT_DELAY_MS: u64 = 2500;
+/// Per-request timeout for a single status probe. Deliberately shorter than the
+/// inter-round delay so one slow source cannot stretch a round past the next.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Outcome of verifying that a just-broadcast tx actually reached the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BroadcastVerification {
     /// At least one source confirms the tx exists (accepted / seen / mined).
     Confirmed,
-    /// A source that would hold the tx if it had been accepted affirmatively
-    /// reports it absent, and no source reports it present — the broadcast was
-    /// silently dropped (classic ARC 465 fee-too-low on a deep unconfirmed BEEF).
+    /// Both the broadcaster we actually submitted through **and** an independent
+    /// chain index affirmatively report the tx absent after the full probe
+    /// window, and no source reports it present — the broadcast was silently
+    /// dropped (classic ARC 465 fee-too-low on a deep unconfirmed BEEF).
     /// The funds were NOT sent.
     Rejected,
-    /// No source could be reached to confirm either way. Callers must NOT treat
-    /// this as a failure (avoids false negatives when the confirmation service
-    /// itself is unreachable).
+    /// No source could give an answer that clears the evidence bar. Callers must
+    /// NOT treat this as a failure (avoids false negatives when the confirmation
+    /// service is unreachable, or when only the *wrong* plane reports absence).
     Inconclusive,
 }
 
@@ -66,8 +121,9 @@ impl BroadcastVerification {
     pub fn into_send_result(self, txid: &str) -> anyhow::Result<()> {
         match self {
             BroadcastVerification::Rejected => Err(anyhow::anyhow!(
-                "broadcast rejected: transaction {txid} is not present on the network. \
-                 The broadcaster (ARC) dropped it — most likely error 465 \"fee too low\", \
+                "broadcast rejected: transaction {txid} is absent from BOTH the broadcaster \
+                 it was submitted to AND an independent chain index, after the full probe \
+                 window. The broadcaster dropped it — most likely error 465 \"fee too low\", \
                  because a monitor-less wallet presented a deep unconfirmed BEEF and ARC \
                  charged the fee for the whole unconfirmed package. The funds were NOT sent. \
                  Fetch merkle proofs for the confirmed ancestors (run `bsv-wallet tick` with \
@@ -83,14 +139,172 @@ impl BroadcastVerification {
 enum Presence {
     /// Source has the tx (HTTP 200).
     Present,
-    /// Source definitively does not have the tx (HTTP 404).
+    /// Source definitively does not have the tx (HTTP 404 from a real handler).
     Absent,
-    /// Source could not give a definitive answer (auth error, 5xx, network error).
+    /// Source could not give a definitive answer (auth error, 5xx, network
+    /// error, or a 404 that looks like "no such route" rather than "no such tx").
     Unknown,
 }
 
+/// What a source's **absence** (404) answer is worth.
+///
+/// Presence is trusted from every source; absence is a different question
+/// entirely, and the answer depends on *why* that store would be expected to
+/// hold the transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbsenceAuthority {
+    /// **Worthless.** A submission-scoped store we did *not* submit to.
+    ///
+    /// ARC/metamorph instances index what was handed to *them*. They are not
+    /// chain indexes: `arc.gorillapool.io` returns 404 for the Bitcoin genesis
+    /// coinbase, a transaction with ~960,000 confirmations. A 404 from such a
+    /// store tells us only that *it* never received the transaction — which is
+    /// the expected answer whenever we broadcast somewhere else. These sources
+    /// are kept purely as extra chances to observe `Present`.
+    None,
+
+    /// **Scope-authoritative.** This is the broadcaster we personally submitted
+    /// through, so it *must* have a record of our own submission.
+    ///
+    /// This is the only store whose silence is meaningful immediately rather
+    /// than eventually. It is still not sufficient on its own:
+    ///   * in Arcade mode the toolbox keeps classic ARC as a failover provider,
+    ///     so the transaction may legitimately have gone out through the other
+    ///     provider and be unknown to the primary; and
+    ///   * a misconfigured base URL turns "no such route" into a 404 that is
+    ///     indistinguishable from "no such transaction" at the status-code level
+    ///     (Arcade V2 answers `GET /tx/{txid}` with `application/json
+    ///     {"error":"transaction not found"}` but answers the *wrong* path
+    ///     `GET /v1/tx/{txid}` with `text/plain "404 page not found"`).
+    ///
+    /// Hence the content-type guard in [`probe`] and the conjunction below.
+    Broadcaster,
+
+    /// **Time-authoritative.** An independent chain + mempool index (WhatsOnChain).
+    ///
+    /// Unlike a metamorph store this really does index the whole chain, so its
+    /// 404 is about the transaction and not about scope. Its weakness is
+    /// *latency*, not coverage: mempool ingestion lags acceptance. So its
+    /// absence counts only from the **final** probe round, after the window in
+    /// [`DEFAULT_ATTEMPTS`] has elapsed.
+    ChainIndex,
+}
+
+/// Absence votes gathered during one probe round, grouped by authority class.
+///
+/// A `Rejected` verdict requires the **conjunction**: the plane we submitted
+/// through has no record of our submission *and* an independent chain index
+/// still cannot see the transaction after the full window. Either one alone has
+/// a mundane innocent explanation (provider failover; indexing lag), and acting
+/// on either one alone is precisely what produced four false "funds were NOT
+/// sent" reports on transactions that were on chain.
+///
+/// Consequence, stated honestly: a wallet whose broadcaster cannot be probed
+/// (e.g. classic TAAL ARC with no API key, which answers 401 → `Unknown`) can
+/// never reach `Rejected`. That is the intended trade. A missed drop is caught
+/// downstream — the transaction simply never mines and the unfail canary
+/// reconciles it — whereas a false `Rejected` reports lost funds that were not
+/// lost, which is the more expensive error by far.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct AbsenceVotes {
+    /// The broadcaster we submitted through answered 404.
+    broadcaster: bool,
+    /// An independent chain index answered 404.
+    chain_index: bool,
+}
+
+impl AbsenceVotes {
+    fn record(&mut self, authority: AbsenceAuthority) {
+        match authority {
+            AbsenceAuthority::Broadcaster => self.broadcaster = true,
+            AbsenceAuthority::ChainIndex => self.chain_index = true,
+            // A store we did not submit to has no opinion about absence.
+            AbsenceAuthority::None => {}
+        }
+    }
+
+    /// Absence is definitive only when both authority classes agree.
+    fn is_definitive(self) -> bool {
+        self.broadcaster && self.chain_index
+    }
+}
+
+/// The broadcast plane the wallet is configured to submit through.
+///
+/// This mirrors `services_env::services_options_from_env` — the ONE place that
+/// decides which broadcaster the wallet uses — so the verifier asks the same
+/// endpoint the transaction was actually handed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BroadcastPlane {
+    /// Arcade V2 (`ARC_MODE=arcade` / `ARCADE=1`).
+    ///
+    /// Status endpoint is `GET {base}/tx/{txid}` — **no `/v1` prefix**. Verified
+    /// two ways: `ArcadeV2Provider::get_tx_status` in `bsv-wallet-toolbox-rs`
+    /// builds `format!("{}/tx/{}", self.url, txid)`, and the live endpoint
+    /// answers that path with `application/json {"error":"transaction not
+    /// found"}` while `/v1/tx/{txid}` answers `text/plain "404 page not found"`
+    /// (i.e. the `/v1` path does not exist and its 404 is a routing artifact).
+    /// Keyless: Arcade's status read needs no `Authorization` header.
+    ArcadeV2 { base: String },
+    /// Classic ARC. Status endpoint is `GET {base}/v1/tx/{txid}`, matching
+    /// `ArcProvider::get_tx_status` in the toolbox.
+    ClassicArc { base: String },
+}
+
+impl BroadcastPlane {
+    /// Resolve the plane from explicit inputs (pure — unit-testable).
+    ///
+    /// `arcade_mode` and `arc_url` are read from the same env vars that
+    /// `services_env` reads, so the verifier cannot drift from the broadcaster.
+    fn resolve(chain: Chain, arcade_mode: bool, arc_url: Option<String>) -> Self {
+        let arc_url = arc_url
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if arcade_mode {
+            BroadcastPlane::ArcadeV2 {
+                base: normalize_base(&arc_url.unwrap_or_else(|| ARCADE_V2_MAINNET.to_string())),
+            }
+        } else {
+            BroadcastPlane::ClassicArc {
+                base: normalize_base(&arc_url.unwrap_or_else(|| taal_arc_url(chain).to_string())),
+            }
+        }
+    }
+
+    fn from_env(chain: Chain) -> Self {
+        Self::resolve(
+            chain,
+            crate::services_env::arcade_mode_enabled(),
+            std::env::var("ARC_URL").ok(),
+        )
+    }
+
+    fn base(&self) -> &str {
+        match self {
+            BroadcastPlane::ArcadeV2 { base } | BroadcastPlane::ClassicArc { base } => base,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            BroadcastPlane::ArcadeV2 { .. } => "broadcaster(arcade-v2)",
+            BroadcastPlane::ClassicArc { .. } => "broadcaster(arc)",
+        }
+    }
+
+    /// URL template with the literal `{txid}` placeholder.
+    fn status_template(&self) -> String {
+        match self {
+            // Arcade V2: `/tx/{txid}`. `/v1/tx/{txid}` is NOT a route there.
+            BroadcastPlane::ArcadeV2 { base } => format!("{base}/tx/{{txid}}"),
+            // Classic ARC: `/v1/tx/{txid}`.
+            BroadcastPlane::ClassicArc { base } => format!("{base}/v1/tx/{{txid}}"),
+        }
+    }
+}
+
 /// A network endpoint we can ask "do you know this txid?".
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct StatusSource {
     /// Human-readable name (diagnostics only).
     name: &'static str,
@@ -98,12 +312,68 @@ struct StatusSource {
     url_template: String,
     /// Full `Authorization` header value, if the endpoint needs one.
     auth: Option<String>,
-    /// Whether a 404 from this source is trustworthy evidence of absence.
-    /// ARC keeps recently-submitted txs queryable and WoC indexes mempool txs
-    /// within the probe window, so all default sources are authoritative here;
-    /// the probe window guards against indexing lag by short-circuiting on the
-    /// first `Present`.
-    authoritative_absence: bool,
+    /// What this source's 404 is worth. See [`AbsenceAuthority`].
+    absence: AbsenceAuthority,
+}
+
+/// Build the ordered source list for a plane (pure — unit-testable).
+///
+/// Ordering is load-bearing: **index 0 is always the broadcaster we submitted
+/// through**, because it is both the fastest and the most authoritative answer
+/// available, and `verify` returns on the first `Present`.
+fn build_sources(
+    chain: Chain,
+    plane: &BroadcastPlane,
+    taal_key: Option<String>,
+) -> Vec<StatusSource> {
+    let mut sources = vec![StatusSource {
+        name: plane.name(),
+        url_template: plane.status_template(),
+        // Arcade's status read is keyless; classic ARC (TAAL) wants the key.
+        auth: match plane {
+            BroadcastPlane::ArcadeV2 { .. } => None,
+            BroadcastPlane::ClassicArc { .. } => taal_key.clone(),
+        },
+        absence: AbsenceAuthority::Broadcaster,
+    }];
+
+    // The independent chain + mempool index. Keyless, reliable 200/404, and the
+    // only source here that indexes the chain rather than its own inbox.
+    sources.push(StatusSource {
+        name: "whatsonchain",
+        url_template: format!("{}/tx/hash/{{txid}}", woc_base(chain)),
+        auth: None,
+        absence: AbsenceAuthority::ChainIndex,
+    });
+
+    // Third-party ARC stores: extra chances to observe `Present`, never a vote
+    // for absence (see AbsenceAuthority::None). Skipped when they *are* the
+    // broadcaster — that row is already at index 0 with real authority.
+    if let Some(gp) = gorillapool_arc_url(chain) {
+        if normalize_base(gp) != plane.base() {
+            sources.push(StatusSource {
+                name: "arc-gorillapool",
+                url_template: format!("{gp}/v1/tx/{{txid}}"),
+                auth: None,
+                absence: AbsenceAuthority::None,
+            });
+        }
+    }
+    // TAAL only when we hold a key — keyless it answers 401 (`Unknown`), which
+    // is pure latency for zero information.
+    if let Some(key) = taal_key {
+        let taal = taal_arc_url(chain);
+        if normalize_base(taal) != plane.base() {
+            sources.push(StatusSource {
+                name: "arc-taal",
+                url_template: format!("{taal}/v1/tx/{{txid}}"),
+                auth: Some(key),
+                absence: AbsenceAuthority::None,
+            });
+        }
+    }
+
+    sources
 }
 
 /// Verifies that a broadcast tx actually reached the network.
@@ -121,7 +391,9 @@ pub struct BroadcastVerifier {
 }
 
 impl BroadcastVerifier {
-    /// Build a verifier for `chain`, reading optional overrides from the env:
+    /// Build a verifier for `chain`, reading the broadcast plane and optional
+    /// overrides from the env:
+    /// - `ARC_MODE=arcade` / `ARCADE=1` + `ARC_URL` select the plane probed first.
     /// - `BSV_WALLET_SKIP_BROADCAST_VERIFY=1` disables verification entirely.
     /// - `BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS` overrides the probe-round count.
     /// - `BSV_WALLET_BROADCAST_VERIFY_DELAY_MS` overrides the inter-round delay.
@@ -148,73 +420,65 @@ impl BroadcastVerifier {
                     .filter(|k| !k.is_empty())
             });
 
-        let mut sources = vec![
-            // TAAL ARC — the primary broadcaster. Authenticated GET when a key is
-            // present; without a key it may 401 (→ Unknown, harmless).
-            StatusSource {
-                name: "arc-taal",
-                url_template: format!("{}/v1/tx/{{txid}}", taal_arc_url(chain)),
-                auth: taal_key.clone(),
-                authoritative_absence: taal_key.is_some(),
-            },
-            // WhatsOnChain — keyless, reliable 200/404. Presence + absence signal.
-            StatusSource {
-                name: "whatsonchain",
-                url_template: format!("{}/tx/hash/{{txid}}", woc_base(chain)),
-                auth: None,
-                authoritative_absence: true,
-            },
-        ];
-        // GorillaPool ARC — keyless fallback broadcaster (mainnet only).
-        if let Some(gp) = gorillapool_arc_url(chain) {
-            sources.push(StatusSource {
-                name: "arc-gorillapool",
-                url_template: format!("{}/v1/tx/{{txid}}", gp),
-                auth: None,
-                authoritative_absence: true,
-            });
-        }
+        let plane = BroadcastPlane::from_env(chain);
+        tracing::debug!(plane = ?plane, "broadcast verifier plane");
 
         Self {
             client: Client::new(),
-            sources,
+            sources: build_sources(chain, &plane, taal_key),
             attempts,
             delay: Duration::from_millis(delay_ms),
             enabled,
         }
     }
 
-    /// Probe the network for `txid`, returning as soon as any source confirms it
+    /// Wall-clock ceiling for the absence determination. A source that hangs
+    /// must not be able to stretch the window without bound, so rounds stop once
+    /// the nominal window (plus one probe timeout of slack) has elapsed.
+    fn absence_window(&self) -> Duration {
+        self.delay * self.attempts.saturating_sub(1) + PROBE_TIMEOUT
+    }
+
+    /// Probe the network for `txid`, returning as soon as any source reports it
     /// present, otherwise after the full probe window.
     pub async fn verify(&self, txid: &str) -> BroadcastVerification {
         if !self.enabled || self.sources.is_empty() {
             return BroadcastVerification::Inconclusive;
         }
 
-        let mut last_round_saw_authoritative_absence = false;
+        let deadline = Instant::now() + self.absence_window();
+        // Votes from the LAST COMPLETED round. Using the last round (rather than
+        // any round) is what makes the chain-index vote time-authoritative: its
+        // silence only counts once the indexing window has actually elapsed.
+        let mut last_votes: Option<AbsenceVotes> = None;
+
         for attempt in 0..self.attempts {
-            let mut any_present = false;
-            let mut authoritative_absence = false;
+            let mut votes = AbsenceVotes::default();
             for src in &self.sources {
                 match probe(&self.client, src, txid).await {
-                    Presence::Present => any_present = true,
-                    Presence::Absent if src.authoritative_absence => authoritative_absence = true,
-                    _ => {}
+                    // Doctrine: a positive answer may be trusted from any source.
+                    // A txid we minted moments ago cannot be known to a third
+                    // party unless it genuinely propagated.
+                    Presence::Present => return BroadcastVerification::Confirmed,
+                    Presence::Absent => votes.record(src.absence),
+                    Presence::Unknown => {}
                 }
             }
-            if any_present {
-                return BroadcastVerification::Confirmed;
-            }
-            last_round_saw_authoritative_absence = authoritative_absence;
+            last_votes = Some(votes);
+
             if attempt + 1 < self.attempts {
+                if Instant::now() >= deadline {
+                    // Slow sources already consumed the window; further rounds
+                    // would only extend the caller's wait, not the evidence.
+                    break;
+                }
                 tokio::time::sleep(self.delay).await;
             }
         }
 
-        if last_round_saw_authoritative_absence {
-            BroadcastVerification::Rejected
-        } else {
-            BroadcastVerification::Inconclusive
+        match last_votes {
+            Some(v) if v.is_definitive() => BroadcastVerification::Rejected,
+            _ => BroadcastVerification::Inconclusive,
         }
     }
 }
@@ -227,23 +491,59 @@ async fn probe(client: &Client, src: &StatusSource, txid: &str) -> Presence {
         req = req.header("Authorization", auth);
     }
     match req.send().await {
-        Ok(resp) => match resp.status().as_u16() {
-            200 => Presence::Present,
-            404 => Presence::Absent,
-            other => {
-                tracing::debug!(
-                    source = src.name,
-                    status = other,
-                    "broadcast probe inconclusive"
-                );
-                Presence::Unknown
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            match status {
+                200 => Presence::Present,
+                404 => {
+                    // A 404 has two very different meanings: "I have no such
+                    // transaction" (a real answer from the ARC/Arcade handler,
+                    // always a JSON problem document) and "I have no such route"
+                    // (a misconfigured base URL — Go/edge routers answer
+                    // `text/plain "404 page not found"`). Only the former is
+                    // evidence, and only for a source whose absence we would act
+                    // on. Downgrading the routing artifact to `Unknown` keeps a
+                    // typo in `ARC_URL` from being reported as lost funds.
+                    if src.absence == AbsenceAuthority::Broadcaster && !is_json(&resp) {
+                        tracing::debug!(
+                            source = src.name,
+                            url = %url,
+                            "broadcaster 404 is not a JSON tx-status body — treating as \
+                             route-not-found (check ARC_URL / path shape), not absence"
+                        );
+                        return Presence::Unknown;
+                    }
+                    Presence::Absent
+                }
+                other => {
+                    tracing::debug!(
+                        source = src.name,
+                        status = other,
+                        "broadcast probe inconclusive"
+                    );
+                    Presence::Unknown
+                }
             }
-        },
+        }
         Err(e) => {
             tracing::debug!(source = src.name, error = %e, "broadcast probe request failed");
             Presence::Unknown
         }
     }
+}
+
+/// Whether a response carries a JSON body (the shape every ARC/Arcade status
+/// handler returns, including for "transaction not found").
+fn is_json(resp: &reqwest::Response) -> bool {
+    resp.headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false)
+}
+
+fn normalize_base(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
 }
 
 fn taal_arc_url(chain: Chain) -> &'static str {
@@ -285,10 +585,232 @@ mod tests {
     use axum::Router;
     use std::net::SocketAddr;
 
-    /// Spin up a local mock that answers `GET /v1/tx/{txid}` with `code` for
-    /// every txid. Returns the base URL (`http://127.0.0.1:PORT`).
+    // ---- synthetic values only (never a real txid / URL from any wallet) ----
+    const TXID: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+    const SYNTHETIC_ARCADE: &str = "https://arcade.invalid";
+    const SYNTHETIC_ARC: &str = "https://arc.invalid";
+    const SYNTHETIC_KEY: &str = "test-key-not-a-real-credential";
+
+    // =====================================================================
+    // Source selection: which plane do we ask, and with what path shape?
+    // =====================================================================
+
+    #[test]
+    fn arcade_plane_uses_bare_tx_path_not_v1() {
+        // Arcade V2's status route is `/tx/{txid}`. `/v1/tx/{txid}` is not a
+        // route on Arcade at all (it answers with the router's text/plain 404),
+        // which would have made every Arcade tx look "absent".
+        let plane = BroadcastPlane::resolve(
+            Chain::Main,
+            /* arcade_mode */ true,
+            Some(SYNTHETIC_ARCADE.to_string()),
+        );
+        assert_eq!(
+            plane.status_template(),
+            format!("{SYNTHETIC_ARCADE}/tx/{{txid}}")
+        );
+        assert!(
+            !plane.status_template().contains("/v1/"),
+            "Arcade V2 must NOT be probed on the classic ARC /v1 path"
+        );
+    }
+
+    #[test]
+    fn classic_arc_plane_uses_v1_tx_path() {
+        let plane = BroadcastPlane::resolve(
+            Chain::Main,
+            /* arcade_mode */ false,
+            Some(SYNTHETIC_ARC.to_string()),
+        );
+        assert_eq!(
+            plane.status_template(),
+            format!("{SYNTHETIC_ARC}/v1/tx/{{txid}}")
+        );
+    }
+
+    #[test]
+    fn arcade_mode_defaults_to_the_arcade_endpoint_when_arc_url_is_unset() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, None);
+        assert_eq!(plane.base(), ARCADE_V2_MAINNET.trim_end_matches('/'));
+    }
+
+    #[test]
+    fn classic_mode_defaults_to_taal_and_respects_chain() {
+        assert_eq!(
+            BroadcastPlane::resolve(Chain::Main, false, None).base(),
+            "https://arc.taal.com"
+        );
+        assert_eq!(
+            BroadcastPlane::resolve(Chain::Test, false, None).base(),
+            "https://arc-test.taal.com"
+        );
+    }
+
+    #[test]
+    fn empty_arc_url_falls_back_to_the_default_rather_than_an_empty_base() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some("   ".to_string()));
+        assert_eq!(plane.base(), ARCADE_V2_MAINNET.trim_end_matches('/'));
+    }
+
+    #[test]
+    fn trailing_slash_in_arc_url_does_not_produce_a_double_slash() {
+        let plane = BroadcastPlane::resolve(
+            Chain::Main,
+            true,
+            Some(format!("{SYNTHETIC_ARCADE}/").to_string()),
+        );
+        assert_eq!(
+            plane.status_template(),
+            format!("{SYNTHETIC_ARCADE}/tx/{{txid}}")
+        );
+    }
+
+    #[test]
+    fn the_broadcaster_we_used_is_always_the_first_source_consulted() {
+        // This is the whole point of the fix: the plane that actually holds the
+        // answer must be asked FIRST, in both modes.
+        for plane in [
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())),
+            BroadcastPlane::resolve(Chain::Main, false, Some(SYNTHETIC_ARC.to_string())),
+        ] {
+            let sources = build_sources(Chain::Main, &plane, None);
+            assert_eq!(sources[0].absence, AbsenceAuthority::Broadcaster);
+            assert!(
+                sources[0].url_template.starts_with(plane.base()),
+                "source 0 ({}) must be the configured broadcaster {}",
+                sources[0].url_template,
+                plane.base()
+            );
+        }
+    }
+
+    #[test]
+    fn arcade_broadcaster_probe_is_keyless_even_when_a_taal_key_exists() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        assert!(sources[0].auth.is_none());
+    }
+
+    #[test]
+    fn classic_broadcaster_probe_carries_the_taal_key_when_present() {
+        let plane = BroadcastPlane::resolve(Chain::Main, false, None);
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        assert_eq!(sources[0].auth.as_deref(), Some(SYNTHETIC_KEY));
+    }
+
+    #[test]
+    fn keyless_taal_is_not_probed_at_all() {
+        // Without a key TAAL answers 401 → Unknown: pure latency, zero signal.
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let sources = build_sources(Chain::Main, &plane, None);
+        assert!(!sources.iter().any(|s| s.name == "arc-taal"));
+    }
+
+    #[test]
+    fn a_store_is_never_listed_twice_when_it_is_also_the_broadcaster() {
+        // Broadcasting through GorillaPool in classic mode must not add a second
+        // (presence-only) GorillaPool row.
+        let plane = BroadcastPlane::resolve(
+            Chain::Main,
+            false,
+            Some("https://arc.gorillapool.io".to_string()),
+        );
+        let sources = build_sources(Chain::Main, &plane, None);
+        let gp_rows: Vec<_> = sources
+            .iter()
+            .filter(|s| s.url_template.contains("arc.gorillapool.io"))
+            .collect();
+        assert_eq!(gp_rows.len(), 1);
+        assert_eq!(gp_rows[0].absence, AbsenceAuthority::Broadcaster);
+    }
+
+    // =====================================================================
+    // Absence authority: whose 404 may be believed, and when?
+    // =====================================================================
+
+    #[test]
+    fn a_third_party_arc_store_is_never_authoritative_for_absence() {
+        // arc.gorillapool.io 404s for the genesis coinbase (~960k confirmations).
+        // It is a submission-scoped metamorph store, not a chain index: when we
+        // broadcast through Arcade, its 404 is the EXPECTED answer and carries
+        // no information. Marking it authoritative caused false "funds not sent".
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        for s in sources.iter().filter(|s| s.name.starts_with("arc-")) {
+            assert_eq!(
+                s.absence,
+                AbsenceAuthority::None,
+                "{} is not the broadcaster; its absence must carry no weight",
+                s.name
+            );
+        }
+    }
+
+    #[test]
+    fn whatsonchain_is_the_chain_index_authority() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let sources = build_sources(Chain::Main, &plane, None);
+        let woc = sources.iter().find(|s| s.name == "whatsonchain").unwrap();
+        assert_eq!(woc.absence, AbsenceAuthority::ChainIndex);
+    }
+
+    #[test]
+    fn absence_is_definitive_only_when_broadcaster_and_chain_index_agree() {
+        let mut none = AbsenceVotes::default();
+        assert!(!none.is_definitive(), "no votes is not evidence");
+
+        // A store we did not submit to voting absent changes nothing.
+        none.record(AbsenceAuthority::None);
+        assert!(!none.is_definitive());
+
+        let mut broadcaster_only = AbsenceVotes::default();
+        broadcaster_only.record(AbsenceAuthority::Broadcaster);
+        assert!(
+            !broadcaster_only.is_definitive(),
+            "the primary may 404 while the tx went out through the failover provider"
+        );
+
+        let mut index_only = AbsenceVotes::default();
+        index_only.record(AbsenceAuthority::ChainIndex);
+        assert!(
+            !index_only.is_definitive(),
+            "a chain index can simply be lagging its mempool ingestion"
+        );
+
+        let mut both = AbsenceVotes::default();
+        both.record(AbsenceAuthority::Broadcaster);
+        both.record(AbsenceAuthority::ChainIndex);
+        assert!(both.is_definitive());
+    }
+
+    // =====================================================================
+    // End-to-end verdicts against local mock sources.
+    // =====================================================================
+
+    /// Local mock answering every status path (`/tx/{txid}` and `/v1/tx/{txid}`)
+    /// with `code`. Returns the base URL (`http://127.0.0.1:PORT`).
     async fn mock_status_server(code: StatusCode) -> String {
-        let app = Router::new().route("/v1/tx/{txid}", get(move || async move { code }));
+        mock_status_server_ct(code, Some("application/json")).await
+    }
+
+    /// As [`mock_status_server`], with an explicit `Content-Type` (or none).
+    async fn mock_status_server_ct(code: StatusCode, content_type: Option<&'static str>) -> String {
+        let handler = move || async move {
+            let mut resp = axum::response::Response::new(axum::body::Body::from("{}"));
+            *resp.status_mut() = code;
+            if let Some(ct) = content_type {
+                resp.headers_mut()
+                    .insert(reqwest::header::CONTENT_TYPE.as_str(), ct.parse().unwrap());
+            } else {
+                resp.headers_mut()
+                    .remove(reqwest::header::CONTENT_TYPE.as_str());
+            }
+            resp
+        };
+        let app = Router::new()
+            .route("/tx/{txid}", get(handler))
+            .route("/v1/tx/{txid}", get(handler))
+            .route("/tx/hash/{txid}", get(handler));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -297,38 +819,39 @@ mod tests {
         format!("http://{}", addr)
     }
 
-    /// Build a verifier pointing at a single mock source (fast: 2 attempts, no delay).
-    fn verifier_for(base: &str, authoritative_absence: bool) -> BroadcastVerifier {
+    fn source(name: &'static str, base: &str, absence: AbsenceAuthority) -> StatusSource {
+        StatusSource {
+            name,
+            url_template: format!("{base}/tx/{{txid}}"),
+            auth: None,
+            absence,
+        }
+    }
+
+    /// Verifier over an explicit source list (fast: 2 rounds, no delay).
+    fn verifier_with(sources: Vec<StatusSource>) -> BroadcastVerifier {
         BroadcastVerifier {
             client: Client::new(),
-            sources: vec![StatusSource {
-                name: "mock",
-                url_template: format!("{}/v1/tx/{{txid}}", base),
-                auth: None,
-                authoritative_absence,
-            }],
+            sources,
             attempts: 2,
             delay: Duration::from_millis(0),
             enabled: true,
         }
     }
 
-    const TXID: &str = "0000000000000000000000000000000000000000000000000000000000000001";
-
-    // The core of the fix: a 465/rejected broadcast (the tx is absent from every
-    // source that would hold it) must resolve to Rejected → an ERROR, never success.
     #[tokio::test]
-    async fn rejected_broadcast_is_an_error_not_success() {
+    async fn rejected_when_broadcaster_and_chain_index_both_report_absent() {
+        // The original purpose of the module (ARC 465 fee-too-low) still fires:
+        // the plane we submitted to has no record AND the chain index cannot see
+        // it after the window.
         let base = mock_status_server(StatusCode::NOT_FOUND).await;
-        let verifier = verifier_for(&base, /* authoritative */ true);
+        let verifier = verifier_with(vec![
+            source("broadcaster", &base, AbsenceAuthority::Broadcaster),
+            source("chain-index", &base, AbsenceAuthority::ChainIndex),
+        ]);
 
         let outcome = verifier.verify(TXID).await;
-        assert_eq!(
-            outcome,
-            BroadcastVerification::Rejected,
-            "an absent (404-everywhere) tx must be classified Rejected"
-        );
-        // And the send path must surface it as a hard error, not exit 0.
+        assert_eq!(outcome, BroadcastVerification::Rejected);
         assert!(
             outcome.into_send_result(TXID).is_err(),
             "a Rejected verification must map to Err so the send fails loudly"
@@ -336,10 +859,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_false_negative_that_motivated_this_fix_is_now_inconclusive() {
+        // Exactly the observed regression: the broadcaster we used is never
+        // asked (or is unreachable), a third-party ARC store 404s because we
+        // never submitted to it, and the chain index has not indexed the mempool
+        // entry yet. Old code: Rejected ("the funds were NOT sent"). Every such
+        // transaction was actually on chain.
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            // Broadcaster unreachable → Unknown, not a vote.
+            source(
+                "broadcaster",
+                "http://127.0.0.1:1",
+                AbsenceAuthority::Broadcaster,
+            ),
+            source("chain-index", &absent, AbsenceAuthority::ChainIndex),
+            source("arc-third-party", &absent, AbsenceAuthority::None),
+        ]);
+        assert_eq!(
+            verifier.verify(TXID).await,
+            BroadcastVerification::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn third_party_absence_alone_never_rejects() {
+        let base = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source("arc-third-party-a", &base, AbsenceAuthority::None),
+            source("arc-third-party-b", &base, AbsenceAuthority::None),
+        ]);
+        assert_eq!(
+            verifier.verify(TXID).await,
+            BroadcastVerification::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn broadcaster_absence_alone_never_rejects() {
+        // The toolbox keeps a failover provider behind the primary, so the tx
+        // may legitimately have gone out through the other plane.
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &absent, AbsenceAuthority::Broadcaster),
+            // Chain index unreachable → Unknown.
+            source(
+                "chain-index",
+                "http://127.0.0.1:1",
+                AbsenceAuthority::ChainIndex,
+            ),
+        ]);
+        assert_eq!(
+            verifier.verify(TXID).await,
+            BroadcastVerification::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_index_absence_alone_never_rejects() {
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            // Broadcaster answers 401 (keyless TAAL) → Unknown.
+            source("broadcaster", &absent, AbsenceAuthority::Broadcaster),
+            source("chain-index", &absent, AbsenceAuthority::ChainIndex),
+        ]);
+        // Sanity: with both absent it WOULD reject...
+        assert_eq!(verifier.verify(TXID).await, BroadcastVerification::Rejected);
+
+        // ...but with the broadcaster unreachable, the chain index alone must not.
+        let unauth = mock_status_server(StatusCode::UNAUTHORIZED).await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &unauth, AbsenceAuthority::Broadcaster),
+            source("chain-index", &absent, AbsenceAuthority::ChainIndex),
+        ]);
+        assert_eq!(
+            verifier.verify(TXID).await,
+            BroadcastVerification::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn presence_from_any_source_confirms_even_when_others_say_absent() {
+        // Doctrine: a positive answer may be trusted; an absence may not.
+        let present = mock_status_server(StatusCode::OK).await;
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &absent, AbsenceAuthority::Broadcaster),
+            source("chain-index", &absent, AbsenceAuthority::ChainIndex),
+            source("arc-third-party", &present, AbsenceAuthority::None),
+        ]);
+        let outcome = verifier.verify(TXID).await;
+        assert_eq!(outcome, BroadcastVerification::Confirmed);
+        assert!(outcome.into_send_result(TXID).is_ok());
+    }
+
+    #[tokio::test]
     async fn confirmed_broadcast_succeeds() {
         let base = mock_status_server(StatusCode::OK).await;
-        let verifier = verifier_for(&base, true);
-
+        let verifier = verifier_with(vec![source(
+            "broadcaster",
+            &base,
+            AbsenceAuthority::Broadcaster,
+        )]);
         let outcome = verifier.verify(TXID).await;
         assert_eq!(outcome, BroadcastVerification::Confirmed);
         assert!(outcome.into_send_result(TXID).is_ok());
@@ -350,20 +971,25 @@ mod tests {
         // 503 from every probe → we cannot confirm either way → Inconclusive,
         // which must NOT be a failure (no false negatives when the service is down).
         let base = mock_status_server(StatusCode::SERVICE_UNAVAILABLE).await;
-        let verifier = verifier_for(&base, true);
-
+        let verifier = verifier_with(vec![
+            source("broadcaster", &base, AbsenceAuthority::Broadcaster),
+            source("chain-index", &base, AbsenceAuthority::ChainIndex),
+        ]);
         let outcome = verifier.verify(TXID).await;
         assert_eq!(outcome, BroadcastVerification::Inconclusive);
         assert!(outcome.into_send_result(TXID).is_ok());
     }
 
     #[tokio::test]
-    async fn non_authoritative_absence_is_inconclusive() {
-        // A 404 from a presence-only source (not authoritative for absence) must
-        // not by itself trigger a Rejected — it stays Inconclusive.
-        let base = mock_status_server(StatusCode::NOT_FOUND).await;
-        let verifier = verifier_for(&base, /* authoritative */ false);
-
+    async fn a_routing_404_from_the_broadcaster_is_not_absence() {
+        // A wrong base URL / path shape yields `text/plain "404 page not found"`.
+        // That must never be read as "the funds were NOT sent".
+        let text_404 = mock_status_server_ct(StatusCode::NOT_FOUND, Some("text/plain")).await;
+        let json_404 = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &text_404, AbsenceAuthority::Broadcaster),
+            source("chain-index", &json_404, AbsenceAuthority::ChainIndex),
+        ]);
         assert_eq!(
             verifier.verify(TXID).await,
             BroadcastVerification::Inconclusive
@@ -373,11 +999,31 @@ mod tests {
     #[tokio::test]
     async fn disabled_verifier_is_inconclusive() {
         let base = mock_status_server(StatusCode::NOT_FOUND).await;
-        let mut verifier = verifier_for(&base, true);
+        let mut verifier = verifier_with(vec![
+            source("broadcaster", &base, AbsenceAuthority::Broadcaster),
+            source("chain-index", &base, AbsenceAuthority::ChainIndex),
+        ]);
         verifier.enabled = false;
         assert_eq!(
             verifier.verify(TXID).await,
             BroadcastVerification::Inconclusive
+        );
+    }
+
+    #[test]
+    fn absence_window_is_bounded_and_reflects_the_configured_rounds() {
+        let v = BroadcastVerifier {
+            client: Client::new(),
+            sources: vec![],
+            attempts: DEFAULT_ATTEMPTS,
+            delay: Duration::from_millis(DEFAULT_DELAY_MS),
+            enabled: true,
+        };
+        // 11 gaps × 2.5s + 5s slack — long enough for a real mempool index to
+        // catch up, and hard-bounded so a hung source cannot extend it.
+        assert_eq!(
+            v.absence_window(),
+            Duration::from_millis(27_500) + PROBE_TIMEOUT
         );
     }
 }

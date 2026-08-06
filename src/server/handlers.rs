@@ -172,8 +172,9 @@ impl AppError {
             status: StatusCode::BAD_GATEWAY,
             code: "BROADCAST_REJECTED",
             message: format!(
-                "broadcast rejected: transaction {txid} is not present on the network. \
-                 The broadcaster (ARC) dropped it — most likely error 465 \"fee too low\" \
+                "broadcast rejected: transaction {txid} is absent from BOTH the broadcaster \
+                 it was submitted to AND an independent chain index, after the full probe \
+                 window. The broadcaster dropped it — most likely error 465 \"fee too low\" \
                  on a deep unconfirmed BEEF. The funds were NOT sent."
             ),
         }
