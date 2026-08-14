@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod handlers;
 pub mod types;
 
@@ -122,6 +123,11 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
             get(handlers::is_authenticated).post(handlers::is_authenticated),
         )
         .route("/getPublicKey", post(handlers::get_public_key))
+        // PERMISSION AUDIT (not BRC-100): what a wallet with a human behind it
+        // would have prompted for. See `audit.rs` — this daemon grants everything
+        // silently, which is what makes it headless AND blind.
+        .route("/permission-audit", get(permission_audit))
+        .route("/permission-audit/reset", post(permission_audit_reset))
         .route("/createSignature", post(handlers::create_signature))
         .route("/createAction", post(handlers::create_action))
         .route("/internalizeAction", post(handlers::internalize_action))
@@ -337,4 +343,16 @@ async fn shutdown_signal() {
         .await
         .expect("failed to listen for ctrl-c");
     eprintln!("\nShutting down...");
+}
+
+/// GET /permission-audit — every permissioned request since start or reset.
+async fn permission_audit() -> Json<serde_json::Value> {
+    let entries = audit::snapshot();
+    Json(json!({ "count": entries.len(), "entries": entries }))
+}
+
+/// POST /permission-audit/reset — call immediately before the flow you measure.
+async fn permission_audit_reset() -> Json<serde_json::Value> {
+    audit::reset();
+    Json(json!({ "ok": true }))
 }

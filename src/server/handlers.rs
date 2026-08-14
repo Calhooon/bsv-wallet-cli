@@ -76,6 +76,30 @@ use super::types::*;
 
 pub type WalletState = Arc<Wallet<StorageSqlx, Services>>;
 
+use super::audit;
+
+/// BRC-43 security level as its number. The enum names are the spec's own
+/// meanings: Silent = 0 (never prompts), App = 1 (once per protocol),
+/// Counterparty = 2 (once per protocol AND counterparty).
+fn cp_str(c: &Counterparty) -> String {
+    // The wire spelling, not Rust's Debug. This field exists so a caller can
+    // compare a level-2 counterparty against a manifest entry; `Other(PublicKey
+    // { compressed: "02…" })` cannot be compared with anything.
+    match c {
+        Counterparty::Self_ => "self".to_string(),
+        Counterparty::Anyone => "anyone".to_string(),
+        Counterparty::Other(pk) => pk.to_string().to_lowercase(),
+    }
+}
+
+fn level_num(l: SecurityLevel) -> u8 {
+    match l {
+        SecurityLevel::Silent => 0,
+        SecurityLevel::App => 1,
+        SecurityLevel::Counterparty => 2,
+    }
+}
+
 /// Extract originator from Origin or Originator header
 fn extract_originator(
     headers: &HeaderMap,
@@ -244,6 +268,16 @@ pub async fn get_public_key(
         for_self: req.for_self,
     };
 
+    if let Some(p) = args.protocol_id.as_ref() {
+        audit::record(audit::protocol_entry(
+            "getPublicKey",
+            level_num(p.security_level),
+            &p.protocol_name,
+            args.counterparty.as_ref().map(cp_str),
+            args.key_id.clone(),
+            &originator,
+        ));
+    }
     let result = wallet
         .get_public_key(args, &originator)
         .await
@@ -286,6 +320,14 @@ pub async fn create_signature(
         counterparty: Some(parse_counterparty(&req.counterparty)?),
     };
 
+    audit::record(audit::protocol_entry(
+        "createSignature",
+        level_num(args.protocol_id.security_level),
+        &args.protocol_id.protocol_name,
+        args.counterparty.as_ref().map(cp_str),
+        Some(args.key_id.clone()),
+        &originator,
+    ));
     let result = wallet
         .create_signature(args, &originator)
         .await
@@ -396,6 +438,16 @@ pub async fn create_action(
         .as_ref()
         .map(|o| o.iter().map(|x| x.satoshis).sum())
         .unwrap_or(0);
+
+    // A real wallet prompts here unless the app declared a BRC-73
+    // `spendingAuthorization` budget — including for a FEE-ONLY action (an
+    // OP_RETURN marker, total_sats == 0) which still costs a miner fee.
+    audit::record(audit::spend_entry(
+        "createAction",
+        total_sats,
+        Some(args.description.clone()),
+        &originator,
+    ));
 
     // Acquire spending lock — queues behind any in-flight createAction.
     // Once the previous tx completes (and its change UTXO exists), we proceed.
@@ -672,6 +724,14 @@ pub async fn encrypt(
             .map(|s| parse_counterparty(&s))
             .transpose()?,
     };
+    audit::record(audit::protocol_entry(
+        "encrypt",
+        level_num(args.protocol_id.security_level),
+        &args.protocol_id.protocol_name,
+        args.counterparty.as_ref().map(cp_str),
+        Some(args.key_id.clone()),
+        &originator,
+    ));
     let result = wallet
         .encrypt(args, &originator)
         .await
@@ -695,6 +755,14 @@ pub async fn decrypt(
             .map(|s| parse_counterparty(&s))
             .transpose()?,
     };
+    audit::record(audit::protocol_entry(
+        "decrypt",
+        level_num(args.protocol_id.security_level),
+        &args.protocol_id.protocol_name,
+        args.counterparty.as_ref().map(cp_str),
+        Some(args.key_id.clone()),
+        &originator,
+    ));
     let result = wallet
         .decrypt(args, &originator)
         .await
@@ -718,6 +786,14 @@ pub async fn create_hmac(
             .map(|s| parse_counterparty(&s))
             .transpose()?,
     };
+    audit::record(audit::protocol_entry(
+        "createHmac",
+        level_num(args.protocol_id.security_level),
+        &args.protocol_id.protocol_name,
+        args.counterparty.as_ref().map(cp_str),
+        Some(args.key_id.clone()),
+        &originator,
+    ));
     let result = wallet
         .create_hmac(args, &originator)
         .await
