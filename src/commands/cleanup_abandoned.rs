@@ -29,7 +29,7 @@ pub struct ReconcileReport {
 /// Core reconcile, shared by the CLI `cleanup-abandoned` command and the daemon's
 /// periodic ticker.
 ///
-/// Scans `status='unproven'` transactions that are at least `min_age_secs` old
+/// Scans `status='unproven'` (and ≥10-min-old `status='sending'`) transactions that are at least `min_age_secs` old
 /// (so a freshly-broadcast tx that has not yet propagated to WhatsOnChain is
 /// never mis-classified), checks each against WoC, and — when `execute` — fails
 /// the ones missing on chain: restore their inputs, invalidate their own phantom
@@ -110,10 +110,21 @@ async fn select_stale_unproven(
     min_age_secs: i64,
 ) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
     let age_modifier = format!("-{} seconds", min_age_secs.max(0));
+    // 'sending' rows too (2026-08-27, the p3 float-recovery find): a broadcast
+    // that never resolved sits at status='sending' FOREVER — same phantom
+    // outputs, same frozen coin selection, invisible to the 'unproven' filter
+    // (12,101 sats of a fleet wallet were stranded behind exactly one). A
+    // genuinely in-flight tx must never be failed, so 'sending' rows carry
+    // their OWN floor — at least 10 minutes old — regardless of the caller's
+    // min_age (the CLI passes 0). WoC-404 remains the only abandonment
+    // verdict either way.
     Ok(sqlx::query(
         "SELECT transaction_id, txid FROM transactions \
-         WHERE status='unproven' AND datetime(created_at) <= datetime('now', ?)",
+         WHERE (status='unproven' AND datetime(created_at) <= datetime('now', ?)) \
+            OR (status='sending' AND datetime(created_at) <= datetime('now', ?) \
+                AND datetime(created_at) <= datetime('now', '-600 seconds'))",
     )
+    .bind(&age_modifier)
     .bind(&age_modifier)
     .fetch_all(pool)
     .await?)
@@ -128,11 +139,11 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     let report = reconcile(&pool, ctx.chain, 0, execute).await?;
 
     if report.checked == 0 {
-        println!("No unproven transactions found.");
+        println!("No unproven (or stale sending) transactions found.");
         return Ok(());
     }
     println!(
-        "Found {} unproven transaction(s); checked against WoC.",
+        "Found {} unproven/stale-sending transaction(s); checked against WoC.",
         report.checked
     );
     println!(
