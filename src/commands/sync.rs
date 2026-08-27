@@ -135,6 +135,15 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
             sats_in,
             skipped
         );
+        // A money verb must never finish SILENT about what it did (or did not)
+        // touch: "checked 0" (nothing qualified) and "checked 12, relinquished
+        // 0" (all verified live) are different facts a drain decision rests on.
+        if reconcile_spent {
+            println!(
+                "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent",
+                reconcile_checked, reconciled
+            );
+        }
     }
 
     Ok(())
