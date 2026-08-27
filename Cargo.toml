@@ -56,3 +56,8 @@ tls = ["axum-server"]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
+
+# LOCAL PATCH: is_sign_action fix (scriptless caller input must defer signing)
+# Remove once bsv-wallet-toolbox-rs with the fix is published and the version bumped.
+[patch.crates-io]
+bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }

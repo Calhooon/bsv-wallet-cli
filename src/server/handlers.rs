@@ -838,7 +838,7 @@ pub async fn sign_action(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
     Json(args): Json<SignActionArgs>,
-) -> Result<Json<SignActionResult>, AppError> {
+) -> Result<Json<McSignActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
     let reference = args.reference.clone();
     let result = wallet
@@ -846,7 +846,16 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_wallet_error)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
-    Ok(Json(result))
+    // Same wire shape as create_action: txid as hex, tx (AtomicBEEF) as a
+    // number array — see McSignActionRes for why the toolbox struct cannot be
+    // serialized directly.
+    Ok(Json(McSignActionRes {
+        txid: result.txid.map(|t| to_hex(&t)),
+        tx: result.tx,
+        send_with_results: result
+            .send_with_results
+            .and_then(|r| serde_json::to_value(r).ok()),
+    }))
 }
 
 /// POST /abortAction

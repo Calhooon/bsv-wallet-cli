@@ -141,6 +141,23 @@ pub struct McCreateActionRes {
     pub no_send_change: Option<serde_json::Value>,
 }
 
+/// signAction response, in the SAME wire shape as `McCreateActionRes`:
+/// `tx` is AtomicBEEF as a plain number array. The toolbox's own
+/// `SignActionResult` serde hex-encodes byte fields, which no BRC-100 client
+/// expects (MetaNet and the TS toolbox both send number arrays); passing that
+/// struct straight to `Json(...)` handed callers a hex STRING they then read
+/// as bytes and failed to parse — after the transaction had already broadcast.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McSignActionRes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub txid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_with_results: Option<serde_json::Value>,
+}
+
 /// Unsigned transaction + reference for deferred signing flow.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
