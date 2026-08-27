@@ -114,7 +114,14 @@ pub enum Commands {
         label: Option<String>,
     },
     /// Scan WhatsOnChain for unspent UTXOs at our deposit address and internalize new ones
-    Sync,
+    Sync {
+        /// Also RECONCILE: for every DB-unspent output missing from the
+        /// chain's unspent set, per-outpoint spent-check WoC and relinquish
+        /// outputs the chain says are SPENT (heals a restored-from-backup
+        /// wallet whose stale rows otherwise produce double-spend inputs).
+        #[arg(long)]
+        reconcile_spent: bool,
+    },
     /// Run all monitor tasks once and exit (one-shot equivalent of `daemon`)
     Tick,
     /// Run monitor + HTTP server (foreground)

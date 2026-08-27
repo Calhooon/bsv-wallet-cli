@@ -90,9 +90,9 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::actions::run(&ctx, label.as_deref()).await?;
         }
-        Commands::Sync => {
+        Commands::Sync { reconcile_spent } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::sync::run(&ctx).await?;
+            commands::sync::run(&ctx, *reconcile_spent).await?;
         }
         Commands::Tick => {
             commands::tick::run(&cli).await?;
