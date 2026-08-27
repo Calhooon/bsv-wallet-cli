@@ -166,6 +166,13 @@ pub async fn run(
         .ok_or_else(|| anyhow!("wallet returned no txid"))?;
     let txid_hex = to_hex(&txid);
 
+    // Same loud-failure bar as `send`/`drain`: a gift whose broadcast was
+    // silently dropped must not print a claimable txid + exit 0.
+    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+        .verify(&txid_hex)
+        .await
+        .into_send_result(&txid_hex)?;
+
     let beef_hex = result.beef.as_ref().and_then(|b| {
         Beef::from_binary(b)
             .ok()

@@ -60,6 +60,17 @@ pub async fn run(ctx: &WalletContext, address: &str) -> Result<()> {
     let result = ctx.wallet.create_action(args, "bsv-wallet-cli").await?;
     let txid_hex = to_hex(&result.txid.expect("expected txid in result"));
 
+    // Same loud-failure bar as `send` (2026-08-27): `create_action` returns Ok
+    // with a txid even when the broadcast never reached the network (ARC 465
+    // misclassified as transient; keyless ARC auth rejection swallowed the
+    // same way). `drain` skipping this check is exactly how 24 phantom
+    // recovery drains printed clean TxIDs while the network never saw one —
+    // a drain that did not propagate must exit nonzero, never print success.
+    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+        .verify(&txid_hex)
+        .await
+        .into_send_result(&txid_hex)?;
+
     if ctx.json_output {
         println!(
             "{}",
