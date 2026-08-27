@@ -64,6 +64,7 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
     // unknown never relinquishes).
     let mut reconciled = 0u32;
     let mut reconcile_checked = 0u32;
+    let mut phantom_parent = 0u32;
     if reconcile_spent {
         let chain_unspent: HashSet<String> = unspent
             .iter()
@@ -85,6 +86,27 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
                 Ok(r) if r.status().is_success() => true,
                 _ => false,
             };
+            // PHANTOM-PARENT detection (2026-08-27, the float-recovery audit):
+            // the spent endpoint answers 404 both for "unspent" and for "the
+            // parent tx does not exist on chain at all" — and a DB full of
+            // never-delivered chains reads as spendable balance through that
+            // ambiguity (247k sats of archived fleet balance were exactly
+            // this). When the spend probe says nothing, ask whether the parent
+            // is even on the network; an absent parent is REPORTED (never
+            // auto-relinquished here — a transient indexer fault must not
+            // erase spendability; `cleanup-abandoned` owns the mutation).
+            if !spent {
+                tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+                let parent_present = matches!(
+                    client.get(format!("{}/tx/hash/{}", base, txid)).send().await,
+                    Ok(r) if r.status().is_success()
+                );
+                if !parent_present {
+                    phantom_parent += 1;
+                    eprintln!("phantom-parent output (parent tx not on chain): {}", op);
+                    continue;
+                }
+            }
             if spent {
                 use bsv_sdk::wallet::RelinquishOutputArgs;
                 match ctx
@@ -125,6 +147,7 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
                 "sats_received": sats_in,
                 "reconcile_checked": reconcile_checked,
                 "reconciled_spent": reconciled,
+                "phantom_parent": phantom_parent,
             })
         );
     } else {
@@ -140,8 +163,8 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
         // 0" (all verified live) are different facts a drain decision rests on.
         if reconcile_spent {
             println!(
-                "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent",
-                reconcile_checked, reconciled
+                "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent, {} phantom-parent (run cleanup-abandoned)",
+                reconcile_checked, reconciled, phantom_parent
             );
         }
     }
