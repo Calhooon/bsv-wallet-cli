@@ -56,4 +56,11 @@ tls = ["axum-server"]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
-
+# Pinned to the sibling checkout until bsv-wallet-toolbox-rs 0.3.55 is
+# published: carries 16669d4 (CheckForProofs adopts proof-less
+# transactions — the receive-proof gap, 2026-08-29). The LOW runner image
+# copies ../bsv-wallet-toolbox-rs alongside this crate (LOW_RUNNER_TOOLBOX),
+# so the fleet CLI builds against exactly that tree. Drop this block and
+# bump the version pin above when 0.3.55 lands on crates.io.
+[patch.crates-io]
+bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }

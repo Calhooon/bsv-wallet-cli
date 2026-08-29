@@ -71,7 +71,10 @@ pub async fn run(cli: &Cli) -> Result<()> {
     }
     // A coin internalized from ANOTHER wallet's broadcast is not on this
     // daemon's Arcade SSE stream, so its spendability waits for the polling
-    // check_for_proofs task (default: 60s interval, first run at t+60s) —
+    // check_for_proofs task (default: 60s interval, first run at t+60s;
+    // since toolbox 16669d4 every pass ALSO adopts proof-less rows that
+    // have no proven_tx_req at all — the pre-0.3.52 internalize shape — so
+    // a wallet's legacy coins get their BUMPs here too) —
     // callers spending freshly internalized 0-conf coins wait 0-60s of pure
     // timer. Opt-in override for latency-sensitive deployments; the default
     // cadence is unchanged when the env var is absent.
