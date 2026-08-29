@@ -166,6 +166,9 @@ async fn probe_input_spend(
     }
 }
 
+/// A candidate to abandon: `(transaction_id, txid, per-input chain answers)`.
+type DeadCandidate = (i64, String, Vec<(TrackedInput, InputSpend)>);
+
 /// One tracked input of a candidate tx: the coin it locks and where it came from.
 struct TrackedInput {
     output_id: i64,
@@ -247,7 +250,7 @@ where
     }
 
     // (tx_id, txid, per-input answers) for every tx to abandon.
-    let mut dead: Vec<(i64, String, Vec<(TrackedInput, InputSpend)>)> = Vec::new();
+    let mut dead: Vec<DeadCandidate> = Vec::new();
     for row in &rows {
         let tx_id: i64 = row.get("transaction_id");
         let txid: String = row.get("txid");
@@ -865,7 +868,7 @@ mod tests {
         };
         use BroadcastVerification as V;
         assert_eq!(
-            verdict_for(&ours, &[other.clone()], V::Confirmed),
+            verdict_for(&ours, std::slice::from_ref(&other), V::Confirmed),
             Verdict::DeadConflict
         );
         assert_eq!(
