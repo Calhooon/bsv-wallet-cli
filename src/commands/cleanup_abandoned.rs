@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use bsv_wallet_toolbox::Chain;
 use sqlx::Row;
+use std::future::Future;
 
-use crate::commands::receive;
+use crate::broadcast_verify::{BroadcastVerification, BroadcastVerifier};
 use crate::context::WalletContext;
 
 /// Summary of one reconcile pass over abandoned transactions.
@@ -10,9 +11,14 @@ use crate::context::WalletContext;
 pub struct ReconcileReport {
     /// `unproven` txs inspected (after the min-age filter).
     pub checked: usize,
-    /// txids still tracked by the network (kept spendable).
+    /// txids some source still holds (kept spendable).
     pub kept: Vec<String>,
-    /// txids missing on chain (HTTP 404) — the abandoned set.
+    /// txids whose absence was NOT definitive (a lone index miss, a source
+    /// fault, probing disabled) — kept, because an unknown never releases
+    /// money. Surfaced so an operator sees what the sweep could not decide.
+    pub inconclusive: Vec<String>,
+    /// txids DEFINITIVELY absent (broadcaster + chain index both 404, no
+    /// source holding them) — the abandoned set.
     pub abandoned: Vec<String>,
     /// Whether `execute` actually applied the cleanup.
     pub applied: bool,
@@ -29,13 +35,20 @@ pub struct ReconcileReport {
 /// Core reconcile, shared by the CLI `cleanup-abandoned` command and the daemon's
 /// periodic ticker.
 ///
-/// Scans `status='unproven'` (and ≥10-min-old `status='sending'`) transactions that are at least `min_age_secs` old
-/// (so a freshly-broadcast tx that has not yet propagated to WhatsOnChain is
-/// never mis-classified), checks each against WoC, and — when `execute` — fails
-/// the ones missing on chain: restore their inputs, invalidate their own phantom
-/// outputs, and mark them `failed` (which excludes them from coin selection,
-/// preventing a never-landed tx's change from funding — and orphaning — a new
-/// transaction).
+/// Scans `status='unproven'` (and ≥10-min-old `status='sending'`) transactions
+/// that are at least `min_age_secs` old and probes each across EVERY broadcast
+/// source the wallet knows (`BroadcastVerifier::single_pass`: the broadcaster
+/// it was submitted to, GorillaPool ARC, TAAL ARC and WhatsOnChain). THE
+/// RELEASE RULE (2026-08-29, the LOW run-A double-spend chain): a tx is
+/// abandoned — inputs restored, its phantom outputs invalidated, status
+/// `failed` — ONLY on DEFINITIVE absence (the broadcaster answers a JSON 404
+/// AND the chain index answers 404, nothing else holding it). A tx ANY source
+/// still holds is kept; a lone index miss is `Inconclusive` and is kept too.
+/// The previous verdict was a single WhatsOnChain 404: a fresh
+/// Arcade/GorillaPool-only split is a WoC 404 for minutes while a peer's
+/// orphan pool still holds it, so the sweep "restored" its inputs, the next
+/// split re-spent them, and when the parent mined the held copy validated
+/// first — every later spend UTXO_SPENT, every child an orphan.
 ///
 /// Operates on the caller-provided pool so the daemon reuses its existing
 /// connection rather than opening a second one (the wallet DB is not in WAL
@@ -46,31 +59,41 @@ pub async fn reconcile(
     min_age_secs: i64,
     execute: bool,
 ) -> Result<ReconcileReport> {
+    let verifier = BroadcastVerifier::single_pass(chain);
+    reconcile_with(pool, min_age_secs, execute, |txid: String| {
+        let v = verifier.clone();
+        async move { v.verify(&txid).await }
+    })
+    .await
+}
+
+/// [`reconcile`] with the presence probe injected — the seam the cells drive
+/// (a real probe hits four networks; the RULE is what is under test).
+pub async fn reconcile_with<F, Fut>(
+    pool: &sqlx::SqlitePool,
+    min_age_secs: i64,
+    execute: bool,
+    probe: F,
+) -> Result<ReconcileReport>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = BroadcastVerification>,
+{
     let mut report = ReconcileReport::default();
-
     let rows = select_stale_unproven(pool, min_age_secs).await?;
-
     report.checked = rows.len();
     if rows.is_empty() {
         return Ok(report);
     }
 
-    let base = receive::woc_base(chain);
-    let client = reqwest::Client::new();
     let mut to_fail: Vec<(i64, String)> = Vec::new();
-
     for row in &rows {
         let tx_id: i64 = row.get("transaction_id");
         let txid: String = row.get("txid");
-        let resp = client
-            .get(format!("{}/tx/{}", base, txid))
-            .send()
-            .await
-            .with_context(|| format!("WoC tx fetch failed for {}", txid))?;
-        if resp.status().as_u16() == 404 {
-            to_fail.push((tx_id, txid));
-        } else {
-            report.kept.push(txid);
+        match probe(txid.clone()).await {
+            BroadcastVerification::Confirmed => report.kept.push(txid),
+            BroadcastVerification::Inconclusive => report.inconclusive.push(txid),
+            BroadcastVerification::Rejected => to_fail.push((tx_id, txid)),
         }
     }
     report.abandoned = to_fail.iter().map(|(_, t)| t.clone()).collect();
@@ -80,10 +103,11 @@ pub async fn reconcile(
     }
 
     let ids: Vec<i64> = to_fail.iter().map(|(id, _)| *id).collect();
-    let restored = restore_inputs(pool, &ids).await?;
+    let restored = restore_inputs(pool, &ids)
+        .await
+        .context("restore inputs of abandoned txs")?;
     let phantoms = remove_phantom_outputs(pool, &ids).await?;
     let failed = mark_failed(pool, &ids).await?;
-
     report.applied = true;
     report.failed = failed;
     report.restored_count = restored.0;
@@ -143,16 +167,23 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         return Ok(());
     }
     println!(
-        "Found {} unproven/stale-sending transaction(s); checked against WoC.",
+        "Found {} unproven/stale-sending transaction(s); probed every broadcast source.",
         report.checked
     );
     println!(
-        "  Missing on chain: {}    Still tracked by network: {}",
+        "  Definitively absent: {}    Held by a source: {}    Undecidable (kept): {}",
         report.abandoned.len(),
-        report.kept.len()
+        report.kept.len(),
+        report.inconclusive.len()
     );
     for txid in &report.kept {
         println!("    keep: {}", txid);
+    }
+    for txid in &report.inconclusive {
+        println!(
+            "    keep (inconclusive — an unknown never releases money): {}",
+            txid
+        );
     }
     for txid in &report.abandoned {
         println!("    fail: {}", txid);
@@ -268,7 +299,17 @@ mod tests {
         sqlx::query(
             "CREATE TABLE transactions (
                 transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                txid TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)",
+                txid TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+                updated_at TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE outputs (
+                output_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_id INTEGER NOT NULL, spendable INTEGER NOT NULL DEFAULT 0,
+                spent_by INTEGER, satoshis INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
         )
         .execute(&pool)
         .await
@@ -340,5 +381,114 @@ mod tests {
         );
         let unguarded = select_stale_unproven(&pool, 0).await.unwrap();
         assert_eq!(unguarded.len(), 3, "0-second guard selects everything");
+    }
+
+    // ── THE RELEASE RULE (2026-08-29) — the verdict is corroborated absence ──
+
+    /// Seed one stale `unproven` tx (id 1) whose input is output 1 (locked,
+    /// spent_by = 1) and whose own phantom change is output 2.
+    async fn rule_fixture() -> sqlx::SqlitePool {
+        let pool = mem_pool_with(&[(
+            "ab".repeat(32).leak(),
+            "unproven",
+            "2020-01-01T00:00:00+00:00",
+        )])
+        .await;
+        sqlx::query(
+            "INSERT INTO outputs (transaction_id, spendable, spent_by, satoshis) VALUES
+             (99, 0, 1, 5000),
+             (1, 1, NULL, 4000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    async fn lock(pool: &sqlx::SqlitePool, output_id: i64) -> (i64, Option<i64>) {
+        sqlx::query_as("SELECT spendable, spent_by FROM outputs WHERE output_id = ?")
+            .bind(output_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// RED→GREEN: the old verdict was a single WoC 404 — exactly what a fresh
+    /// Arcade/GorillaPool-only tx looks like for minutes. An INCONCLUSIVE
+    /// probe must keep the tx and release NOTHING, even under --execute.
+    #[tokio::test]
+    async fn a_lone_index_miss_is_inconclusive_and_releases_nothing() {
+        let pool = rule_fixture().await;
+        let report = reconcile_with(&pool, 0, true, |_txid| async {
+            BroadcastVerification::Inconclusive
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.checked, 1);
+        assert_eq!(report.inconclusive.len(), 1);
+        assert!(report.abandoned.is_empty());
+        assert!(!report.applied, "nothing to apply");
+        assert_eq!(lock(&pool, 1).await, (0, Some(1)), "the input stays locked");
+        assert_eq!(lock(&pool, 2).await.0, 1, "its change untouched");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM transactions WHERE transaction_id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "unproven");
+    }
+
+    /// A tx ANY source still holds is kept.
+    #[tokio::test]
+    async fn a_held_tx_is_kept() {
+        let pool = rule_fixture().await;
+        let report = reconcile_with(&pool, 0, true, |_txid| async {
+            BroadcastVerification::Confirmed
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.kept.len(), 1);
+        assert!(report.abandoned.is_empty() && report.inconclusive.is_empty());
+        assert_eq!(lock(&pool, 1).await, (0, Some(1)));
+    }
+
+    /// DEFINITIVE absence (broadcaster JSON-404 + index 404, nothing holding
+    /// it) is the ONE verdict that abandons: inputs restored, phantom change
+    /// invalidated, tx failed — and only under --execute.
+    #[tokio::test]
+    async fn a_definitive_absence_abandons_and_restores_under_execute() {
+        let pool = rule_fixture().await;
+        let dry = reconcile_with(&pool, 0, false, |_txid| async {
+            BroadcastVerification::Rejected
+        })
+        .await
+        .unwrap();
+        assert_eq!(dry.abandoned.len(), 1);
+        assert!(!dry.applied);
+        assert_eq!(
+            lock(&pool, 1).await,
+            (0, Some(1)),
+            "dry run touches nothing"
+        );
+
+        let wet = reconcile_with(&pool, 0, true, |_txid| async {
+            BroadcastVerification::Rejected
+        })
+        .await
+        .unwrap();
+        assert!(wet.applied);
+        assert_eq!(
+            (wet.failed, wet.restored_count, wet.restored_sats),
+            (1, 1, 5000)
+        );
+        assert_eq!((wet.phantom_count, wet.phantom_sats), (1, 4000));
+        assert_eq!(lock(&pool, 1).await, (1, None), "the input is released");
+        assert_eq!(lock(&pool, 2).await.0, 0, "the phantom change is dead");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM transactions WHERE transaction_id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed");
     }
 }

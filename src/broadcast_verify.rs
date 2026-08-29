@@ -435,6 +435,23 @@ impl BroadcastVerifier {
     /// Wall-clock ceiling for the absence determination. A source that hangs
     /// must not be able to stretch the window without bound, so rounds stop once
     /// the nominal window (plus one probe timeout of slack) has elapsed.
+    /// ONE probe pass over every source (no retry window) — the verdict the
+    /// abandoned-tx reconcile needs (2026-08-29, THE RELEASE RULE): a
+    /// transaction is abandoned ONLY on DEFINITIVE absence (the broadcaster
+    /// it was submitted to answers a JSON 404 AND the chain index answers
+    /// 404, with no other source holding it). A lone index miss is
+    /// `Inconclusive` and must keep the tx: a fresh Arcade/GorillaPool-only
+    /// tx is a WoC 404 for minutes while a peer's orphan pool still holds it.
+    /// Honours `BSV_WALLET_SKIP_BROADCAST_VERIFY` like `from_env` — under it
+    /// every verdict is `Inconclusive`, so nothing is ever abandoned (the
+    /// fail-safe direction).
+    pub fn single_pass(chain: Chain) -> Self {
+        let mut v = Self::from_env(chain);
+        v.attempts = 1;
+        v.delay = Duration::ZERO;
+        v
+    }
+
     fn absence_window(&self) -> Duration {
         self.delay * self.attempts.saturating_sub(1) + PROBE_TIMEOUT
     }
@@ -594,6 +611,24 @@ mod tests {
     // =====================================================================
     // Source selection: which plane do we ask, and with what path shape?
     // =====================================================================
+
+    /// THE RELEASE RULE's verdict source: one attempt, no retry window, and
+    /// with probing disabled every verdict is Inconclusive — a sweep that
+    /// cannot look can never abandon anything.
+    #[tokio::test]
+    async fn single_pass_is_one_attempt_and_disabled_means_inconclusive() {
+        let v = BroadcastVerifier::single_pass(Chain::Main);
+        assert_eq!(v.attempts, 1);
+        assert_eq!(v.delay, Duration::ZERO);
+        let off = BroadcastVerifier {
+            enabled: false,
+            ..v
+        };
+        assert_eq!(
+            off.verify(&"cd".repeat(32)).await,
+            BroadcastVerification::Inconclusive
+        );
+    }
 
     #[test]
     fn arcade_plane_uses_bare_tx_path_not_v1() {

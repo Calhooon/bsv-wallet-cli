@@ -156,9 +156,11 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let check_wallet = wallet_state.clone();
     // Auto-reconcile abandoned transactions (#18): a never-landed `unproven` tx's
     // change must not be selected to fund — and orphan — a new transaction. Each
-    // tick we WoC-check unproven txs older than RECONCILE_ABANDONED_MIN_AGE_SECS
+    // tick we probe unproven txs older than RECONCILE_ABANDONED_MIN_AGE_SECS
     // (default 1h, so an in-flight tx still propagating is never mis-classified)
-    // and fail the ones missing on chain. Toggle off with RECONCILE_ABANDONED=0.
+    // across every broadcast source and fail ONLY the definitively absent ones
+    // (THE RELEASE RULE, 2026-08-29 — a lone index miss keeps the tx). Toggle
+    // off with RECONCILE_ABANDONED=0.
     let reconcile_chain = chain;
     let reconcile_enabled = std::env::var("RECONCILE_ABANDONED")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
