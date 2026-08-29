@@ -113,7 +113,7 @@ pub async fn reconcile(
 /// probe names the spender; a 404 there is `Unspent` ONLY when the parent
 /// itself is on chain (a phantom parent is `Unknown` — the 2026-08-27
 /// float-recovery lesson); the spender's own record says whether it mined.
-async fn probe_input_spend(
+pub(crate) async fn probe_input_spend(
     client: &reqwest::Client,
     base: &str,
     src: &str,

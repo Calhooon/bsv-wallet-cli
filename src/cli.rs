@@ -162,4 +162,15 @@ pub enum Commands {
         #[arg(long)]
         execute: bool,
     },
+    /// Re-mark spent every output a LIVE tx of this wallet already spends (DB-only), then
+    /// chain-check the remaining spendable outputs per outpoint: relinquish when a confirmed
+    /// tx spent them, keep untouched when unknown (an unknown never moves money)
+    ReconcileOutputs {
+        /// Apply changes (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+        /// Spendable outputs to chain-check per pass (run again to continue)
+        #[arg(long, default_value_t = 200)]
+        max_chain_checks: usize,
+    },
 }

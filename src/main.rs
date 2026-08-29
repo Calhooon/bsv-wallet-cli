@@ -129,6 +129,13 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::cleanup_abandoned::run(&ctx, &cli.db, *execute).await?;
         }
+        Commands::ReconcileOutputs {
+            execute,
+            max_chain_checks,
+        } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::reconcile_outputs::run(&ctx, &cli.db, *execute, *max_chain_checks).await?;
+        }
     }
 
     Ok(())
