@@ -58,7 +58,6 @@ use bsv_sdk::wallet::{
     RevealSpecificKeyLinkageResult,
     SecurityLevel,
     SignActionArgs,
-    SignActionResult,
     TrustSelf,
     VerifyHmacArgs,
     VerifySignatureArgs,

@@ -75,17 +75,18 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
             if chain_unspent.contains(&op) {
                 continue;
             }
-            let Some((txid, vout)) = op.split_once('.') else { continue };
+            let Some((txid, vout)) = op.split_once('.') else {
+                continue;
+            };
             reconcile_checked += 1;
             tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            let spent = match client
-                .get(format!("{}/tx/{}/{}/spent", base, txid, vout))
-                .send()
-                .await
-            {
-                Ok(r) if r.status().is_success() => true,
-                _ => false,
-            };
+            let spent = matches!(
+                client
+                    .get(format!("{}/tx/{}/{}/spent", base, txid, vout))
+                    .send()
+                    .await,
+                Ok(r) if r.status().is_success()
+            );
             // PHANTOM-PARENT detection (2026-08-27, the float-recovery audit):
             // the spent endpoint answers 404 both for "unspent" and for "the
             // parent tx does not exist on chain at all" — and a DB full of
