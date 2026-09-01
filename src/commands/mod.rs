@@ -18,6 +18,7 @@ pub mod receive;
 pub mod reconcile_outputs;
 pub mod send;
 pub mod serve;
+pub mod serve_fleet;
 pub mod services;
 pub mod split;
 pub mod sync;

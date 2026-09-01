@@ -128,6 +128,15 @@ pub enum Commands {
     Daemon,
     /// Run HTTP server only (no monitor)
     Serve,
+    /// ONE process serving MANY wallets (fleet mode): each --wallet
+    /// <seat-dir>:<port> serves <seat-dir>/wallet.db on its own port with the
+    /// ROOT_KEY read from <seat-dir>/.env (never process env). Per-seat port
+    /// contract unchanged; any tenant exiting ends the whole process.
+    ServeFleet {
+        /// Repeated: <seat-dir>:<port> (dir holds wallet.db + .env)
+        #[arg(long = "wallet", required = true)]
+        wallet: Vec<String>,
+    },
     /// Split UTXOs into multiple outputs for concurrency
     Split {
         /// Number of output UTXOs to create

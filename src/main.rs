@@ -104,6 +104,9 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::serve::run(ctx, cli.port).await?;
         }
+        Commands::ServeFleet { wallet } => {
+            commands::serve_fleet::run(wallet, cli.testnet).await?;
+        }
         Commands::Split { count } => {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::split::run(&ctx, *count).await?;

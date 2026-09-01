@@ -115,7 +115,12 @@ pub fn protocol_entry(
 }
 
 /// Build an entry for a spending call.
-pub fn spend_entry(method: &str, satoshis: u64, description: Option<String>, originator: &str) -> AuditEntry {
+pub fn spend_entry(
+    method: &str,
+    satoshis: u64,
+    description: Option<String>,
+    originator: &str,
+) -> AuditEntry {
     AuditEntry {
         method: method.to_string(),
         protocol_level: None,
@@ -149,8 +154,20 @@ mod tests {
     fn records_in_order_and_resets() {
         let _s = serial();
         reset();
-        record(protocol_entry("createSignature", 2, "low settle", Some("02ab".into()), None, "low.game"));
-        record(spend_entry("createAction", 20_000, Some("LOW pot JOIN funding hop".into()), "low.game"));
+        record(protocol_entry(
+            "createSignature",
+            2,
+            "low settle",
+            Some("02ab".into()),
+            None,
+            "low.game",
+        ));
+        record(spend_entry(
+            "createAction",
+            20_000,
+            Some("LOW pot JOIN funding hop".into()),
+            "low.game",
+        ));
         let s = snapshot();
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].seq, 0);
