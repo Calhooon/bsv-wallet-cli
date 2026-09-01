@@ -136,6 +136,11 @@ pub enum Commands {
         /// Repeated: <seat-dir>:<port> (dir holds wallet.db + .env)
         #[arg(long = "wallet", required = true)]
         wallet: Vec<String>,
+        /// Run each tenant's FULL daemon (monitor + auto-reconcile), not bare
+        /// HTTP — what a fleet playing back-to-back hands needs (bare serve
+        /// never proves 0-conf ancestry; the createAction-502 class returns).
+        #[arg(long)]
+        daemon: bool,
     },
     /// Split UTXOs into multiple outputs for concurrency
     Split {

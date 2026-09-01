@@ -20,6 +20,13 @@
 //! and the runner restarts the fleet. No tenant is silently missing: a fleet
 //! where seat 7 quietly died is exactly the "unknown reads as fine" shape the
 //! harness doctrine bans.
+//!
+//! `--daemon` runs each tenant's FULL daemon composition (its own monitor,
+//! auto-reconcile task, relay poller when configured) via
+//! `daemon_tenant::start` — the mode the bsv-low fleet box needs: bare
+//! HTTP-only tenants never prove 0-conf ancestry and the deep-ancestry
+//! createAction-502 class returns (the serveWallet lesson). HTTP-only mode
+//! stays for wallets something else keeps proven.
 
 use std::path::{Path, PathBuf};
 
@@ -102,6 +109,48 @@ pub fn root_key_from_env_file(env_path: &Path) -> Result<String> {
     bail!("no ROOT_KEY in {}", env_path.display())
 }
 
+/// Service-relevant env keys `services_env`/the server read from PROCESS env.
+/// A per-seat `.env` line for one of these would have applied under the
+/// per-process shape but is INVISIBLE to a shared process — so a divergent
+/// value must refuse the fleet rather than silently misconfigure one tenant.
+/// (ROOT_KEY is deliberately absent: it is read per-tenant by design.)
+pub const SHARED_ENV_KEYS: &[&str] = &[
+    "ARC_MODE",
+    "ARCADE",
+    "ARC_URL",
+    "PUBLIC_CALLBACK_URL",
+    "CALLBACK_TOKEN",
+    "CHAINTRACKS_URL",
+    "TAAL_API_KEY",
+    "MAIN_TAAL_API_KEY",
+    "AUTH_TOKEN",
+    "BIND_ADDR",
+    "RELAY_URL",
+];
+
+/// Refuse a seat whose .env sets a SHARED key to a value differing from the
+/// process env (values never printed — these are secrets).
+pub fn assert_env_uniform(env_path: &Path) -> Result<()> {
+    let iter = dotenvy::from_path_iter(env_path)
+        .with_context(|| format!("reading {}", env_path.display()))?;
+    for item in iter {
+        let (k, v) = item.with_context(|| format!("parsing {}", env_path.display()))?;
+        if SHARED_ENV_KEYS.contains(&k.as_str()) {
+            match std::env::var(&k) {
+                Ok(procv) if procv == v => {}
+                _ => bail!(
+                    "fleet env divergence: {} sets {} to a value the shared process env does not carry — \
+                     under per-process daemons that line applied; in one process it would be silently ignored. \
+                     Export it globally (identical fleet-wide) or drop the per-seat line.",
+                    env_path.display(),
+                    k
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Build one tenant's ServerConfig — the same env-driven shape `serve` builds,
 /// with the callback token resolved per-db (Arcade runtime is db-anchored).
 fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
@@ -135,20 +184,81 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
     })
 }
 
-pub async fn run(specs: &[String], testnet: bool) -> Result<()> {
+pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
     let entries = parse_fleet(specs)?;
     let n = entries.len();
+    let chain = if testnet {
+        bsv_wallet_toolbox::Chain::Test
+    } else {
+        bsv_wallet_toolbox::Chain::Main
+    };
 
-    // All contexts load BEFORE any server binds: a fleet that cannot fully
-    // start must not half-start (the runner would read partial as healthy).
-    let mut tenants = Vec::with_capacity(n);
+    // Validate EVERY seat (env uniformity + key present) BEFORE anything binds:
+    // a fleet that cannot fully start must not half-start (the runner would
+    // read partial as healthy).
+    let mut keys = Vec::with_capacity(n);
     for e in &entries {
+        let env_path = e.dir.join(".env");
+        assert_env_uniform(&env_path)?;
+        keys.push(root_key_from_env_file(&env_path)?);
+    }
+
+    if daemon {
+        // FULL daemon composition per tenant (monitor + reconcile + server).
+        let mut monitors = Vec::with_capacity(n);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(u16, Result<()>)>(n.max(1));
+        for (e, key) in entries.iter().zip(&keys) {
+            let db = e.dir.join("wallet.db");
+            let db_str = db
+                .to_str()
+                .with_context(|| format!("non-UTF8 path {}", db.display()))?;
+            let ident = super::daemon_tenant::identity_of(key)?;
+            eprintln!(
+                "[serve-fleet] {} → port {} (identity {}…, daemon)",
+                e.dir.display(),
+                e.port,
+                &ident[..12.min(ident.len())]
+            );
+            let tenant = super::daemon_tenant::start(db_str, key, chain, e.port)
+                .await
+                .with_context(|| format!("starting tenant {}", e.dir.display()))?;
+            let port = tenant.port;
+            let server = tenant.server;
+            monitors.push(tenant.monitor);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let res = match server.await {
+                    Ok(r) => r,
+                    Err(join) => Err(anyhow::anyhow!("server task panicked: {join}")),
+                };
+                let _ = tx.send((port, res)).await;
+            });
+        }
+        drop(tx);
+        eprintln!("[serve-fleet] {n} wallet(s) serving (daemon mode)");
+        let outcome = rx.recv().await;
+        // Whatever ended first, stop every monitor before exiting.
+        for m in monitors {
+            let _ = m.stop().await;
+        }
+        return match outcome {
+            Some((port, Ok(()))) => {
+                eprintln!("[serve-fleet] port {port} exited cleanly — shutting the fleet down");
+                Ok(())
+            }
+            Some((port, Err(e))) => bail!("tenant on port {port} failed: {e:#}"),
+            None => bail!("serve-fleet: no tenants ran"),
+        };
+    }
+
+    // HTTP-only mode.
+    let mut tenants = Vec::with_capacity(n);
+    for (e, key) in entries.iter().zip(&keys) {
         let db = e.dir.join("wallet.db");
         let db_str = db
             .to_str()
             .with_context(|| format!("non-UTF8 path {}", db.display()))?;
-        let key = root_key_from_env_file(&e.dir.join(".env"))?;
-        let ctx = WalletContext::load_with(db_str, &key, testnet, false)
+        let ctx = WalletContext::load_with(db_str, key, testnet, false)
             .await
             .with_context(|| format!("loading wallet {}", e.dir.display()))?;
         eprintln!(
@@ -218,6 +328,34 @@ mod tests {
             .to_string()
             .contains("duplicate seat dir"));
         assert!(parse_fleet(&[]).is_err());
+    }
+
+    #[test]
+    fn env_divergence_refused_by_name_secrets_never_printed() {
+        let dir = std::env::temp_dir().join(format!("serve-fleet-env-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_path = dir.join(".env");
+        std::fs::write(
+            &env_path,
+            "ROOT_KEY=aa\nTAAL_API_KEY=seat-specific-secret\n",
+        )
+        .unwrap();
+        // process env does not carry TAAL_API_KEY (or carries another value):
+        std::env::remove_var("TAAL_API_KEY");
+        let err = assert_env_uniform(&env_path).unwrap_err().to_string();
+        assert!(err.contains("fleet env divergence"), "{err}");
+        assert!(err.contains("TAAL_API_KEY"), "{err}");
+        assert!(
+            !err.contains("seat-specific-secret"),
+            "secret leaked: {err}"
+        );
+        // matching value passes; ROOT_KEY alone always passes
+        std::env::set_var("TAAL_API_KEY", "seat-specific-secret");
+        assert!(assert_env_uniform(&env_path).is_ok());
+        std::env::remove_var("TAAL_API_KEY");
+        std::fs::write(&env_path, "ROOT_KEY=aa\n").unwrap();
+        assert!(assert_env_uniform(&env_path).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod balance;
 pub mod cleanup_abandoned;
 pub mod compact;
 pub mod daemon;
+pub mod daemon_tenant;
 pub mod drain;
 pub mod export_beefs;
 pub mod fund;
