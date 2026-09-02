@@ -155,6 +155,12 @@ impl AppError {
             || clean.starts_with("Internal error:")
         {
             (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
+        } else if clean.starts_with("Transaction broadcast failed") {
+            // The toolbox's DEFINITIVE broadcast rejection (465 fee too low,
+            // Arcade REJECTED / DOUBLE_SPEND_ATTEMPTED, ...): the tx is already
+            // failed and its inputs released. Same code the inline presence
+            // verification uses, so clients handle both the same way.
+            (StatusCode::BAD_GATEWAY, "BROADCAST_REJECTED")
         } else if clean.starts_with("Service error:")
             || clean.starts_with("Network error:")
             || clean.starts_with("Broadcast failed:")
@@ -487,20 +493,39 @@ pub async fn create_action(
         _ => result.tx.clone(),
     };
 
-    // Fail loud if an immediate broadcast was silently dropped. `create_action`
-    // returns Ok with a txid even when ARC rejected the tx (e.g. 465 fee-too-low
-    // on a deep unconfirmed BEEF), because the toolbox misclassifies a 465 as a
-    // transient service error. Only immediate broadcasts (not no-send / delayed /
-    // external-signing) are verified. A definitive network absence → 502, so the
-    // caller sees a failure instead of a phantom (never-mined) txid.
-    if !opt_no_send && !opt_accept_delayed && result.signable_transaction.is_none() {
-        if let Some(txid_bytes) = result.txid.as_ref() {
-            let txid_hex = to_hex(txid_bytes);
-            if verifier.verify(&txid_hex).await
-                == crate::broadcast_verify::BroadcastVerification::Rejected
-            {
-                return Err(AppError::broadcast_rejected(&txid_hex));
-            }
+    // Post-broadcast follow-up (see `broadcast_follow_up`). A definitive
+    // rejection (465 fee too low, Arcade REJECTED, ...) has already surfaced
+    // above as an error from `create_action` — the toolbox fails the tx and
+    // releases its inputs. What remains:
+    //   * ACCEPTED by the broadcaster (`sendWithResults: unproven`): answer now;
+    //     the presence probe runs in the background and, on a definitive
+    //     absence, retires the tx through the toolbox's RELEASE-RULE path.
+    //   * Ambiguous (a transient service fault, `sending`): verify inline —
+    //     the one case where the client must not be told "sent" on a coin flip.
+    //     A definitive absence → tx retired, 502 BROADCAST_REJECTED.
+    //   * Not broadcast (noSend / delayed / deferred signing): nothing.
+    let disposition =
+        super::broadcast_follow_up::disposition(&result, opt_no_send, opt_accept_delayed);
+    if let Some(txid_bytes) = result.txid.as_ref() {
+        let txid_hex = to_hex(txid_bytes);
+        let probe = verifier.clone();
+        let retire_wallet = wallet.clone();
+        let outcome = super::broadcast_follow_up::follow_up(
+            disposition,
+            txid_hex.clone(),
+            move |txid| async move { probe.verify(&txid).await },
+            move |txid| async move {
+                super::broadcast_follow_up::retire_rejected_broadcast(
+                    retire_wallet.storage(),
+                    retire_wallet.services(),
+                    &txid,
+                )
+                .await;
+            },
+        )
+        .await;
+        if outcome == super::broadcast_follow_up::FollowUp::Rejected {
+            return Err(AppError::broadcast_rejected(&txid_hex));
         }
     }
 

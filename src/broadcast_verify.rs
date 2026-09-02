@@ -84,16 +84,24 @@ use reqwest::Client;
 /// declaring a verdict on indexing latency, and that is exactly how the four
 /// observed false negatives happened.
 ///
-/// 12 rounds × 2500 ms ≈ 27.5 s of wall clock gives the independent index a
-/// realistic chance to catch up before its silence is treated as evidence.
+/// ~26 s of wall clock (see [`INITIAL_DELAY_MS`] for the schedule) gives the
+/// independent index a realistic chance to catch up before its silence is
+/// treated as evidence.
 ///
 /// The cost is paid **only by transactions that really are absent everywhere**:
 /// the happy path returns on the very first probe of the broadcaster, and the
 /// caller's spending lock is already released before verification runs, so a
 /// longer window does not serialize anything.
-const DEFAULT_ATTEMPTS: u32 = 12;
-/// Default delay between probe rounds (ms). See [`DEFAULT_ATTEMPTS`].
+const DEFAULT_ATTEMPTS: u32 = 14;
+/// Default CAP on the delay between probe rounds (ms). See [`INITIAL_DELAY_MS`].
 const DEFAULT_DELAY_MS: u64 = 2500;
+/// First inter-round delay (ms). The schedule is: probe immediately, then wait
+/// 250 ms, 500 ms, 1 s, 2 s, then [`DEFAULT_DELAY_MS`] between every further
+/// round. A cleanly accepted transaction is usually visible at the broadcaster
+/// within a second, so the early rounds are cheap; the later rounds keep the
+/// total window long enough for a lagging chain index. With the defaults the
+/// gaps sum to 250+500+1000+2000 + 9×2500 = 26,250 ms.
+const INITIAL_DELAY_MS: u64 = 250;
 /// Per-request timeout for a single status probe. Deliberately shorter than the
 /// inter-round delay so one slow source cannot stretch a round past the next.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -453,7 +461,21 @@ impl BroadcastVerifier {
     }
 
     fn absence_window(&self) -> Duration {
-        self.delay * self.attempts.saturating_sub(1) + PROBE_TIMEOUT
+        (1..self.attempts)
+            .map(|round| self.delay_before_round(round))
+            .sum::<Duration>()
+            + PROBE_TIMEOUT
+    }
+
+    /// The pause before probe round `round` (1-based; round 0 is immediate):
+    /// [`INITIAL_DELAY_MS`] doubling each round, capped at the configured
+    /// delay (`BSV_WALLET_BROADCAST_VERIFY_DELAY_MS`, default
+    /// [`DEFAULT_DELAY_MS`]). A cap below the initial delay simply flattens the
+    /// schedule to the cap.
+    fn delay_before_round(&self, round: u32) -> Duration {
+        let exponent = round.saturating_sub(1).min(16);
+        let grown = Duration::from_millis(INITIAL_DELAY_MS.saturating_mul(1u64 << exponent));
+        grown.min(self.delay)
     }
 
     /// Probe the network for `txid`, returning as soon as any source reports it
@@ -489,7 +511,7 @@ impl BroadcastVerifier {
                     // would only extend the caller's wait, not the evidence.
                     break;
                 }
-                tokio::time::sleep(self.delay).await;
+                tokio::time::sleep(self.delay_before_round(attempt + 1)).await;
             }
         }
 
@@ -1054,11 +1076,108 @@ mod tests {
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
         };
-        // 11 gaps × 2.5s + 5s slack — long enough for a real mempool index to
-        // catch up, and hard-bounded so a hung source cannot extend it.
+        // 13 gaps: 250+500+1000+2000 then 9 × 2.5 s, plus 5 s slack — long
+        // enough for a real mempool index to catch up, and hard-bounded so a
+        // hung source cannot extend it.
         assert_eq!(
             v.absence_window(),
-            Duration::from_millis(27_500) + PROBE_TIMEOUT
+            Duration::from_millis(26_250) + PROBE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn probe_schedule_starts_short_grows_and_caps() {
+        // A clean tx is usually present within a second: the first re-probes
+        // come quickly, then the gaps grow to the cap so the total window stays
+        // long enough for a lagging chain index.
+        let v = BroadcastVerifier {
+            client: Client::new(),
+            sources: vec![],
+            attempts: DEFAULT_ATTEMPTS,
+            delay: Duration::from_millis(DEFAULT_DELAY_MS),
+            enabled: true,
+        };
+        let gaps: Vec<u64> = (1..v.attempts)
+            .map(|r| v.delay_before_round(r).as_millis() as u64)
+            .collect();
+        assert_eq!(
+            gaps,
+            vec![250, 500, 1000, 2000, 2500, 2500, 2500, 2500, 2500, 2500, 2500, 2500, 2500]
+        );
+        assert!(gaps.windows(2).all(|w| w[0] <= w[1]), "never shrinks");
+        assert!(
+            gaps.iter().all(|g| *g <= DEFAULT_DELAY_MS),
+            "never exceeds the cap"
+        );
+
+        // An env override below the initial delay flattens the schedule.
+        let tight = BroadcastVerifier {
+            delay: Duration::from_millis(100),
+            ..v
+        };
+        assert!(
+            (1..tight.attempts).all(|r| tight.delay_before_round(r) == Duration::from_millis(100))
+        );
+
+        // single_pass has no gaps at all.
+        let one = BroadcastVerifier::single_pass(Chain::Main);
+        assert_eq!(one.absence_window(), PROBE_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn a_present_tx_is_confirmed_on_the_first_probe_without_waiting() {
+        // The served handler's ambiguous path and the CLI send bar both call
+        // verify inline: presence must be answered by the immediate first
+        // round, never after a sleep.
+        let present = mock_status_server(StatusCode::OK).await;
+        let verifier = BroadcastVerifier {
+            client: Client::new(),
+            sources: vec![source(
+                "broadcaster",
+                &present,
+                AbsenceAuthority::Broadcaster,
+            )],
+            attempts: DEFAULT_ATTEMPTS,
+            delay: Duration::from_millis(DEFAULT_DELAY_MS),
+            enabled: true,
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(
+            verifier.verify(TXID).await,
+            BroadcastVerification::Confirmed
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(INITIAL_DELAY_MS),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absent_tx_is_retried_on_the_growing_schedule() {
+        // 4 rounds against an absent broadcaster + index under a 200 ms cap: the
+        // 250/500/1000 ms schedule flattens to 3 gaps of 200 ms, so the verdict
+        // must arrive after ~600 ms — and only after every round has run.
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = BroadcastVerifier {
+            client: Client::new(),
+            sources: vec![
+                source("broadcaster", &absent, AbsenceAuthority::Broadcaster),
+                source("chain-index", &absent, AbsenceAuthority::ChainIndex),
+            ],
+            attempts: 4,
+            delay: Duration::from_millis(200),
+            enabled: true,
+        };
+        // Schedule under a 200 ms cap: 250→200, 500→200, 1000→200.
+        assert!((1..4).all(|r| verifier.delay_before_round(r) == Duration::from_millis(200)));
+        let started = std::time::Instant::now();
+        assert_eq!(verifier.verify(TXID).await, BroadcastVerification::Rejected);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(600) && elapsed < Duration::from_millis(2_000),
+            "took {:?}",
+            elapsed
         );
     }
 }

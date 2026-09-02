@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "bsv-wallet-cli"
-version = "0.2.14"
+version = "0.2.15"
 edition = "2021"
 license = "MIT"
 authors = ["John Calhoun"]
@@ -29,7 +29,7 @@ name = "bsv-wallet-relay"
 path = "src/bin/bsv-wallet-relay.rs"
 
 [dependencies]
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.54", features = ["sqlite"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.55", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "0.3.4", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
@@ -58,9 +58,14 @@ tower = { version = "0.5", features = ["util"] }
 
 # Pinned to the sibling checkout until bsv-wallet-toolbox-rs 0.3.55 is
 # published: carries 16669d4 (CheckForProofs adopts proof-less
-# transactions — the receive-proof gap, 2026-08-29). The LOW runner image
-# copies ../bsv-wallet-toolbox-rs alongside this crate (LOW_RUNNER_TOOLBOX),
-# so the fleet CLI builds against exactly that tree. Drop this block and
-# bump the version pin above when 0.3.55 lands on crates.io.
+# transactions — the receive-proof gap, 2026-08-29), the sighash-aware
+# caller-complete funding rule (ANYONECANPAY covenant inputs get a funding
+# input + change), definitive broadcast rejections (465 / Arcade REJECTED)
+# failing create_action, `sendWithResults: unproven` on an accepted
+# broadcast, and `retire_undeliverable_txid` (the served wallet's async
+# post-broadcast retire path). The LOW runner image copies
+# ../bsv-wallet-toolbox-rs alongside this crate (LOW_RUNNER_TOOLBOX), so the
+# fleet CLI builds against exactly that tree. Drop this block when 0.3.55
+# lands on crates.io.
 [patch.crates-io]
 bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }
