@@ -221,8 +221,25 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                 }
                 // Poisoned chains: whatever a verdict (SSE, webhook, the
                 // sweep above) failed, its unproven descendants go with it.
-                match crate::broadcast_reconcile::run_sweep(&check_wallet, true).await {
-                    Ok(reports) => {
+                match crate::broadcast_reconcile::run_sweep(
+                    check_wallet.storage(),
+                    check_wallet.services(),
+                    true,
+                )
+                .await
+                {
+                    Ok(sweep) => {
+                        if sweep.locked.restored > 0 || sweep.locked.spent > 0 {
+                            tracing::warn!(
+                                restored = sweep.locked.restored,
+                                restored_sats = sweep.locked.restored_sats,
+                                spent = sweep.locked.spent,
+                                unknown = sweep.locked.unknown,
+                                port = port,
+                                "locked inputs re-checked"
+                            );
+                        }
+                        let reports = sweep.poison;
                         for r in reports
                             .iter()
                             .filter(|r| r.outcome == bsv_wallet_toolbox::PoisonOutcome::Retired)

@@ -1,9 +1,9 @@
 //! `bsv-wallet reconcile-broadcasts`: one pass of the broadcast reconciler
 //! by hand (see `broadcast_reconcile`). Dry run by default; `--execute`
-//! applies the poison retirements.
+//! applies the poison retirements and the locked-input restores.
 
 use anyhow::Result;
-use bsv_wallet_toolbox::PoisonOutcome;
+use bsv_wallet_toolbox::{LockedInputVerdict, PoisonOutcome};
 
 use crate::broadcast_reconcile::{self, ReconcileOptions};
 use crate::broadcast_verify::BroadcastVerifier;
@@ -27,7 +27,13 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
             ""
         }
     );
-    let report = broadcast_reconcile::run_pass(&ctx.wallet, &verifier, &opts).await?;
+    let report = broadcast_reconcile::run_pass(
+        ctx.wallet.storage(),
+        ctx.wallet.services(),
+        &verifier,
+        &opts,
+    )
+    .await?;
 
     if ctx.json_output {
         let retired: Vec<serde_json::Value> = report
@@ -36,6 +42,8 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
             .map(|r| {
                 serde_json::json!({
                     "root": r.root,
+                    "origin": r.origin,
+                    "climbed": r.climbed,
                     "outcome": format!("{:?}", r.outcome),
                     "executed": r.executed,
                     "chain": r.chain.iter().map(|t| serde_json::json!({
@@ -53,6 +61,22 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                 })
             })
             .collect();
+        let locked: Vec<serde_json::Value> = report
+            .locked
+            .checks
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "outputId": c.output_id,
+                    "outpoint": format!("{}:{}", c.source_txid, c.vout),
+                    "satoshis": c.satoshis,
+                    "lockedBy": c.locked_by,
+                    "verdict": format!("{:?}", c.verdict),
+                    "attempts": c.attempts,
+                    "nextCheckMinutes": c.next_check_minutes,
+                })
+            })
+            .collect();
         println!(
             "{}",
             serde_json::json!({
@@ -61,13 +85,22 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                 "candidates": report.candidates,
                 "fresh": report.fresh,
                 "probed": report.probed,
-                "seen": report.seen,
-                "mined": report.mined,
+                "chainSeen": report.seen,
+                "chainMined": report.mined,
                 "held": report.held,
                 "inconclusive": report.inconclusive,
-                "absent": report.absent.iter().map(|(t, m)| serde_json::json!({"txid": t, "minutes": m})).collect::<Vec<_>>(),
+                "absent": report.absent.iter().map(|(t, m)| serde_json::json!({"txid": t, "ageMinutes": m})).collect::<Vec<_>>(),
                 "fatal": report.fatal,
                 "retired": retired,
+                "lockedInputs": {
+                    "adopted": report.locked.adopted,
+                    "due": report.locked.due,
+                    "restored": report.locked.restored,
+                    "restoredSats": report.locked.restored_sats,
+                    "spent": report.locked.spent,
+                    "unknown": report.locked.unknown,
+                    "checks": locked,
+                },
             })
         );
         return Ok(());
@@ -85,26 +118,26 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         );
     }
     println!(
-        "Candidates: {} unproven/stale-sending; {} with fresh network evidence, {} probed.",
+        "Candidates: {} unproven/stale-sending; {} with fresh chain evidence, {} probed.",
         report.candidates, report.fresh, report.probed
     );
     for txid in &report.seen {
-        println!("    seen on the network: {}", txid);
+        println!("    chain index has it: {}", txid);
     }
     for txid in &report.mined {
         println!("    mined: {}", txid);
     }
     for txid in &report.held {
-        println!("    held by a store, no network evidence: {}", txid);
+        println!("    held by a store, chain index gave no answer: {}", txid);
     }
     for txid in &report.inconclusive {
         println!("    inconclusive (kept): {}", txid);
     }
-    for (txid, minutes) in &report.absent {
+    for (txid, age) in &report.absent {
         println!(
-            "    ABSENT from every network source for {} min{}: {}",
-            minutes,
-            if *minutes >= opts.absence_minutes {
+            "    ABSENT from the chain index (the broadcaster holds it), {} min old{}: {}",
+            age,
+            if *age >= opts.absence_minutes {
                 " (past the threshold)"
             } else {
                 ""
@@ -122,11 +155,21 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         println!();
         println!("Poisoned chains:");
         for r in &report.retired {
+            let climb = if r.climbed.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " (climbed from {} through {} step(s))",
+                    r.origin,
+                    r.climbed.len()
+                )
+            };
             match &r.outcome {
                 PoisonOutcome::Retired => {
                     println!(
-                        "  root {} : {} transaction(s) {}",
+                        "  root {}{} : {} transaction(s) {}",
                         r.root,
+                        climb,
                         r.retirable_txids().len(),
                         if r.executed {
                             "retired"
@@ -145,7 +188,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                     }
                     if r.executed {
                         println!(
-                            "      failed {}, inputs restored {} ({} sats), kept locked {}, outputs invalidated {} ({} sats)",
+                            "      failed {}, inputs restored {} ({} sats), kept locked {} (re-checked with backoff), outputs invalidated {} ({} sats)",
                             r.failed, r.restored, r.restored_sats, r.kept, r.invalidated, r.invalidated_sats
                         );
                         for p in &r.internalized {
@@ -157,12 +200,15 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                     }
                 }
                 PoisonOutcome::Alive => {
-                    println!("  root {} : alive per the status service, kept", r.root);
+                    println!(
+                        "  root {}{} : alive per the status service, kept",
+                        r.root, climb
+                    );
                 }
                 PoisonOutcome::Refused { proven_txid } => {
                     println!(
-                        "  root {} : REFUSED, descendant {} is proven",
-                        r.root, proven_txid
+                        "  root {}{} : REFUSED, descendant {} is proven",
+                        r.root, climb, proven_txid
                     );
                 }
                 PoisonOutcome::NotFound => {
@@ -172,11 +218,46 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         }
     }
 
+    let locked = &report.locked;
+    if locked.due > 0 || locked.adopted > 0 {
+        println!();
+        println!(
+            "Locked inputs of failed transactions: {} adopted, {} due, {} restored ({} sats), {} spent (left), {} undecided (backoff), {} dropped.",
+            locked.adopted, locked.due, locked.restored, locked.restored_sats, locked.spent, locked.unknown, locked.dropped
+        );
+        for c in &locked.checks {
+            let what = match c.verdict {
+                LockedInputVerdict::Restored => {
+                    if execute {
+                        "UNSPENT on chain: restored to coin selection".to_string()
+                    } else {
+                        "UNSPENT on chain: would be restored".to_string()
+                    }
+                }
+                LockedInputVerdict::Spent => {
+                    "SPENT on chain by another transaction: left locked".to_string()
+                }
+                LockedInputVerdict::Unknown => format!(
+                    "undecided (attempt {}), next re-check in {} min",
+                    c.attempts,
+                    c.next_check_minutes.unwrap_or(0)
+                ),
+                LockedInputVerdict::Phantom => "source is a retired phantom: dropped".to_string(),
+                LockedInputVerdict::Released => "no longer locked: dropped".to_string(),
+            };
+            println!(
+                "    {}:{} ({} sats, locked by {}): {}",
+                c.source_txid, c.vout, c.satoshis, c.locked_by, what
+            );
+        }
+    }
+
     if !execute
-        && report
+        && (report
             .retired
             .iter()
             .any(|r| r.outcome == PoisonOutcome::Retired)
+            || locked.restored > 0)
     {
         println!();
         println!("Dry run. Re-run with --execute to apply.");
