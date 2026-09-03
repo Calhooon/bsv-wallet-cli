@@ -194,6 +194,7 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         // Layer ordering: CORS (outermost) → auth → trace → body limit
         .layer(cors)
         .layer(middleware::from_fn(auth_middleware))
+        .layer(middleware::from_fn(lenient_json_body))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -289,6 +290,105 @@ async fn arc_callback(
     }
 }
 
+/// Browser wallets accept JSON whose strings carry lone UTF-16 surrogate escapes
+/// (`"\ud83d"` without its pair); serde does not, so a page whose keyID or data
+/// happened to contain one got `400 Failed to parse the request body as JSON:
+/// keyID: lone leading surrogate` from this wallet while MetaNet Desktop served
+/// the same call (beta soak, 2026-09-02, two logins lost). A browser's encoder
+/// turns such a code unit into U+FFFD when it hashes the string, so the same
+/// substitution here yields the same bytes the JS wallet would derive from.
+pub fn sanitize_lone_surrogates(input: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !input.windows(2).any(|w| w == b"\\u") {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    let hex4 = |b: &[u8]| -> Option<u32> {
+        if b.len() < 4 {
+            return None;
+        }
+        std::str::from_utf8(&b[..4])
+            .ok()
+            .and_then(|h| u32::from_str_radix(h, 16).ok())
+    };
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    let mut changed = false;
+    while i < input.len() {
+        if input[i] == b'\\' && i + 1 < input.len() && input[i + 1] == b'u' {
+            if let Some(cu) = hex4(&input[i + 2..]) {
+                let is_lead = (0xD800..=0xDBFF).contains(&cu);
+                let is_trail = (0xDC00..=0xDFFF).contains(&cu);
+                if is_lead {
+                    let next = &input[i + 6..];
+                    let paired = next.len() >= 6
+                        && next[0] == b'\\'
+                        && next[1] == b'u'
+                        && hex4(&next[2..]).is_some_and(|t| (0xDC00..=0xDFFF).contains(&t));
+                    if paired {
+                        out.extend_from_slice(&input[i..i + 12]);
+                        i += 12;
+                        continue;
+                    }
+                    out.extend_from_slice(b"\\ufffd");
+                    changed = true;
+                    i += 6;
+                    continue;
+                }
+                if is_trail {
+                    out.extend_from_slice(b"\\ufffd");
+                    changed = true;
+                    i += 6;
+                    continue;
+                }
+                out.extend_from_slice(&input[i..i + 6]);
+                i += 6;
+                continue;
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+    if changed {
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(input)
+    }
+}
+
+/// Rewrite lone surrogate escapes in JSON request bodies before the `Json`
+/// extractors see them (see [`sanitize_lone_surrogates`]).
+async fn lenient_json_body(request: Request, next: Next) -> Response {
+    let is_json = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.to_ascii_lowercase().contains("json"));
+    if !is_json {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, 50 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(json!({"code": "TOO_LARGE", "message": "payload too large"})),
+            )
+                .into_response();
+        }
+    };
+    let body = match sanitize_lone_surrogates(&bytes) {
+        std::borrow::Cow::Borrowed(_) => axum::body::Body::from(bytes),
+        std::borrow::Cow::Owned(fixed) => {
+            tracing::warn!(
+                path = %parts.uri.path(),
+                "json body carried a lone UTF-16 surrogate escape; substituted U+FFFD"
+            );
+            axum::body::Body::from(fixed)
+        }
+    };
+    next.run(Request::from_parts(parts, body)).await
+}
+
 pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result<()> {
     let tls = config.tls.clone();
     let bind_addr = config.bind_addr;
@@ -356,4 +456,33 @@ async fn permission_audit() -> Json<serde_json::Value> {
 async fn permission_audit_reset() -> Json<serde_json::Value> {
     audit::reset();
     Json(json!({ "ok": true }))
+}
+
+#[cfg(test)]
+mod lenient_json_tests {
+    use super::sanitize_lone_surrogates;
+
+    #[test]
+    fn lone_lead_and_lone_trail_become_fffd_and_pairs_survive() {
+        let lead = br#"{"keyID":"ab \ud83d cd"}"#;
+        assert_eq!(
+            &*sanitize_lone_surrogates(lead),
+            br#"{"keyID":"ab \ufffd cd"}"#
+        );
+        let trail = br#"{"keyID":"\udc00"}"#;
+        assert_eq!(&*sanitize_lone_surrogates(trail), br#"{"keyID":"\ufffd"}"#);
+        let pair = br#"{"keyID":"\ud83d\ude00"}"#;
+        assert!(matches!(
+            sanitize_lone_surrogates(pair),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        let plain = br#"{"keyID":"plain \\u0041"}"#;
+        assert!(matches!(
+            sanitize_lone_surrogates(plain),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        let fixed = sanitize_lone_surrogates(lead);
+        let v: serde_json::Value = serde_json::from_slice(&fixed).unwrap();
+        assert_eq!(v["keyID"], "ab \u{fffd} cd");
+    }
 }
