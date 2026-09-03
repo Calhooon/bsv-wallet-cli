@@ -91,8 +91,8 @@
 use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::{
-    services::ARCADE_V2_MAINNET, BroadcastStatus, Chain, BROADCAST_PROVIDER_NETWORK,
-    PROVIDER_ARCADE_V2,
+    services::ARCADE_V2_MAINNET, BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN,
+    BROADCAST_PROVIDER_NETWORK, PROVIDER_ARCADE_V2,
 };
 use reqwest::Client;
 
@@ -189,26 +189,48 @@ impl NetworkEvidence {
     }
 }
 
+/// What the chain index (WhatsOnChain) answered in the last probe round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainIndexAnswer {
+    /// It holds the transaction (mempool or chain).
+    Present(NetworkEvidence),
+    /// It answered 404: not in its mempool, not on chain.
+    Absent,
+    /// Not asked, unreachable, or no chain index configured.
+    Unknown,
+}
+
 /// Everything one verification learned, for callers that act on more than
 /// the verdict (the broadcast memory, the absence clock).
+///
+/// Evidence is graded by where it came from. The chain index is the only
+/// plane whose answer is chain evidence ([`PresenceReport::chain_index`]);
+/// a broadcaster's `SEEN_MULTIPLE_NODES` is that provider's evidence (good
+/// for its reduced sends, credited under its name) and nothing more: on
+/// 2026-09-02 Arcade reported it two hours later for transactions the chain
+/// index never saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresenceReport {
     /// The verdict (`verify`'s answer).
     pub verification: BroadcastVerification,
-    /// Network-level evidence from some source, if any.
+    /// The best network-level evidence from any source, if any.
     pub evidence: Option<NetworkEvidence>,
     /// The broadcast-memory provider to credit with `evidence`:
-    /// [`PROVIDER_ARCADE_V2`] when the Arcade plane reported it,
-    /// [`BROADCAST_PROVIDER_NETWORK`] otherwise (a chain index, a third-party
-    /// store: the whole network has it).
+    /// [`BROADCAST_PROVIDER_CHAIN`] for a chain-index hit,
+    /// [`BROADCAST_PROVIDER_NETWORK`] for a third-party store (a peer node
+    /// has it), [`PROVIDER_ARCADE_V2`] when only the Arcade plane reported
+    /// it.
     pub evidence_provider: &'static str,
+    /// The chain index's own answer.
+    pub chain_index: ChainIndexAnswer,
     /// The broadcaster we submitted through reports a fatal verdict
     /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`).
     pub broadcaster_fatal: bool,
-    /// In the last probe round no source gave network evidence, the chain
-    /// index answered absent and the broadcaster answered (held, absent or
-    /// fatal): the transaction is not on the network right now. The absence
-    /// clock advances on it; it is NOT a verdict by itself.
+    /// In the last probe round the chain index answered absent, the
+    /// broadcaster answered (held, seen, absent or fatal) and no third-party
+    /// node vouched for the transaction: it is not on the network right
+    /// now, whatever the broadcaster says. The reconciler's absence rule
+    /// acts on it; it is NOT a verdict by itself.
     pub network_absent: bool,
 }
 
@@ -219,6 +241,7 @@ impl PresenceReport {
             verification,
             evidence: None,
             evidence_provider: BROADCAST_PROVIDER_NETWORK,
+            chain_index: ChainIndexAnswer::Unknown,
             broadcaster_fatal: false,
             network_absent: false,
         }
@@ -601,12 +624,16 @@ impl BroadcastVerifier {
     }
 
     /// [`BroadcastVerifier::verify`] with everything the probes learned: the
-    /// network evidence (and which plane gave it), a fatal verdict from the
-    /// broadcaster, and whether the transaction is absent from the network
-    /// right now. Returns as soon as any source gives NETWORK evidence; a
-    /// source merely holding the tx does not end the round (a later source
-    /// may still vouch for the network), but it does make the verdict
-    /// `Confirmed`.
+    /// network evidence (and which plane gave it), the chain index's own
+    /// answer, a fatal verdict from the broadcaster, and whether the
+    /// transaction is absent from the network right now.
+    ///
+    /// A chain-index hit ends the verification at once (chain evidence
+    /// settles everything). A round in which a store holds or has seen the
+    /// tx ends the verification too (the verdict is `Confirmed` and cannot
+    /// become `Rejected`), but only after the chain index has been asked in
+    /// that round: a broadcaster's `SEEN` never stands in for the chain
+    /// index. Absence keeps probing until the window ends.
     pub async fn verify_report(&self, txid: &str) -> PresenceReport {
         let mut report = PresenceReport::from_verification(BroadcastVerification::Inconclusive);
         if !self.enabled || self.sources.is_empty() {
@@ -623,19 +650,28 @@ impl BroadcastVerifier {
             let mut round = RoundResult::default();
             for src in &self.sources {
                 match probe(&self.client, src, txid).await {
-                    // Doctrine: a positive answer may be trusted from any
-                    // source. Network evidence ends the verification.
                     Presence::Present(evidence) => {
-                        report.verification = BroadcastVerification::Confirmed;
-                        report.evidence = Some(evidence);
-                        report.evidence_provider = if src.kind == SourceKind::Arcade
-                            && src.absence == AbsenceAuthority::Broadcaster
-                        {
-                            PROVIDER_ARCADE_V2
+                        if src.kind == SourceKind::ChainIndex {
+                            // Chain evidence: the answer for everyone.
+                            report.verification = BroadcastVerification::Confirmed;
+                            report.evidence = Some(evidence);
+                            report.evidence_provider = BROADCAST_PROVIDER_CHAIN;
+                            report.chain_index = ChainIndexAnswer::Present(evidence);
+                            return report;
+                        }
+                        if src.absence == AbsenceAuthority::Broadcaster {
+                            round.broadcaster_answered = true;
+                            let provider = if src.kind == SourceKind::Arcade {
+                                PROVIDER_ARCADE_V2
+                            } else {
+                                BROADCAST_PROVIDER_NETWORK
+                            };
+                            round.broadcaster_evidence = Some((evidence, provider));
                         } else {
-                            BROADCAST_PROVIDER_NETWORK
-                        };
-                        return report;
+                            // A peer node we did not submit to holds it as a
+                            // non-orphan: the network has it.
+                            round.third_party_evidence = Some(evidence);
+                        }
                     }
                     Presence::Held => {
                         round.held = true;
@@ -657,14 +693,15 @@ impl BroadcastVerifier {
                     Presence::Unknown => {}
                 }
             }
-            let held = round.held;
+            let settled = round.held
+                || round.broadcaster_evidence.is_some()
+                || round.third_party_evidence.is_some();
             last = Some(round);
 
-            // A store holding the tx settles the verdict (Confirmed): the
-            // window exists to give absence time to become definitive, and
-            // nothing about a held transaction is absent. (Network evidence
-            // for the memory, if any comes, is the reconciler's business.)
-            if held {
+            // A store holding (or having seen) the tx settles the verdict
+            // (Confirmed): the window exists to give absence time to become
+            // definitive, and nothing about a held transaction is absent.
+            if settled {
                 break;
             }
 
@@ -680,8 +717,27 @@ impl BroadcastVerifier {
 
         if let Some(round) = last {
             report.broadcaster_fatal = round.fatal;
-            report.network_absent = round.votes.chain_index && round.broadcaster_answered;
-            report.verification = if round.held {
+            report.chain_index = if round.votes.chain_index {
+                ChainIndexAnswer::Absent
+            } else {
+                ChainIndexAnswer::Unknown
+            };
+            // A peer node's evidence is more independent than the
+            // broadcaster's own: prefer it, and let it block the absence.
+            if let Some(evidence) = round.third_party_evidence {
+                report.evidence = Some(evidence);
+                report.evidence_provider = BROADCAST_PROVIDER_NETWORK;
+            } else if let Some((evidence, provider)) = round.broadcaster_evidence {
+                report.evidence = Some(evidence);
+                report.evidence_provider = provider;
+            }
+            report.network_absent = round.votes.chain_index
+                && round.broadcaster_answered
+                && round.third_party_evidence.is_none();
+            let held = round.held
+                || round.broadcaster_evidence.is_some()
+                || round.third_party_evidence.is_some();
+            report.verification = if held {
                 BroadcastVerification::Confirmed
             } else if round.votes.is_definitive() {
                 BroadcastVerification::Rejected
@@ -691,18 +747,66 @@ impl BroadcastVerifier {
         }
         report
     }
+
+    /// A verifier over an explicit broadcaster and chain index (tests and
+    /// tools; the binary reaches it through the library): one round, no
+    /// delay. `arcade` selects the Arcade status
+    /// path (`{base}/tx/{txid}`) and body vocabulary; classic ARC uses
+    /// `{base}/v1/tx/{txid}`. The chain index is probed at
+    /// `{base}/tx/hash/{txid}`.
+    #[allow(dead_code)]
+    pub fn explicit(arcade: bool, broadcaster_base: &str, chain_index_base: Option<&str>) -> Self {
+        let plane = if arcade {
+            BroadcastPlane::ArcadeV2 {
+                base: normalize_base(broadcaster_base),
+            }
+        } else {
+            BroadcastPlane::ClassicArc {
+                base: normalize_base(broadcaster_base),
+            }
+        };
+        let mut sources = vec![StatusSource {
+            name: plane.name(),
+            url_template: plane.status_template(),
+            auth: None,
+            absence: AbsenceAuthority::Broadcaster,
+            kind: plane.kind(),
+        }];
+        if let Some(base) = chain_index_base {
+            sources.push(StatusSource {
+                name: "chain-index",
+                url_template: format!("{}/tx/hash/{{txid}}", normalize_base(base)),
+                auth: None,
+                absence: AbsenceAuthority::ChainIndex,
+                kind: SourceKind::ChainIndex,
+            });
+        }
+        Self {
+            client: Client::new(),
+            sources,
+            attempts: 1,
+            delay: Duration::ZERO,
+            enabled: true,
+        }
+    }
 }
 
-/// What one probe round learned when no source gave network evidence.
+/// What one probe round learned when the chain index did not hold the tx.
 #[derive(Debug, Clone, Copy, Default)]
 struct RoundResult {
     votes: AbsenceVotes,
     /// Some source holds the tx (no network evidence).
     held: bool,
-    /// The broadcaster we submitted through answered (held, absent or fatal).
+    /// The broadcaster we submitted through answered (held, seen, absent or
+    /// fatal).
     broadcaster_answered: bool,
     /// The broadcaster reported a fatal verdict.
     fatal: bool,
+    /// The broadcaster reported network-level presence (its plane's word,
+    /// with the provider to credit).
+    broadcaster_evidence: Option<(NetworkEvidence, &'static str)>,
+    /// A store we did not submit to reported network-level presence.
+    third_party_evidence: Option<NetworkEvidence>,
 }
 
 /// Read a 200 body according to the source kind.
@@ -1424,7 +1528,87 @@ mod tests {
         assert_eq!(report.verification, BroadcastVerification::Confirmed);
         assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
         assert_eq!(report.evidence_provider, PROVIDER_ARCADE_V2);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Unknown);
         assert!(!report.network_absent && !report.broadcaster_fatal);
+    }
+
+    #[tokio::test]
+    async fn a_broadcasters_seen_with_a_chain_index_miss_is_network_absent() {
+        // The 2026-09-02 phantom roots: Arcade still says SEEN_MULTIPLE_NODES
+        // two hours later, the chain index has never seen them. The
+        // broadcaster's word is its own evidence (credited to Arcade), not
+        // the chain's: the report says absent.
+        let seen =
+            mock_status_server_body(r#"{"txid":"x","txStatus":"SEEN_MULTIPLE_NODES"}"#).await;
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &seen,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                &absent,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
+        assert_eq!(report.evidence_provider, PROVIDER_ARCADE_V2);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Absent);
+        assert!(
+            report.network_absent,
+            "the chain index was asked and said no"
+        );
+        assert!(!report.broadcaster_fatal);
+
+        // The explicit constructor builds exactly that pair.
+        let explicit = BroadcastVerifier::explicit(true, &seen, Some(&absent));
+        assert_eq!(explicit.sources.len(), 2);
+        assert_eq!(explicit.sources[0].kind, SourceKind::Arcade);
+        assert_eq!(explicit.sources[1].kind, SourceKind::ChainIndex);
+        let report = explicit.verify_report(TXID).await;
+        assert!(report.network_absent);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Absent);
+    }
+
+    #[tokio::test]
+    async fn a_peer_nodes_seen_blocks_the_absence() {
+        // A third-party store holding the tx as a non-orphan means a node of
+        // the network has it: the chain index is merely lagging.
+        let held = mock_status_server_body(r#"{"txid":"x","txStatus":"RECEIVED"}"#).await;
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let peer = mock_status_server_body(r#"{"txid":"x","txStatus":"SEEN_ON_NETWORK"}"#).await;
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &held,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                &absent,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+            source_kind(
+                "arc-third-party",
+                &peer,
+                AbsenceAuthority::None,
+                SourceKind::ClassicArc,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
+        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_NETWORK);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Absent);
+        assert!(!report.network_absent);
     }
 
     #[tokio::test]
@@ -1520,7 +1704,11 @@ mod tests {
         let report = verifier.verify_report(TXID).await;
         assert_eq!(report.verification, BroadcastVerification::Confirmed);
         assert_eq!(report.evidence, Some(NetworkEvidence::Mined));
-        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_NETWORK);
+        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_CHAIN);
+        assert_eq!(
+            report.chain_index,
+            ChainIndexAnswer::Present(NetworkEvidence::Mined)
+        );
         assert!(!report.network_absent);
     }
 
