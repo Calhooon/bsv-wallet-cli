@@ -421,6 +421,51 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         println!("Nothing to clean up.");
         return Ok(());
     }
+
+    // Everything this wallet built on an abandoned transaction is a phantom
+    // too (the poisoned chain, 2026-09-02): the toolbox walks the unproven
+    // descendants under THE RELEASE RULE. On a dry run it only lists them.
+    let mut descendants_retired = 0usize;
+    for txid in report.abandoned.iter().chain(report.conflicted.iter()) {
+        let poison = ctx
+            .wallet
+            .storage()
+            .retire_poisoned_chain(ctx.wallet.services(), txid, "invalid", execute)
+            .await?;
+        let descendants: Vec<_> = poison.chain.iter().filter(|t| t.depth > 0).collect();
+        if descendants.is_empty() {
+            continue;
+        }
+        println!(
+            "    {} unproven descendant(s) of {} {}:",
+            descendants.len(),
+            txid,
+            if execute {
+                "retired"
+            } else {
+                "would be retired"
+            }
+        );
+        for tx in &descendants {
+            println!(
+                "        depth {} {} ({}{})",
+                tx.depth,
+                tx.txid,
+                tx.status,
+                if tx.is_outgoing { "" } else { ", received" }
+            );
+        }
+        if poison.executed {
+            descendants_retired += poison.retirable_txids().len();
+            for p in &poison.internalized {
+                println!(
+                    "        internalized payment {}:{} ({} sats) traces to a phantom source: unspendable",
+                    p.txid, p.vout, p.satoshis
+                );
+            }
+        }
+    }
+
     if !execute {
         println!();
         println!("Dry run. Re-run with --execute to apply.");
@@ -429,6 +474,9 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
 
     println!();
     println!("Applied:");
+    if descendants_retired > 0 {
+        println!("  Descendant transactions retired: {}", descendants_retired);
+    }
     println!("  Transactions marked failed: {}", report.failed);
     println!(
         "  Inputs restored to spendable (verified unspent): {} ({} sats)",

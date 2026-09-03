@@ -16,6 +16,7 @@ pub mod identity;
 pub mod init;
 pub mod outputs;
 pub mod receive;
+pub mod reconcile_broadcasts;
 pub mod reconcile_outputs;
 pub mod send;
 pub mod serve;

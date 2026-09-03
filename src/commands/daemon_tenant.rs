@@ -219,6 +219,27 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                         tracing::debug!("abandoned-tx reconcile skipped: {}", e);
                     }
                 }
+                // Poisoned chains: whatever a verdict (SSE, webhook, the
+                // sweep above) failed, its unproven descendants go with it.
+                match crate::broadcast_reconcile::run_sweep(&check_wallet, true).await {
+                    Ok(reports) => {
+                        for r in reports
+                            .iter()
+                            .filter(|r| r.outcome == bsv_wallet_toolbox::PoisonOutcome::Retired)
+                        {
+                            tracing::warn!(
+                                root = %r.root,
+                                txs = r.retirable_txids().len(),
+                                restored = r.restored,
+                                invalidated = r.invalidated,
+                                internalized = r.internalized.len(),
+                                port = port,
+                                "auto-retired a poisoned chain"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::debug!("poisoned-chain sweep skipped: {}", e),
+                }
             }
         }
     });

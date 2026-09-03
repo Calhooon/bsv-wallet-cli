@@ -176,6 +176,18 @@ pub enum Commands {
         #[arg(long)]
         execute: bool,
     },
+    /// Probe unproven txs for network presence (broadcaster, chain index), credit the
+    /// broadcast memory, and retire phantom chains: a REJECTED tx, or one absent from
+    /// every network source past BROADCAST_ABSENCE_MINUTES, together with every unproven
+    /// descendant (inputs released only on chain verification)
+    ReconcileBroadcasts {
+        /// Apply changes (default is dry-run; probes run either way)
+        #[arg(long)]
+        execute: bool,
+        /// Unproven transactions to probe this pass (run again to continue)
+        #[arg(long, default_value_t = 200)]
+        max_probes: usize,
+    },
     /// Re-mark spent every output a LIVE tx of this wallet already spends (DB-only), then
     /// chain-check the remaining spendable outputs per outpoint: relinquish when a confirmed
     /// tx spent them, keep untouched when unknown (an unknown never moves money)

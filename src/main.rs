@@ -1,6 +1,7 @@
 mod arc_ingest;
 mod atomic_beef;
 mod brc29;
+mod broadcast_reconcile;
 mod broadcast_verify;
 mod cli;
 mod commands;
@@ -131,6 +132,13 @@ async fn main() -> Result<()> {
         Commands::CleanupAbandoned { execute } => {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::cleanup_abandoned::run(&ctx, &cli.db, *execute).await?;
+        }
+        Commands::ReconcileBroadcasts {
+            execute,
+            max_probes,
+        } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::reconcile_broadcasts::run(&ctx, *execute, *max_probes).await?;
         }
         Commands::ReconcileOutputs {
             execute,

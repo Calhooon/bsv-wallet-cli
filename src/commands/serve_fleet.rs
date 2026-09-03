@@ -274,10 +274,19 @@ pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(u16, Result<()>)>(n.max(1));
     for (ctx, port) in tenants {
         let config = tenant_config(&ctx)?;
+        let chain = ctx.chain;
+        let db_path = ctx.db_path.clone();
         let state = server::make_wallet_state(ctx.wallet);
+        // Bare serve has no monitor: each tenant gets its own broadcast
+        // reconciler (every 60 s, bounded).
+        let reconcile =
+            crate::broadcast_reconcile::spawn_serve_loop(state.clone(), chain, &db_path);
         let tx = tx.clone();
         tokio::spawn(async move {
             let res = server::run(state, port, config).await;
+            if let Some(handle) = reconcile {
+                handle.abort();
+            }
             let _ = tx.send((port, res)).await;
         });
     }
