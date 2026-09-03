@@ -18,10 +18,20 @@
 //!   run the presence verification in the **background** — on a definitive
 //!   `Rejected` verdict the tx is failed and its inputs released through the
 //!   toolbox's RELEASE-RULE path (`retire_undeliverable_txid`: alive-check,
-//!   per-input chain verification, own outputs unspendable);
+//!   per-input chain verification, own outputs unspendable, and since 0.3.58
+//!   every unproven descendant retired with it);
 //! * keep the **inline** verification ONLY for an **ambiguous** result — a
 //!   transient service fault where the transaction may or may not be out, the
 //!   one case where the client must not be told "sent" on a coin flip.
+//!
+//! # The broadcast memory (0.3.58)
+//!
+//! The background probe is also the served wallet's only source of NETWORK
+//! evidence (a `serve` has no monitor). When it finds the transaction seen on
+//! the network, [`apply_presence_report`] records `seen` for the txid AND for
+//! every unproven ancestor the package carried: presence of the child implies
+//! the parents connected, and only `seen` lets the next broadcast leave an
+//! ancestor out of the package. An acceptance alone never does (2026-09-02).
 //!
 //! The decision (`disposition`) and the follow-up mechanics (`follow_up`) are
 //! pure over injected closures so the timing contract is testable without a
@@ -30,9 +40,11 @@
 use std::future::Future;
 
 use bsv_sdk::wallet::{CreateActionResult, SendWithResultStatus};
-use bsv_wallet_toolbox::{RetireOutcome, StorageSqlx, WalletServices};
+use bsv_wallet_toolbox::{
+    BroadcastMemory, MonitorStorage, RetireOutcome, StorageSqlx, WalletServices,
+};
 
-use crate::broadcast_verify::BroadcastVerification;
+use crate::broadcast_verify::{BroadcastVerification, NetworkEvidence, PresenceReport};
 
 /// How the immediate broadcast of a `create_action` went, as far as the wallet
 /// could tell.
@@ -88,32 +100,40 @@ pub enum FollowUp {
 /// Run the post-broadcast verification for `txid` according to `disposition`.
 ///
 /// * `NotBroadcast`: nothing happens.
-/// * `Accepted`: `verify` is SPAWNED; this function returns at once. If the
-///   verdict is `Rejected`, `on_rejected` runs in that background task.
-/// * `Ambiguous`: `verify` is AWAITED; a `Rejected` verdict runs `on_rejected`
-///   before returning [`FollowUp::Rejected`].
+/// * `Accepted`: `verify` is SPAWNED; this function returns at once. The
+///   report is handed to `on_report` in that background task.
+/// * `Ambiguous`: `verify` is AWAITED and its report handed to `on_report`
+///   before returning; a `Rejected` verdict returns [`FollowUp::Rejected`].
 ///
-/// A `Confirmed` or `Inconclusive` verdict never touches the transaction: an
-/// absence must be definitive before any money moves (see `broadcast_verify`).
+/// `on_report` is where the wallet acts (see [`apply_presence_report`]): a
+/// `Rejected` verdict retires the transaction, network evidence feeds the
+/// broadcast memory, and a `Confirmed`-but-held or `Inconclusive` report
+/// touches no money (an absence must be definitive before any money moves,
+/// see `broadcast_verify`).
 pub async fn follow_up<V, VF, R, RF>(
     disposition: BroadcastDisposition,
     txid: String,
     verify: V,
-    on_rejected: R,
+    on_report: R,
 ) -> FollowUp
 where
     V: FnOnce(String) -> VF + Send + 'static,
-    VF: Future<Output = BroadcastVerification> + Send + 'static,
-    R: FnOnce(String) -> RF + Send + 'static,
+    VF: Future<Output = PresenceReport> + Send + 'static,
+    R: FnOnce(String, PresenceReport) -> RF + Send + 'static,
     RF: Future<Output = ()> + Send + 'static,
 {
     match disposition {
         BroadcastDisposition::NotBroadcast => FollowUp::Proceed,
         BroadcastDisposition::Accepted => {
             tokio::spawn(async move {
-                match verify(txid.clone()).await {
+                let report = verify(txid.clone()).await;
+                match report.verification {
                     BroadcastVerification::Confirmed => {
-                        tracing::debug!(txid = %txid, "post-broadcast verification: present");
+                        tracing::debug!(
+                            txid = %txid,
+                            evidence = ?report.evidence,
+                            "post-broadcast verification: present"
+                        );
                     }
                     BroadcastVerification::Inconclusive => {
                         tracing::info!(
@@ -126,25 +146,87 @@ where
                             txid = %txid,
                             "post-broadcast verification: ACCEPTED by the broadcaster but definitively absent afterwards — retiring"
                         );
-                        on_rejected(txid).await;
                     }
                 }
+                on_report(txid, report).await;
             });
             FollowUp::Proceed
         }
-        BroadcastDisposition::Ambiguous => match verify(txid.clone()).await {
-            BroadcastVerification::Rejected => {
+        BroadcastDisposition::Ambiguous => {
+            let report = verify(txid.clone()).await;
+            let verification = report.verification;
+            if verification == BroadcastVerification::Rejected {
                 tracing::warn!(
                     txid = %txid,
                     "ambiguous broadcast verified definitively absent — retiring and failing the request"
                 );
-                on_rejected(txid).await;
-                FollowUp::Rejected
             }
-            BroadcastVerification::Confirmed | BroadcastVerification::Inconclusive => {
-                FollowUp::Proceed
+            on_report(txid, report).await;
+            match verification {
+                BroadcastVerification::Rejected => FollowUp::Rejected,
+                BroadcastVerification::Confirmed | BroadcastVerification::Inconclusive => {
+                    FollowUp::Proceed
+                }
             }
-        },
+        }
+    }
+}
+
+/// Act on a presence report for `txid` whose package carried `ancestors`
+/// (its unproven ancestors, from the BEEF the wallet built):
+///
+/// * network evidence → `seen` (or `mined`) for the txid under the plane
+///   that reported it, and `seen` for every ancestor (presence of the child
+///   implies the parents connected). The txid's own req is lifted to
+///   `unmined` exactly as a push `SEEN_ON_NETWORK` would.
+/// * a `Rejected` verdict → [`retire_rejected_broadcast`].
+/// * anything else → nothing.
+pub async fn apply_presence_report(
+    storage: &StorageSqlx,
+    services: &dyn WalletServices,
+    txid: &str,
+    ancestors: &[String],
+    report: &PresenceReport,
+) {
+    if let Some(evidence) = report.evidence {
+        let provider = report.evidence_provider;
+        if let Err(e) = storage
+            .mark_transaction_seen_on_network_by(txid, provider)
+            .await
+        {
+            tracing::warn!(txid = %txid, error = %e, "could not record the network presence");
+        }
+        if evidence == NetworkEvidence::Mined {
+            if let Err(e) = storage
+                .record_broadcast_status(txid, provider, evidence.memory_status())
+                .await
+            {
+                tracing::warn!(txid = %txid, error = %e, "could not record the mined evidence");
+            }
+        }
+        if !ancestors.is_empty() {
+            if let Err(e) = storage
+                .sqlx_broadcast_memory()
+                .record_broadcast_status_many(
+                    provider,
+                    bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
+                    ancestors,
+                )
+                .await
+            {
+                tracing::warn!(txid = %txid, error = %e, "could not credit the ancestors");
+            }
+        }
+        tracing::info!(
+            txid = %txid,
+            evidence = ?evidence,
+            provider,
+            ancestors = ancestors.len(),
+            "network presence recorded: the package's ancestors connected"
+        );
+    }
+    if report.verification == BroadcastVerification::Rejected {
+        retire_rejected_broadcast(storage, services, txid).await;
     }
 }
 
@@ -152,8 +234,9 @@ where
 /// toolbox's RELEASE-RULE path (`StorageSqlx::retire_undeliverable_txid`): the
 /// tx is alive-checked first, each input is released only on its own chain
 /// verification, the tx's own outputs go unspendable and the tx is `failed`
-/// with its req `invalid` (the unfail canary keeps re-checking it). Every
-/// outcome is logged; nothing here can fail the request that already answered.
+/// with its req `invalid` (the unfail canary keeps re-checking it), and every
+/// unproven descendant is retired with it. Every outcome is logged; nothing
+/// here can fail the request that already answered.
 pub async fn retire_rejected_broadcast(
     storage: &StorageSqlx,
     services: &dyn WalletServices,
@@ -226,6 +309,10 @@ mod tests {
         }
     }
 
+    fn report(v: BroadcastVerification) -> PresenceReport {
+        PresenceReport::from_verification(v)
+    }
+
     // ---- disposition ------------------------------------------------------
 
     #[test]
@@ -293,18 +380,18 @@ mod tests {
     async fn accepted_broadcast_answers_before_the_verification_finishes() {
         // The verifier takes 300 ms and comes back Rejected. The handler must
         // return long before that (the probe was SPAWNED, not awaited), and the
-        // retire hook must still fire afterwards, in the background.
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        // report hook must still fire afterwards, in the background.
+        let (tx, rx) = tokio::sync::oneshot::channel::<(String, PresenceReport)>();
         let started = Instant::now();
         let outcome = follow_up(
             BroadcastDisposition::Accepted,
             TXID_HEX.to_string(),
             |_txid| async {
                 tokio::time::sleep(Duration::from_millis(300)).await;
-                BroadcastVerification::Rejected
+                report(BroadcastVerification::Rejected)
             },
-            move |txid| async move {
-                tx.send(txid).ok();
+            move |txid, report| async move {
+                tx.send((txid, report)).ok();
             },
         )
         .await;
@@ -315,11 +402,12 @@ mod tests {
             "an accepted broadcast must not wait for the verifier (took {:?})",
             elapsed
         );
-        let retired = tokio::time::timeout(Duration::from_secs(2), rx)
+        let (retired, report) = tokio::time::timeout(Duration::from_secs(2), rx)
             .await
             .expect("the background verification must run to its verdict")
-            .expect("retire hook fired");
+            .expect("report hook fired");
         assert_eq!(retired, TXID_HEX);
+        assert_eq!(report.verification, BroadcastVerification::Rejected);
         assert!(
             started.elapsed() >= Duration::from_millis(300),
             "the verdict arrives only after the probe window"
@@ -327,46 +415,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepted_and_present_never_retires() {
-        let fired = Arc::new(AtomicBool::new(false));
-        let f = fired.clone();
+    async fn accepted_and_present_hands_the_report_over_without_retiring() {
+        // The hook sees every report (it records network evidence); the
+        // retire decision is the hook's, keyed on the verdict.
+        let (tx, rx) = tokio::sync::oneshot::channel::<PresenceReport>();
         let outcome = follow_up(
             BroadcastDisposition::Accepted,
             TXID_HEX.to_string(),
-            |_txid| async { BroadcastVerification::Confirmed },
-            move |_txid| async move {
-                f.store(true, Ordering::SeqCst);
+            |_txid| async {
+                let mut r = report(BroadcastVerification::Confirmed);
+                r.evidence = Some(NetworkEvidence::Seen);
+                r
+            },
+            move |_txid, report| async move {
+                tx.send(report).ok();
             },
         )
         .await;
         assert_eq!(outcome, FollowUp::Proceed);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(!fired.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn accepted_and_inconclusive_never_retires() {
-        // An absence that is not definitive must never release money.
-        let fired = Arc::new(AtomicBool::new(false));
-        let f = fired.clone();
-        follow_up(
-            BroadcastDisposition::Accepted,
-            TXID_HEX.to_string(),
-            |_txid| async { BroadcastVerification::Inconclusive },
-            move |_txid| async move {
-                f.store(true, Ordering::SeqCst);
-            },
-        )
-        .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(!fired.load(Ordering::SeqCst));
+        let report = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .expect("hook runs")
+            .expect("report");
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
     }
 
     #[tokio::test]
     async fn ambiguous_broadcast_is_verified_inline_and_a_rejection_fails_the_request() {
         // The one case that still blocks: the wallet could not tell whether the
-        // tx went out. The verifier is AWAITED, and a definitive absence retires
-        // the tx BEFORE the handler answers with a failure.
+        // tx went out. The verifier is AWAITED, and a definitive absence reaches
+        // the hook BEFORE the handler answers with a failure.
         let fired = Arc::new(AtomicBool::new(false));
         let f = fired.clone();
         let started = Instant::now();
@@ -375,10 +454,11 @@ mod tests {
             TXID_HEX.to_string(),
             |_txid| async {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                BroadcastVerification::Rejected
+                report(BroadcastVerification::Rejected)
             },
-            move |txid| async move {
+            move |txid, report| async move {
                 assert_eq!(txid, TXID_HEX);
+                assert_eq!(report.verification, BroadcastVerification::Rejected);
                 f.store(true, Ordering::SeqCst);
             },
         )
@@ -390,7 +470,7 @@ mod tests {
         );
         assert!(
             fired.load(Ordering::SeqCst),
-            "the tx is retired before the failure is returned"
+            "the hook runs before the failure is returned"
         );
     }
 
@@ -400,19 +480,14 @@ mod tests {
             BroadcastVerification::Confirmed,
             BroadcastVerification::Inconclusive,
         ] {
-            let fired = Arc::new(AtomicBool::new(false));
-            let f = fired.clone();
             let outcome = follow_up(
                 BroadcastDisposition::Ambiguous,
                 TXID_HEX.to_string(),
-                move |_txid| async move { verdict },
-                move |_txid| async move {
-                    f.store(true, Ordering::SeqCst);
-                },
+                move |_txid| async move { report(verdict) },
+                move |_txid, _report| async move {},
             )
             .await;
             assert_eq!(outcome, FollowUp::Proceed);
-            assert!(!fired.load(Ordering::SeqCst));
         }
     }
 
@@ -425,9 +500,9 @@ mod tests {
             TXID_HEX.to_string(),
             move |_txid| async move {
                 p.store(true, Ordering::SeqCst);
-                BroadcastVerification::Rejected
+                report(BroadcastVerification::Rejected)
             },
-            |_txid| async {},
+            |_txid, _report| async {},
         )
         .await;
         assert_eq!(outcome, FollowUp::Proceed);
@@ -435,7 +510,7 @@ mod tests {
         assert!(!probed.load(Ordering::SeqCst));
     }
 
-    // ---- the retire hook against real storage ------------------------------
+    // ---- the report hook against real storage ------------------------------
 
     /// The exact storage the handler's hook runs against: an `unproven` tx
     /// (broadcast accepted), req `unmined`, one input locked, one change output.
@@ -544,32 +619,25 @@ mod tests {
         let services = MockWalletServices::new();
 
         // Drive the exact handler wiring: an ACCEPTED broadcast whose background
-        // verification comes back Rejected runs the retire hook.
+        // verification comes back Rejected runs the report hook, which retires.
         let storage = Arc::new(storage);
         let services = Arc::new(services);
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Option<RetireOutcome>>();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
         let (s, v) = (storage.clone(), services.clone());
         follow_up(
             BroadcastDisposition::Accepted,
             TXID_HEX.to_string(),
-            |_txid| async { BroadcastVerification::Rejected },
-            move |txid| async move {
-                let outcome = retire_rejected_broadcast(&s, &*v, &txid).await;
-                done_tx.send(outcome).ok();
+            |_txid| async { report(BroadcastVerification::Rejected) },
+            move |txid, report| async move {
+                apply_presence_report(&s, &*v, &txid, &[], &report).await;
+                done_tx.send(()).ok();
             },
         )
         .await;
-        let outcome = tokio::time::timeout(Duration::from_secs(5), done_rx)
+        tokio::time::timeout(Duration::from_secs(5), done_rx)
             .await
             .expect("background retire runs")
             .expect("hook fired");
-        assert_eq!(
-            outcome,
-            Some(RetireOutcome::Retired {
-                restored: 1,
-                kept: 0
-            })
-        );
 
         let status: String = sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ?")
             .bind(TXID_HEX)
@@ -593,6 +661,99 @@ mod tests {
             (0, None),
             "the failed tx's change can never fund anything"
         );
+        // No provider ever skips it again.
+        let memory: String = sqlx::query_scalar(
+            "SELECT status FROM broadcast_seen WHERE txid = ? AND provider = 'network'",
+        )
+        .bind(TXID_HEX)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+        assert_eq!(memory, "rejected");
+    }
+
+    #[tokio::test]
+    async fn network_presence_credits_the_txid_and_its_ancestors_as_seen() {
+        use bsv_wallet_toolbox::services::mock::MockWalletServices;
+        use bsv_wallet_toolbox::PROVIDER_ARCADE_V2;
+
+        let (storage, input_id, own_id) = seeded_storage().await;
+        let ancestors = vec!["11".repeat(32), "22".repeat(32)];
+        let mut r = report(BroadcastVerification::Confirmed);
+        r.evidence = Some(NetworkEvidence::Seen);
+        r.evidence_provider = PROVIDER_ARCADE_V2;
+        apply_presence_report(
+            &storage,
+            &MockWalletServices::new(),
+            TXID_HEX,
+            &ancestors,
+            &r,
+        )
+        .await;
+
+        let mut wanted = ancestors.clone();
+        wanted.push(TXID_HEX.to_string());
+        let seen = storage
+            .broadcast_seen_for(PROVIDER_ARCADE_V2, &wanted)
+            .await
+            .unwrap();
+        assert_eq!(
+            seen.len(),
+            3,
+            "the txid and both ancestors qualify: {:?}",
+            seen
+        );
+        // Another provider is not credited by an Arcade report.
+        assert!(storage
+            .broadcast_seen_for("TaalArcBeef", &wanted)
+            .await
+            .unwrap()
+            .is_empty());
+        // Nothing about the money changed.
+        assert_eq!(output_state(&storage, input_id).await.0, 0);
+        assert_eq!(output_state(&storage, own_id).await.0, 1);
+        let status: String = sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ?")
+            .bind(TXID_HEX)
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(status, "unproven");
+
+        // A mined verdict from the chain index credits everyone.
+        let mut mined = report(BroadcastVerification::Confirmed);
+        mined.evidence = Some(NetworkEvidence::Mined);
+        apply_presence_report(&storage, &MockWalletServices::new(), TXID_HEX, &[], &mined).await;
+        let memory: String = sqlx::query_scalar(
+            "SELECT status FROM broadcast_seen WHERE txid = ? AND provider = 'network'",
+        )
+        .bind(TXID_HEX)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+        assert_eq!(memory, "mined");
+    }
+
+    #[tokio::test]
+    async fn a_held_or_inconclusive_report_touches_nothing() {
+        use bsv_wallet_toolbox::services::mock::MockWalletServices;
+
+        let (storage, input_id, own_id) = seeded_storage().await;
+        for verdict in [
+            BroadcastVerification::Confirmed,
+            BroadcastVerification::Inconclusive,
+        ] {
+            let mut r = report(verdict);
+            r.network_absent = true;
+            apply_presence_report(&storage, &MockWalletServices::new(), TXID_HEX, &[], &r).await;
+        }
+        assert_eq!(output_state(&storage, input_id).await.0, 0);
+        assert_eq!(output_state(&storage, own_id).await.0, 1);
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM broadcast_seen WHERE txid = ?")
+            .bind(TXID_HEX)
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "no evidence, no memory row");
     }
 
     #[tokio::test]

@@ -44,6 +44,28 @@
 //! verdicts were **false negatives** — every one of those transactions was on
 //! chain.
 //!
+//! # Bug 3: "present" is not "on the network" (2026-09-02)
+//!
+//! A 200 from the broadcaster we submitted through used to count as presence.
+//! It is not network evidence: Arcade answers `GET /tx/{txid}` with a 200 and
+//! `txStatus: RECEIVED` / `SENT_TO_NETWORK` for a transaction it holds but
+//! that no node has seen, and with a 200 and `txStatus: REJECTED` for one it
+//! will never relay. On 2026-09-02 four beta wallets sent EF children whose
+//! 202'd parents had never propagated; the children were orphans forever,
+//! and a verifier that read "200" as "present" could not tell.
+//!
+//! So a probe now reads the body. Every source yields one of: network-level
+//! [`NetworkEvidence`] (`SEEN_ON_NETWORK` / `SEEN_MULTIPLE_NODES` / `MINED`
+//! from an ARC-style store, any 200 from the chain index), *held* (the store
+//! has the bytes, the network has not vouched: pre-gate statuses, an
+//! orphan-pool hit), a *fatal* verdict from the broadcaster we submitted
+//! through (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`), absence, or unknown.
+//! [`BroadcastVerifier::verify_report`] surfaces all of it in a
+//! [`PresenceReport`]; the served follow-up credits the wallet's broadcast
+//! memory (`seen` for the tx AND its unproven ancestors: presence of the
+//! child implies the parents connected) and the reconciler runs its absence
+//! clock on it.
+//!
 //! # The model this module now implements
 //!
 //! Doctrine (`CLAUDE.md`): *"2xx is never success — truth = visible in our own
@@ -51,14 +73,15 @@
 //! be chain-verified. Applied to the verifier itself: **absence from the wrong
 //! plane is not truth.**
 //!
-//! * **Presence is trusted from anybody.** A 200 from any store means that store
-//!   holds the transaction. A freshly-minted txid we just created cannot be
-//!   known to a third party unless it really propagated. So any `Present` →
-//!   `Confirmed`, immediately.
+//! * **Presence is trusted from anybody.** A store holding the transaction
+//!   (held or seen) means the broadcast was not silently dropped. A
+//!   freshly-minted txid we just created cannot be known to a third party
+//!   unless it really propagated. So any held / seen answer → `Confirmed`.
 //! * **Absence is trusted from almost nobody.** See [`AbsenceAuthority`]: a 404
-//!   is evidence only from the broadcaster we personally submitted through
-//!   (scope) or from a real chain+mempool index after its indexing window has
-//!   elapsed (time) — and we require **both** before declaring `Rejected`.
+//!   (or a fatal verdict) is evidence only from the broadcaster we personally
+//!   submitted through (scope) or from a real chain+mempool index after its
+//!   indexing window has elapsed (time), and we require **both** before
+//!   declaring `Rejected`.
 //! * **The broadcaster we used is consulted first**, so the happy path
 //!   short-circuits to `Confirmed` on a single request.
 //! * If we cannot satisfy that bar we return `Inconclusive`, and callers preserve
@@ -67,7 +90,10 @@
 
 use std::time::{Duration, Instant};
 
-use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain};
+use bsv_wallet_toolbox::{
+    services::ARCADE_V2_MAINNET, BroadcastStatus, Chain, BROADCAST_PROVIDER_NETWORK,
+    PROVIDER_ARCADE_V2,
+};
 use reqwest::Client;
 
 /// Default number of probe rounds before an absence may become definitive.
@@ -109,13 +135,13 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Outcome of verifying that a just-broadcast tx actually reached the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BroadcastVerification {
-    /// At least one source confirms the tx exists (accepted / seen / mined).
+    /// At least one source holds the tx (accepted / seen / mined).
     Confirmed,
     /// Both the broadcaster we actually submitted through **and** an independent
-    /// chain index affirmatively report the tx absent after the full probe
-    /// window, and no source reports it present — the broadcast was silently
-    /// dropped (classic ARC 465 fee-too-low on a deep unconfirmed BEEF).
-    /// The funds were NOT sent.
+    /// chain index affirmatively report the tx absent (or, for the broadcaster,
+    /// fatally rejected) after the full probe window, and no source holds it:
+    /// the broadcast was silently dropped (classic ARC 465 fee-too-low on a
+    /// deep unconfirmed BEEF, an Arcade `REJECTED`). The funds were NOT sent.
     Rejected,
     /// No source could give an answer that clears the evidence bar. Callers must
     /// NOT treat this as a failure (avoids false negatives when the confirmation
@@ -142,11 +168,76 @@ impl BroadcastVerification {
     }
 }
 
+/// Network-level presence a source reported: the transaction was seen by a
+/// node (so its parents connected), or mined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NetworkEvidence {
+    /// `SEEN_ON_NETWORK` / `SEEN_MULTIPLE_NODES`, or an unconfirmed chain-index
+    /// hit.
+    Seen,
+    /// `MINED`, or a chain-index hit with confirmations.
+    Mined,
+}
+
+impl NetworkEvidence {
+    /// The broadcast-memory status this evidence records.
+    pub fn memory_status(self) -> &'static str {
+        match self {
+            NetworkEvidence::Seen => bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
+            NetworkEvidence::Mined => bsv_wallet_toolbox::BROADCAST_STATUS_MINED,
+        }
+    }
+}
+
+/// Everything one verification learned, for callers that act on more than
+/// the verdict (the broadcast memory, the absence clock).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresenceReport {
+    /// The verdict (`verify`'s answer).
+    pub verification: BroadcastVerification,
+    /// Network-level evidence from some source, if any.
+    pub evidence: Option<NetworkEvidence>,
+    /// The broadcast-memory provider to credit with `evidence`:
+    /// [`PROVIDER_ARCADE_V2`] when the Arcade plane reported it,
+    /// [`BROADCAST_PROVIDER_NETWORK`] otherwise (a chain index, a third-party
+    /// store: the whole network has it).
+    pub evidence_provider: &'static str,
+    /// The broadcaster we submitted through reports a fatal verdict
+    /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`).
+    pub broadcaster_fatal: bool,
+    /// In the last probe round no source gave network evidence, the chain
+    /// index answered absent and the broadcaster answered (held, absent or
+    /// fatal): the transaction is not on the network right now. The absence
+    /// clock advances on it; it is NOT a verdict by itself.
+    pub network_absent: bool,
+}
+
+impl PresenceReport {
+    /// A report carrying only a verdict (tests, callers without a probe).
+    pub fn from_verification(verification: BroadcastVerification) -> Self {
+        Self {
+            verification,
+            evidence: None,
+            evidence_provider: BROADCAST_PROVIDER_NETWORK,
+            broadcaster_fatal: false,
+            network_absent: false,
+        }
+    }
+}
+
 /// Presence of a txid according to a single source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Presence {
-    /// Source has the tx (HTTP 200).
-    Present,
+    /// The source holds the bytes but has not seen them on the network (an
+    /// ARC/Arcade pre-gate status, an orphan-pool hit, a 200 without a
+    /// readable status).
+    Held,
+    /// The source saw the tx on the network (or mined).
+    Present(NetworkEvidence),
+    /// The broadcaster we submitted through reports `REJECTED` /
+    /// `DOUBLE_SPEND_ATTEMPTED`: a definitive negative from the scope that
+    /// holds our submission. Counts as its absence vote.
+    Fatal,
     /// Source definitively does not have the tx (HTTP 404 from a real handler).
     Absent,
     /// Source could not give a definitive answer (auth error, 5xx, network
@@ -168,7 +259,7 @@ enum AbsenceAuthority {
     /// coinbase, a transaction with ~960,000 confirmations. A 404 from such a
     /// store tells us only that *it* never received the transaction — which is
     /// the expected answer whenever we broadcast somewhere else. These sources
-    /// are kept purely as extra chances to observe `Present`.
+    /// are kept purely as extra chances to observe presence.
     None,
 
     /// **Scope-authoritative.** This is the broadcaster we personally submitted
@@ -198,24 +289,36 @@ enum AbsenceAuthority {
     ChainIndex,
 }
 
+/// How a source's 200 body is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceKind {
+    /// Arcade V2: `{"txid","txStatus",...}`.
+    Arcade,
+    /// Classic ARC: `{"txid","txStatus",...}` with ARC's status vocabulary.
+    ClassicArc,
+    /// WhatsOnChain `/tx/hash/{txid}`: `{"confirmations",...}`.
+    ChainIndex,
+}
+
 /// Absence votes gathered during one probe round, grouped by authority class.
 ///
 /// A `Rejected` verdict requires the **conjunction**: the plane we submitted
-/// through has no record of our submission *and* an independent chain index
-/// still cannot see the transaction after the full window. Either one alone has
-/// a mundane innocent explanation (provider failover; indexing lag), and acting
-/// on either one alone is precisely what produced four false "funds were NOT
-/// sent" reports on transactions that were on chain.
+/// through has no record of our submission (or rejected it) *and* an
+/// independent chain index still cannot see the transaction after the full
+/// window. Either one alone has a mundane innocent explanation (provider
+/// failover; indexing lag), and acting on either one alone is precisely what
+/// produced four false "funds were NOT sent" reports on transactions that were
+/// on chain.
 ///
 /// Consequence, stated honestly: a wallet whose broadcaster cannot be probed
 /// (e.g. classic TAAL ARC with no API key, which answers 401 → `Unknown`) can
 /// never reach `Rejected`. That is the intended trade. A missed drop is caught
-/// downstream — the transaction simply never mines and the unfail canary
-/// reconciles it — whereas a false `Rejected` reports lost funds that were not
-/// lost, which is the more expensive error by far.
+/// downstream (the transaction simply never mines and the reconciler's
+/// absence clock retires it), whereas a false `Rejected` reports lost funds
+/// that were not lost, which is the more expensive error by far.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct AbsenceVotes {
-    /// The broadcaster we submitted through answered 404.
+    /// The broadcaster we submitted through answered 404 (or fatal).
     broadcaster: bool,
     /// An independent chain index answered 404.
     chain_index: bool,
@@ -300,6 +403,13 @@ impl BroadcastPlane {
         }
     }
 
+    fn kind(&self) -> SourceKind {
+        match self {
+            BroadcastPlane::ArcadeV2 { .. } => SourceKind::Arcade,
+            BroadcastPlane::ClassicArc { .. } => SourceKind::ClassicArc,
+        }
+    }
+
     /// URL template with the literal `{txid}` placeholder.
     fn status_template(&self) -> String {
         match self {
@@ -322,13 +432,15 @@ struct StatusSource {
     auth: Option<String>,
     /// What this source's 404 is worth. See [`AbsenceAuthority`].
     absence: AbsenceAuthority,
+    /// How its 200 body is read. See [`SourceKind`].
+    kind: SourceKind,
 }
 
 /// Build the ordered source list for a plane (pure — unit-testable).
 ///
 /// Ordering is load-bearing: **index 0 is always the broadcaster we submitted
 /// through**, because it is both the fastest and the most authoritative answer
-/// available, and `verify` returns on the first `Present`.
+/// available, and `verify` returns on the first presence.
 fn build_sources(
     chain: Chain,
     plane: &BroadcastPlane,
@@ -343,6 +455,7 @@ fn build_sources(
             BroadcastPlane::ClassicArc { .. } => taal_key.clone(),
         },
         absence: AbsenceAuthority::Broadcaster,
+        kind: plane.kind(),
     }];
 
     // The independent chain + mempool index. Keyless, reliable 200/404, and the
@@ -352,9 +465,10 @@ fn build_sources(
         url_template: format!("{}/tx/hash/{{txid}}", woc_base(chain)),
         auth: None,
         absence: AbsenceAuthority::ChainIndex,
+        kind: SourceKind::ChainIndex,
     });
 
-    // Third-party ARC stores: extra chances to observe `Present`, never a vote
+    // Third-party ARC stores: extra chances to observe presence, never a vote
     // for absence (see AbsenceAuthority::None). Skipped when they *are* the
     // broadcaster — that row is already at index 0 with real authority.
     if let Some(gp) = gorillapool_arc_url(chain) {
@@ -364,6 +478,7 @@ fn build_sources(
                 url_template: format!("{gp}/v1/tx/{{txid}}"),
                 auth: None,
                 absence: AbsenceAuthority::None,
+                kind: SourceKind::ClassicArc,
             });
         }
     }
@@ -377,6 +492,7 @@ fn build_sources(
                 url_template: format!("{taal}/v1/tx/{{txid}}"),
                 auth: Some(key),
                 absence: AbsenceAuthority::None,
+                kind: SourceKind::ClassicArc,
             });
         }
     }
@@ -481,29 +597,76 @@ impl BroadcastVerifier {
     /// Probe the network for `txid`, returning as soon as any source reports it
     /// present, otherwise after the full probe window.
     pub async fn verify(&self, txid: &str) -> BroadcastVerification {
+        self.verify_report(txid).await.verification
+    }
+
+    /// [`BroadcastVerifier::verify`] with everything the probes learned: the
+    /// network evidence (and which plane gave it), a fatal verdict from the
+    /// broadcaster, and whether the transaction is absent from the network
+    /// right now. Returns as soon as any source gives NETWORK evidence; a
+    /// source merely holding the tx does not end the round (a later source
+    /// may still vouch for the network), but it does make the verdict
+    /// `Confirmed`.
+    pub async fn verify_report(&self, txid: &str) -> PresenceReport {
+        let mut report = PresenceReport::from_verification(BroadcastVerification::Inconclusive);
         if !self.enabled || self.sources.is_empty() {
-            return BroadcastVerification::Inconclusive;
+            return report;
         }
 
         let deadline = Instant::now() + self.absence_window();
-        // Votes from the LAST COMPLETED round. Using the last round (rather than
+        // The LAST COMPLETED round decides. Using the last round (rather than
         // any round) is what makes the chain-index vote time-authoritative: its
         // silence only counts once the indexing window has actually elapsed.
-        let mut last_votes: Option<AbsenceVotes> = None;
+        let mut last: Option<RoundResult> = None;
 
         for attempt in 0..self.attempts {
-            let mut votes = AbsenceVotes::default();
+            let mut round = RoundResult::default();
             for src in &self.sources {
                 match probe(&self.client, src, txid).await {
-                    // Doctrine: a positive answer may be trusted from any source.
-                    // A txid we minted moments ago cannot be known to a third
-                    // party unless it genuinely propagated.
-                    Presence::Present => return BroadcastVerification::Confirmed,
-                    Presence::Absent => votes.record(src.absence),
+                    // Doctrine: a positive answer may be trusted from any
+                    // source. Network evidence ends the verification.
+                    Presence::Present(evidence) => {
+                        report.verification = BroadcastVerification::Confirmed;
+                        report.evidence = Some(evidence);
+                        report.evidence_provider = if src.kind == SourceKind::Arcade
+                            && src.absence == AbsenceAuthority::Broadcaster
+                        {
+                            PROVIDER_ARCADE_V2
+                        } else {
+                            BROADCAST_PROVIDER_NETWORK
+                        };
+                        return report;
+                    }
+                    Presence::Held => {
+                        round.held = true;
+                        if src.absence == AbsenceAuthority::Broadcaster {
+                            round.broadcaster_answered = true;
+                        }
+                    }
+                    Presence::Fatal => {
+                        round.fatal = true;
+                        round.broadcaster_answered = true;
+                        round.votes.record(src.absence);
+                    }
+                    Presence::Absent => {
+                        if src.absence == AbsenceAuthority::Broadcaster {
+                            round.broadcaster_answered = true;
+                        }
+                        round.votes.record(src.absence);
+                    }
                     Presence::Unknown => {}
                 }
             }
-            last_votes = Some(votes);
+            let held = round.held;
+            last = Some(round);
+
+            // A store holding the tx settles the verdict (Confirmed): the
+            // window exists to give absence time to become definitive, and
+            // nothing about a held transaction is absent. (Network evidence
+            // for the memory, if any comes, is the reconciler's business.)
+            if held {
+                break;
+            }
 
             if attempt + 1 < self.attempts {
                 if Instant::now() >= deadline {
@@ -515,9 +678,75 @@ impl BroadcastVerifier {
             }
         }
 
-        match last_votes {
-            Some(v) if v.is_definitive() => BroadcastVerification::Rejected,
-            _ => BroadcastVerification::Inconclusive,
+        if let Some(round) = last {
+            report.broadcaster_fatal = round.fatal;
+            report.network_absent = round.votes.chain_index && round.broadcaster_answered;
+            report.verification = if round.held {
+                BroadcastVerification::Confirmed
+            } else if round.votes.is_definitive() {
+                BroadcastVerification::Rejected
+            } else {
+                BroadcastVerification::Inconclusive
+            };
+        }
+        report
+    }
+}
+
+/// What one probe round learned when no source gave network evidence.
+#[derive(Debug, Clone, Copy, Default)]
+struct RoundResult {
+    votes: AbsenceVotes,
+    /// Some source holds the tx (no network evidence).
+    held: bool,
+    /// The broadcaster we submitted through answered (held, absent or fatal).
+    broadcaster_answered: bool,
+    /// The broadcaster reported a fatal verdict.
+    fatal: bool,
+}
+
+/// Read a 200 body according to the source kind.
+fn presence_of_body(src: &StatusSource, body: &str) -> Presence {
+    let json: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    match src.kind {
+        SourceKind::ChainIndex => {
+            let confirmations = json
+                .as_ref()
+                .and_then(|v| v.get("confirmations"))
+                .and_then(|c| c.as_i64())
+                .unwrap_or(0);
+            if confirmations >= 1 {
+                Presence::Present(NetworkEvidence::Mined)
+            } else {
+                Presence::Present(NetworkEvidence::Seen)
+            }
+        }
+        SourceKind::Arcade | SourceKind::ClassicArc => {
+            let Some(tx_status) = json
+                .as_ref()
+                .and_then(|v| v.get("txStatus"))
+                .and_then(|s| s.as_str())
+            else {
+                return Presence::Held;
+            };
+            let status = match src.kind {
+                SourceKind::Arcade => BroadcastStatus::from_arcade_status(tx_status),
+                _ => BroadcastStatus::from_arc_status(tx_status),
+            };
+            match status {
+                BroadcastStatus::Seen => Presence::Present(NetworkEvidence::Seen),
+                BroadcastStatus::Mined => Presence::Present(NetworkEvidence::Mined),
+                BroadcastStatus::Rejected => {
+                    if src.absence == AbsenceAuthority::Broadcaster {
+                        Presence::Fatal
+                    } else {
+                        // A store we did not submit to rejecting a copy it
+                        // was handed by someone says nothing about ours.
+                        Presence::Unknown
+                    }
+                }
+                BroadcastStatus::Accepted | BroadcastStatus::Unknown => Presence::Held,
+            }
         }
     }
 }
@@ -533,7 +762,12 @@ async fn probe(client: &Client, src: &StatusSource, txid: &str) -> Presence {
         Ok(resp) => {
             let status = resp.status().as_u16();
             match status {
-                200 => Presence::Present,
+                200 => {
+                    let body = resp.text().await.unwrap_or_default();
+                    let presence = presence_of_body(src, &body);
+                    tracing::debug!(source = src.name, ?presence, "broadcast probe");
+                    presence
+                }
                 404 => {
                     // A 404 has two very different meanings: "I have no such
                     // transaction" (a real answer from the ARC/Arcade handler,
@@ -670,6 +904,7 @@ mod tests {
             !plane.status_template().contains("/v1/"),
             "Arcade V2 must NOT be probed on the classic ARC /v1 path"
         );
+        assert_eq!(plane.kind(), SourceKind::Arcade);
     }
 
     #[test]
@@ -683,6 +918,7 @@ mod tests {
             plane.status_template(),
             format!("{SYNTHETIC_ARC}/v1/tx/{{txid}}")
         );
+        assert_eq!(plane.kind(), SourceKind::ClassicArc);
     }
 
     #[test]
@@ -732,6 +968,7 @@ mod tests {
         ] {
             let sources = build_sources(Chain::Main, &plane, None);
             assert_eq!(sources[0].absence, AbsenceAuthority::Broadcaster);
+            assert_eq!(sources[0].kind, plane.kind());
             assert!(
                 sources[0].url_template.starts_with(plane.base()),
                 "source 0 ({}) must be the configured broadcaster {}",
@@ -809,6 +1046,7 @@ mod tests {
         let sources = build_sources(Chain::Main, &plane, None);
         let woc = sources.iter().find(|s| s.name == "whatsonchain").unwrap();
         assert_eq!(woc.absence, AbsenceAuthority::ChainIndex);
+        assert_eq!(woc.kind, SourceKind::ChainIndex);
     }
 
     #[test]
@@ -841,19 +1079,108 @@ mod tests {
     }
 
     // =====================================================================
+    // Reading a 200: held, seen, mined, fatal.
+    // =====================================================================
+
+    fn src_of(kind: SourceKind, absence: AbsenceAuthority) -> StatusSource {
+        StatusSource {
+            name: "test",
+            url_template: "http://127.0.0.1:1/tx/{txid}".to_string(),
+            auth: None,
+            absence,
+            kind,
+        }
+    }
+
+    #[test]
+    fn a_200_body_is_read_by_source_kind() {
+        let arcade = src_of(SourceKind::Arcade, AbsenceAuthority::Broadcaster);
+        assert_eq!(
+            presence_of_body(&arcade, r#"{"txid":"x","txStatus":"RECEIVED"}"#),
+            Presence::Held,
+            "a pre-gate status is held, not network evidence"
+        );
+        assert_eq!(
+            presence_of_body(&arcade, r#"{"txid":"x","txStatus":"ACCEPTED_BY_NETWORK"}"#),
+            Presence::Held
+        );
+        assert_eq!(
+            presence_of_body(&arcade, r#"{"txid":"x","txStatus":"SEEN_ON_NETWORK"}"#),
+            Presence::Present(NetworkEvidence::Seen)
+        );
+        assert_eq!(
+            presence_of_body(&arcade, r#"{"txid":"x","txStatus":"MINED"}"#),
+            Presence::Present(NetworkEvidence::Mined)
+        );
+        assert_eq!(
+            presence_of_body(&arcade, r#"{"txid":"x","txStatus":"REJECTED"}"#),
+            Presence::Fatal
+        );
+        assert_eq!(
+            presence_of_body(&arcade, "{}"),
+            Presence::Held,
+            "a 200 without a readable status still means the store holds it"
+        );
+        assert_eq!(presence_of_body(&arcade, "not json"), Presence::Held);
+
+        let arc = src_of(SourceKind::ClassicArc, AbsenceAuthority::None);
+        assert_eq!(
+            presence_of_body(&arc, r#"{"txStatus":"SEEN_IN_ORPHAN_MEMPOOL"}"#),
+            Presence::Held,
+            "an orphan-pool hit is held: the node lacks the parent"
+        );
+        assert_eq!(
+            presence_of_body(&arc, r#"{"txStatus":"SEEN_ON_NETWORK"}"#),
+            Presence::Present(NetworkEvidence::Seen)
+        );
+        assert_eq!(
+            presence_of_body(&arc, r#"{"txStatus":"REJECTED"}"#),
+            Presence::Unknown,
+            "a third-party rejection of somebody's copy is no vote"
+        );
+
+        let woc = src_of(SourceKind::ChainIndex, AbsenceAuthority::ChainIndex);
+        assert_eq!(
+            presence_of_body(&woc, r#"{"txid":"x","confirmations":0}"#),
+            Presence::Present(NetworkEvidence::Seen)
+        );
+        assert_eq!(
+            presence_of_body(&woc, r#"{"txid":"x","confirmations":3}"#),
+            Presence::Present(NetworkEvidence::Mined)
+        );
+        assert_eq!(
+            presence_of_body(&woc, r#"{"txid":"x"}"#),
+            Presence::Present(NetworkEvidence::Seen)
+        );
+    }
+
+    // =====================================================================
     // End-to-end verdicts against local mock sources.
     // =====================================================================
 
     /// Local mock answering every status path (`/tx/{txid}` and `/v1/tx/{txid}`)
     /// with `code`. Returns the base URL (`http://127.0.0.1:PORT`).
     async fn mock_status_server(code: StatusCode) -> String {
-        mock_status_server_ct(code, Some("application/json")).await
+        mock_status_server_full(code, Some("application/json"), "{}").await
     }
 
     /// As [`mock_status_server`], with an explicit `Content-Type` (or none).
     async fn mock_status_server_ct(code: StatusCode, content_type: Option<&'static str>) -> String {
+        mock_status_server_full(code, content_type, "{}").await
+    }
+
+    /// A 200 with this JSON body on every status path.
+    async fn mock_status_server_body(body: &'static str) -> String {
+        mock_status_server_full(StatusCode::OK, Some("application/json"), body).await
+    }
+
+    async fn mock_status_server_full(
+        code: StatusCode,
+        content_type: Option<&'static str>,
+        body: &'static str,
+    ) -> String {
         let handler = move || async move {
-            let mut resp = axum::response::Response::new(axum::body::Body::from("{}"));
+            let mut resp = axum::response::Response::new(axum::body::Body::from(body));
             *resp.status_mut() = code;
             if let Some(ct) = content_type {
                 resp.headers_mut()
@@ -877,11 +1204,21 @@ mod tests {
     }
 
     fn source(name: &'static str, base: &str, absence: AbsenceAuthority) -> StatusSource {
+        source_kind(name, base, absence, SourceKind::ClassicArc)
+    }
+
+    fn source_kind(
+        name: &'static str,
+        base: &str,
+        absence: AbsenceAuthority,
+        kind: SourceKind,
+    ) -> StatusSource {
         StatusSource {
             name,
             url_template: format!("{base}/tx/{{txid}}"),
             auth: None,
             absence,
+            kind,
         }
     }
 
@@ -907,10 +1244,13 @@ mod tests {
             source("chain-index", &base, AbsenceAuthority::ChainIndex),
         ]);
 
-        let outcome = verifier.verify(TXID).await;
-        assert_eq!(outcome, BroadcastVerification::Rejected);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Rejected);
+        assert!(report.network_absent);
+        assert!(!report.broadcaster_fatal);
+        assert_eq!(report.evidence, None);
         assert!(
-            outcome.into_send_result(TXID).is_err(),
+            report.verification.into_send_result(TXID).is_err(),
             "a Rejected verification must map to Err so the send fails loudly"
         );
     }
@@ -933,9 +1273,11 @@ mod tests {
             source("chain-index", &absent, AbsenceAuthority::ChainIndex),
             source("arc-third-party", &absent, AbsenceAuthority::None),
         ]);
-        assert_eq!(
-            verifier.verify(TXID).await,
-            BroadcastVerification::Inconclusive
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Inconclusive);
+        assert!(
+            !report.network_absent,
+            "the absence clock does not run while the broadcaster is unreachable"
         );
     }
 
@@ -1065,6 +1407,135 @@ mod tests {
             verifier.verify(TXID).await,
             BroadcastVerification::Inconclusive
         );
+    }
+
+    // ---- the 2026-09-02 lesson: a 200 is not the network ---------------------
+
+    #[tokio::test]
+    async fn seen_on_network_from_the_arcade_plane_is_network_evidence_for_arcade() {
+        let seen = mock_status_server_body(r#"{"txid":"x","txStatus":"SEEN_ON_NETWORK"}"#).await;
+        let verifier = verifier_with(vec![source_kind(
+            "broadcaster",
+            &seen,
+            AbsenceAuthority::Broadcaster,
+            SourceKind::Arcade,
+        )]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
+        assert_eq!(report.evidence_provider, PROVIDER_ARCADE_V2);
+        assert!(!report.network_absent && !report.broadcaster_fatal);
+    }
+
+    #[tokio::test]
+    async fn a_pre_gate_status_is_held_only_and_the_absence_clock_runs() {
+        // The incident shape: Arcade holds the tx (RECEIVED) but no node has
+        // seen it and the chain index cannot find it. Not a rejection (the
+        // store holds it), no network evidence, and the clock advances.
+        let held = mock_status_server_body(r#"{"txid":"x","txStatus":"RECEIVED"}"#).await;
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &held,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                &absent,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, None);
+        assert!(report.network_absent);
+        assert!(!report.broadcaster_fatal);
+    }
+
+    #[tokio::test]
+    async fn a_fatal_verdict_from_the_broadcaster_with_an_index_miss_is_rejected() {
+        let fatal = mock_status_server_body(r#"{"txid":"x","txStatus":"REJECTED"}"#).await;
+        let absent = mock_status_server(StatusCode::NOT_FOUND).await;
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &fatal,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                &absent,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Rejected);
+        assert!(report.broadcaster_fatal);
+        assert!(report.network_absent);
+
+        // A fatal verdict alone (index unreachable) is still not definitive.
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &fatal,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                "http://127.0.0.1:1",
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Inconclusive);
+        assert!(report.broadcaster_fatal);
+        assert!(!report.network_absent);
+    }
+
+    #[tokio::test]
+    async fn a_chain_index_hit_is_network_evidence_for_everyone() {
+        let held = mock_status_server_body(r#"{"txid":"x","txStatus":"SENT_TO_NETWORK"}"#).await;
+        let mined = mock_status_server_body(r#"{"txid":"x","confirmations":2}"#).await;
+        let verifier = verifier_with(vec![
+            source_kind(
+                "broadcaster",
+                &held,
+                AbsenceAuthority::Broadcaster,
+                SourceKind::Arcade,
+            ),
+            source_kind(
+                "chain-index",
+                &mined,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::ChainIndex,
+            ),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Mined));
+        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_NETWORK);
+        assert!(!report.network_absent);
+    }
+
+    #[tokio::test]
+    async fn a_third_party_rejection_alone_is_inconclusive() {
+        let fatal = mock_status_server_body(r#"{"txid":"x","txStatus":"REJECTED"}"#).await;
+        let verifier = verifier_with(vec![source_kind(
+            "arc-third-party",
+            &fatal,
+            AbsenceAuthority::None,
+            SourceKind::ClassicArc,
+        )]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Inconclusive);
+        assert!(!report.broadcaster_fatal);
     }
 
     #[test]

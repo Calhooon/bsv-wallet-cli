@@ -509,16 +509,25 @@ pub async fn create_action(
     if let Some(txid_bytes) = result.txid.as_ref() {
         let txid_hex = to_hex(txid_bytes);
         let probe = verifier.clone();
-        let retire_wallet = wallet.clone();
+        let report_wallet = wallet.clone();
+        // The unproven ancestors the package carried: network presence of
+        // the new tx vouches for them too (the broadcast memory's `seen`).
+        let ancestors: Vec<String> = result
+            .beef
+            .as_deref()
+            .map(|beef| bsv_wallet_toolbox::unproven_ancestors_in_beef(beef, &txid_hex))
+            .unwrap_or_default();
         let outcome = super::broadcast_follow_up::follow_up(
             disposition,
             txid_hex.clone(),
-            move |txid| async move { probe.verify(&txid).await },
-            move |txid| async move {
-                super::broadcast_follow_up::retire_rejected_broadcast(
-                    retire_wallet.storage(),
-                    retire_wallet.services(),
+            move |txid| async move { probe.verify_report(&txid).await },
+            move |txid, report| async move {
+                super::broadcast_follow_up::apply_presence_report(
+                    report_wallet.storage(),
+                    report_wallet.services(),
                     &txid,
+                    &ancestors,
+                    &report,
                 )
                 .await;
             },
