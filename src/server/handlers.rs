@@ -899,17 +899,19 @@ pub async fn abort_action(
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet.abort_action(args, &originator).await.map_err(|e| {
-        // The toolbox (correctly) refuses to abort a broadcast tx blindly — it
-        // could be on-chain, and failing it here would fabricate a phantom
-        // double-spend. The sanctioned recovery for a broadcast-lie is the
-        // chain-checked sweep: point the operator at it.
+        // Since toolbox 0.3.60 a broadcast ('unproven' / 'sending') tx is
+        // aborted on the caller's word when the wallet holds NO chain
+        // evidence for it: inputs released, its unproven descendants retired,
+        // the broadcast memory told never to skip it again. It is refused
+        // when the chain index, a proof, or a mined report vouches for the
+        // tx: failing it then would fabricate a double spend.
         let mut err = AppError::from_wallet_error(e);
-        if err.message().contains("unproven") {
+        if err.message().contains("the network has transaction") {
             err = err.with_hint(
-                "an 'unproven' tx may already be on-chain; if its broadcast \
-                 never landed, run `bsv-wallet cleanup-abandoned --execute` \
-                 (verifies chain absence before restoring inputs) or wait for \
-                 the daemon's auto-reconcile tick",
+                "the wallet holds chain evidence for this transaction, so it \
+                 cannot be aborted; if it is a phantom after all, \
+                 `bsv-wallet reconcile-broadcasts --execute` re-checks it \
+                 against the chain index",
             );
         }
         err

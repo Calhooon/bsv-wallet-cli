@@ -430,7 +430,13 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         let poison = ctx
             .wallet
             .storage()
-            .retire_poisoned_chain_from(ctx.wallet.services(), txid, "invalid", execute)
+            .retire_poisoned_chain_from(
+                ctx.wallet.services(),
+                txid,
+                "invalid",
+                execute,
+                crate::broadcast_reconcile::absence_minutes_from_env(),
+            )
             .await?;
         let descendants: Vec<_> = poison.chain.iter().filter(|t| t.depth > 0).collect();
         if descendants.is_empty() {

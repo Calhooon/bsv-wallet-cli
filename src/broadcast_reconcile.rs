@@ -38,7 +38,15 @@
 //!    then retires the root with every unproven descendant through the
 //!    toolbox's RELEASE-RULE path: outside inputs restored only on chain
 //!    verification, the set's outputs unspendable, internalized payments that
-//!    trace to a phantom marked unspendable and logged.
+//!    trace to a phantom marked unspendable and logged. The climb never
+//!    passes through a parent younger than the absence threshold (toolbox
+//!    0.3.60): a transaction the chain index has not seen yet is not absent,
+//!    and the verdict was about the child. On 2026-09-03 (beta, fleet w2)
+//!    the live bytes transaction of a lost head race was retired on a 404
+//!    48 s after broadcast and the five coins it had spent were released;
+//!    the next two actions double-spent them and were rejected in turn.
+//!    A "not in the unspent set" answer for a coin whose source the index
+//!    does not know is likewise `unknown` (re-checked), not `spent`.
 //! 4. **Kept-locked inputs are retried.** An outside input the chain could
 //!    not vouch for is re-checked every pass with exponential backoff until
 //!    it is verifiably unspent (restored) or spent (left); nothing stays
@@ -436,7 +444,13 @@ pub async fn run_pass(
             continue;
         }
         let poison = storage
-            .retire_poisoned_chain_from(services, &root, "invalid", opts.execute)
+            .retire_poisoned_chain_from(
+                services,
+                &root,
+                "invalid",
+                opts.execute,
+                opts.absence_minutes,
+            )
             .await?;
         log_poison(&poison, reason, opts.execute);
         covered.insert(poison.origin.clone());
@@ -480,7 +494,13 @@ pub async fn run_sweep(
             continue;
         }
         let report = storage
-            .retire_poisoned_chain_from(services, &root, "invalid", execute)
+            .retire_poisoned_chain_from(
+                services,
+                &root,
+                "invalid",
+                execute,
+                absence_minutes_from_env(),
+            )
             .await?;
         log_poison(&report, "sweep", execute);
         covered.insert(report.origin.clone());
@@ -940,6 +960,52 @@ mod tests {
         assert!(!needs_probe(5, 30, &network_seen, now));
         assert!(needs_probe(5, 30, &[], now));
         assert!(needs_probe(5, 30, &chain_stale, now));
+    }
+
+    #[tokio::test]
+    async fn a_broadcaster_status_refreshed_every_pass_never_becomes_chain_evidence() {
+        // The serve loop drains Arcade's SSE stream every minute, and every
+        // SEEN frame refreshes the broadcaster's row (`seen_at` = now). For
+        // a transaction past the absence threshold that refresh must never
+        // exempt it from the chain-index probe, however many passes repeat
+        // it (2026-09-03, fleet w2).
+        let (storage, _user_id, _basket) = wallet_storage().await;
+        let t = "ab".repeat(32);
+        for pass in 0..5 {
+            storage
+                .mark_transaction_seen_on_network_by(&t, PROVIDER_ARCADE_V2)
+                .await
+                .unwrap();
+            storage.mark_transaction_seen_on_network(&t).await.unwrap();
+            let records = storage
+                .broadcast_records(None, std::slice::from_ref(&t))
+                .await
+                .unwrap();
+            assert_eq!(records.len(), 2, "arcade and network rows, pass {}", pass);
+            assert!(
+                records
+                    .iter()
+                    .all(|r| (Utc::now() - r.seen_at).num_seconds() < 5),
+                "every row refreshed to now on pass {}",
+                pass
+            );
+            assert!(
+                needs_probe(31, 30, &records, Utc::now()),
+                "past the threshold the refreshed rows still do not exempt it (pass {})",
+                pass
+            );
+            assert!(
+                !needs_probe(5, 30, &records, Utc::now()),
+                "a young transaction is provisionally trusted on them"
+            );
+        }
+        // Only the chain index's own row exempts it.
+        credit_chain(&storage, &t, NetworkEvidence::Seen).await;
+        let records = storage
+            .broadcast_records(None, std::slice::from_ref(&t))
+            .await
+            .unwrap();
+        assert!(!needs_probe(31, 30, &records, Utc::now()));
     }
 
     #[test]

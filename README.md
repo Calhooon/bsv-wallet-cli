@@ -130,7 +130,7 @@ All 28 BRC WalletInterface endpoints on `http://127.0.0.1:3322`, wire-compatible
 **Transactions** (POST, requires `Origin` header)
 - `/createAction` -- build, sign, and broadcast transactions
 - `/signAction` -- sign a deferred (unsigned) transaction
-- `/abortAction` -- cancel a deferred transaction and release UTXOs
+- `/abortAction` -- cancel a deferred transaction and release UTXOs; a broadcast transaction the wallet holds no chain evidence for is aborted too (inputs released, its unproven descendants retired), one the chain vouches for is refused
 - `/internalizeAction` -- accept incoming payments
 - `/listActions` -- transaction history
 - `/listOutputs` -- UTXO listing
