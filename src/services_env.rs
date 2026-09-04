@@ -8,7 +8,7 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Chaintracks header service for proof validation |
+//! | `CHAINTRACKS_URL` | Chaintracks header service for proof validation (default: the public Babbage instance for the chain; `off` disables validation on purpose) |
 //! | `ARC_URL` | Override the broadcaster URL (classic ARC, or the Arcade endpoint in Arcade mode) |
 //! | `ARC_MODE=arcade` or `ARCADE=1` | Arcade V2 mode: EF-only submit, SSE status stream, push proofs |
 //! | `CALLBACK_TOKEN` | Override the per-wallet callback token (otherwise auto-generated and persisted next to the db) |
@@ -23,6 +23,35 @@ use bsv_wallet_toolbox::{
 };
 use std::io::Write;
 use std::path::PathBuf;
+
+/// Header service used to validate merkle proofs when `CHAINTRACKS_URL` is
+/// unset: the public Babbage chaintracks for the chain, the same default the
+/// TS toolbox and MetaNet Desktop ship with. The toolbox keeps a
+/// WhatsOnChain header fallback behind it.
+pub const DEFAULT_MAINNET_CHAINTRACKS_URL: &str = "https://mainnet-chaintracks.babbage.systems";
+/// Testnet counterpart of [`DEFAULT_MAINNET_CHAINTRACKS_URL`].
+pub const DEFAULT_TESTNET_CHAINTRACKS_URL: &str = "https://testnet-chaintracks.babbage.systems";
+
+/// Resolve the header service from the `CHAINTRACKS_URL` value.
+///
+/// Unset or empty falls back to the chain's public default; `off` (any
+/// case) returns `None` and the wallet stores proofs unvalidated, which is
+/// only ever right for an offline or air-gapped run. Without a header
+/// service every proof that reaches the wallet (webhook, SSE, monitor,
+/// `tick`) would be taken on the broadcaster's word.
+pub fn chaintracks_url_for(chain: Chain, configured: Option<&str>) -> Option<String> {
+    match configured.map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("off") => None,
+        Some(v) if !v.is_empty() => Some(v.to_string()),
+        _ => Some(
+            match chain {
+                Chain::Main => DEFAULT_MAINNET_CHAINTRACKS_URL,
+                Chain::Test => DEFAULT_TESTNET_CHAINTRACKS_URL,
+            }
+            .to_string(),
+        ),
+    }
+}
 
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
 #[derive(Debug, Clone)]
@@ -133,10 +162,12 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
         Chain::Test => ServicesOptions::testnet(),
     };
 
-    if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
-        if !url.is_empty() {
-            opts = opts.with_chaintracks_url(url);
-        }
+    let configured = std::env::var("CHAINTRACKS_URL").ok();
+    match chaintracks_url_for(chain, configured.as_deref()) {
+        Some(url) => opts = opts.with_chaintracks_url(url),
+        None => tracing::warn!(
+            "CHAINTRACKS_URL=off: merkle proofs will be stored without header validation"
+        ),
     }
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
@@ -187,6 +218,36 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chaintracks_defaults_to_the_public_instance_for_the_chain() {
+        assert_eq!(
+            chaintracks_url_for(Chain::Main, None).as_deref(),
+            Some(DEFAULT_MAINNET_CHAINTRACKS_URL)
+        );
+        assert_eq!(
+            chaintracks_url_for(Chain::Test, Some("")).as_deref(),
+            Some(DEFAULT_TESTNET_CHAINTRACKS_URL)
+        );
+        assert_eq!(
+            chaintracks_url_for(Chain::Main, Some("   ")).as_deref(),
+            Some(DEFAULT_MAINNET_CHAINTRACKS_URL)
+        );
+    }
+
+    #[test]
+    fn chaintracks_honours_an_explicit_url() {
+        assert_eq!(
+            chaintracks_url_for(Chain::Main, Some("https://ct.example/v1")).as_deref(),
+            Some("https://ct.example/v1")
+        );
+    }
+
+    #[test]
+    fn chaintracks_off_disables_validation_on_purpose() {
+        assert_eq!(chaintracks_url_for(Chain::Main, Some("off")), None);
+        assert_eq!(chaintracks_url_for(Chain::Test, Some("OFF")), None);
+    }
 
     #[test]
     fn callback_token_path_is_next_to_db() {
