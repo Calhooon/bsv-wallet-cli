@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-cli"
-version = "0.2.21"
+version = "0.2.22"
 dependencies = [
  "anyhow",
  "axum",

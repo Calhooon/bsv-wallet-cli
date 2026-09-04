@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "bsv-wallet", about = "Self-contained BSV wallet")]
+#[command(name = "bsv-wallet", about = "Self-contained BSV wallet", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
