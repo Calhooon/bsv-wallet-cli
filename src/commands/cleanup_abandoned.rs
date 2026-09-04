@@ -3,7 +3,10 @@ use bsv_wallet_toolbox::Chain;
 use sqlx::Row;
 use std::future::Future;
 
-use crate::broadcast_verify::{BroadcastVerification, BroadcastVerifier};
+use crate::broadcast_reconcile::absence_minutes_from_env;
+use crate::broadcast_verify::{
+    BroadcastVerification, BroadcastVerifier, ChainIndexAnswer, PresenceReport,
+};
 use crate::commands::receive;
 use crate::context::WalletContext;
 
@@ -19,9 +22,18 @@ pub enum InputSpend {
     Unknown,
 }
 
+/// `proven_tx_reqs` statuses the monitor's proof pass (and the send/no-send
+/// tasks) keep polling. A req a retire leaves in one of these keeps the
+/// wallet asking every provider about a transaction it already gave up on,
+/// every minute, forever (the soak wallet, 2026-06-29..09-04: three reqs).
+const POLLED_REQ_STATUSES: &str =
+    "'unmined', 'unknown', 'callback', 'sending', 'unconfirmed', 'unsent', 'nosend'";
+
 /// Summary of one reconcile pass over abandoned transactions.
 #[derive(Default, Debug, Clone)]
 pub struct ReconcileReport {
+    /// The absence threshold (minutes) this pass ran with.
+    pub absence_minutes: i64,
     /// `unproven` txs inspected (after the min-age filter).
     pub checked: usize,
     /// txids some source still holds (kept spendable).
@@ -30,19 +42,45 @@ pub struct ReconcileReport {
     /// fault, probing disabled) — kept, because an unknown never releases
     /// money. Surfaced so an operator sees what the sweep could not decide.
     pub inconclusive: Vec<String>,
+    /// txids absent from the chain index while the broadcaster holds or has
+    /// seen them, YOUNGER than the threshold: `(txid, age in minutes)`. Kept:
+    /// the absence clock is running.
+    pub absent_on_clock: Vec<(String, i64)>,
     /// txids DEFINITIVELY absent (broadcaster + chain index both 404, no
     /// source holding them) — abandoned.
     pub abandoned: Vec<String>,
+    /// txids absent from the chain index PAST the threshold while the
+    /// broadcaster still holds or has seen them: `(txid, age in minutes)`.
+    /// A broadcaster's SEEN is not chain evidence; the absence clock is.
+    /// Abandoned like the absent set.
+    pub absent_past_threshold: Vec<(String, i64)>,
     /// txids DEFINITIVELY DEAD BY CONFLICT: an input of theirs is chain-spent
     /// by a DIFFERENT, CONFIRMED txid, so the bytes can never mine however
     /// many sources still hold them (the run-B heal's sharp edge: 11
     /// phantom-parent outputs counted as balance behind one "held" tx).
     /// Abandoned like the absent set.
     pub conflicted: Vec<String>,
+    /// Proof requests still polled for transactions this wallet already
+    /// failed (after the min-age filter): inspected.
+    pub stale_reqs_checked: usize,
+    /// Those retired (or, on a dry run, to retire): the transaction is
+    /// definitively absent, or absent from the chain index past the
+    /// threshold. txids.
+    pub stale_reqs_retired: Vec<String>,
+    /// Those the chain index KNOWS: the wallet's `failed` verdict is the
+    /// suspect one, so the req is left to the proof pass and the unfail
+    /// path. txids.
+    pub stale_reqs_known: Vec<String>,
+    /// Those neither absent for certain nor known: kept, asked again next
+    /// pass. txids.
+    pub stale_reqs_kept: Vec<String>,
     /// Whether `execute` actually applied the cleanup.
     pub applied: bool,
     /// Transactions transitioned `unproven`/`sending` -> `failed`.
     pub failed: u64,
+    /// `proven_tx_reqs` rows moved to `invalid` (the failed transactions'
+    /// own reqs plus the stale ones).
+    pub reqs_retired: u64,
     /// Inputs of abandoned txs VERIFIED unspent and restored to spendable.
     pub restored_count: u64,
     pub restored_sats: u64,
@@ -58,6 +96,27 @@ pub struct ReconcileReport {
     pub phantom_sats: u64,
 }
 
+impl ReconcileReport {
+    /// Every transaction this pass abandons (or would): absent, absent past
+    /// the threshold, dead by conflict.
+    pub fn dead_txids(&self) -> Vec<String> {
+        self.abandoned
+            .iter()
+            .cloned()
+            .chain(self.absent_past_threshold.iter().map(|(t, _)| t.clone()))
+            .chain(self.conflicted.iter().cloned())
+            .collect()
+    }
+
+    /// Whether an `--execute` run would write anything.
+    pub fn has_work(&self) -> bool {
+        !self.abandoned.is_empty()
+            || !self.absent_past_threshold.is_empty()
+            || !self.conflicted.is_empty()
+            || !self.stale_reqs_retired.is_empty()
+    }
+}
+
 /// Core reconcile, shared by the CLI `cleanup-abandoned` command and the daemon's
 /// periodic ticker.
 ///
@@ -71,14 +130,28 @@ pub struct ReconcileReport {
 ///    kept tx froze 11 phantom-parent outputs as balance). Abandoned.
 /// 2. Otherwise, **is the tx present anywhere?** `BroadcastVerifier::single_pass`
 ///    (the broadcaster it was submitted to, GorillaPool ARC, TAAL ARC and
-///    WhatsOnChain): held by any source ⇒ kept; a lone index miss / fault /
-///    probing disabled ⇒ `Inconclusive`, kept; DEFINITIVE absence (broadcaster
-///    JSON-404 AND index 404) ⇒ abandoned.
+///    WhatsOnChain), read as a [`PresenceReport`]: the chain index holding it
+///    ⇒ kept; DEFINITIVE absence (broadcaster JSON-404 AND index 404) ⇒
+///    abandoned; the chain index answering 404 while the broadcaster merely
+///    holds or has seen it ⇒ the absence clock: kept while younger than
+///    `BROADCAST_ABSENCE_MINUTES` (default 30), abandoned past it. A
+///    broadcaster's SEEN is not chain evidence (2026-09-02: Arcade reported
+///    `SEEN_MULTIPLE_NODES` for hours for phantoms the chain index never saw,
+///    and the daemon's sweep, which runs THIS rule and not the served loop's,
+///    kept them as "held"). A lone index miss with the broadcaster silent, a
+///    source fault, probing disabled ⇒ `Inconclusive`, kept.
 ///
 /// Abandoning is per-input verified, never blind: an input the chain says is
 /// UNSPENT is restored; one spent by another confirmed tx is RELINQUISHED
 /// (unspendable, unlocked — it is gone); one the chain cannot vouch for stays
-/// LOCKED. The tx's own outputs go unspendable and the tx `failed`.
+/// LOCKED. The tx's own outputs go unspendable, the tx `failed`, and its
+/// `proven_tx_reqs` row `invalid` so the proof pass stops asking about it.
+///
+/// A second scan covers the proof requests an earlier verdict left behind:
+/// reqs still in a polled status for transactions already `failed`. Each is
+/// probed the same way, never retired blind: definitive absence (or absence
+/// past the threshold) retires the req; a transaction the chain index knows
+/// is left alone (the `failed` verdict is the suspect one there).
 ///
 /// Operates on the caller-provided pool so the daemon reuses its existing
 /// connection rather than opening a second one (the wallet DB is not in WAL
@@ -95,10 +168,11 @@ pub async fn reconcile(
     reconcile_with(
         pool,
         min_age_secs,
+        absence_minutes_from_env(),
         execute,
         |txid: String| {
             let v = verifier.clone();
-            async move { v.verify(&txid).await }
+            async move { v.verify_report(&txid).await }
         },
         |src: String, vout: u32| {
             let c = client.clone();
@@ -197,34 +271,89 @@ async fn tracked_inputs(pool: &sqlx::SqlitePool, tx_id: i64) -> Result<Vec<Track
         .collect())
 }
 
-/// The pure decision for one candidate given its two chain answers.
+/// The pure decision for one candidate given its chain answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
+    /// The chain index holds it, or a source holds it and the chain index
+    /// gave no answer.
     Kept,
+    /// Nothing decisive (a probe fault, probing disabled).
     Inconclusive,
+    /// Absent from the chain index while the broadcaster holds or has seen
+    /// it, younger than the threshold: kept, the clock is running.
+    AbsentOnClock,
+    /// Definitive absence: the broadcaster answered JSON-404 (or a fatal
+    /// verdict) AND the chain index answered 404.
     DeadAbsent,
+    /// Absent from the chain index past the threshold while the broadcaster
+    /// still holds or has seen it: a phantom the broadcaster never let go of.
+    DeadAbsentPastThreshold,
+    /// An input is chain-spent by a DIFFERENT, CONFIRMED tx.
     DeadConflict,
 }
 
+impl Verdict {
+    /// Whether this verdict abandons the transaction.
+    pub fn is_dead(self) -> bool {
+        matches!(
+            self,
+            Verdict::DeadAbsent | Verdict::DeadAbsentPastThreshold | Verdict::DeadConflict
+        )
+    }
+}
+
+/// The presence half of the rule, for a transaction `age_minutes` old.
+///
+/// The chain index's own answer settles it when it has one. Otherwise the
+/// verifier's `Rejected` (broadcaster JSON-404 or fatal AND chain index 404)
+/// is definitive absence, and `network_absent` (chain index 404 while the
+/// broadcaster holds or has seen it, no peer node vouching) is the absence
+/// clock: past `absence_minutes` it is a verdict, before that a wait. A
+/// held transaction with no chain-index answer at all (the index was
+/// unreachable) is kept; nothing else decides anything.
+pub fn presence_verdict(
+    presence: &PresenceReport,
+    age_minutes: i64,
+    absence_minutes: i64,
+) -> Verdict {
+    if matches!(presence.chain_index, ChainIndexAnswer::Present(_)) {
+        return Verdict::Kept;
+    }
+    match presence.verification {
+        BroadcastVerification::Rejected => Verdict::DeadAbsent,
+        _ if presence.network_absent => {
+            if age_minutes >= absence_minutes {
+                Verdict::DeadAbsentPastThreshold
+            } else {
+                Verdict::AbsentOnClock
+            }
+        }
+        BroadcastVerification::Confirmed => Verdict::Kept,
+        BroadcastVerification::Inconclusive => Verdict::Inconclusive,
+    }
+}
+
 /// THE two-question rule, as a value: a confirmed spend of any input by a
-/// DIFFERENT txid is dead however held; otherwise the presence probe decides.
+/// DIFFERENT txid is dead however held; otherwise [`presence_verdict`]
+/// decides.
 pub fn verdict_for(
     our_txid: &str,
     inputs: &[InputSpend],
-    presence: BroadcastVerification,
+    presence: &PresenceReport,
+    age_minutes: i64,
+    absence_minutes: i64,
 ) -> Verdict {
-    let conflict = inputs.iter().any(|i| {
-        matches!(i, InputSpend::SpentBy { txid, confirmed: true }
-                     if !txid.eq_ignore_ascii_case(our_txid))
-    });
-    if conflict {
+    if has_conflict(our_txid, inputs) {
         return Verdict::DeadConflict;
     }
-    match presence {
-        BroadcastVerification::Confirmed => Verdict::Kept,
-        BroadcastVerification::Inconclusive => Verdict::Inconclusive,
-        BroadcastVerification::Rejected => Verdict::DeadAbsent,
-    }
+    presence_verdict(presence, age_minutes, absence_minutes)
+}
+
+fn has_conflict(our_txid: &str, inputs: &[InputSpend]) -> bool {
+    inputs.iter().any(|i| {
+        matches!(i, InputSpend::SpentBy { txid, confirmed: true }
+                     if !txid.eq_ignore_ascii_case(our_txid))
+    })
 }
 
 /// [`reconcile`] with both chain probes injected — the seam the cells drive
@@ -232,28 +361,30 @@ pub fn verdict_for(
 pub async fn reconcile_with<P, PF, I, IF>(
     pool: &sqlx::SqlitePool,
     min_age_secs: i64,
+    absence_minutes: i64,
     execute: bool,
     probe: P,
     input_spend: I,
 ) -> Result<ReconcileReport>
 where
     P: Fn(String) -> PF,
-    PF: Future<Output = BroadcastVerification>,
+    PF: Future<Output = PresenceReport>,
     I: Fn(String, u32) -> IF,
     IF: Future<Output = InputSpend>,
 {
-    let mut report = ReconcileReport::default();
+    let mut report = ReconcileReport {
+        absence_minutes,
+        ..ReconcileReport::default()
+    };
     let rows = select_stale_unproven(pool, min_age_secs).await?;
     report.checked = rows.len();
-    if rows.is_empty() {
-        return Ok(report);
-    }
 
     // (tx_id, txid, per-input answers) for every tx to abandon.
     let mut dead: Vec<DeadCandidate> = Vec::new();
     for row in &rows {
         let tx_id: i64 = row.get("transaction_id");
         let txid: String = row.get("txid");
+        let age_minutes: i64 = row.get("age_minutes");
         let inputs = tracked_inputs(pool, tx_id).await?;
         let mut answers: Vec<(TrackedInput, InputSpend)> = Vec::with_capacity(inputs.len());
         for i in inputs {
@@ -263,82 +394,117 @@ where
         let spends: Vec<InputSpend> = answers.iter().map(|(_, a)| a.clone()).collect();
         // The conflict question is decided from the inputs alone; the
         // presence probe is only asked when no input says "dead".
-        let presence = if verdict_for(&txid, &spends, BroadcastVerification::Inconclusive)
-            == Verdict::DeadConflict
-        {
-            BroadcastVerification::Inconclusive
+        let presence = if has_conflict(&txid, &spends) {
+            PresenceReport::from_verification(BroadcastVerification::Inconclusive)
         } else {
             probe(txid.clone()).await
         };
-        match verdict_for(&txid, &spends, presence) {
-            Verdict::Kept => report.kept.push(txid),
-            Verdict::Inconclusive => report.inconclusive.push(txid),
-            Verdict::DeadAbsent => {
-                report.abandoned.push(txid.clone());
-                dead.push((tx_id, txid, answers));
-            }
-            Verdict::DeadConflict => {
-                report.conflicted.push(txid.clone());
-                dead.push((tx_id, txid, answers));
-            }
+        let verdict = verdict_for(&txid, &spends, &presence, age_minutes, absence_minutes);
+        match verdict {
+            Verdict::Kept => report.kept.push(txid.clone()),
+            Verdict::Inconclusive => report.inconclusive.push(txid.clone()),
+            Verdict::AbsentOnClock => report.absent_on_clock.push((txid.clone(), age_minutes)),
+            Verdict::DeadAbsent => report.abandoned.push(txid.clone()),
+            Verdict::DeadAbsentPastThreshold => report
+                .absent_past_threshold
+                .push((txid.clone(), age_minutes)),
+            Verdict::DeadConflict => report.conflicted.push(txid.clone()),
+        }
+        if verdict.is_dead() {
+            dead.push((tx_id, txid, answers));
         }
     }
 
-    if dead.is_empty() || !execute {
+    // Proof requests an earlier verdict left polled: (req id, txid, status).
+    let stale = select_stale_reqs(pool, min_age_secs).await?;
+    report.stale_reqs_checked = stale.len();
+    let mut retire_reqs: Vec<(i64, String)> = Vec::new();
+    for row in &stale {
+        let req_id: i64 = row.get("proven_tx_req_id");
+        let txid: String = row.get("txid");
+        let req_status: String = row.get("req_status");
+        let age_minutes: i64 = row.get("age_minutes");
+        let presence = probe(txid.clone()).await;
+        match presence_verdict(&presence, age_minutes, absence_minutes) {
+            Verdict::DeadAbsent | Verdict::DeadAbsentPastThreshold => {
+                report.stale_reqs_retired.push(txid);
+                retire_reqs.push((req_id, req_status));
+            }
+            Verdict::Kept if matches!(presence.chain_index, ChainIndexAnswer::Present(_)) => {
+                report.stale_reqs_known.push(txid);
+            }
+            _ => report.stale_reqs_kept.push(txid),
+        }
+    }
+
+    if !execute || (dead.is_empty() && retire_reqs.is_empty()) {
         return Ok(report);
     }
 
-    let ids: Vec<i64> = dead.iter().map(|(id, _, _)| *id).collect();
-    let mut tx = pool.begin().await?;
-    for (tx_id, our_txid, answers) in &dead {
-        for (input, answer) in answers {
-            match answer {
-                InputSpend::Unspent => {
-                    sqlx::query(
-                        "UPDATE outputs SET spendable = 1, spent_by = NULL, \
-                         updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
-                    )
-                    .bind(input.output_id)
-                    .bind(tx_id)
-                    .execute(&mut *tx)
-                    .await?;
-                    report.restored_count += 1;
-                    report.restored_sats += input.satoshis.max(0) as u64;
-                }
-                InputSpend::SpentBy {
-                    txid,
-                    confirmed: true,
-                } if !txid.eq_ignore_ascii_case(our_txid) => {
-                    sqlx::query(
-                        "UPDATE outputs SET spendable = 0, spent_by = NULL, \
-                         updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
-                    )
-                    .bind(input.output_id)
-                    .bind(tx_id)
-                    .execute(&mut *tx)
-                    .await?;
-                    report.relinquished_count += 1;
-                    report.relinquished_sats += input.satoshis.max(0) as u64;
-                }
-                _ => {
-                    // Unknown, or a spend the chain would not vouch for as
-                    // confirmed: stays LOCKED by the failed tx.
-                    report.kept_locked_count += 1;
+    if !dead.is_empty() {
+        let mut tx = pool.begin().await?;
+        for (tx_id, our_txid, answers) in &dead {
+            for (input, answer) in answers {
+                match answer {
+                    InputSpend::Unspent => {
+                        sqlx::query(
+                            "UPDATE outputs SET spendable = 1, spent_by = NULL, \
+                             updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                        )
+                        .bind(input.output_id)
+                        .bind(tx_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        report.restored_count += 1;
+                        report.restored_sats += input.satoshis.max(0) as u64;
+                    }
+                    InputSpend::SpentBy {
+                        txid,
+                        confirmed: true,
+                    } if !txid.eq_ignore_ascii_case(our_txid) => {
+                        sqlx::query(
+                            "UPDATE outputs SET spendable = 0, spent_by = NULL, \
+                             updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                        )
+                        .bind(input.output_id)
+                        .bind(tx_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        report.relinquished_count += 1;
+                        report.relinquished_sats += input.satoshis.max(0) as u64;
+                    }
+                    _ => {
+                        // Unknown, or a spend the chain would not vouch for as
+                        // confirmed: stays LOCKED by the failed tx.
+                        report.kept_locked_count += 1;
+                    }
                 }
             }
         }
+        tx.commit().await.context("commit per-input release")?;
+        let ids: Vec<i64> = dead.iter().map(|(id, _, _)| *id).collect();
+        let phantoms = remove_phantom_outputs(pool, &ids).await?;
+        let targets: Vec<(i64, String)> = dead
+            .iter()
+            .map(|(id, txid, _)| (*id, txid.clone()))
+            .collect();
+        let (failed, reqs) = mark_failed(pool, &targets).await?;
+        report.failed = failed;
+        report.reqs_retired += reqs;
+        report.phantom_count = phantoms.0;
+        report.phantom_sats = phantoms.1;
     }
-    tx.commit().await.context("commit per-input release")?;
-    let phantoms = remove_phantom_outputs(pool, &ids).await?;
-    let failed = mark_failed(pool, &ids).await?;
+    report.reqs_retired += retire_stale_reqs(pool, &retire_reqs).await?;
     report.applied = true;
-    report.failed = failed;
-    report.phantom_count = phantoms.0;
-    report.phantom_sats = phantoms.1;
     Ok(report)
 }
 
-/// `unproven` transactions at least `min_age_secs` old.
+/// SQL for a row's age in whole minutes, tolerant of both timestamp forms
+/// the wallet writes (see [`select_stale_unproven`]).
+const AGE_MINUTES_SQL: &str =
+    "CAST((julianday('now') - julianday(datetime(created_at))) * 1440 AS INTEGER)";
+
+/// `unproven` transactions at least `min_age_secs` old, with their age.
 ///
 /// `created_at` is written by the toolbox as ISO-8601 (`…T…+00:00`) but by
 /// this module's own UPDATEs as `CURRENT_TIMESTAMP` (space-separated), and a
@@ -363,13 +529,40 @@ async fn select_stale_unproven(
     // their OWN floor — at least 10 minutes old — regardless of the caller's
     // min_age (the CLI passes 0). WoC-404 remains the only abandonment
     // verdict either way.
-    Ok(sqlx::query(
-        "SELECT transaction_id, txid FROM transactions \
+    Ok(sqlx::query(&format!(
+        "SELECT transaction_id, txid, {AGE_MINUTES_SQL} AS age_minutes FROM transactions \
          WHERE (status='unproven' AND datetime(created_at) <= datetime('now', ?)) \
             OR (status='sending' AND datetime(created_at) <= datetime('now', ?) \
-                AND datetime(created_at) <= datetime('now', '-600 seconds'))",
-    )
+                AND datetime(created_at) <= datetime('now', '-600 seconds'))"
+    ))
     .bind(&age_modifier)
+    .bind(&age_modifier)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Proof requests still in a polled status for transactions this wallet
+/// already `failed`, at least `min_age_secs` old (the transaction's age):
+/// `(proven_tx_req_id, txid, req_status, age_minutes)`.
+///
+/// The soak wallet's shape (2026-09-04): three transactions this sweep failed
+/// on 2026-06-29 kept their reqs at `unmined`, because `mark_failed` never
+/// touched `proven_tx_reqs`, and the monitor asked Arcade, WhatsOnChain and
+/// Bitails about all three every minute for 67 days. The sweep itself never
+/// saw them again: its candidates are `unproven`/`sending` rows.
+async fn select_stale_reqs(
+    pool: &sqlx::SqlitePool,
+    min_age_secs: i64,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+    let age_modifier = format!("-{} seconds", min_age_secs.max(0));
+    let age = AGE_MINUTES_SQL.replace("created_at", "t.created_at");
+    Ok(sqlx::query(&format!(
+        "SELECT r.proven_tx_req_id, r.txid, r.status AS req_status, {age} AS age_minutes \
+         FROM proven_tx_reqs r JOIN transactions t ON t.txid = r.txid \
+         WHERE t.status = 'failed' AND r.status IN ({POLLED_REQ_STATUSES}) \
+           AND datetime(t.created_at) <= datetime('now', ?) \
+         ORDER BY r.proven_tx_req_id ASC"
+    ))
     .bind(&age_modifier)
     .fetch_all(pool)
     .await?)
@@ -383,23 +576,31 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     // Operator-initiated: no age guard (inspect every unproven tx).
     let report = reconcile(&pool, ctx.chain, 0, execute).await?;
 
-    if report.checked == 0 {
-        println!("No unproven (or stale sending) transactions found.");
+    if report.checked == 0 && report.stale_reqs_checked == 0 {
+        println!("No unproven (or stale sending) transactions found, and no stale proof requests.");
         return Ok(());
     }
     println!(
-        "Found {} unproven/stale-sending transaction(s); probed every broadcast source.",
-        report.checked
+        "Found {} unproven/stale-sending transaction(s); probed every broadcast source (absence threshold {} min).",
+        report.checked, report.absence_minutes
     );
     println!(
-        "  Definitively absent: {}    Dead by conflict: {}    Held by a source: {}    Undecidable (kept): {}",
+        "  Definitively absent: {}    Absent past the threshold: {}    Dead by conflict: {}    Held by a source: {}    On the clock: {}    Undecidable (kept): {}",
         report.abandoned.len(),
+        report.absent_past_threshold.len(),
         report.conflicted.len(),
         report.kept.len(),
+        report.absent_on_clock.len(),
         report.inconclusive.len()
     );
     for txid in &report.kept {
         println!("    keep: {}", txid);
+    }
+    for (txid, age) in &report.absent_on_clock {
+        println!(
+            "    keep (absent from the chain index for {} min while the broadcaster holds it; retired once past {} min): {}",
+            age, report.absence_minutes, txid
+        );
     }
     for txid in &report.inconclusive {
         println!(
@@ -410,6 +611,12 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     for txid in &report.abandoned {
         println!("    fail (absent everywhere): {}", txid);
     }
+    for (txid, age) in &report.absent_past_threshold {
+        println!(
+            "    fail (absent from the chain index for {} min, past the {}-min threshold; a broadcaster's SEEN is not chain evidence): {}",
+            age, report.absence_minutes, txid
+        );
+    }
     for txid in &report.conflicted {
         println!(
             "    fail (an input is chain-spent by another confirmed tx — dead however held): {}",
@@ -417,7 +624,32 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         );
     }
 
-    if report.abandoned.is_empty() && report.conflicted.is_empty() {
+    if report.stale_reqs_checked > 0 {
+        println!(
+            "Proof requests still polled for {} failed transaction(s): retire {}, chain index knows {}, undecided {}.",
+            report.stale_reqs_checked,
+            report.stale_reqs_retired.len(),
+            report.stale_reqs_known.len(),
+            report.stale_reqs_kept.len()
+        );
+        for txid in &report.stale_reqs_retired {
+            println!("    retire proof request (absent everywhere): {}", txid);
+        }
+        for txid in &report.stale_reqs_known {
+            println!(
+                "    keep proof request (the chain index KNOWS this failed transaction; left to the proof pass and the unfail path): {}",
+                txid
+            );
+        }
+        for txid in &report.stale_reqs_kept {
+            println!(
+                "    keep proof request (undecided, asked again next pass): {}",
+                txid
+            );
+        }
+    }
+
+    if !report.has_work() {
         println!("Nothing to clean up.");
         return Ok(());
     }
@@ -426,16 +658,16 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     // too (the poisoned chain, 2026-09-02): the toolbox walks the unproven
     // descendants under THE RELEASE RULE. On a dry run it only lists them.
     let mut descendants_retired = 0usize;
-    for txid in report.abandoned.iter().chain(report.conflicted.iter()) {
+    for txid in report.dead_txids() {
         let poison = ctx
             .wallet
             .storage()
             .retire_poisoned_chain_from(
                 ctx.wallet.services(),
-                txid,
+                &txid,
                 "invalid",
                 execute,
-                crate::broadcast_reconcile::absence_minutes_from_env(),
+                report.absence_minutes,
             )
             .await?;
         let descendants: Vec<_> = poison.chain.iter().filter(|t| t.depth > 0).collect();
@@ -485,6 +717,11 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     }
     println!("  Transactions marked failed: {}", report.failed);
     println!(
+        "  Proof requests retired (invalid): {} ({} of them for transactions failed earlier)",
+        report.reqs_retired,
+        report.stale_reqs_retired.len()
+    );
+    println!(
         "  Inputs restored to spendable (verified unspent): {} ({} sats)",
         report.restored_count, report.restored_sats
     );
@@ -533,15 +770,51 @@ async fn remove_phantom_outputs(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<
     Ok((count, sats))
 }
 
-async fn mark_failed(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<u64> {
+/// Fail the transactions and retire their proof requests: `(transactions
+/// failed, reqs retired)`. The req goes to `invalid` (the toolbox's status
+/// for a phantom) so the monitor's proof pass stops asking every provider
+/// about it every minute; the unfail canary still re-verifies `invalid`
+/// reqs of failed transactions against the chain with backoff, so a wrong
+/// verdict here is recoverable.
+async fn mark_failed(pool: &sqlx::SqlitePool, targets: &[(i64, String)]) -> Result<(u64, u64)> {
     let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-    for id in ids {
+    let mut failed = 0u64;
+    let mut reqs = 0u64;
+    for (id, txid) in targets {
         let res = sqlx::query(
             "UPDATE transactions SET status = 'failed', \
-             updated_at = CURRENT_TIMESTAMP WHERE transaction_id = ? AND status = 'unproven'",
+             updated_at = CURRENT_TIMESTAMP WHERE transaction_id = ? AND status IN ('unproven', 'sending')",
         )
         .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        failed += res.rows_affected();
+        let res = sqlx::query(&format!(
+            "UPDATE proven_tx_reqs SET status = 'invalid', attempts = attempts + 1, \
+             updated_at = CURRENT_TIMESTAMP WHERE txid = ? AND status IN ({POLLED_REQ_STATUSES})"
+        ))
+        .bind(txid)
+        .execute(&mut *tx)
+        .await?;
+        reqs += res.rows_affected();
+    }
+    tx.commit().await?;
+    Ok((failed, reqs))
+}
+
+/// Retire stale proof requests: each `(proven_tx_req_id, status seen)` goes
+/// to `invalid` only if it is still at the status the pass saw (a proof
+/// that landed meanwhile wins).
+async fn retire_stale_reqs(pool: &sqlx::SqlitePool, reqs: &[(i64, String)]) -> Result<u64> {
+    let mut count = 0u64;
+    let mut tx = pool.begin().await?;
+    for (id, status) in reqs {
+        let res = sqlx::query(
+            "UPDATE proven_tx_reqs SET status = 'invalid', attempts = attempts + 1, \
+             updated_at = CURRENT_TIMESTAMP WHERE proven_tx_req_id = ? AND status = ?",
+        )
+        .bind(id)
+        .bind(status)
         .execute(&mut *tx)
         .await?;
         count += res.rows_affected();
@@ -553,6 +826,8 @@ async fn mark_failed(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::broadcast_verify::NetworkEvidence;
+    use bsv_wallet_toolbox::{BROADCAST_PROVIDER_CHAIN, PROVIDER_ARCADE_V2};
     use sqlx::Row;
 
     async fn mem_pool_with(rows: &[(&str, &str, &str)]) -> sqlx::SqlitePool {
@@ -560,7 +835,7 @@ mod tests {
         sqlx::query(
             "CREATE TABLE transactions (
                 transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                txid TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+                txid TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL,
                 updated_at TEXT)",
         )
         .execute(&pool)
@@ -572,6 +847,15 @@ mod tests {
                 transaction_id INTEGER NOT NULL, spendable INTEGER NOT NULL DEFAULT 0,
                 spent_by INTEGER, satoshis INTEGER NOT NULL DEFAULT 0, vout INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE proven_tx_reqs (
+                proven_tx_req_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL DEFAULT 'unknown', attempts INTEGER NOT NULL DEFAULT 0,
+                txid TEXT NOT NULL UNIQUE, updated_at TEXT)",
         )
         .execute(&pool)
         .await
@@ -588,9 +872,79 @@ mod tests {
         pool
     }
 
+    async fn insert_req(pool: &sqlx::SqlitePool, txid: &str, status: &str, attempts: i64) {
+        sqlx::query(
+            "INSERT INTO proven_tx_reqs (txid, status, attempts, updated_at) VALUES (?,?,?,'2026-06-29T15:43:34.936649+00:00')",
+        )
+        .bind(txid)
+        .bind(status)
+        .bind(attempts)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn req_state(pool: &sqlx::SqlitePool, txid: &str) -> (String, i64) {
+        sqlx::query_as("SELECT status, attempts FROM proven_tx_reqs WHERE txid = ?")
+            .bind(txid)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn tx_state(pool: &sqlx::SqlitePool, id: i64) -> (String, Option<String>) {
+        sqlx::query_as("SELECT status, updated_at FROM transactions WHERE transaction_id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    fn presence(verification: BroadcastVerification) -> PresenceReport {
+        PresenceReport::from_verification(verification)
+    }
+
+    /// The chain index holds it (mined): the answer for everyone.
+    fn chain_mined() -> PresenceReport {
+        PresenceReport {
+            verification: BroadcastVerification::Confirmed,
+            evidence: Some(NetworkEvidence::Mined),
+            evidence_provider: BROADCAST_PROVIDER_CHAIN,
+            chain_index: ChainIndexAnswer::Present(NetworkEvidence::Mined),
+            broadcaster_fatal: false,
+            network_absent: false,
+        }
+    }
+
+    /// The broadcaster says SEEN_MULTIPLE_NODES (or holds it), the chain
+    /// index says 404, no peer node vouches: `network_absent`.
+    fn seen_by_arcade_absent_from_chain() -> PresenceReport {
+        PresenceReport {
+            verification: BroadcastVerification::Confirmed,
+            evidence: Some(NetworkEvidence::Seen),
+            evidence_provider: PROVIDER_ARCADE_V2,
+            chain_index: ChainIndexAnswer::Absent,
+            broadcaster_fatal: false,
+            network_absent: true,
+        }
+    }
+
+    /// Broadcaster JSON-404 AND chain index 404: definitive absence.
+    fn absent_everywhere() -> PresenceReport {
+        PresenceReport {
+            verification: BroadcastVerification::Rejected,
+            evidence: None,
+            evidence_provider: bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
+            chain_index: ChainIndexAnswer::Absent,
+            broadcaster_fatal: false,
+            network_absent: true,
+        }
+    }
+
     /// The regression: toolbox-written rows use ISO-8601 `…T…+00:00`, which a
     /// bare string compare against `datetime('now')` NEVER matches ('T' > ' ')
-    /// — the sweep silently found nothing, forever. Both formats must match.
+    /// (the sweep silently found nothing, forever). Both formats must match,
+    /// and the age comes out of both.
     #[tokio::test]
     async fn selects_iso8601_and_space_format_rows() {
         let pool = mem_pool_with(&[
@@ -616,6 +970,10 @@ mod tests {
         );
         assert!(txids.contains(&"aa".repeat(32)));
         assert!(txids.contains(&"bb".repeat(32)));
+        for row in &rows {
+            let age: i64 = row.get("age_minutes");
+            assert!(age > 60 * 24 * 365 * 5, "years old in minutes: {age}");
+        }
     }
 
     /// The min-age guard still filters: a just-created row (either format)
@@ -643,22 +1001,25 @@ mod tests {
         );
         let unguarded = select_stale_unproven(&pool, 0).await.unwrap();
         assert_eq!(unguarded.len(), 3, "0-second guard selects everything");
+        let fresh_age: i64 = unguarded
+            .iter()
+            .find(|r| r.get::<String, _>("txid") == "fresh_iso")
+            .unwrap()
+            .get("age_minutes");
+        assert_eq!(fresh_age, 0);
     }
 
     // ── THE RELEASE RULE (2026-08-29) — the verdict is corroborated absence ──
 
-    /// Seed one stale `unproven` tx (id 1) whose input is output 1 (locked,
-    /// spent_by = 1) and whose own phantom change is output 2.
     /// Seed one stale `unproven` tx (id 1, txid `ab…`) whose input is output 1
     /// (coin of parent tx 99 `cd…`:0, locked: spent_by = 1) and whose own
-    /// phantom change is output 2.
+    /// phantom change is output 2, with its `unmined` proof request.
     async fn rule_fixture() -> sqlx::SqlitePool {
-        let pool = mem_pool_with(&[(
-            "ab".repeat(32).leak(),
-            "unproven",
-            "2020-01-01T00:00:00+00:00",
-        )])
-        .await;
+        rule_fixture_aged("2020-01-01T00:00:00+00:00").await
+    }
+
+    async fn rule_fixture_aged(created_at: &str) -> sqlx::SqlitePool {
+        let pool = mem_pool_with(&[("ab".repeat(32).leak(), "unproven", created_at)]).await;
         sqlx::query(
             "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES (99, ?, 'completed', '2019-12-31T00:00:00+00:00')",
         )
@@ -674,6 +1035,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        insert_req(&pool, &"ab".repeat(32), "unmined", 1).await;
         pool
     }
 
@@ -694,8 +1056,9 @@ mod tests {
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Inconclusive },
+            |_txid| async { presence(BroadcastVerification::Inconclusive) },
             |_src, _vout| async { InputSpend::Unspent },
         )
         .await
@@ -706,23 +1069,20 @@ mod tests {
         assert!(!report.applied, "nothing to apply");
         assert_eq!(lock(&pool, 1).await, (0, Some(1)), "the input stays locked");
         assert_eq!(lock(&pool, 2).await.0, 1, "its change untouched");
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM transactions WHERE transaction_id = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(status, "unproven");
+        assert_eq!(tx_state(&pool, 1).await.0, "unproven");
+        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "unmined");
     }
 
-    /// A tx ANY source still holds is kept.
+    /// A tx ANY source still holds, with no chain-index answer, is kept.
     #[tokio::test]
     async fn a_held_tx_is_kept() {
         let pool = rule_fixture().await;
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Confirmed },
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
             |_src, _vout| async { InputSpend::Unspent },
         )
         .await
@@ -734,15 +1094,17 @@ mod tests {
 
     /// DEFINITIVE absence (broadcaster JSON-404 + index 404, nothing holding
     /// it) is the ONE verdict that abandons: inputs restored, phantom change
-    /// invalidated, tx failed — and only under --execute.
+    /// invalidated, tx failed, its proof request retired, and only under
+    /// --execute.
     #[tokio::test]
     async fn a_definitive_absence_abandons_and_restores_under_execute() {
         let pool = rule_fixture().await;
         let dry = reconcile_with(
             &pool,
             0,
+            30,
             false,
-            |_txid| async { BroadcastVerification::Rejected },
+            |_txid| async { absent_everywhere() },
             |_src, _vout| async { InputSpend::Unspent },
         )
         .await
@@ -754,12 +1116,17 @@ mod tests {
             (0, Some(1)),
             "dry run touches nothing"
         );
+        assert_eq!(
+            req_state(&pool, &"ab".repeat(32)).await,
+            ("unmined".into(), 1)
+        );
 
         let wet = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Rejected },
+            |_txid| async { absent_everywhere() },
             |_src, _vout| async { InputSpend::Unspent },
         )
         .await
@@ -772,12 +1139,13 @@ mod tests {
         assert_eq!((wet.phantom_count, wet.phantom_sats), (1, 4000));
         assert_eq!(lock(&pool, 1).await, (1, None), "the input is released");
         assert_eq!(lock(&pool, 2).await.0, 0, "the phantom change is dead");
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM transactions WHERE transaction_id = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(status, "failed");
+        assert_eq!(tx_state(&pool, 1).await.0, "failed");
+        assert_eq!(wet.reqs_retired, 1);
+        assert_eq!(
+            req_state(&pool, &"ab".repeat(32)).await,
+            ("invalid".into(), 2),
+            "the proof pass stops asking about it"
+        );
     }
 
     // ── the abandonment-side twin (run B's heal, 2026-08-29): dead however held ──
@@ -793,10 +1161,11 @@ mod tests {
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
             |_txid| {
                 probed.set(true);
-                async { BroadcastVerification::Confirmed }
+                async { presence(BroadcastVerification::Confirmed) }
             },
             |_src, _vout| async {
                 InputSpend::SpentBy {
@@ -825,12 +1194,8 @@ mod tests {
             "relinquished: unspendable and unlocked"
         );
         assert_eq!(lock(&pool, 2).await.0, 0, "phantom change dead");
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM transactions WHERE transaction_id = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(status, "failed");
+        assert_eq!(tx_state(&pool, 1).await.0, "failed");
+        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "invalid");
     }
 
     /// An UNCONFIRMED competitor is not a verdict (a mempool race can still
@@ -841,8 +1206,9 @@ mod tests {
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Confirmed },
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
             |_src, _vout| async {
                 InputSpend::SpentBy {
                     txid: "98".repeat(32),
@@ -864,8 +1230,9 @@ mod tests {
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Confirmed },
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
             |_src, _vout| async {
                 InputSpend::SpentBy {
                     txid: "AB".repeat(32), // ours, other case
@@ -886,8 +1253,9 @@ mod tests {
         let report = reconcile_with(
             &pool,
             0,
+            30,
             true,
-            |_txid| async { BroadcastVerification::Rejected },
+            |_txid| async { absent_everywhere() },
             |_src, _vout| async { InputSpend::Unknown },
         )
         .await
@@ -902,6 +1270,417 @@ mod tests {
             "an unknown never releases money"
         );
         assert_eq!(lock(&pool, 2).await.0, 0, "the phantom change still dies");
+    }
+
+    // ── the absence clock (2026-09-02): a broadcaster's SEEN is not chain evidence ──
+
+    /// RED→GREEN, the 2026-09-02 phantom shape under the DAEMON's sweep:
+    /// Arcade answers SEEN_MULTIPLE_NODES for hours, WhatsOnChain 404, the
+    /// transaction is older than the absence threshold. The old rule read
+    /// the broadcaster's word as "held by a source" and kept it forever;
+    /// past the threshold it is a phantom: input restored (verified
+    /// unspent), phantom change dead, tx failed, req retired.
+    #[tokio::test]
+    async fn a_seen_forever_phantom_past_the_threshold_is_retired() {
+        let pool = rule_fixture_aged("2026-01-01T00:00:00+00:00").await;
+        let dry = reconcile_with(
+            &pool,
+            0,
+            30,
+            false,
+            |_txid| async { seen_by_arcade_absent_from_chain() },
+            |_src, _vout| async { InputSpend::Unspent },
+        )
+        .await
+        .unwrap();
+        assert_eq!(dry.absent_past_threshold.len(), 1);
+        assert_eq!(dry.absent_past_threshold[0].0, "ab".repeat(32));
+        assert!(dry.absent_past_threshold[0].1 >= 30);
+        assert!(dry.kept.is_empty() && dry.abandoned.is_empty());
+        assert!(!dry.applied);
+        assert_eq!(
+            lock(&pool, 1).await,
+            (0, Some(1)),
+            "dry run touches nothing"
+        );
+
+        let wet = reconcile_with(
+            &pool,
+            0,
+            30,
+            true,
+            |_txid| async { seen_by_arcade_absent_from_chain() },
+            |_src, _vout| async { InputSpend::Unspent },
+        )
+        .await
+        .unwrap();
+        assert!(wet.applied);
+        assert_eq!(wet.dead_txids(), vec!["ab".repeat(32)]);
+        assert_eq!(
+            (wet.failed, wet.restored_count, wet.restored_sats),
+            (1, 1, 5000)
+        );
+        assert_eq!((wet.phantom_count, wet.phantom_sats), (1, 4000));
+        assert_eq!(lock(&pool, 1).await, (1, None), "the coin is back");
+        assert_eq!(lock(&pool, 2).await.0, 0, "the phantom change is dead");
+        assert_eq!(tx_state(&pool, 1).await.0, "failed");
+        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "invalid");
+    }
+
+    /// The same shape younger than the threshold is on the clock: kept,
+    /// nothing written, surfaced with its age.
+    #[tokio::test]
+    async fn a_seen_but_absent_tx_younger_than_the_threshold_is_on_the_clock() {
+        let pool = mem_pool_with(&[]).await;
+        sqlx::query(
+            "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES
+             (1, ?, 'unproven', strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-5 minutes'))",
+        )
+        .bind("ab".repeat(32))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO outputs (transaction_id, spendable, spent_by, satoshis) VALUES (1, 1, NULL, 4000)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_req(&pool, &"ab".repeat(32), "unmined", 0).await;
+        let report = reconcile_with(
+            &pool,
+            0,
+            30,
+            true,
+            |_txid| async { seen_by_arcade_absent_from_chain() },
+            |_src, _vout| async { InputSpend::Unspent },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.absent_on_clock.len(), 1);
+        assert_eq!(report.absent_on_clock[0].0, "ab".repeat(32));
+        assert!(
+            (4..=6).contains(&report.absent_on_clock[0].1),
+            "{:?}",
+            report.absent_on_clock
+        );
+        assert!(report.absent_past_threshold.is_empty() && report.kept.is_empty());
+        assert!(!report.applied);
+        assert_eq!(lock(&pool, 1).await.0, 1, "its change untouched");
+        assert_eq!(tx_state(&pool, 1).await.0, "unproven");
+        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "unmined");
+    }
+
+    // ── the soak wallet's six (2026-09-04) ──
+
+    /// The June shape (e951…, ca29…, 28e3…): this sweep failed them on
+    /// 2026-06-29 (the space-form `updated_at` is its `CURRENT_TIMESTAMP`),
+    /// their outputs are dead, nothing is locked by them, but their reqs
+    /// stayed `unmined` and the proof pass asked three providers about them
+    /// every minute for 67 days. They are not sweep candidates (`failed`),
+    /// so the OLD sweep never saw them again; the stale-req scan does, and
+    /// retires the req only on the probe's definitive absence (Arcade
+    /// JSON-404, WhatsOnChain 404).
+    #[tokio::test]
+    async fn the_june_shape_a_failed_tx_whose_req_the_proof_pass_still_polls() {
+        let pool = mem_pool_with(&[]).await;
+        let june: [(&str, i64, i64); 3] = [
+            ("e9512972dc4f57b6", 2, 14),
+            ("ca29779e41865656", 1, 15),
+            ("28e3b96e8f26f5db", 1, 21),
+        ];
+        for (prefix, attempts, id) in june {
+            let txid = format!("{prefix}{}", "0".repeat(64 - prefix.len()));
+            sqlx::query(
+                "INSERT INTO transactions (transaction_id, txid, status, created_at, updated_at) \
+                 VALUES (?, ?, 'failed', '2026-06-29T15:42:52.146700+00:00', '2026-06-29 17:34:15')",
+            )
+            .bind(id)
+            .bind(&txid)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO outputs (transaction_id, spendable, spent_by, satoshis) VALUES (?, 0, NULL, 10000)")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            insert_req(&pool, &txid, "unmined", attempts).await;
+        }
+        let probed = std::cell::RefCell::new(Vec::new());
+
+        let dry = reconcile_with(
+            &pool,
+            3600,
+            30,
+            false,
+            |txid| {
+                probed.borrow_mut().push(txid);
+                async { absent_everywhere() }
+            },
+            |_src, _vout| async { InputSpend::Unknown },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            dry.checked, 0,
+            "a failed transaction is not a sweep candidate"
+        );
+        assert_eq!(dry.stale_reqs_checked, 3);
+        assert_eq!(dry.stale_reqs_retired.len(), 3);
+        assert!(dry.stale_reqs_known.is_empty() && dry.stale_reqs_kept.is_empty());
+        assert!(dry.has_work());
+        assert!(!dry.applied, "a dry run writes nothing");
+        assert_eq!(
+            probed.borrow().len(),
+            3,
+            "each req is probed, never retired blind"
+        );
+        for (prefix, attempts, _) in june {
+            let txid = format!("{prefix}{}", "0".repeat(64 - prefix.len()));
+            assert_eq!(req_state(&pool, &txid).await, ("unmined".into(), attempts));
+        }
+
+        let wet = reconcile_with(
+            &pool,
+            3600,
+            30,
+            true,
+            |_txid| async { absent_everywhere() },
+            |_src, _vout| async { InputSpend::Unknown },
+        )
+        .await
+        .unwrap();
+        assert!(wet.applied);
+        assert_eq!(wet.reqs_retired, 3);
+        assert_eq!(
+            (wet.failed, wet.restored_count, wet.phantom_count),
+            (0, 0, 0)
+        );
+        for (prefix, attempts, id) in june {
+            let txid = format!("{prefix}{}", "0".repeat(64 - prefix.len()));
+            assert_eq!(
+                req_state(&pool, &txid).await,
+                ("invalid".into(), attempts + 1),
+                "the proof pass stops asking"
+            );
+            assert_eq!(
+                tx_state(&pool, id).await,
+                ("failed".into(), Some("2026-06-29 17:34:15".into())),
+                "the transaction row is not touched"
+            );
+        }
+
+        // The next pass finds nothing left to do.
+        let again = reconcile_with(
+            &pool,
+            3600,
+            30,
+            true,
+            |_txid| async { absent_everywhere() },
+            |_src, _vout| async { InputSpend::Unknown },
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.stale_reqs_checked, 0);
+        assert!(!again.applied);
+    }
+
+    /// The September shape (f525…, a053…, ab66…): `unproven` with an
+    /// `unmined` req, two days old, spending a completed parent's coin,
+    /// mined on chain (WhatsOnChain 290+ confirmations) while Arcade still
+    /// answers ACCEPTED_BY_NETWORK. The sweep keeps them (the chain index
+    /// holds them) and touches nothing: the proof pass owns the req, and
+    /// the toolbox now lets the chain index's `mined` through Arcade's
+    /// stale `known` so the proof gets fetched.
+    #[tokio::test]
+    async fn the_september_shape_a_mined_tx_arcade_still_calls_in_flight_is_kept() {
+        let pool = mem_pool_with(&[]).await;
+        let ours = format!("f5258b036f7b2694{}", "0".repeat(48));
+        sqlx::query(
+            "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES
+             (20, ?, 'completed', '2026-06-29T00:00:00+00:00'),
+             (22, ?, 'unproven', strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-2 days'))",
+        )
+        .bind(format!("ec7373a33c77cf6c{}", "0".repeat(48)))
+        .bind(&ours)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO outputs (output_id, transaction_id, spendable, spent_by, satoshis, vout) VALUES
+             (65, 20, 0, 22, 30092, 1),
+             (70, 22, 1, NULL, 1, 0),
+             (71, 22, 0, 23, 29947, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_req(&pool, &ours, "unmined", 1).await;
+        let spender = ours.clone();
+        let report = reconcile_with(
+            &pool,
+            3600,
+            30,
+            true,
+            |_txid| async { chain_mined() },
+            move |_src, _vout| {
+                let spender = spender.clone();
+                async move {
+                    InputSpend::SpentBy {
+                        txid: spender,
+                        confirmed: true,
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.checked, 1);
+        assert_eq!(report.kept, vec![ours.clone()]);
+        assert!(report.dead_txids().is_empty() && report.absent_on_clock.is_empty());
+        assert_eq!(report.stale_reqs_checked, 0);
+        assert!(!report.applied);
+        assert_eq!(
+            lock(&pool, 65).await,
+            (0, Some(22)),
+            "its input stays spent by it"
+        );
+        assert_eq!(
+            lock(&pool, 70).await,
+            (1, None),
+            "its change stays spendable"
+        );
+        assert_eq!(tx_state(&pool, 22).await.0, "unproven");
+        assert_eq!(req_state(&pool, &ours).await, ("unmined".into(), 1));
+    }
+
+    /// A stale req whose transaction the chain index KNOWS is never retired
+    /// (the `failed` verdict is the suspect one); an undecidable probe keeps
+    /// it for the next pass.
+    #[tokio::test]
+    async fn a_stale_req_the_chain_index_knows_or_cannot_judge_is_kept() {
+        let pool = mem_pool_with(&[
+            (
+                "11".repeat(32).leak(),
+                "failed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "22".repeat(32).leak(),
+                "failed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        ])
+        .await;
+        insert_req(&pool, &"11".repeat(32), "unmined", 3).await;
+        insert_req(&pool, &"22".repeat(32), "callback", 0).await;
+        let report = reconcile_with(
+            &pool,
+            0,
+            30,
+            true,
+            |txid| async move {
+                if txid == "11".repeat(32) {
+                    chain_mined()
+                } else {
+                    presence(BroadcastVerification::Inconclusive)
+                }
+            },
+            |_src, _vout| async { InputSpend::Unknown },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.stale_reqs_checked, 2);
+        assert_eq!(report.stale_reqs_known, vec!["11".repeat(32)]);
+        assert_eq!(report.stale_reqs_kept, vec!["22".repeat(32)]);
+        assert!(report.stale_reqs_retired.is_empty());
+        assert!(!report.has_work() && !report.applied);
+        assert_eq!(
+            req_state(&pool, &"11".repeat(32)).await,
+            ("unmined".into(), 3)
+        );
+        assert_eq!(
+            req_state(&pool, &"22".repeat(32)).await,
+            ("callback".into(), 0)
+        );
+    }
+
+    /// A stale req is retired under the SEEN-forever rule too, and a
+    /// terminal req (`invalid`, `completed`) or a fresh transaction (inside
+    /// the min-age guard) is never a stale-req candidate.
+    #[tokio::test]
+    async fn stale_req_candidates_are_polled_reqs_of_old_failed_txs_only() {
+        let pool = mem_pool_with(&[
+            (
+                "11".repeat(32).leak(),
+                "failed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "22".repeat(32).leak(),
+                "failed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "33".repeat(32).leak(),
+                "failed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "55".repeat(32).leak(),
+                "completed",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        ])
+        .await;
+        sqlx::query(
+            "INSERT INTO transactions (txid, status, created_at) VALUES (?, 'failed', strftime('%Y-%m-%dT%H:%M:%f+00:00','now'))",
+        )
+        .bind("44".repeat(32))
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_req(&pool, &"11".repeat(32), "unmined", 0).await;
+        insert_req(&pool, &"22".repeat(32), "invalid", 4).await;
+        insert_req(&pool, &"33".repeat(32), "completed", 0).await;
+        insert_req(&pool, &"44".repeat(32), "unmined", 0).await;
+        insert_req(&pool, &"55".repeat(32), "unmined", 0).await;
+        let report = reconcile_with(
+            &pool,
+            3600,
+            30,
+            true,
+            |_txid| async { seen_by_arcade_absent_from_chain() },
+            |_src, _vout| async { InputSpend::Unknown },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.stale_reqs_checked, 1,
+            "only the old failed tx's polled req"
+        );
+        assert_eq!(report.stale_reqs_retired, vec!["11".repeat(32)]);
+        assert!(report.applied);
+        assert_eq!(report.reqs_retired, 1);
+        assert_eq!(
+            req_state(&pool, &"11".repeat(32)).await,
+            ("invalid".into(), 1)
+        );
+        assert_eq!(
+            req_state(&pool, &"22".repeat(32)).await,
+            ("invalid".into(), 4)
+        );
+        assert_eq!(
+            req_state(&pool, &"33".repeat(32)).await,
+            ("completed".into(), 0)
+        );
+        assert_eq!(
+            req_state(&pool, &"44".repeat(32)).await,
+            ("unmined".into(), 0)
+        );
+        assert_eq!(
+            req_state(&pool, &"55".repeat(32)).await,
+            ("unmined".into(), 0)
+        );
     }
 
     /// The pure verdict table.
@@ -921,26 +1700,64 @@ mod tests {
             confirmed: true,
         };
         use BroadcastVerification as V;
+        let held = presence(V::Confirmed);
         assert_eq!(
-            verdict_for(&ours, std::slice::from_ref(&other), V::Confirmed),
+            verdict_for(&ours, std::slice::from_ref(&other), &held, 0, 30),
             Verdict::DeadConflict
         );
         assert_eq!(
-            verdict_for(&ours, &[InputSpend::Unspent, other], V::Rejected),
+            verdict_for(
+                &ours,
+                &[InputSpend::Unspent, other],
+                &absent_everywhere(),
+                0,
+                30
+            ),
             Verdict::DeadConflict
         );
         assert_eq!(
-            verdict_for(&ours, &[other_unconf], V::Confirmed),
+            verdict_for(&ours, &[other_unconf], &held, 0, 30),
             Verdict::Kept
         );
         assert_eq!(
-            verdict_for(&ours, &[mine], V::Inconclusive),
+            verdict_for(&ours, &[mine], &presence(V::Inconclusive), 0, 30),
             Verdict::Inconclusive
         );
-        assert_eq!(verdict_for(&ours, &[], V::Rejected), Verdict::DeadAbsent);
         assert_eq!(
-            verdict_for(&ours, &[InputSpend::Unknown], V::Confirmed),
+            verdict_for(&ours, &[], &absent_everywhere(), 0, 30),
+            Verdict::DeadAbsent,
+            "definitive absence needs no age"
+        );
+        assert_eq!(
+            verdict_for(&ours, &[InputSpend::Unknown], &held, 0, 30),
             Verdict::Kept
         );
+        // The absence clock: the broadcaster's SEEN with a chain-index 404.
+        let seen = seen_by_arcade_absent_from_chain();
+        assert_eq!(
+            verdict_for(&ours, &[], &seen, 29, 30),
+            Verdict::AbsentOnClock
+        );
+        assert_eq!(
+            verdict_for(&ours, &[], &seen, 30, 30),
+            Verdict::DeadAbsentPastThreshold
+        );
+        assert_eq!(
+            verdict_for(&ours, &[], &seen, 100_000, 30),
+            Verdict::DeadAbsentPastThreshold
+        );
+        // The chain index's own answer settles everything, whatever else.
+        assert_eq!(
+            verdict_for(&ours, &[], &chain_mined(), 100_000, 30),
+            Verdict::Kept
+        );
+        let mut chain_seen = chain_mined();
+        chain_seen.chain_index = ChainIndexAnswer::Present(NetworkEvidence::Seen);
+        assert_eq!(
+            verdict_for(&ours, &[], &chain_seen, 100_000, 30),
+            Verdict::Kept
+        );
+        assert!(Verdict::DeadAbsentPastThreshold.is_dead());
+        assert!(!Verdict::AbsentOnClock.is_dead());
     }
 }

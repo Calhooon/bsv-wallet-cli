@@ -205,16 +205,30 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                     Ok(r) if r.applied => {
                         tracing::warn!(
                             failed = r.failed,
+                            absent = r.abandoned.len(),
+                            absent_past_threshold = r.absent_past_threshold.len(),
+                            conflicted = r.conflicted.len(),
+                            reqs_retired = r.reqs_retired,
+                            stale_reqs_retired = r.stale_reqs_retired.len(),
                             restored_count = r.restored_count,
                             restored_sats = r.restored_sats,
                             phantom_count = r.phantom_count,
                             phantom_sats = r.phantom_sats,
                             port = port,
-                            "auto-reconciled abandoned tx(s): marked {} failed, restored {} input(s) ({} sats), invalidated {} phantom output(s) ({} sats)",
-                            r.failed, r.restored_count, r.restored_sats, r.phantom_count, r.phantom_sats
+                            "auto-reconciled abandoned tx(s): marked {} failed, retired {} proof request(s), restored {} input(s) ({} sats), invalidated {} phantom output(s) ({} sats)",
+                            r.failed, r.reqs_retired, r.restored_count, r.restored_sats, r.phantom_count, r.phantom_sats
                         );
                     }
-                    Ok(_) => {}
+                    Ok(r) => {
+                        if !r.absent_on_clock.is_empty() || !r.stale_reqs_known.is_empty() {
+                            tracing::info!(
+                                on_clock = ?r.absent_on_clock,
+                                stale_reqs_known = ?r.stale_reqs_known,
+                                port = port,
+                                "abandoned-tx reconcile: absence clock running, or a failed transaction the chain index knows"
+                            );
+                        }
+                    }
                     Err(e) => {
                         tracing::debug!("abandoned-tx reconcile skipped: {}", e);
                     }
