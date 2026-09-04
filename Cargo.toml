@@ -29,7 +29,7 @@ name = "bsv-wallet-relay"
 path = "src/bin/bsv-wallet-relay.rs"
 
 [dependencies]
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.60", features = ["sqlite"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.3.61", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "0.3.4", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
