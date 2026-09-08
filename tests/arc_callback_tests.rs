@@ -39,6 +39,12 @@ async fn setup_with_callback(
         .await
         .expect("migrate db");
     storage.make_available().await.expect("make available");
+    // The proof LAG gate is closed on a fresh database; these tests pin the
+    // webhook and SSE ingest itself, so the gate is open here (the toolbox
+    // pins the deferral).
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
+        .await
+        .expect("open the proof gate");
 
     if let Some(tracker) = chain_tracker {
         storage.set_chain_tracker(tracker).await;
@@ -350,6 +356,12 @@ async fn callback_disabled_without_token_config() {
         .await
         .expect("migrate db");
     storage.make_available().await.expect("make available");
+    // The proof LAG gate is closed on a fresh database; these tests pin the
+    // webhook and SSE ingest itself, so the gate is open here (the toolbox
+    // pins the deferral).
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
+        .await
+        .expect("open the proof gate");
     let services =
         Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
     let wallet = Wallet::new(Some(key), storage, services)
@@ -507,6 +519,12 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
         .await
         .expect("migrate");
     storage.make_available().await.expect("available");
+    // The proof LAG gate is closed on a fresh database; these tests pin the
+    // webhook and SSE ingest itself, so the gate is open here (the toolbox
+    // pins the deferral).
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
+        .await
+        .expect("open the proof gate");
     let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
     tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
     storage.set_chain_tracker(Arc::new(tracker)).await;

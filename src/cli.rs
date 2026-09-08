@@ -122,7 +122,12 @@ pub enum Commands {
         #[arg(long)]
         reconcile_spent: bool,
     },
-    /// Run all monitor tasks once and exit (one-shot equivalent of `daemon`)
+    /// Run all monitor tasks once and exit (one-shot equivalent of `daemon`). The
+    /// header task's state and the proof gate persist in the wallet database, so
+    /// the FIRST run queues the chain tip and the SECOND run (one that still sees
+    /// that tip) processes it and opens the proof gate: no proof is stored before
+    /// the second run, exactly as the daemon accepts nothing before a header has
+    /// stayed the tip for a full cycle
     Tick,
     /// Run monitor + HTTP server (foreground)
     Daemon,
@@ -199,14 +204,25 @@ pub enum Commands {
         #[arg(long, default_value_t = 200)]
         max_chain_checks: usize,
     },
-    /// Re-prove stored merkle proofs the chain no longer confirms (after a reorg): compare
-    /// every stored proof's block with the canonical header, replace the ones a provider
-    /// can re-prove, demote the rest to unmined so the monitor re-proves them; dry-run by default
+    /// Re-prove stored merkle proofs the chain no longer confirms (after a reorg).
+    /// Compares every stored proof's merkle root in the window with the canonical
+    /// header's and lists the disagreements. Dry-run by default (no storage write).
+    /// With --execute: a provider's validated proof for the canonical block replaces
+    /// the stored one; providers still naming the stored block, or faulting, retain
+    /// it (the monitor retries); only positive evidence (the tracker refutes the
+    /// stored root, two providers answer cleanly "not mined", no provider serves a
+    /// path) demotes it to unproven with its bytes kept. --execute first raises the
+    /// persisted proof gate to tip - 1 when it is closed or below that, and is
+    /// refused when CHAINTRACKS_URL=off (nothing can be refuted without a header
+    /// service).
     Reproof {
-        /// Only proofs at or above this height (default: the last 288 blocks)
+        /// Only proofs at or above this height (default: the last 288 blocks). The
+        /// window includes the un-aged tip: a replacement there is deferred by the
+        /// proof gate and re-presented by the monitor, never stored early
         #[arg(long)]
         since_height: Option<u32>,
-        /// Every stored proof, whatever its height
+        /// Every stored proof, whatever its height: one chaintracks read per distinct
+        /// height with no bound (progress every 50 heights on stderr)
         #[arg(long)]
         all: bool,
         /// Apply changes (default is dry-run)
