@@ -199,4 +199,18 @@ pub enum Commands {
         #[arg(long, default_value_t = 200)]
         max_chain_checks: usize,
     },
+    /// Re-prove stored merkle proofs the chain no longer confirms (after a reorg): compare
+    /// every stored proof's block with the canonical header, replace the ones a provider
+    /// can re-prove, demote the rest to unmined so the monitor re-proves them; dry-run by default
+    Reproof {
+        /// Only proofs at or above this height (default: the last 288 blocks)
+        #[arg(long)]
+        since_height: Option<u32>,
+        /// Every stored proof, whatever its height
+        #[arg(long)]
+        all: bool,
+        /// Apply changes (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+    },
 }

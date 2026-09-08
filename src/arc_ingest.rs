@@ -94,6 +94,23 @@ pub async fn ingest_arc_payload(
                 tracing::warn!(txid = %txid, error = %e, "arc-callback: proof deferred (ChainTracker error) — polling sync will retry");
                 Ok(IngestAction::ProofRejected(format!("tracker error: {}", e)))
             }
+            ProofIngestOutcome::DeferredAboveProcessedHeight {
+                block_height,
+                processed_height,
+            } => {
+                // M19 R1: the proof lag. The header has not stayed the tip
+                // for a full monitor cycle; the fetch path re-presents it.
+                tracing::info!(
+                    txid = %txid,
+                    block_height,
+                    processed_height,
+                    "arc-callback: proof deferred (block newer than the processed header); the monitor re-presents it"
+                );
+                Ok(IngestAction::ProofRejected(format!(
+                    "deferred: block {} above the processed height {}",
+                    block_height, processed_height
+                )))
+            }
         }
     } else {
         // Status-only payload — identical mapping to the Monitor's SSE task.

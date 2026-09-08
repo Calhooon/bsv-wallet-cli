@@ -147,6 +147,14 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::reconcile_outputs::run(&ctx, &cli.db, *execute, *max_chain_checks).await?;
         }
+        Commands::Reproof {
+            since_height,
+            all,
+            execute,
+        } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::reproof::run(&ctx, *since_height, *all, *execute).await?;
+        }
     }
 
     Ok(())

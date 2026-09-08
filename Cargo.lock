@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-cli"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "anyhow",
  "axum",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.3.64"
+version = "0.3.65"
 dependencies = [
  "anyhow",
  "async-trait",

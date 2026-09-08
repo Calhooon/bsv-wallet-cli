@@ -18,6 +18,7 @@ pub mod outputs;
 pub mod receive;
 pub mod reconcile_broadcasts;
 pub mod reconcile_outputs;
+pub mod reproof;
 pub mod send;
 pub mod serve;
 pub mod serve_fleet;
