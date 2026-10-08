@@ -79,7 +79,7 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 
 **Environment variables consumed:**
 - `ROOT_KEY` (required) — hex-encoded private key
-- `CHAINTRACKS_URL` (optional) — header service for proof validation; unset = the public Babbage chaintracks for the chain (`services_env::chaintracks_url_for`), `off` = no validation
+- `CHAINTRACKS_URL` (optional) — header service for proof validation; unset = the public Babbage chaintracks for the chain (`services_env::chaintracks_url_for`), `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
 
 ### `lib.rs` (test support)
 

@@ -165,7 +165,7 @@ All configuration is via environment variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ROOT_KEY` | Yes | Wallet root private key (hex). Set by `bsv-wallet init`. |
-| `CHAINTRACKS_URL` | No | Header service that validates merkle proofs. Defaults to the public Babbage chaintracks for the chain (WhatsOnChain headers as fallback); set `off` to store proofs unvalidated on purpose |
+| `CHAINTRACKS_URL` | No | Header service that validates merkle proofs. Defaults to the public Babbage chaintracks for the chain (WhatsOnChain headers as fallback); `off` runs with no header service: every merkle proof is refused and nothing is marked proven, and `tick` and `reproof --execute` exit non-zero |
 | `AUTH_TOKEN` | No | Bearer token for HTTP auth (localhost-only, optional) |
 | `TLS_CERT_PATH` | No | TLS certificate path (requires `--features tls`) |
 | `TLS_KEY_PATH` | No | TLS private key path (requires `--features tls`) |

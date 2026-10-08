@@ -56,6 +56,11 @@ tls = ["axum-server"]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
+# P0-1b (bsv-stack-lean #35), this branch only: built against the toolbox
+# branch p0-1/proof-root-required (786f401), whose ProofIngestOutcome gains
+# TrackerUnavailable (a breaking 0.4.0). When 0.4.0 is published this block
+# goes and the requirement above becomes version = "0.4".
+#
 # Pinned to the sibling checkout until bsv-wallet-toolbox-rs 0.3.55 is
 # published: carries 16669d4 (CheckForProofs adopts proof-less
 # transactions — the receive-proof gap, 2026-08-29), the sighash-aware
@@ -68,4 +73,4 @@ tower = { version = "0.5", features = ["util"] }
 # fleet CLI builds against exactly that tree. Drop this block when 0.3.55
 # lands on crates.io.
 [patch.crates-io]
-bsv-wallet-toolbox-rs = { path = "../bsv-wallet-toolbox-rs" }
+bsv-wallet-toolbox-rs = { path = "/Users/johncalhoun/bsv/targets/p0/p0-1/proof-root-required" }

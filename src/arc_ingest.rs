@@ -18,12 +18,18 @@ use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
 use bsv_wallet_toolbox::{MonitorStorage, ProofIngestOutcome, StorageSqlx};
 use std::sync::atomic::AtomicBool;
 
+/// The reason carried by [`IngestAction::ProofRejected`] when the wallet has
+/// no chain tracker: the proof is refused and not stored.
+pub const NO_TRACKER_REFUSAL: &str =
+    "no chain tracker configured (CHAINTRACKS_URL=off): proof refused, not stored";
+
 /// What ingesting a callback payload did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngestAction {
     /// A merkle proof was validated and stored; records completed.
     ProofIngested,
-    /// The proof was rejected (invalid root / unparseable) — NOT stored.
+    /// The proof was rejected (invalid root / unparseable / no chain
+    /// tracker to check it) — NOT stored.
     ProofRejected(String),
     /// A status-only update was applied to storage.
     StatusApplied,
@@ -93,6 +99,16 @@ pub async fn ingest_arc_payload(
             ProofIngestOutcome::TrackerError(e) => {
                 tracing::warn!(txid = %txid, error = %e, "arc-callback: proof deferred (ChainTracker error) — polling sync will retry");
                 Ok(IngestAction::ProofRejected(format!("tracker error: {}", e)))
+            }
+            ProofIngestOutcome::TrackerUnavailable => {
+                // No header service (CHAINTRACKS_URL=off): nothing can check
+                // the root, so the toolbox refuses the proof and stores
+                // nothing. A misconfiguration, not a transient: error level.
+                tracing::error!(
+                    txid = %txid,
+                    "arc-callback: proof refused, no chain tracker is configured (CHAINTRACKS_URL=off); set CHAINTRACKS_URL to prove"
+                );
+                Ok(IngestAction::ProofRejected(NO_TRACKER_REFUSAL.into()))
             }
             ProofIngestOutcome::DeferredAboveProcessedHeight {
                 block_height,

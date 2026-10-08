@@ -8,7 +8,7 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Chaintracks header service for proof validation (default: the public Babbage instance for the chain; `off` disables validation on purpose) |
+//! | `CHAINTRACKS_URL` | Chaintracks header service for proof validation (default: the public Babbage instance for the chain; `off` = no header service, so every proof is refused and nothing is marked proven) |
 //! | `ARC_URL` | Override the broadcaster URL (classic ARC, or the Arcade endpoint in Arcade mode) |
 //! | `ARC_MODE=arcade` or `ARCADE=1` | Arcade V2 mode: EF-only submit, SSE status stream, push proofs |
 //! | `CALLBACK_TOKEN` | Override the per-wallet callback token (otherwise auto-generated and persisted next to the db) |
@@ -35,10 +35,10 @@ pub const DEFAULT_TESTNET_CHAINTRACKS_URL: &str = "https://testnet-chaintracks.b
 /// Resolve the header service from the `CHAINTRACKS_URL` value.
 ///
 /// Unset or empty falls back to the chain's public default; `off` (any
-/// case) returns `None` and the wallet stores proofs unvalidated, which is
-/// only ever right for an offline or air-gapped run. Without a header
-/// service every proof that reaches the wallet (webhook, SSE, monitor,
-/// `tick`) would be taken on the broadcaster's word.
+/// case) returns `None`: the wallet has no chain tracker, and the toolbox
+/// refuses every proof that reaches it (webhook, SSE, monitor, relay)
+/// rather than take it on the broadcaster's word, so nothing is marked
+/// proven. Only ever right for an offline or air-gapped run.
 pub fn chaintracks_url_for(chain: Chain, configured: Option<&str>) -> Option<String> {
     match configured.map(str::trim) {
         Some(v) if v.eq_ignore_ascii_case("off") => None,
@@ -51,6 +51,24 @@ pub fn chaintracks_url_for(chain: Chain, configured: Option<&str>) -> Option<Str
             .to_string(),
         ),
     }
+}
+
+/// What a wallet with `CHAINTRACKS_URL=off` is told at startup.
+pub const CHAINTRACKS_OFF_WARNING: &str = "CHAINTRACKS_URL=off: no chain tracker, so every merkle \
+     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set";
+
+/// Refuse a command whose job is to prove when no chain tracker is
+/// configured: it could only refuse every proof it met, so it exits
+/// non-zero instead of reporting a run that proved nothing.
+pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Result<()> {
+    if !has_tracker {
+        anyhow::bail!(
+            "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
+             every merkle proof would be refused. Set CHAINTRACKS_URL (or unset it for the \
+             chain's default header service)."
+        );
+    }
+    Ok(())
 }
 
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
@@ -165,9 +183,7 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
     let configured = std::env::var("CHAINTRACKS_URL").ok();
     match chaintracks_url_for(chain, configured.as_deref()) {
         Some(url) => opts = opts.with_chaintracks_url(url),
-        None => tracing::warn!(
-            "CHAINTRACKS_URL=off: merkle proofs will be stored without header validation"
-        ),
+        None => tracing::warn!("{}", CHAINTRACKS_OFF_WARNING),
     }
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
@@ -247,6 +263,20 @@ mod tests {
     fn chaintracks_off_disables_validation_on_purpose() {
         assert_eq!(chaintracks_url_for(Chain::Main, Some("off")), None);
         assert_eq!(chaintracks_url_for(Chain::Test, Some("OFF")), None);
+    }
+
+    #[test]
+    fn the_off_warning_says_proofs_are_refused() {
+        assert!(CHAINTRACKS_OFF_WARNING.contains("every merkle proof will be refused"));
+        assert!(!CHAINTRACKS_OFF_WARNING.contains("stored"));
+    }
+
+    #[test]
+    fn a_proving_command_needs_a_chain_tracker() {
+        let err = require_chain_tracker_to_prove("tick", false).unwrap_err();
+        assert!(err.to_string().starts_with("tick refused"), "{err}");
+        assert!(err.to_string().contains("CHAINTRACKS_URL=off"), "{err}");
+        assert!(require_chain_tracker_to_prove("tick", true).is_ok());
     }
 
     #[test]
