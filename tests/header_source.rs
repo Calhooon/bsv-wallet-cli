@@ -28,4 +28,27 @@ fn an_unset_header_source_is_refused_never_a_third_party_default() {
             "the refusal names the setting: {e}"
         ),
     }
+
+    // An explicit header service is used as is, with no explorer behind it.
+    std::env::set_var("CHAINTRACKS_URL", "https://headers.example");
+    std::env::remove_var("BREAK_GLASS_EXPLORER_HEADERS");
+    let opts = services_options_from_env(Chain::Main, db).expect("a header service");
+    assert_eq!(
+        opts.chaintracks_url.as_deref(),
+        Some("https://headers.example")
+    );
+    assert!(!opts.break_glass_explorer_headers, "off by default");
+
+    // `off` is the explicit choice of none.
+    std::env::set_var("CHAINTRACKS_URL", "off");
+    let opts = services_options_from_env(Chain::Main, db).expect("off is a choice");
+    assert!(opts.chaintracks_url.is_none());
+
+    // Break-glass only when asked for by name.
+    std::env::set_var("CHAINTRACKS_URL", "https://headers.example");
+    std::env::set_var("BREAK_GLASS_EXPLORER_HEADERS", "1");
+    let opts = services_options_from_env(Chain::Main, db).expect("break-glass");
+    assert!(opts.break_glass_explorer_headers);
+    std::env::remove_var("BREAK_GLASS_EXPLORER_HEADERS");
+    std::env::remove_var("CHAINTRACKS_URL");
 }

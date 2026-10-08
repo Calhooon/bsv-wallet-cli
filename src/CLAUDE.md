@@ -79,7 +79,8 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 
 **Environment variables consumed:**
 - `ROOT_KEY` (required) — hex-encoded private key
-- `CHAINTRACKS_URL` (optional) — header service for proof validation; unset = the public Babbage chaintracks for the chain (`services_env::chaintracks_url_for`), `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
+- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
+- `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default) — `1`/`true`/`yes` lets the toolbox ask WhatsOnChain, then Bitails, for headers when the header service gives no answer, each call logged at warn
 
 ### `lib.rs` (test support)
 
@@ -92,7 +93,7 @@ Single line: `pub mod server;`. Exists solely so integration tests can import th
 - **`lib.rs` only re-exports `server`**: The binary's main logic lives in `main.rs`. `lib.rs` exists solely so integration tests can import the server module (Rust test binaries can't import from a `main.rs`).
 - **Tracing defaults**: Without `RUST_LOG`, tracing filters to `bsv_wallet=info,tower_http=info`. The `--verbose` flag overrides to `debug` for all crates. `dotenvy` loads `.env` before anything else.
 - **Chain selection via `--testnet` flag**: Defaults to mainnet. The flag propagates through `WalletContext.chain` to both `StorageSqlx` service configuration and `Services` construction. `ServicesOptions::mainnet()` vs `ServicesOptions::testnet()` selects the appropriate blockchain endpoints.
-- **Chaintracks integration at context level**: If `CHAINTRACKS_URL` is set, it's applied via `ServicesOptions.with_chaintracks_url()` during context construction. This puts the user's Chaintracks instance at highest priority in the chain tracker failover chain.
+- **Chaintracks integration at context level**: `CHAINTRACKS_URL` is applied via `ServicesOptions.with_chaintracks_url()` during context construction and is the only header source the chain tracker asks (no explorer unless `BREAK_GLASS_EXPLORER_HEADERS` is on).
 
 ## Gotchas
 

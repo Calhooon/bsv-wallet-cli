@@ -57,3 +57,35 @@ fn tick_with_chaintracks_off_exits_non_zero_and_says_proofs_are_refused() {
         "no monitor pass ran (no network reached): {stdout}"
     );
 }
+
+/// P0-1c (bsv-stack-lean #48): an operator upgrading with no
+/// `CHAINTRACKS_URL` set (the old default, the public Babbage chaintracks
+/// with WhatsOnChain behind it) is told to set one, and nothing runs.
+#[test]
+fn an_unset_header_source_stops_the_command_and_names_the_setting() {
+    let dir = TempDir::new().expect("temp dir");
+    let init = wallet(&dir)
+        .args(["--db", "wallet.db", "init"])
+        .output()
+        .expect("run init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    for command in ["tick", "compact"] {
+        let out = wallet(&dir)
+            .env_remove("CHAINTRACKS_URL")
+            .args(["--db", "wallet.db", command])
+            .output()
+            .expect("run the command");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{command} must fail: {stderr}");
+        assert!(
+            stderr.contains("CHAINTRACKS_URL is not set"),
+            "{command}: {stderr}"
+        );
+        assert!(!stderr.contains("babbage"), "{command}: {stderr}");
+    }
+}
