@@ -318,6 +318,106 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
     assert_eq!(req_status(&pool, &txid).await, "unmined");
 }
 
+/// P0-1b (bsv-stack-lean #35): a wallet with no chain tracker
+/// (`CHAINTRACKS_URL=off`) cannot check a proof's root, so the proof is
+/// refused and the answer says why. The BUMP's root is in no header the
+/// wallet has; before the toolbox's fix it was stored and the tx completed.
+#[tokio::test]
+async fn mined_webhook_without_a_chain_tracker_is_refused_and_says_so() {
+    let txid = "d".repeat(64);
+    let height = 850_000u32;
+    let bump = MerklePath::from_coinbase_txid(&txid, height);
+    let bump_hex = hex::encode(bump.to_binary());
+
+    let (base, client, pool, _tmp) =
+        setup_with_callback(None, Some((&txid, "unmined", "unproven"))).await;
+
+    let resp = client
+        .post(format!("{base}/arc-callback"))
+        .header("Authorization", format!("Bearer {CB_TOKEN}"))
+        .json(&json!({
+            "txid": txid,
+            "txStatus": "MINED",
+            "blockHeight": height,
+            "blockHash": "f".repeat(64),
+            "merklePath": bump_hex,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let action = body["action"].as_str().unwrap_or_default();
+    assert!(
+        action.starts_with("ProofRejected") && action.contains("no chain tracker"),
+        "the refusal is named, not swallowed: {action}"
+    );
+
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proven_txs WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "an unchecked proof is never stored");
+    assert_eq!(req_status(&pool, &txid).await, "unmined");
+    assert_eq!(tx_status(&pool, &txid).await, "unproven");
+}
+
+/// The relay poller's door (`ingest_arc_payload` called directly, no HTTP):
+/// the same refusal, as the action it logs.
+#[tokio::test]
+async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
+    use bsv_wallet_cli::arc_ingest::{ingest_arc_payload, IngestAction};
+
+    let tmp = TempDir::new().expect("temp dir");
+    let storage = StorageSqlx::open(tmp.path().join("relay.db").to_str().unwrap())
+        .await
+        .expect("open db");
+    let identity_key = PrivateKey::random().public_key().to_hex();
+    storage
+        .migrate("bsv-wallet-test", &identity_key)
+        .await
+        .expect("migrate");
+    storage.make_available().await.expect("available");
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
+        .await
+        .expect("open the proof gate");
+    let pool = storage.pool().clone();
+    let txid = "e".repeat(64);
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "INSERT INTO proven_tx_reqs (txid, status, attempts, history, notified, notify, raw_tx, created_at, updated_at) \
+         VALUES (?, 'unmined', 0, '{}', 0, '{}', X'01000000', ?, ?)",
+    )
+    .bind(&txid)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("seed req");
+
+    let bump = MerklePath::from_coinbase_txid(&txid, 850_000);
+    let action = ingest_arc_payload(
+        &storage,
+        &json!({
+            "txid": txid,
+            "txStatus": "MINED",
+            "blockHeight": 850_000,
+            "blockHash": "f".repeat(64),
+            "merklePath": hex::encode(bump.to_binary()),
+        }),
+    )
+    .await
+    .expect("a well-formed payload is not an error");
+    match action {
+        IngestAction::ProofRejected(reason) => {
+            assert!(reason.contains("no chain tracker"), "{reason}")
+        }
+        other => panic!("expected the refusal, got {other:?}"),
+    }
+    assert_eq!(req_status(&pool, &txid).await, "unmined");
+}
+
 #[tokio::test]
 async fn malformed_payload_is_bad_request() {
     let (base, client, _pool, _tmp) = setup_with_callback(None, None).await;
@@ -566,6 +666,9 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
         block_height: Some(PROBE_HEIGHT),
         merkle_path: Some(PROBE_MERKLE_PATH_HEX.to_string()),
         event_id: None,
+        competing_txs: None,
+        extra_info: None,
+        status_code: None,
     };
     let trigger = AtomicBool::new(false);
     let updated = ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &ev, &trigger)
@@ -603,6 +706,9 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
         block_height: None,
         merkle_path: None,
         event_id: None,
+        competing_txs: None,
+        extra_info: None,
+        status_code: None,
     };
     let trigger2 = AtomicBool::new(false);
     ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &legacy, &trigger2)

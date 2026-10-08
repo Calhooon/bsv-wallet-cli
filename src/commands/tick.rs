@@ -31,6 +31,9 @@ pub async fn run(cli: &Cli) -> Result<()> {
         let opts = services_env::services_options_from_env(chain, &cli.db)?;
         Services::with_options(chain, opts)?
     };
+    // P0-1b: with no tracker every proof is refused; a proving pass that
+    // proves nothing exits non-zero rather than print a clean run.
+    services_env::require_chain_tracker_to_prove("tick", services.chaintracks.is_some())?;
     if let Some(ref ct) = services.chaintracks {
         storage.set_chain_tracker(ct.clone()).await;
     }

@@ -21,7 +21,7 @@ bsv-wallet init          # generates ROOT_KEY, creates wallet.db
 bsv-wallet daemon        # starts HTTP server on port 3322
 ```
 
-Environment variables: `ROOT_KEY` (required, set by `init`), `CHAINTRACKS_URL` (optional), `AUTH_TOKEN` (optional bearer auth), `RUST_LOG` (tracing filter). Port is set via `--port` flag (default 3322), not an env var.
+Environment variables: `ROOT_KEY` (required, set by `init`), `CHAINTRACKS_URL` (required: your header service, or `off`), `AUTH_TOKEN` (optional bearer auth), `RUST_LOG` (tracing filter). Port is set via `--port` flag (default 3322), not an env var.
 
 ## Running Tests
 

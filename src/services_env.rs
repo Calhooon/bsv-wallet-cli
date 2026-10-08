@@ -8,7 +8,8 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Chaintracks header service for proof validation (default: the public Babbage instance for the chain; `off` disables validation on purpose) |
+//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven |
+//! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
 //! | `ARC_URL` | Override the broadcaster URL (classic ARC, or the Arcade endpoint in Arcade mode) |
 //! | `ARC_MODE=arcade` or `ARCADE=1` | Arcade V2 mode: EF-only submit, SSE status stream, push proofs |
 //! | `CALLBACK_TOKEN` | Override the per-wallet callback token (otherwise auto-generated and persisted next to the db) |
@@ -24,33 +25,64 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-/// Header service used to validate merkle proofs when `CHAINTRACKS_URL` is
-/// unset: the public Babbage chaintracks for the chain, the same default the
-/// TS toolbox and MetaNet Desktop ship with. The toolbox keeps a
-/// WhatsOnChain header fallback behind it.
-pub const DEFAULT_MAINNET_CHAINTRACKS_URL: &str = "https://mainnet-chaintracks.babbage.systems";
-/// Testnet counterpart of [`DEFAULT_MAINNET_CHAINTRACKS_URL`].
-pub const DEFAULT_TESTNET_CHAINTRACKS_URL: &str = "https://testnet-chaintracks.babbage.systems";
+/// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
+/// proof path (P0-1c, bsv-stack-lean #48): the header source is the
+/// operator's own service, and ours (`chaintracks-cloudflare`) documents no
+/// public URL to default to.
+pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it to the header \
+     service that checks merkle roots (your chaintracks-cloudflare or rust-chaintracks \
+     deployment), or to `off` to run with none (every merkle proof is then refused). There is \
+     no default header service.";
 
 /// Resolve the header service from the `CHAINTRACKS_URL` value.
 ///
-/// Unset or empty falls back to the chain's public default; `off` (any
-/// case) returns `None` and the wallet stores proofs unvalidated, which is
-/// only ever right for an offline or air-gapped run. Without a header
-/// service every proof that reaches the wallet (webhook, SSE, monitor,
-/// `tick`) would be taken on the broadcaster's word.
-pub fn chaintracks_url_for(chain: Chain, configured: Option<&str>) -> Option<String> {
+/// A URL is the header service. `off` (any case) returns `None`: the
+/// wallet has no chain tracker, and the toolbox refuses every proof that
+/// reaches it (webhook, SSE, monitor, relay) rather than take it on the
+/// broadcaster's word, so nothing is marked proven; only ever right for an
+/// offline or air-gapped run. Unset or empty is an error
+/// ([`CHAINTRACKS_URL_REQUIRED`]): there is no default.
+pub fn chaintracks_url_for(configured: Option<&str>) -> Result<Option<String>> {
     match configured.map(str::trim) {
-        Some(v) if v.eq_ignore_ascii_case("off") => None,
-        Some(v) if !v.is_empty() => Some(v.to_string()),
-        _ => Some(
-            match chain {
-                Chain::Main => DEFAULT_MAINNET_CHAINTRACKS_URL,
-                Chain::Test => DEFAULT_TESTNET_CHAINTRACKS_URL,
-            }
-            .to_string(),
-        ),
+        Some(v) if v.eq_ignore_ascii_case("off") => Ok(None),
+        Some(v) if !v.is_empty() => Ok(Some(v.to_string())),
+        _ => anyhow::bail!(CHAINTRACKS_URL_REQUIRED),
     }
+}
+
+/// The environment variable that turns the break-glass explorer header
+/// fallback on (the toolbox's `ServicesOptions::break_glass_explorer_headers`).
+pub const BREAK_GLASS_EXPLORER_HEADERS_ENV: &str = "BREAK_GLASS_EXPLORER_HEADERS";
+
+/// Is the break-glass explorer header fallback asked for? `1`, `true` or
+/// `yes` (any case); anything else, or unset, is off.
+pub fn break_glass_explorer_headers(configured: Option<&str>) -> bool {
+    matches!(
+        configured.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+/// What a wallet with the break-glass setting on is told at startup.
+pub const BREAK_GLASS_WARNING: &str = "BREAK_GLASS_EXPLORER_HEADERS is on: when the header \
+     service gives no answer, merkle roots and block headers are asked of WhatsOnChain (then \
+     Bitails); every such call is logged. Turn it off once the header service is back.";
+
+/// What a wallet with `CHAINTRACKS_URL=off` is told at startup.
+pub const CHAINTRACKS_OFF_WARNING: &str = "CHAINTRACKS_URL=off: no chain tracker, so every merkle \
+     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set";
+
+/// Refuse a command whose job is to prove when no chain tracker is
+/// configured: it could only refuse every proof it met, so it exits
+/// non-zero instead of reporting a run that proved nothing.
+pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Result<()> {
+    if !has_tracker {
+        anyhow::bail!(
+            "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
+             every merkle proof would be refused. Set CHAINTRACKS_URL to your header service."
+        );
+    }
+    Ok(())
 }
 
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
@@ -163,11 +195,18 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
     };
 
     let configured = std::env::var("CHAINTRACKS_URL").ok();
-    match chaintracks_url_for(chain, configured.as_deref()) {
+    match chaintracks_url_for(configured.as_deref())? {
         Some(url) => opts = opts.with_chaintracks_url(url),
-        None => tracing::warn!(
-            "CHAINTRACKS_URL=off: merkle proofs will be stored without header validation"
-        ),
+        None => tracing::warn!("{}", CHAINTRACKS_OFF_WARNING),
+    }
+    let break_glass = std::env::var(BREAK_GLASS_EXPLORER_HEADERS_ENV).ok();
+    if break_glass_explorer_headers(break_glass.as_deref()) {
+        tracing::warn!(
+            marker = "break_glass_explorer_header",
+            "{}",
+            BREAK_GLASS_WARNING
+        );
+        opts = opts.with_break_glass_explorer_headers(true);
     }
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
@@ -220,33 +259,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chaintracks_defaults_to_the_public_instance_for_the_chain() {
-        assert_eq!(
-            chaintracks_url_for(Chain::Main, None).as_deref(),
-            Some(DEFAULT_MAINNET_CHAINTRACKS_URL)
-        );
-        assert_eq!(
-            chaintracks_url_for(Chain::Test, Some("")).as_deref(),
-            Some(DEFAULT_TESTNET_CHAINTRACKS_URL)
-        );
-        assert_eq!(
-            chaintracks_url_for(Chain::Main, Some("   ")).as_deref(),
-            Some(DEFAULT_MAINNET_CHAINTRACKS_URL)
-        );
+    fn chaintracks_has_no_default() {
+        for unset in [None, Some(""), Some("   ")] {
+            let err = chaintracks_url_for(unset).unwrap_err();
+            assert!(
+                err.to_string().contains("CHAINTRACKS_URL is not set"),
+                "{err}"
+            );
+        }
+        assert!(!CHAINTRACKS_URL_REQUIRED.contains("babbage"));
     }
 
     #[test]
     fn chaintracks_honours_an_explicit_url() {
         assert_eq!(
-            chaintracks_url_for(Chain::Main, Some("https://ct.example/v1")).as_deref(),
+            chaintracks_url_for(Some("https://ct.example/v1"))
+                .unwrap()
+                .as_deref(),
             Some("https://ct.example/v1")
         );
     }
 
     #[test]
     fn chaintracks_off_disables_validation_on_purpose() {
-        assert_eq!(chaintracks_url_for(Chain::Main, Some("off")), None);
-        assert_eq!(chaintracks_url_for(Chain::Test, Some("OFF")), None);
+        assert_eq!(chaintracks_url_for(Some("off")).unwrap(), None);
+        assert_eq!(chaintracks_url_for(Some("OFF")).unwrap(), None);
+    }
+
+    #[test]
+    fn break_glass_is_off_unless_asked_for() {
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some("on"),
+        ] {
+            assert!(!break_glass_explorer_headers(off), "{off:?}");
+        }
+        for on in [Some("1"), Some("true"), Some("YES"), Some(" yes ")] {
+            assert!(break_glass_explorer_headers(on), "{on:?}");
+        }
+    }
+
+    #[test]
+    fn the_off_warning_says_proofs_are_refused() {
+        assert!(CHAINTRACKS_OFF_WARNING.contains("every merkle proof will be refused"));
+        assert!(!CHAINTRACKS_OFF_WARNING.contains("stored"));
+    }
+
+    #[test]
+    fn a_proving_command_needs_a_chain_tracker() {
+        let err = require_chain_tracker_to_prove("tick", false).unwrap_err();
+        assert!(err.to_string().starts_with("tick refused"), "{err}");
+        assert!(err.to_string().contains("CHAINTRACKS_URL=off"), "{err}");
+        assert!(require_chain_tracker_to_prove("tick", true).is_ok());
     }
 
     #[test]

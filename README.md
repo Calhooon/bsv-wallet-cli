@@ -165,7 +165,8 @@ All configuration is via environment variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ROOT_KEY` | Yes | Wallet root private key (hex). Set by `bsv-wallet init`. |
-| `CHAINTRACKS_URL` | No | Header service that validates merkle proofs. Defaults to the public Babbage chaintracks for the chain (WhatsOnChain headers as fallback); set `off` to store proofs unvalidated on purpose |
+| `CHAINTRACKS_URL` | Yes | Header service that validates merkle proofs: your own `chaintracks-cloudflare` or rust-chaintracks deployment. There is no default; a command that builds the wallet's services refuses to run without it (`CHAINTRACKS_URL is not set`). `off` runs with no header service: every merkle proof is refused and nothing is marked proven, and `tick` and `reproof --execute` exit non-zero |
+| `BREAK_GLASS_EXPLORER_HEADERS` | No | Break-glass, off by default. `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for block headers when the header service gives no answer; every such call is logged at warn level. An explorer never overrules the header service's own answer |
 | `AUTH_TOKEN` | No | Bearer token for HTTP auth (localhost-only, optional) |
 | `TLS_CERT_PATH` | No | TLS certificate path (requires `--features tls`) |
 | `TLS_KEY_PATH` | No | TLS private key path (requires `--features tls`) |

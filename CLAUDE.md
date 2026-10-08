@@ -57,7 +57,7 @@ node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
 ```
 
-Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `CHAINTRACKS_URL` (optional, for chain tracking), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
+Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
 
 ## E2E Testing
 

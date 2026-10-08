@@ -127,7 +127,8 @@ pub enum Commands {
     /// the FIRST run queues the chain tip and the SECOND run (one that still sees
     /// that tip) processes it and opens the proof gate: no proof is stored before
     /// the second run, exactly as the daemon accepts nothing before a header has
-    /// stayed the tip for a full cycle
+    /// stayed the tip for a full cycle. Refused (non-zero exit) when
+    /// CHAINTRACKS_URL=off: with no header service every proof is refused
     Tick,
     /// Run monitor + HTTP server (foreground)
     Daemon,
