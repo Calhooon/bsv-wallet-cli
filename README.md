@@ -230,8 +230,13 @@ ARC_MODE=arcade bsv-wallet daemon
 `/arc-callback` is authenticated by the per-wallet callback token
 (`Authorization: Bearer <token>` or `X-CallbackToken`) and is **exempt** from
 the wallet `AUTH_TOKEN` bearer — the broadcaster doesn't know your wallet
-token. Invalid proofs are validated against the ChainTracker and rejected,
-never stored. Note Arcade's webhook target is SSRF-guarded: it must be public
+token. The body goes whole to the toolbox's one Arcade judgment
+(`ArcadeEventsTask::apply_event`, the same as an SSE frame): the word decides,
+not the presence of a path. A `MINED`/`IMMUTABLE` path (a `reorg_reanchor`
+included) is checked against the ChainTracker and stored, or rejected and
+never stored; `reorg_unmined` changes nothing and answers `Reask`; `REJECTED`
+466 is a double spend, 476 is retryable and not applied; a word Arcade does
+not define answers `Refused(..)`. Note Arcade's webhook target is SSRF-guarded: it must be public
 HTTPS — plain localhost can never receive it, which is why the SSE rung below
 is the default.
 

@@ -314,12 +314,14 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                                                 .await
                                                 {
                                                     // A refused proof (no tracker,
-                                                    // bad root) is not a success line.
+                                                    // bad root) or a refused word
+                                                    // is not a success line.
                                                     Ok(
-                                                        action @ crate::arc_ingest::IngestAction::ProofRejected(_),
+                                                        action @ (crate::arc_ingest::IngestAction::ProofRejected(_)
+                                                        | crate::arc_ingest::IngestAction::Refused(_)),
                                                     ) => tracing::warn!(
                                                         ?action,
-                                                        "relay: payload ingested, proof refused"
+                                                        "relay: payload ingested, proof or word refused"
                                                     ),
                                                     Ok(action) => tracing::info!(
                                                         ?action,

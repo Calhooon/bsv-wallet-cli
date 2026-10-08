@@ -62,7 +62,14 @@ impl ChainTracker for SharedTracker {
         root: &str,
         height: u32,
     ) -> Result<bool, ChainTrackerError> {
-        Ok(self.0.roots.read().unwrap().get(&height).map(String::as_str) == Some(root))
+        Ok(self
+            .0
+            .roots
+            .read()
+            .unwrap()
+            .get(&height)
+            .map(String::as_str)
+            == Some(root))
     }
 
     async fn current_height(&self) -> Result<u32, ChainTrackerError> {
@@ -294,7 +301,11 @@ async fn a_path_on_a_word_that_is_not_mined_is_not_stored() {
         action_of(&answer).starts_with("Refused"),
         "a stale word is refused, its path unread: {answer}"
     );
-    assert_eq!(proven_height(&pool, &txid).await, None, "a stale anchor stored");
+    assert_eq!(
+        proven_height(&pool, &txid).await,
+        None,
+        "a stale anchor stored"
+    );
     assert_eq!(req_status(&pool, &txid).await, "unmined");
 }
 
