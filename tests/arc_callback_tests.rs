@@ -666,6 +666,9 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
         block_height: Some(PROBE_HEIGHT),
         merkle_path: Some(PROBE_MERKLE_PATH_HEX.to_string()),
         event_id: None,
+        competing_txs: None,
+        extra_info: None,
+        status_code: None,
     };
     let trigger = AtomicBool::new(false);
     let updated = ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &ev, &trigger)
@@ -703,6 +706,9 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
         block_height: None,
         merkle_path: None,
         event_id: None,
+        competing_txs: None,
+        extra_info: None,
+        status_code: None,
     };
     let trigger2 = AtomicBool::new(false);
     ArcadeEventsTask::<StorageSqlx>::apply_event(&storage, &legacy, &trigger2)
