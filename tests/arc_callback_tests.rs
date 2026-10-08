@@ -6,6 +6,7 @@
 
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::{MerklePath, MockChainTracker};
+use bsv_wallet_cli::arc_ingest::PROOF_NOT_ACCEPTED;
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{
     Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
@@ -320,10 +321,12 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
 
 /// P0-1b (bsv-stack-lean #35): a wallet with no chain tracker
 /// (`CHAINTRACKS_URL=off`) cannot check a proof's root, so the proof is
-/// refused and the answer says why. The BUMP's root is in no header the
-/// wallet has; before the toolbox's fix it was stored and the tx completed.
+/// refused and not stored. The BUMP's root is in no header the wallet has;
+/// before the toolbox's fix it was stored and the tx completed. Since P0-2c
+/// the body goes whole to the toolbox's `apply_event`, which reports only
+/// that the path was not stored; its warn log names the outcome.
 #[tokio::test]
-async fn mined_webhook_without_a_chain_tracker_is_refused_and_says_so() {
+async fn mined_webhook_without_a_chain_tracker_is_refused_and_not_stored() {
     let txid = "d".repeat(64);
     let height = 850_000u32;
     let bump = MerklePath::from_coinbase_txid(&txid, height);
@@ -348,9 +351,10 @@ async fn mined_webhook_without_a_chain_tracker_is_refused_and_says_so() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     let action = body["action"].as_str().unwrap_or_default();
-    assert!(
-        action.starts_with("ProofRejected") && action.contains("no chain tracker"),
-        "the refusal is named, not swallowed: {action}"
+    assert_eq!(
+        action,
+        format!("ProofRejected({PROOF_NOT_ACCEPTED:?})"),
+        "the refusal is answered, not swallowed"
     );
 
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proven_txs WHERE txid = ?")
@@ -410,9 +414,7 @@ async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
     .await
     .expect("a well-formed payload is not an error");
     match action {
-        IngestAction::ProofRejected(reason) => {
-            assert!(reason.contains("no chain tracker"), "{reason}")
-        }
+        IngestAction::ProofRejected(reason) => assert_eq!(reason, PROOF_NOT_ACCEPTED),
         other => panic!("expected the refusal, got {other:?}"),
     }
     assert_eq!(req_status(&pool, &txid).await, "unmined");

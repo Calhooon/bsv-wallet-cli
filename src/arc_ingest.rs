@@ -4,40 +4,58 @@
 //! - the daemon's own `POST /arc-callback` route (direct webhook), and
 //! - the `bsv-wallet-relay` poller (store-and-forward webhook).
 //!
-//! Payload shape (ARC webhook convention, Arcade V2 verified):
-//! `{ "txid", "txStatus", "blockHash"?, "blockHeight"?, "merklePath"?, ... }`
-//! — `merklePath` (BUMP hex) is present on `MINED`.
-//!
-//! With a merkle path present the proof is validated and stored via the
-//! toolbox's `StorageSqlx::ingest_merkle_proof` (ChainTracker validation →
-//! `proven_txs` insert → complete `proven_tx_reqs`/`transactions`). Status-only
-//! payloads map through the same status transitions as the Monitor's SSE task.
+//! The body is Arcade's event (`txid`, `txStatus`, `extraInfo`, `status`,
+//! `competingTxs`, `blockHash`, `blockHeight`, `merklePath`; arcade@1ae1208
+//! `services/webhook/service.go:317-327`). It is parsed into the toolbox's
+//! own `ArcadeStatusEvent` and handed whole to
+//! `ArcadeEventsTask::apply_event`, the toolbox's one judgment for the SSE
+//! frame and the webhook alike: the CLI adds nothing and drops nothing, so
+//! the word decides, never the presence of a path. A MINED or IMMUTABLE path
+//! (a `reorg_reanchor` included) goes through the toolbox's proof funnel,
+//! checked against our headers; `reorg_unmined` changes nothing and asks for
+//! the proof again; a REJECTED with ARC code 466 (or competitors) is a
+//! conflict, with 476 it is retryable and not applied; a word Arcade does
+//! not define is refused (bsv-stack-lean P0-2b, P0-2c).
 
 use anyhow::{anyhow, Result};
 use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
-use bsv_wallet_toolbox::{MonitorStorage, ProofIngestOutcome, StorageSqlx};
-use std::sync::atomic::AtomicBool;
+use bsv_wallet_toolbox::services::providers::arcade::{
+    arcade_reorg_marker, arcade_verdict, ArcadeReorgMarker, ArcadeStatusEvent, ArcadeVerdict,
+};
+use bsv_wallet_toolbox::StorageSqlx;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The reason carried by [`IngestAction::ProofRejected`] when the wallet has
-/// no chain tracker: the proof is refused and not stored.
-pub const NO_TRACKER_REFUSAL: &str =
-    "no chain tracker configured (CHAINTRACKS_URL=off): proof refused, not stored";
+/// The reason carried by [`IngestAction::ProofRejected`]: the toolbox's
+/// funnel did not store a MINED path. `apply_event` reports only that the
+/// path was not stored (it falls back to the re-ask), so which outcome it was
+/// (unparseable, a root our headers do not hold, a block above the processed
+/// height, a tracker fault, no chain tracker) is named in the toolbox's warn
+/// log, `inline SSE proof not accepted`, not here.
+pub const PROOF_NOT_ACCEPTED: &str =
+    "proof not stored: the toolbox's funnel refused or deferred the path (its log names why); the proof is asked for again";
 
 /// What ingesting a callback payload did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngestAction {
     /// A merkle proof was validated and stored; records completed.
     ProofIngested,
-    /// The proof was rejected (invalid root / unparseable / no chain
-    /// tracker to check it) — NOT stored.
+    /// The body was MINED or IMMUTABLE with a path and the toolbox did not
+    /// store it (see [`PROOF_NOT_ACCEPTED`]); nothing stored.
     ProofRejected(String),
     /// A status-only update was applied to storage.
     StatusApplied,
     /// A status-only update matched no records (unknown txid or already final).
     StatusIgnored,
+    /// The toolbox asked for the proof again (`reorg_unmined`, a mined word
+    /// with no path, `STUMP_PROCESSING`); any status change it made is in
+    /// storage, the word itself moved no proof.
+    Reask,
+    /// A word Arcade does not define: refused, nothing applied.
+    Refused(String),
 }
 
-/// Parse and apply one ARC/Arcade callback payload against wallet storage.
+/// Parse one ARC/Arcade callback payload and hand it whole to the toolbox's
+/// judgment.
 pub async fn ingest_arc_payload(
     storage: &StorageSqlx,
     payload: &serde_json::Value,
@@ -49,107 +67,63 @@ pub async fn ingest_arc_payload(
     if txid.len() != 64 || !txid.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(anyhow!("invalid txid"));
     }
-    let tx_status = payload
-        .get("txStatus")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let ev: ArcadeStatusEvent = serde_json::from_value(payload.clone())
+        .map_err(|e| anyhow!("not an Arcade status body: {}", e))?;
 
-    let merkle_path_hex = payload
-        .get("merklePath")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
+    // The CLI's trigger: the running monitor's proof flag is not reachable
+    // from here (toolbox 0.4.0 exposes none), so the re-ask is answered and
+    // logged; the monitor's own proof and reorg tasks do the re-check.
+    let reask = AtomicBool::new(false);
+    let updated = ArcadeEventsTask::<StorageSqlx>::apply_event(storage, &ev, &reask)
+        .await
+        .map_err(|e| anyhow!("apply_event: {}", e))?;
+    let reask = reask.load(Ordering::SeqCst);
 
-    if let Some(mp_hex) = merkle_path_hex {
-        let merkle_path = hex::decode(mp_hex).map_err(|e| anyhow!("merklePath not hex: {}", e))?;
-        let block_height = payload
-            .get("blockHeight")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow!("merklePath payload missing blockHeight"))?
-            as u32;
-        let block_hash = payload
-            .get("blockHash")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-
-        // Ensure spendability transition happened even if we never saw
-        // SEEN_ON_NETWORK (webhook may be the only delivery path).
-        let _ = storage.mark_transaction_seen_on_network(txid).await;
-
-        match storage
-            .ingest_merkle_proof(txid, &merkle_path, block_height, block_hash, None)
-            .await
-            .map_err(|e| anyhow!("ingest_merkle_proof: {}", e))?
-        {
-            ProofIngestOutcome::Ingested(status) => {
-                tracing::info!(
-                    txid = %txid,
-                    block_height = ?status.block_height,
-                    "arc-callback: merkle proof ingested"
-                );
-                Ok(IngestAction::ProofIngested)
-            }
-            ProofIngestOutcome::InvalidMerkleRoot { computed_root } => {
-                tracing::warn!(txid = %txid, computed_root = %computed_root, "arc-callback: proof rejected (invalid merkle root)");
-                Ok(IngestAction::ProofRejected("invalid merkle root".into()))
-            }
-            ProofIngestOutcome::InvalidProof(e) => {
-                tracing::warn!(txid = %txid, error = %e, "arc-callback: proof rejected (unparseable)");
-                Ok(IngestAction::ProofRejected(e))
-            }
-            ProofIngestOutcome::TrackerError(e) => {
-                tracing::warn!(txid = %txid, error = %e, "arc-callback: proof deferred (ChainTracker error) — polling sync will retry");
-                Ok(IngestAction::ProofRejected(format!("tracker error: {}", e)))
-            }
-            ProofIngestOutcome::TrackerUnavailable => {
-                // No header service (CHAINTRACKS_URL=off): nothing can check
-                // the root, so the toolbox refuses the proof and stores
-                // nothing. A misconfiguration, not a transient: error level.
-                tracing::error!(
-                    txid = %txid,
-                    "arc-callback: proof refused, no chain tracker is configured (CHAINTRACKS_URL=off); set CHAINTRACKS_URL to prove"
-                );
-                Ok(IngestAction::ProofRejected(NO_TRACKER_REFUSAL.into()))
-            }
-            ProofIngestOutcome::DeferredAboveProcessedHeight {
-                block_height,
-                processed_height,
-            } => {
-                // M19 R1: the proof lag. The header has not stayed the tip
-                // for a full monitor cycle; the fetch path re-presents it.
-                tracing::info!(
-                    txid = %txid,
-                    block_height,
-                    processed_height,
-                    "arc-callback: proof deferred (block newer than the processed header); the monitor re-presents it"
-                );
-                Ok(IngestAction::ProofRejected(format!(
-                    "deferred: block {} above the processed height {}",
-                    block_height, processed_height
-                )))
-            }
-        }
-    } else {
-        // Status-only payload — identical mapping to the Monitor's SSE task.
-        // Since arcade v0.10.1 (#259) MINED webhooks DO carry merklePath and
-        // take the proof branch above; a status-only MINED still lands here
-        // when upstream enrichment best-effort-misses (BUMP-cache eviction /
-        // reorg race), and the proof is then fetched by the SSE task's
-        // trigger / the polling backstop.
-        let trigger = AtomicBool::new(false);
-        let updated =
-            ArcadeEventsTask::<StorageSqlx>::apply_status_event(storage, txid, tx_status, &trigger)
-                .await
-                .map_err(|e| anyhow!("apply_status_event: {}", e))?;
-        tracing::info!(
-            txid = %txid,
-            status = %tx_status,
-            updated,
-            "arc-callback: status webhook received"
-        );
-        if updated {
-            Ok(IngestAction::StatusApplied)
+    // Name what the toolbox did, by the toolbox's own reading of the body.
+    let unmined = arcade_reorg_marker(ev.extra_info.as_deref()) == Some(ArcadeReorgMarker::Unmined);
+    let verdict = arcade_verdict(&ev.tx_status);
+    let offered_path = ev.merkle_path.as_deref().is_some_and(|p| !p.is_empty());
+    let action = if unmined {
+        IngestAction::Reask
+    } else if verdict == ArcadeVerdict::Invalid {
+        IngestAction::Refused(format!(
+            "txStatus {:?} is not a word Arcade defines: nothing applied",
+            ev.tx_status
+        ))
+    } else if verdict == ArcadeVerdict::Mined && offered_path {
+        // The toolbox returns early, with no re-ask, only when it stored the
+        // path; any other outcome falls back to the re-ask.
+        if reask {
+            IngestAction::ProofRejected(PROOF_NOT_ACCEPTED.into())
         } else {
-            Ok(IngestAction::StatusIgnored)
+            IngestAction::ProofIngested
         }
+    } else if reask {
+        IngestAction::Reask
+    } else if updated {
+        IngestAction::StatusApplied
+    } else {
+        IngestAction::StatusIgnored
+    };
+
+    match &action {
+        IngestAction::Refused(reason) => {
+            tracing::warn!(txid = %txid, reason = %reason, "arc-callback: refused")
+        }
+        IngestAction::ProofRejected(reason) => tracing::warn!(
+            txid = %txid,
+            status = %ev.tx_status,
+            reason = %reason,
+            "arc-callback: proof not stored"
+        ),
+        _ => tracing::info!(
+            txid = %txid,
+            status = %ev.tx_status,
+            extra_info = ?ev.extra_info,
+            code = ?ev.status_code,
+            action = ?action,
+            "arc-callback: Arcade event applied by the toolbox"
+        ),
     }
+    Ok(action)
 }
