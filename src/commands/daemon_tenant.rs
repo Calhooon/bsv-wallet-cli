@@ -196,6 +196,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
             if reconcile_enabled {
                 match crate::commands::cleanup_abandoned::reconcile(
                     check_wallet.storage().pool(),
+                    check_wallet.services(),
                     reconcile_chain,
                     reconcile_min_age_secs,
                     true,

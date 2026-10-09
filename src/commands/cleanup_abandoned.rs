@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bsv_wallet_toolbox::Chain;
+use bsv_wallet_toolbox::{Chain, WalletServices};
 use sqlx::Row;
 use std::future::Future;
 
@@ -16,7 +16,8 @@ use crate::context::WalletContext;
 pub enum InputSpend {
     /// The outpoint is unspent and its parent is on chain — safe to release.
     Unspent,
-    /// The outpoint is spent by `txid`; `confirmed` = that spend is mined.
+    /// The outpoint is spent by `txid`; `confirmed` = we hold a merkle proof
+    /// of that spend whose root the header service checked.
     SpentBy { txid: String, confirmed: bool },
     /// Cannot say (probe fault, phantom parent) — never released.
     Unknown,
@@ -156,8 +157,9 @@ impl ReconcileReport {
 /// Operates on the caller-provided pool so the daemon reuses its existing
 /// connection rather than opening a second one (the wallet DB is not in WAL
 /// mode and a fresh pool would lack the daemon's `busy_timeout`).
-pub async fn reconcile(
+pub async fn reconcile<V: WalletServices>(
     pool: &sqlx::SqlitePool,
+    services: &V,
     chain: Chain,
     min_age_secs: i64,
     execute: bool,
@@ -176,7 +178,7 @@ pub async fn reconcile(
         },
         |src: String, vout: u32| {
             let c = client.clone();
-            async move { probe_input_spend(&c, base, &src, vout).await }
+            async move { probe_input_spend(&c, base, services, &src, vout).await }
         },
     )
     .await
@@ -186,10 +188,19 @@ pub async fn reconcile(
 /// oracle (the same endpoints `sync --reconcile-spent` uses): the spend
 /// probe names the spender; a 404 there is `Unspent` ONLY when the parent
 /// itself is on chain (a phantom parent is `Unknown` — the 2026-08-27
-/// float-recovery lesson); the spender's own record says whether it mined.
-pub(crate) async fn probe_input_spend(
+/// float-recovery lesson).
+///
+/// Whether the spender is mined is a proof, never the explorer's word (Rule
+/// 28, C8): `confirmed` is true only when `services` returns a merkle path
+/// for the spender, which it does only after checking the path's root
+/// against the header service. This field decides RELINQUISHED, so an
+/// explorer's `confirmations` count is not read at all. With no proof (not
+/// mined yet, no header service, a courier fault) the answer is `confirmed:
+/// false` and the coin stays as it is.
+pub(crate) async fn probe_input_spend<V: WalletServices>(
     client: &reqwest::Client,
     base: &str,
+    services: &V,
     src: &str,
     vout: u32,
 ) -> InputSpend {
@@ -211,20 +222,7 @@ pub(crate) async fn probe_input_spend(
     };
     match spent {
         Some(spender) => {
-            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            let confirmed = match client
-                .get(format!("{}/tx/hash/{}", base, spender))
-                .send()
-                .await
-            {
-                Ok(r) if r.status().is_success() => r
-                    .json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|v| v.get("confirmations").and_then(|c| c.as_i64()))
-                    .is_some_and(|c| c >= 1),
-                _ => false,
-            };
+            let confirmed = proven_mined(services, &spender).await;
             InputSpend::SpentBy {
                 txid: spender,
                 confirmed,
@@ -238,6 +236,16 @@ pub(crate) async fn probe_input_spend(
             }
         }
     }
+}
+
+/// Is `txid` mined, as a fact we can check: `get_merkle_path` returns a
+/// path only after its root matched the header service's header for that
+/// height, and returns none when no header service is configured.
+async fn proven_mined<V: WalletServices>(services: &V, txid: &str) -> bool {
+    matches!(
+        services.get_merkle_path(txid, false).await,
+        Ok(found) if found.merkle_path.is_some()
+    )
 }
 
 /// A candidate to abandon: `(transaction_id, txid, per-input chain answers)`.
@@ -574,7 +582,7 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         .with_context(|| format!("failed to open {} (is the daemon running?)", db_path))?;
 
     // Operator-initiated: no age guard (inspect every unproven tx).
-    let report = reconcile(&pool, ctx.chain, 0, execute).await?;
+    let report = reconcile(&pool, ctx.wallet.services(), ctx.chain, 0, execute).await?;
 
     if report.checked == 0 && report.stale_reqs_checked == 0 {
         println!("No unproven (or stale sending) transactions found, and no stale proof requests.");
@@ -1759,5 +1767,81 @@ mod tests {
         );
         assert!(Verdict::DeadAbsentPastThreshold.is_dead());
         assert!(!Verdict::AbsentOnClock.is_dead());
+    }
+    /// C8 (Rule 28): whether the spender is mined is a proof, never an
+    /// explorer's `confirmations` count. The explorer names the spender and
+    /// says it has five confirmations; no proof of it can be had. Red at the
+    /// base: `confirmed: true`, on the explorer's word.
+    #[tokio::test]
+    async fn the_spenders_confirmation_is_a_proof_never_an_explorers_count() {
+        use crate::test_support::Fixture;
+        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
+        use bsv_wallet_toolbox::services::GetMerklePathResult;
+        let src = "aa".repeat(32);
+        let spender = "bb".repeat(32);
+        let spent_route = format!("/tx/{src}/0/spent");
+        let spender_route = format!("/tx/hash/{spender}");
+        let explorer = Fixture::start(
+            &[
+                (
+                    &spent_route,
+                    200,
+                    &format!(r#"{{"txid":"{spender}","vin":0}}"#),
+                ),
+                (&spender_route, 200, r#"{"confirmations":5}"#),
+            ],
+            500,
+        )
+        .await;
+        let client = reqwest::Client::new();
+
+        let no_proof = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                merkle_path: None,
+                header: None,
+                error: Some("not mined".to_string()),
+                notes: vec![],
+            }))
+            .build();
+        let answer = probe_input_spend(&client, &explorer.base, &no_proof, &src, 0).await;
+        assert_eq!(
+            answer,
+            InputSpend::SpentBy {
+                txid: spender.clone(),
+                confirmed: false
+            },
+            "no proof of the spender: not confirmed"
+        );
+        assert_eq!(no_proof.call_count("get_merkle_path"), 1);
+
+        // A proof the header service checked is the confirmation.
+        let proven = MockWalletServices::new();
+        let answer = probe_input_spend(&client, &explorer.base, &proven, &src, 0).await;
+        assert_eq!(
+            answer,
+            InputSpend::SpentBy {
+                txid: spender.clone(),
+                confirmed: true
+            }
+        );
+
+        // A courier fault is no proof either.
+        let fault = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Error(
+                MockErrorKind::NetworkError,
+                "down".to_string(),
+            ))
+            .build();
+        let answer = probe_input_spend(&client, &explorer.base, &fault, &src, 0).await;
+        assert!(matches!(
+            answer,
+            InputSpend::SpentBy {
+                confirmed: false,
+                ..
+            }
+        ));
+
+        assert_eq!(explorer.count(&spender_route), 0, "{:?}", explorer.hits());
     }
 }
