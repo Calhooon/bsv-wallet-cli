@@ -5,6 +5,12 @@
 //! claim (covenant unlock + fee input), and broadcasts through the wallet's
 //! own broadcasters (Rule 28, C11: the deposit's bytes through
 //! `Services::get_raw_tx`, the claim through `post_beef`; see `gift_chain`).
+//!
+//! The claim is tracked from the moment it is handed over, and what the
+//! command prints is the tracker's word (E2). With `--force` before the
+//! lock time a broadcaster may take the claim (`announced`) or call it not
+//! final; the second is not a failure: the claim is kept and announced
+//! again at the lock time by the tracker's pass.
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::bsv::sighash::parse_transaction;
@@ -13,6 +19,7 @@ use bsv_wallet_cli::gift::covenant::parse_locking_script;
 
 use crate::commands::gift_chain;
 use crate::context::WalletContext;
+use crate::tracker_host::{SystemClock, TickOptions};
 
 pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
     // 1. fetch the deposit transaction
@@ -56,11 +63,20 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
     let plan = build_claim_tx(&deposit_raw, &deposit_priv, params.lock_until as u32)
         .map_err(|e| anyhow!("failed to build claim: {e}"))?;
 
-    // 5. broadcast through the wallet's broadcasters
+    // 5. hand it to the wallet's broadcasters, and to the tracker
     let claim_raw =
         hex::decode(&plan.claim_raw_hex).map_err(|e| anyhow!("the claim is not hex: {e}"))?;
-    let broadcaster =
-        gift_chain::broadcast_claim(ctx.wallet.services(), &deposit_raw, &claim_raw).await?;
+    let outcome = gift_chain::announce_claim(
+        ctx.wallet.storage(),
+        ctx.wallet.services(),
+        &SystemClock,
+        &TickOptions::from_env(),
+        &deposit_raw,
+        &claim_raw,
+        params.lock_until,
+        force,
+    )
+    .await?;
     let claim_txid = plan.claim_txid.as_str();
 
     if ctx.json_output {
@@ -73,12 +89,18 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
                 "fee": plan.fee,
                 "change": plan.change,
                 "lockUntil": plan.covenant.lock_until,
-                "broadcast": broadcaster,
+                "broadcast": outcome.broadcaster,
+                "word": outcome.word,
+                "reask": outcome.reask,
+                "heldUntil": outcome.held_until,
+                "notFinal": outcome.not_final,
             })
         );
     } else {
-        let pre = now < params.lock_until;
-        println!("🔓 Gift claim broadcast");
+        match &outcome.not_final {
+            None => println!("🔓 Gift claim broadcast"),
+            Some(_) => println!("⏳ Gift claim held: not final yet"),
+        }
         println!(
             "   amount:     {} sats → your address",
             plan.covenant.amount
@@ -89,11 +111,17 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
         );
         println!("   unlocks:    {unlock_human}");
         println!("   claim txid: {claim_txid}");
-        println!("   View:       https://whatsonchain.com/tx/{claim_txid}");
-        if pre {
-            println!(
-                "\n   ⏳ Pre-armed before unlock: it sits unconfirmed and auto-confirms once\n      median-time-past passes {unlock_human}."
-            );
+        println!("   word:       {} (the tracker's)", outcome.word);
+        match (&outcome.not_final, outcome.held_until) {
+            (Some(said), _) => println!(
+                "\n   A broadcaster called it not final ({said}). The claim is kept and\n   announced again at {unlock_human}: `serve` does that by itself, or run\n   `bsv-wallet tracker-tick` after the unlock."
+            ),
+            (None, Some(_)) => println!(
+                "\n   ⏳ Pre-armed before unlock: it sits unconfirmed and confirms once\n      median-time-past passes {unlock_human}. Nothing is asked about it before then."
+            ),
+            (None, None) => println!(
+                "\n   `bsv-wallet tracker-tick` (or `serve`) asks for its proof; the word turns\n   `mined` when the proof checks against the header service."
+            ),
         }
     }
 
