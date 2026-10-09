@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use bsv_wallet_toolbox::services::UtxoVerdict;
 use bsv_wallet_toolbox::{Chain, WalletServices};
 use sqlx::Row;
 use std::future::Future;
@@ -14,12 +15,14 @@ use crate::context::WalletContext;
 /// (THE RELEASE RULE's per-input primitive, 2026-08-29).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSpend {
-    /// The outpoint is unspent and its parent is on chain — safe to release.
+    /// The outpoint is in an explorer's unspent set: safe to release.
     Unspent,
     /// The outpoint is spent by `txid`; `confirmed` = we hold a merkle proof
     /// of that spend whose root the header service checked.
     SpentBy { txid: String, confirmed: bool },
-    /// Cannot say (probe fault, phantom parent) — never released.
+    /// Cannot say: could not look, no spender named while no explorer
+    /// lists the outpoint as unspent (a phantom parent reads this way), or
+    /// one explorer's negative the other could not confirm. Never released.
     Unknown,
 }
 
@@ -178,63 +181,109 @@ pub async fn reconcile<V: WalletServices>(
         },
         |src: String, vout: u32| {
             let c = client.clone();
-            async move { probe_input_spend(&c, base, services, &src, vout).await }
+            async move {
+                let script = stored_locking_script(pool, &src, vout).await;
+                probe_input_spend(&c, base, services, &src, vout, script.as_deref()).await
+            }
         },
     )
     .await
 }
 
-/// The chain's answer for one outpoint through the wallet's existing spend
-/// oracle (the same endpoints `sync --reconcile-spent` uses): the spend
-/// probe names the spender; a 404 there is `Unspent` ONLY when the parent
-/// itself is on chain (a phantom parent is `Unknown` — the 2026-08-27
-/// float-recovery lesson).
+/// The locking script of one of our own outpoints, from our own rows: the
+/// output's stored script, else the script at `vout` of the stored parent.
+/// `None` when the store holds neither (the unspent question then cannot be
+/// asked, and the probe answers `Unknown`).
+pub(crate) async fn stored_locking_script(
+    pool: &sqlx::SqlitePool,
+    src: &str,
+    vout: u32,
+) -> Option<Vec<u8>> {
+    let row = sqlx::query(
+        "SELECT o.locking_script AS script, t.raw_tx AS raw \
+         FROM outputs o JOIN transactions t ON t.transaction_id = o.transaction_id \
+         WHERE lower(t.txid) = ? AND o.vout = ? LIMIT 1",
+    )
+    .bind(src.to_ascii_lowercase())
+    .bind(vout as i64)
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+    if let Ok(Some(script)) = row.try_get::<Option<Vec<u8>>, _>("script") {
+        if !script.is_empty() {
+            return Some(script);
+        }
+    }
+    let raw = row.try_get::<Option<Vec<u8>>, _>("raw").ok()??;
+    let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).ok()?;
+    tx.outputs
+        .get(vout as usize)
+        .map(|o| o.locking_script.to_binary())
+}
+
+/// The chain's answer for one outpoint: the ONE spend probe (Rule 28, C5
+/// and C7; `cleanup-abandoned`, `reconcile-outputs`, the daemon's sweep and
+/// `sync --reconcile-spent` all ask here). Three answers, and "could not
+/// look" is never "unspent" and never "spent".
 ///
-/// Whether the spender is mined is a proof, never the explorer's word (Rule
-/// 28, C8): `confirmed` is true only when `services` returns a merkle path
-/// for the spender, which it does only after checking the path's root
-/// against the header service. This field decides RELINQUISHED, so an
-/// explorer's `confirmations` count is not read at all. With no proof (not
-/// mined yet, no header service, a courier fault) the answer is `confirmed:
-/// false` and the coin stays as it is.
+/// Break-glass (Rule 28): headers and proofs prove that a transaction is in
+/// a block, never that an output is unspent, and our own outputs table
+/// knows only our own spends; so an output's spend by someone else is asked
+/// of explorers, in two steps.
+///
+/// 1. **Who spent it?** WhatsOnChain's `/tx/{txid}/{vout}/spent`, the one
+///    explorer route we hold that names a spender. A name is a positive and
+///    is then checked: `confirmed` is true only with a merkle proof of the
+///    spender whose root the header service checked (C8). A 404 here is
+///    one explorer saying "no spend known" (it is also what a parent that
+///    does not exist answers), and a fault is "could not look": neither is
+///    an answer, and both fall through to step 2.
+/// 2. **Is it unspent?** The toolbox's `is_utxo` (its Rule 28 item 5): two
+///    explorers (WhatsOnChain and Bitails) with a rotating start, a
+///    positive from the one that gives it, a negative only from both.
+///    `Unspent` is the outpoint in an unspent set, so its parent exists.
+///    Both explorers agreeing it is not unspent while no spender is named
+///    (a phantom parent, or an index behind) is `Unknown`: no spender can
+///    be proven. Anything else is `Unknown`.
+///
+/// Without `locking_script` the unspent set cannot be asked (it is keyed
+/// by script hash) and the answer is `Unknown`.
 pub(crate) async fn probe_input_spend<V: WalletServices>(
     client: &reqwest::Client,
     base: &str,
     services: &V,
     src: &str,
     vout: u32,
+    locking_script: Option<&[u8]>,
 ) -> InputSpend {
     tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-    let spent = match client
+    let spender = match client
         .get(format!("{}/tx/{}/{}/spent", base, src, vout))
         .send()
         .await
     {
-        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
-            Ok(v) => v
-                .get("txid")
-                .and_then(|t| t.as_str())
-                .map(|t| t.to_ascii_lowercase()),
-            Err(_) => return InputSpend::Unknown,
-        },
-        Ok(r) if r.status().as_u16() == 404 => None,
-        _ => return InputSpend::Unknown,
+        Ok(r) if r.status().is_success() => {
+            r.json::<serde_json::Value>().await.ok().and_then(|v| {
+                v.get("txid")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.to_ascii_lowercase())
+            })
+        }
+        _ => None,
     };
-    match spent {
-        Some(spender) => {
-            let confirmed = proven_mined(services, &spender).await;
-            InputSpend::SpentBy {
-                txid: spender,
-                confirmed,
-            }
-        }
-        None => {
-            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            match client.get(format!("{}/tx/hash/{}", base, src)).send().await {
-                Ok(r) if r.status().is_success() => InputSpend::Unspent,
-                _ => InputSpend::Unknown,
-            }
-        }
+    if let Some(spender) = spender {
+        let confirmed = proven_mined(services, &spender).await;
+        return InputSpend::SpentBy {
+            txid: spender,
+            confirmed,
+        };
+    }
+    let Some(script) = locking_script else {
+        return InputSpend::Unknown;
+    };
+    match services.is_utxo(src, vout, script).await {
+        UtxoVerdict::Unspent => InputSpend::Unspent,
+        UtxoVerdict::Spent | UtxoVerdict::Unknown => InputSpend::Unknown,
     }
 }
 
@@ -1804,7 +1853,7 @@ mod tests {
                 notes: vec![],
             }))
             .build();
-        let answer = probe_input_spend(&client, &explorer.base, &no_proof, &src, 0).await;
+        let answer = probe_input_spend(&client, &explorer.base, &no_proof, &src, 0, None).await;
         assert_eq!(
             answer,
             InputSpend::SpentBy {
@@ -1817,7 +1866,7 @@ mod tests {
 
         // A proof the header service checked is the confirmation.
         let proven = MockWalletServices::new();
-        let answer = probe_input_spend(&client, &explorer.base, &proven, &src, 0).await;
+        let answer = probe_input_spend(&client, &explorer.base, &proven, &src, 0, None).await;
         assert_eq!(
             answer,
             InputSpend::SpentBy {
@@ -1833,7 +1882,7 @@ mod tests {
                 "down".to_string(),
             ))
             .build();
-        let answer = probe_input_spend(&client, &explorer.base, &fault, &src, 0).await;
+        let answer = probe_input_spend(&client, &explorer.base, &fault, &src, 0, None).await;
         assert!(matches!(
             answer,
             InputSpend::SpentBy {
@@ -1843,5 +1892,152 @@ mod tests {
         ));
 
         assert_eq!(explorer.count(&spender_route), 0, "{:?}", explorer.hits());
+    }
+    /// C5 and C7 (Rule 28): "unspent" is a positive from an explorer's
+    /// unspent set, asked of two explorers through the toolbox; one
+    /// explorer's "no spend known" is not it. WhatsOnChain says no spend and
+    /// that the parent exists; the unspent set could not be read. Red at the
+    /// base: `Unspent`, on the one explorer's negative.
+    #[tokio::test]
+    async fn one_explorers_no_spend_known_is_not_unspent() {
+        use crate::test_support::Fixture;
+        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
+        let src = "aa".repeat(32);
+        let spent_route = format!("/tx/{src}/0/spent");
+        let parent_route = format!("/tx/hash/{src}");
+        let explorer = Fixture::start(
+            &[
+                (&spent_route, 404, ""),
+                (&parent_route, 200, r#"{"confirmations":9}"#),
+            ],
+            500,
+        )
+        .await;
+        let client = reqwest::Client::new();
+
+        let could_not_look = MockWalletServices::builder()
+            .is_utxo_response(MockResponse::Error(
+                MockErrorKind::ServiceError,
+                "one explorer's negative, the other down".to_string(),
+            ))
+            .build();
+        let script = crate::test_support::p2pkh([0xdb; 20]);
+        let answer = probe_input_spend(
+            &client,
+            &explorer.base,
+            &could_not_look,
+            &src,
+            0,
+            Some(&script),
+        )
+        .await;
+        assert_eq!(answer, InputSpend::Unknown);
+        assert_eq!(could_not_look.call_count("is_utxo"), 1);
+
+        // Two explorers agreeing it is not unspent, and no spender named: a
+        // phantom parent reads this way. Never unspent, never relinquished.
+        let not_unspent = MockWalletServices::builder()
+            .is_utxo_response(MockResponse::Success(false))
+            .build();
+        let answer = probe_input_spend(
+            &client,
+            &explorer.base,
+            &not_unspent,
+            &src,
+            0,
+            Some(&script),
+        )
+        .await;
+        assert_eq!(answer, InputSpend::Unknown);
+
+        // In an unspent set: unspent.
+        let unspent = MockWalletServices::new();
+        let answer =
+            probe_input_spend(&client, &explorer.base, &unspent, &src, 0, Some(&script)).await;
+        assert_eq!(answer, InputSpend::Unspent);
+
+        // No script of ours to ask the unspent set with: cannot say.
+        let answer = probe_input_spend(&client, &explorer.base, &unspent, &src, 0, None).await;
+        assert_eq!(answer, InputSpend::Unknown);
+
+        // The parent's existence is no longer a separate explorer question.
+        assert_eq!(explorer.count(&parent_route), 0, "{:?}", explorer.hits());
+    }
+
+    /// C5 and C7: a WhatsOnChain fault is "could not look" at the one
+    /// explorer that names a spender, and the unspent question still has
+    /// its two explorers. Red at the base: `Unknown` on the first fault.
+    #[tokio::test]
+    async fn a_fault_at_the_spender_lookup_falls_through_to_the_unspent_set() {
+        use crate::test_support::Fixture;
+        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
+        let src = "aa".repeat(32);
+        let explorer = Fixture::start(&[], 500).await;
+        let client = reqwest::Client::new();
+
+        let script = crate::test_support::p2pkh([0xdb; 20]);
+        let unspent = MockWalletServices::new();
+        let answer =
+            probe_input_spend(&client, &explorer.base, &unspent, &src, 0, Some(&script)).await;
+        assert_eq!(answer, InputSpend::Unspent);
+
+        // And with the unspent set unreadable too, it is "could not look".
+        let down = MockWalletServices::builder()
+            .is_utxo_response(MockResponse::Error(
+                MockErrorKind::NetworkError,
+                "down".to_string(),
+            ))
+            .build();
+        let answer =
+            probe_input_spend(&client, &explorer.base, &down, &src, 0, Some(&script)).await;
+        assert_eq!(answer, InputSpend::Unknown);
+    }
+
+    /// The script the unspent set is asked with comes from our own rows:
+    /// the output's stored script, else the stored parent's own bytes.
+    #[tokio::test]
+    async fn the_locking_script_of_an_outpoint_comes_from_our_own_rows() {
+        use crate::test_support::{p2pkh, raw_tx, txid_of};
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE transactions (transaction_id INTEGER PRIMARY KEY, txid TEXT, raw_tx BLOB)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE outputs (output_id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             transaction_id INTEGER NOT NULL, vout INTEGER NOT NULL, locking_script BLOB)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = p2pkh([0x01; 20]);
+        let second = p2pkh([0x02; 20]);
+        let raw = raw_tx(
+            &[(&"11".repeat(32), 0)],
+            &[(500, first.clone()), (600, second.clone())],
+        );
+        let txid = txid_of(&raw);
+        sqlx::query("INSERT INTO transactions (transaction_id, txid, raw_tx) VALUES (1, ?, ?)")
+            .bind(&txid)
+            .bind(&raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Output 0 has its script stored; output 1 has none (kept in the parent).
+        sqlx::query("INSERT INTO outputs (transaction_id, vout, locking_script) VALUES (1, 0, ?), (1, 1, NULL)")
+            .bind(&first)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(stored_locking_script(&pool, &txid, 0).await, Some(first));
+        assert_eq!(stored_locking_script(&pool, &txid, 1).await, Some(second));
+        assert_eq!(stored_locking_script(&pool, &txid, 2).await, None);
+        assert_eq!(
+            stored_locking_script(&pool, &"cd".repeat(32), 0).await,
+            None
+        );
     }
 }

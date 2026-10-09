@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::collections::HashSet;
 
 use crate::brc29;
+use crate::commands::cleanup_abandoned::{probe_input_spend, stored_locking_script, InputSpend};
 use crate::commands::receive;
 use crate::context::WalletContext;
 
@@ -57,20 +58,24 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
     // --reconcile-spent (2026-08-27): a restored-from-backup wallet holds rows
     // for outputs the chain has since seen SPENT; selecting them builds
     // double-spend inputs the network refuses (the fleet-restore incident).
-    // For every DB outpoint MISSING from the chain's unspent set at the
-    // deposit address, ask WoC's per-outpoint spent endpoint; a definitive
-    // spender ⇒ relinquish. Anything else (404 / transport) is LEFT ALONE:
-    // only a positive spent answer may remove spendability (fail-safe —
-    // unknown never relinquishes).
+    // Every DB outpoint MISSING from the chain's unspent set at the deposit
+    // address is put to the ONE spend probe (Rule 28, C5 and C7: the same
+    // function `cleanup-abandoned` and `reconcile-outputs` ask, with the
+    // same three answers; this command no longer holds a copy with its own
+    // error rule). Only a spend we hold a proof of relinquishes; a named
+    // but unproven spender, and anything the probe could not decide, is
+    // LEFT ALONE and counted (fail-safe: unknown never relinquishes).
     let mut reconciled = 0u32;
     let mut reconcile_checked = 0u32;
-    let mut phantom_parent = 0u32;
+    let mut spent_unproven = 0u32;
+    let mut unknown = 0u32;
     if reconcile_spent {
         let chain_unspent: HashSet<String> = unspent
             .iter()
             .map(|u| format!("{}.{}", u.tx_hash, u.tx_pos))
             .collect();
         let db_outpoints = known_outpoints(ctx).await?;
+        let pool = ctx.wallet.storage().pool();
         for op in db_outpoints {
             if chain_unspent.contains(&op) {
                 continue;
@@ -78,60 +83,61 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
             let Some((txid, vout)) = op.split_once('.') else {
                 continue;
             };
+            let Ok(vout) = vout.parse::<u32>() else {
+                continue;
+            };
             reconcile_checked += 1;
-            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            let spent = matches!(
-                client
-                    .get(format!("{}/tx/{}/{}/spent", base, txid, vout))
-                    .send()
-                    .await,
-                Ok(r) if r.status().is_success()
-            );
-            // PHANTOM-PARENT detection (2026-08-27, the float-recovery audit):
-            // the spent endpoint answers 404 both for "unspent" and for "the
-            // parent tx does not exist on chain at all" — and a DB full of
-            // never-delivered chains reads as spendable balance through that
-            // ambiguity (247k sats of archived fleet balance were exactly
-            // this). When the spend probe says nothing, ask whether the parent
-            // is even on the network; an absent parent is REPORTED (never
-            // auto-relinquished here — a transient indexer fault must not
-            // erase spendability; `cleanup-abandoned` owns the mutation).
-            if !spent {
-                tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-                let parent_present = matches!(
-                    client.get(format!("{}/tx/hash/{}", base, txid)).send().await,
-                    Ok(r) if r.status().is_success()
-                );
-                if !parent_present {
-                    phantom_parent += 1;
-                    eprintln!("phantom-parent output (parent tx not on chain): {}", op);
-                    continue;
+            let script = stored_locking_script(pool, txid, vout).await;
+            let answer = probe_input_spend(
+                &client,
+                base,
+                ctx.wallet.services(),
+                txid,
+                vout,
+                script.as_deref(),
+            )
+            .await;
+            match reconcile_step(&answer) {
+                ReconcileStep::Keep => {}
+                ReconcileStep::LeaveUnproven => {
+                    spent_unproven += 1;
+                    eprintln!(
+                        "spent by a transaction we hold no proof of yet (left alone): {}",
+                        op
+                    );
                 }
-            }
-            if spent {
-                use bsv_sdk::wallet::RelinquishOutputArgs;
-                match ctx
-                    .wallet
-                    .relinquish_output(
-                        RelinquishOutputArgs {
-                            basket: "default".to_string(),
-                            output: match bsv_sdk::wallet::Outpoint::from_string(&op) {
-                                Ok(o) => o,
-                                Err(e) => {
-                                    eprintln!("bad outpoint {}: {}", op, e);
-                                    continue;
-                                }
+                ReconcileStep::LeaveUnknown => {
+                    unknown += 1;
+                    eprintln!(
+                        "could not decide (no spender named and not in an unspent set, or could not look): {}",
+                        op
+                    );
+                }
+                ReconcileStep::Relinquish => {
+                    use bsv_sdk::wallet::RelinquishOutputArgs;
+                    match ctx
+                        .wallet
+                        .relinquish_output(
+                            RelinquishOutputArgs {
+                                basket: "default".to_string(),
+                                output: match bsv_sdk::wallet::Outpoint::from_string(&op) {
+                                    Ok(o) => o,
+                                    Err(e) => {
+                                        eprintln!("bad outpoint {}: {}", op, e);
+                                        continue;
+                                    }
+                                },
                             },
-                        },
-                        "bsv-wallet-cli",
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        reconciled += 1;
-                        eprintln!("reconciled spent: {}", op);
+                            "bsv-wallet-cli",
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            reconciled += 1;
+                            eprintln!("reconciled spent: {}", op);
+                        }
+                        Err(e) => eprintln!("relinquish failed {}: {}", op, e),
                     }
-                    Err(e) => eprintln!("relinquish failed {}: {}", op, e),
                 }
             }
         }
@@ -148,7 +154,8 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
                 "sats_received": sats_in,
                 "reconcile_checked": reconcile_checked,
                 "reconciled_spent": reconciled,
-                "phantom_parent": phantom_parent,
+                "spent_unproven": spent_unproven,
+                "unknown": unknown,
             })
         );
     } else {
@@ -164,13 +171,40 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
         // 0" (all verified live) are different facts a drain decision rests on.
         if reconcile_spent {
             println!(
-                "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent, {} phantom-parent (run cleanup-abandoned)",
-                reconcile_checked, reconciled, phantom_parent
+                "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent (proven), {} spent but not proven yet (left alone), {} undecided (left alone; run cleanup-abandoned)",
+                reconcile_checked, reconciled, spent_unproven, unknown
             );
         }
     }
 
     Ok(())
+}
+
+/// What `--reconcile-spent` does with one probe answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReconcileStep {
+    /// In an unspent set: the row is right.
+    Keep,
+    /// Spent by a transaction we hold a proof of: the coin is gone.
+    Relinquish,
+    /// A spender is named but not proven: left alone, counted.
+    LeaveUnproven,
+    /// The probe could not decide: left alone, counted.
+    LeaveUnknown,
+}
+
+/// Only a proven spend may remove spendability.
+fn reconcile_step(answer: &InputSpend) -> ReconcileStep {
+    match answer {
+        InputSpend::Unspent => ReconcileStep::Keep,
+        InputSpend::SpentBy {
+            confirmed: true, ..
+        } => ReconcileStep::Relinquish,
+        InputSpend::SpentBy {
+            confirmed: false, ..
+        } => ReconcileStep::LeaveUnproven,
+        InputSpend::Unknown => ReconcileStep::LeaveUnknown,
+    }
 }
 
 async fn known_outpoints(ctx: &WalletContext) -> Result<HashSet<String>> {
@@ -206,4 +240,50 @@ async fn known_outpoints(ctx: &WalletContext) -> Result<HashSet<String>> {
         offset += n as i32;
     }
     Ok(known)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C5 (Rule 28): `sync --reconcile-spent` holds no spend probe of its
+    /// own. Red at the base: the copy asked `/tx/{txid}/{vout}/spent` and
+    /// `/tx/hash/{txid}` here, and read any failure as "not spent".
+    #[test]
+    fn sync_holds_no_copy_of_the_spend_probe() {
+        let source = include_str!("sync.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(!code.contains("/spent\""), "a spent request in sync.rs");
+        assert!(!code.contains("/tx/hash/"), "a parent request in sync.rs");
+        assert!(
+            code.contains("probe_input_spend("),
+            "the one probe is asked"
+        );
+    }
+
+    /// Only a proven spend relinquishes. Red at the base: any 200 from the
+    /// explorer's spent route relinquished, mined or not.
+    #[test]
+    fn only_a_proven_spend_relinquishes() {
+        let spender = "bb".repeat(32);
+        assert_eq!(
+            reconcile_step(&InputSpend::SpentBy {
+                txid: spender.clone(),
+                confirmed: true
+            }),
+            ReconcileStep::Relinquish
+        );
+        assert_eq!(
+            reconcile_step(&InputSpend::SpentBy {
+                txid: spender,
+                confirmed: false
+            }),
+            ReconcileStep::LeaveUnproven
+        );
+        assert_eq!(
+            reconcile_step(&InputSpend::Unknown),
+            ReconcileStep::LeaveUnknown
+        );
+        assert_eq!(reconcile_step(&InputSpend::Unspent), ReconcileStep::Keep);
+    }
 }
