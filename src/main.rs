@@ -12,6 +12,9 @@ mod services_env;
 mod test_support;
 
 use anyhow::Result;
+// The tracker host is the library's, one copy: its spend guard and its
+// reads are public API the binary does not call itself.
+use bsv_wallet_cli::tracker_host;
 use clap::Parser;
 use cli::{Cli, Commands};
 use tracing_subscriber::EnvFilter;
@@ -99,6 +102,10 @@ async fn main() -> Result<()> {
         }
         Commands::Tick => {
             commands::tick::run(&cli).await?;
+        }
+        Commands::TrackerTick => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::tracker_tick::run(&ctx).await?;
         }
         Commands::Daemon => {
             commands::daemon::run(&cli).await?;

@@ -146,6 +146,14 @@ pub enum Commands {
     /// stayed the tip for a full cycle. Refused (non-zero exit) when
     /// CHAINTRACKS_URL=off: with no header service every proof is refused
     Tick,
+    /// Run one pass of the transaction tracker and exit: each of this wallet's
+    /// unproven transactions holds a word (built, announced, seen, mined); a
+    /// broadcaster's word is a hint; a merkle proof is asked for one named
+    /// transaction when a hint disagrees or its age is due (TRACKER_AGE_SECS,
+    /// default 600), and only a proof checked against the header service
+    /// writes `mined`. Asks no chain index. `serve` runs the same pass every
+    /// 60 s. Refused (non-zero exit) when CHAINTRACKS_URL=off
+    TrackerTick,
     /// Run monitor + HTTP server (foreground)
     Daemon,
     /// Run HTTP server only (no monitor)

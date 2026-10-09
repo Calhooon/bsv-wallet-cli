@@ -95,6 +95,7 @@ Swap storage backends, add HSM key management, put it behind your corporate prox
 | `gift-send <pubkey> <sats> --unlock <date>` | Send a time-locked BSV gift |
 | `gift-inspect <txid>` | See a gift, prove it's yours + when it unlocks |
 | `gift-claim <txid>` | Claim a time-locked gift after its unlock time |
+| `tracker-tick` | Run one pass of the transaction tracker (see [The transaction tracker](#the-transaction-tracker)) |
 | `daemon` | Run monitor + HTTP server (production) |
 | `serve` | Run HTTP server only (dev mode) |
 | `services` | Show blockchain service status |
@@ -178,6 +179,8 @@ All configuration is via environment variables:
 | `BIND_ADDR` | No | HTTP server bind address (default `127.0.0.1`; set `0.0.0.0` for the tunnel/webhook case) |
 | `RELAY_URL` / `RELAY_POLL_SECS` | No | Drain a `bsv-wallet-relay` queue (see proof-delivery ladder) |
 | `TAAL_API_KEY` / `MAIN_TAAL_API_KEY` | No | TAAL ARC auth (Bearer / raw `Authorization` respectively) |
+| `TRACKER_AGE_SECS` | No | Seconds without a new word from a broadcaster before the tracker asks for a transaction's merkle proof (default 600); the pause between two asks for the same transaction doubles from there |
+| `TRACKER_MAX_ASKS` | No | Proof requests one tracker pass runs (default 20) |
 
 Port is set via `--port` CLI flag (default: 3322), not an environment variable.
 
@@ -191,8 +194,8 @@ kept apart from "nothing there". Each call says why at its site in the source, a
 
 | Question | Asked when | Where |
 |----------|-----------|-------|
-| Has the network seen a transaction we just sent | after a send, by the reconciler, by `cleanup-abandoned` | the broadcaster first, then WhatsOnChain and Bitails as chain indexes: present from either, absent only from both |
-| Who spent an output, and is it unspent | `cleanup-abandoned`, `reconcile-outputs`, `sync --reconcile-spent`, the daemon's sweep | WhatsOnChain names a spender, and the spend counts only with a merkle proof of it; "unspent" is the toolbox's two-explorer read |
+| Has the network seen a transaction we just sent | after a send, by `reconcile-broadcasts` (by hand), by `cleanup-abandoned`; never by `serve`'s loop (0.6.0) | the broadcaster first, then WhatsOnChain and Bitails as chain indexes: present from either, absent only from both |
+| Who spent an output, and is it unspent | `cleanup-abandoned`, `reconcile-outputs`, `sync --reconcile-spent`, the daemon's sweep | WhatsOnChain names a spender; the named transaction's own bytes must hold the outpoint among their inputs (0.6.0), and the spend counts only with a merkle proof of it; "unspent" is the toolbox's two-explorer read |
 | The BEEF of a payment nobody handed us | `receive` | WhatsOnChain's BEEF route, then the toolbox's `get_beef`; the BEEF is checked against the header service like any other |
 | Which outputs pay our deposit address | `sync` (an operator's command, never a daemon path) | WhatsOnChain; a chain scan. The routine way to receive is `fund` with the BEEF the payer hands over |
 | A stranger's transaction bytes | `gift-inspect`, `gift-claim` | the toolbox's `get_raw_tx` (two explorers, the bytes hashed to the txid) |
@@ -200,6 +203,30 @@ kept apart from "nothing there". Each call says why at its site in the source, a
 Nothing else asks an explorer: `export-beefs` builds from the wallet's own storage, the
 tip height and median time past come from the header service, and `gift-claim`
 broadcasts through the wallet's own broadcasters.
+
+## The transaction tracker
+
+The CLI hosts [`bsv-tracker`](https://github.com/Calhooon/bsv-tracker) (0.6.0). Each
+of the wallet's own unproven transactions holds one word: `built`, `announced`, `seen`,
+`mined`. A broadcaster's word (an acceptance, a SEEN, a MINED with no path) is a hint:
+it can move a word among the first three and it can ask for a proof, and it never
+writes `mined`. Only a merkle path checked against the header service's header does.
+
+- `bsv-wallet tracker-tick` runs one pass; `serve` runs the same pass every 60 s in
+  place of the chain-index poll it ran through 0.5.0.
+- A pass names transactions. It asks for one proof for one transaction when a hint
+  disagrees with the word or when `TRACKER_AGE_SECS` passed with no new hint, and it
+  pauses twice as long before each next ask for that transaction. It asks no chain
+  index and walks no chain.
+- The state is in the wallet's own database (`tracker_states`): the hints heard and
+  the raw merkle path, never a trusted word. A stored path is checked again against
+  the active header every time its row is read.
+- A mined row is read again only when a header at or below its height moved, or when
+  the spend guard is run for it (`tracker_host::spend_guard`, the tracker README's
+  wallet sketch run by this host; `send` does not call it yet).
+- What the loop no longer does by itself: retire a transaction because the chain
+  indexes do not know it. `bsv-wallet reconcile-broadcasts` does that, by hand; a
+  pass lists every transaction it asked a proof for and got none.
 
 ## Broadcasting: Arcade V2 mode
 
