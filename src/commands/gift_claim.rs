@@ -14,6 +14,7 @@
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::bsv::sighash::parse_transaction;
+use bsv_sdk::wallet::WalletInterface;
 use bsv_wallet_cli::gift::claim::build_claim_tx;
 use bsv_wallet_cli::gift::covenant::parse_locking_script;
 
@@ -35,7 +36,8 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
         .map_err(|e| anyhow!("{txid} vout 0 is not a TimeLockedGift covenant: {e}"))?;
 
     // Sign + receive with the BRC-29 DEPOSIT key, so the claimed coins land at
-    // the wallet's deposit address and become normal spendable balance after sync.
+    // the wallet's deposit address; the wallet records its own claim below
+    // (E4), so they are normal spendable balance with no scan of the chain.
     let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&ctx.root_key)?;
     let our_pub = deposit_pub.to_compressed();
     if our_pub.as_slice() != params.recipient.as_slice() {
@@ -73,11 +75,26 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
         &TickOptions::from_env(),
         &deposit_raw,
         &claim_raw,
+        &crate::brc29::deposit_script(&ctx.root_key)?,
         params.lock_until,
         force,
     )
     .await?;
     let claim_txid = plan.claim_txid.as_str();
+
+    // 6. the wallet records its own claim (E4): the BEEF is in hand, so
+    // nothing scans the chain to learn what this wallet just did. A claim
+    // held as not final is recorded when its re-announce is accepted.
+    let recorded: Option<std::result::Result<bool, String>> = match outcome.record.clone() {
+        Some(record) => Some(
+            ctx.wallet
+                .internalize_action(record, "bsv-wallet-cli")
+                .await
+                .map(|result| result.accepted)
+                .map_err(|e| e.to_string()),
+        ),
+        None => None,
+    };
 
     if ctx.json_output {
         println!(
@@ -94,6 +111,12 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
                 "reask": outcome.reask,
                 "heldUntil": outcome.held_until,
                 "notFinal": outcome.not_final,
+                "recorded": matches!(recorded, Some(Ok(true))),
+                "recordError": match &recorded {
+                    Some(Err(e)) => Some(e.clone()),
+                    Some(Ok(false)) => Some("the wallet did not accept its own claim".to_string()),
+                    _ => None,
+                },
             })
         );
     } else {
@@ -112,6 +135,19 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
         println!("   unlocks:    {unlock_human}");
         println!("   claim txid: {claim_txid}");
         println!("   word:       {} (the tracker's)", outcome.word);
+        match &recorded {
+            Some(Ok(true)) => println!(
+                "   wallet:     recorded; {} sats are in your balance",
+                plan.covenant.amount + plan.change
+            ),
+            Some(Ok(false)) => println!(
+                "   wallet:     NOT recorded (the wallet did not accept its own claim); run `bsv-wallet receive {claim_txid}` once it is mined"
+            ),
+            Some(Err(e)) => println!(
+                "   wallet:     NOT recorded ({e}); run `bsv-wallet receive {claim_txid}` once it is mined"
+            ),
+            None => println!("   wallet:     recorded when a broadcaster takes the claim"),
+        }
         match (&outcome.not_final, outcome.held_until) {
             (Some(said), _) => println!(
                 "\n   A broadcaster called it not final ({said}). The claim is kept and\n   announced again at {unlock_human}: `serve` does that by itself, or run\n   `bsv-wallet tracker-tick` after the unlock."

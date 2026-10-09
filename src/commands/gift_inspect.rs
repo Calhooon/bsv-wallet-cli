@@ -165,9 +165,7 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
     if claimable_now {
         println!("   status:         🔓 CLAIMABLE NOW");
         println!("\n   Claim it:  bsv-wallet gift-claim {txid}");
-        println!(
-            "   …then it lands in your wallet; `bsv-wallet sync` + `bsv-wallet send` to spend."
-        );
+        println!("   …the claim records itself in your wallet; `bsv-wallet send` to spend.");
     } else {
         println!(
             "   status:         🔒 LOCKED — claimable ~{} (≈ block {}, ~{} blocks away)",

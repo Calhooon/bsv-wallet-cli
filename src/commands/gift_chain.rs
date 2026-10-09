@@ -9,9 +9,12 @@
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
+use bsv_sdk::wallet::{InternalizeActionArgs, InternalizeOutput, WalletPayment};
 use bsv_tracker::{Clock, Hint, HintStatus};
 use bsv_wallet_toolbox::{StorageSqlx, WalletServices};
 
+use crate::atomic_beef;
+use crate::brc29;
 use crate::tracker_host::{self, PostAnswer, Reannounce, TickOptions};
 
 /// The bytes of the deposit transaction `txid`.
@@ -100,8 +103,52 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
     })
 }
 
+/// What the wallet records for its own claim (E4, the rulings of
+/// 2026-10-09): the `internalizeAction` arguments for the BEEF the command
+/// already holds, naming every output of the claim that pays `pay_script`
+/// (the wallet's deposit script) as a payment to the deposit key. The
+/// wallet's storage is the verdict for its own actions; no scan of the
+/// chain tells it what it did itself.
+pub(crate) fn claim_record(
+    beef: &[u8],
+    claim_raw: &[u8],
+    pay_script: &[u8],
+) -> Result<InternalizeActionArgs> {
+    let claim = Transaction::from_binary(claim_raw).map_err(|e| anyhow!("parse claim: {e}"))?;
+    let (_, anyone_pubkey) = bsv_sdk::wallet::KeyDeriver::anyone_key();
+    let sender_identity_key = anyone_pubkey.to_hex();
+    let outputs: Vec<InternalizeOutput> = claim
+        .outputs
+        .iter()
+        .enumerate()
+        .filter(|(_, output)| output.locking_script.to_binary() == pay_script)
+        .map(|(index, _)| InternalizeOutput {
+            output_index: index as u32,
+            protocol: "wallet payment".to_string(),
+            payment_remittance: Some(WalletPayment {
+                derivation_prefix: brc29::DEFAULT_DERIVATION_PREFIX.to_string(),
+                derivation_suffix: brc29::DEFAULT_DERIVATION_SUFFIX.to_string(),
+                sender_identity_key: sender_identity_key.clone(),
+            }),
+            insertion_remittance: None,
+        })
+        .collect();
+    if outputs.is_empty() {
+        return Err(anyhow!(
+            "the claim pays nothing to this wallet's deposit key"
+        ));
+    }
+    Ok(InternalizeActionArgs {
+        tx: atomic_beef::ensure_atomic(beef)?,
+        outputs,
+        description: "Claim a time-locked gift".to_string(),
+        labels: Some(vec!["gift-claim".to_string()]),
+        seek_permission: None,
+    })
+}
+
 /// What became of a claim handed to the broadcasters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct ClaimOutcome {
     /// The broadcaster that accepted it, if one did.
     pub broadcaster: Option<String>,
@@ -114,6 +161,10 @@ pub(crate) struct ClaimOutcome {
     pub held_until: Option<u64>,
     /// What a broadcaster said when it called the claim not final.
     pub not_final: Option<String>,
+    /// What the wallet records now: present when a broadcaster took the
+    /// claim. A claim held as not final is recorded when a re-announce is
+    /// accepted (`tracker_host::record_accepted`), never before.
+    pub record: Option<InternalizeActionArgs>,
 }
 
 /// Hand the claim to the broadcasters and to the tracker.
@@ -126,6 +177,9 @@ pub(crate) struct ClaimOutcome {
 ///   again at the lock time by the tracker's pass (`serve`'s loop, or
 ///   `tracker-tick`).
 /// - Any other refusal: an error that says what they said.
+///
+/// `pay_script` is the wallet's deposit script: the claim's outputs paying
+/// it are what the wallet records (see [`claim_record`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
     storage: &StorageSqlx,
@@ -134,10 +188,12 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
     opts: &TickOptions,
     deposit_raw: &[u8],
     claim_raw: &[u8],
+    pay_script: &[u8],
     lock_until: u64,
     force: bool,
 ) -> Result<ClaimOutcome> {
     let post = broadcast_claim(services, deposit_raw, claim_raw).await?;
+    let record = claim_record(&post.beef, claim_raw, pay_script)?;
     let now = clock.now();
     let early = now < lock_until;
     let held_until = early.then_some(lock_until);
@@ -160,6 +216,7 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 reask,
                 held_until,
                 not_final: None,
+                record: Some(record),
             })
         }
         PostAnswer::NotFinal { provider, said } if force && early => {
@@ -173,6 +230,7 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
             let again = Reannounce {
                 beef: post.beef,
                 at: lock_until,
+                on_accept: Some(record),
             };
             let (word, reask) = tracker_host::heard(
                 storage,
@@ -190,6 +248,7 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 reask,
                 held_until,
                 not_final: Some(format!("{provider}: {said}")),
+                record: None,
             })
         }
         PostAnswer::NotFinal { provider, said } => Err(anyhow!(
@@ -264,8 +323,13 @@ mod tests {
         assert!(err.to_string().contains("could not look"), "{err}");
     }
 
+    /// The script the fixture's claim pays: the wallet's, in these tests.
+    fn pay() -> Vec<u8> {
+        p2pkh([0xdb; 20])
+    }
+
     fn deposit_and_claim() -> (Vec<u8>, Vec<u8>) {
-        let lock = p2pkh([0xdb; 20]);
+        let lock = pay();
         let deposit = raw_tx(
             &[(&"11".repeat(32), 0)],
             &[(1000, lock.clone()), (200, lock.clone())],
@@ -382,21 +446,19 @@ mod tests {
             &opts(),
             &deposit,
             &claim,
+            &pay(),
             lock,
             true,
         )
         .await
         .unwrap();
-        assert_eq!(
-            outcome,
-            ClaimOutcome {
-                broadcaster: None,
-                word: "built".to_string(),
-                reask: Some("hint:Arcade|rejected".to_string()),
-                held_until: Some(lock),
-                not_final: Some("Arcade: 476 non-final".to_string()),
-            }
-        );
+        assert_eq!(outcome.broadcaster, None);
+        assert_eq!(outcome.word, "built");
+        assert_eq!(outcome.reask.as_deref(), Some("hint:Arcade|rejected"));
+        assert_eq!(outcome.held_until, Some(lock));
+        assert_eq!(outcome.not_final.as_deref(), Some("Arcade: 476 non-final"));
+        // Not final is not out: nothing is recorded in the wallet yet.
+        assert!(outcome.record.is_none());
         // The tracker holds it, in the wallet's own storage.
         assert_eq!(
             tracker_host::stored_word(&storage, &claim_txid)
@@ -427,6 +489,7 @@ mod tests {
                 &opts(),
                 &deposit,
                 &claim,
+                &pay(),
                 lock,
                 force,
             )
@@ -466,6 +529,7 @@ mod tests {
             &opts(),
             &deposit,
             &claim,
+            &pay(),
             lock,
             true,
         )
@@ -488,6 +552,203 @@ mod tests {
         assert_eq!(report.no_proof, vec![claim_txid]);
     }
 
+    /// A transaction with scripts of any length (the covenant's is long).
+    fn tx_bytes(inputs: &[(&str, u32)], outputs: &[(u64, Vec<u8>)]) -> Vec<u8> {
+        let mut tx = bsv_sdk::transaction::Transaction::new();
+        for (txid, vout) in inputs {
+            tx.add_input(bsv_sdk::transaction::TransactionInput::new(
+                txid.to_string(),
+                *vout,
+            ))
+            .unwrap();
+        }
+        for (satoshis, script) in outputs {
+            tx.add_output(bsv_sdk::transaction::TransactionOutput::new(
+                *satoshis,
+                bsv_sdk::script::LockingScript::from_binary(script).unwrap(),
+            ))
+            .unwrap();
+        }
+        tx.to_binary()
+    }
+
+    /// The spendable satoshis the wallet's own storage holds.
+    async fn spendable(storage: &StorageSqlx) -> i64 {
+        sqlx::query_scalar("SELECT COALESCE(SUM(satoshis), 0) FROM outputs WHERE spendable = 1")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap()
+    }
+
+    /// E4 (the rulings of 2026-10-09): the wallet records its own claim the
+    /// moment a broadcaster takes it; no scan of the chain tells it what it
+    /// did itself. Red at the base: zero satoshis in the wallet's storage
+    /// after the claim, and the flow sent the user to `bsv-wallet sync`.
+    #[tokio::test]
+    async fn gift_claim_records_its_own_claim_and_the_flow_names_no_chain_scan() {
+        use bsv_sdk::primitives::PrivateKey;
+        use bsv_sdk::wallet::WalletInterface;
+        use bsv_wallet_cli::gift::claim::build_claim_tx;
+        use bsv_wallet_cli::gift::covenant::build_locking_script;
+        use bsv_wallet_toolbox::Wallet;
+
+        let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+        let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
+        let pay = crate::brc29::deposit_script(&root).unwrap();
+        let lock = 1_900_000_000u64;
+        let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
+        let deposit = tx_bytes(
+            &[(&"11".repeat(32), 0)],
+            &[(5000, covenant), (1000, pay.clone())],
+        );
+        let plan = build_claim_tx(&deposit, &deposit_priv, lock as u32).unwrap();
+        let claim = hex::decode(&plan.claim_raw_hex).unwrap();
+
+        // The deposit is mined and its proof checks.
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                merkle_path: Some(
+                    MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000).to_hex(),
+                ),
+                header: None,
+                error: None,
+                notes: vec![],
+            }))
+            .build();
+        let wallet = Wallet::new(Some(root), storage().await, services)
+            .await
+            .unwrap();
+        assert_eq!(spendable(wallet.storage()).await, 0);
+
+        let outcome = announce_claim(
+            wallet.storage(),
+            wallet.services(),
+            &At(lock + 7200),
+            &opts(),
+            &deposit,
+            &claim,
+            &pay,
+            lock,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.word, "announced");
+
+        // What `gift-claim` does next: the wallet records its own claim.
+        let record = outcome.record.expect("an accepted claim is recorded");
+        assert_eq!(record.outputs.len(), 2, "the gift and the change");
+        let recorded = wallet
+            .internalize_action(record, "bsv-wallet-cli")
+            .await
+            .unwrap();
+        assert!(recorded.accepted);
+        assert_eq!(
+            spendable(wallet.storage()).await as u64,
+            plan.covenant.amount + plan.change,
+            "the claim's outputs are the wallet's balance"
+        );
+        // Nothing asked the chain what this wallet did: no address or
+        // script history, no unspent set.
+        for scan in ["get_script_hash_history", "get_utxo_status", "is_utxo"] {
+            assert_eq!(wallet.services().call_count(scan), 0, "{scan}");
+        }
+
+        // And the gift flow names no chain scan: not the commands, not the
+        // guide.
+        for (name, text) in [
+            ("gift_claim.rs", include_str!("gift_claim.rs")),
+            ("gift_inspect.rs", include_str!("gift_inspect.rs")),
+            ("gift_send.rs", include_str!("gift_send.rs")),
+            ("GIFT.md", include_str!("../../GIFT.md")),
+        ] {
+            for phrase in ["wallet sync", "`sync`", "after sync"] {
+                assert!(
+                    !text.to_ascii_lowercase().contains(phrase),
+                    "{name} still sends the user to the chain scan ({phrase})"
+                );
+            }
+        }
+    }
+
+    /// A claim held as not final is recorded when its re-announce is
+    /// accepted, by the caller that holds the wallet, and not before.
+    #[tokio::test]
+    async fn a_held_claim_is_recorded_when_its_re_announce_is_accepted() {
+        use bsv_sdk::primitives::PrivateKey;
+        use bsv_wallet_cli::gift::claim::build_claim_tx;
+        use bsv_wallet_cli::gift::covenant::build_locking_script;
+        use bsv_wallet_toolbox::services::mock::success_post_beef_result;
+        use bsv_wallet_toolbox::Wallet;
+
+        let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+        let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
+        let pay = crate::brc29::deposit_script(&root).unwrap();
+        let lock = 1_900_000_000u64;
+        let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
+        let deposit = tx_bytes(
+            &[(&"11".repeat(32), 0)],
+            &[(5000, covenant), (1000, pay.clone())],
+        );
+        let plan = build_claim_tx(&deposit, &deposit_priv, lock as u32).unwrap();
+        let claim = hex::decode(&plan.claim_raw_hex).unwrap();
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Sequence(vec![MockResponse::Success(
+                GetMerklePathResult {
+                    name: Some("Services".to_string()),
+                    merkle_path: Some(
+                        MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000).to_hex(),
+                    ),
+                    header: None,
+                    error: None,
+                    notes: vec![],
+                },
+            )]))
+            .post_beef_response(MockResponse::Sequence(vec![
+                MockResponse::Success(vec![error_post_beef_result("Arcade", "476 non-final")]),
+                MockResponse::Success(vec![success_post_beef_result(
+                    "Arcade",
+                    &[&plan.claim_txid],
+                )]),
+            ]))
+            .build();
+        let wallet = Wallet::new(Some(root), storage().await, services)
+            .await
+            .unwrap();
+
+        let outcome = announce_claim(
+            wallet.storage(),
+            wallet.services(),
+            &At(lock - 3600),
+            &opts(),
+            &deposit,
+            &claim,
+            &pay,
+            lock,
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(outcome.record.is_none());
+        assert_eq!(spendable(wallet.storage()).await, 0);
+
+        let mut report =
+            tracker_host::tick(wallet.storage(), wallet.services(), &At(lock), &opts())
+                .await
+                .unwrap();
+        assert_eq!(report.reannounced, vec![plan.claim_txid.clone()]);
+        tracker_host::record_accepted(&wallet, &mut report).await;
+        assert_eq!(
+            report.stored,
+            vec![format!("{}: recorded in the wallet", plan.claim_txid)]
+        );
+        assert_eq!(
+            spendable(wallet.storage()).await as u64,
+            plan.covenant.amount + plan.change
+        );
+    }
+
     /// Every broadcaster refusing is an error that says what they said.
     #[tokio::test]
     async fn a_refused_claim_is_an_error_naming_the_refusal() {
@@ -506,6 +767,7 @@ mod tests {
             &opts(),
             &deposit,
             &claim,
+            &pay(),
             1_900_000_000,
             true,
         )

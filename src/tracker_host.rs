@@ -50,6 +50,7 @@ use std::convert::Infallible;
 
 use anyhow::Result;
 use bsv_sdk::transaction::MerklePath;
+use bsv_sdk::wallet::{InternalizeActionArgs, WalletInterface};
 use bsv_tracker::{
     CheckError, Clock, Evidence, Header, HeaderError, Headers, Height, Hint, HintSource,
     HintStatus, HostAction, Input, Params, Proof, ProofFetcher, Reask, State, Timestamp, TxId,
@@ -382,6 +383,9 @@ struct TrackedRow {
     /// The BEEF to hand to the broadcasters again, and when.
     reannounce_beef: Option<Vec<u8>>,
     reannounce_at: Option<Timestamp>,
+    /// What the wallet records once a broadcaster takes it: the
+    /// `internalizeAction` arguments, JSON.
+    on_accept: Option<String>,
 }
 
 impl TrackedRow {
@@ -395,6 +399,7 @@ impl TrackedRow {
             next_ask_at: None,
             reannounce_beef: None,
             reannounce_at: None,
+            on_accept: None,
         }
     }
 
@@ -475,6 +480,7 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
             next_ask_at INTEGER, \
             reannounce_beef BLOB, \
             reannounce_at INTEGER, \
+            on_accept TEXT, \
             updated_at INTEGER NOT NULL DEFAULT 0)",
         "CREATE INDEX IF NOT EXISTS tracker_states_word ON tracker_states (word)",
         "CREATE INDEX IF NOT EXISTS tracker_states_height ON tracker_states (height)",
@@ -486,7 +492,7 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
 }
 
 const ROW_COLUMNS: &str =
-    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at";
+    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at, on_accept";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     let hints: String = row.get("hints");
@@ -503,6 +509,7 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
         reannounce_at: row
             .get::<Option<i64>, _>("reannounce_at")
             .map(|t| t.max(0) as Timestamp),
+        on_accept: row.get("on_accept"),
     }
 }
 
@@ -532,13 +539,14 @@ async fn store_row(
     sqlx::query(
         "INSERT INTO tracker_states \
             (txid, built, hints, bump, word, height, header_hash, reask, asks, next_ask_at, \
-             reannounce_beef, reannounce_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             reannounce_beef, reannounce_at, on_accept, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(txid) DO UPDATE SET built = excluded.built, hints = excluded.hints, \
             bump = excluded.bump, word = excluded.word, height = excluded.height, \
             header_hash = excluded.header_hash, reask = excluded.reask, asks = excluded.asks, \
             next_ask_at = excluded.next_ask_at, reannounce_beef = excluded.reannounce_beef, \
-            reannounce_at = excluded.reannounce_at, updated_at = excluded.updated_at",
+            reannounce_at = excluded.reannounce_at, on_accept = excluded.on_accept, \
+            updated_at = excluded.updated_at",
     )
     .bind(&row.txid)
     .bind(row.built as i64)
@@ -552,6 +560,7 @@ async fn store_row(
     .bind(row.next_ask_at.map(|t| t as i64))
     .bind(&row.reannounce_beef)
     .bind(row.reannounce_at.map(|t| t as i64))
+    .bind(&row.on_accept)
     .bind(now as i64)
     .execute(storage.pool())
     .await?;
@@ -645,12 +654,14 @@ pub fn read_post(results: &[PostBeefResult]) -> PostAnswer {
 }
 
 /// A BEEF to hand to the broadcasters again, and when.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Reannounce {
     /// The BEEF, as it was posted.
     pub beef: Vec<u8>,
     /// Not before this time (seconds since the epoch).
     pub at: Timestamp,
+    /// What the wallet records when a broadcaster takes it then.
+    pub on_accept: Option<InternalizeActionArgs>,
 }
 
 /// Track a transaction this wallet built and just handed to a broadcaster,
@@ -692,10 +703,15 @@ pub async fn heard<C: Clock>(
         Some(again) => {
             row.reannounce_beef = Some(again.beef);
             row.reannounce_at = Some(again.at);
+            row.on_accept = match again.on_accept {
+                Some(args) => Some(serde_json::to_string(&args)?),
+                None => None,
+            };
         }
         None => {
             row.reannounce_beef = None;
             row.reannounce_at = None;
+            row.on_accept = None;
         }
     }
     store_row(storage, &row, &state, clock.now()).await?;
@@ -765,6 +781,11 @@ pub struct TickReport {
     /// Transactions handed over again and still called not final; each is
     /// handed over again after a pause.
     pub not_final: Vec<String>,
+    /// What the wallet is to record for each transaction accepted on a
+    /// re-announce (`txid`, the `internalizeAction` arguments): the caller
+    /// that holds the wallet runs [`record_accepted`].
+    #[serde(skip)]
+    pub on_accept: Vec<(String, String)>,
     /// Faults the host reports: `txid: what failed`.
     pub faults: Vec<String>,
     /// What the wallet's storage did with each checked proof.
@@ -989,6 +1010,9 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                 row.asks = 0;
                 row.next_ask_at = pause;
                 report.reannounced.push(row.txid.clone());
+                if let Some(args) = row.on_accept.take() {
+                    report.on_accept.push((row.txid.clone(), args));
+                }
             }
             Ok(PostAnswer::NotFinal { .. }) => {
                 row.asks = row.asks.saturating_add(1);
@@ -1112,6 +1136,29 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     }
     write_ring(storage, &ring).await?;
     Ok(report)
+}
+
+/// Record in the wallet what a pass's re-announces got accepted (E4): the
+/// wallet's storage is the verdict for its own actions, so a claim the
+/// wallet made is internalized from the BEEF it already holds, and nothing
+/// scans the chain for it. Each outcome is added to `report.stored`.
+pub async fn record_accepted<W: WalletInterface>(wallet: &W, report: &mut TickReport) {
+    for (txid, args) in std::mem::take(&mut report.on_accept) {
+        let line = match serde_json::from_str::<InternalizeActionArgs>(&args) {
+            Ok(args) => match wallet.internalize_action(args, "bsv-wallet-cli").await {
+                Ok(result) if result.accepted => format!("{txid}: recorded in the wallet"),
+                Ok(_) => format!("{txid}: the wallet did not accept its own transaction"),
+                Err(e) => format!(
+                    "{txid}: not recorded in the wallet ({e}); `bsv-wallet receive {txid}` records it once it is mined"
+                ),
+            },
+            Err(e) => format!("{txid}: not recorded in the wallet (stored arguments: {e})"),
+        };
+        if !line.ends_with("recorded in the wallet") {
+            tracing::warn!(marker = "own_transaction_not_recorded", "{line}");
+        }
+        report.stored.push(line);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1432,6 +1479,7 @@ pub(crate) mod tests {
         let again = Reannounce {
             beef: vec![1, 2, 3],
             at: lock,
+            on_accept: None,
         };
         let word = heard(
             &storage,
