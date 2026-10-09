@@ -112,6 +112,8 @@ warns and you should pick an earlier date for real value.
 
 All 28 BRC WalletInterface endpoints on `http://127.0.0.1:3322`, wire-compatible with MetaNet Client.
 
+`serve`, `daemon` and `serve-fleet` refuse at startup to bind an address beyond loopback (`BIND_ADDR`) when no `AUTH_TOKEN` is set, since a wallet served without a token answers anyone who can reach it and its BEEF doors take a body of any size. Set `AUTH_TOKEN`, or pass `--allow-no-token` to bind open deliberately; a loopback bind without a token is unchanged.
+
 ### Endpoints
 
 **Status** (GET)
@@ -168,7 +170,7 @@ All configuration is via environment variables:
 | `ROOT_KEY` | Yes | Wallet root private key (hex). Set by `bsv-wallet init`. |
 | `CHAINTRACKS_URL` | Yes | Header service that validates merkle proofs: your own `chaintracks-cloudflare` or rust-chaintracks deployment. There is no default; a command that builds the wallet's services refuses to run without it (`CHAINTRACKS_URL is not set`). `off` runs with no header service: every merkle proof is refused and nothing is marked proven, and `tick` and `reproof --execute` exit non-zero |
 | `BREAK_GLASS_EXPLORER_HEADERS` | No | Break-glass, off by default. `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for block headers when the header service gives no answer; every such call is logged at warn level. An explorer never overrules the header service's own answer |
-| `AUTH_TOKEN` | No | Bearer token for HTTP auth (localhost-only, optional) |
+| `AUTH_TOKEN` | No | Bearer token for HTTP auth. Optional on loopback; a bind beyond loopback without it is refused unless `--allow-no-token` is passed |
 | `TLS_CERT_PATH` | No | TLS certificate path (requires `--features tls`) |
 | `TLS_KEY_PATH` | No | TLS private key path (requires `--features tls`) |
 | `MIN_UTXOS` | No | Low UTXO warning threshold in daemon mode (default: 3) |
@@ -176,7 +178,7 @@ All configuration is via environment variables:
 | `ARC_MODE=arcade` / `ARCADE=1` | No | Arcade V2 mode: EF-only submit, SSE push statuses, push proofs |
 | `CALLBACK_TOKEN` | No | Override the per-wallet callback token (auto-generated + persisted as `<db>.callback-token` otherwise) |
 | `PUBLIC_CALLBACK_URL` | No | Public HTTPS URL for Arcade status webhooks (`X-CallbackUrl`), pointing at this daemon's `/arc-callback` |
-| `BIND_ADDR` | No | HTTP server bind address (default `127.0.0.1`; set `0.0.0.0` for the tunnel/webhook case) |
+| `BIND_ADDR` | No | HTTP server bind address (default `127.0.0.1`; set `0.0.0.0` for the tunnel/webhook case, with `AUTH_TOKEN`) |
 | `RELAY_URL` / `RELAY_POLL_SECS` | No | Drain a `bsv-wallet-relay` queue (see proof-delivery ladder) |
 | `TAAL_API_KEY` / `MAIN_TAAL_API_KEY` | No | TAAL ARC auth (Bearer / raw `Authorization` respectively) |
 | `TRACKER_AGE_SECS` | No | Seconds without a new word from a broadcaster before the tracker asks for a transaction's merkle proof (default 600); the pause between two asks for the same transaction doubles from there |
