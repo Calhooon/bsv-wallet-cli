@@ -235,8 +235,13 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                     }
                 }
                 LockedInputVerdict::Spent => {
-                    "SPENT on chain by another transaction: left locked".to_string()
+                    "SPENT on chain by another transaction (proven): left locked".to_string()
                 }
+                LockedInputVerdict::SpentHint => format!(
+                    "spent by a hint, unproven (attempt {}): left locked, re-checked in {} min",
+                    c.attempts,
+                    c.next_check_minutes.unwrap_or(0)
+                ),
                 LockedInputVerdict::Unknown => format!(
                     "undecided (attempt {}), next re-check in {} min",
                     c.attempts,
