@@ -8,6 +8,8 @@ mod commands;
 mod context;
 mod server;
 mod services_env;
+#[cfg(test)]
+mod test_support;
 
 use anyhow::Result;
 use clap::Parser;

@@ -7,3 +7,5 @@ pub mod server;
 // The ONE env→broadcaster resolver. `broadcast_verify` reads the broadcast
 // plane from it so the verifier cannot drift from the broadcaster in use.
 pub mod services_env;
+#[cfg(test)]
+pub(crate) mod test_support;
