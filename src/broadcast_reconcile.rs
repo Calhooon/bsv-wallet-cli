@@ -52,12 +52,18 @@
 //!    it is verifiably unspent (restored) or spent (left); nothing stays
 //!    locked forever unattended.
 //!
-//! In Arcade mode the per-wallet SSE stream is drained once per pass first
+//! # The served loop (0.6.0)
+//!
+//! `serve` runs a pass every 60 s in the background: the Arcade SSE drain
 //! (verdicts go through the same mapping as the monitor's SSE task and the
-//! webhook). `serve` runs a pass every 60 s in the background (bounded, one
-//! summary line per pass); `bsv-wallet reconcile-broadcasts` runs one pass
-//! by hand (dry run by default); the daemon's ticker runs the sweep and the
-//! locked-input re-checks.
+//! webhook), the tracker's pass (`tracker_host::tick`: each of the wallet's
+//! unproven transactions holds a word, a broadcaster's word is a hint, and
+//! a proof is asked for one named transaction when a hint disagrees or its
+//! age is due), then the sweep of rule 3 over the verdicts already in
+//! storage and the re-checks of rule 4. It asks no chain index. Rules 1
+//! and 2 are the by-hand pass: `bsv-wallet reconcile-broadcasts` (dry run
+//! by default). The daemon's ticker runs the sweep and the locked-input
+//! re-checks.
 
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
@@ -68,8 +74,8 @@ use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
 use bsv_wallet_toolbox::services::providers::arcade::statuses;
 use bsv_wallet_toolbox::{
     ArcadeSseClient, ArcadeStatusEvent, BroadcastMemory, BroadcastSeenRecord, BroadcastStatus,
-    Chain, LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx,
-    Wallet, WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
+    LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx, Wallet,
+    WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
     BROADCAST_SEEN_STALE_SECS, BROADCAST_STATUS_MINED, BROADCAST_STATUS_SEEN,
     BROADCAST_STATUS_UNKNOWN, PROVIDER_ARCADE_V2,
 };
@@ -79,6 +85,7 @@ use sqlx::Row;
 use crate::broadcast_verify::{
     BroadcastVerification, BroadcastVerifier, ChainIndexAnswer, NetworkEvidence, PresenceReport,
 };
+use crate::tracker_host::{SystemClock, TickOptions, TickReport};
 
 /// Default minutes an unproven transaction must be old before a chain-index
 /// absence retires it (`BROADCAST_ABSENCE_MINUTES`).
@@ -86,14 +93,9 @@ pub const DEFAULT_ABSENCE_MINUTES: i64 = 30;
 /// Default seconds between two passes of the served loop
 /// (`BROADCAST_RECONCILE_INTERVAL_SECS`).
 pub const DEFAULT_INTERVAL_SECS: u64 = 60;
-/// Default probes per pass of the served loop
-/// (`BROADCAST_RECONCILE_MAX_PROBES`).
-pub const DEFAULT_MAX_PROBES: usize = 20;
 /// Default locked-input re-checks per pass
 /// (`BROADCAST_RECONCILE_MAX_LOCKED_CHECKS`).
 pub const DEFAULT_MAX_LOCKED_CHECKS: usize = 20;
-/// The served loop only probes transactions younger than this.
-pub const SERVE_MAX_AGE_HOURS: i64 = 24;
 /// Pause between two probes of one pass (WhatsOnChain's public rate).
 const PROBE_PACE: Duration = Duration::from_millis(350);
 /// Wall-clock budget of one SSE drain.
@@ -134,23 +136,6 @@ pub struct ReconcileOptions {
 }
 
 impl ReconcileOptions {
-    /// The served loop's options: apply, bounded probes, 24 h window, the
-    /// env knobs (`BROADCAST_ABSENCE_MINUTES`, `BROADCAST_RECONCILE_MAX_PROBES`,
-    /// `BROADCAST_RECONCILE_MAX_LOCKED_CHECKS`).
-    pub fn for_serve(sse: Option<ArcadeSse>) -> Self {
-        Self {
-            execute: true,
-            max_probes: env_parse("BROADCAST_RECONCILE_MAX_PROBES", DEFAULT_MAX_PROBES),
-            max_age_hours: Some(SERVE_MAX_AGE_HOURS),
-            absence_minutes: absence_minutes_from_env(),
-            max_locked_checks: env_parse(
-                "BROADCAST_RECONCILE_MAX_LOCKED_CHECKS",
-                DEFAULT_MAX_LOCKED_CHECKS,
-            ),
-            sse,
-        }
-    }
-
     /// The command's options: every unproven transaction, `max_probes` of
     /// them probed, applied only with `execute`.
     pub fn for_command(execute: bool, max_probes: usize, sse: Option<ArcadeSse>) -> Self {
@@ -237,6 +222,7 @@ pub struct ReconcileBroadcastsReport {
     pub locked: LockedInputReport,
 }
 
+#[allow(dead_code)] // the by-hand pass's report; the served loop prints its own
 impl ReconcileBroadcastsReport {
     /// Transactions the retirements touched (retirable statuses).
     pub fn retired_txids(&self) -> Vec<String> {
@@ -346,8 +332,12 @@ pub fn needs_probe(
     }
 }
 
-/// One pass: SSE drain, probes, poison retirements, locked-input re-checks.
-/// See the module docs.
+/// One pass by hand (`reconcile-broadcasts`): SSE drain, probes, poison
+/// retirements, locked-input re-checks. See the module docs.
+///
+/// Break-glass (Rule 28, C1): this is the one caller left that asks the
+/// chain indexes whether the network has a transaction, and it runs when an
+/// operator runs it. The served loop does not ([`run_served_pass`]).
 pub async fn run_pass(
     storage: &StorageSqlx,
     services: &dyn WalletServices,
@@ -516,12 +506,81 @@ pub async fn run_sweep(
     Ok(SweepReport { poison, locked })
 }
 
+/// What one pass of the served loop did.
+pub struct ServedPassReport {
+    /// Arcade SSE status frames applied.
+    pub sse_events: u64,
+    /// The tracker's pass.
+    pub tracker: TickReport,
+    /// The poisoned-chain sweep and the locked-input re-checks.
+    pub sweep: SweepReport,
+}
+
+impl ServedPassReport {
+    /// Nothing happened this pass.
+    pub fn is_quiet(&self) -> bool {
+        self.sse_events == 0
+            && self.tracker.is_quiet()
+            && self.sweep.poison.is_empty()
+            && self.sweep.locked.due == 0
+    }
+
+    /// One line.
+    pub fn summary(&self) -> String {
+        format!(
+            "served pass: {} sse event(s); {}; {} poison retirement(s); locked inputs: {} due, {} restored, {} spent, {} unknown",
+            self.sse_events,
+            self.tracker.summary(),
+            self.sweep.poison.len(),
+            self.sweep.locked.due,
+            self.sweep.locked.restored,
+            self.sweep.locked.spent,
+            self.sweep.locked.unknown,
+        )
+    }
+}
+
+/// One pass of the served loop (E3, the rulings of 2026-10-09): the SSE
+/// drain, the tracker's pass, the sweep.
+///
+/// No chain index is asked here. The pass used to ask WhatsOnChain and
+/// Bitails about every unproven transaction each minute; the answer it
+/// waited for was "mined", and that is a proof. The proof arrives pushed
+/// (the Arcade webhook, the SSE drain below) or is asked for by the
+/// tracker, one named transaction at a time, when a hint disagrees or its
+/// age is due (`tracker_host::tick`). The verdicts already in storage (a
+/// rejected memory row, a failed transaction with unproven descendants) are
+/// still swept, and kept-locked inputs are still re-checked.
+///
+/// What is no longer routine: retiring a transaction because the chain
+/// indexes do not know it. That reading is `reconcile-broadcasts`, by hand
+/// ([`run_pass`]); the tracker's pass names every transaction that has
+/// been asked for a proof and has none.
+pub async fn run_served_pass<C: bsv_tracker::Clock>(
+    storage: &StorageSqlx,
+    services: &dyn WalletServices,
+    clock: &C,
+    tracker: &TickOptions,
+    sse: Option<&ArcadeSse>,
+) -> Result<ServedPassReport> {
+    let sse_events = match sse {
+        Some(sse) => drain_sse(storage, sse).await.0,
+        None => 0,
+    };
+    let tracker = crate::tracker_host::tick(storage, services, clock, tracker).await?;
+    let sweep = run_sweep(storage, services, true).await?;
+    Ok(ServedPassReport {
+        sse_events,
+        tracker,
+        sweep,
+    })
+}
+
 /// Spawn the served loop: one pass every `BROADCAST_RECONCILE_INTERVAL_SECS`
-/// (default 60), applied, bounded, one summary line per pass. Disabled by
+/// (default 60), one summary line per pass. Disabled by
 /// `BROADCAST_RECONCILE=0`.
 pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
-    chain: Chain,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let enabled = std::env::var("BROADCAST_RECONCILE")
@@ -531,16 +590,15 @@ pub fn spawn_serve_loop(
         tracing::info!("broadcast reconcile loop disabled (BROADCAST_RECONCILE=0)");
         return None;
     }
-    let opts = ReconcileOptions::for_serve(arcade_sse_for(db_path));
+    let sse = arcade_sse_for(db_path);
+    let tracker = TickOptions::from_env();
     let interval_secs =
         env_parse("BROADCAST_RECONCILE_INTERVAL_SECS", DEFAULT_INTERVAL_SECS).max(5);
-    let verifier = BroadcastVerifier::single_pass(chain);
     tracing::info!(
         interval_secs,
-        max_probes = opts.max_probes,
-        absence_minutes = opts.absence_minutes,
-        max_locked_checks = opts.max_locked_checks,
-        sse = opts.sse.is_some(),
+        tracker_age_secs = tracker.age_threshold,
+        tracker_max_asks = tracker.max_asks,
+        sse = sse.is_some(),
         "broadcast reconcile loop started"
     );
     Some(tokio::spawn(async move {
@@ -550,15 +608,23 @@ pub fn spawn_serve_loop(
         interval.tick().await;
         loop {
             interval.tick().await;
-            match run_pass(wallet.storage(), wallet.services(), &verifier, &opts).await {
+            match run_served_pass(
+                wallet.storage(),
+                wallet.services(),
+                &SystemClock,
+                &tracker,
+                sse.as_ref(),
+            )
+            .await
+            {
                 Ok(report) => {
                     if report.is_quiet() {
-                        tracing::debug!("{}", report.summary(true));
+                        tracing::debug!("{}", report.summary());
                     } else {
-                        tracing::info!("{}", report.summary(true));
+                        tracing::info!("{}", report.summary());
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "broadcast reconcile pass failed"),
+                Err(e) => tracing::warn!(error = %e, "served pass failed"),
             }
         }
     }))
@@ -1010,9 +1076,6 @@ mod tests {
 
     #[test]
     fn options_read_the_env_knobs_with_defaults() {
-        let serve = ReconcileOptions::for_serve(None);
-        assert!(serve.execute);
-        assert_eq!(serve.max_age_hours, Some(SERVE_MAX_AGE_HOURS));
         let command = ReconcileOptions::for_command(false, 7, None);
         assert!(!command.execute);
         assert_eq!(command.max_probes, 7);
@@ -1267,6 +1330,83 @@ mod tests {
             .fetch_one(storage.pool())
             .await
             .unwrap()
+    }
+
+    /// E3 (the rulings of 2026-10-09): the served pass asks no chain index.
+    /// What it waits for is "mined", and that is a proof. An unproven
+    /// transaction 31 minutes old, the broadcaster saying SEEN. Red at the
+    /// base: the pass asked the chain index about it (`/tx/hash/{txid}`).
+    #[tokio::test]
+    async fn the_served_pass_asks_for_a_proof_and_never_a_chain_index() {
+        use bsv_sdk::transaction::MerklePath;
+        use bsv_wallet_toolbox::services::mock::MockResponse;
+        use bsv_wallet_toolbox::services::{BlockHeader, GetMerklePathResult};
+        let (storage, user_id, _basket) = wallet_storage().await;
+        let txid = "a1".repeat(32);
+        let old = (Utc::now() - chrono::Duration::minutes(31)).to_rfc3339();
+        insert_tx(&storage, user_id, &txid, "unproven", &old).await;
+        storage
+            .record_broadcast_status(&txid, PROVIDER_ARCADE_V2, BROADCAST_STATUS_SEEN)
+            .await
+            .unwrap();
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                merkle_path: Some(MerklePath::from_coinbase_txid(&txid, 900).to_hex()),
+                header: None,
+                error: None,
+                notes: vec![],
+            }))
+            .build();
+        services.set_header_for_height(BlockHeader {
+            version: 1,
+            previous_hash: "00".repeat(32),
+            merkle_root: txid.clone(),
+            time: 1_700_000_000,
+            bits: 0x1d00_ffff,
+            nonce: 0,
+            hash: String::new(),
+            height: 900,
+        });
+
+        struct At(u64);
+        impl bsv_tracker::Clock for At {
+            fn now(&self) -> u64 {
+                self.0
+            }
+        }
+        let opts = TickOptions {
+            age_threshold: 600,
+            max_asks: 20,
+        };
+        let now = Utc::now().timestamp() as u64;
+        let report = run_served_pass(&storage, &services, &At(now), &opts, None)
+            .await
+            .unwrap();
+        // The broadcaster's SEEN is 31 minutes of silence old at most by
+        // the next pass: the age asks for the proof, once, by name.
+        assert!(report.tracker.mined.is_empty(), "{:?}", report.tracker);
+        let report = run_served_pass(&storage, &services, &At(now + 601), &opts, None)
+            .await
+            .unwrap();
+        assert_eq!(report.tracker.mined, vec![txid.clone()]);
+        assert_eq!(services.call_count("get_merkle_path"), 1);
+        assert_eq!(
+            crate::tracker_host::stored_word(&storage, &txid)
+                .await
+                .unwrap()
+                .map(|w| (w.0, w.1)),
+            Some(("mined".to_string(), Some(900)))
+        );
+
+        // And the loop holds no chain index to ask: no verifier, no probe.
+        let source = include_str!("broadcast_reconcile.rs");
+        let from = source.find("pub async fn run_served_pass").unwrap();
+        let to = source.find("/// What a probe report means").unwrap();
+        let served = &source[from..to];
+        for word in ["BroadcastVerifier", "verify_report", "run_pass("] {
+            assert!(!served.contains(word), "the served loop names `{word}`");
+        }
     }
 
     /// THE live shape (2026-09-02, w0): the broadcaster still says

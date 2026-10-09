@@ -27,4 +27,5 @@ pub mod services;
 pub mod split;
 pub mod sync;
 pub mod tick;
+pub mod tracker_tick;
 pub mod ui;
