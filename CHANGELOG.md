@@ -3,6 +3,29 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## 0.7.1
+
+- **No open bind without a token.** `serve`, `daemon` and `serve-fleet`
+  refuse at startup, before the wallet is opened or a socket bound, to bind
+  an address beyond loopback (`BIND_ADDR`, IPv4 or IPv6) when no bearer token
+  (`AUTH_TOKEN`, an empty value counting as none) is set. The error names the
+  one flag, `--allow-no-token`, that permits the open bind deliberately. A
+  loopback bind without a token is unchanged.
+- **The risk it closes.** Since 0.7.0 the served `/internalizeAction` and
+  `/createAction` doors take a body of any size, auth before the body; a
+  daemon bound to `0.0.0.0` with no token was a wallet any host on the
+  network could drive, and made to hold any body it sent.
+
+### Upgrade
+
+A daemon started with `BIND_ADDR` beyond loopback and no `AUTH_TOKEN` now
+exits non-zero at startup: set `AUTH_TOKEN` (and send it as
+`Authorization: Bearer`), or add `--allow-no-token` to keep the open bind.
+The library gains `server::refuse_open_bind`,
+`server::refuse_open_bind_from_env` and `server::bind_addr_from_env`;
+`server::run` itself does not check, so a host calling it directly checks
+first.
+
 ## 0.7.0
 
 The 0.4 line: bsv-rs 0.4.1 under the CLI, the toolbox and the tracker, one
