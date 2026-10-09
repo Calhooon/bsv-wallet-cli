@@ -314,8 +314,12 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
         return InputSpend::Unknown;
     };
     match services.is_utxo(src, vout, script).await {
-        UtxoVerdict::Unspent => InputSpend::Unspent,
-        UtxoVerdict::Spent | UtxoVerdict::Unknown => InputSpend::Unknown,
+        // A hint from an unspent set: no stranger's spend is known. The
+        // proven spend was asked for above, by the spender's own bytes and
+        // its proof; a `Spent` or a `SpentHint` here names no spender, so
+        // it is not an answer this probe can act on.
+        UtxoVerdict::UnspentHint => InputSpend::Unspent,
+        UtxoVerdict::Spent | UtxoVerdict::SpentHint | UtxoVerdict::Unknown => InputSpend::Unknown,
     }
 }
 
