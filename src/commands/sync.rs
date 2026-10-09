@@ -20,6 +20,11 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
     let base = receive::woc_base(ctx.chain);
     let client = reqwest::Client::new();
 
+    tracing::warn!(
+        marker = "break_glass_chain_scan",
+        "sync is a chain scan at an explorer (break-glass): the routine way to receive is \
+         `fund` with the BEEF the payer hands over"
+    );
     // Break-glass (Rule 28, C4): a CHAIN SCAN. "Which outputs pay our
     // deposit address" has no header, proof or own-index answer by
     // construction: it is the question of a payment nobody handed us. The
@@ -29,11 +34,6 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
     // empty list is "this explorer lists nothing", never "nothing was
     // paid", and nothing is removed on it. A fault is an error ("could not
     // look"), never an empty list.
-    tracing::warn!(
-        marker = "break_glass_chain_scan",
-        "sync is a chain scan at an explorer (break-glass): the routine way to receive is \
-         `fund` with the BEEF the payer hands over"
-    );
     let unspent: Vec<WocUnspent> = client
         .get(format!("{}/address/{}/unspent", base, address))
         .send()
@@ -283,9 +283,14 @@ mod tests {
         let code = source.split("#[cfg(test)]").next().unwrap();
         let site = code.find("/address/{}/unspent").expect("the scan");
         let before = &code[..site];
-        let comment = before.rfind("Break-glass (Rule 28, C4): a CHAIN SCAN");
-        assert!(comment.is_some(), "the scan is not named at its site");
-        assert!(before[comment.unwrap()..].contains("break_glass_chain_scan"));
+        assert!(
+            before.contains("Break-glass (Rule 28, C4): a CHAIN SCAN"),
+            "the scan is not named at its site"
+        );
+        assert!(
+            before.contains("break_glass_chain_scan"),
+            "and says so when run"
+        );
     }
 
     /// Only a proven spend relinquishes. Red at the base: any 200 from the

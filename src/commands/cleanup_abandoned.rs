@@ -257,6 +257,12 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
     locking_script: Option<&[u8]>,
 ) -> InputSpend {
     tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    // Break-glass (Rule 28, C7): who spent an outpoint. No header or proof
+    // says an output is spent by someone else, and our outputs table knows
+    // only our own spends; this is the one explorer route we hold that
+    // names a spender. The name is a claim, checked by a proof below; a
+    // 404 or a fault here is not an answer and falls through to the
+    // two-explorer unspent question.
     let spender = match client
         .get(format!("{}/tx/{}/{}/spent", base, src, vout))
         .send()

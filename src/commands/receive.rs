@@ -8,6 +8,10 @@ use crate::brc29;
 use crate::commands::fund;
 use crate::context::WalletContext;
 
+/// WhatsOnChain's API base: the explorer behind the three break-glass
+/// reads the commands still make themselves (Rule 28: C2 here, C4 in
+/// `sync`, C7 in the spend probe). Every other chain question goes through
+/// the wallet's services or the header service.
 pub fn woc_base(chain: Chain) -> &'static str {
     match chain {
         Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
@@ -107,6 +111,11 @@ where
 }
 
 /// WhatsOnChain's `/tx/{txid}/beef`: the transaction with its proofs, hex.
+///
+/// Break-glass (Rule 28, C2): a courier. Nothing we hold answers "the BEEF
+/// of a payment nobody handed us"; what this returns is checked against
+/// the header service when it is internalized, so the explorer is trusted
+/// for delivery alone, and `second_courier` stands behind it.
 async fn first_courier(client: &reqwest::Client, base: &str, txid: &str) -> Result<Vec<u8>> {
     let beef_hex = client
         .get(format!("{}/tx/{}/beef", base, txid))
