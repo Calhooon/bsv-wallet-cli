@@ -155,6 +155,7 @@ fn beef_from(found: GetBeefResult) -> Result<Vec<u8>> {
 /// holds the transaction's own bytes, so its outputs are matched here and no
 /// explorer is asked for a decoded copy of them.
 fn vout_paying(beef_bytes: &[u8], txid: &str, deposit_script: &[u8]) -> Result<u32> {
+    crate::atomic_beef::refuse_invalid_bytes(beef_bytes)?;
     let beef = Beef::from_binary(beef_bytes).context("the BEEF does not parse")?;
     let held = beef
         .find_txid(txid)
@@ -335,5 +336,42 @@ mod tests {
         let source = include_str!("receive.rs");
         let code = source.split("#[cfg(test)]").next().unwrap();
         assert!(code.contains("Break-glass (Rule 28, C2): a COURIER"));
+    }
+
+    /// The courier's BEEF is a stranger's bytes: a transaction with no input
+    /// is refused at its offset before an output is matched, and a cut BEEF
+    /// at the field that ran out.
+    #[test]
+    fn the_couriers_beef_is_refused_for_invalid_bytes_at_their_offset() {
+        let ours = p2pkh([0xdb; 20]);
+        let mut raw = vec![1, 0, 0, 0, 0, 1];
+        raw.extend_from_slice(&1000u64.to_le_bytes());
+        raw.push(ours.len() as u8);
+        raw.extend_from_slice(&ours);
+        raw.extend_from_slice(&[0, 0, 0, 0]);
+        let mut h = bsv_sdk::primitives::sha256d(&raw).to_vec();
+        h.reverse();
+        let txid = hex::encode(h);
+        let mut beef = Beef::new();
+        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
+        beef.merge_raw_tx(raw.clone(), Some(bump));
+        let bytes = beef.to_binary();
+        let at = bytes.windows(raw.len()).position(|w| w == raw).unwrap();
+
+        let text = vout_paying(&bytes, &txid, &ours)
+            .expect_err("a transaction with no input is invalid bytes")
+            .to_string();
+        assert!(
+            text.contains(&format!("Invalid BEEF at byte {at}")) && text.contains("NoInputs"),
+            "{text}"
+        );
+
+        let text = vout_paying(&bytes[..bytes.len() - 6], &txid, &ours)
+            .expect_err("cut bytes")
+            .to_string();
+        assert!(
+            text.contains("Invalid BEEF at byte") && text.contains("Truncated"),
+            "{text}"
+        );
     }
 }
