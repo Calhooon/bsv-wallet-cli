@@ -17,8 +17,9 @@ use crate::context::WalletContext;
 pub enum InputSpend {
     /// The outpoint is in an explorer's unspent set: safe to release.
     Unspent,
-    /// The outpoint is spent by `txid`; `confirmed` = we hold a merkle proof
-    /// of that spend whose root the header service checked.
+    /// The outpoint is spent by `txid`, whose own bytes name the outpoint
+    /// as an input; `confirmed` = we hold a merkle proof of that spend
+    /// whose root the header service checked.
     SpentBy { txid: String, confirmed: bool },
     /// Cannot say: could not look, no spender named while no explorer
     /// lists the outpoint as unspent (a phantom parent reads this way), or
@@ -233,8 +234,11 @@ pub(crate) async fn stored_locking_script(
 ///
 /// 1. **Who spent it?** WhatsOnChain's `/tx/{txid}/{vout}/spent`, the one
 ///    explorer route we hold that names a spender. A name is a positive and
-///    is then checked: `confirmed` is true only with a merkle proof of the
-///    spender whose root the header service checked (C8). A 404 here is
+///    is then checked twice, in this order (E1): the named transaction's
+///    own bytes must hash to the name and hold the outpoint among their
+///    inputs, and `confirmed` is true only with a merkle proof of that
+///    bound spender whose root the header service checked (C8). A name
+///    whose bytes could not be read is `Unknown`. A 404 here is
 ///    one explorer saying "no spend known" (it is also what a parent that
 ///    does not exist answers), and a fault is "could not look": neither is
 ///    an answer, and both fall through to step 2.
@@ -278,11 +282,33 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
         _ => None,
     };
     if let Some(spender) = spender {
-        let confirmed = proven_mined(services, &spender).await;
-        return InputSpend::SpentBy {
-            txid: spender,
-            confirmed,
-        };
+        // Bind, then prove (E1, the rulings of 2026-10-09). The name is a
+        // provider's word; the named transaction's own bytes, hashing to
+        // that name and holding the outpoint among their inputs, are the
+        // fact. Only a bound spender is named in the answer, and only a
+        // bound spender is asked for its proof.
+        match spender_binds(services, &spender, src, vout).await {
+            Some(true) => {
+                let confirmed = proven_mined(services, &spender).await;
+                return InputSpend::SpentBy {
+                    txid: spender,
+                    confirmed,
+                };
+            }
+            // Its bytes could not be read: the name is neither confirmed
+            // nor refuted, and the outpoint is never released on it.
+            None => return InputSpend::Unknown,
+            // Its bytes spend something else: the provider named no
+            // spender. Fall through to the unspent question.
+            Some(false) => {
+                tracing::warn!(
+                    marker = "spender_not_bound",
+                    outpoint = %format!("{src}:{vout}"),
+                    named = %spender,
+                    "a provider named a spender whose bytes do not spend the outpoint"
+                );
+            }
+        }
     }
     let Some(script) = locking_script else {
         return InputSpend::Unknown;
@@ -291,6 +317,29 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
         UtxoVerdict::Unspent => InputSpend::Unspent,
         UtxoVerdict::Spent | UtxoVerdict::Unknown => InputSpend::Unknown,
     }
+}
+
+/// Does the transaction named `spender` spend `src:vout`, by its own bytes?
+/// `Some(true)`: bytes that hash to `spender` hold the outpoint among their
+/// inputs. `Some(false)`: bytes that hash to `spender` do not. `None`: its
+/// bytes could not be read (a fault, or bytes of some other transaction).
+async fn spender_binds<V: WalletServices>(
+    services: &V,
+    spender: &str,
+    src: &str,
+    vout: u32,
+) -> Option<bool> {
+    let raw = services.get_raw_tx(spender, false).await.ok()?.raw_tx?;
+    let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).ok()?;
+    if !tx.id().eq_ignore_ascii_case(spender) {
+        return None;
+    }
+    Some(tx.inputs.iter().any(|input| {
+        input.source_output_index == vout
+            && input
+                .get_source_txid()
+                .is_ok_and(|txid| txid.eq_ignore_ascii_case(src))
+    }))
 }
 
 /// Is `txid` mined, as a fact we can check: `get_merkle_path` returns a
@@ -1829,11 +1878,23 @@ mod tests {
     /// base: `confirmed: true`, on the explorer's word.
     #[tokio::test]
     async fn the_spenders_confirmation_is_a_proof_never_an_explorers_count() {
-        use crate::test_support::Fixture;
+        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
         use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetMerklePathResult;
+        use bsv_wallet_toolbox::services::{GetMerklePathResult, GetRawTxResult};
         let src = "aa".repeat(32);
-        let spender = "bb".repeat(32);
+        // The spender's own bytes name the outpoint (E1), so what is left
+        // to settle is whether it is mined.
+        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
+        let spender = txid_of(&spender_bytes);
+        let bytes = || {
+            MockResponse::Success(GetRawTxResult {
+                name: "MockProvider".to_string(),
+                txid: String::new(),
+                raw_tx: Some(spender_bytes.clone()),
+                error: None,
+                could_not_look: false,
+            })
+        };
         let spent_route = format!("/tx/{src}/0/spent");
         let spender_route = format!("/tx/hash/{spender}");
         let explorer = Fixture::start(
@@ -1851,6 +1912,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         let no_proof = MockWalletServices::builder()
+            .get_raw_tx_response(bytes())
             .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
                 name: Some("Services".to_string()),
                 merkle_path: None,
@@ -1871,7 +1933,9 @@ mod tests {
         assert_eq!(no_proof.call_count("get_merkle_path"), 1);
 
         // A proof the header service checked is the confirmation.
-        let proven = MockWalletServices::new();
+        let proven = MockWalletServices::builder()
+            .get_raw_tx_response(bytes())
+            .build();
         let answer = probe_input_spend(&client, &explorer.base, &proven, &src, 0, None).await;
         assert_eq!(
             answer,
@@ -1883,6 +1947,7 @@ mod tests {
 
         // A courier fault is no proof either.
         let fault = MockWalletServices::builder()
+            .get_raw_tx_response(bytes())
             .get_merkle_path_response(MockResponse::Error(
                 MockErrorKind::NetworkError,
                 "down".to_string(),
@@ -1899,6 +1964,99 @@ mod tests {
 
         assert_eq!(explorer.count(&spender_route), 0, "{:?}", explorer.hits());
     }
+    /// E1 (the rulings of 2026-10-09): a provider's "spent by X" is a word;
+    /// X's own bytes naming the outpoint are the fact, read before the
+    /// proof and before `confirmed`. The explorer names a mined transaction
+    /// that spends some other outpoint. Red at the base: `SpentBy` with
+    /// `confirmed: true`, and the output would be relinquished on it.
+    #[tokio::test]
+    async fn a_named_spender_is_bound_to_the_outpoint_by_its_own_bytes() {
+        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
+        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
+        use bsv_wallet_toolbox::services::GetRawTxResult;
+        let src = "aa".repeat(32);
+        let other = "cc".repeat(32);
+        let bytes_of = |raw: Option<Vec<u8>>, could_not_look: bool| {
+            MockWalletServices::builder()
+                .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
+                    name: "MockProvider".to_string(),
+                    txid: String::new(),
+                    raw_tx: raw,
+                    error: None,
+                    could_not_look,
+                }))
+                .build()
+        };
+        let client = reqwest::Client::new();
+        let named = |spender: &str| {
+            let route = format!("/tx/{src}/0/spent");
+            let body = format!(r#"{{"txid":"{spender}","vin":0}}"#);
+            async move { Fixture::start(&[(&route, 200, &body)], 500).await }
+        };
+
+        // A mined transaction that spends another outpoint is not the
+        // spender: no `SpentBy`, and no proof is asked for it.
+        let stranger = raw_tx(&[(&other, 0)], &[(1, p2pkh([7; 20]))]);
+        let explorer = named(&txid_of(&stranger)).await;
+        let services = bytes_of(Some(stranger.clone()), false);
+        let answer = probe_input_spend(&client, &explorer.base, &services, &src, 0, None).await;
+        assert_eq!(
+            answer,
+            InputSpend::Unknown,
+            "the named spender does not spend the outpoint"
+        );
+        assert_eq!(services.call_count("get_raw_tx"), 1);
+        assert_eq!(
+            services.call_count("get_merkle_path"),
+            0,
+            "bind, then prove"
+        );
+
+        // The same outpoint's other index is not the outpoint.
+        let sibling = raw_tx(&[(&src, 1)], &[(1, p2pkh([7; 20]))]);
+        let explorer = named(&txid_of(&sibling)).await;
+        let services = bytes_of(Some(sibling), false);
+        let answer = probe_input_spend(&client, &explorer.base, &services, &src, 0, None).await;
+        assert_eq!(answer, InputSpend::Unknown);
+
+        // Bytes that do not hash to the named txid are not its bytes.
+        let spender = raw_tx(&[(&other, 3), (&src, 0)], &[(1, p2pkh([7; 20]))]);
+        let explorer = named(&"bb".repeat(32)).await;
+        let services = bytes_of(Some(spender.clone()), false);
+        let answer = probe_input_spend(&client, &explorer.base, &services, &src, 0, None).await;
+        assert_eq!(answer, InputSpend::Unknown);
+        assert_eq!(services.call_count("get_merkle_path"), 0);
+
+        // Bytes that could not be had bind nothing.
+        let explorer = named(&txid_of(&spender)).await;
+        let services = bytes_of(None, true);
+        let answer = probe_input_spend(&client, &explorer.base, &services, &src, 0, None).await;
+        assert_eq!(answer, InputSpend::Unknown);
+        assert_eq!(services.call_count("get_merkle_path"), 0);
+
+        // An unbound name falls through to the unspent question: the
+        // outpoint in an unspent set is unspent, whatever the explorer named.
+        let explorer = named(&txid_of(&stranger)).await;
+        let services = bytes_of(Some(stranger), false);
+        let script = p2pkh([9; 20]);
+        let answer =
+            probe_input_spend(&client, &explorer.base, &services, &src, 0, Some(&script)).await;
+        assert_eq!(answer, InputSpend::Unspent);
+
+        // The spender whose bytes name the outpoint, with its proof.
+        let explorer = named(&txid_of(&spender)).await;
+        let services = bytes_of(Some(spender.clone()), false);
+        let answer = probe_input_spend(&client, &explorer.base, &services, &src, 0, None).await;
+        assert_eq!(
+            answer,
+            InputSpend::SpentBy {
+                txid: txid_of(&spender),
+                confirmed: true
+            }
+        );
+        assert_eq!(services.call_count("get_merkle_path"), 1);
+    }
+
     /// C5 and C7 (Rule 28): "unspent" is a positive from an explorer's
     /// unspent set, asked of two explorers through the toolbox; one
     /// explorer's "no spend known" is not it. WhatsOnChain says no spend and
