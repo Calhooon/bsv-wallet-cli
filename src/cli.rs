@@ -91,7 +91,12 @@ pub enum Commands {
         #[arg(long, default_value_t = 0)]
         vout: u32,
     },
-    /// Fetch a tx by txid from WhatsOnChain and internalize it
+    /// Break-glass courier: fetch a transaction's BEEF by txid and internalize it
+    ///
+    /// For a payment to our bare address that came with no BEEF from its sender. The BEEF
+    /// is fetched from a courier (WhatsOnChain's BEEF route, then the wallet's own
+    /// services) and then checked like any other: its proofs must meet the header
+    /// service's roots. The routine path is `fund` with the BEEF the payer hands over.
     Receive {
         /// Transaction id (hex)
         txid: String,

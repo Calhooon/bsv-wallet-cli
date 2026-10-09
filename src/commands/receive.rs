@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use bsv_sdk::transaction::{Beef, Transaction};
-use bsv_wallet_toolbox::Chain;
+use bsv_wallet_toolbox::services::GetBeefResult;
+use bsv_wallet_toolbox::{Chain, WalletServices};
+use std::future::Future;
 
 use crate::brc29;
 use crate::commands::fund;
@@ -43,8 +45,12 @@ pub(crate) async fn receive_txid(
     let client = reqwest::Client::new();
     let deposit_script = brc29::deposit_script(&ctx.root_key)?;
 
+    let services = ctx.wallet.services();
     let (beef_bytes, resolved_vout) =
-        fetch_beef_and_vout(&client, base, txid, vout, &deposit_script).await?;
+        fetch_beef_and_vout(&client, base, txid, vout, &deposit_script, || {
+            second_courier(services, txid)
+        })
+        .await?;
 
     let accepted = fund::internalize_beef(ctx, &beef_bytes, resolved_vout).await?;
     Ok((resolved_vout, accepted))
@@ -52,13 +58,56 @@ pub(crate) async fn receive_txid(
 
 /// The BEEF of `txid`, and the output of it that pays us: `vout` when the
 /// caller named one, else read from the BEEF's own transaction.
-async fn fetch_beef_and_vout(
+///
+/// Break-glass (Rule 28, C2): a COURIER. A payment to a bare address
+/// arrives with no BEEF from its sender, so no row, header or proof of ours
+/// holds this answer and it is fetched. What is fetched is self-verifying:
+/// the BEEF is internalized, its transaction hashes to the txid and its
+/// merkle paths meet the header service's roots, so the courier is trusted
+/// for nothing but delivery. Two couriers: WhatsOnChain's BEEF route first
+/// (it alone carries an unmined transaction's ancestors), and behind it
+/// `second` (the toolbox's `get_beef`). A fault at the first falls through;
+/// when neither delivers, the error says what each said ("could not
+/// look"), and nothing is concluded about the payment.
+async fn fetch_beef_and_vout<S, SF>(
     client: &reqwest::Client,
     base: &str,
     txid: &str,
     vout: Option<u32>,
     deposit_script: &[u8],
-) -> Result<(Vec<u8>, u32)> {
+    second: S,
+) -> Result<(Vec<u8>, u32)>
+where
+    S: FnOnce() -> SF,
+    SF: Future<Output = Result<Vec<u8>>>,
+{
+    let beef_bytes = match first_courier(client, base, txid).await {
+        Ok(bytes) => bytes,
+        Err(first) => {
+            tracing::warn!(
+                marker = "break_glass_beef_courier",
+                txid = %txid,
+                error = %first,
+                "the first BEEF courier did not deliver; asking the second"
+            );
+            second().await.map_err(|second| {
+                anyhow!(
+                    "no courier delivered a BEEF for {txid} (could not look): \
+                     WhatsOnChain: {first}; the wallet's services: {second}"
+                )
+            })?
+        }
+    };
+
+    let resolved_vout = match vout {
+        Some(v) => v,
+        None => vout_paying(&beef_bytes, txid, deposit_script)?,
+    };
+    Ok((beef_bytes, resolved_vout))
+}
+
+/// WhatsOnChain's `/tx/{txid}/beef`: the transaction with its proofs, hex.
+async fn first_courier(client: &reqwest::Client, base: &str, txid: &str) -> Result<Vec<u8>> {
     let beef_hex = client
         .get(format!("{}/tx/{}/beef", base, txid))
         .send()
@@ -67,13 +116,29 @@ async fn fetch_beef_and_vout(
         .error_for_status()?
         .text()
         .await?;
-    let beef_bytes = hex::decode(beef_hex.trim())?;
+    Ok(hex::decode(beef_hex.trim())?)
+}
 
-    let resolved_vout = match vout {
-        Some(v) => v,
-        None => vout_paying(&beef_bytes, txid, deposit_script)?,
-    };
-    Ok((beef_bytes, resolved_vout))
+/// The second courier: the toolbox's `get_beef`, which carries the bytes
+/// from either explorer (hashed to the txid) and a merkle path only after
+/// its root met the header service.
+async fn second_courier<V: WalletServices>(services: &V, txid: &str) -> Result<Vec<u8>> {
+    let found = services
+        .get_beef(txid, &[])
+        .await
+        .map_err(|e| anyhow!("{e}"))?;
+    beef_from(found)
+}
+
+fn beef_from(found: GetBeefResult) -> Result<Vec<u8>> {
+    found.beef.ok_or_else(|| {
+        anyhow!(
+            "{}",
+            found
+                .error
+                .unwrap_or_else(|| "no BEEF and no reason given".to_string())
+        )
+    })
 }
 
 /// Which output of `txid` pays `deposit_script`, read from the transaction
@@ -109,6 +174,12 @@ mod tests {
     use super::*;
     use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
     use bsv_sdk::transaction::{Beef, MerklePath};
+    use bsv_wallet_toolbox::services::mock::MockWalletServices;
+
+    /// A second courier that must not be reached.
+    async fn no_second_courier() -> Result<Vec<u8>> {
+        panic!("the second courier was asked while the first delivered")
+    }
 
     /// C3 (Rule 28): which output pays us is read from the transaction the
     /// BEEF carries. Red at the base, with a local fixture in the explorer's
@@ -129,8 +200,15 @@ mod tests {
         let tx_route = format!("/tx/{txid}");
         let explorer = Fixture::start(&[(&beef_route, 200, &beef.to_hex())], 500).await;
 
-        let got =
-            fetch_beef_and_vout(&reqwest::Client::new(), &explorer.base, &txid, None, &ours).await;
+        let got = fetch_beef_and_vout(
+            &reqwest::Client::new(),
+            &explorer.base,
+            &txid,
+            None,
+            &ours,
+            no_second_courier,
+        )
+        .await;
 
         assert_eq!(explorer.count(&tx_route), 0, "{:?}", explorer.hits());
         let (_, vout) = got.expect("the BEEF carries the transaction");
@@ -144,6 +222,7 @@ mod tests {
             &txid,
             Some(0),
             &ours,
+            no_second_courier,
         )
         .await
         .unwrap();
@@ -160,5 +239,92 @@ mod tests {
             err.to_string().contains("does not carry transaction"),
             "{err}"
         );
+    }
+
+    /// C2 (Rule 28): the BEEF courier has a second courier behind it. Red
+    /// at the base: WhatsOnChain's fault was the command's error.
+    #[tokio::test]
+    async fn a_courier_fault_falls_through_to_the_second_courier() {
+        let txid = "ab".repeat(32);
+        let explorer = Fixture::start(&[], 500).await;
+        let services = MockWalletServices::new();
+        let got = fetch_beef_and_vout(
+            &reqwest::Client::new(),
+            &explorer.base,
+            &txid,
+            Some(0),
+            &p2pkh([0xdb; 20]),
+            || second_courier(&services, &txid),
+        )
+        .await;
+        assert!(
+            got.is_ok(),
+            "one courier's fault ended the command: {got:?}"
+        );
+        assert_eq!(explorer.total(), 1, "the first courier was asked once");
+        assert_eq!(services.call_count("get_beef"), 1);
+    }
+
+    /// The second courier is not asked while the first delivers.
+    #[tokio::test]
+    async fn the_second_courier_is_not_asked_while_the_first_delivers() {
+        let txid = "ab".repeat(32);
+        let route = format!("/tx/{txid}/beef");
+        let explorer = Fixture::start(&[(&route, 200, "0100beef")], 500).await;
+        let services = MockWalletServices::new();
+        let (bytes, _) = fetch_beef_and_vout(
+            &reqwest::Client::new(),
+            &explorer.base,
+            &txid,
+            Some(0),
+            &p2pkh([0xdb; 20]),
+            || second_courier(&services, &txid),
+        )
+        .await
+        .unwrap();
+        assert_eq!(bytes, vec![0x01, 0x00, 0xbe, 0xef]);
+        assert_eq!(services.call_count("get_beef"), 0);
+    }
+
+    /// Neither courier delivering is "could not look", with what each said.
+    #[tokio::test]
+    async fn no_courier_delivering_is_could_not_look_with_both_reasons() {
+        let txid = "ab".repeat(32);
+        let explorer = Fixture::start(&[], 503).await;
+        let err = fetch_beef_and_vout(
+            &reqwest::Client::new(),
+            &explorer.base,
+            &txid,
+            Some(0),
+            &p2pkh([0xdb; 20]),
+            || async { Err(anyhow!("both explorers down")) },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("could not look"), "{err}");
+        assert!(err.contains("503"), "{err}");
+        assert!(err.contains("both explorers down"), "{err}");
+
+        // The toolbox's "no BEEF" carries its reason through.
+        let none = GetBeefResult {
+            name: "Services".to_string(),
+            txid: txid.clone(),
+            beef: None,
+            has_proof: false,
+            error: Some("Transaction not found".to_string()),
+        };
+        assert_eq!(
+            beef_from(none).unwrap_err().to_string(),
+            "Transaction not found"
+        );
+    }
+
+    /// The courier is named at its site, in the rule's words.
+    #[test]
+    fn the_beef_courier_is_named_at_the_site() {
+        let source = include_str!("receive.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(code.contains("Break-glass (Rule 28, C2): a COURIER"));
     }
 }
