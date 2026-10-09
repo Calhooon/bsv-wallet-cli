@@ -31,6 +31,7 @@ path = "src/bin/bsv-wallet-relay.rs"
 [dependencies]
 bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "0.5.0", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "0.3.35", features = ["full"] }
+bsv-tracker = { version = "0.1.0", path = "/Users/johncalhoun/bsv/bsv-tracker" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
