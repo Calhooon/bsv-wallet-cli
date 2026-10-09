@@ -1,15 +1,94 @@
 name: Release
 
+# A version tag on main publishes the crate and the binaries; nothing publishes
+# from a laptop (RELEASING.md). crates.io trusted publishing: the registry
+# trusts this repository's release.yml and hands the publish job a short-lived
+# token through OIDC; no token is stored in the repository or its secrets.
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: Tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - name: The tag names the manifest's version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(cargo metadata --no-deps --locked --format-version 1 | jq -r '.packages[] | select(.name == "bsv-wallet-cli") | .version')"
+          echo "tag ${GITHUB_REF_NAME}, Cargo.toml ${version}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}"
+            exit 1
+          fi
+
+      # Tags are outside branch protection; refuse one that main does not hold.
+      - name: The tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_SHA} is not on main; tag a commit that merged through a PR"
+            exit 1
+          fi
+
+  ci:
+    name: CI
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish to crates.io
+    needs: [version, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - name: Package dry run
+        run: cargo publish -p bsv-wallet-cli --locked --dry-run
+
+      - name: Exchange the OIDC token for a crates.io token
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+
+      - name: Publish
+        run: cargo publish -p bsv-wallet-cli --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
   build:
+    name: Binaries (${{ matrix.target }})
+    needs: [version, ci]
     strategy:
       matrix:
         include:
@@ -23,15 +102,16 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Build release binaries
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+        run: cargo build --workspace --release --locked --target ${{ matrix.target }}
 
       - name: Package binaries
         run: |
@@ -39,26 +119,31 @@ jobs:
           # Package all available binaries (bsv-wallet-mcp may not build on all targets)
           BINS="bsv-wallet"
           if [ -f bsv-wallet-mcp ]; then BINS="$BINS bsv-wallet-mcp"; fi
+          # shellcheck disable=SC2086  # $BINS is a list of file names, split on purpose
           tar czf ../../../bsv-wallet-${{ matrix.target }}.tar.gz $BINS
           cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bsv-wallet-${{ matrix.target }}
           path: bsv-wallet-${{ matrix.target }}.tar.gz
 
   release:
+    name: GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    # The one job that writes to the repository: it creates the release.
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
