@@ -1,32 +1,59 @@
 name: CI
 
+# The machine gate. Branch protection on main requires the check names below:
+# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling) and the two
+# `Build (...)` checks that were already required. Renaming a job removes its
+# context and blocks every PR until the protection is updated. Every action is
+# pinned by commit sha.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  # release.yml runs the same jobs on a tag before it publishes.
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes the run; a tag's run is never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Lint & Format
+  fmt:
+    name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
+          toolchain: stable
+          components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   build:
     name: Build (${{ matrix.os }})
@@ -35,27 +62,65 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Build workspace (release)
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Build MCP subcrate (release)
-        run: cargo build --release -p bsv-wallet-mcp
+        run: cargo build --release --locked -p bsv-wallet-mcp
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Run synthetic integration tests
-        run: cargo test --test integration
+      # Every target of the workspace, not the synthetic integration tests
+      # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
+      # (the callback intake, the tracker-off refusals) live in the others.
+      - name: Run the workspace's tests
+        run: cargo test --workspace --locked
+
+  # The vector-backed tests as one named check: the Arcade status vector
+  # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
+  # webhook intake, and the gift covenant's sCrypt parity vectors
+  # (src/gift/covenant_vectors.json).
+  vectors:
+    name: vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: The vector files are present
+        run: |
+          test -s tests/vectors/arcade_status_verdicts.json
+          test -s src/gift/covenant_vectors.json
+
+      - name: Run the Arcade status vector through the webhook intake
+        run: cargo test --locked --test arcade_webhook_vector_tests
+
+      # A filter that matches nothing passes; the grep refuses a renamed module.
+      - name: Run the covenant vectors
+        run: |
+          set -o pipefail
+          cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
+          grep -q 'test result: ok. 5 passed' covenant.log
