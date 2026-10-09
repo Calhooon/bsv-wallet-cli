@@ -156,7 +156,7 @@ bsv-wallet-cli          (this repo -- CLI + HTTP server)
 
 - **Storage**: SQLite via sqlx (single file, portable)
 - **Concurrency**: Spending operations queue via FIFO lock. All other endpoints (crypto, queries, status) are fully concurrent.
-- **Blockchain**: Chaintracks (primary) with WoC/BHS/Bitails failover
+- **Blockchain**: the header service (`CHAINTRACKS_URL`) answers every header, root, tip and height question; explorers (WhatsOnChain, Bitails) are asked only for the break-glass reads listed under [Explorer calls](#explorer-calls)
 
 ## Configuration
 
@@ -180,6 +180,26 @@ All configuration is via environment variables:
 | `TAAL_API_KEY` / `MAIN_TAAL_API_KEY` | No | TAAL ARC auth (Bearer / raw `Authorization` respectively) |
 
 Port is set via `--port` CLI flag (default: 3322), not an environment variable.
+
+## Explorer calls
+
+The rule (0.5.0): an explorer is asked only where no header, no merkle proof and no row
+of the wallet's own answers the question, and then in one shape: two providers where a
+second exists, a rotating start, a negative only when both agree, and "could not look"
+kept apart from "nothing there". Each call says why at its site in the source, and
+`tests/rule_28_sites.rs` holds the list.
+
+| Question | Asked when | Where |
+|----------|-----------|-------|
+| Has the network seen a transaction we just sent | after a send, by the reconciler, by `cleanup-abandoned` | the broadcaster first, then WhatsOnChain and Bitails as chain indexes: present from either, absent only from both |
+| Who spent an output, and is it unspent | `cleanup-abandoned`, `reconcile-outputs`, `sync --reconcile-spent`, the daemon's sweep | WhatsOnChain names a spender, and the spend counts only with a merkle proof of it; "unspent" is the toolbox's two-explorer read |
+| The BEEF of a payment nobody handed us | `receive` | WhatsOnChain's BEEF route, then the toolbox's `get_beef`; the BEEF is checked against the header service like any other |
+| Which outputs pay our deposit address | `sync` (an operator's command, never a daemon path) | WhatsOnChain; a chain scan. The routine way to receive is `fund` with the BEEF the payer hands over |
+| A stranger's transaction bytes | `gift-inspect`, `gift-claim` | the toolbox's `get_raw_tx` (two explorers, the bytes hashed to the txid) |
+
+Nothing else asks an explorer: `export-beefs` builds from the wallet's own storage, the
+tip height and median time past come from the header service, and `gift-claim`
+broadcasts through the wallet's own broadcasters.
 
 ## Broadcasting: Arcade V2 mode
 
