@@ -217,7 +217,7 @@ pub async fn run(
     let base = receive::woc_base(ctx.chain);
     let report = reconcile_outputs_with(&pool, execute, max_chain_checks, |src, vout| {
         let c = client.clone();
-        async move { probe_input_spend(&c, base, &src, vout).await }
+        async move { probe_input_spend(&c, base, ctx.wallet.services(), &src, vout).await }
     })
     .await?;
 
