@@ -47,6 +47,16 @@ pub fn deposit_address(root_key: &PrivateKey, chain: Chain) -> Result<String> {
     })
 }
 
+/// The locking script of the deposit address: P2PKH over the deposit key.
+/// The same on either chain (the address prefix is not in the script).
+pub fn deposit_script(root_key: &PrivateKey) -> Result<Vec<u8>> {
+    let (_, deposit_pub) = deposit_keypair(root_key)?;
+    let mut script = vec![0x76, 0xa9, 0x14];
+    script.extend_from_slice(&deposit_pub.hash160());
+    script.extend_from_slice(&[0x88, 0xac]);
+    Ok(script)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,5 +78,18 @@ mod tests {
             pub_key.to_address(),
             deposit_address(&root, Chain::Main).unwrap()
         );
+    }
+
+    /// The deposit script is the script of the deposit address: the output
+    /// `receive` matches in a BEEF is the one a payer to the address made.
+    #[test]
+    fn deposit_script_is_the_script_of_the_deposit_address() {
+        let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+        let from_address = bsv_sdk::script::templates::P2PKH::lock_from_address(
+            &deposit_address(&root, Chain::Main).unwrap(),
+        )
+        .unwrap()
+        .to_binary();
+        assert_eq!(deposit_script(&root).unwrap(), from_address);
     }
 }
