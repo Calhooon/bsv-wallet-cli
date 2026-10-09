@@ -88,6 +88,8 @@
 //!   prior behaviour — a down (or unidentifiable) confirmation service never
 //!   turns a real send into a false failure.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::{
@@ -189,14 +191,18 @@ impl NetworkEvidence {
     }
 }
 
-/// What the chain index (WhatsOnChain) answered in the last probe round.
+/// What the chain indexes (WhatsOnChain and Bitails) answered in the last
+/// probe round, as one answer (Rule 28, C1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainIndexAnswer {
-    /// It holds the transaction (mempool or chain).
+    /// A chain index holds the transaction (mempool or chain): a positive
+    /// from the one that gives it.
     Present(NetworkEvidence),
-    /// It answered 404: not in its mempool, not on chain.
+    /// EVERY chain index answered 404: not in a mempool, not on chain. One
+    /// index's 404 is never this.
     Absent,
-    /// Not asked, unreachable, or no chain index configured.
+    /// Not asked, no chain index configured, or at least one index could
+    /// not look while none held the transaction.
     Unknown,
 }
 
@@ -302,13 +308,16 @@ enum AbsenceAuthority {
     /// Hence the content-type guard in [`probe`] and the conjunction below.
     Broadcaster,
 
-    /// **Time-authoritative.** An independent chain + mempool index (WhatsOnChain).
+    /// **Time-authoritative.** An independent chain + mempool index
+    /// (WhatsOnChain, Bitails).
     ///
     /// Unlike a metamorph store this really does index the whole chain, so its
     /// 404 is about the transaction and not about scope. Its weakness is
     /// *latency*, not coverage: mempool ingestion lags acceptance. So its
     /// absence counts only from the **final** probe round, after the window in
-    /// [`DEFAULT_ATTEMPTS`] has elapsed.
+    /// [`DEFAULT_ATTEMPTS`] has elapsed, and only when every configured chain
+    /// index answers 404 in that round (Rule 28, C1: a negative needs the
+    /// second provider; see `BroadcastVerifier::ask_chain_indexes`).
     ChainIndex,
 }
 
@@ -321,6 +330,11 @@ enum SourceKind {
     ClassicArc,
     /// WhatsOnChain `/tx/hash/{txid}`: `{"confirmations",...}`.
     ChainIndex,
+    /// Bitails `/tx/{txid}`: `{"txid","blockHeight",...}`, `blockHeight`
+    /// absent or null while unmined (`[SRC]` bsv-wallet-toolbox-rs@9484b2a
+    /// `src/services/providers/bitails.rs:757-776,841-847`, the toolbox's
+    /// own read of the same route).
+    BitailsIndex,
 }
 
 /// Absence votes gathered during one probe round, grouped by authority class.
@@ -481,14 +495,30 @@ fn build_sources(
         kind: plane.kind(),
     }];
 
-    // The independent chain + mempool index. Keyless, reliable 200/404, and the
-    // only source here that indexes the chain rather than its own inbox.
+    // The independent chain + mempool indexes: keyless, 200 or 404, and the
+    // only sources here that index the chain rather than their own inbox.
+    //
+    // Break-glass (Rule 28, C1): "has the network seen a transaction we
+    // just sent" has no header, proof or own-index answer while the
+    // transaction is unmined, and none at all for its absence; the
+    // broadcaster we submitted to is asked ahead of these, and once mined
+    // the proof is the fact. So an explorer is asked, in the fallback
+    // shape: two of them, the start rotating between them
+    // (`ask_chain_indexes`), a positive from the one that gives it, a
+    // negative only from both, and "could not look" kept apart from both.
     sources.push(StatusSource {
         name: "whatsonchain",
         url_template: format!("{}/tx/hash/{{txid}}", woc_base(chain)),
         auth: None,
         absence: AbsenceAuthority::ChainIndex,
         kind: SourceKind::ChainIndex,
+    });
+    sources.push(StatusSource {
+        name: "bitails",
+        url_template: format!("{}/tx/{{txid}}", bitails_base(chain)),
+        auth: None,
+        absence: AbsenceAuthority::ChainIndex,
+        kind: SourceKind::BitailsIndex,
     });
 
     // Third-party ARC stores: extra chances to observe presence, never a vote
@@ -535,6 +565,10 @@ pub struct BroadcastVerifier {
     delay: Duration,
     /// When false (env opt-out) `verify` short-circuits to `Inconclusive`.
     enabled: bool,
+    /// Which chain index is asked first, advanced once per probe round and
+    /// shared by every clone (Rule 28: a rotating start, so one explorer is
+    /// not the fixed first word).
+    rotation: Arc<AtomicUsize>,
 }
 
 impl BroadcastVerifier {
@@ -576,6 +610,7 @@ impl BroadcastVerifier {
             attempts,
             delay: Duration::from_millis(delay_ms),
             enabled,
+            rotation: Arc::default(),
         }
     }
 
@@ -648,10 +683,17 @@ impl BroadcastVerifier {
 
         for attempt in 0..self.attempts {
             let mut round = RoundResult::default();
+            let mut chain_indexes_asked = false;
             for src in &self.sources {
-                match probe(&self.client, src, txid).await {
-                    Presence::Present(evidence) => {
-                        if src.kind == SourceKind::ChainIndex {
+                if src.absence == AbsenceAuthority::ChainIndex {
+                    // The chain indexes are one question with one answer,
+                    // asked where the first of them stands in the list.
+                    if chain_indexes_asked {
+                        continue;
+                    }
+                    chain_indexes_asked = true;
+                    match self.ask_chain_indexes(txid).await {
+                        ChainIndexAnswer::Present(evidence) => {
                             // Chain evidence: the answer for everyone.
                             report.verification = BroadcastVerification::Confirmed;
                             report.evidence = Some(evidence);
@@ -659,6 +701,13 @@ impl BroadcastVerifier {
                             report.chain_index = ChainIndexAnswer::Present(evidence);
                             return report;
                         }
+                        ChainIndexAnswer::Absent => round.votes.record(src.absence),
+                        ChainIndexAnswer::Unknown => {}
+                    }
+                    continue;
+                }
+                match probe(&self.client, src, txid).await {
+                    Presence::Present(evidence) => {
                         if src.absence == AbsenceAuthority::Broadcaster {
                             round.broadcaster_answered = true;
                             let provider = if src.kind == SourceKind::Arcade {
@@ -787,6 +836,41 @@ impl BroadcastVerifier {
             attempts: 1,
             delay: Duration::ZERO,
             enabled: true,
+            rotation: Arc::default(),
+        }
+    }
+
+    /// The chain indexes' one answer for `txid` (Rule 28, C1).
+    ///
+    /// The start rotates. A positive from the index that gives it ends the
+    /// question (the others are not asked). Absence is every index
+    /// answering 404; an index that could not look (a fault, a timeout, a
+    /// status that is neither 200 nor 404) leaves the answer `Unknown`,
+    /// whatever the others said. With one index configured its answer is
+    /// the answer.
+    async fn ask_chain_indexes(&self, txid: &str) -> ChainIndexAnswer {
+        let indexes: Vec<&StatusSource> = self
+            .sources
+            .iter()
+            .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
+            .collect();
+        if indexes.is_empty() {
+            return ChainIndexAnswer::Unknown;
+        }
+        let start = self.rotation.fetch_add(1, Ordering::Relaxed) % indexes.len();
+        let mut absent = 0;
+        for offset in 0..indexes.len() {
+            let src = indexes[(start + offset) % indexes.len()];
+            match probe(&self.client, src, txid).await {
+                Presence::Present(evidence) => return ChainIndexAnswer::Present(evidence),
+                Presence::Absent => absent += 1,
+                Presence::Held | Presence::Fatal | Presence::Unknown => {}
+            }
+        }
+        if absent == indexes.len() {
+            ChainIndexAnswer::Absent
+        } else {
+            ChainIndexAnswer::Unknown
         }
     }
 }
@@ -820,6 +904,17 @@ fn presence_of_body(src: &StatusSource, body: &str) -> Presence {
                 .and_then(|c| c.as_i64())
                 .unwrap_or(0);
             if confirmations >= 1 {
+                Presence::Present(NetworkEvidence::Mined)
+            } else {
+                Presence::Present(NetworkEvidence::Seen)
+            }
+        }
+        SourceKind::BitailsIndex => {
+            let mined = json
+                .as_ref()
+                .and_then(|v| v.get("blockHeight"))
+                .is_some_and(|h| h.as_u64().is_some());
+            if mined {
                 Presence::Present(NetworkEvidence::Mined)
             } else {
                 Presence::Present(NetworkEvidence::Seen)
@@ -942,6 +1037,15 @@ fn woc_base(chain: Chain) -> &'static str {
     match chain {
         Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
         Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
+    }
+}
+
+/// Bitails, the second chain index (`[SRC]` bsv-wallet-toolbox-rs@9484b2a
+/// `src/services/providers/bitails.rs:32-35`).
+fn bitails_base(chain: Chain) -> &'static str {
+    match chain {
+        Chain::Main => "https://api.bitails.io",
+        Chain::Test => "https://test-api.bitails.io",
     }
 }
 
@@ -1334,6 +1438,7 @@ mod tests {
             attempts: 2,
             delay: Duration::from_millis(0),
             enabled: true,
+            rotation: Arc::default(),
         }
     }
 
@@ -1734,6 +1839,7 @@ mod tests {
             attempts: DEFAULT_ATTEMPTS,
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
+            rotation: Arc::default(),
         };
         // 13 gaps: 250+500+1000+2000 then 9 × 2.5 s, plus 5 s slack — long
         // enough for a real mempool index to catch up, and hard-bounded so a
@@ -1755,6 +1861,7 @@ mod tests {
             attempts: DEFAULT_ATTEMPTS,
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
+            rotation: Arc::default(),
         };
         let gaps: Vec<u64> = (1..v.attempts)
             .map(|r| v.delay_before_round(r).as_millis() as u64)
@@ -1799,6 +1906,7 @@ mod tests {
             attempts: DEFAULT_ATTEMPTS,
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
+            rotation: Arc::default(),
         };
         let started = std::time::Instant::now();
         assert_eq!(
@@ -1827,6 +1935,7 @@ mod tests {
             attempts: 4,
             delay: Duration::from_millis(200),
             enabled: true,
+            rotation: Arc::default(),
         };
         // Schedule under a 200 ms cap: 250→200, 500→200, 1000→200.
         assert!((1..4).all(|r| verifier.delay_before_round(r) == Duration::from_millis(200)));
@@ -1838,5 +1947,140 @@ mod tests {
             "took {:?}",
             elapsed
         );
+    }
+    // =====================================================================
+    // Rule 28, C1: two chain indexes, a rotating start, a negative from both.
+    // =====================================================================
+
+    /// A chain index fixture answering `/tx/{TXID}` with `code` and `body`.
+    async fn chain_index_fixture(code: u16, body: &str) -> crate::test_support::Fixture {
+        let route = format!("/tx/{TXID}");
+        crate::test_support::Fixture::start(&[(&route, code, body)], 500).await
+    }
+
+    fn chain_index(name: &'static str, base: &str) -> StatusSource {
+        source_kind(
+            name,
+            base,
+            AbsenceAuthority::ChainIndex,
+            SourceKind::ChainIndex,
+        )
+    }
+
+    /// One chain index's 404 while the other could not look is not the
+    /// chain's absence. Red at the base: `Rejected` ("the funds were NOT
+    /// sent") on one explorer's negative.
+    #[tokio::test]
+    async fn one_chain_indexs_absence_is_not_absence_while_the_other_could_not_look() {
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        let absent = chain_index_fixture(404, "").await;
+        let down = chain_index_fixture(500, "").await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+            chain_index("index-a", &absent.base),
+            chain_index("index-b", &down.base),
+        ]);
+
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Inconclusive);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Unknown);
+        assert!(!report.network_absent);
+    }
+
+    /// The start rotates between the chain indexes, and a present answer
+    /// from the first asked ends the question. Red at the base: the first
+    /// in the list is asked every time and the second never.
+    #[tokio::test]
+    async fn the_chain_index_start_rotates() {
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        let a = chain_index_fixture(200, r#"{"confirmations":0}"#).await;
+        let b = chain_index_fixture(200, r#"{"confirmations":0}"#).await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+            chain_index("index-a", &a.base),
+            chain_index("index-b", &b.base),
+        ]);
+
+        for _ in 0..4 {
+            let report = verifier.verify_report(TXID).await;
+            assert_eq!(
+                report.chain_index,
+                ChainIndexAnswer::Present(NetworkEvidence::Seen)
+            );
+        }
+        assert_eq!((a.total(), b.total()), (2, 2), "each asked in its turn");
+    }
+
+    /// The wallet's own source list names a second chain index. Red at the
+    /// base: WhatsOnChain alone.
+    #[test]
+    fn bitails_is_a_second_chain_index() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let sources = build_sources(Chain::Main, &plane, None);
+        let indexes: Vec<_> = sources
+            .iter()
+            .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(indexes, vec!["whatsonchain", "bitails"]);
+    }
+
+    /// Both chain indexes answering 404, with the broadcaster's own 404, is
+    /// the definitive absence the rule always asked for.
+    #[tokio::test]
+    async fn two_chain_indexes_absent_with_the_broadcaster_is_rejected() {
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        let a = chain_index_fixture(404, "").await;
+        let b = chain_index_fixture(404, "").await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+            chain_index("index-a", &a.base),
+            chain_index("index-b", &b.base),
+        ]);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Rejected);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Absent);
+        assert!(report.network_absent);
+    }
+
+    /// A positive from the index that gives it stands, whatever the other
+    /// said: a 404 from one and a hit from the other is present, in either
+    /// order of asking.
+    #[tokio::test]
+    async fn the_second_chain_indexs_positive_stands_after_a_negative_or_a_fault() {
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        for first_answer in [404u16, 500] {
+            let first = chain_index_fixture(first_answer, "").await;
+            let second = chain_index_fixture(200, r#"{"confirmations":3}"#).await;
+            let verifier = verifier_with(vec![
+                source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+                chain_index("index-a", &first.base),
+                chain_index("index-b", &second.base),
+            ]);
+            for _ in 0..2 {
+                let report = verifier.verify_report(TXID).await;
+                assert_eq!(report.verification, BroadcastVerification::Confirmed);
+                assert_eq!(
+                    report.chain_index,
+                    ChainIndexAnswer::Present(NetworkEvidence::Mined)
+                );
+            }
+        }
+    }
+
+    /// Bitails' body: a block height is mined, none is seen.
+    #[test]
+    fn a_bitails_body_is_read_by_its_block_height() {
+        let bitails = src_of(SourceKind::BitailsIndex, AbsenceAuthority::ChainIndex);
+        assert_eq!(
+            presence_of_body(&bitails, r#"{"txid":"ab","blockHeight":900001}"#),
+            Presence::Present(NetworkEvidence::Mined)
+        );
+        for unmined in [r#"{"txid":"ab"}"#, r#"{"txid":"ab","blockHeight":null}"#] {
+            assert_eq!(
+                presence_of_body(&bitails, unmined),
+                Presence::Present(NetworkEvidence::Seen)
+            );
+        }
     }
 }
