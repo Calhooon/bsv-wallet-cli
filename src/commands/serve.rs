@@ -26,10 +26,7 @@ pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
                 .filter(|s| !s.is_empty())
         });
 
-    let bind_addr: std::net::IpAddr = std::env::var("BIND_ADDR")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]));
+    let bind_addr = server::bind_addr_from_env();
 
     let config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
