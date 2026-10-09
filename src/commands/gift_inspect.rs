@@ -10,8 +10,9 @@ use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::bsv::sighash::parse_transaction;
 use bsv_wallet_cli::gift::claim::build_claim_tx;
 use bsv_wallet_cli::gift::covenant::parse_locking_script;
-use bsv_wallet_toolbox::{Chain, WalletServices};
+use bsv_wallet_toolbox::WalletServices;
 
+use crate::commands::gift_chain;
 use crate::context::WalletContext;
 
 /// How many headers the median time past is taken over: the tip and its
@@ -71,13 +72,6 @@ fn median(mut times: Vec<u32>) -> u32 {
     times[times.len() / 2]
 }
 
-fn woc_base(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
-        _ => "https://api.whatsonchain.com/v1/bsv/main",
-    }
-}
-
 fn fmt_ts(ts: u64) -> String {
     chrono::DateTime::from_timestamp(ts as i64, 0)
         .map(|d| d.to_rfc3339())
@@ -85,20 +79,9 @@ fn fmt_ts(ts: u64) -> String {
 }
 
 pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
-    let base = woc_base(ctx.chain);
-    let client = reqwest::Client::new();
-
-    // 1. fetch + parse the deposit covenant
-    let raw_hex = client
-        .get(format!("{base}/tx/{txid}/hex"))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| anyhow!("could not fetch {txid} from WhatsOnChain: {e}"))?
-        .text()
-        .await?;
-    let deposit_raw = hex::decode(raw_hex.trim())
-        .map_err(|e| anyhow!("WhatsOnChain returned non-hex for {txid}: {e}"))?;
+    // 1. fetch + parse the deposit covenant (Rule 28, C12: through the
+    // wallet's services, see `gift_chain::deposit_bytes`)
+    let deposit_raw = gift_chain::deposit_bytes(ctx.wallet.services(), txid).await?;
     let dep = parse_transaction(&deposit_raw).map_err(|e| anyhow!("parse deposit: {e}"))?;
     let cov_out = dep
         .outputs

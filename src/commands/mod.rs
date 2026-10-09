@@ -9,6 +9,7 @@ pub mod daemon_tenant;
 pub mod drain;
 pub mod export_beefs;
 pub mod fund;
+pub mod gift_chain;
 pub mod gift_claim;
 pub mod gift_inspect;
 pub mod gift_send;
