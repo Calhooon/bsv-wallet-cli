@@ -128,10 +128,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                 .ok()
                 .filter(|s| !s.is_empty())
         });
-    let bind_addr: std::net::IpAddr = std::env::var("BIND_ADDR")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]));
+    let bind_addr = server::bind_addr_from_env();
     let config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
         tls,

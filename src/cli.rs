@@ -158,9 +158,19 @@ pub enum Commands {
     /// 60 s. Refused (non-zero exit) when CHAINTRACKS_URL=off
     TrackerTick,
     /// Run monitor + HTTP server (foreground)
-    Daemon,
+    Daemon {
+        /// Bind beyond loopback (BIND_ADDR) with no AUTH_TOKEN set: without
+        /// this flag such a bind is refused at startup
+        #[arg(long)]
+        allow_no_token: bool,
+    },
     /// Run HTTP server only (no monitor)
-    Serve,
+    Serve {
+        /// Bind beyond loopback (BIND_ADDR) with no AUTH_TOKEN set: without
+        /// this flag such a bind is refused at startup
+        #[arg(long)]
+        allow_no_token: bool,
+    },
     /// ONE process serving MANY wallets (fleet mode): each --wallet
     /// <seat-dir>:<port> serves <seat-dir>/wallet.db on its own port with the
     /// ROOT_KEY read from <seat-dir>/.env (never process env). Per-seat port
@@ -174,6 +184,10 @@ pub enum Commands {
         /// never proves 0-conf ancestry; the createAction-502 class returns).
         #[arg(long)]
         daemon: bool,
+        /// Bind beyond loopback (BIND_ADDR) with no AUTH_TOKEN set: without
+        /// this flag such a bind is refused at startup
+        #[arg(long)]
+        allow_no_token: bool,
     },
     /// Split UTXOs into multiple outputs for concurrency
     Split {

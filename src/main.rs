@@ -107,14 +107,21 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::tracker_tick::run(&ctx).await?;
         }
-        Commands::Daemon => {
+        Commands::Daemon { allow_no_token } => {
+            server::refuse_open_bind_from_env(*allow_no_token)?;
             commands::daemon::run(&cli).await?;
         }
-        Commands::Serve => {
+        Commands::Serve { allow_no_token } => {
+            server::refuse_open_bind_from_env(*allow_no_token)?;
             let ctx = context::WalletContext::load(&cli).await?;
             commands::serve::run(ctx, cli.port).await?;
         }
-        Commands::ServeFleet { wallet, daemon } => {
+        Commands::ServeFleet {
+            wallet,
+            daemon,
+            allow_no_token,
+        } => {
+            server::refuse_open_bind_from_env(*allow_no_token)?;
             commands::serve_fleet::run(wallet, cli.testnet, *daemon).await?;
         }
         Commands::Split { count } => {

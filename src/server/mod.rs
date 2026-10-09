@@ -68,6 +68,43 @@ impl Default for ServerConfig {
     }
 }
 
+/// The address to bind: `BIND_ADDR` when it parses, else `127.0.0.1`. Read
+/// by every served command and by the bind guard, so the two agree.
+pub fn bind_addr_from_env() -> std::net::IpAddr {
+    std::env::var("BIND_ADDR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
+}
+
+/// The bind guard (0.7.1). With no bearer token a served wallet answers any
+/// caller that can reach it, and its two BEEF doors take a body of any size
+/// (0.7.0), so an address beyond loopback needs a token or the operator's
+/// explicit `allow_no_token`. An empty token counts as none. Loopback is
+/// unchanged. Run at startup, before the wallet is opened or a socket bound.
+pub fn refuse_open_bind(
+    bind_addr: std::net::IpAddr,
+    auth_token: Option<&str>,
+    allow_no_token: bool,
+) -> Result<()> {
+    let has_token = auth_token.is_some_and(|t| !t.is_empty());
+    if has_token || allow_no_token || bind_addr.to_canonical().is_loopback() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "refusing to bind {bind_addr}: no bearer token is configured, and a wallet served \
+         beyond loopback without one answers anyone who can reach it. Set AUTH_TOKEN, or pass \
+         --allow-no-token to bind it open deliberately."
+    )
+}
+
+/// [`refuse_open_bind`] on the environment the served commands read
+/// (`BIND_ADDR`, `AUTH_TOKEN`).
+pub fn refuse_open_bind_from_env(allow_no_token: bool) -> Result<()> {
+    let token = std::env::var("AUTH_TOKEN").ok();
+    refuse_open_bind(bind_addr_from_env(), token.as_deref(), allow_no_token)
+}
+
 /// Auth middleware — checks Bearer token if configured.
 async fn auth_middleware(headers: HeaderMap, request: Request, next: Next) -> Response {
     // /arc-callback is EXEMPT from wallet bearer auth: it is authenticated by
@@ -511,5 +548,42 @@ mod lenient_json_tests {
         let fixed = sanitize_lone_surrogates(lead);
         let v: serde_json::Value = serde_json::from_slice(&fixed).unwrap();
         assert_eq!(v["keyID"], "ab \u{fffd} cd");
+    }
+}
+
+#[cfg(test)]
+mod bind_guard_tests {
+    use super::refuse_open_bind;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn beyond_loopback_needs_a_token_or_the_flag() {
+        for open in ["0.0.0.0", "::", "192.168.1.10", "10.0.0.1"] {
+            let err = refuse_open_bind(ip(open), None, false).unwrap_err();
+            assert!(
+                err.to_string().contains("--allow-no-token"),
+                "{open}: {err}"
+            );
+            assert!(
+                refuse_open_bind(ip(open), Some(""), false).is_err(),
+                "{open}"
+            );
+            assert!(
+                refuse_open_bind(ip(open), Some("t"), false).is_ok(),
+                "{open}"
+            );
+            assert!(refuse_open_bind(ip(open), None, true).is_ok(), "{open}");
+        }
+    }
+
+    #[test]
+    fn loopback_is_unchanged() {
+        for lo in ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"] {
+            assert!(refuse_open_bind(ip(lo), None, false).is_ok(), "{lo}");
+        }
     }
 }
