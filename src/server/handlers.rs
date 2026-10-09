@@ -145,6 +145,10 @@ impl AppError {
         } else if clean.starts_with("Duplicate entity:") || clean.starts_with("Invalid operation:")
         {
             (StatusCode::CONFLICT, "CONFLICT")
+        } else if clean.starts_with("Invalid BEEF at byte") {
+            // The toolbox's streaming reader: the offset and the kind of
+            // the invalid byte (never a size or a count).
+            (StatusCode::BAD_REQUEST, "INVALID_BEEF")
         } else if clean.starts_with("Validation error:")
             || clean.starts_with("Invalid argument:")
             || clean.starts_with("Origin header required")

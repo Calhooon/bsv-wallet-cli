@@ -130,8 +130,17 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         .route("/permission-audit", get(permission_audit))
         .route("/permission-audit/reset", post(permission_audit_reset))
         .route("/createSignature", post(handlers::create_signature))
-        .route("/createAction", post(handlers::create_action))
-        .route("/internalizeAction", post(handlers::internalize_action))
+        // The two doors that carry a caller's BEEF (`inputBEEF`, `tx`): no
+        // body cap, a valid BEEF is never refused for its size (see
+        // `BEEF_DOORS`).
+        .route(
+            "/createAction",
+            post(handlers::create_action).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/internalizeAction",
+            post(handlers::internalize_action).layer(DefaultBodyLimit::disable()),
+        )
         // Batch 1: Status (GET + POST for HTTPWalletJSON compat)
         .route(
             "/getHeight",
@@ -191,15 +200,17 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         // ARC/Arcade proof-delivery webhook (callback-token auth, exempt from
         // wallet bearer auth — see auth_middleware).
         .route("/arc-callback", post(arc_callback))
-        // Layer ordering: CORS (outermost) → auth → trace → body limit
+        // The last layer added runs first: body limit, trace, the
+        // extensions, then auth BEFORE the body is read (an uncapped BEEF
+        // door is open only to the wallet's own caller), then the body.
         .layer(cors)
-        .layer(middleware::from_fn(auth_middleware))
         .layer(middleware::from_fn(lenient_json_body))
+        .layer(middleware::from_fn(auth_middleware))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
         .layer(TraceLayer::new_for_http())
-        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(BODY_CAP))
         .with_state(wallet)
 }
 
@@ -354,6 +365,17 @@ pub fn sanitize_lone_surrogates(input: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     }
 }
 
+/// The routes whose JSON body carries a caller's BEEF. Their body is read
+/// whole with no cap: the BRC-100 JSON wire carries the BEEF as one array, so
+/// the body is held in memory (linear in the BEEF, about four bytes of body
+/// per byte of BEEF) and the BEEF is then judged by the toolbox's streaming
+/// reader for invalid bytes only. Every other route keeps
+/// [`BODY_CAP`].
+const BEEF_DOORS: [&str; 2] = ["/createAction", "/internalizeAction"];
+
+/// The body cap of the routes that carry no BEEF.
+const BODY_CAP: usize = 50 * 1024 * 1024;
+
 /// Rewrite lone surrogate escapes in JSON request bodies before the `Json`
 /// extractors see them (see [`sanitize_lone_surrogates`]).
 async fn lenient_json_body(request: Request, next: Next) -> Response {
@@ -366,7 +388,12 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();
-    let bytes = match axum::body::to_bytes(body, 50 * 1024 * 1024).await {
+    let cap = if BEEF_DOORS.contains(&parts.uri.path()) {
+        usize::MAX
+    } else {
+        BODY_CAP
+    };
+    let bytes = match axum::body::to_bytes(body, cap).await {
         Ok(b) => b,
         Err(_) => {
             return (
