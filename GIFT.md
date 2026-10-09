@@ -51,9 +51,9 @@ coins they can spend immediately (no time-lock).
 exchange, HandCash, hardware, MetaNet):
 
 ```bash
-bsv-wallet address     # your funding address — send BSV here from anywhere
-bsv-wallet sync        # pull the received coins into your spendable balance
-bsv-wallet balance     # confirm it arrived
+bsv-wallet address          # your funding address — send BSV here from anywhere
+bsv-wallet receive <txid>   # record that payment, by its transaction id
+bsv-wallet balance          # confirm it arrived
 ```
 
 **Step 2 — send the gift** (must be this tool — it builds the covenant):
@@ -82,9 +82,9 @@ anything.
 
 > You do **not** need to "receive", import, or internalize the gift before
 > inspecting or claiming it. `gift-inspect` and `gift-claim` read the gift
-> straight from the chain by its txid. The only "internalize" step is
-> `bsv-wallet sync` *after* you claim — that's what turns the freed coins into
-> normal spendable balance.
+> by its txid. There is no step after the claim either: `gift-claim` records
+> its own claim in your wallet, so the freed coins are normal spendable
+> balance the moment a broadcaster takes it.
 
 ## Claiming after unlock
 
@@ -95,8 +95,7 @@ Before the unlock time it politely refuses. After, it builds + broadcasts the
 claim; the coins land at your wallet's deposit address. Then:
 
 ```bash
-bsv-wallet sync                 # pull the claimed coins into your balance
-bsv-wallet balance              # there it is
+bsv-wallet balance              # there it is: the claim recorded itself
 bsv-wallet send <addr> <sats>   # spend it like any other balance
 ```
 

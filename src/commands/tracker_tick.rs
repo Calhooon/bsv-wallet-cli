@@ -13,13 +13,14 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
         "tracker-tick",
         ctx.wallet.services().chaintracks.is_some(),
     )?;
-    let report = tracker_host::tick(
+    let mut report = tracker_host::tick(
         ctx.wallet.storage(),
         ctx.wallet.services(),
         &SystemClock,
         &TickOptions::from_env(),
     )
     .await?;
+    tracker_host::record_accepted(&ctx.wallet, &mut report).await;
     if ctx.json_output {
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
@@ -27,6 +28,12 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
     println!("{}", report.summary());
     for txid in &report.mined {
         println!("  mined:     {txid}");
+    }
+    for txid in &report.reannounced {
+        println!("  announced: {txid} (accepted on a re-announce)");
+    }
+    for txid in &report.not_final {
+        println!("  not final: {txid} (announced again after a pause)");
     }
     for txid in &report.no_proof {
         println!("  no proof:  {txid} (asked again after its pause)");

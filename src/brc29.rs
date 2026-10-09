@@ -9,9 +9,10 @@ pub const DEFAULT_DERIVATION_SUFFIX: &str = "NaGLC6fMH50=";
 
 /// Derive the wallet's BRC-29 deposit keypair (the key behind `deposit_address`).
 ///
-/// Funds paid to this key's P2PKH address are auto-detected + internalized by
-/// `bsv-wallet sync`, so a time-locked gift locked to `deposit_pubkey` becomes
-/// normal, spendable wallet balance once claimed. Returns `(private, public)`
+/// Funds paid to this key's P2PKH address are internalized as a payment to
+/// the deposit key (`fund`, `receive`), and `gift-claim` records its own
+/// claim the same way, so a time-locked gift locked to `deposit_pubkey`
+/// becomes normal, spendable wallet balance once claimed. Returns `(private, public)`
 /// where `public == private.public_key()` (asserted in tests).
 pub fn deposit_keypair(root_key: &PrivateKey) -> Result<(PrivateKey, PublicKey)> {
     let deriver = KeyDeriver::new(Some(root_key.clone()));
