@@ -2,38 +2,21 @@
 //!
 //! Fetches the deposit tx, confirms the covenant is locked to this wallet's key,
 //! refuses if still locked (unless `--force` to pre-broadcast), builds the signed
-//! claim (covenant unlock + fee input), and broadcasts via WhatsOnChain.
+//! claim (covenant unlock + fee input), and broadcasts through the wallet's
+//! own broadcasters (Rule 28, C11: the deposit's bytes through
+//! `Services::get_raw_tx`, the claim through `post_beef`; see `gift_chain`).
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::bsv::sighash::parse_transaction;
 use bsv_wallet_cli::gift::claim::build_claim_tx;
 use bsv_wallet_cli::gift::covenant::parse_locking_script;
-use bsv_wallet_toolbox::Chain;
 
+use crate::commands::gift_chain;
 use crate::context::WalletContext;
 
-fn woc_base(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
-        _ => "https://api.whatsonchain.com/v1/bsv/main",
-    }
-}
-
 pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
-    let base = woc_base(ctx.chain);
-    let client = reqwest::Client::new();
-
     // 1. fetch the deposit transaction
-    let raw_hex = client
-        .get(format!("{base}/tx/{txid}/hex"))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| anyhow!("could not fetch deposit {txid} from WhatsOnChain: {e}"))?
-        .text()
-        .await?;
-    let deposit_raw = hex::decode(raw_hex.trim())
-        .map_err(|e| anyhow!("WhatsOnChain returned non-hex for {txid}: {e}"))?;
+    let deposit_raw = gift_chain::deposit_bytes(ctx.wallet.services(), txid).await?;
 
     // 2. parse the covenant + confirm it's ours
     let dep = parse_transaction(&deposit_raw).map_err(|e| anyhow!("parse deposit: {e}"))?;
@@ -73,18 +56,12 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
     let plan = build_claim_tx(&deposit_raw, &deposit_priv, params.lock_until as u32)
         .map_err(|e| anyhow!("failed to build claim: {e}"))?;
 
-    // 5. broadcast via WhatsOnChain
-    let resp = client
-        .post(format!("{base}/tx/raw"))
-        .json(&serde_json::json!({ "txhex": plan.claim_raw_hex }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        return Err(anyhow!("broadcast rejected ({status}): {}", body.trim()));
-    }
-    let claim_txid = body.trim().trim_matches('"');
+    // 5. broadcast through the wallet's broadcasters
+    let claim_raw =
+        hex::decode(&plan.claim_raw_hex).map_err(|e| anyhow!("the claim is not hex: {e}"))?;
+    let broadcaster =
+        gift_chain::broadcast_claim(ctx.wallet.services(), &deposit_raw, &claim_raw).await?;
+    let claim_txid = plan.claim_txid.as_str();
 
     if ctx.json_output {
         println!(
@@ -96,7 +73,7 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
                 "fee": plan.fee,
                 "change": plan.change,
                 "lockUntil": plan.covenant.lock_until,
-                "broadcast": "whatsonchain",
+                "broadcast": broadcaster,
             })
         );
     } else {
