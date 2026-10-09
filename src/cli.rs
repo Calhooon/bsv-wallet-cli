@@ -115,10 +115,13 @@ pub enum Commands {
     },
     /// Scan WhatsOnChain for unspent UTXOs at our deposit address and internalize new ones
     Sync {
-        /// Also RECONCILE: for every DB-unspent output missing from the
-        /// chain's unspent set, per-outpoint spent-check WoC and relinquish
-        /// outputs the chain says are SPENT (heals a restored-from-backup
-        /// wallet whose stale rows otherwise produce double-spend inputs).
+        /// Also RECONCILE: every DB-unspent output missing from the chain's
+        /// unspent set is put to the spend probe (the one `cleanup-abandoned`
+        /// and `reconcile-outputs` use), and an output spent by a transaction
+        /// we hold a merkle proof of is relinquished. A spender not proven yet,
+        /// or an answer the probe could not get, leaves the output alone (heals
+        /// a restored-from-backup wallet whose stale rows otherwise produce
+        /// double-spend inputs).
         #[arg(long)]
         reconcile_spent: bool,
     },

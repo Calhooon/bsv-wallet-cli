@@ -28,7 +28,7 @@ use bsv_sdk::transaction::Transaction;
 use sqlx::Row;
 use std::future::Future;
 
-use crate::commands::cleanup_abandoned::{probe_input_spend, InputSpend};
+use crate::commands::cleanup_abandoned::{probe_input_spend, stored_locking_script, InputSpend};
 use crate::commands::receive;
 use crate::context::WalletContext;
 
@@ -217,7 +217,19 @@ pub async fn run(
     let base = receive::woc_base(ctx.chain);
     let report = reconcile_outputs_with(&pool, execute, max_chain_checks, |src, vout| {
         let c = client.clone();
-        async move { probe_input_spend(&c, base, ctx.wallet.services(), &src, vout).await }
+        let pool = &pool;
+        async move {
+            let script = stored_locking_script(pool, &src, vout).await;
+            probe_input_spend(
+                &c,
+                base,
+                ctx.wallet.services(),
+                &src,
+                vout,
+                script.as_deref(),
+            )
+            .await
+        }
     })
     .await?;
 
