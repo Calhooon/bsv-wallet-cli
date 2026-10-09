@@ -345,6 +345,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bsv-tracker"
+version = "0.1.0"
+dependencies = [
+ "bsv-rs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bsv-wallet-cli"
 version = "0.5.0"
 dependencies = [
@@ -353,6 +362,7 @@ dependencies = [
  "axum",
  "axum-server",
  "bsv-rs",
+ "bsv-tracker",
  "bsv-wallet-toolbox-rs",
  "chrono",
  "clap",
