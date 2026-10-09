@@ -513,6 +513,10 @@ fn build_sources(
         absence: AbsenceAuthority::ChainIndex,
         kind: SourceKind::ChainIndex,
     });
+    // Break-glass (Rule 28, C1): the second chain index, for the same
+    // question and the same reason as the first (no header, proof or
+    // own-index answer for a transaction's presence while unmined, or for
+    // its absence); it is what makes one explorer's 404 not the answer.
     sources.push(StatusSource {
         name: "bitails",
         url_template: format!("{}/tx/{{txid}}", bitails_base(chain)),
@@ -822,6 +826,8 @@ impl BroadcastVerifier {
             kind: plane.kind(),
         }];
         if let Some(base) = chain_index_base {
+            // The chain index of a test or a tool, at the base it was given
+            // (never a default): the WhatsOnChain shape of C1.
             sources.push(StatusSource {
                 name: "chain-index",
                 url_template: format!("{}/tx/hash/{{txid}}", normalize_base(base)),
