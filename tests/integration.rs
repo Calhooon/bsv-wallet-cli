@@ -16,6 +16,44 @@ use tempfile::TempDir;
 
 /// Spin up a server on a random port, return the base URL and a reqwest client.
 async fn setup() -> (String, Client, TempDir) {
+    setup_with_header_service(std::env::var("CHAINTRACKS_URL").ok()).await
+}
+
+/// A local header service that answers the tip header at `height` and
+/// nothing else (the toolbox's `findChainTipHeaderHex` frame).
+async fn local_header_service(height: u32) -> String {
+    let tip = json!({
+        "status": "success",
+        "value": {
+            "version": 536870912u32,
+            "previousHash": "0".repeat(64),
+            "merkleRoot": "a".repeat(64),
+            "time": 1700000000u32,
+            "bits": 402917821u32,
+            "nonce": 7u32,
+            "height": height,
+            "hash": "b".repeat(64),
+        }
+    });
+    let app = axum::Router::new().route(
+        "/findChainTipHeaderHex",
+        axum::routing::get(move || {
+            let tip = tip.clone();
+            async move { axum::Json(tip) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr: SocketAddr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    format!("http://{}", addr)
+}
+
+/// `setup` over an explicit header service (or none).
+async fn setup_with_header_service(chaintracks_url: Option<String>) -> (String, Client, TempDir) {
     let tmp = TempDir::new().expect("temp dir");
     let db_path = tmp.path().join("test.db");
 
@@ -33,7 +71,7 @@ async fn setup() -> (String, Client, TempDir) {
 
     let services = {
         let mut opts = ServicesOptions::mainnet();
-        if let Ok(url) = std::env::var("CHAINTRACKS_URL") {
+        if let Some(url) = chaintracks_url {
             opts = opts.with_chaintracks_url(url);
         }
         Services::with_options(Chain::Main, opts).expect("services")
@@ -95,9 +133,13 @@ async fn test_is_authenticated() {
     assert_eq!(body["authenticated"], true);
 }
 
+/// The tip height is the header service's tip header's height (Rule 28,
+/// the toolbox's T1 and T2): a local header service answers it here, and no
+/// explorer is asked.
 #[tokio::test]
 async fn test_get_height() {
-    let (base, client, _tmp) = setup().await;
+    let header_service = local_header_service(900_001).await;
+    let (base, client, _tmp) = setup_with_header_service(Some(header_service)).await;
     let resp = client
         .get(format!("{base}/getHeight"))
         .send()
@@ -105,7 +147,20 @@ async fn test_get_height() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["height"].is_number(), "height should be a number");
+    assert_eq!(body["height"], 900_001, "the header service's tip");
+}
+
+/// With no header service the height is an error, never an explorer's
+/// number (the toolbox 0.5.0).
+#[tokio::test]
+async fn test_get_height_without_a_header_service_is_an_error() {
+    let (base, client, _tmp) = setup_with_header_service(None).await;
+    let resp = client
+        .get(format!("{base}/getHeight"))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), 200, "no header service: no height");
 }
 
 #[tokio::test]
