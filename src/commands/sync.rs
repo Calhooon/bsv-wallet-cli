@@ -20,6 +20,20 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
     let base = receive::woc_base(ctx.chain);
     let client = reqwest::Client::new();
 
+    // Break-glass (Rule 28, C4): a CHAIN SCAN. "Which outputs pay our
+    // deposit address" has no header, proof or own-index answer by
+    // construction: it is the question of a payment nobody handed us. The
+    // routine path is `fund` with a BEEF from the payer, which asks no
+    // explorer. This read is an operator's command only (no daemon path
+    // reaches it), one explorer, and its negative is weak on purpose: an
+    // empty list is "this explorer lists nothing", never "nothing was
+    // paid", and nothing is removed on it. A fault is an error ("could not
+    // look"), never an empty list.
+    tracing::warn!(
+        marker = "break_glass_chain_scan",
+        "sync is a chain scan at an explorer (break-glass): the routine way to receive is \
+         `fund` with the BEEF the payer hands over"
+    );
     let unspent: Vec<WocUnspent> = client
         .get(format!("{}/address/{}/unspent", base, address))
         .send()
@@ -259,6 +273,19 @@ mod tests {
             code.contains("probe_input_spend("),
             "the one probe is asked"
         );
+    }
+
+    /// C4 (Rule 28): the scan is named a chain scan and a break-glass read
+    /// at the site, and says so when it runs. Red at the base: neither.
+    #[test]
+    fn the_address_scan_is_named_at_the_site() {
+        let source = include_str!("sync.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        let site = code.find("/address/{}/unspent").expect("the scan");
+        let before = &code[..site];
+        let comment = before.rfind("Break-glass (Rule 28, C4): a CHAIN SCAN");
+        assert!(comment.is_some(), "the scan is not named at its site");
+        assert!(before[comment.unwrap()..].contains("break_glass_chain_scan"));
     }
 
     /// Only a proven spend relinquishes. Red at the base: any 200 from the
