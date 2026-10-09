@@ -59,7 +59,7 @@ All 28 endpoints, organized by batch:
   - 502 — `Service error:`, `Network error:`, `Broadcast failed:`
   - Default: 400
   - Response body: `{"code": "ERROR_CODE", "message": "..."}`. Errors are also logged via `tracing::warn`.
-- **Layer ordering**: CORS (outermost) -> auth middleware -> tracing -> 50MB body limit. `ServerConfig` and `SpendingLock` are injected via axum `Extension`, not per-handler.
+- **Layer ordering**: the last layer added runs first: the body limit, tracing, the extensions, auth, then the JSON body is read (`lenient_json_body`), then CORS. Auth runs before any body is read. The body cap is 50 MiB (`BODY_CAP`) on every route but the two BEEF doors (`BEEF_DOORS`: `/createAction`, `/internalizeAction`), which have none: a valid BEEF is never refused for its size, the body is held whole, and the toolbox refuses invalid bytes only (`INVALID_BEEF`, 400, the offset and the kind). `ServerConfig` and `SpendingLock` are injected via axum `Extension`, not per-handler.
 - **AtomicBEEF in createAction response**: The SDK returns standard BEEF with ancestors. The handler converts it to AtomicBEEF via `Beef::from_binary()` + `to_binary_atomic(&txid_hex)`. Falls back to raw tx bytes if conversion fails. Clients (x402, worm) expect AtomicBEEF format in the `tx` response field.
 - **Graceful shutdown**: `run()` registers a ctrl-c signal handler via `tokio::signal::ctrl_c()` and uses `axum::serve`'s `with_graceful_shutdown()` to drain in-flight requests.
 - **ServerConfig**: Holds optional `auth_token` (bearer auth) and optional `TlsConfig` (cert + key paths). Auth middleware checks bearer token only when configured; when `None`, all requests pass.
