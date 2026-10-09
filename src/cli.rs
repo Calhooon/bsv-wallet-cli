@@ -73,7 +73,10 @@ pub enum Commands {
     GiftClaim {
         /// The gift (deposit) transaction id
         txid: String,
-        /// Pre-broadcast before unlock (sits unconfirmed, auto-confirms at unlock)
+        /// Hand the claim over before unlock. A broadcaster that takes it holds
+        /// it until the unlock; one that calls it not final is not a failure:
+        /// the claim is kept and announced again at the unlock time by the
+        /// tracker's pass (`serve`, or `tracker-tick`)
         #[arg(long)]
         force: bool,
     },

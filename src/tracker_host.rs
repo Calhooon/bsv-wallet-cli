@@ -39,6 +39,11 @@
 //! requests for the same transaction. A mined row is read again only when
 //! the header at or below its height moved (the last twelve tips are kept
 //! to see that) or when a spend names it ([`spend_guard`]).
+//!
+//! One re-ask is an announce, not a proof request: a transaction a
+//! broadcaster called not final (a forced `gift-claim` before its lock
+//! time) is kept with its BEEF and handed to the broadcasters again at the
+//! lock time ([`heard`], and the re-announce step of [`tick`]).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
@@ -50,6 +55,7 @@ use bsv_tracker::{
     HintStatus, HostAction, Input, Params, Proof, ProofFetcher, Reask, State, Timestamp, TxId,
     Word,
 };
+use bsv_wallet_toolbox::services::PostBeefResult;
 use bsv_wallet_toolbox::{BroadcastStatus, StorageSqlx, WalletServices};
 use serde::{Deserialize, Serialize};
 use sqlx::Row as _;
@@ -100,6 +106,14 @@ impl HeaderSnapshot {
         };
         snapshot.extend(services, heights).await;
         snapshot
+    }
+
+    /// A snapshot of nothing: no tip, no header. Every check fails closed.
+    pub fn unread() -> Self {
+        Self {
+            tip: Err("the header service was not read".to_string()),
+            headers: BTreeMap::new(),
+        }
     }
 
     /// Read the headers at `heights` that this snapshot does not hold yet.
@@ -365,9 +379,25 @@ struct TrackedRow {
     bump: Option<String>,
     asks: u32,
     next_ask_at: Option<Timestamp>,
+    /// The BEEF to hand to the broadcasters again, and when.
+    reannounce_beef: Option<Vec<u8>>,
+    reannounce_at: Option<Timestamp>,
 }
 
 impl TrackedRow {
+    fn new(txid: &str) -> Self {
+        Self {
+            txid: txid.to_ascii_lowercase(),
+            built: true,
+            hints: vec![],
+            bump: None,
+            asks: 0,
+            next_ask_at: None,
+            reannounce_beef: None,
+            reannounce_at: None,
+        }
+    }
+
     fn proof(&self) -> Option<std::result::Result<Proof, CheckError>> {
         let hex = self.bump.as_deref()?;
         Some(
@@ -443,6 +473,8 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
             reask TEXT, \
             asks INTEGER NOT NULL DEFAULT 0, \
             next_ask_at INTEGER, \
+            reannounce_beef BLOB, \
+            reannounce_at INTEGER, \
             updated_at INTEGER NOT NULL DEFAULT 0)",
         "CREATE INDEX IF NOT EXISTS tracker_states_word ON tracker_states (word)",
         "CREATE INDEX IF NOT EXISTS tracker_states_height ON tracker_states (height)",
@@ -453,7 +485,8 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     Ok(())
 }
 
-const ROW_COLUMNS: &str = "txid, built, hints, bump, asks, next_ask_at";
+const ROW_COLUMNS: &str =
+    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     let hints: String = row.get("hints");
@@ -465,6 +498,10 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
         asks: row.get::<i64, _>("asks").max(0) as u32,
         next_ask_at: row
             .get::<Option<i64>, _>("next_ask_at")
+            .map(|t| t.max(0) as Timestamp),
+        reannounce_beef: row.get("reannounce_beef"),
+        reannounce_at: row
+            .get::<Option<i64>, _>("reannounce_at")
             .map(|t| t.max(0) as Timestamp),
     }
 }
@@ -494,12 +531,14 @@ async fn store_row(
     };
     sqlx::query(
         "INSERT INTO tracker_states \
-            (txid, built, hints, bump, word, height, header_hash, reask, asks, next_ask_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            (txid, built, hints, bump, word, height, header_hash, reask, asks, next_ask_at, \
+             reannounce_beef, reannounce_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(txid) DO UPDATE SET built = excluded.built, hints = excluded.hints, \
             bump = excluded.bump, word = excluded.word, height = excluded.height, \
             header_hash = excluded.header_hash, reask = excluded.reask, asks = excluded.asks, \
-            next_ask_at = excluded.next_ask_at, updated_at = excluded.updated_at",
+            next_ask_at = excluded.next_ask_at, reannounce_beef = excluded.reannounce_beef, \
+            reannounce_at = excluded.reannounce_at, updated_at = excluded.updated_at",
     )
     .bind(&row.txid)
     .bind(row.built as i64)
@@ -511,6 +550,8 @@ async fn store_row(
     .bind(state.reask().map(reask_label))
     .bind(row.asks as i64)
     .bind(row.next_ask_at.map(|t| t as i64))
+    .bind(&row.reannounce_beef)
+    .bind(row.reannounce_at.map(|t| t as i64))
     .bind(now as i64)
     .execute(storage.pool())
     .await?;
@@ -536,6 +577,132 @@ pub async fn stored_word(
             r.get("reask"),
         )
     }))
+}
+
+// ---------------------------------------------------------------------------
+// What a broadcaster answered to a transaction the host just handed over
+// ---------------------------------------------------------------------------
+
+/// The broadcasters' answer to one post, read as a hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostAnswer {
+    /// A broadcaster took it.
+    Accepted { provider: String },
+    /// None took it and one called it not final: its lock time has not
+    /// passed for the node behind that broadcaster. Transient.
+    NotFinal { provider: String, said: String },
+    /// None took it, for some other reason (or none answered).
+    Refused { said: String },
+}
+
+/// Does a broadcaster's refusal say "not final"? The node's word is
+/// `non-final`; ARC and Arcade carry it under code 476, which the toolbox
+/// reads as retryable (bsv-wallet-toolbox-rs `ARCADE_CODE_NON_FINAL`).
+pub fn says_not_final(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    ["non-final", "nonfinal", "non final", "not final"]
+        .iter()
+        .any(|word| lower.contains(word))
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|token| token == "476")
+}
+
+/// Read the results of one `post_beef`.
+pub fn read_post(results: &[PostBeefResult]) -> PostAnswer {
+    if let Some(accepted) = results.iter().find(|r| r.is_success()) {
+        return PostAnswer::Accepted {
+            provider: accepted.name.clone(),
+        };
+    }
+    let said: Vec<(String, String)> = results
+        .iter()
+        .map(|r| {
+            let detail = r
+                .error
+                .clone()
+                .or_else(|| r.txid_results.iter().find_map(|t| t.data.clone()))
+                .unwrap_or_else(|| r.status.clone());
+            (r.name.clone(), detail)
+        })
+        .collect();
+    if let Some((provider, detail)) = said.iter().find(|(_, detail)| says_not_final(detail)) {
+        return PostAnswer::NotFinal {
+            provider: provider.clone(),
+            said: detail.clone(),
+        };
+    }
+    PostAnswer::Refused {
+        said: if said.is_empty() {
+            "none answered".to_string()
+        } else {
+            said.iter()
+                .map(|(name, detail)| format!("{name}: {detail}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        },
+    }
+}
+
+/// A BEEF to hand to the broadcasters again, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reannounce {
+    /// The BEEF, as it was posted.
+    pub beef: Vec<u8>,
+    /// Not before this time (seconds since the epoch).
+    pub at: Timestamp,
+}
+
+/// Track a transaction this wallet built and just handed to a broadcaster,
+/// and feed what the broadcaster said, as a hint. `not_before` holds every
+/// re-ask until that time (a transaction that cannot be mined before its
+/// lock time has no proof to ask for before it); `reannounce` keeps the
+/// BEEF to hand over again then. Returns the tracker's word and its
+/// pending re-ask.
+pub async fn heard<C: Clock>(
+    storage: &StorageSqlx,
+    clock: &C,
+    opts: &TickOptions,
+    txid: &str,
+    hint: Hint,
+    not_before: Option<Timestamp>,
+    reannounce: Option<Reannounce>,
+) -> Result<(String, Option<String>)> {
+    ensure_tables(storage).await?;
+    let mut row = match load_row(storage, txid).await? {
+        // A row with a stored path is past this: its word is read, never
+        // rewritten from a hint.
+        Some(row) if row.bump.is_some() => {
+            let stored = stored_word(storage, txid).await?.unwrap_or_default();
+            return Ok((stored.0, stored.2));
+        }
+        Some(row) => row,
+        None => TrackedRow::new(txid),
+    };
+    let params = opts.params();
+    let headers = HeaderSnapshot::unread();
+    let (mut state, _) = row.replay(&params, &headers);
+    if !row.hints.iter().any(|h| h.source == hint.source) {
+        row.hints.push(StoredHint::of(&hint));
+        let _ = state.step(&params, &headers, Input::Hint(hint));
+    }
+    row.asks = 0;
+    row.next_ask_at = not_before;
+    match reannounce {
+        Some(again) => {
+            row.reannounce_beef = Some(again.beef);
+            row.reannounce_at = Some(again.at);
+        }
+        None => {
+            row.reannounce_beef = None;
+            row.reannounce_at = None;
+        }
+    }
+    store_row(storage, &row, &state, clock.now()).await?;
+    Ok((
+        word_label(state.word()).to_string(),
+        state.reask().map(reask_label),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +760,11 @@ pub struct TickReport {
     pub moved: Vec<String>,
     /// The lowest height whose header moved since the last pass, if any.
     pub moved_from: Option<Height>,
+    /// Transactions handed to the broadcasters again and accepted.
+    pub reannounced: Vec<String>,
+    /// Transactions handed over again and still called not final; each is
+    /// handed over again after a pause.
+    pub not_final: Vec<String>,
     /// Faults the host reports: `txid: what failed`.
     pub faults: Vec<String>,
     /// What the wallet's storage did with each checked proof.
@@ -605,6 +777,8 @@ impl TickReport {
         self.adopted == 0
             && self.hints == 0
             && self.asked == 0
+            && self.reannounced.is_empty()
+            && self.not_final.is_empty()
             && self.moved.is_empty()
             && self.faults.is_empty()
     }
@@ -612,10 +786,12 @@ impl TickReport {
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "tracker tick: {} tracked ({} new), {} hint(s), {} re-ask(s): {} mined, {} without a proof, {} moved, {} fault(s)",
+            "tracker tick: {} tracked ({} new), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} fault(s)",
             self.tracked,
             self.adopted,
             self.hints,
+            self.reannounced.len(),
+            self.not_final.len(),
             self.asked,
             self.mined.len(),
             self.no_proof.len(),
@@ -781,6 +957,68 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         if matches!(state.reask(), Some(Reask::Hint(_))) {
             row.asks = 0;
             row.next_ask_at = None;
+        }
+    }
+    // Announce again what a broadcaster called not final, at its time.
+    // The lock time passing on our clock is not the node's rule passing
+    // (the node reads the median time past, about an hour behind; the rule
+    // is the sibling's, bsv-script-lean `docs/BLOCK-CONSENSUS.md` section
+    // 2.2), so "not final" again is expected and waits one more pause.
+    for row in rows.iter_mut() {
+        let (Some(beef), Some(at)) = (row.reannounce_beef.clone(), row.reannounce_at) else {
+            continue;
+        };
+        let Some(state) = states.get_mut(&row.txid) else {
+            continue;
+        };
+        if at > now || matches!(state.word(), Word::Mined(_)) {
+            continue;
+        }
+        let pause = Some(now.saturating_add(opts.age_threshold));
+        let answer = services
+            .post_beef(&beef, std::slice::from_ref(&row.txid))
+            .await
+            .map(|results| read_post(&results));
+        match answer {
+            Ok(PostAnswer::Accepted { provider }) => {
+                let hint = Hint::new(format!("{provider}|accepted"), HintStatus::Accepted, now);
+                row.hints.push(StoredHint::of(&hint));
+                let _ = state.step(&params, &snapshot, Input::Hint(hint));
+                row.reannounce_beef = None;
+                row.reannounce_at = None;
+                row.asks = 0;
+                row.next_ask_at = pause;
+                report.reannounced.push(row.txid.clone());
+            }
+            Ok(PostAnswer::NotFinal { .. }) => {
+                row.asks = row.asks.saturating_add(1);
+                row.next_ask_at = pause;
+                if row.asks >= MAX_ASKS_PER_TX {
+                    row.reannounce_at = None;
+                    report.faults.push(format!(
+                        "{}: still not final after {MAX_ASKS_PER_TX} announces; not announced again",
+                        row.txid
+                    ));
+                } else {
+                    row.reannounce_at = pause;
+                    report.not_final.push(row.txid.clone());
+                }
+            }
+            Ok(PostAnswer::Refused { said }) => {
+                row.reannounce_at = None;
+                row.next_ask_at = pause;
+                report.faults.push(format!(
+                    "{}: refused when announced again: {said}",
+                    row.txid
+                ));
+            }
+            Err(e) => {
+                // Could not look: the same time again, one pause on.
+                row.reannounce_at = pause;
+                report
+                    .faults
+                    .push(format!("{}: could not announce again: {e}", row.txid));
+            }
         }
     }
     for state in states.values_mut() {
@@ -1161,6 +1399,118 @@ pub(crate) mod tests {
             stored_word(&storage, &low).await.unwrap().unwrap().1,
             Some(100)
         );
+    }
+
+    /// E2 (the rulings of 2026-10-09). A transaction a broadcaster called
+    /// not final is held with its BEEF: nothing is asked or announced
+    /// before its lock time; at the lock time it is announced again; "not
+    /// final" again (the node's clock is behind ours) waits one pause; an
+    /// acceptance announces it, and from there its age asks for the proof.
+    #[tokio::test]
+    async fn a_not_final_transaction_is_announced_again_at_its_lock_time() {
+        use bsv_wallet_toolbox::services::mock::{
+            error_post_beef_result, success_post_beef_result,
+        };
+        let (storage, _user) = wallet_storage().await;
+        let txid = "c7".repeat(32);
+        let lock = 2_000_000_000u64;
+        let services = MockWalletServices::builder()
+            .post_beef_response(MockResponse::Sequence(vec![
+                MockResponse::Success(vec![error_post_beef_result("Arcade", "476 non-final")]),
+                MockResponse::Success(vec![success_post_beef_result("Arcade", &[&txid])]),
+            ]))
+            .get_merkle_path_response(proof_answer(None))
+            .build();
+
+        let hint = Hint::new(
+            "Arcade|rejected",
+            HintStatus::Rejected {
+                reason: "476 non-final".to_string(),
+            },
+            lock - 3600,
+        );
+        let again = Reannounce {
+            beef: vec![1, 2, 3],
+            at: lock,
+        };
+        let word = heard(
+            &storage,
+            &FixedClock(lock - 3600),
+            &opts(),
+            &txid,
+            hint,
+            Some(lock),
+            Some(again),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            word,
+            (
+                "built".to_string(),
+                Some("hint:Arcade|rejected".to_string())
+            )
+        );
+
+        // Before the lock time: nothing announced, no proof asked.
+        let report = tick(&storage, &services, &FixedClock(lock - 1), &opts())
+            .await
+            .unwrap();
+        assert_eq!((report.tracked, report.asked), (1, 0), "{report:?}");
+        assert_eq!(services.call_count("post_beef"), 0);
+
+        // At the lock time: announced again; the node still says not final.
+        let report = tick(&storage, &services, &FixedClock(lock), &opts())
+            .await
+            .unwrap();
+        assert_eq!(report.not_final, vec![txid.clone()]);
+        assert_eq!(services.call_count("post_beef"), 1);
+        let report = tick(&storage, &services, &FixedClock(lock + 60), &opts())
+            .await
+            .unwrap();
+        assert!(report.not_final.is_empty() && report.reannounced.is_empty());
+        assert_eq!(services.call_count("post_beef"), 1, "one pause between two");
+
+        // One pause on: accepted. The word is the tracker's `announced`.
+        let report = tick(&storage, &services, &FixedClock(lock + 600), &opts())
+            .await
+            .unwrap();
+        assert_eq!(report.reannounced, vec![txid.clone()]);
+        assert_eq!(services.call_count("post_beef"), 2);
+        assert_eq!(
+            stored_word(&storage, &txid).await.unwrap().unwrap().0,
+            "announced"
+        );
+        assert_eq!(services.call_count("get_merkle_path"), 0);
+
+        // It is not announced a third time; its age asks for the proof.
+        let report = tick(&storage, &services, &FixedClock(lock + 1300), &opts())
+            .await
+            .unwrap();
+        assert_eq!(report.asked, 1);
+        assert_eq!(services.call_count("post_beef"), 2);
+        assert_eq!(services.call_count("get_merkle_path"), 1);
+    }
+
+    /// The words that mean "not final", and one that does not.
+    #[test]
+    fn not_final_is_read_from_the_refusal() {
+        for said in [
+            "476 non-final",
+            "bad-txns-nonfinal",
+            "tx is not final",
+            "code 476",
+        ] {
+            assert!(says_not_final(said), "{said}");
+        }
+        for said in [
+            "fee too low",
+            "DOUBLE_SPEND_ATTEMPTED",
+            "txid 4476aa",
+            "HTTP 500",
+        ] {
+            assert!(!says_not_final(said), "{said}");
+        }
     }
 
     /// A tip header carrying the hash its bytes have.

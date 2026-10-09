@@ -1,10 +1,18 @@
 //! What the gift commands ask of the chain, through the wallet's services
 //! (Rule 28, C11 and C12): a foreign deposit's bytes, and the broadcast of
 //! the claim. Neither command holds an explorer base or an HTTP client.
+//!
+//! The claim is a transaction this wallet built, so the tracker holds it
+//! from the moment it is handed over (E2, the rulings of 2026-10-09): what
+//! the broadcaster answers is a hint, and the word the user sees is the
+//! tracker's.
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
-use bsv_wallet_toolbox::WalletServices;
+use bsv_tracker::{Clock, Hint, HintStatus};
+use bsv_wallet_toolbox::{StorageSqlx, WalletServices};
+
+use crate::tracker_host::{self, PostAnswer, Reannounce, TickOptions};
 
 /// The bytes of the deposit transaction `txid`.
 ///
@@ -34,9 +42,18 @@ pub(crate) async fn deposit_bytes<V: WalletServices>(services: &V, txid: &str) -
     })
 }
 
-/// Broadcast the claim through the wallet's broadcasters (`post_beef`: the
+/// The claim, posted: its txid, the BEEF that carried it, and what the
+/// broadcasters answered.
+pub(crate) struct ClaimPost {
+    pub claim_txid: String,
+    pub beef: Vec<u8>,
+    pub answer: PostAnswer,
+}
+
+/// Post the claim through the wallet's broadcasters (`post_beef`: the
 /// ladder the wallet's own sends use, with its broadcast memory), never a
-/// post of our own to an explorer. Returns the provider that accepted it.
+/// post of our own to an explorer. An error is "could not post"; a refusal
+/// is an answer.
 ///
 /// The BEEF is the deposit and the claim. The deposit carries its merkle
 /// proof when the header service checks one for it (`get_merkle_path`
@@ -45,7 +62,7 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
     services: &V,
     deposit_raw: &[u8],
     claim_raw: &[u8],
-) -> Result<String> {
+) -> Result<ClaimPost> {
     let deposit_txid = Transaction::from_binary(deposit_raw)
         .map_err(|e| anyhow!("parse deposit: {e}"))?
         .id();
@@ -70,33 +87,118 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
         }
     }
     beef.merge_raw_tx(claim_raw.to_vec(), None);
+    let beef = beef.to_binary();
 
     let results = services
-        .post_beef(&beef.to_binary(), std::slice::from_ref(&claim_txid))
+        .post_beef(&beef, std::slice::from_ref(&claim_txid))
         .await
         .map_err(|e| anyhow!("broadcast failed: {e}"))?;
-    if let Some(accepted) = results.iter().find(|r| r.is_success()) {
-        return Ok(accepted.name.clone());
-    }
-    let said: Vec<String> = results
-        .iter()
-        .map(|r| {
-            let detail = r
-                .error
-                .clone()
-                .or_else(|| r.txid_results.iter().find_map(|t| t.data.clone()))
-                .unwrap_or_else(|| r.status.clone());
-            format!("{}: {}", r.name, detail)
-        })
-        .collect();
-    Err(anyhow!(
-        "broadcast rejected by every broadcaster ({})",
-        if said.is_empty() {
-            "none answered".to_string()
-        } else {
-            said.join("; ")
+    Ok(ClaimPost {
+        claim_txid,
+        beef,
+        answer: tracker_host::read_post(&results),
+    })
+}
+
+/// What became of a claim handed to the broadcasters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClaimOutcome {
+    /// The broadcaster that accepted it, if one did.
+    pub broadcaster: Option<String>,
+    /// The tracker's word for the claim.
+    pub word: String,
+    /// The tracker's pending re-ask, if any.
+    pub reask: Option<String>,
+    /// When the host acts on the claim next: the lock time, for a claim
+    /// handed over before it.
+    pub held_until: Option<u64>,
+    /// What a broadcaster said when it called the claim not final.
+    pub not_final: Option<String>,
+}
+
+/// Hand the claim to the broadcasters and to the tracker.
+///
+/// - Accepted: the broadcaster's acceptance is a hint and the word is
+///   `announced`. Before the lock time no proof can exist, so nothing is
+///   asked until then.
+/// - Called not final, with `force`, before the lock time: not a failure.
+///   The refusal is a hint; the claim is kept with its BEEF and announced
+///   again at the lock time by the tracker's pass (`serve`'s loop, or
+///   `tracker-tick`).
+/// - Any other refusal: an error that says what they said.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
+    storage: &StorageSqlx,
+    services: &V,
+    clock: &C,
+    opts: &TickOptions,
+    deposit_raw: &[u8],
+    claim_raw: &[u8],
+    lock_until: u64,
+    force: bool,
+) -> Result<ClaimOutcome> {
+    let post = broadcast_claim(services, deposit_raw, claim_raw).await?;
+    let now = clock.now();
+    let early = now < lock_until;
+    let held_until = early.then_some(lock_until);
+    match post.answer {
+        PostAnswer::Accepted { provider } => {
+            let hint = Hint::new(format!("{provider}|accepted"), HintStatus::Accepted, now);
+            let (word, reask) = tracker_host::heard(
+                storage,
+                clock,
+                opts,
+                &post.claim_txid,
+                hint,
+                held_until,
+                None,
+            )
+            .await?;
+            Ok(ClaimOutcome {
+                broadcaster: Some(provider),
+                word,
+                reask,
+                held_until,
+                not_final: None,
+            })
         }
-    ))
+        PostAnswer::NotFinal { provider, said } if force && early => {
+            let hint = Hint::new(
+                format!("{provider}|rejected"),
+                HintStatus::Rejected {
+                    reason: said.clone(),
+                },
+                now,
+            );
+            let again = Reannounce {
+                beef: post.beef,
+                at: lock_until,
+            };
+            let (word, reask) = tracker_host::heard(
+                storage,
+                clock,
+                opts,
+                &post.claim_txid,
+                hint,
+                held_until,
+                Some(again),
+            )
+            .await?;
+            Ok(ClaimOutcome {
+                broadcaster: None,
+                word,
+                reask,
+                held_until,
+                not_final: Some(format!("{provider}: {said}")),
+            })
+        }
+        PostAnswer::NotFinal { provider, said } => Err(anyhow!(
+            "broadcast rejected by every broadcaster ({provider}: {said})"
+        )),
+        PostAnswer::Refused { said } => {
+            Err(anyhow!("broadcast rejected by every broadcaster ({said})"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -190,8 +292,14 @@ mod tests {
             }))
             .build();
 
-        let provider = broadcast_claim(&services, &deposit, &claim).await.unwrap();
-        assert_eq!(provider, "MockProvider");
+        let post = broadcast_claim(&services, &deposit, &claim).await.unwrap();
+        assert_eq!(
+            post.answer,
+            PostAnswer::Accepted {
+                provider: "MockProvider".to_string()
+            }
+        );
+        assert_eq!(post.claim_txid, claim_txid);
         let calls = services.call_history();
         let posts: Vec<_> = calls.iter().filter(|c| c.method == "post_beef").collect();
         assert_eq!(posts.len(), 1);
@@ -216,9 +324,168 @@ mod tests {
                 notes: vec![],
             }))
             .build();
-        broadcast_claim(&services, &deposit, &claim).await.unwrap();
+        let post = broadcast_claim(&services, &deposit, &claim).await.unwrap();
+        assert!(matches!(post.answer, PostAnswer::Accepted { .. }));
         assert_eq!(services.call_count("get_merkle_path"), 1);
         assert_eq!(services.call_count("post_beef"), 1);
+    }
+
+    struct At(u64);
+    impl Clock for At {
+        fn now(&self) -> u64 {
+            self.0
+        }
+    }
+
+    async fn storage() -> StorageSqlx {
+        use bsv_wallet_toolbox::WalletStorageWriter;
+        let storage = StorageSqlx::in_memory().await.unwrap();
+        storage
+            .migrate("gift-tests", &("02".to_string() + &"ab".repeat(32)))
+            .await
+            .unwrap();
+        storage.make_available().await.unwrap();
+        storage
+    }
+
+    fn opts() -> TickOptions {
+        TickOptions {
+            age_threshold: 600,
+            max_asks: 20,
+        }
+    }
+
+    /// E2 (the rulings of 2026-10-09): a forced claim a broadcaster calls
+    /// not final is not a failed claim. The refusal is a hint; the tracker
+    /// holds the claim and the host announces it again at the lock time.
+    /// Red at the base: `broadcast rejected by every broadcaster (Arcade:
+    /// 476 non-final)`, and nothing kept.
+    #[tokio::test]
+    async fn a_forced_claim_called_not_final_is_tracked_and_re_asked_at_the_lock_time() {
+        let (deposit, claim) = deposit_and_claim();
+        let claim_txid = txid_of(&claim);
+        let lock = 2_000_000_000u64;
+        let not_final = || {
+            MockWalletServices::builder()
+                .post_beef_response(MockResponse::Success(vec![error_post_beef_result(
+                    "Arcade",
+                    "476 non-final",
+                )]))
+                .build()
+        };
+        let storage = storage().await;
+        let services = not_final();
+        let outcome = announce_claim(
+            &storage,
+            &services,
+            &At(lock - 3600),
+            &opts(),
+            &deposit,
+            &claim,
+            lock,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome,
+            ClaimOutcome {
+                broadcaster: None,
+                word: "built".to_string(),
+                reask: Some("hint:Arcade|rejected".to_string()),
+                held_until: Some(lock),
+                not_final: Some("Arcade: 476 non-final".to_string()),
+            }
+        );
+        // The tracker holds it, in the wallet's own storage.
+        assert_eq!(
+            tracker_host::stored_word(&storage, &claim_txid)
+                .await
+                .unwrap()
+                .map(|w| w.0),
+            Some("built".to_string())
+        );
+        // The host announces it again at the lock time, not before.
+        let early = tracker_host::tick(&storage, &services, &At(lock - 1), &opts())
+            .await
+            .unwrap();
+        assert!(early.not_final.is_empty(), "{early:?}");
+        assert_eq!(services.call_count("post_beef"), 1);
+        let at_lock = tracker_host::tick(&storage, &services, &At(lock), &opts())
+            .await
+            .unwrap();
+        assert_eq!(at_lock.not_final, vec![claim_txid.clone()]);
+        assert_eq!(services.call_count("post_beef"), 2);
+
+        // Without --force, and past the lock time, "not final" is a refusal.
+        for (now, force) in [(lock - 3600, false), (lock + 1, true)] {
+            let storage = self::storage().await;
+            let err = announce_claim(
+                &storage,
+                &not_final(),
+                &At(now),
+                &opts(),
+                &deposit,
+                &claim,
+                lock,
+                force,
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("Arcade: 476 non-final"), "{err}");
+            assert_eq!(
+                tracker_host::stored_word(&storage, &claim_txid)
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+    }
+
+    /// A forced claim a broadcaster accepts is `announced`, the tracker's
+    /// word, and nothing is asked about it before its lock time.
+    #[tokio::test]
+    async fn an_accepted_claim_is_announced_and_held_until_its_lock_time() {
+        let (deposit, claim) = deposit_and_claim();
+        let claim_txid = txid_of(&claim);
+        let lock = 2_000_000_000u64;
+        let storage = storage().await;
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                merkle_path: None,
+                header: None,
+                error: None,
+                notes: vec![],
+            }))
+            .build();
+        let outcome = announce_claim(
+            &storage,
+            &services,
+            &At(lock - 7200),
+            &opts(),
+            &deposit,
+            &claim,
+            lock,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.broadcaster.as_deref(), Some("MockProvider"));
+        assert_eq!(outcome.word, "announced");
+        assert_eq!(outcome.held_until, Some(lock));
+        // One call for the deposit's proof at the post; none for the claim
+        // an hour later, well past the age threshold.
+        assert_eq!(services.call_count("get_merkle_path"), 1);
+        let report = tracker_host::tick(&storage, &services, &At(lock - 3600), &opts())
+            .await
+            .unwrap();
+        assert_eq!((report.tracked, report.asked), (1, 0), "{report:?}");
+        let report = tracker_host::tick(&storage, &services, &At(lock), &opts())
+            .await
+            .unwrap();
+        assert_eq!(report.asked, 1);
+        assert_eq!(report.no_proof, vec![claim_txid]);
     }
 
     /// Every broadcaster refusing is an error that says what they said.
@@ -228,12 +495,22 @@ mod tests {
         let services = MockWalletServices::builder()
             .post_beef_response(MockResponse::Success(vec![error_post_beef_result(
                 "Arcade",
-                "non-final",
+                "fee too low",
             )]))
             .build();
-        let err = broadcast_claim(&services, &deposit, &claim)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("Arcade: non-final"), "{err}");
+        let storage = storage().await;
+        let err = announce_claim(
+            &storage,
+            &services,
+            &At(2_000_000_000),
+            &opts(),
+            &deposit,
+            &claim,
+            1_900_000_000,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("Arcade: fee too low"), "{err}");
     }
 }
