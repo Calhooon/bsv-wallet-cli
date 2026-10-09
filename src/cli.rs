@@ -82,7 +82,8 @@ pub enum Commands {
         /// Destination address
         address: String,
     },
-    /// Internalize a BEEF transaction (receive funds)
+    /// Internalize a BEEF transaction (receive funds): the routine way to receive, with the
+    /// BEEF the payer hands over; checked against headers, no explorer asked
     Fund {
         /// BEEF transaction in hex (standard or AtomicBEEF)
         beef_hex: String,
@@ -113,7 +114,14 @@ pub enum Commands {
         #[arg(long)]
         label: Option<String>,
     },
-    /// Scan WhatsOnChain for unspent UTXOs at our deposit address and internalize new ones
+    /// Break-glass chain scan: ask an explorer for the unspent outputs at our deposit
+    /// address and internalize new ones
+    ///
+    /// This is a chain scan (an address lookup at WhatsOnChain, one explorer), kept for
+    /// one case: finding a payment nobody handed us. It is not the routine way to
+    /// receive, and no daemon path runs it. The routine path is `fund` with the BEEF the
+    /// payer hands over: that answer is checked against headers and asks no explorer.
+    /// An empty list from the explorer means "it lists nothing", not "nothing was paid".
     Sync {
         /// Also RECONCILE: every DB-unspent output missing from the chain's
         /// unspent set is put to the spend probe (the one `cleanup-abandoned`
@@ -234,4 +242,28 @@ pub enum Commands {
         #[arg(long)]
         execute: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn help_of(name: &str) -> String {
+        let mut cli = Cli::command();
+        let sub = cli.find_subcommand_mut(name).expect("the subcommand");
+        sub.render_long_help().to_string()
+    }
+
+    /// C4 (Rule 28): `sync --help` says what the command is, a chain scan
+    /// and a break-glass read, and names the routine path. Red at the base:
+    /// "Scan WhatsOnChain for unspent UTXOs at our deposit address and
+    /// internalize new ones", and nothing else.
+    #[test]
+    fn sync_help_says_it_is_a_break_glass_chain_scan_and_names_fund() {
+        let help = help_of("sync");
+        for words in ["chain scan", "Break-glass", "`fund`", "BEEF"] {
+            assert!(help.contains(words), "sync --help lacks `{words}`:\n{help}");
+        }
+    }
 }
