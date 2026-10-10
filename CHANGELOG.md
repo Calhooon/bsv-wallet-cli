@@ -3,6 +3,43 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## 0.7.2
+
+The toolbox 0.7.3 and bsv-rs 0.4.3, moved together; no line of the CLI's
+code changed, one test added.
+
+- **Dependencies.** `bsv-wallet-toolbox-rs` 0.7.3 (was 0.7.0) and the CLI's
+  own `bsv-rs` (`bsv-sdk`) 0.4.3 (was 0.4.1), in one commit, so the graph
+  holds one bsv-rs; `bsv-tracker` 0.2.0 resolves the same 0.4.3.
+- **A transaction with no output is invalid bytes** (bsv-rs 0.4.3,
+  bsv-stack-lean #59; the node's rule, bsv-script-lean@87f0461
+  `lean/BsvScript/TxRules.lean:85-86`), as one with no input has been since
+  0.7.0. The CLI's reader of a stranger's BEEF (`atomic_beef`, the
+  toolbox's `refuse_invalid_beef_bytes`, which the served doors also call)
+  refuses one at the transaction's offset, kind `NoOutputs`, under a BUMP
+  too; the witness `a_transaction_with_no_output_is_refused_at_its_offset`
+  fails on 0.7.1's dependencies (the BEEF taken) and passes here. No fixture
+  of the CLI carries a transaction with no output, and no code of the CLI
+  matches on bsv-rs's `Kind` or `Reason`, so the new variant breaks no match
+  here.
+- **What the toolbox 0.7.1 to 0.7.3 brings to the daemon.** A txid-only
+  entry is valid only when the BEEF proves it, except that `createAction`
+  with `trustSelf: 'known'` (the wallet's default) resolves an entry the
+  wallet's own storage holds before it verifies. ARC is posted the plain BEEF
+  as written, and ARC's 400 is a request fault that schedules a re-ask, not
+  the transaction's rejection. The monitor retires no announced transaction
+  on transient words or by age: a `sending` transaction stays `sending`, its
+  inputs locked, re-asked on a 1, 2, 4 ... 64 minute cadence, until a
+  definitive word, a proof, or the host's explicit retire.
+
+### Upgrade
+
+Nothing stored is migrated. A daemon that relied on the toolbox failing a
+transaction stuck in `sending` (after seven attempts, or five minutes) now
+keeps it announced and its inputs locked; the CLI's own retire paths
+(`broadcast_reconcile`'s absence threshold, `/abortAction`, the release rule
+on a definitive rejection) are unchanged. Rollback: pin 0.7.1.
+
 ## 0.7.1
 
 - **No open bind without a token.** `serve`, `daemon` and `serve-fleet`
