@@ -310,9 +310,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-rs"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd2df2d47d3b8b34a45e328088b98f2292e528e3ba342948c03573b928ead3c6"
+checksum = "42933faae7326d02eae1deb9a779f16055beb4b4afe963a58e82b6d2edcaca17"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -399,9 +399,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.7.0"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2df3df2f32568dc756a52209de2cc24f0b061a2cdc5d9171a95a96d481bcc403"
+checksum = "d0f5a96c8ba863a57e4f3a2a601c50f1362eff8442279467cf0721ece372e84c"
 dependencies = [
  "anyhow",
  "async-trait",
