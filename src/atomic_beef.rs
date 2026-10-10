@@ -109,6 +109,28 @@ mod tests {
         );
     }
 
+    /// A stranger's BEEF carrying a transaction with one input and no output
+    /// is refused at the transaction's leading byte under a BUMP too
+    /// (bsv-rs 0.4.3, bsv-stack-lean #59); the same frame around one output
+    /// is taken.
+    #[test]
+    fn a_transaction_with_no_output_is_refused_at_its_offset() {
+        let raw = raw_tx(&[(&"11".repeat(32), 0)], &[]);
+        let bytes = proven_beef(raw.clone(), &display_txid(&raw));
+        let at = offset_of(&bytes, &raw);
+
+        let err = ensure_atomic(&bytes).expect_err("a transaction with no output is invalid bytes");
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!("Invalid BEEF at byte {at}")) && text.contains("NoOutputs"),
+            "{text}"
+        );
+
+        let control = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, p2pkh([0xdb; 20]))]);
+        let control_id = txid_of(&control);
+        assert!(ensure_atomic(&proven_beef(control, &control_id)).is_ok());
+    }
+
     /// Bytes cut short are refused at the field that ran out, with the
     /// reader's kind, not the parser's text.
     #[test]
