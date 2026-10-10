@@ -13,9 +13,11 @@
 //! the word decides, never the presence of a path. A MINED or IMMUTABLE path
 //! (a `reorg_reanchor` included) goes through the toolbox's proof funnel,
 //! checked against our headers; `reorg_unmined` changes nothing and asks for
-//! the proof again; a REJECTED with ARC code 466 (or competitors) is a
-//! conflict, with 476 it is retryable and not applied; a word Arcade does
-//! not define is refused (bsv-stack-lean P0-2b, P0-2c).
+//! the proof again; a REJECTED or DOUBLE_SPEND_ATTEMPTED is a hint that
+//! writes no word (noted on the request's history, a competitor it names
+//! queued for a proof ask; bsv-stack-lean #66, the toolbox from 0.7.4), with
+//! 476 it is retryable and not applied; a word Arcade does not define is
+//! refused (bsv-stack-lean P0-2b, P0-2c).
 
 use anyhow::{anyhow, Result};
 use bsv_wallet_toolbox::monitor::ArcadeEventsTask;

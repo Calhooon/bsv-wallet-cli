@@ -203,8 +203,14 @@ async fn exempt_from_wallet_bearer_and_accepts_both_token_headers() {
     assert_eq!(resp.status(), 200);
 }
 
+/// A pushed DOUBLE_SPEND_ATTEMPTED is a broadcaster's word, so a hint
+/// (bsv-stack-lean #66, the toolbox from 0.7.4): the route answers 200, the
+/// word goes on the request's history, and the transaction keeps its word.
+/// Only a competitor's proof checked against our headers writes
+/// `doubleSpend`. Until the toolbox 0.7.3 this push wrote req `doubleSpend`
+/// and tx `failed`.
 #[tokio::test]
-async fn rejected_status_marks_double_spend() {
+async fn a_pushed_double_spend_word_is_a_hint_that_writes_no_word() {
     let txid = "d".repeat(64);
     let (base, client, pool, _tmp) =
         setup_with_callback(None, Some((&txid, "unmined", "unproven"))).await;
@@ -218,8 +224,18 @@ async fn rejected_status_marks_double_spend() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
-    assert_eq!(req_status(&pool, &txid).await, "doubleSpend");
-    assert_eq!(tx_status(&pool, &txid).await, "failed");
+    assert_eq!(req_status(&pool, &txid).await, "unmined");
+    assert_eq!(tx_status(&pool, &txid).await, "unproven");
+    let (history,): (String,) =
+        sqlx::query_as("SELECT history FROM proven_tx_reqs WHERE txid = ?")
+            .bind(&txid)
+            .fetch_one(&pool)
+            .await
+            .expect("req history");
+    assert!(
+        history.contains("broadcasterRefusalHint"),
+        "the word is on the request's history: {history}"
+    );
 }
 
 #[tokio::test]
