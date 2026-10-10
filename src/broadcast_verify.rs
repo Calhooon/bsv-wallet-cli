@@ -349,10 +349,11 @@ enum SourceKind {
 ///
 /// Consequence, stated honestly: a wallet whose broadcaster cannot be probed
 /// (e.g. classic TAAL ARC with no API key, which answers 401 → `Unknown`) can
-/// never reach `Rejected`. That is the intended trade. A missed drop is caught
-/// downstream (the transaction simply never mines and the reconciler's
-/// absence clock retires it), whereas a false `Rejected` reports lost funds
-/// that were not lost, which is the more expensive error by far.
+/// never reach `Rejected`. That is the intended trade. A missed drop is not
+/// retired downstream by an absence (since 0.7.3 a transaction a broadcaster
+/// took stays until a proof, a node verdict or a competitor's checked proof),
+/// whereas a false `Rejected` reports lost funds that were not lost, which is
+/// the more expensive error by far.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct AbsenceVotes {
     /// The broadcaster we submitted through answered 404 (or fatal).

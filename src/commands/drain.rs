@@ -57,6 +57,8 @@ pub async fn run(ctx: &WalletContext, address: &str) -> Result<()> {
         }),
     };
 
+    // A coin whose transaction drew no accepting word is not selected.
+    crate::spend_guard::run(ctx.wallet.storage().pool()).await?;
     let result = ctx.wallet.create_action(args, "bsv-wallet-cli").await?;
     let txid_hex = to_hex(&result.txid.expect("expected txid in result"));
 

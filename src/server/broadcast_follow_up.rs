@@ -9,20 +9,24 @@
 //! toolbox once classified a definitive ARC/Arcade rejection (465 fee too low,
 //! `REJECTED`) as a *transient* service error and handed back a phantom txid.
 //!
-//! Since bsv-wallet-toolbox-rs 0.3.55 a definitive rejection is a permanent
-//! failure of `create_action` itself (tx failed, inputs released, the caller
-//! gets an error), and an ACCEPTED broadcast is reported in
-//! `sendWithResults[].status == "unproven"`. So the handler can now:
+//! From bsv-wallet-toolbox-rs 0.7.4 (bsv-stack-lean #66) a broadcaster's
+//! refusal on the immediate post is a hint, not an error: `create_action`
+//! returns the txid with `sendWithResults[].status == "sending"`, the
+//! refusal on the request's history, the inputs locked. An ACCEPTED
+//! broadcast is reported `unproven`. So the handler:
 //!
-//! * answer **immediately** when the broadcaster ACCEPTED the transaction, and
-//!   run the presence verification in the **background** — on a definitive
-//!   `Rejected` verdict the tx is failed and its inputs released through the
-//!   toolbox's RELEASE-RULE path (`retire_undeliverable_txid`: alive-check,
-//!   per-input chain verification, own outputs unspendable, and since 0.3.58
-//!   every unproven descendant retired with it);
-//! * keep the **inline** verification ONLY for an **ambiguous** result — a
-//!   transient service fault where the transaction may or may not be out, the
-//!   one case where the client must not be told "sent" on a coin flip.
+//! * answers **immediately** when the broadcaster ACCEPTED the transaction,
+//!   and runs the presence verification in the **background**, which records
+//!   network evidence and never retires: a transaction a broadcaster took
+//!   stays until a proof, a node verdict or a competitor's checked proof
+//!   (the tracker's words; [`crate::retire_guard`]);
+//! * keeps the **inline** verification for a result with no accepting word
+//!   (`sending`: a refusal, a transient word, no broadcaster reached). A
+//!   definitive `Rejected` verdict on a transaction no broadcaster took
+//!   retires it through the toolbox's RELEASE-RULE path
+//!   (`retire_undeliverable_txid`: alive-check, per-input chain
+//!   verification, own outputs unspendable, every unproven descendant with
+//!   it): the host's act on a template never announced.
 //!
 //! # The broadcast memory (0.3.58)
 //!
@@ -179,7 +183,9 @@ where
 ///   that reported it, and `seen` for every ancestor (presence of the child
 ///   implies the parents connected). The txid's own req is lifted to
 ///   `unmined` exactly as a push `SEEN_ON_NETWORK` would.
-/// * a `Rejected` verdict → [`retire_rejected_broadcast`].
+/// * a `Rejected` verdict on a transaction no broadcaster took →
+///   [`retire_rejected_broadcast`]; on one a broadcaster took → nothing
+///   (kept, re-asked; [`crate::retire_guard::broadcaster_took`]).
 /// * anything else → nothing.
 pub async fn apply_presence_report(
     storage: &StorageSqlx,
@@ -226,8 +232,43 @@ pub async fn apply_presence_report(
         );
     }
     if report.verification == BroadcastVerification::Rejected {
-        retire_rejected_broadcast(storage, services, txid).await;
+        match crate::retire_guard::broadcaster_took(storage.pool(), txid).await {
+            Ok(false) => {
+                retire_rejected_broadcast(storage, services, txid).await;
+            }
+            Ok(true) => tracing::warn!(
+                txid = %txid,
+                "absent per the probe, but a broadcaster took it: kept, re-asked until a proof, a node verdict or a competitor's checked proof"
+            ),
+            Err(e) => tracing::warn!(
+                txid = %txid,
+                error = %e,
+                "absent per the probe; whether a broadcaster took it could not be read: kept"
+            ),
+        }
     }
+}
+
+/// Whether `send_with_results` reports `txid` `sending`: the immediate post
+/// drew no accepting word.
+pub fn sending(
+    send_with_results: &Option<Vec<bsv_sdk::wallet::SendWithResult>>,
+    txid: &[u8; 32],
+) -> bool {
+    send_with_results.as_ref().is_some_and(|rs| {
+        rs.iter()
+            .any(|r| &r.txid == txid && matches!(r.status, SendWithResultStatus::Sending))
+    })
+}
+
+/// The wallet's status word for `txid`, if it holds the transaction.
+pub async fn tx_status(storage: &StorageSqlx, txid: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ? LIMIT 1")
+        .bind(txid)
+        .fetch_optional(storage.pool())
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Fail a definitively-absent broadcast and give its inputs back, through the
@@ -611,15 +652,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_rejection_marks_the_tx_failed_and_releases_verified_inputs() {
+    async fn async_rejection_of_an_accepted_broadcast_retires_nothing() {
         use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
+        // The broadcaster accepted it (req `unmined`): a broadcaster took it.
         let (storage, input_id, own_id) = seeded_storage().await;
-        // The chain oracle: the tx is unknown (not alive), its input is unspent.
         let services = MockWalletServices::new();
 
-        // Drive the exact handler wiring: an ACCEPTED broadcast whose background
-        // verification comes back Rejected runs the report hook, which retires.
+        // Drive the exact handler wiring: an ACCEPTED broadcast whose
+        // background verification comes back Rejected runs the report hook.
+        // Until 0.7.2 the hook retired it (failed, input released); a
+        // transaction a broadcaster took stays until a proof, a node verdict
+        // or a competitor's checked proof (bsv-stack-lean #66; #24).
         let storage = Arc::new(storage);
         let services = Arc::new(services);
         let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
@@ -636,7 +680,7 @@ mod tests {
         .await;
         tokio::time::timeout(Duration::from_secs(5), done_rx)
             .await
-            .expect("background retire runs")
+            .expect("background hook runs")
             .expect("hook fired");
 
         let status: String = sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ?")
@@ -644,32 +688,23 @@ mod tests {
             .fetch_one(storage.pool())
             .await
             .unwrap();
-        assert_eq!(status, "failed");
+        assert_eq!(status, "unproven");
         let req: String = sqlx::query_scalar("SELECT status FROM proven_tx_reqs WHERE txid = ?")
             .bind(TXID_HEX)
             .fetch_one(storage.pool())
             .await
             .unwrap();
-        assert_eq!(req, "invalid");
+        assert_eq!(req, "unmined");
         assert_eq!(
-            output_state(&storage, input_id).await,
-            (1, None),
-            "the chain-verified input is back in coin selection"
+            output_state(&storage, input_id).await.0,
+            0,
+            "the input stays locked"
         );
         assert_eq!(
             output_state(&storage, own_id).await,
-            (0, None),
-            "the failed tx's change can never fund anything"
+            (1, None),
+            "change kept"
         );
-        // No provider ever skips it again.
-        let memory: String = sqlx::query_scalar(
-            "SELECT status FROM broadcast_seen WHERE txid = ? AND provider = 'network'",
-        )
-        .bind(TXID_HEX)
-        .fetch_one(storage.pool())
-        .await
-        .unwrap();
-        assert_eq!(memory, "rejected");
     }
 
     #[tokio::test]

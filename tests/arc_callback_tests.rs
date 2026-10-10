@@ -226,12 +226,11 @@ async fn a_pushed_double_spend_word_is_a_hint_that_writes_no_word() {
 
     assert_eq!(req_status(&pool, &txid).await, "unmined");
     assert_eq!(tx_status(&pool, &txid).await, "unproven");
-    let (history,): (String,) =
-        sqlx::query_as("SELECT history FROM proven_tx_reqs WHERE txid = ?")
-            .bind(&txid)
-            .fetch_one(&pool)
-            .await
-            .expect("req history");
+    let (history,): (String,) = sqlx::query_as("SELECT history FROM proven_tx_reqs WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(&pool)
+        .await
+        .expect("req history");
     assert!(
         history.contains("broadcasterRefusalHint"),
         "the word is on the request's history: {history}"

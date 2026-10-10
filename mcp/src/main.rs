@@ -584,7 +584,7 @@ impl WalletMcp {
     // ── Transactions ───────────────────────────────────────────
 
     #[tool(
-        description = "Create a BSV transaction. Build, sign, broadcast. Use options.signAndProcess=false for unsigned templates (sign later with sign_action). Use options.noSend=true to sign but not broadcast."
+        description = "Create a BSV transaction. Build, sign, broadcast. Use options.signAndProcess=false for unsigned templates (sign later with sign_action). Use options.noSend=true to sign but not broadcast. A broadcaster's refusal is not an error: the answer carries sendWithResults 'sending' and broadcast {word: 'built', request, hint, inputs: 'locked'}; the inputs stay locked until a proof, a competitor's checked proof or the wallet's retire, and nothing is released."
     )]
     async fn create_action(
         &self,
@@ -595,7 +595,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Sign a previously unsigned transaction (from create_action with signAndProcess=false)."
+        description = "Sign a previously unsigned transaction (from create_action with signAndProcess=false). A broadcaster's refusal is not an error: the answer carries sendWithResults 'sending' and broadcast {word: 'built', request, hint, inputs: 'locked'}; the inputs stay locked until a proof, a competitor's checked proof or the wallet's retire, and nothing is released."
     )]
     async fn sign_action(
         &self,
@@ -605,7 +605,9 @@ impl WalletMcp {
             .await
     }
 
-    #[tool(description = "Abort an unsigned transaction and release locked UTXOs.")]
+    #[tool(
+        description = "Abort an unsigned transaction and release locked UTXOs. A transaction a broadcaster accepted is never aborted (refused, 409): it stays until a proof, a node verdict or a competitor's checked proof."
+    )]
     async fn abort_action(
         &self,
         p: Parameters<ReferenceParams>,
@@ -614,7 +616,9 @@ impl WalletMcp {
             .await
     }
 
-    #[tool(description = "Accept incoming payment. tx must be AtomicBEEF format byte array.")]
+    #[tool(
+        description = "Accept incoming payment. tx must be AtomicBEEF format byte array. A broadcaster's refusal of the incoming transaction is not an error: the answer is accepted, with broadcast {word: 'built', request, hint, inputs: 'locked'}; its coins are not spent by this wallet until a status source holds the transaction."
+    )]
     async fn internalize_action(
         &self,
         p: Parameters<InternalizeActionParams>,
