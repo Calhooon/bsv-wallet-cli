@@ -3,6 +3,65 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## 0.7.3
+
+The toolbox 0.7.4 (bsv-stack-lean #66: every broadcaster word is a hint; a
+refusal on the immediate post is not an error), and the host's side of it:
+no path of the CLI retires a transaction a broadcaster took, the served
+doors answer a refused post with the tracker's word, and a coin whose
+transaction drew no accepting word is not spent.
+
+- **Dependencies.** `bsv-wallet-toolbox-rs` 0.7.4 (was 0.7.3). `fastrand`
+  2.5.0 and `spin` 0.9.9 (were 2.4.0 and 0.9.8, both yanked, in the lock
+  since 0.7.1): a lock-only move.
+- **The vector.** `tests/vectors/arcade_status_verdicts.json` is the toolbox
+  0.7.4's file, byte-identical (`cmp` against the crate's file); four
+  `toolbox_push` values move to `none` (`push_rejected_467`,
+  `push_rejected_466_conflict`, `push_double_spend_attempted`,
+  `push_rejected_lower_case`): a pushed REJECTED or DOUBLE_SPEND_ATTEMPTED
+  writes no word.
+- **No retire of a transaction a broadcaster took** (the tracker's
+  `abandoned` is the host's act on a template never announced; #24). An
+  accepting word in the wallet's records (the proof request past the post,
+  an `accepted`/`seen`/`mined` memory row, the tracker's word past `built`)
+  keeps a transaction from every retire path: the served sweep (which
+  retired any unproven transaction with a `rejected` memory row, now a
+  hint), `reconcile-broadcasts`, `cleanup-abandoned` and the daemon's
+  ticker (which abandoned one the broadcaster held past
+  `BROADCAST_ABSENCE_MINUTES`, or found nowhere), the after-send follow-up,
+  and `/abortAction` (409). It stays, re-asked, until a proof, a node
+  verdict or a competitor's checked proof. A transaction no broadcaster took
+  is retired as before; a confirmed competitor's spend still abandons.
+- **The doors' word for a refused post.** "Transaction broadcast failed" no
+  longer reaches the CLI, and the `BROADCAST_REJECTED` mapping that promised
+  "the tx is already failed and its inputs released" is gone.
+  `/createAction` and `/signAction` answering `sending`, and
+  `/internalizeAction`, carry `broadcast: {word: "built", request, hint,
+  inputs: "locked"}` (the request's status, the toolbox's
+  `immediateBroadcastHint`); the MCP tools say the same. The inline
+  follow-up's 502 promises a release only where the chain vouches the coin.
+- **The spend guard.** A coin of a transaction whose immediate post drew no
+  accepting word, with no status source holding it, is held (not
+  spendable, recorded in `spend_guard_holds`) before every spend and on each
+  served pass, and released once the toolbox promotes the request
+  (`unmined`) or a proof completes it; a retire drops the hold.
+
+### Upgrade
+
+The wallet database gains `spend_guard_holds`; no existing table changes. A
+held coin reads `spendable = 0` until released; the toolbox's balance does
+not count it meanwhile. A client of the served doors that read 502
+`BROADCAST_REJECTED` on a refused post now receives 200 with `sending` and
+`broadcast.word = "built"`, and reads the refusal there or from the
+monitor. A daemon that relied on the absence threshold, or on
+`/abortAction`, to free the inputs of a transaction a broadcaster accepted
+keeps them locked. The library's report structs (`ReconcileBroadcastsReport`,
+`SweepReport`, `ServedPassReport`) and the doors' response types gain a
+field each. Rollback: pin 0.7.2 (with the toolbox 0.7.3); `spend_guard_holds`
+is left unread, and a coin it held stays `spendable = 0` until set back by
+hand (`UPDATE outputs SET spendable = 1 WHERE output_id IN (SELECT
+output_id FROM spend_guard_holds)`).
+
 ## 0.7.2
 
 The toolbox 0.7.3 and bsv-rs 0.4.3, moved together; no line of the CLI's
