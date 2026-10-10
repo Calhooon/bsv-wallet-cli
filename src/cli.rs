@@ -225,9 +225,9 @@ pub enum Commands {
         execute: bool,
     },
     /// Probe unproven txs for network presence (broadcaster, chain index), credit the
-    /// broadcast memory, and retire phantom chains: a REJECTED tx, or one absent from
-    /// every network source past BROADCAST_ABSENCE_MINUTES, together with every unproven
-    /// descendant (inputs released only on chain verification)
+    /// broadcast memory, and retire a REJECTED tx no broadcaster took, together with
+    /// every unproven descendant (inputs released only on chain verification); one a
+    /// broadcaster took, or an absence past BROADCAST_ABSENCE_MINUTES, is named and kept
     ReconcileBroadcasts {
         /// Apply changes (default is dry-run; probes run either way)
         #[arg(long)]

@@ -133,7 +133,7 @@ All 28 BRC WalletInterface endpoints on `http://127.0.0.1:3322`, wire-compatible
 **Transactions** (POST, requires `Origin` header)
 - `/createAction` -- build, sign, and broadcast transactions
 - `/signAction` -- sign a deferred (unsigned) transaction
-- `/abortAction` -- cancel a deferred transaction and release UTXOs; a broadcast transaction the wallet holds no chain evidence for is aborted too (inputs released, its unproven descendants retired), one the chain vouches for is refused
+- `/abortAction` -- cancel a deferred transaction and release UTXOs; a broadcast transaction no broadcaster took (no accepting word in the wallet's records) and the chain does not vouch for is aborted too (inputs released, its unproven descendants retired); one a broadcaster took is refused, 409 (0.7.3: it stays until a proof, a node verdict or a competitor's checked proof)
 - `/internalizeAction` -- accept incoming payments
 - `/listActions` -- transaction history
 - `/listOutputs` -- UTXO listing
@@ -227,8 +227,18 @@ writes `mined`. Only a merkle path checked against the header service's header d
   the spend guard is run for it (`tracker_host::spend_guard`, the tracker README's
   wallet sketch run by this host; `send` does not call it yet).
 - What the loop no longer does by itself: retire a transaction because the chain
-  indexes do not know it. `bsv-wallet reconcile-broadcasts` does that, by hand; a
-  pass lists every transaction it asked a proof for and got none.
+  indexes do not know it; a pass lists every transaction it asked a proof for and
+  got none.
+- What no path does (0.7.3): retire, abandon or abort a transaction a broadcaster
+  took (an accepting word in the wallet's records: its proof request past the post,
+  an `accepted`/`seen`/`mined` memory row, the tracker's word past `built`). The
+  sweep, `reconcile-broadcasts`, `cleanup-abandoned`, the daemon's ticker, the
+  after-send follow-up and `/abortAction` retire only a transaction no broadcaster
+  took; a chain-index absence of one a broadcaster holds is named and kept.
+- The spend guard (0.7.3): a coin whose transaction's immediate post drew no
+  accepting word (the toolbox 0.7.4's `immediateBroadcastHint`) is held, not
+  selected, until a status source holds the transaction; every spend and every
+  served pass runs it (`spend_guard`).
 
 ## Broadcasting: Arcade V2 mode
 

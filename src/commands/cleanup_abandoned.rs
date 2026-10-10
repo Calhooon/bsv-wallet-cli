@@ -52,12 +52,18 @@ pub struct ReconcileReport {
     /// the absence clock is running.
     pub absent_on_clock: Vec<(String, i64)>,
     /// txids DEFINITIVELY absent (broadcaster + chain index both 404, no
-    /// source holding them) — abandoned.
+    /// source holding them) that no broadcaster ever took (the tracker's
+    /// `built`): abandoned.
     pub abandoned: Vec<String>,
+    /// txids DEFINITIVELY absent that a broadcaster took (an accepting word
+    /// in the wallet's records, [`crate::retire_guard::broadcaster_took`]):
+    /// kept, never abandoned (bsv-stack-lean #66; #24). They stay, re-asked,
+    /// until a proof, a node verdict or a competitor's checked proof.
+    pub absent_announced: Vec<String>,
     /// txids absent from the chain index PAST the threshold while the
     /// broadcaster still holds or has seen them: `(txid, age in minutes)`.
-    /// A broadcaster's SEEN is not chain evidence; the absence clock is.
-    /// Abandoned like the absent set.
+    /// A broadcaster's SEEN is not chain evidence, and the broadcaster
+    /// holding it is its acceptance: named and kept (until 0.7.2 abandoned).
     pub absent_past_threshold: Vec<(String, i64)>,
     /// txids DEFINITIVELY DEAD BY CONFLICT: an input of theirs is chain-spent
     /// by a DIFFERENT, CONFIRMED txid, so the bytes can never mine however
@@ -102,13 +108,12 @@ pub struct ReconcileReport {
 }
 
 impl ReconcileReport {
-    /// Every transaction this pass abandons (or would): absent, absent past
-    /// the threshold, dead by conflict.
+    /// Every transaction this pass abandons (or would): absent and never
+    /// taken by a broadcaster, dead by conflict.
     pub fn dead_txids(&self) -> Vec<String> {
         self.abandoned
             .iter()
             .cloned()
-            .chain(self.absent_past_threshold.iter().map(|(t, _)| t.clone()))
             .chain(self.conflicted.iter().cloned())
             .collect()
     }
@@ -116,7 +121,6 @@ impl ReconcileReport {
     /// Whether an `--execute` run would write anything.
     pub fn has_work(&self) -> bool {
         !self.abandoned.is_empty()
-            || !self.absent_past_threshold.is_empty()
             || !self.conflicted.is_empty()
             || !self.stale_reqs_retired.is_empty()
     }
@@ -137,14 +141,15 @@ impl ReconcileReport {
 ///    (the broadcaster it was submitted to, GorillaPool ARC, TAAL ARC and
 ///    WhatsOnChain), read as a [`PresenceReport`]: the chain index holding it
 ///    ⇒ kept; DEFINITIVE absence (broadcaster JSON-404 AND index 404) ⇒
-///    abandoned; the chain index answering 404 while the broadcaster merely
-///    holds or has seen it ⇒ the absence clock: kept while younger than
-///    `BROADCAST_ABSENCE_MINUTES` (default 30), abandoned past it. A
-///    broadcaster's SEEN is not chain evidence (2026-09-02: Arcade reported
-///    `SEEN_MULTIPLE_NODES` for hours for phantoms the chain index never saw,
-///    and the daemon's sweep, which runs THIS rule and not the served loop's,
-///    kept them as "held"). A lone index miss with the broadcaster silent, a
-///    source fault, probing disabled ⇒ `Inconclusive`, kept.
+///    abandoned when no broadcaster ever took it (the tracker's `built`),
+///    kept when one did; the chain index answering 404 while the broadcaster
+///    merely holds or has seen it ⇒ the absence clock, named and kept on
+///    both sides of `BROADCAST_ABSENCE_MINUTES` (default 30): the
+///    broadcaster holding it is its acceptance, and the tracker refuses the
+///    host's abandon once a broadcaster took a transaction (bsv-stack-lean
+///    #66; #24). Until 0.7.2 it was abandoned past the threshold. A lone
+///    index miss with the broadcaster silent, a source fault, probing
+///    disabled ⇒ `Inconclusive`, kept.
 ///
 /// Abandoning is per-input verified, never blind: an input the chain says is
 /// UNSPENT is restored; one spent by another confirmed tx is RELINQUISHED
@@ -402,8 +407,9 @@ pub enum Verdict {
     /// verdict) AND the chain index answered 404.
     DeadAbsent,
     /// Absent from the chain index past the threshold while the broadcaster
-    /// still holds or has seen it: a phantom the broadcaster never let go of.
-    DeadAbsentPastThreshold,
+    /// still holds or has seen it: a broadcaster took it, so it is named and
+    /// kept (until 0.7.2 abandoned).
+    AbsentPastThreshold,
     /// An input is chain-spent by a DIFFERENT, CONFIRMED tx.
     DeadConflict,
 }
@@ -411,10 +417,7 @@ pub enum Verdict {
 impl Verdict {
     /// Whether this verdict abandons the transaction.
     pub fn is_dead(self) -> bool {
-        matches!(
-            self,
-            Verdict::DeadAbsent | Verdict::DeadAbsentPastThreshold | Verdict::DeadConflict
-        )
+        matches!(self, Verdict::DeadAbsent | Verdict::DeadConflict)
     }
 }
 
@@ -439,7 +442,7 @@ pub fn presence_verdict(
         BroadcastVerification::Rejected => Verdict::DeadAbsent,
         _ if presence.network_absent => {
             if age_minutes >= absence_minutes {
-                Verdict::DeadAbsentPastThreshold
+                Verdict::AbsentPastThreshold
             } else {
                 Verdict::AbsentOnClock
             }
@@ -516,12 +519,19 @@ where
             probe(txid.clone()).await
         };
         let verdict = verdict_for(&txid, &spends, &presence, age_minutes, absence_minutes);
+        // The host abandons only a transaction no broadcaster took.
+        if verdict == Verdict::DeadAbsent
+            && crate::retire_guard::broadcaster_took(pool, &txid).await?
+        {
+            report.absent_announced.push(txid.clone());
+            continue;
+        }
         match verdict {
             Verdict::Kept => report.kept.push(txid.clone()),
             Verdict::Inconclusive => report.inconclusive.push(txid.clone()),
             Verdict::AbsentOnClock => report.absent_on_clock.push((txid.clone(), age_minutes)),
             Verdict::DeadAbsent => report.abandoned.push(txid.clone()),
-            Verdict::DeadAbsentPastThreshold => report
+            Verdict::AbsentPastThreshold => report
                 .absent_past_threshold
                 .push((txid.clone(), age_minutes)),
             Verdict::DeadConflict => report.conflicted.push(txid.clone()),
@@ -542,7 +552,7 @@ where
         let age_minutes: i64 = row.get("age_minutes");
         let presence = probe(txid.clone()).await;
         match presence_verdict(&presence, age_minutes, absence_minutes) {
-            Verdict::DeadAbsent | Verdict::DeadAbsentPastThreshold => {
+            Verdict::DeadAbsent | Verdict::AbsentPastThreshold => {
                 report.stale_reqs_retired.push(txid);
                 retire_reqs.push((req_id, req_status));
             }
@@ -701,8 +711,9 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         report.checked, report.absence_minutes
     );
     println!(
-        "  Definitively absent: {}    Absent past the threshold: {}    Dead by conflict: {}    Held by a source: {}    On the clock: {}    Undecidable (kept): {}",
+        "  Definitively absent: {}    Absent, a broadcaster took it (kept): {}    Absent past the threshold (kept): {}    Dead by conflict: {}    Held by a source: {}    On the clock: {}    Undecidable (kept): {}",
         report.abandoned.len(),
+        report.absent_announced.len(),
         report.absent_past_threshold.len(),
         report.conflicted.len(),
         report.kept.len(),
@@ -714,7 +725,7 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     }
     for (txid, age) in &report.absent_on_clock {
         println!(
-            "    keep (absent from the chain index for {} min while the broadcaster holds it; retired once past {} min): {}",
+            "    keep (absent from the chain index for {} min while the broadcaster holds it; threshold {} min): {}",
             age, report.absence_minutes, txid
         );
     }
@@ -725,11 +736,20 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
         );
     }
     for txid in &report.abandoned {
-        println!("    fail (absent everywhere): {}", txid);
+        println!(
+            "    fail (absent everywhere, and no broadcaster ever took it): {}",
+            txid
+        );
+    }
+    for txid in &report.absent_announced {
+        println!(
+            "    keep (absent everywhere, but a broadcaster took it: re-asked until a proof, a node verdict or a competitor's checked proof): {}",
+            txid
+        );
     }
     for (txid, age) in &report.absent_past_threshold {
         println!(
-            "    fail (absent from the chain index for {} min, past the {}-min threshold; a broadcaster's SEEN is not chain evidence): {}",
+            "    keep (absent from the chain index for {} min, past the {}-min threshold, while the broadcaster holds it: a broadcaster took it): {}",
             age, report.absence_minutes, txid
         );
     }
@@ -773,19 +793,27 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     // Everything this wallet built on an abandoned transaction is a phantom
     // too (the poisoned chain, 2026-09-02): the toolbox walks the unproven
     // descendants under THE RELEASE RULE. On a dry run it only lists them.
+    // A set holding a transaction a broadcaster took is kept whole.
     let mut descendants_retired = 0usize;
     for txid in report.dead_txids() {
-        let poison = ctx
-            .wallet
-            .storage()
-            .retire_poisoned_chain_from(
-                ctx.wallet.services(),
-                &txid,
-                "invalid",
-                execute,
-                report.absence_minutes,
-            )
-            .await?;
+        let poison = match crate::broadcast_reconcile::retire_never_announced(
+            ctx.wallet.storage(),
+            ctx.wallet.services(),
+            &txid,
+            execute,
+            report.absence_minutes,
+        )
+        .await?
+        {
+            crate::broadcast_reconcile::Guarded::Ran(poison) => poison,
+            crate::broadcast_reconcile::Guarded::Kept { taken, .. } => {
+                println!(
+                    "    the unproven descendants of {} are kept: a broadcaster took {}",
+                    txid, taken
+                );
+                continue;
+            }
+        };
         let descendants: Vec<_> = poison.chain.iter().filter(|t| t.depth > 0).collect();
         if descendants.is_empty() {
             continue;
@@ -1155,6 +1183,22 @@ mod tests {
         pool
     }
 
+    /// [`rule_fixture`] for a transaction no broadcaster took: its post drew
+    /// no accepting word (`sending`, its request `unsent`, the toolbox 0.7.4's
+    /// hint shape). The host may abandon it.
+    async fn rule_fixture_built() -> sqlx::SqlitePool {
+        let pool = rule_fixture().await;
+        sqlx::query("UPDATE transactions SET status = 'sending' WHERE transaction_id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE proven_tx_reqs SET status = 'unsent'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
     async fn lock(pool: &sqlx::SqlitePool, output_id: i64) -> (i64, Option<i64>) {
         sqlx::query_as("SELECT spendable, spent_by FROM outputs WHERE output_id = ?")
             .bind(output_id)
@@ -1209,12 +1253,13 @@ mod tests {
     }
 
     /// DEFINITIVE absence (broadcaster JSON-404 + index 404, nothing holding
-    /// it) is the ONE verdict that abandons: inputs restored, phantom change
-    /// invalidated, tx failed, its proof request retired, and only under
-    /// --execute.
+    /// it) of a transaction no broadcaster took is the ONE absence verdict
+    /// that abandons: inputs restored, phantom change invalidated, tx failed,
+    /// its proof request retired, and only under --execute. One a broadcaster
+    /// took is kept (`tracker_words_witnesses`).
     #[tokio::test]
     async fn a_definitive_absence_abandons_and_restores_under_execute() {
-        let pool = rule_fixture().await;
+        let pool = rule_fixture_built().await;
         let dry = reconcile_with(
             &pool,
             0,
@@ -1234,7 +1279,7 @@ mod tests {
         );
         assert_eq!(
             req_state(&pool, &"ab".repeat(32)).await,
-            ("unmined".into(), 1)
+            ("unsent".into(), 1)
         );
 
         let wet = reconcile_with(
@@ -1365,7 +1410,7 @@ mod tests {
     /// Abandonment by absence releases per input: UNKNOWN stays locked.
     #[tokio::test]
     async fn a_definitive_absence_keeps_an_unknown_input_locked() {
-        let pool = rule_fixture().await;
+        let pool = rule_fixture_built().await;
         let report = reconcile_with(
             &pool,
             0,
@@ -1390,37 +1435,17 @@ mod tests {
 
     // ── the absence clock (2026-09-02): a broadcaster's SEEN is not chain evidence ──
 
-    /// RED→GREEN, the 2026-09-02 phantom shape under the DAEMON's sweep:
-    /// Arcade answers SEEN_MULTIPLE_NODES for hours, WhatsOnChain 404, the
-    /// transaction is older than the absence threshold. The old rule read
-    /// the broadcaster's word as "held by a source" and kept it forever;
-    /// past the threshold it is a phantom: input restored (verified
-    /// unspent), phantom change dead, tx failed, req retired.
+    /// The 2026-09-02 phantom shape under the DAEMON's sweep: Arcade answers
+    /// SEEN_MULTIPLE_NODES for hours, WhatsOnChain 404, the transaction (its
+    /// request `unmined`) is older than the absence threshold. Until 0.7.2
+    /// it was abandoned past the threshold. The broadcaster holding it is
+    /// its acceptance, and the tracker refuses the host's abandon once a
+    /// broadcaster took a transaction (bsv-stack-lean #66; #24): named past
+    /// the threshold, nothing written, re-asked.
     #[tokio::test]
-    async fn a_seen_forever_phantom_past_the_threshold_is_retired() {
+    async fn a_seen_forever_transaction_past_the_threshold_is_named_and_kept() {
         let pool = rule_fixture_aged("2026-01-01T00:00:00+00:00").await;
-        let dry = reconcile_with(
-            &pool,
-            0,
-            30,
-            false,
-            |_txid| async { seen_by_arcade_absent_from_chain() },
-            |_src, _vout| async { InputSpend::Unspent },
-        )
-        .await
-        .unwrap();
-        assert_eq!(dry.absent_past_threshold.len(), 1);
-        assert_eq!(dry.absent_past_threshold[0].0, "ab".repeat(32));
-        assert!(dry.absent_past_threshold[0].1 >= 30);
-        assert!(dry.kept.is_empty() && dry.abandoned.is_empty());
-        assert!(!dry.applied);
-        assert_eq!(
-            lock(&pool, 1).await,
-            (0, Some(1)),
-            "dry run touches nothing"
-        );
-
-        let wet = reconcile_with(
+        let report = reconcile_with(
             &pool,
             0,
             30,
@@ -1430,17 +1455,15 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(wet.applied);
-        assert_eq!(wet.dead_txids(), vec!["ab".repeat(32)]);
-        assert_eq!(
-            (wet.failed, wet.restored_count, wet.restored_sats),
-            (1, 1, 5000)
-        );
-        assert_eq!((wet.phantom_count, wet.phantom_sats), (1, 4000));
-        assert_eq!(lock(&pool, 1).await, (1, None), "the coin is back");
-        assert_eq!(lock(&pool, 2).await.0, 0, "the phantom change is dead");
-        assert_eq!(tx_state(&pool, 1).await.0, "failed");
-        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "invalid");
+        assert_eq!(report.absent_past_threshold.len(), 1);
+        assert_eq!(report.absent_past_threshold[0].0, "ab".repeat(32));
+        assert!(report.absent_past_threshold[0].1 >= 30);
+        assert!(report.dead_txids().is_empty() && report.kept.is_empty());
+        assert!(!report.applied, "nothing written");
+        assert_eq!(lock(&pool, 1).await, (0, Some(1)), "the coin stays locked");
+        assert_eq!(lock(&pool, 2).await.0, 1, "its change untouched");
+        assert_eq!(tx_state(&pool, 1).await.0, "unproven");
+        assert_eq!(req_state(&pool, &"ab".repeat(32)).await.0, "unmined");
     }
 
     /// The same shape younger than the threshold is on the clock: kept,
@@ -1856,11 +1879,11 @@ mod tests {
         );
         assert_eq!(
             verdict_for(&ours, &[], &seen, 30, 30),
-            Verdict::DeadAbsentPastThreshold
+            Verdict::AbsentPastThreshold
         );
         assert_eq!(
             verdict_for(&ours, &[], &seen, 100_000, 30),
-            Verdict::DeadAbsentPastThreshold
+            Verdict::AbsentPastThreshold
         );
         // The chain index's own answer settles everything, whatever else.
         assert_eq!(
@@ -1873,7 +1896,8 @@ mod tests {
             verdict_for(&ours, &[], &chain_seen, 100_000, 30),
             Verdict::Kept
         );
-        assert!(Verdict::DeadAbsentPastThreshold.is_dead());
+        // The broadcaster holds it: a broadcaster took it, never abandoned.
+        assert!(!Verdict::AbsentPastThreshold.is_dead());
         assert!(!Verdict::AbsentOnClock.is_dead());
     }
     /// C8 (Rule 28): whether the spender is mined is a proof, never an

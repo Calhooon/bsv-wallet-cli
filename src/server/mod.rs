@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod broadcast_follow_up;
 pub mod handlers;
+pub mod post_word;
 pub mod types;
 
 use anyhow::Result;

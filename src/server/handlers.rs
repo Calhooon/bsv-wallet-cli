@@ -159,12 +159,6 @@ impl AppError {
             || clean.starts_with("Internal error:")
         {
             (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
-        } else if clean.starts_with("Transaction broadcast failed") {
-            // The toolbox's DEFINITIVE broadcast rejection (465 fee too low,
-            // Arcade REJECTED / DOUBLE_SPEND_ATTEMPTED, ...): the tx is already
-            // failed and its inputs released. Same code the inline presence
-            // verification uses, so clients handle both the same way.
-            (StatusCode::BAD_GATEWAY, "BROADCAST_REJECTED")
         } else if clean.starts_with("Service error:")
             || clean.starts_with("Network error:")
             || clean.starts_with("Broadcast failed:")
@@ -196,19 +190,22 @@ impl AppError {
         self
     }
 
-    /// A broadcast that `create_action` reported as `Ok`, but which the network
-    /// confirms never landed (silently dropped — typically ARC 465 fee-too-low
-    /// on a deep unconfirmed BEEF). Surfaced as a gateway error so callers see a
-    /// failure instead of a phantom txid.
+    /// A broadcast no broadcaster took (`sendWithResults` `sending`), absent
+    /// from the broadcaster it was submitted to and from an independent chain
+    /// index after the full probe window, which this wallet then retired (the
+    /// host's act on a template never announced). The retire releases an
+    /// input only where the chain vouches it unspent; the message promises
+    /// nothing more.
     fn broadcast_rejected(txid: &str) -> Self {
         Self {
             status: StatusCode::BAD_GATEWAY,
             code: "BROADCAST_REJECTED",
             message: format!(
-                "broadcast rejected: transaction {txid} is absent from BOTH the broadcaster \
-                 it was submitted to AND an independent chain index, after the full probe \
-                 window. The broadcaster dropped it — most likely error 465 \"fee too low\" \
-                 on a deep unconfirmed BEEF. The funds were NOT sent."
+                "broadcast rejected: no broadcaster accepted transaction {txid}, and it is \
+                 absent from the broadcaster it was submitted to and from an independent chain \
+                 index after the full probe window; this wallet retired it (failed). An input \
+                 it spent is released only where the chain vouches it unspent; any other stays \
+                 locked and is re-checked."
             ),
         }
     }
@@ -461,6 +458,11 @@ pub async fn create_action(
     // Acquire spending lock — queues behind any in-flight createAction.
     // Once the previous tx completes (and its change UTXO exists), we proceed.
     let _guard = spending_lock.lock().await;
+    // A coin whose transaction drew no accepting word on its immediate post,
+    // with no status source holding it, is not selected (`spend_guard`).
+    crate::spend_guard::run(wallet.storage().pool())
+        .await
+        .map_err(|e| AppError::from_wallet_error(format!("Storage error: spend guard: {e}")))?;
     let result = wallet
         .create_action(args, &originator)
         .await
@@ -497,16 +499,18 @@ pub async fn create_action(
         _ => result.tx.clone(),
     };
 
-    // Post-broadcast follow-up (see `broadcast_follow_up`). A definitive
-    // rejection (465 fee too low, Arcade REJECTED, ...) has already surfaced
-    // above as an error from `create_action` — the toolbox fails the tx and
-    // releases its inputs. What remains:
+    // Post-broadcast follow-up (see `broadcast_follow_up`). From the toolbox
+    // 0.7.4 a broadcaster's refusal on the immediate post is a hint, not an
+    // error (bsv-stack-lean #66): `create_action` returns the txid with
+    // `sending`, the refusal on the request's history, the inputs locked.
     //   * ACCEPTED by the broadcaster (`sendWithResults: unproven`): answer now;
-    //     the presence probe runs in the background and, on a definitive
-    //     absence, retires the tx through the toolbox's RELEASE-RULE path.
-    //   * Ambiguous (a transient service fault, `sending`): verify inline —
-    //     the one case where the client must not be told "sent" on a coin flip.
-    //     A definitive absence → tx retired, 502 BROADCAST_REJECTED.
+    //     the presence probe runs in the background and records evidence; it
+    //     never retires a transaction a broadcaster took.
+    //   * No accepting word (`sending`: a refusal, a transient word, no
+    //     broadcaster reached): verify inline. A definitive absence of a
+    //     transaction no broadcaster took retires it (the host's act on
+    //     `built`), 502 BROADCAST_REJECTED; otherwise the answer carries the
+    //     word `built` and the toolbox's hint (`broadcast`).
     //   * Not broadcast (noSend / delayed / deferred signing): nothing.
     let disposition =
         super::broadcast_follow_up::disposition(&result, opt_no_send, opt_accept_delayed);
@@ -537,10 +541,19 @@ pub async fn create_action(
             },
         )
         .await;
-        if outcome == super::broadcast_follow_up::FollowUp::Rejected {
+        if outcome == super::broadcast_follow_up::FollowUp::Rejected
+            && super::broadcast_follow_up::tx_status(wallet.storage(), &txid_hex).await
+                == Some("failed".to_string())
+        {
             return Err(AppError::broadcast_rejected(&txid_hex));
         }
     }
+    let broadcast = match result.txid.as_ref() {
+        Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
+            super::post_word::post_word(wallet.storage(), &to_hex(t)).await
+        }
+        _ => None,
+    };
 
     Ok(Json(McCreateActionRes {
         txid: result.txid.map(|t| to_hex(&t)),
@@ -562,6 +575,7 @@ pub async fn create_action(
         no_send_change: result
             .no_send_change
             .and_then(|v| serde_json::to_value(v).ok()),
+        broadcast,
     }))
 }
 
@@ -599,6 +613,7 @@ pub async fn internalize_action(
     };
 
     let output_count = args.outputs.len();
+    let subject = super::post_word::atomic_subject(&args.tx);
     let result = wallet
         .internalize_action(args, &originator)
         .await
@@ -610,9 +625,16 @@ pub async fn internalize_action(
         accepted = result.accepted,
         "internalizeAction"
     );
+    // From the toolbox 0.7.4 a refusal of the internalized transaction's
+    // post is a hint and the answer is `accepted`; the word says so.
+    let broadcast = match subject {
+        Some(txid) => super::post_word::post_word(wallet.storage(), &txid).await,
+        None => None,
+    };
 
     Ok(Json(McInternalizeActionRes {
         accepted: result.accepted,
+        broadcast,
     }))
 }
 
@@ -883,6 +905,12 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_wallet_error)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
+    let broadcast = match result.txid.as_ref() {
+        Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
+            super::post_word::post_word(wallet.storage(), &to_hex(t)).await
+        }
+        _ => None,
+    };
     // Same wire shape as create_action: txid as hex, tx (AtomicBEEF) as a
     // number array — see McSignActionRes for why the toolbox struct cannot be
     // serialized directly.
@@ -892,6 +920,7 @@ pub async fn sign_action(
         send_with_results: result
             .send_with_results
             .and_then(|r| serde_json::to_value(r).ok()),
+        broadcast,
     }))
 }
 
@@ -902,6 +931,20 @@ pub async fn abort_action(
     Json(args): Json<AbortActionArgs>,
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    // A transaction a broadcaster took is never aborted here, whatever the
+    // caller knows: it stays until a proof, a node verdict or a competitor's
+    // checked proof (bsv-stack-lean #66; #24). One no broadcaster took is
+    // the toolbox's to abort.
+    if let Some(txid) =
+        crate::retire_guard::abort_refused_for(wallet.storage().pool(), &args.reference)
+            .await
+            .map_err(AppError::from_wallet_error)?
+    {
+        return Err(AppError::from_wallet_error(format!(
+            "Invalid operation: a broadcaster took transaction {txid}; it is not aborted. It stays, \
+             re-asked, until a proof, a node verdict or a competitor's checked proof decides it"
+        )));
+    }
     let result = wallet.abort_action(args, &originator).await.map_err(|e| {
         // Since toolbox 0.3.60 a broadcast ('unproven' / 'sending') tx is
         // aborted on the caller's word when the wallet holds NO chain

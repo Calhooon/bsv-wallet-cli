@@ -10,11 +10,17 @@ mod server;
 mod services_env;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod tracker_words_witnesses;
 
 use anyhow::Result;
 // The tracker host is the library's, one copy: its spend guard and its
 // reads are public API the binary does not call itself.
 use bsv_wallet_cli::tracker_host;
+// The retire guard is the library's too: every retire path asks it.
+use bsv_wallet_cli::retire_guard;
+// The spend guard too: every spend of the binary runs it first.
+use bsv_wallet_cli::spend_guard;
 use clap::Parser;
 use cli::{Cli, Commands};
 use tracing_subscriber::EnvFilter;

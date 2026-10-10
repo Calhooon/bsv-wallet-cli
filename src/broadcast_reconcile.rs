@@ -31,7 +31,8 @@
 //!    evidence for the transaction and its unproven parents (presence of the
 //!    child implies the parents connected). A chain-index 404 with the
 //!    broadcaster merely holding or having seen the transaction is
-//!    `network_absent`; past the threshold it retires.
+//!    `network_absent`. Until 0.7.3 it retired past the threshold; since
+//!    0.7.3 it is named and kept (rule 5).
 //! 3. **The poison runs both ways.** A retire climbs UP first (a phantom's
 //!    parent that is unproven and unknown to the chain is part of the same
 //!    poison; the climb stops at the first transaction the chain knows) and
@@ -51,6 +52,16 @@
 //!    not vouch for is re-checked every pass with exponential backoff until
 //!    it is verifiably unspent (restored) or spent (left); nothing stays
 //!    locked forever unattended.
+//! 5. **Only a transaction no broadcaster took is retired (0.7.3).** The
+//!    tracker allows the host's retire on `built` alone (bsv-stack-lean #66,
+//!    the tracker charter sections 1 and 5; #24, never abort a template
+//!    already broadcast). Every retire here first asks
+//!    [`crate::retire_guard::broadcaster_took`] of each transaction it would
+//!    write `failed` (the origin, the climb and the descendants); one that a
+//!    broadcaster accepted keeps the whole set, named in the report, until
+//!    a proof, a node verdict or a competitor's checked proof. A chain-index
+//!    absence of a transaction a broadcaster holds is therefore never a
+//!    retire: the broadcaster holding it is its acceptance.
 //!
 //! # The served loop (0.6.0)
 //!
@@ -88,7 +99,9 @@ use crate::broadcast_verify::{
 use crate::tracker_host::{SystemClock, TickOptions, TickReport};
 
 /// Default minutes an unproven transaction must be old before a chain-index
-/// absence retires it (`BROADCAST_ABSENCE_MINUTES`).
+/// absence is named past the threshold, and below which no retire climbs
+/// through a parent (`BROADCAST_ABSENCE_MINUTES`). Since 0.7.3 an absence
+/// retires nothing by itself (rule 5).
 pub const DEFAULT_ABSENCE_MINUTES: i64 = 30;
 /// Default seconds between two passes of the served loop
 /// (`BROADCAST_RECONCILE_INTERVAL_SECS`).
@@ -127,7 +140,7 @@ pub struct ReconcileOptions {
     /// = every unproven transaction).
     pub max_age_hours: Option<i64>,
     /// Minutes an unproven transaction must be old before a chain-index
-    /// absence retires it.
+    /// absence is named past the threshold (it retires nothing, rule 5).
     pub absence_minutes: i64,
     /// Locked-input re-checks per pass.
     pub max_locked_checks: usize,
@@ -218,6 +231,9 @@ pub struct ReconcileBroadcastsReport {
     pub fatal: Vec<String>,
     /// The poison retirements run (or, on a dry run, simulated), in order.
     pub retired: Vec<PoisonReport>,
+    /// Retires refused because a broadcaster took a transaction of the set:
+    /// `(origin, the transaction a broadcaster took)` (rule 5).
+    pub kept_announced: Vec<(String, String)>,
     /// The locked-input re-checks of this pass.
     pub locked: LockedInputReport,
 }
@@ -268,7 +284,7 @@ impl ReconcileBroadcastsReport {
             .filter(|r| matches!(r.outcome, PoisonOutcome::Refused { .. }))
             .count();
         format!(
-            "reconcile-broadcasts{}: sse_events={} candidates={} fresh={} probed={} chain_seen={} chain_mined={} held={} inconclusive={} absent={} fatal={} retired_roots={} retired_txs={} climbed={} restored={} ({} sats) kept_locked={} invalidated={} ({} sats) internalized={} alive={} refused={} locked_due={} locked_restored={} ({} sats) locked_spent={} locked_unknown={}",
+            "reconcile-broadcasts{}: sse_events={} candidates={} fresh={} probed={} chain_seen={} chain_mined={} held={} inconclusive={} absent={} fatal={} retired_roots={} retired_txs={} climbed={} restored={} ({} sats) kept_locked={} invalidated={} ({} sats) internalized={} alive={} refused={} kept_announced={} locked_due={} locked_restored={} ({} sats) locked_spent={} locked_unknown={}",
             if execute { "" } else { " (dry run)" },
             self.sse_events,
             self.candidates,
@@ -291,6 +307,7 @@ impl ReconcileBroadcastsReport {
             internalized,
             alive,
             refused,
+            self.kept_announced.len(),
             self.locked.due,
             self.locked.restored,
             self.locked.restored_sats,
@@ -407,14 +424,10 @@ pub async fn run_pass(
                 roots.push((txid.clone(), "fatal verdict from the broadcaster"));
             }
             Probe::Absent => {
+                // The broadcaster holds or has seen it: a broadcaster took
+                // it, so the absence is named and never a retire (rule 5).
                 note_absence(storage, txid, *age, opts.absence_minutes).await;
                 report.absent.push((txid.clone(), *age));
-                if *age >= opts.absence_minutes {
-                    roots.push((
-                        txid.clone(),
-                        "absent from the chain index past the threshold",
-                    ));
-                }
             }
             Probe::Held => report.held.push(txid.clone()),
             Probe::Inconclusive => report.inconclusive.push(txid.clone()),
@@ -433,22 +446,23 @@ pub async fn run_pass(
         if covered.contains(&root) {
             continue;
         }
-        let poison = storage
-            .retire_poisoned_chain_from(
-                services,
-                &root,
-                "invalid",
-                opts.execute,
-                opts.absence_minutes,
-            )
-            .await?;
-        log_poison(&poison, reason, opts.execute);
-        covered.insert(poison.origin.clone());
-        covered.extend(poison.climbed.iter().cloned());
-        for tx in &poison.chain {
-            covered.insert(tx.txid.clone());
+        match retire_never_announced(storage, services, &root, opts.execute, opts.absence_minutes)
+            .await?
+        {
+            Guarded::Ran(poison) => {
+                log_poison(&poison, reason, opts.execute);
+                covered.insert(poison.origin.clone());
+                covered.extend(poison.climbed.iter().cloned());
+                for tx in &poison.chain {
+                    covered.insert(tx.txid.clone());
+                }
+                report.retired.push(poison);
+            }
+            Guarded::Kept { members, taken } => {
+                covered.extend(members);
+                report.kept_announced.push((root, taken));
+            }
         }
-        report.retired.push(poison);
     }
 
     // 4. Kept-locked inputs.
@@ -465,6 +479,9 @@ pub async fn run_pass(
 pub struct SweepReport {
     /// The poison retirements run.
     pub poison: Vec<PoisonReport>,
+    /// Retires refused because a broadcaster took a transaction of the set:
+    /// `(origin, the transaction a broadcaster took)` (rule 5).
+    pub kept_announced: Vec<(String, String)>,
     /// The locked-input re-checks.
     pub locked: LockedInputReport,
 }
@@ -476,6 +493,7 @@ pub async fn run_sweep(
     execute: bool,
 ) -> Result<SweepReport> {
     let mut poison = Vec::new();
+    let mut kept_announced = Vec::new();
     let mut covered: HashSet<String> = HashSet::new();
     let mut roots = sweep_roots(storage).await?;
     roots.extend(rejected_roots(storage).await?);
@@ -483,27 +501,93 @@ pub async fn run_sweep(
         if covered.contains(&root) {
             continue;
         }
-        let report = storage
-            .retire_poisoned_chain_from(
-                services,
-                &root,
-                "invalid",
-                execute,
-                absence_minutes_from_env(),
-            )
-            .await?;
-        log_poison(&report, "sweep", execute);
-        covered.insert(report.origin.clone());
-        covered.extend(report.climbed.iter().cloned());
-        for tx in &report.chain {
-            covered.insert(tx.txid.clone());
+        match retire_never_announced(
+            storage,
+            services,
+            &root,
+            execute,
+            absence_minutes_from_env(),
+        )
+        .await?
+        {
+            Guarded::Ran(report) => {
+                log_poison(&report, "sweep", execute);
+                covered.insert(report.origin.clone());
+                covered.extend(report.climbed.iter().cloned());
+                for tx in &report.chain {
+                    covered.insert(tx.txid.clone());
+                }
+                poison.push(report);
+            }
+            Guarded::Kept { members, taken } => {
+                covered.extend(members);
+                kept_announced.push((root, taken));
+            }
         }
-        poison.push(report);
     }
     let locked = storage
         .recheck_locked_inputs(services, DEFAULT_MAX_LOCKED_CHECKS, execute)
         .await?;
-    Ok(SweepReport { poison, locked })
+    Ok(SweepReport {
+        poison,
+        kept_announced,
+        locked,
+    })
+}
+
+/// What [`retire_never_announced`] did.
+pub(crate) enum Guarded {
+    /// The toolbox's retire ran (a dry run when not executing); its report.
+    Ran(PoisonReport),
+    /// Nothing written: a broadcaster took `taken`, one of `members` (the
+    /// transactions the retire would have written `failed`).
+    Kept { members: Vec<String>, taken: String },
+}
+
+/// The toolbox's poisoned-chain retire from `origin`, refused when a
+/// broadcaster took any transaction it would write `failed` (rule 5).
+///
+/// The set is learned from a dry run first (the climb, the root and every
+/// unproven descendant; the root's alive check runs and writes nothing but
+/// the chain-evidence row it always writes); each of its retirable members
+/// is then asked of [`crate::retire_guard::broadcaster_took`]. Only a set
+/// no broadcaster took is retired.
+pub(crate) async fn retire_never_announced(
+    storage: &StorageSqlx,
+    services: &dyn WalletServices,
+    origin: &str,
+    execute: bool,
+    absence_minutes: i64,
+) -> Result<Guarded> {
+    let dry = storage
+        .retire_poisoned_chain_from(services, origin, "invalid", false, absence_minutes)
+        .await?;
+    if dry.outcome == PoisonOutcome::Retired {
+        // The root, the climb (each a descendant of the root) and the
+        // descendants: every transaction of the set that is still retirable.
+        let mut members = dry.retirable_txids();
+        if let Some(taken) =
+            crate::retire_guard::first_taken(storage.pool(), members.iter().map(String::as_str))
+                .await?
+        {
+            tracing::warn!(
+                origin = %origin,
+                root = %dry.root,
+                taken = %taken,
+                "retire refused: a broadcaster took a transaction of the set; it stays, re-asked, until a proof, a node verdict or a competitor's checked proof"
+            );
+            members.push(origin.to_string());
+            return Ok(Guarded::Kept { members, taken });
+        }
+    }
+    if !execute {
+        return Ok(Guarded::Ran(dry));
+    }
+    Ok(Guarded::Ran(
+        storage
+            .retire_poisoned_chain_from(services, origin, "invalid", true, absence_minutes)
+            .await?,
+    ))
 }
 
 /// What one pass of the served loop did.
@@ -514,6 +598,8 @@ pub struct ServedPassReport {
     pub tracker: TickReport,
     /// The poisoned-chain sweep and the locked-input re-checks.
     pub sweep: SweepReport,
+    /// The spend guard's holds and releases (`spend_guard`).
+    pub guard: crate::spend_guard::GuardReport,
 }
 
 impl ServedPassReport {
@@ -522,20 +608,25 @@ impl ServedPassReport {
         self.sse_events == 0
             && self.tracker.is_quiet()
             && self.sweep.poison.is_empty()
+            && self.sweep.kept_announced.is_empty()
             && self.sweep.locked.due == 0
+            && self.guard.is_quiet()
     }
 
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "served pass: {} sse event(s); {}; {} poison retirement(s); locked inputs: {} due, {} restored, {} spent, {} unknown",
+            "served pass: {} sse event(s); {}; {} poison retirement(s), {} kept (a broadcaster took it); locked inputs: {} due, {} restored, {} spent, {} unknown; spend guard: {} held, {} released",
             self.sse_events,
             self.tracker.summary(),
             self.sweep.poison.len(),
+            self.sweep.kept_announced.len(),
             self.sweep.locked.due,
             self.sweep.locked.restored,
             self.sweep.locked.spent,
             self.sweep.locked.unknown,
+            self.guard.held.len(),
+            self.guard.released.len(),
         )
     }
 }
@@ -569,10 +660,12 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
     };
     let tracker = crate::tracker_host::tick(storage, services, clock, tracker).await?;
     let sweep = run_sweep(storage, services, true).await?;
+    let guard = crate::spend_guard::run(storage.pool()).await?;
     Ok(ServedPassReport {
         sse_events,
         tracker,
         sweep,
+        guard,
     })
 }
 
@@ -775,14 +868,14 @@ async fn note_absence(storage: &StorageSqlx, txid: &str, age_minutes: i64, thres
             txid = %txid,
             age_minutes,
             threshold,
-            "absent from the chain index past the threshold while the broadcaster holds it: a phantom"
+            "absent from the chain index past the threshold while the broadcaster holds it: a broadcaster took it, kept and re-asked"
         );
     } else {
         tracing::info!(
             txid = %txid,
             age_minutes,
             threshold,
-            "absent from the chain index (the broadcaster holds it); retired once older than the threshold"
+            "absent from the chain index (the broadcaster holds it); kept, a broadcaster took it"
         );
     }
 }
@@ -1413,10 +1506,13 @@ mod tests {
     /// THE live shape (2026-09-02, w0): the broadcaster still says
     /// SEEN_MULTIPLE_NODES, the chain index says 404. G (on chain) -> X
     /// (unproven, 31 min old) -> C (unproven, 31 min old); Y (unproven, just
-    /// created) on its own. X and C are phantoms and retire, G's coin comes
-    /// back, Y is too young to judge.
+    /// created) on its own. Until 0.7.2 X and C retired as phantoms and G's
+    /// coin came back. The broadcaster holding them is their acceptance, so
+    /// (rule 5) every absence is named and nothing is retired: they stay,
+    /// re-asked, until a proof, a node verdict or a competitor's checked
+    /// proof.
     #[tokio::test]
-    async fn a_seen_but_absent_phantom_is_retired_after_the_threshold() {
+    async fn a_seen_but_absent_transaction_past_the_threshold_is_named_and_kept() {
         let (storage, user_id, basket) = wallet_storage().await;
         let old = (Utc::now() - chrono::Duration::minutes(31)).to_rfc3339();
         let g = insert_tx(&storage, user_id, &"11".repeat(32), "completed", &old).await;
@@ -1489,66 +1585,60 @@ mod tests {
             "a broadcaster's seen exempts nothing past the threshold"
         );
         assert_eq!(report.probed, 3);
-        assert_eq!(report.absent.len(), 3);
+        assert_eq!(report.absent.len(), 3, "every absence is named");
         assert!(report.seen.is_empty() && report.fatal.is_empty());
-        // One retire from X covers C (its descendant); Y is too young.
-        let retired: Vec<&PoisonReport> = report
-            .retired
-            .iter()
-            .filter(|r| r.outcome == PoisonOutcome::Retired)
-            .collect();
-        assert_eq!(retired.len(), 1, "{:?}", report.retired);
-        assert_eq!(retired[0].root, "22".repeat(32));
-        assert_eq!(
-            retired[0].retirable_txids(),
-            vec!["22".repeat(32), "33".repeat(32)]
+        assert!(
+            report
+                .retired
+                .iter()
+                .all(|r| r.outcome != PoisonOutcome::Retired),
+            "{:?}",
+            report.retired
         );
-        assert_eq!(tx_status(&storage, &"22".repeat(32)).await, "failed");
-        assert_eq!(tx_status(&storage, &"33".repeat(32)).await, "failed");
+        assert_eq!(tx_status(&storage, &"22".repeat(32)).await, "unproven");
+        assert_eq!(tx_status(&storage, &"33".repeat(32)).await, "unproven");
         assert_eq!(tx_status(&storage, &"44".repeat(32)).await, "unproven");
-        assert_eq!(tx_status(&storage, &"11".repeat(32)).await, "completed");
         assert_eq!(
             output_state(&storage, g0).await,
-            (1, None),
-            "G's coin is back"
+            (0, Some(x)),
+            "G's coin stays locked by X"
         );
-        assert_eq!(output_state(&storage, x0).await.0, 0);
-        assert_eq!(output_state(&storage, c0).await.0, 0);
-        // Y's absence is on the clock, nothing more.
+        assert_eq!(output_state(&storage, x0).await, (0, Some(c)));
+        assert_eq!(output_state(&storage, c0).await.0, 1);
+        // Y's absence is noted, nothing more.
         let y_row = storage
             .broadcast_status_of(&"44".repeat(32), BROADCAST_PROVIDER_NETWORK)
             .await
             .unwrap()
             .expect("absence row");
         assert_eq!(y_row.status, BROADCAST_STATUS_UNKNOWN);
-        // The retired ones are remembered as rejected everywhere.
-        let x_arcade = storage
-            .broadcast_status_of(&"22".repeat(32), PROVIDER_ARCADE_V2)
-            .await
-            .unwrap()
-            .expect("row");
-        assert_eq!(x_arcade.status, "rejected");
         assert!(!report.summary(true).contains('\n'));
 
-        // The next pass: X and C are failed (not candidates), Y still young
-        // and absent, nothing to retire, no locked inputs.
+        // The next pass: the same three, named again, nothing retired.
         let again = run_pass(&storage, &services, &verifier, &opts)
             .await
             .unwrap();
-        assert_eq!(again.candidates, 1);
-        assert!(again.retired.is_empty());
-        assert_eq!(again.locked.due, 0);
+        assert_eq!(again.candidates, 3);
+        assert!(again
+            .retired
+            .iter()
+            .all(|r| r.outcome != PoisonOutcome::Retired));
     }
 
     /// The climb through the reconciler: the verdict lands on the child,
-    /// the poison starts at its unproven, absent parent.
+    /// the retire starts at its unproven parent. Neither was taken by a
+    /// broadcaster (both `sending`, no accepting word recorded): the
+    /// broadcaster calls the child REJECTED and the chain index has neither,
+    /// so the host may retire the set (rule 5).
     #[tokio::test]
-    async fn an_absent_child_retires_from_its_absent_parent() {
+    async fn a_refused_child_no_broadcaster_took_retires_from_its_parent() {
         let (storage, user_id, basket) = wallet_storage().await;
+        let older = (Utc::now() - chrono::Duration::minutes(50)).to_rfc3339();
         let old = (Utc::now() - chrono::Duration::minutes(45)).to_rfc3339();
-        let g = insert_tx(&storage, user_id, &"11".repeat(32), "completed", &old).await;
-        let p = insert_tx(&storage, user_id, &"22".repeat(32), "unproven", &old).await;
-        let c = insert_tx(&storage, user_id, &"33".repeat(32), "unproven", &old).await;
+        let g = insert_tx(&storage, user_id, &"11".repeat(32), "completed", &older).await;
+        // C is the older row, so the one probe of this pass is C's.
+        let c = insert_tx(&storage, user_id, &"33".repeat(32), "sending", &older).await;
+        let p = insert_tx(&storage, user_id, &"22".repeat(32), "sending", &old).await;
         let g0 = insert_output(
             &storage,
             user_id,
@@ -1570,18 +1660,8 @@ mod tests {
         )
         .await;
         let _c0 = insert_output(&storage, user_id, basket, c, &"33".repeat(32), true, None).await;
-        // P has fresh chain evidence in the memory from a stale earlier pass
-        // (it is not probed this pass); C is probed and absent.
-        storage
-            .record_broadcast_status(
-                &"22".repeat(32),
-                BROADCAST_PROVIDER_CHAIN,
-                BROADCAST_STATUS_SEEN,
-            )
-            .await
-            .unwrap();
         let broadcaster =
-            mock_server(StatusCode::OK, r#"{"txid":"x","txStatus":"RECEIVED"}"#).await;
+            mock_server(StatusCode::OK, r#"{"txid":"x","txStatus":"REJECTED"}"#).await;
         let chain = mock_server(
             StatusCode::NOT_FOUND,
             r#"{"error":"transaction not found"}"#,
@@ -1591,7 +1671,7 @@ mod tests {
         let services = MockWalletServices::new();
         let opts = ReconcileOptions {
             execute: true,
-            max_probes: 20,
+            max_probes: 1,
             max_age_hours: None,
             absence_minutes: 30,
             max_locked_checks: 20,
@@ -1600,14 +1680,14 @@ mod tests {
         let report = run_pass(&storage, &services, &verifier, &opts)
             .await
             .unwrap();
-        assert_eq!(report.fresh, 1, "P exempt on fresh chain evidence");
         assert_eq!(report.probed, 1, "C");
+        assert_eq!(report.fatal, vec!["33".repeat(32)]);
         let retired: Vec<&PoisonReport> = report
             .retired
             .iter()
             .filter(|r| r.outcome == PoisonOutcome::Retired)
             .collect();
-        assert_eq!(retired.len(), 1);
+        assert_eq!(retired.len(), 1, "{:?}", report.retired);
         assert_eq!(retired[0].origin, "33".repeat(32));
         assert_eq!(
             retired[0].root,

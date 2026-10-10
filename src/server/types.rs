@@ -139,6 +139,12 @@ pub struct McCreateActionRes {
     /// Change outpoints for noSend transactions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_send_change: Option<serde_json::Value>,
+    /// The doors' word when the immediate post drew no accepting word
+    /// (`built`, the request's status, the toolbox's hint, the inputs
+    /// `locked`); absent when a broadcaster took it. See
+    /// [`crate::server::post_word`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<crate::server::post_word::PostWord>,
 }
 
 /// signAction response, in the SAME wire shape as `McCreateActionRes`:
@@ -156,6 +162,12 @@ pub struct McSignActionRes {
     pub tx: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub send_with_results: Option<serde_json::Value>,
+    /// The doors' word when the immediate post drew no accepting word
+    /// (`built`, the request's status, the toolbox's hint, the inputs
+    /// `locked`); absent when a broadcaster took it. See
+    /// [`crate::server::post_word`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<crate::server::post_word::PostWord>,
 }
 
 /// Unsigned transaction + reference for deferred signing flow.
@@ -215,6 +227,12 @@ pub struct McWalletPayment {
 #[derive(Serialize)]
 pub struct McInternalizeActionRes {
     pub accepted: bool,
+    /// The doors' word when the immediate post drew no accepting word
+    /// (`built`, the request's status, the toolbox's hint, the inputs
+    /// `locked`); absent when a broadcaster took it. See
+    /// [`crate::server::post_word`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<crate::server::post_word::PostWord>,
 }
 
 // =============================================================================
