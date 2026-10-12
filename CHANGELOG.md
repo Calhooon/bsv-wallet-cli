@@ -5,6 +5,9 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## Unreleased
 
+- Pin `bsv-wallet-toolbox-rs` to `=0.7.5` and `bsv-rs` to `=0.4.5`.
+  bsv-rs 0.4.5: the lone leaf at offset 0 only; the LOCAL work bound; no behavior change under the defaults.
+
 - Add `respend <txid>`: deliberately spend an accepted transaction's exact
   wallet-owned inputs back to wallet change, using the wallet fee policy.
   Refuse while any answering status source holds the original, when status
