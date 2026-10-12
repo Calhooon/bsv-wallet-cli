@@ -332,6 +332,40 @@ dependencies = [
  "p256",
  "pbkdf2",
  "rand",
+ "ripemd",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "subtle",
+ "thiserror 1.0.69",
+ "urlencoding",
+]
+
+[[package]]
+name = "bsv-rs"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72a8372f5500535f1d192765d88e123fc41c363b423516157a8fc7e5ae9326f0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "async-trait",
+ "base64",
+ "bs58",
+ "cbc",
+ "futures",
+ "getrandom 0.2.17",
+ "hex",
+ "hmac",
+ "k256",
+ "lazy_static",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "pbkdf2",
+ "rand",
  "reqwest",
  "ripemd",
  "serde",
@@ -350,7 +384,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bb41c7cf541717c7c2f0538c7e1376451991c079999107199c87fa03a00a840"
 dependencies = [
- "bsv-rs",
+ "bsv-rs 0.4.5",
  "serde",
  "serde_json",
 ]
@@ -363,7 +397,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-server",
- "bsv-rs",
+ "bsv-rs 0.5.0",
  "bsv-tracker",
  "bsv-wallet-toolbox-rs",
  "chrono",
@@ -399,14 +433,14 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.7.5"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67738e92d498b3bfee10da0c1808e40876ee85eb7d1dc9790e5b6180995b9258"
+checksum = "b0bcd2ba82fd4ba029a5eae1cde8ddd9e484378873aec4485bbaa83ec9b78d34"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
- "bsv-rs",
+ "bsv-rs 0.5.0",
  "chrono",
  "futures",
  "futures-util",

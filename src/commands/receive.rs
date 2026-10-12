@@ -45,18 +45,28 @@ pub(crate) async fn receive_txid(
     txid: &str,
     vout: Option<u32>,
 ) -> Result<(u32, bool)> {
-    let base = woc_base(ctx.chain);
+    receive_txid_from(ctx, woc_base(ctx.chain), txid, vout).await
+}
+
+pub(crate) async fn receive_txid_from(
+    ctx: &WalletContext,
+    base: &str,
+    txid: &str,
+    vout: Option<u32>,
+) -> Result<(u32, bool)> {
     let client = reqwest::Client::new();
     let deposit_script = brc29::deposit_script(&ctx.root_key)?;
 
     let services = ctx.wallet.services();
-    let (beef_bytes, resolved_vout) =
+    let (beef_bytes, resolved_vout, courier) =
         fetch_beef_and_vout(&client, base, txid, vout, &deposit_script, || {
             second_courier(services, txid)
         })
         .await?;
 
-    let accepted = fund::internalize_beef(ctx, &beef_bytes, resolved_vout).await?;
+    let accepted = fund::internalize_beef(ctx, &beef_bytes, resolved_vout)
+        .await
+        .map_err(|e| anyhow!("refused tx {txid} from {courier}: {e:#}"))?;
     Ok((resolved_vout, accepted))
 }
 
@@ -68,9 +78,9 @@ pub(crate) async fn receive_txid(
 /// holds this answer and it is fetched. What is fetched is self-verifying:
 /// the BEEF is internalized, its transaction hashes to the txid and its
 /// merkle paths meet the header service's roots, so the courier is trusted
-/// for nothing but delivery. Two couriers: WhatsOnChain's BEEF route first
-/// (it alone carries an unmined transaction's ancestors), and behind it
-/// `second` (the toolbox's `get_beef`). A fault at the first falls through;
+/// for nothing but delivery. Two couriers: WhatsOnChain's BEEF route, and
+/// behind it `second` (the toolbox's `get_beef`). A transport fault falls through;
+/// a delivered body with incomplete ancestry is refused at internalization.
 /// when neither delivers, the error says what each said ("could not
 /// look"), and nothing is concluded about the payment.
 async fn fetch_beef_and_vout<S, SF>(
@@ -80,13 +90,13 @@ async fn fetch_beef_and_vout<S, SF>(
     vout: Option<u32>,
     deposit_script: &[u8],
     second: S,
-) -> Result<(Vec<u8>, u32)>
+) -> Result<(Vec<u8>, u32, &'static str)>
 where
     S: FnOnce() -> SF,
     SF: Future<Output = Result<Vec<u8>>>,
 {
-    let beef_bytes = match first_courier(client, base, txid).await {
-        Ok(bytes) => bytes,
+    let (beef_bytes, courier) = match first_courier(client, base, txid).await {
+        Ok(bytes) => (bytes, "WhatsOnChain"),
         Err(first) => {
             tracing::warn!(
                 marker = "break_glass_beef_courier",
@@ -94,20 +104,22 @@ where
                 error = %first,
                 "the first BEEF courier did not deliver; asking the second"
             );
-            second().await.map_err(|second| {
+            let bytes = second().await.map_err(|second| {
                 anyhow!(
                     "no courier delivered a BEEF for {txid} (could not look): \
                      WhatsOnChain: {first}; the wallet's services: {second}"
                 )
-            })?
+            })?;
+            (bytes, "wallet services")
         }
     };
 
     let resolved_vout = match vout {
         Some(v) => v,
-        None => vout_paying(&beef_bytes, txid, deposit_script)?,
+        None => vout_paying(&beef_bytes, txid, deposit_script)
+            .map_err(|e| anyhow!("refused tx {txid} from {courier}: {e:#}"))?,
     };
-    Ok((beef_bytes, resolved_vout))
+    Ok((beef_bytes, resolved_vout, courier))
 }
 
 /// WhatsOnChain's `/tx/{txid}/beef`: the transaction with its proofs, hex.
@@ -180,11 +192,73 @@ fn vout_paying(beef_bytes: &[u8], txid: &str, deposit_script: &[u8]) -> Result<u
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
     use bsv_sdk::transaction::{Beef, MerklePath};
     use bsv_wallet_toolbox::services::mock::MockWalletServices;
+
+    pub(crate) async fn stub_context() -> WalletContext {
+        use bsv_sdk::primitives::PrivateKey;
+        use bsv_sdk::transaction::MockChainTracker;
+        use bsv_wallet_toolbox::{
+            Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
+        };
+        let root_key = PrivateKey::from_hex(&format!("{:064x}", 42)).unwrap();
+        let storage = StorageSqlx::open(":memory:").await.unwrap();
+        storage.make_available().await.unwrap();
+        storage
+            .set_chain_tracker(std::sync::Arc::new(MockChainTracker::new(900_001)))
+            .await;
+        let services = Services::with_options(Chain::Main, ServicesOptions::mainnet()).unwrap();
+        let wallet = Wallet::new(Some(root_key.clone()), storage, services)
+            .await
+            .unwrap();
+        WalletContext {
+            wallet,
+            identity_key: root_key.public_key().to_hex(),
+            root_key,
+            chain: Chain::Main,
+            json_output: true,
+            db_path: ":memory:".into(),
+        }
+    }
+
+    pub(crate) fn stub(ctx: &WalletContext, salt: u8) -> (String, String) {
+        let raw = raw_tx(
+            &[(&format!("{salt:02x}").repeat(32), 0)],
+            &[(1000, brc29::deposit_script(&ctx.root_key).unwrap())],
+        );
+        let txid = txid_of(&raw);
+        let mut beef = Beef::new();
+        beef.merge_raw_tx(raw, None);
+        (txid, beef.to_hex())
+    }
+
+    #[tokio::test]
+    async fn l2_stub_refusal_names_txid_courier_reason_and_stores_nothing() {
+        let ctx = stub_context().await;
+        let (txid, body) = stub(&ctx, 17);
+        let route = format!("/tx/{txid}/beef");
+        let courier = Fixture::start(&[(&route, 200, &body)], 500).await;
+        let error = receive_txid_from(&ctx, &courier.base, &txid, None)
+            .await
+            .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.contains(&txid)
+                && text.contains("WhatsOnChain")
+                && text.contains("BEEF structure is invalid"),
+            "{text}"
+        );
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE txid = ?")
+            .bind(&txid)
+            .fetch_one(ctx.wallet.storage().pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(courier.hits(), vec![route]);
+    }
 
     /// A second courier that must not be reached.
     async fn no_second_courier() -> Result<Vec<u8>> {
@@ -221,12 +295,12 @@ mod tests {
         .await;
 
         assert_eq!(explorer.count(&tx_route), 0, "{:?}", explorer.hits());
-        let (_, vout) = got.expect("the BEEF carries the transaction");
+        let (_, vout, _) = got.expect("the BEEF carries the transaction");
         assert_eq!(vout, 1);
         assert_eq!(explorer.hits(), vec![beef_route.clone()]);
 
         // A named output is taken as named.
-        let (_, vout) = fetch_beef_and_vout(
+        let (_, vout, _) = fetch_beef_and_vout(
             &reqwest::Client::new(),
             &explorer.base,
             &txid,
@@ -282,7 +356,7 @@ mod tests {
         let route = format!("/tx/{txid}/beef");
         let explorer = Fixture::start(&[(&route, 200, "0100beef")], 500).await;
         let services = MockWalletServices::new();
-        let (bytes, _) = fetch_beef_and_vout(
+        let (bytes, _, _) = fetch_beef_and_vout(
             &reqwest::Client::new(),
             &explorer.base,
             &txid,
