@@ -64,6 +64,14 @@ async fn require_silence(
     let known: Vec<String> = sqlx::query_scalar("SELECT provider FROM broadcast_seen WHERE txid=? AND status IN ('accepted','seen','mined')")
         .bind(txid).fetch_all(storage.pool()).await?;
     for provider in known {
+        // These are aggregate memory markers, not broadcaster endpoints.
+        // Current chain presence is asked by get_status_for_txids below;
+        // a historical chain marker cannot make a stale proof current.
+        if provider == bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK
+            || provider == bsv_wallet_toolbox::BROADCAST_PROVIDER_CHAIN
+        {
+            continue;
+        }
         ensure!(
             answers.iter().any(|(name, _)| name == &provider),
             "respend refused: a previous status source is unavailable"
