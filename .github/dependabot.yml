@@ -1,0 +1,56 @@
+# The stack's update loop (bsv-stack-lean docs/UPDATE-LOOP.md): the stack's
+# crates only, every day, one PR per release with the gate on its head.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: cron
+      cronjob: "0 6,18 * * *"
+      timezone: Etc/UTC
+    allow:
+      - dependency-name: bsv-rs
+      - dependency-name: bsv-middleware-core
+      - dependency-name: bsv-middleware-cloudflare
+      - dependency-name: bsv-middleware-rs
+      - dependency-name: bsv-overlay-engine
+      - dependency-name: bsv-overlay-discovery
+      - dependency-name: bsv-overlay-cloudflare
+      - dependency-name: bsv-low-proof-replay
+      - dependency-name: bsv-worker-build-info
+      - dependency-name: bsv-wallet-toolbox-rs
+      - dependency-name: bsv-tracker
+    cooldown:
+      exclude:
+        - bsv-rs
+        - bsv-middleware-core
+        - bsv-middleware-cloudflare
+        - bsv-middleware-rs
+        - bsv-overlay-engine
+        - bsv-overlay-discovery
+        - bsv-overlay-cloudflare
+        - bsv-low-proof-replay
+        - bsv-worker-build-info
+        - bsv-wallet-toolbox-rs
+        - bsv-tracker
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps(stack)
+    labels:
+      - stack-line
+      - dependencies
+    groups:
+      bsv-stack:
+        patterns:
+          - bsv-rs
+          - bsv-middleware-core
+          - bsv-middleware-cloudflare
+          - bsv-middleware-rs
+          - bsv-overlay-engine
+          - bsv-overlay-discovery
+          - bsv-overlay-cloudflare
+          - bsv-low-proof-replay
+          - bsv-worker-build-info
+          - bsv-wallet-toolbox-rs
+          - bsv-tracker
