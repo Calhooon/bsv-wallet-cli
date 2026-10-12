@@ -51,6 +51,12 @@ pub enum Commands {
         /// Amount in satoshis
         satoshis: u64,
     },
+    /// Replace an accepted, silent transaction with a spend back to this wallet.
+    /// Refuses while a status source holds the original; proof decides its fate.
+    Respend {
+        /// Original transaction id (hex)
+        txid: String,
+    },
     /// Send a time-locked BSV gift to a recipient's public key
     GiftSend {
         /// Recipient's 33-byte compressed public key (hex)

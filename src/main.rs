@@ -19,6 +19,8 @@ use anyhow::Result;
 use bsv_wallet_cli::tracker_host;
 // The retire guard is the library's too: every retire path asks it.
 use bsv_wallet_cli::retire_guard;
+// The replacement act uses the same host implementation as its harness.
+use bsv_wallet_cli::respend;
 // The spend guard too: every spend of the binary runs it first.
 use bsv_wallet_cli::spend_guard;
 use clap::Parser;
@@ -64,6 +66,10 @@ async fn main() -> Result<()> {
         Commands::Send { address, satoshis } => {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::send::run(&ctx, address, *satoshis).await?;
+        }
+        Commands::Respend { txid } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::respend::run(&ctx, txid).await?;
         }
         Commands::GiftSend {
             recipient,

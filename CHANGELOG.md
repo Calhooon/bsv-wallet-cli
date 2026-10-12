@@ -3,6 +3,22 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## Unreleased
+
+- Add `respend <txid>`: deliberately spend an accepted transaction's exact
+  wallet-owned inputs back to wallet change, using the wallet fee policy.
+  Refuse while any answering status source holds the original, when status
+  lookups fail, after proof, or for an input the wallet cannot sign.
+  The replacement follows the toolbox process and broadcast path and is
+  retried on its cadence. Construction and broadcaster hints leave the
+  original's word and input reservations intact; only a checked competitor
+  proof writes `doubleSpend`. A served pass assigns locked inputs to the
+  proven replacement; the spend guard keeps those inputs reserved even
+  when an unspent hint reaches the rollback path. A recorded build interrupted before processing is
+  completed by that pass; repeated construction is refused.
+  No change to the age policy for accepted unproven change, dependencies,
+  or crate version (bsv-stack-lean #67).
+
 ## 0.7.3
 
 The toolbox 0.7.4 (bsv-stack-lean #66: every broadcaster word is a hint; a
