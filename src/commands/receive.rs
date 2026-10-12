@@ -206,6 +206,10 @@ pub(crate) mod tests {
         };
         let root_key = PrivateKey::from_hex(&format!("{:064x}", 42)).unwrap();
         let storage = StorageSqlx::open(":memory:").await.unwrap();
+        storage
+            .migrate("stub-refusal-test", &root_key.public_key().to_hex())
+            .await
+            .unwrap();
         storage.make_available().await.unwrap();
         storage
             .set_chain_tracker(std::sync::Arc::new(MockChainTracker::new(900_001)))
@@ -241,23 +245,27 @@ pub(crate) mod tests {
         let (txid, body) = stub(&ctx, 17);
         let route = format!("/tx/{txid}/beef");
         let courier = Fixture::start(&[(&route, 200, &body)], 500).await;
-        let error = receive_txid_from(&ctx, &courier.base, &txid, None)
-            .await
-            .unwrap_err();
-        let text = error.to_string();
-        assert!(
-            text.contains(&txid)
-                && text.contains("WhatsOnChain")
-                && text.contains("BEEF structure is invalid"),
-            "{text}"
-        );
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE txid = ?")
-            .bind(&txid)
-            .fetch_one(ctx.wallet.storage().pool())
-            .await
-            .unwrap();
-        assert_eq!(count, 0);
-        assert_eq!(courier.hits(), vec![route]);
+        // Exercise both output discovery and an explicitly named output.
+        for vout in [None, Some(0)] {
+            let error = receive_txid_from(&ctx, &courier.base, &txid, vout)
+                .await
+                .unwrap_err();
+            let text = error.to_string();
+            assert!(
+                text.contains(&txid)
+                    && text.contains("WhatsOnChain")
+                    && text.contains("BEEF structure is invalid"),
+                "{text}"
+            );
+            for table in ["transactions", "outputs"] {
+                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                    .fetch_one(ctx.wallet.storage().pool())
+                    .await
+                    .unwrap();
+                assert_eq!(count, 0, "refusal wrote {table}");
+            }
+        }
+        assert_eq!(courier.hits(), vec![route.clone(), route]);
     }
 
     /// A second courier that must not be reached.

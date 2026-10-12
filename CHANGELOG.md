@@ -3,6 +3,12 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.7.5] - 2026-10-12
+
+- Pin `bsv-wallet-toolbox-rs` to `=0.7.6`, `bsv-tracker` to `=0.2.2`, and `bsv-rs` to `=0.5.0`. The committed lock carries one SDK version.
+- Report a refused courier BEEF with its transaction id, courier and validation reason in `receive` and `sync`. `sync` processes the remaining outpoints and exits nonzero if any were refused. Incomplete unmined stubs are refused before storage by toolbox 0.7.6 ([toolbox #23](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/23)).
+- Add mock courier regressions for refusal without storage and continued sync processing. Completing missing ancestry through a courier remains separate work.
+
 ## [0.7.4] - 2026-10-12
 
 `respend <txid>`: the host's deliberate competitor for a transaction a broadcaster accepted that never mines (bsv-stack-lean #67; the tracker rule: no hand writes a status, the chain decides). The L2 re-pin: bsv-wallet-toolbox-rs 0.7.5, bsv-tracker 0.2.1, bsv-rs 0.4.5 (the lone leaf at offset 0 only; the LOCAL work bound inside one input's script); no behavior change under the defaults.

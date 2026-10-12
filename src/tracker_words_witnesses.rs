@@ -540,6 +540,39 @@ fn pay_args() -> CreateActionArgs {
     }
 }
 
+/// Give synthetic funding a complete proof instead of relying on an
+/// incomplete coinbase stub being accepted as ancestry.
+async fn prove_funding(storage: &StorageSqlx, tx: &Transaction) {
+    use bsv_sdk::transaction::{MerklePath, MockChainTracker};
+    let txid = tx.id();
+    let height = 800;
+    let mut tracker = MockChainTracker::new(height + 100);
+    tracker.add_root(height, txid.clone());
+    storage.set_chain_tracker(Arc::new(tracker)).await;
+    let now = Utc::now();
+    let proven: i64 = sqlx::query_scalar(
+        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?) RETURNING proven_tx_id",
+    )
+    .bind(&txid)
+    .bind(height as i64)
+    .bind("bb".repeat(32))
+    .bind(&txid)
+    .bind(MerklePath::from_coinbase_txid(&txid, height).to_binary())
+    .bind(tx.to_binary())
+    .bind(now)
+    .bind(now)
+    .fetch_one(storage.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE transactions SET proven_tx_id = ? WHERE txid = ?")
+        .bind(proven)
+        .bind(&txid)
+        .execute(storage.pool())
+        .await
+        .unwrap();
+}
+
 /// The wallet's one coin: the change output of an internalized transaction
 /// P whose immediate post the broadcaster refused, as the toolbox 0.7.4
 /// leaves it (`internalizeAction` answered `accepted`; P `unproven`; its
@@ -594,6 +627,7 @@ async fn refused_coin() -> (StorageSqlx, PrivateKey, String, i64) {
     .execute(storage.pool())
     .await
     .unwrap();
+    prove_funding(&storage, &grand).await;
     // P: the payment to us, spending G:0.
     let parent = Transaction::with_params(
         1,
@@ -853,6 +887,7 @@ async fn funded() -> (StorageSqlx, PrivateKey, String) {
     .await
     .unwrap()
     .last_insert_rowid();
+    prove_funding(&storage, &parent).await;
     sqlx::query(
         "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, \
                               txid, type, spendable, change, derivation_prefix, derivation_suffix, \
