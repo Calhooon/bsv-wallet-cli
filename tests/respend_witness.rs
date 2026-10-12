@@ -199,6 +199,15 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     let s = f.wallet.storage();
     let before = words(&f).await;
     assert_eq!(before, ("unproven".into(), "unmined".into()));
+    // This shared memory marker records an old index sighting. It is not
+    // a broadcaster endpoint; current batch status below is unknown.
+    s.record_broadcast_status(
+        &f.phantom,
+        bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
+        bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
+    )
+    .await
+    .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
     let replacement = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
         .await
