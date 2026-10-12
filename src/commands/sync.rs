@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bsv_sdk::wallet::{ListOutputsArgs, WalletInterface};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -16,8 +16,11 @@ struct WocUnspent {
 }
 
 pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
+    run_from(ctx, reconcile_spent, receive::woc_base(ctx.chain)).await
+}
+
+async fn run_from(ctx: &WalletContext, reconcile_spent: bool, base: &str) -> Result<()> {
     let address = brc29::deposit_address(&ctx.root_key, ctx.chain)?;
-    let base = receive::woc_base(ctx.chain);
     let client = reqwest::Client::new();
 
     tracing::warn!(
@@ -45,6 +48,7 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
 
     let known = known_outpoints(ctx).await?;
 
+    let mut refused = 0u32;
     let mut received = 0u32;
     let mut skipped = 0u32;
     let mut sats_in = 0u64;
@@ -55,16 +59,18 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
             skipped += 1;
             continue;
         }
-        match receive::receive_txid(ctx, &u.tx_hash, Some(u.tx_pos)).await {
+        match receive::receive_txid_from(ctx, base, &u.tx_hash, Some(u.tx_pos)).await {
             Ok((_, true)) => {
                 received += 1;
                 sats_in += u.value;
             }
             Ok((_, false)) => {
+                refused += 1;
                 eprintln!("not accepted: {}", outpoint);
             }
             Err(e) => {
-                eprintln!("failed {}: {}", outpoint, e);
+                refused += 1;
+                eprintln!("failed {}: {:#}", outpoint, e);
             }
         }
     }
@@ -164,6 +170,7 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
                 "address": address,
                 "unspent_on_chain": unspent.len(),
                 "received": received,
+                "refused": refused,
                 "skipped": skipped,
                 "sats_received": sats_in,
                 "reconcile_checked": reconcile_checked,
@@ -191,6 +198,11 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
         }
     }
 
+    if refused > 0 {
+        return Err(anyhow!(
+            "sync refused {refused} outpoint(s); other outpoints were processed"
+        ));
+    }
     Ok(())
 }
 
@@ -259,6 +271,44 @@ async fn known_outpoints(ctx: &WalletContext) -> Result<HashSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn l2_sync_continues_after_stub_refusal_and_returns_error() {
+        use crate::commands::receive::tests::{stub, stub_context};
+        use crate::test_support::Fixture;
+        let ctx = stub_context().await;
+        let (one, body_one) = stub(&ctx, 17);
+        let (two, body_two) = stub(&ctx, 18);
+        let address = brc29::deposit_address(&ctx.root_key, ctx.chain).unwrap();
+        let scan = format!("/address/{address}/unspent");
+        let route_one = format!("/tx/{one}/beef");
+        let route_two = format!("/tx/{two}/beef");
+        let list = serde_json::json!([
+            {"tx_hash": one, "tx_pos": 0, "value": 1000},
+            {"tx_hash": two, "tx_pos": 0, "value": 1000}
+        ])
+        .to_string();
+        let courier = Fixture::start(
+            &[
+                (&scan, 200, &list),
+                (&route_one, 200, &body_one),
+                (&route_two, 200, &body_two),
+            ],
+            500,
+        )
+        .await;
+        let error = run_from(&ctx, false, &courier.base).await.unwrap_err();
+        assert!(error.to_string().contains("sync refused 2"), "{error}");
+        assert_eq!(courier.hits(), vec![scan, route_one, route_two]);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE txid IN (?, ?)")
+                .bind(&one)
+                .bind(&two)
+                .fetch_one(ctx.wallet.storage().pool())
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
 
     /// C5 (Rule 28): `sync --reconcile-spent` holds no spend probe of its
     /// own. Red at the base: the copy asked `/tx/{txid}/{vout}/spent` and
