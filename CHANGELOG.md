@@ -3,6 +3,10 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.7.4] - 2026-10-12
+
+`respend <txid>`: the host's deliberate competitor for a transaction a broadcaster accepted that never mines (bsv-stack-lean #67; the tracker rule: no hand writes a status, the chain decides). The L2 re-pin: bsv-wallet-toolbox-rs 0.7.5, bsv-tracker 0.2.1, bsv-rs 0.4.5 (the lone leaf at offset 0 only; the LOCAL work bound inside one input's script); no behavior change under the defaults.
+
 ## Unreleased
 
 - Pin `bsv-wallet-toolbox-rs` to `=0.7.5` and `bsv-rs` to `=0.4.5`.
