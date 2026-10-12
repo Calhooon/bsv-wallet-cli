@@ -64,6 +64,7 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
 /// Release what a status source now holds, then hold every spendable coin
 /// of a transaction whose last word is an immediate-refusal hint.
 pub async fn run(pool: &SqlitePool) -> Result<GuardReport> {
+    crate::respend::reserve_inputs(pool).await?;
     ensure_schema(pool).await?;
     let mut report = GuardReport::default();
 

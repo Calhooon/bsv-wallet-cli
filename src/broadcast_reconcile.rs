@@ -492,6 +492,9 @@ pub async fn run_sweep(
     services: &dyn WalletServices,
     execute: bool,
 ) -> Result<SweepReport> {
+    if execute {
+        crate::respend::settle_proven(storage, services).await?;
+    }
     let mut poison = Vec::new();
     let mut kept_announced = Vec::new();
     let mut covered: HashSet<String> = HashSet::new();
