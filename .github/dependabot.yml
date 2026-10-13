@@ -6,7 +6,10 @@ updates:
     directory: /
     schedule:
       interval: cron
-      cronjob: "0 6,18 * * *"
+      # One slot a day: the live validator refuses a cron whose interval is under 24 hours
+      # (read on PR #21, 2026-10-13: "minimum interval of 12 hours which is less than the minimum
+      # allowed interval of 24 hours"). 18:00Z catches the day's releases the same afternoon.
+      cronjob: "0 18 * * *"
       timezone: Etc/UTC
     allow:
       - dependency-name: bsv-rs
