@@ -3,6 +3,12 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.9.0] - 2026-10-17
+
+- `daemon` holds the header service's chain-event feed (`CHAINTRACKS_URL`; Calhooon/bsv-wallet-cli #26, bsv-stack-lean #167): a replay through `GET /events?since=` from the stored cursor until `hasMore` is false, then the SSE stream; every envelope through `bsv_tracker::decode_envelope` and `Tracker::on_chain` with the daemon's headers; the cursor stored after each delivery in the same transaction as the tracker's rows (`tracker_meta`, `feed_cursor`). A decode fault, `cursorAhead` (409), an `event: error` or a refused request stops the loop at its cursor and is reported at `GET /chain-feed`; a dropped stream reconnects (the page from the cursor, then the stream with `Last-Event-ID`). Load: one stream per daemon plus one page request per reconnect.
+- A chain event that leaves a tracked transaction other than a plain checked `mined` (a reorg's `stale`, a fork's or a split's suspect mark) is kept on its row (`tracker_states.chain`, added to an existing table empty) and replayed on each load; a new proof, or a stored path dropped as no longer checking, clears it.
+- `SPEND_DEPTH`: the spend depth the tracker host's spend guard reads, default 1 and the floor (the stack's wallet charter R3, `lean/Wallet.lean` `guardDepth`).
+
 ## [0.8.0] - 2026-10-17
 
 - Pin `bsv-wallet-toolbox-rs` to `=0.8.0`, `bsv-rs` to `=0.6.1` and `bsv-tracker` to `=0.4.0`. They move together because toolbox 0.8.0 and tracker 0.3.0 put bsv-rs 0.6 types in their public APIs. The committed lock carries one SDK version, bsv-rs 0.6.1, on the line the toolbox's caret `0.6.0` admits.
