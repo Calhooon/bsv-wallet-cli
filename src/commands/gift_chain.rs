@@ -416,6 +416,7 @@ mod tests {
         TickOptions {
             age_threshold: 600,
             max_asks: 20,
+            spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
         }
     }
 

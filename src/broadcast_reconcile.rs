@@ -1475,6 +1475,7 @@ mod tests {
         let opts = TickOptions {
             age_threshold: 600,
             max_asks: 20,
+            spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
         };
         let now = Utc::now().timestamp() as u64;
         let report = run_served_pass(&storage, &services, &At(now), &opts, None)

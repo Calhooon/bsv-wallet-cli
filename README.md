@@ -1,18 +1,16 @@
 # bsv-wallet-cli
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
-storage, signing, broadcasting and transaction tracking. **0.7.4** pins
-**bsv-wallet-toolbox-rs =0.7.5** and **bsv-rs =0.4.5**. Its tracker dependency
-has the compatible requirement `0.2.0`; [Cargo.lock](Cargo.lock) resolves
-**bsv-tracker 0.2.0**. The published tracker 0.2.1 is compatible with that
-requirement, but is not the version in this checkout's lockfile.
+storage, signing, broadcasting and transaction tracking. **0.9.0** pins
+**bsv-wallet-toolbox-rs =0.8.0**, **bsv-rs =0.6.1** and **bsv-tracker =0.4.0**;
+[Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
 
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.7.4 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.9.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -35,6 +33,39 @@ The server implements the wallet interface and serializes spending operations.
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. Configuration and defaults
 are defined in [src](src); [GIFT.md](GIFT.md) documents gift flows and limits.
+
+## The chain-event feed
+
+`daemon` holds the header service's chain-event feed
+([src/chain_feed.rs](src/chain_feed.rs)); the source is `CHAINTRACKS_URL`
+(required, no default; `off` has no feed). On start it replays from its stored
+cursor (0 at birth) through `GET /events?since=<cursor>` until `hasMore` is
+false, then holds `GET /events/stream?since=<cursor>`. Every envelope goes
+through the tracker's decoder and `Tracker::on_chain` with the daemon's
+headers: a reorg turns the words of the transactions mined at or above its
+height `stale` and asks for a new proof; a fork or a split marks them suspect
+and moves no word; a tip or a resolved split rechecks the marked ones against
+the headers. The cursor is stored after each delivery, in the same transaction
+as the tracker's rows (`tracker_meta`, `feed_cursor`).
+
+A decode fault, a cursor ahead of the journal (409 `cursorAhead`), an
+`event: error` from the feed or a refused request stops the loop at its
+cursor, with no skip; the fault is in the daemon's status, `GET /chain-feed`
+(`status.fault`: its kind, the cursor it stopped at, the offending cursor, the
+text). A restart resumes from the stored cursor. A stream that ends without an
+error event reconnects: the page from the cursor, then the stream with
+`Last-Event-ID`.
+
+Load: one outbound stream per daemon, plus one page request per reconnect
+(more only while the journal says `hasMore`). The daemon runs nothing periodic
+of its own for the feed; a transport failure is retried after a pause that
+doubles from one second to five minutes. Headers are read beyond the feed
+only when an envelope names a tracked transaction.
+
+`SPEND_DEPTH` (default 1, and the floor: a smaller number reads as 1) is the
+depth the block holding a coin's transaction must reach before the tracker's
+spend guard offers the coin; the tip is depth 1 (the stack's wallet charter
+R3).
 
 ## Deliberate respend
 
