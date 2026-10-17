@@ -11,7 +11,7 @@
 
 use std::process::Command;
 
-use bsv_sdk::primitives::{sha256d, to_hex};
+use bsv_sdk::primitives::{sha256d, to_hex, to_var_int};
 use bsv_sdk::transaction::{Beef, MerklePath, MerklePathLeaf, BEEF_V1};
 use tempfile::TempDir;
 
@@ -49,8 +49,7 @@ fn tx_spending(prev: &str, script_len: usize) -> Vec<u8> {
     if script_len == 0 {
         raw.push(0);
     } else {
-        raw.push(0xfe);
-        raw.extend_from_slice(&(script_len as u32).to_le_bytes());
+        raw.extend(to_var_int(script_len as u64));
         raw.push(0x6a); // OP_RETURN
         raw.extend(vec![0u8; script_len - 1]);
     }
