@@ -53,6 +53,10 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
         "src/commands/sync.rs",
         "C4, and the client it hands the spend probe",
     ),
+    (
+        "src/chain_feed.rs",
+        "the header service's chain-event feed (CHAINTRACKS_URL), not an explorer",
+    ),
     ("src/commands/cleanup_abandoned.rs", "C7"),
     (
         "src/commands/reconcile_outputs.rs",
