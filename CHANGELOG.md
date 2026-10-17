@@ -3,6 +3,11 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.8.0] - 2026-10-17
+
+- Pin `bsv-wallet-toolbox-rs` to `=0.8.0`, `bsv-rs` to `=0.6.1` and `bsv-tracker` to `=0.4.0`. They move together because toolbox 0.8.0 and tracker 0.3.0 put bsv-rs 0.6 types in their public APIs. The committed lock carries one SDK version, bsv-rs 0.6.1, on the line the toolbox's caret `0.6.0` admits.
+- bsv-tracker 0.4.0 adds two `ChainEvent` variants, `Split` and `SplitResolved`. The CLI has no exhaustive `match` on `ChainEvent` because it does not decode the header feed, so neither variant needs an arm and no split moves a coin.
+
 ## [0.7.5] - 2026-10-12
 
 - Pin `bsv-wallet-toolbox-rs` to `=0.7.6`, `bsv-tracker` to `=0.2.2`, and `bsv-rs` to `=0.5.0`. The committed lock carries one SDK version.
