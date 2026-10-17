@@ -14,6 +14,9 @@ mod test_support;
 mod tracker_words_witnesses;
 
 use anyhow::Result;
+// The chain-event feed is the library's: the daemon holds it, the server
+// reads its status.
+use bsv_wallet_cli::chain_feed;
 // The tracker host is the library's, one copy: its spend guard and its
 // reads are public API the binary does not call itself.
 use bsv_wallet_cli::tracker_host;

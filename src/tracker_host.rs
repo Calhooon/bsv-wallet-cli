@@ -40,6 +40,19 @@
 //! the header at or below its height moved (the last twelve tips are kept
 //! to see that) or when a spend names it ([`spend_guard`]).
 //!
+//! # What the header service pushes
+//!
+//! The daemon's chain-event feed ([`crate::chain_feed`]) hands each
+//! envelope to [`deliver_chain_event`]: the rows the event names by index
+//! (the mined rows at or above a fork, reorg or split height, the rows
+//! marked by an earlier event for a tip, the rows on an invalidated
+//! block's hash) are loaded into a [`Tracker`], and `Tracker::on_chain`
+//! moves their words. An event that left a row anything but a plain
+//! checked `mined` is kept on the row as one more input to replay (the
+//! `chain` column), so a `stale` or a suspect mark survives the next load;
+//! a new proof, or a stored path dropped because it no longer checks,
+//! clears it. The cursor is stored in the same transaction.
+//!
 //! One re-ask is an announce, not a proof request: a transaction a
 //! broadcaster called not final (a forced `gift-claim` before its lock
 //! time) is kept with its BEEF and handed to the broadcasters again at the
@@ -52,9 +65,9 @@ use anyhow::Result;
 use bsv_sdk::transaction::MerklePath;
 use bsv_sdk::wallet::{InternalizeActionArgs, WalletInterface};
 use bsv_tracker::{
-    CheckError, Clock, Evidence, Header, HeaderError, Headers, Height, Hint, HintSource,
-    HintStatus, HostAction, Input, Params, Proof, ProofFetcher, Reask, State, Timestamp, TxId,
-    Word,
+    decode_envelope, ChainEnvelope, ChainEvent, CheckError, Clock, Evidence, Header, HeaderError,
+    Headers, Height, Hint, HintSource, HintStatus, HostAction, Input, Params, Proof, ProofFetcher,
+    Reask, State, Timestamp, Tracker, TxId, Word,
 };
 use bsv_wallet_toolbox::services::PostBeefResult;
 use bsv_wallet_toolbox::{BroadcastStatus, StorageSqlx, WalletServices};
@@ -75,6 +88,9 @@ const MAX_BACKOFF_DOUBLINGS: u32 = 6;
 const MAX_ASKS_PER_TX: u32 = 16;
 /// Recent tips kept to see a moved header.
 const TIP_RING: usize = 12;
+/// Default spend depth (`SPEND_DEPTH`), and its floor: a coin is offered
+/// when the block holding its transaction is at or below the tip.
+pub const DEFAULT_SPEND_DEPTH: Height = 1;
 
 // ---------------------------------------------------------------------------
 // Headers
@@ -386,6 +402,10 @@ struct TrackedRow {
     /// What the wallet records once a broadcaster takes it: the
     /// `internalizeAction` arguments, JSON.
     on_accept: Option<String>,
+    /// Chain events that left the checked word other than a plain
+    /// `mined` (stale, or suspect), oldest first, as their envelopes.
+    /// Replayed after the proof on every load.
+    chain: Vec<String>,
 }
 
 impl TrackedRow {
@@ -400,6 +420,63 @@ impl TrackedRow {
             reannounce_beef: None,
             reannounce_at: None,
             on_accept: None,
+            chain: vec![],
+        }
+    }
+
+    /// The stored chain events, decoded. They were decoded once before
+    /// they were stored; one that no longer decodes is reported and not
+    /// replayed.
+    fn chain_events(&self) -> Vec<ChainEvent> {
+        self.chain
+            .iter()
+            .filter_map(|json| match decode_envelope(json.as_bytes()) {
+                Ok(event) => Some(event),
+                Err(fault) => {
+                    tracing::warn!(txid = %self.txid, %fault, "a stored chain event does not decode");
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Keep `event` on the row when it left the state anything but a
+    /// plain checked `mined`; forget every kept event when it did. One
+    /// `tip` is kept at most (each rechecks the same suspect mark).
+    fn keep_chain(&mut self, state: &State, event: &ChainEvent) -> Result<()> {
+        let plain = matches!(state.word(), Word::Mined(_)) && !state.suspect();
+        if plain && state.reask().is_none() {
+            self.chain.clear();
+            return Ok(());
+        }
+        if matches!(event, ChainEvent::Tip { .. } | ChainEvent::TipAge { .. }) {
+            self.chain.retain(|json| {
+                !matches!(
+                    decode_envelope(json.as_bytes()),
+                    Ok(ChainEvent::Tip { .. } | ChainEvent::TipAge { .. })
+                )
+            });
+        }
+        self.chain
+            .push(serde_json::to_string(&ChainEnvelope::new(event.clone()))?);
+        Ok(())
+    }
+
+    /// Feed the stored inputs to `tracker`, as [`TrackedRow::replay`] feeds
+    /// them to one state.
+    fn replay_into<H: Headers>(&self, tracker: &mut Tracker, headers: &H) {
+        tracker.track(self.txid.clone());
+        if self.built {
+            let _ = tracker.apply(&self.txid, headers, Input::Host(HostAction::Build));
+        }
+        for hint in &self.hints {
+            let _ = tracker.apply(&self.txid, headers, Input::Hint(hint.hint()));
+        }
+        if let Some(Ok(proof)) = self.proof() {
+            let _ = tracker.apply(&self.txid, headers, Input::Evidence(Evidence::Proof(proof)));
+        }
+        for event in self.chain_events() {
+            let _ = tracker.apply(&self.txid, headers, Input::Evidence(Evidence::Chain(event)));
         }
     }
 
@@ -434,6 +511,9 @@ impl TrackedRow {
             Some(Err(fault)) => Some(fault),
             None => None,
         };
+        for event in self.chain_events() {
+            let _ = state.step(params, headers, Input::Evidence(Evidence::Chain(event)));
+        }
         (state, fault)
     }
 }
@@ -488,14 +568,27 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     ] {
         sqlx::query(sql).execute(storage.pool()).await?;
     }
+    // Added with the chain-event feed (0.9.0); a table made before it
+    // gains the column empty.
+    let has_chain: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = 'chain'",
+    )
+    .fetch_one(storage.pool())
+    .await?;
+    if has_chain == 0 {
+        sqlx::query("ALTER TABLE tracker_states ADD COLUMN chain TEXT NOT NULL DEFAULT '[]'")
+            .execute(storage.pool())
+            .await?;
+    }
     Ok(())
 }
 
 const ROW_COLUMNS: &str =
-    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at, on_accept";
+    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at, on_accept, chain";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     let hints: String = row.get("hints");
+    let chain: String = row.get("chain");
     TrackedRow {
         txid: row.get("txid"),
         built: row.get::<i64, _>("built") != 0,
@@ -510,6 +603,7 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
             .get::<Option<i64>, _>("reannounce_at")
             .map(|t| t.max(0) as Timestamp),
         on_accept: row.get("on_accept"),
+        chain: serde_json::from_str(&chain).unwrap_or_default(),
     }
 }
 
@@ -529,6 +623,15 @@ async fn store_row(
     state: &State,
     now: Timestamp,
 ) -> Result<()> {
+    store_row_in(storage.pool(), row, state, now).await
+}
+
+async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+    row: &TrackedRow,
+    state: &State,
+    now: Timestamp,
+) -> Result<()> {
     let (height, header_hash) = match state.word() {
         Word::Mined(mined) => (
             Some(mined.height() as i64),
@@ -539,14 +642,14 @@ async fn store_row(
     sqlx::query(
         "INSERT INTO tracker_states \
             (txid, built, hints, bump, word, height, header_hash, reask, asks, next_ask_at, \
-             reannounce_beef, reannounce_at, on_accept, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             reannounce_beef, reannounce_at, on_accept, chain, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(txid) DO UPDATE SET built = excluded.built, hints = excluded.hints, \
             bump = excluded.bump, word = excluded.word, height = excluded.height, \
             header_hash = excluded.header_hash, reask = excluded.reask, asks = excluded.asks, \
             next_ask_at = excluded.next_ask_at, reannounce_beef = excluded.reannounce_beef, \
             reannounce_at = excluded.reannounce_at, on_accept = excluded.on_accept, \
-            updated_at = excluded.updated_at",
+            chain = excluded.chain, updated_at = excluded.updated_at",
     )
     .bind(&row.txid)
     .bind(row.built as i64)
@@ -561,8 +664,9 @@ async fn store_row(
     .bind(&row.reannounce_beef)
     .bind(row.reannounce_at.map(|t| t as i64))
     .bind(&row.on_accept)
+    .bind(serde_json::to_string(&row.chain)?)
     .bind(now as i64)
-    .execute(storage.pool())
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -733,10 +837,19 @@ pub struct TickOptions {
     pub age_threshold: Timestamp,
     /// Re-asks one pass runs.
     pub max_asks: usize,
+    /// How deep the block holding a coin's transaction must be before the
+    /// coin is offered (`SPEND_DEPTH`): the tip is depth 1. The stack's
+    /// wallet charter R3 (b), ruled 2026-10-12 (bsv-stack-lean
+    /// `lean/Wallet.lean`, `guardDepth`): the spend depth is the host's
+    /// parameter, named in its config, with 1 the floor; a number below 1
+    /// reads as 1. Read by [`spend_guard`], where the host decides whether
+    /// a coin may be spent.
+    pub spend_depth: Height,
 }
 
 impl TickOptions {
-    /// `TRACKER_AGE_SECS` and `TRACKER_MAX_ASKS`, with their defaults.
+    /// `TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS` and `SPEND_DEPTH`, with their
+    /// defaults.
     pub fn from_env() -> Self {
         fn env<T: std::str::FromStr>(key: &str, default: T) -> T {
             std::env::var(key)
@@ -747,7 +860,16 @@ impl TickOptions {
         Self {
             age_threshold: env("TRACKER_AGE_SECS", DEFAULT_AGE_SECS).max(1),
             max_asks: env("TRACKER_MAX_ASKS", DEFAULT_MAX_ASKS),
+            spend_depth: env("SPEND_DEPTH", DEFAULT_SPEND_DEPTH),
         }
+        .floored()
+    }
+
+    /// The options with the spend depth at its floor of 1 or above (R3).
+    #[must_use]
+    pub fn floored(mut self) -> Self {
+        self.spend_depth = self.spend_depth.max(DEFAULT_SPEND_DEPTH);
+        self
     }
 
     fn params(&self) -> Params {
@@ -949,6 +1071,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                 // The path proves inclusion in a block that is no longer
                 // active: it is dropped, and a new one is asked for.
                 row.bump = None;
+                row.chain.clear();
                 report.moved.push(row.txid.clone());
                 tracing::warn!(
                     marker = "tracker_stored_proof_moved",
@@ -1080,6 +1203,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                 match state.step(&params, &snapshot, Input::Evidence(Evidence::Proof(proof))) {
                     Ok(()) => {
                         row.bump = Some(hex);
+                        row.chain.clear();
                         true
                     }
                     Err(fault) => {
@@ -1206,9 +1330,257 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
         Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => return Ok(Err(fault)),
         _ => {}
     }
-    let verdict = readme_spend_guard(&mut state, &params, &snapshot);
+    let verdict = readme_spend_guard(&mut state, &params, &snapshot)
+        .and_then(|offered| Ok(offered && deep_enough(&state, &snapshot, opts.spend_depth)?));
     store_row(storage, &row, &state, clock.now()).await?;
     Ok(verdict)
+}
+
+/// Is the block holding a `mined` word's transaction at least
+/// `spend_depth` deep under `headers`' tip (the tip is depth 1; the stack's
+/// `Tracker.depth hd h = hd.tip + 1 - h`)? The depth reads as 1 at least
+/// (R3's floor). An unreadable tip is an error, as for the guard.
+fn deep_enough<H: Headers>(
+    state: &State,
+    headers: &H,
+    spend_depth: Height,
+) -> std::result::Result<bool, CheckError> {
+    let Some(height) = state.word().height() else {
+        return Ok(false);
+    };
+    let tip = headers.tip_height().map_err(CheckError::Headers)?;
+    let depth = (u64::from(tip) + 1).saturating_sub(u64::from(height));
+    Ok(depth >= u64::from(spend_depth.max(DEFAULT_SPEND_DEPTH)))
+}
+
+// ---------------------------------------------------------------------------
+// Chain events from the header service's feed
+// ---------------------------------------------------------------------------
+
+/// The feed's stored cursor: the last envelope delivered, `0` at birth.
+/// One row of `tracker_meta`, beside the tracker's rows.
+pub async fn feed_cursor(storage: &StorageSqlx) -> Result<u64> {
+    ensure_tables(storage).await?;
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM tracker_meta WHERE key = 'feed_cursor'")
+            .fetch_optional(storage.pool())
+            .await?;
+    Ok(match value {
+        Some(v) => v
+            .parse()
+            .map_err(|e| anyhow::anyhow!("the stored feed cursor {v:?}: {e}"))?,
+        None => 0,
+    })
+}
+
+/// What one delivered envelope did to one tracked transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChainMove {
+    /// The transaction the event named, by index.
+    pub txid: String,
+    /// The tracker's word after the event.
+    pub word: String,
+    /// Its pending re-ask, if any.
+    pub reask: Option<String>,
+    /// Marked by a fork or a split, awaiting a recheck.
+    pub suspect: bool,
+    /// The tracker's fault for this transaction, reported, if any.
+    pub fault: Option<String>,
+}
+
+/// One delivered envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChainDelivery {
+    /// The envelope's cursor, now stored.
+    pub cursor: u64,
+    /// The event's kind.
+    pub kind: &'static str,
+    /// The transactions it named.
+    pub moved: Vec<ChainMove>,
+}
+
+/// The event's wire kind.
+pub fn event_kind(event: &ChainEvent) -> &'static str {
+    match event {
+        ChainEvent::Tip { .. } => "tip",
+        ChainEvent::Fork { .. } => "fork",
+        ChainEvent::Reorg { .. } => "reorg",
+        ChainEvent::Invalidated { .. } => "invalidated",
+        ChainEvent::Frozen { .. } => "frozen",
+        ChainEvent::TipAge { .. } => "tipAge",
+        ChainEvent::Split { .. } => "split",
+        ChainEvent::SplitResolved { .. } => "splitResolved",
+    }
+}
+
+/// The headers a reorg replaced, over the daemon's snapshot: a stored
+/// proof is replayed against the header it was checked against (the
+/// event's deactivated header at its height, the prior tip as the tip),
+/// so the tracker sees the `mined` word the reorg takes away. The event
+/// writes no `mined` word through this view; `Tracker::on_chain` turns
+/// the words it names `stale`.
+struct Replaced<'a> {
+    snapshot: &'a HeaderSnapshot,
+    replaced: BTreeMap<Height, Header>,
+    prior_tip: Option<Height>,
+}
+
+impl Headers for Replaced<'_> {
+    fn header_at(&self, height: Height) -> std::result::Result<Option<Header>, HeaderError> {
+        match self.replaced.get(&height) {
+            Some(header) => Ok(Some(header.clone())),
+            None => self.snapshot.header_at(height),
+        }
+    }
+
+    fn tip_height(&self) -> std::result::Result<Height, HeaderError> {
+        match self.prior_tip {
+            Some(tip) => Ok(tip),
+            None => self.snapshot.tip_height(),
+        }
+    }
+}
+
+/// Deliver one chain envelope (already decoded, at `cursor`) to the
+/// tracked transactions it names, through `Tracker::on_chain` with the
+/// daemon's headers, and store the moved rows and the cursor in one
+/// transaction. A cursor at or below the stored one was delivered before
+/// (delivery is at least once) and changes nothing.
+///
+/// The rows are named by index, never by a scan of the chain: a fork, a
+/// reorg or a split names the mined rows at or above its height; a tip,
+/// the rows an earlier event marked; an invalidated block, the rows on its
+/// hash; a freeze or a tip age names none here (they are the spend and
+/// freshness guards' inputs). The header service is read only when a row
+/// is named: the tip and the heights of the named rows' proofs.
+pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
+    storage: &StorageSqlx,
+    services: &V,
+    clock: &C,
+    opts: &TickOptions,
+    cursor: u64,
+    event: ChainEvent,
+) -> Result<ChainDelivery> {
+    let kind = event_kind(&event);
+    if cursor <= feed_cursor(storage).await? {
+        return Ok(ChainDelivery {
+            cursor,
+            kind,
+            moved: vec![],
+        });
+    }
+    let named = format!("SELECT {ROW_COLUMNS} FROM tracker_states");
+    let query = match &event {
+        ChainEvent::Fork { height: from, .. }
+        | ChainEvent::Reorg {
+            fork_height: from, ..
+        }
+        | ChainEvent::Split {
+            fork_height: from, ..
+        }
+        | ChainEvent::SplitResolved {
+            fork_height: from, ..
+        } => Some(
+            sqlx::query(&format!(
+                "{named} WHERE word = 'mined' AND height >= ? ORDER BY txid"
+            ))
+            .bind(i64::from(*from))
+            .fetch_all(storage.pool())
+            .await?,
+        ),
+        ChainEvent::Tip { .. } => Some(
+            sqlx::query(&format!(
+                "{named} WHERE word = 'mined' AND chain <> '[]' ORDER BY txid"
+            ))
+            .fetch_all(storage.pool())
+            .await?,
+        ),
+        ChainEvent::Invalidated { block_hash } => Some(
+            sqlx::query(&format!("{named} WHERE header_hash = ? ORDER BY txid"))
+                .bind(block_hash.to_ascii_lowercase())
+                .fetch_all(storage.pool())
+                .await?,
+        ),
+        ChainEvent::Frozen { .. } | ChainEvent::TipAge { .. } => None,
+    };
+    let mut rows: Vec<TrackedRow> = query.iter().flatten().map(row_of).collect();
+
+    let now = clock.now();
+    let mut moved = Vec::new();
+    let mut tx = storage.pool().begin().await?;
+    if !rows.is_empty() {
+        let snapshot =
+            HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
+        let (replaced, prior_tip) = match &event {
+            ChainEvent::Reorg {
+                deactivated_headers,
+                ..
+            } => (
+                deactivated_headers
+                    .iter()
+                    .map(|h| {
+                        (
+                            h.height,
+                            Header {
+                                hash: h.hash.to_ascii_lowercase(),
+                                merkle_root: h.merkle_root.to_ascii_lowercase(),
+                            },
+                        )
+                    })
+                    .collect(),
+                deactivated_headers.first().map(|h| h.height),
+            ),
+            _ => (BTreeMap::new(), None),
+        };
+        let replay_view = Replaced {
+            snapshot: &snapshot,
+            replaced,
+            prior_tip,
+        };
+        let mut tracker = Tracker::new(opts.params());
+        for row in &rows {
+            row.replay_into(&mut tracker, &replay_view);
+        }
+        for update in tracker.on_chain(&snapshot, event.clone()) {
+            let (Some(state), Some(row)) = (
+                tracker.get(&update.txid),
+                rows.iter_mut().find(|r| r.txid == update.txid),
+            ) else {
+                continue;
+            };
+            row.keep_chain(state, &event)?;
+            if matches!(update.reask, Some(Reask::Reorg { .. })) {
+                // Asked now, not after the pause an earlier re-ask earned.
+                row.asks = 0;
+                row.next_ask_at = None;
+            }
+            store_row_in(&mut *tx, row, state, now).await?;
+            let fault = update.result.err().map(|e| e.to_string());
+            if let Some(fault) = &fault {
+                tracing::warn!(txid = %update.txid, kind, cursor, %fault, "a chain event's recheck could not look");
+            }
+            moved.push(ChainMove {
+                txid: update.txid,
+                word: word_label(state.word()).to_string(),
+                reask: state.reask().map(reask_label),
+                suspect: state.suspect(),
+                fault,
+            });
+        }
+    }
+    sqlx::query(
+        "INSERT INTO tracker_meta (key, value) VALUES ('feed_cursor', ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(cursor.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(ChainDelivery {
+        cursor,
+        kind,
+        moved,
+    })
 }
 
 #[cfg(test)]
@@ -1233,6 +1605,7 @@ pub(crate) mod tests {
         TickOptions {
             age_threshold: 600,
             max_asks: 20,
+            spend_depth: DEFAULT_SPEND_DEPTH,
         }
     }
 
@@ -1562,10 +1935,66 @@ pub(crate) mod tests {
     }
 
     /// A tip header carrying the hash its bytes have.
-    fn header_with_hash(height: u32, root: &str, nonce: u32) -> BlockHeader {
+    pub(crate) fn header_with_hash(height: u32, root: &str, nonce: u32) -> BlockHeader {
         let mut h = header(height, root, nonce);
         h.hash = header_of(&h.to_binary()).unwrap().hash;
         h
+    }
+
+    /// R3 (b): the spend depth is the host's, named in its config, 1 the
+    /// floor. A coin whose block is the tip (one block deep) is offered at
+    /// depth 1 and held at depth 3; two blocks later it is offered at 3; a
+    /// depth of 0 reads as 1.
+    #[tokio::test]
+    async fn the_spend_depth_holds_a_coin_until_its_block_is_deep_enough() {
+        let (storage, user) = wallet_storage().await;
+        let txid = "e7".repeat(32);
+        insert_tx(&storage, user, &txid, "unproven").await;
+        storage
+            .record_broadcast_status(&txid, "arcade", BROADCAST_STATUS_MINED)
+            .await
+            .unwrap();
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(proof_answer(Some(path_of(&txid, 900))))
+            .build();
+        services.set_header_for_height(header(900, &txid, 0));
+        services.set_tip_header(header_with_hash(900, &txid, 0));
+        let clock = FixedClock(Utc::now().timestamp() as u64);
+        tick(&storage, &services, &clock, &opts()).await.unwrap();
+        let at = |spend_depth| TickOptions {
+            spend_depth,
+            ..opts()
+        };
+
+        let one = spend_guard(&storage, &services, &clock, &at(1), &txid)
+            .await
+            .unwrap();
+        let three = spend_guard(&storage, &services, &clock, &at(3), &txid)
+            .await
+            .unwrap();
+        let zero = spend_guard(&storage, &services, &clock, &at(0), &txid)
+            .await
+            .unwrap();
+        println!("one block deep: depth 1 {one:?}, depth 3 {three:?}, depth 0 {zero:?}");
+        assert_eq!(one, Ok(true));
+        assert_eq!(three, Ok(false));
+        assert_eq!(zero, Ok(true), "0 reads as the floor, 1");
+
+        services.set_tip_header(header_with_hash(902, &"0c".repeat(32), 0));
+        let three = spend_guard(&storage, &services, &clock, &at(3), &txid)
+            .await
+            .unwrap();
+        println!("three blocks deep: depth 3 {three:?}");
+        assert_eq!(three, Ok(true));
+        assert_eq!(
+            TickOptions {
+                spend_depth: 0,
+                ..opts()
+            }
+            .floored()
+            .spend_depth,
+            1
+        );
     }
 
     /// The README's wallet spend guard, run by the host over a stored row

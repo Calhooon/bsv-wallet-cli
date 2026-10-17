@@ -167,6 +167,9 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         // silently, which is what makes it headless AND blind.
         .route("/permission-audit", get(permission_audit))
         .route("/permission-audit/reset", post(permission_audit_reset))
+        // CHAIN FEED (not BRC-100): the daemon's chain-event feed status,
+        // its stored cursor and, when it stopped, the fault it stopped on.
+        .route("/chain-feed", get(chain_feed_status))
         .route("/createSignature", post(handlers::create_signature))
         // The two doors that carry a caller's BEEF (`inputBEEF`, `tx`): no
         // body cap, a valid BEEF is never refused for its size (see
@@ -515,6 +518,26 @@ async fn shutdown_signal() {
 async fn permission_audit() -> Json<serde_json::Value> {
     let entries = audit::snapshot();
     Json(json!({ "count": entries.len(), "entries": entries }))
+}
+
+/// GET /chain-feed — the feed's stored status and cursor (`chain_feed`).
+/// `{"status": null}` where no feed ran (`serve`, or `CHAINTRACKS_URL=off`).
+async fn chain_feed_status(
+    axum::extract::State(wallet): axum::extract::State<WalletState>,
+) -> Response {
+    let storage = wallet.storage();
+    let status = crate::chain_feed::read_status(storage).await;
+    let cursor = crate::tracker_host::feed_cursor(storage).await;
+    match (status, cursor) {
+        (Ok(status), Ok(cursor)) => {
+            Json(json!({ "status": status, "cursor": cursor.to_string() })).into_response()
+        }
+        (Err(e), _) | (_, Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "code": "ERR_CHAIN_FEED", "message": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// POST /permission-audit/reset — call immediately before the flow you measure.

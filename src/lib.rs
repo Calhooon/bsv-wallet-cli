@@ -1,6 +1,7 @@
 pub mod arc_ingest;
 pub mod broadcast_reconcile;
 pub mod broadcast_verify;
+pub mod chain_feed;
 pub mod gift;
 pub mod relay;
 pub mod retire_guard;

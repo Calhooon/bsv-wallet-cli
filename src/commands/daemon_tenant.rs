@@ -94,6 +94,28 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     eprintln!("[{port}] Monitor started");
 
+    // The header service's chain-event feed: one stream, one stored
+    // cursor, every envelope to the tracker (`chain_feed`). `off` has no
+    // header service and so no feed.
+    if let Some(feed_url) =
+        services_env::chaintracks_url_for(std::env::var("CHAINTRACKS_URL").ok().as_deref())?
+    {
+        let feed_storage = storage_arc.clone();
+        let feed_services = services_arc.clone();
+        eprintln!("[{port}] Chain-event feed: {feed_url}/events/stream");
+        tokio::spawn(async move {
+            crate::chain_feed::run(
+                &feed_url,
+                &feed_storage,
+                &*feed_services,
+                &crate::tracker_host::SystemClock,
+                &crate::tracker_host::TickOptions::from_env(),
+                &crate::chain_feed::FeedOptions::default(),
+            )
+            .await
+        });
+    }
+
     // The wallet needs its own storage/services (Wallet::new takes owned).
     let storage2 = StorageSqlx::open(db).await?;
     storage2.make_available().await?;
