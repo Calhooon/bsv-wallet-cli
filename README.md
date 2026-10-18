@@ -1,7 +1,9 @@
 # bsv-wallet-cli
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
-storage, signing, broadcasting and transaction tracking. **0.12.0** pins
+storage, signing, broadcasting and transaction tracking. The release of record
+is the tag **v0.12.0**, and crates.io carries the same version, **0.12.0**; the
+repository's Releases page holds a Release per tag. It pins
 **bsv-wallet-toolbox-rs =0.8.0**, **bsv-rs =0.6.1** and **bsv-tracker =0.4.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
@@ -112,10 +114,10 @@ only when an envelope names a tracked transaction.
 `serve`, `daemon` (and each tenant of `serve-fleet`, with or without
 `--daemon`) run the same served pass
 ([src/broadcast_reconcile.rs](src/broadcast_reconcile.rs),
-`run_served_pass`) every `BROADCAST_RECONCILE_INTERVAL_SECS` (default 60;
+`run_served_pass`) every `BROADCAST_RECONCILE_INTERVAL_SECS` (default 60, at least 5;
 `BROADCAST_RECONCILE=0` turns it off): the tracker's pass, the poisoned-chain
 sweep and the spend guard. Under `serve` it drains the wallet's Arcade SSE
-stream first; under `daemon` the monitor holds that stream and the pass drains
+stream before the pass; under `daemon` the monitor holds that stream and the pass drains
 none. Its load: it reads the store and asks the header service for the tip and
 the header at each height a stored path names (one read per height per pass).
 Beyond that it asks only when a row is due: a merkle path for a re-ask that is
@@ -127,7 +129,7 @@ Every creator of a coin we hold gets a row (the stack's wallet charter,
 section 0: "About a transaction it believes only the tracker's word: each
 action hosts one tracker state"). An `unproven` or `sending` transaction of
 the wallet is adopted at `built`. A `completed` transaction with a stored proof
-(`proven_tx_id` set; the toolbox's monitor proved it first) that creates a coin
+(`proven_tx_id` set; the toolbox's monitor proved it before the tracker did) that creates a coin
 we hold and has no row is adopted by replaying its stored path against the
 headers of the moment, as the spend guard replays it: the row's word is
 `mined(h)` with that path as its evidence when the header at h carries the
@@ -219,7 +221,7 @@ The CLI's sites:
 | `src/commands/receive.rs` (C2) | WhatsOnChain `GET /tx/{txid}/beef`: `receive`, a payment's BEEF no store of ours holds |
 | `src/commands/sync.rs` (C4) | `GET /address/{address}/unspent`: a chain scan for payments to our deposit address nobody handed us; `sync` only, by hand, one explorer |
 | `src/commands/cleanup_abandoned.rs` (C7) | WhatsOnChain `GET /tx/{txid}/{vout}/spent`: who spent an outpoint, for the abandoned-transaction reconcile (no header or proof says an output is spent by someone else) |
-| the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, Arcade first when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.8.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
+| the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, from Arcade when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.8.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
 | the tracker's re-ask (`Courier`, every served pass) | a merkle path for one named transaction whose re-ask is due, through the same toolbox couriers (Arcade, then WhatsOnChain, then Bitails), checked by the tracker against the header service |
 
 ## Deliberate respend
@@ -249,6 +251,8 @@ cargo fmt --all -- --check
 formatting, clippy, release builds on Linux and macOS, and the status/covenant
 vector checks on every PR and main push. [tests](tests) contains the HTTP and
 tracker integration witnesses; local fixture tests are not live-wallet proof.
+Dependabot moves the stack's crates daily at 18:00Z under
+[.github/dependabot.yml](.github/dependabot.yml).
 
 ## Records and releases
 
