@@ -10,7 +10,7 @@ storage, signing, broadcasting and transaction tracking. **0.9.0** pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.9.0 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.10.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -18,6 +18,45 @@ cargo install bsv-wallet-cli --version 0.9.0 --locked --root ./wallet-tools
 The package includes `bsv-wallet` and the callback receiver `bsv-wallet-relay`.
 The MCP companion is a separate workspace member in [mcp](mcp), not a binary
 installed by the command above. [Cargo.toml](Cargo.toml) describes the workspace.
+
+## The MCP companion
+
+`bsv-wallet-mcp` (0.2.0, on rmcp 3.5) speaks MCP over stdio and calls the
+wallet's HTTP server: the 28 wallet endpoints, `wallet_balance`, and five tools
+over the host's own routes, one per route, no route added: `chain_feed_status`
+(`GET /chain-feed`), `tx_word` (`GET /tx/{txid}`), and on the callback relay
+`health` (`GET /health`), `pull` (`GET /pull`) and `register`
+(`POST /register`, with the relay's admin bearer). Each tool's description
+says what its word rests on: headers and a proof, or a hint.
+
+It is a workspace member, so build it from the workspace root:
+
+```sh
+cargo build --release -p bsv-wallet-mcp
+```
+
+The binary lands in the workspace's `target/release/bsv-wallet-mcp` (or under
+`$CARGO_TARGET_DIR/release`), not under `mcp/`. A client config, with the
+paths and URLs your own:
+
+```json
+{
+  "mcpServers": {
+    "bsv-wallet": {
+      "command": "/path/to/bsv-wallet-cli/target/release/bsv-wallet-mcp",
+      "env": {
+        "WALLET_URL": "http://localhost:3322",
+        "WALLET_ORIGIN": "http://localhost",
+        "RELAY_URL": "http://localhost:3390",
+        "RELAY_ADMIN_TOKEN": "<the relay's admin token, only for register>"
+      }
+    }
+  }
+}
+```
+
+`RELAY_URL` and `RELAY_ADMIN_TOKEN` are optional; without `RELAY_URL` the
+three relay tools answer that no relay is named and ask nothing.
 
 ## Use and configuration
 
@@ -62,10 +101,37 @@ of its own for the feed; a transport failure is retried after a pause that
 doubles from one second to five minutes. Headers are read beyond the feed
 only when an envelope names a tracked transaction.
 
-`SPEND_DEPTH` (default 1, and the floor: a smaller number reads as 1) is the
-depth the block holding a coin's transaction must reach before the tracker's
-spend guard offers the coin; the tip is depth 1 (the stack's wallet charter
-R3).
+## The spend guard on coin selection
+
+Every coin the binary offers to `createAction` (the served `/createAction`,
+`send`, `drain`, `split`, `gift-send`) passes the spend guard
+([src/spend_gate.rs](src/spend_gate.rs)). The toolbox picks the coins inside
+its own query, so the guard holds every coin it does not offer for the length
+of the call (the coin's `change` flag, recorded in `spend_gate_holds`) and
+restores exactly those after. Two settings:
+
+- `SPEND_DEPTH` (default 1, and the floor: a smaller number reads as 1): the
+  depth the block holding a coin's transaction must reach, checked against the
+  header service's headers of the moment; the tip is depth 1. The stack's
+  wallet charter **R3 (b)**: the spend depth is the host's parameter, 1 the
+  floor.
+- `SPEND_OWN_CHANGE` (default `1`; `0` turns it off): offer our own change
+  (`made`: a transaction this wallet created and signed) whose transaction has
+  no block yet. The charter's **R1 (b)**: the one rule a host may name for a
+  coin whose creator is not yet mined is for its own change. A received coin
+  (`internalizeAction`, any counterparty's payment) with no proof is never
+  offered, under any setting. Here the guard departs from the reference
+  toolbox, which spends unproven coins whoever made them.
+
+A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
+is never offered, and a coin an action of ours holds is the toolbox's lock.
+When no offered coin covers the action, the refusal lists every coin held
+back: its outpoint, the word, the origin (`made` or `received`), its age in
+minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
+`received, no proof`, `own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`).
+The route answers `402 INSUFFICIENT_FUNDS` with the list under `held`; the
+commands print it. Nothing is fetched for it but the header service's tip and
+headers: no chain scan, no explorer.
 
 ## Deliberate respend
 

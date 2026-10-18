@@ -3,6 +3,12 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.10.0] - 2026-10-18
+
+- The spend guard on the binary's real coin selection (Calhooon/bsv-wallet-cli #28; the stack's wallet charter R1 (b) and R3 (b), rulings of 2026-10-12): every coin the served `/createAction`, `send`, `drain`, `split` and `gift-send` offer to the toolbox's `createAction` is either mined at `SPEND_DEPTH` (floor 1) under the headers of the moment, or our own `made` change under `SPEND_OWN_CHANGE` (new, default `1`). A received coin with no proof is never offered. The toolbox allocates inside its own query, so the guard holds the coins it does not offer (`outputs.change = 0`, recorded in `spend_gate_holds`) for the call and restores exactly those after; a hold left by a call that did not finish is restored by the next one after ten minutes. Departs from the reference's allocation of unproven change (ts-stack `edf6e03` `StorageKnex.ts:2222-2231`).
+- The refusal lists every coin held back, with its word, origin, age in minutes and the rule that holds it; `/createAction` answers `402 INSUFFICIENT_FUNDS` with the list under `held`.
+- `bsv-wallet-mcp` 0.2.0: rmcp 3.5; five tools over the host's existing routes, `chain_feed_status`, `tx_word`, `health`, `pull`, `register` (the relay's at `RELAY_URL`, `RELAY_ADMIN_TOKEN` for `register`). The README says how the binary is built (`cargo build --release -p bsv-wallet-mcp`, in the workspace's `target/release`) and gives a client config.
+
 ## [0.9.0] - 2026-10-17
 
 - `daemon` holds the header service's chain-event feed (`CHAINTRACKS_URL`; Calhooon/bsv-wallet-cli #26, bsv-stack-lean #167): a replay through `GET /events?since=` from the stored cursor until `hasMore` is false, then the SSE stream; every envelope through `bsv_tracker::decode_envelope` and `Tracker::on_chain` with the daemon's headers; the cursor stored after each delivery in the same transaction as the tracker's rows (`tracker_meta`, `feed_cursor`). A decode fault, `cursorAhead` (409), an `event: error` or a refused request stops the loop at its cursor and is reported at `GET /chain-feed`; a dropped stream reconnects (the page from the cursor, then the stream with `Last-Event-ID`). Load: one stream per daemon plus one page request per reconnect.
