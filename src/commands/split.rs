@@ -165,13 +165,16 @@ pub async fn run(ctx: &WalletContext, count: u32, allow_received: bool) -> Resul
     crate::spend_guard::run(ctx.wallet.storage().pool()).await?;
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
-    let result = crate::spend_gate::create_action(
-        &ctx.wallet,
-        args,
-        "bsv-wallet-cli",
-        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
-    )
-    .await?;
+    let result = crate::spend_gate::refused_as_json(
+        crate::spend_gate::create_action(
+            &ctx.wallet,
+            args,
+            "bsv-wallet-cli",
+            &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
+        )
+        .await,
+        ctx.json_output,
+    )?;
 
     let txid = result.txid.expect("Expected txid from split transaction");
     let txid_hex = to_hex(&txid);
