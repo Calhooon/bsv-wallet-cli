@@ -6,7 +6,7 @@
 //! path as createAction; broadcaster refusals remain retryable hints.
 use std::collections::HashSet;
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bsv_sdk::primitives::{PrivateKey, PublicKey};
 use bsv_sdk::script::template::SignOutputs;
 use bsv_sdk::script::templates::P2PKH;
@@ -184,6 +184,33 @@ pub async fn build_and_post(
         ensure!(
             tracker.is_valid_root_for_height(&root_hash, height).await?,
             "respend refused: ancestry proof off our headers"
+        );
+    }
+    // The exact inputs pass the spend gate's per-coin judgment, as the
+    // toolbox's own allocation does (#29); their lock to the phantom is the
+    // respend's own and is not a hold. The replacement inherits the word the
+    // phantom was created under (R1 (d); `lean/Wallet.lean` `onRespend`).
+    let under_rule = crate::spend_gate::rules_of(storage.pool())
+        .await?
+        .get(&txid)
+        .cloned();
+    let gate = crate::spend_gate::GateOptions::from_env()
+        .with_allow_received(under_rule.as_deref() == Some(crate::spend_gate::RECEIVED_PENDING));
+    let named: Vec<(String, u32)> = phantom
+        .inputs
+        .iter()
+        .map(|i| Ok((i.get_source_txid()?, i.source_output_index)))
+        .collect::<bsv_sdk::Result<_>>()?;
+    let held =
+        crate::spend_gate::assess_named(storage, services, &gate, &named, Some(phantom_id)).await?;
+    if !held.is_empty() {
+        bail!(
+            "respend refused: {}",
+            crate::spend_gate::Refusal {
+                toolbox: crate::spend_gate::NAMED_INPUT_REFUSED.to_string(),
+                offered_satoshis: 0,
+                held,
+            }
         );
     }
     let deriver = KeyDeriver::new(Some(root.clone()));
@@ -369,6 +396,9 @@ pub async fn build_and_post(
         .update_transaction_status_after_broadcast(&replacement_id, &outcome)
         .await?;
     crate::spend_guard::run(storage.pool()).await?;
+    if let Some(rule) = under_rule {
+        crate::spend_gate::record_rule(storage.pool(), &replacement_id, &rule).await?;
+    }
     Ok(replacement_id)
 }
 

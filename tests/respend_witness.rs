@@ -30,6 +30,23 @@ struct Fixture {
     coin: i64,
     phantom_row: i64,
     change: i64,
+    funding: String,
+}
+
+/// The header service's view of the funding block: the header at 800
+/// carries the funding proof's root, so the spend gate's read of the
+/// respend's inputs (0.11.0, #29) finds the coin mined.
+fn headed(services: &MockWalletServices, funding: &str) {
+    services.set_header_for_height(bsv_wallet_toolbox::services::BlockHeader {
+        version: 1,
+        previous_hash: "00".repeat(32),
+        merkle_root: funding.to_string(),
+        time: 1_700_000_000,
+        bits: 0x1d00_ffff,
+        nonce: 0,
+        hash: String::new(),
+        height: 800,
+    });
 }
 
 fn status_source(txid: &str, status: &str, broadcaster: BroadcastStatus) -> MockWalletServices {
@@ -166,6 +183,7 @@ async fn fixture() -> Fixture {
         coin,
         phantom_row,
         change,
+        funding: funding.id(),
     }
 }
 
@@ -209,6 +227,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     .await
     .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     let replacement = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
         .await
         .expect("respend must build and post the host's competitor");
@@ -410,6 +429,7 @@ async fn respend_refuses_an_input_outside_the_wallet() {
         .await
         .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     let before = words(&f).await;
     let err = build_and_post(f.wallet.storage(), &absent, &f.root, &f.phantom, &["mock"])
         .await
@@ -429,6 +449,7 @@ async fn respend_refuses_a_phantom_with_competitor_proof_already_recorded() {
         .await
         .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     let err = build_and_post(f.wallet.storage(), &absent, &f.root, &f.phantom, &["mock"])
         .await
         .unwrap_err();
@@ -442,6 +463,7 @@ async fn a_refused_replacement_is_a_retryable_hint_and_cannot_be_built_twice() {
     let f = fixture().await;
     let s = f.wallet.storage();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     // The post is a service error: no accepting word. Its request must still
     // be on the toolbox's retry path, with the phantom untouched.
     let refusing = MockWalletServices::builder()
@@ -461,6 +483,7 @@ async fn a_refused_replacement_is_a_retryable_hint_and_cannot_be_built_twice() {
         }))
         .broadcaster_statuses(vec![("mock".into(), BroadcastStatus::Unknown)])
         .build();
+    headed(&refusing, &f.funding);
     let before = words(&f).await;
     let replacement = build_and_post(s, &refusing, &f.root, &f.phantom, &["mock"])
         .await
@@ -499,6 +522,7 @@ async fn a_refused_replacement_is_a_retryable_hint_and_cannot_be_built_twice() {
 async fn respend_refuses_if_one_configured_source_cannot_answer() {
     let f = fixture().await;
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     let before = words(&f).await;
     let err = build_and_post(
         f.wallet.storage(),
@@ -519,6 +543,7 @@ async fn served_pass_recovers_a_durable_build_interrupted_before_processing() {
     let f = fixture().await;
     let s = f.wallet.storage();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
     let before = words(&f).await;
     // Inject a crash boundary between the committed host build and toolbox
     // processing; no post has happened, but the exact signed act is durable.
@@ -552,4 +577,37 @@ async fn served_pass_recovers_a_durable_build_interrupted_before_processing() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("already tracked"), "{err}");
+}
+
+/// 0.11.0 (#29): the respend's exact inputs pass the spend gate; an input
+/// the feed froze refuses it before anything is built or posted.
+#[tokio::test]
+async fn respend_refuses_an_input_the_gate_holds() {
+    let f = fixture().await;
+    let s = f.wallet.storage();
+    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    bsv_wallet_cli::tracker_host::deliver_chain_event(
+        s,
+        &absent,
+        &bsv_wallet_cli::tracker_host::SystemClock,
+        &bsv_wallet_cli::tracker_host::TickOptions::from_env(),
+        1,
+        bsv_tracker::ChainEvent::Frozen {
+            outpoint: bsv_tracker::Outpoint {
+                txid: f.funding.clone(),
+                vout: 0,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let before = words(&f).await;
+    let err = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("frozen: never offered"), "{err}");
+    assert_eq!(absent.call_count("post_beef"), 0);
+    assert_eq!(words(&f).await, before);
+    assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
 }

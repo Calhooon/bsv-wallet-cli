@@ -70,6 +70,12 @@ pub struct McCreateActionReq {
     pub options: Option<McCreateActionOptions>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+    /// R1 (d), the action's word at the door, beside `options` (the
+    /// toolbox's `CreateActionOptions` is the reference's shape and stays
+    /// as it is): the one value `"received"` offers a received coin whose
+    /// creator is not yet mined; absent or anything else is off.
+    #[serde(default)]
+    pub allow_pending: Option<serde_json::Value>,
 }
 
 /// A single caller-provided input for createAction.

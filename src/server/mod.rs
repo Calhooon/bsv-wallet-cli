@@ -170,6 +170,10 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         // CHAIN FEED (not BRC-100): the daemon's chain-event feed status,
         // its stored cursor and, when it stopped, the fault it stopped on.
         .route("/chain-feed", get(chain_feed_status))
+        // THE TRACKER'S WORD (not BRC-100): one transaction's stored word,
+        // its height, its pending re-ask and, for `mined`, the stored
+        // proof's root and height. Behind the same auth as `/chain-feed`.
+        .route("/tx/{txid}", get(tx_word))
         .route("/createSignature", post(handlers::create_signature))
         // The two doors that carry a caller's BEEF (`inputBEEF`, `tx`): no
         // body cap, a valid BEEF is never refused for its size (see
@@ -528,16 +532,83 @@ async fn chain_feed_status(
     let storage = wallet.storage();
     let status = crate::chain_feed::read_status(storage).await;
     let cursor = crate::tracker_host::feed_cursor(storage).await;
-    match (status, cursor) {
-        (Ok(status), Ok(cursor)) => {
-            Json(json!({ "status": status, "cursor": cursor.to_string() })).into_response()
-        }
-        (Err(e), _) | (_, Err(e)) => (
+    let frozen = crate::tracker_host::frozen_count(storage.pool()).await;
+    match (status, cursor, frozen) {
+        (Ok(status), Ok(cursor), Ok(frozen)) => Json(json!({
+            "status": status,
+            "cursor": cursor.to_string(),
+            "frozenCount": frozen,
+        }))
+        .into_response(),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "code": "ERR_CHAIN_FEED", "message": e.to_string() })),
         )
             .into_response(),
     }
+}
+
+/// GET /tx/{txid} — the tracker's stored word for one transaction
+/// (`tracker_host::stored_word`): `{txid, word, height, reask, evidence}`.
+/// `evidence` is, for a `mined` word, the stored proof's root and height
+/// (the toolbox's `proven_txs` row the spend gate reads), else `null`. A
+/// view for a person or an agent; nothing is decided from it. 404 when the
+/// tracker holds no word for the txid.
+async fn tx_word(
+    axum::extract::State(wallet): axum::extract::State<WalletState>,
+    axum::extract::Path(txid): axum::extract::Path<String>,
+) -> Response {
+    let txid = txid.trim().to_ascii_lowercase();
+    if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "code": "VALIDATION_ERROR", "message": "txid must be 64 hex characters" }),
+            ),
+        )
+            .into_response();
+    }
+    let storage = wallet.storage();
+    let fault = |e: anyhow::Error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "code": "ERR_TX_WORD", "message": e.to_string() })),
+        )
+            .into_response()
+    };
+    let (word, height, reask) =
+        match crate::tracker_host::stored_word(storage, &txid).await {
+            Ok(Some(view)) => view,
+            Ok(None) => return (
+                StatusCode::NOT_FOUND,
+                Json(
+                    json!({ "code": "NOT_FOUND", "message": format!("no word stored for {txid}") }),
+                ),
+            )
+                .into_response(),
+            Err(e) => return fault(e),
+        };
+    let evidence = if word == "mined" {
+        let row: Result<Option<(String, i64)>, sqlx::Error> =
+            sqlx::query_as("SELECT merkle_root, height FROM proven_txs WHERE lower(txid) = ?")
+                .bind(&txid)
+                .fetch_optional(storage.pool())
+                .await;
+        match row {
+            Ok(row) => row.map(|(root, height)| json!({ "root": root, "height": height })),
+            Err(e) => return fault(e.into()),
+        }
+    } else {
+        None
+    };
+    Json(json!({
+        "txid": txid,
+        "word": word,
+        "height": height,
+        "reask": reask,
+        "evidence": evidence,
+    }))
+    .into_response()
 }
 
 /// POST /permission-audit/reset — call immediately before the flow you measure.

@@ -109,6 +109,7 @@ fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
     GateOptions {
         spend_depth,
         own_change,
+        allow_received: false,
     }
 }
 
@@ -137,7 +138,7 @@ async fn at_depth_one_the_tip_is_offered_and_no_block_is_not() {
     assert_eq!(a.offered, vec![(at_tip, 5_000)]);
     assert_eq!(
         reason_of(&a, &none).as_deref(),
-        Some("depth 1: 0 blocks; received, no proof")
+        Some("depth 1: 0 blocks; received, no proof; offered under allowPending: received")
     );
     let held = &a.held[0];
     assert_eq!(
@@ -186,7 +187,7 @@ async fn own_change_is_offered_under_the_rule_and_held_without_it() {
 }
 
 /// R1 (c) refused: a received coin with no proof is held under both
-/// settings.
+/// host settings; the reason names the door's word that would offer it.
 #[tokio::test]
 async fn a_received_pending_coin_is_held_under_both_settings() {
     let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
@@ -200,7 +201,7 @@ async fn a_received_pending_coin_is_held_under_both_settings() {
         assert!(a.offered.is_empty(), "SPEND_OWN_CHANGE={own_change}");
         assert_eq!(
             reason_of(&a, &received).as_deref(),
-            Some("depth 1: 0 blocks; received, no proof")
+            Some("depth 1: 0 blocks; received, no proof; offered under allowPending: received")
         );
     }
 }
@@ -280,7 +281,8 @@ async fn the_refusal_lists_every_coin_held_back_with_its_reason() {
             ),
             (
                 "d2d2".to_string(),
-                "depth 2: 0 blocks; received, no proof".to_string(),
+                "depth 2: 0 blocks; received, no proof; offered under allowPending: received"
+                    .to_string(),
                 Origin::Received
             ),
             (
@@ -364,4 +366,219 @@ async fn holds_restore_exactly_and_stale_holds_are_restored() {
         .await
         .unwrap();
     assert_eq!(restore(pool, None).await.unwrap(), 1, "a stale hold");
+}
+
+/// R1 (d): `allowPending: received` offers a received coin whose creator is
+/// `pending`, and nothing else changes: our own change is offered either
+/// way (R1 (b)), a mined coin at the tip (one block deep) is offered at a
+/// spend depth of 0 and of 1 either way, and a mined coin whose block is
+/// above the tip (0 blocks deep) is held either way, failing closed.
+#[tokio::test]
+async fn the_door_word_offers_a_received_pending_coin_and_nothing_else() {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let received = "a5".repeat(32);
+    let made = "a6".repeat(32);
+    let at_tip = "a7".repeat(32);
+    let above = "a8".repeat(32);
+    let r = coin(&storage, (user, basket), &received, false, None, 4_000, 3).await;
+    let m = coin(&storage, (user, basket), &made, true, None, 3_000, 2).await;
+    let t = coin(
+        &storage,
+        (user, basket),
+        &at_tip,
+        false,
+        Some(900),
+        2_000,
+        9,
+    )
+    .await;
+    coin(&storage, (user, basket), &above, false, Some(901), 1_000, 9).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(900, &at_tip, 0));
+    services.set_header_for_height(header(901, &above, 0));
+    services.set_tip_header(header_with_hash(900, &at_tip, 0));
+
+    for depth in [0, 1] {
+        for allow in [false, true] {
+            let gate = opts(depth, true).with_allow_received(allow);
+            let mut a = assess(&storage, &services, &gate, None).await.unwrap();
+            a.offered.sort();
+            let mut want = vec![(m, 3_000), (t, 2_000)];
+            if allow {
+                want.push((r, 4_000));
+            }
+            want.sort();
+            assert_eq!(a.offered, want, "depth {depth}, allowPending {allow}");
+            // The snapshot reads no header above its tip: the guard fails
+            // closed on it.
+            assert_eq!(
+                reason_of(&a, &above).as_deref(),
+                Some("headers unavailable: Unavailable(901)"),
+                "depth {depth}, allowPending {allow}"
+            );
+            assert_eq!(
+                reason_of(&a, &received).is_some(),
+                !allow,
+                "depth {depth}, allowPending {allow}"
+            );
+        }
+    }
+}
+
+/// The door's word: only `"received"` turns it on.
+#[test]
+fn only_the_word_received_opens_the_door() {
+    assert!(allow_pending(Some("received")));
+    for off in [None, Some(""), Some("Received"), Some("all"), Some("true")] {
+        assert!(!allow_pending(off), "{off:?}");
+    }
+    assert!(!GateOptions::from_env().allow_received);
+    assert!(!GateOptions::default().allow_received);
+}
+
+/// The record of the word: an action created under R1 (d) carries it, and
+/// `actions` / `/listActions` show it as `underRule` on that action only.
+#[tokio::test]
+async fn the_word_is_recorded_on_the_action_and_shown() {
+    let (storage, _, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let under = "b7".repeat(32);
+    record_rule(
+        storage.pool(),
+        &under.to_ascii_uppercase(),
+        RECEIVED_PENDING,
+    )
+    .await
+    .unwrap();
+    let rules = rules_of(storage.pool()).await.unwrap();
+    assert_eq!(
+        rules.get(&under).map(String::as_str),
+        Some("received-pending")
+    );
+    let shown = crate::server::handlers::with_rules(
+        serde_json::json!({"totalActions": 2, "actions": [
+            {"txid": under, "status": "unproven"},
+            {"txid": "b8".repeat(32), "status": "completed"},
+        ]}),
+        &rules,
+    );
+    assert_eq!(shown["actions"][0]["underRule"], "received-pending");
+    assert!(shown["actions"][1].get("underRule").is_none());
+}
+
+/// Delivers a `frozen` chain event for `txid.0` at `cursor`.
+async fn freeze(storage: &StorageSqlx, txid: &str, cursor: u64) {
+    let services = MockWalletServices::builder().build();
+    crate::tracker_host::deliver_chain_event(
+        storage,
+        &services,
+        &crate::tracker_host::tests::FixedClock(1_700_000_000),
+        &crate::tracker_host::tests::opts(),
+        cursor,
+        bsv_tracker::ChainEvent::Frozen {
+            outpoint: bsv_tracker::Outpoint {
+                txid: txid.to_string(),
+                vout: 0,
+            },
+        },
+    )
+    .await
+    .unwrap();
+}
+
+/// R6: the feed's `frozen` event is recorded, and the gate holds the coin,
+/// mined or not, rule or no rule, and never clears it.
+#[tokio::test]
+async fn a_frozen_outpoint_is_held_under_every_rule() {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let mined = "c7".repeat(32);
+    let received = "c8".repeat(32);
+    coin(&storage, (user, basket), &mined, false, Some(900), 5_000, 9).await;
+    coin(&storage, (user, basket), &received, false, None, 5_000, 9).await;
+    freeze(&storage, &mined, 7).await;
+    freeze(&storage, &received, 8).await;
+    // Delivered again (at least once): one row each, the cursor unchanged.
+    freeze(&storage, &mined, 7).await;
+    assert_eq!(
+        crate::tracker_host::frozen_count(storage.pool())
+            .await
+            .unwrap(),
+        2
+    );
+    let services = headers_with(&mined, 900, 900);
+    let a = assess(
+        &storage,
+        &services,
+        &opts(1, true).with_allow_received(true),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(a.offered.is_empty(), "{:?}", a.offered);
+    for txid in [&mined, &received] {
+        assert_eq!(
+            reason_of(&a, txid).as_deref(),
+            Some("frozen: never offered")
+        );
+    }
+}
+
+/// Explicit inputs under the guard: a coin the caller names that the gate
+/// would hold refuses the action before the toolbox runs, with the same
+/// `held[]` listing; under the door's word the same received coin passes
+/// the gate.
+#[tokio::test]
+async fn a_named_input_the_gate_would_hold_is_refused() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let received = "d7".repeat(32);
+    coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
+    let services = headers_with(&"0c".repeat(32), 900, 900);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let mut args = pay(1_000);
+    args.inputs = Some(vec![bsv_sdk::wallet::CreateActionInput {
+        outpoint: bsv_sdk::wallet::Outpoint::from_string(&format!("{received}.0")).unwrap(),
+        input_description: "named".to_string(),
+        unlocking_script: None,
+        unlocking_script_length: Some(107),
+        sequence_number: None,
+    }]);
+
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, args.clone(), "gate.local", &opts(1, true)).await
+    else {
+        panic!("the named coin passed the gate");
+    };
+    assert!(refusal.is_named_input());
+    assert_eq!(refusal.held.len(), 1);
+    assert_eq!(refusal.held[0].outpoint, format!("{received}.0"));
+    assert_eq!(
+        refusal.held[0].reason,
+        "depth 1: 0 blocks; received, no proof; offered under allowPending: received"
+    );
+    assert!(
+        refusal.to_string().starts_with("Access denied: "),
+        "{refusal}"
+    );
+
+    let held = assess_named(
+        wallet.storage(),
+        wallet.services(),
+        &opts(1, true).with_allow_received(true),
+        &[(received.clone(), 0)],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(held.is_empty(), "{held:?}");
+    // Not one of this wallet's coins: left to the toolbox.
+    let foreign = assess_named(
+        wallet.storage(),
+        wallet.services(),
+        &opts(1, true),
+        &[("d9".repeat(32), 0)],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(foreign.is_empty());
 }
