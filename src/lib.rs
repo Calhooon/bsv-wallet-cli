@@ -1,4 +1,5 @@
 pub mod arc_ingest;
+pub mod backstop_log;
 pub mod broadcast_reconcile;
 pub mod broadcast_verify;
 pub mod chain_feed;
