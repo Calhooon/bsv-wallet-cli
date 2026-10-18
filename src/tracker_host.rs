@@ -337,11 +337,15 @@ struct StoredHint {
     reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     competitors: Vec<TxId>,
+    /// The courier of a `mempool_present` hint (tracker 0.5.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    courier: Option<String>,
     observed: Timestamp,
 }
 
 impl StoredHint {
     fn of(hint: &Hint) -> Self {
+        let mut courier = None;
         let (status, height, reason, competitors) = match &hint.status {
             HintStatus::Accepted => ("accepted", None, None, vec![]),
             HintStatus::Seen => ("seen", None, None, vec![]),
@@ -353,6 +357,10 @@ impl StoredHint {
             }
             HintStatus::OrphanMempool => ("orphan_mempool", None, None, vec![]),
             HintStatus::Unknown => ("unknown", None, None, vec![]),
+            HintStatus::MempoolPresent { source } => {
+                courier = Some(source.clone());
+                ("mempool_present", None, None, vec![])
+            }
         };
         Self {
             source: hint.source.clone(),
@@ -360,6 +368,7 @@ impl StoredHint {
             height,
             reason,
             competitors,
+            courier,
             observed: hint.observed,
         }
     }
@@ -379,6 +388,9 @@ impl StoredHint {
                 competitors: self.competitors.clone(),
             },
             "orphan_mempool" => HintStatus::OrphanMempool,
+            "mempool_present" => self.courier.clone().map_or(HintStatus::Unknown, |source| {
+                HintStatus::MempoolPresent { source }
+            }),
             _ => HintStatus::Unknown,
         };
         Hint::new(self.source.clone(), status, self.observed)
@@ -2290,6 +2302,29 @@ pub(crate) mod tests {
         assert_eq!(report.asked, 1);
         assert_eq!(services.call_count("post_beef"), 2);
         assert_eq!(services.call_count("get_merkle_path"), 1);
+    }
+
+    /// A courier's mempool presence (tracker 0.5.0) survives the stored row,
+    /// its courier with it; a presence row without one reads as `unknown`.
+    #[test]
+    fn a_mempool_presence_hint_round_trips_through_the_stored_row() {
+        let hint = Hint::new(
+            "arcade".to_string(),
+            HintStatus::MempoolPresent {
+                source: "courier-a".to_string(),
+            },
+            1_700_000_000,
+        );
+        let stored = StoredHint::of(&hint);
+        let json = serde_json::to_string(&stored).unwrap();
+        let back: StoredHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.hint(), hint);
+
+        let bare = StoredHint {
+            courier: None,
+            ..stored
+        };
+        assert_eq!(bare.hint().status, HintStatus::Unknown);
     }
 
     /// The words that mean "not final", and one that does not.
