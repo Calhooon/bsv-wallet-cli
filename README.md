@@ -1,7 +1,7 @@
 # bsv-wallet-cli
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
-storage, signing, broadcasting and transaction tracking. **0.9.0** pins
+storage, signing, broadcasting and transaction tracking. **0.12.0** pins
 **bsv-wallet-toolbox-rs =0.8.0**, **bsv-rs =0.6.1** and **bsv-tracker =0.4.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
@@ -10,7 +10,7 @@ storage, signing, broadcasting and transaction tracking. **0.9.0** pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.10.0 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.12.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -88,7 +88,10 @@ the headers; a freeze writes its outpoint to the frozen record,
 `frozen_outpoints` (txid, vout, the envelope's cursor, when), which the spend
 guard reads (never offered; nothing here clears a row, the charter's R6). The
 cursor is stored after each delivery, in the same transaction as the tracker's
-rows (`tracker_meta`, `feed_cursor`).
+rows (`tracker_meta`, `feed_cursor`). The status object `GET /chain-feed`
+serves (`status`: its `cursor`, `delivered`, `updatedAt`) is rewritten after
+every delivery (N = 1), while replaying and while following, so `status.cursor`
+equals the top-level `cursor` once the delivery's write lands.
 
 A decode fault, a cursor ahead of the journal (409 `cursorAhead`), an
 `event: error` from the feed or a refused request stops the loop at its
@@ -103,6 +106,36 @@ Load: one outbound stream per daemon, plus one page request per reconnect
 of its own for the feed; a transport failure is retried after a pause that
 doubles from one second to five minutes. Headers are read beyond the feed
 only when an envelope names a tracked transaction.
+
+## The tracker pass
+
+`serve`, `daemon` (and each tenant of `serve-fleet`, with or without
+`--daemon`) run the same served pass
+([src/broadcast_reconcile.rs](src/broadcast_reconcile.rs),
+`run_served_pass`) every `BROADCAST_RECONCILE_INTERVAL_SECS` (default 60;
+`BROADCAST_RECONCILE=0` turns it off): the tracker's pass, the poisoned-chain
+sweep and the spend guard. Under `serve` it drains the wallet's Arcade SSE
+stream first; under `daemon` the monitor holds that stream and the pass drains
+none. Its load: it reads the store and asks the header service for the tip and
+the header at each height a stored path names (one read per height per pass).
+Beyond that it asks only when a row is due: a merkle path for a re-ask that is
+due (at most `TRACKER_MAX_ASKS`, default 20, per pass, through the toolbox's
+couriers, below), a re-announce to the broadcasters at a lock time, and the
+sweep's re-check of an input held locked past its due time.
+
+Every creator of a coin we hold gets a row (the stack's wallet charter,
+section 0: "About a transaction it believes only the tracker's word: each
+action hosts one tracker state"). An `unproven` or `sending` transaction of
+the wallet is adopted at `built`. A `completed` transaction with a stored proof
+(`proven_tx_id` set; the toolbox's monitor proved it first) that creates a coin
+we hold and has no row is adopted by replaying its stored path against the
+headers of the moment, as the spend guard replays it: the row's word is
+`mined(h)` with that path as its evidence when the header at h carries the
+root, else the row has no word and the pending re-ask `proofFailed`, run by the
+next pass. A header the service could not give adopts nothing that pass; the
+toolbox's rows are never written; at most 100 such creators per pass. A creator
+the toolbox moves to `completed` while a row exists keeps its row. So
+`GET /tx/{txid}` answers for every coin the wallet holds.
 
 ## The spend guard on coin selection
 
@@ -143,7 +176,12 @@ for deferred signing (`signAndProcess: false`) records it by the action's
 record. There is no environment variable for it.
 
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
-is never offered, a frozen coin is never offered, and a coin an action of ours
+is never offered; a coin whose creator is `mined` at or above the
+`forkHeight` of a `split` the feed delivered is held until that split's
+`splitResolved` (the open splits are kept in `tracker_meta`, `open_splits`,
+written in the delivery's transaction; the scenario
+`tracker-split-observation-writes-no-word.md` column 4), with the reason
+`suspect: a fork or an unresolved split at or below its height`; a frozen coin is never offered, and a coin an action of ours
 holds is the toolbox's lock. Coins a caller names (`createAction`'s `inputs`,
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
@@ -154,7 +192,9 @@ minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
 `own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`, `frozen: never offered`).
 The route answers `402 INSUFFICIENT_FUNDS` with the list under `held`; the
-commands print it. Nothing is fetched for it but the header service's tip and
+commands print it, and under `--json` print the route's body as one JSON object
+on stdout, `{"code":"INSUFFICIENT_FUNDS","message","offeredSatoshis","held":[...]}`
+(`INPUT_NOT_OFFERED` for a named coin), exit 1. Nothing is fetched for it but the header service's tip and
 headers: no chain scan, no explorer.
 
 ## One transaction's word
@@ -165,6 +205,22 @@ evidence}`, where `evidence` is, for `mined`, the stored proof's `root` and
 `height` (the toolbox's `proven_txs`), else `null`; 404 when the tracker holds
 no word for it. A view; nothing is decided from it. The MCP tool `tx_word`
 reads it.
+
+## Explorer calls (rule 28)
+
+Every explorer call is deleted, because a header, a proof or our own index
+already answers, or it is a break-glass read that says why at its site
+([tests/rule_28_sites.rs](tests/rule_28_sites.rs) holds the CLI's own list).
+The CLI's sites:
+
+| site | what it asks, and when |
+|---|---|
+| `src/broadcast_verify.rs` (C1) | WhatsOnChain `GET /tx/hash/{txid}`, Bitails `GET /tx/{txid}`: after a send, whether the network holds what a broadcaster took |
+| `src/commands/receive.rs` (C2) | WhatsOnChain `GET /tx/{txid}/beef`: `receive`, a payment's BEEF no store of ours holds |
+| `src/commands/sync.rs` (C4) | `GET /address/{address}/unspent`: a chain scan for payments to our deposit address nobody handed us; `sync` only, by hand, one explorer |
+| `src/commands/cleanup_abandoned.rs` (C7) | WhatsOnChain `GET /tx/{txid}/{vout}/spent`: who spent an outpoint, for the abandoned-transaction reconcile (no header or proof says an output is spent by someone else) |
+| the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, Arcade first when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.8.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
+| the tracker's re-ask (`Courier`, every served pass) | a merkle path for one named transaction whose re-ask is due, through the same toolbox couriers (Arcade, then WhatsOnChain, then Bitails), checked by the tracker against the header service |
 
 ## Deliberate respend
 
