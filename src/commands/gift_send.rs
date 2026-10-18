@@ -9,7 +9,7 @@
 use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::{hash160, to_hex};
 use bsv_sdk::transaction::Beef;
-use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput, WalletInterface};
+use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput};
 use bsv_wallet_cli::gift::covenant::build_locking_script;
 
 use crate::context::WalletContext;
@@ -162,7 +162,15 @@ pub async fn run(
 
     // A coin whose transaction drew no accepting word is not selected.
     crate::spend_guard::run(ctx.wallet.storage().pool()).await?;
-    let result = ctx.wallet.create_action(args, "bsv-wallet-cli").await?;
+    // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
+    // refusal lists every coin held back.
+    let result = crate::spend_gate::create_action(
+        &ctx.wallet,
+        args,
+        "bsv-wallet-cli",
+        &crate::spend_gate::GateOptions::from_env(),
+    )
+    .await?;
     let txid = result
         .txid
         .ok_or_else(|| anyhow!("wallet returned no txid"))?;

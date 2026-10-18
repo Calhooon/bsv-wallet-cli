@@ -124,6 +124,8 @@ pub struct AppError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    /// The spend gate's refusal: every coin held back, and why.
+    refusal: Option<crate::spend_gate::Refusal>,
 }
 
 impl AppError {
@@ -177,6 +179,20 @@ impl AppError {
             status,
             code,
             message,
+            refusal: None,
+        }
+    }
+
+    /// A gated `createAction`'s failure: the refusal keeps its listing.
+    fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
+        match e {
+            crate::spend_gate::GateError::Refused(refusal) => Self {
+                status: StatusCode::PAYMENT_REQUIRED,
+                code: "INSUFFICIENT_FUNDS",
+                message: refusal.to_string(),
+                refusal: Some(refusal),
+            },
+            other => Self::from_wallet_error(other),
         }
     }
 
@@ -207,6 +223,7 @@ impl AppError {
                  it spent is released only where the chain vouches it unspent; any other stays \
                  locked and is re-checked."
             ),
+            refusal: None,
         }
     }
 }
@@ -230,6 +247,7 @@ impl From<(StatusCode, Json<serde_json::Value>)> for AppError {
             status,
             code,
             message,
+            refusal: None,
         }
     }
 }
@@ -242,11 +260,23 @@ impl IntoResponse for AppError {
             message = %self.message,
             "request error"
         );
-        (
-            self.status,
-            Json(json!({"code": self.code, "message": self.message})),
-        )
-            .into_response()
+        let mut body = json!({"code": self.code, "message": self.message});
+        if let Some(refusal) = &self.refusal {
+            body["offeredSatoshis"] = json!(refusal.offered_satoshis);
+            body["held"] = json!(refusal
+                .held
+                .iter()
+                .map(|c| json!({
+                    "outpoint": c.outpoint,
+                    "satoshis": c.satoshis,
+                    "word": c.word,
+                    "origin": c.origin,
+                    "ageMinutes": c.age_minutes,
+                    "reason": c.reason,
+                }))
+                .collect::<Vec<_>>());
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 
@@ -463,10 +493,17 @@ pub async fn create_action(
     crate::spend_guard::run(wallet.storage().pool())
         .await
         .map_err(|e| AppError::from_wallet_error(format!("Storage error: spend guard: {e}")))?;
-    let result = wallet
-        .create_action(args, &originator)
-        .await
-        .map_err(AppError::from_wallet_error)?;
+    // The spend gate (R1 (b), R3 (b)): the toolbox allocates only coins
+    // whose creator is mined at SPEND_DEPTH, or our own change under
+    // SPEND_OWN_CHANGE; a refusal lists every coin held back.
+    let result = crate::spend_gate::create_action(
+        &wallet,
+        args,
+        &originator,
+        &crate::spend_gate::GateOptions::from_env(),
+    )
+    .await
+    .map_err(AppError::from_gate_error)?;
     drop(_guard);
 
     tracing::info!(
