@@ -3,6 +3,14 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.13.0] - 2026-10-18
+
+The line of the wave of 2026-10-18 (bsv-stack-lean #119): `bsv-rs` to `=0.7.0`, `bsv-wallet-toolbox-rs` to `=0.9.0` and `bsv-tracker` to `=0.6.0`, together, because the toolbox and the tracker put bsv-rs types in their public APIs. The committed lock carries one SDK version, bsv-rs 0.7.0. Supersedes the update loop's #35 (tracker 0.4.1).
+
+- bsv-tracker 0.5.0 widens `HintStatus` by `MempoolPresent { source }`. The stored hint row (`tracker_states.hints`) writes it as `mempool_present` with its courier in a new optional `courier` field, and reads it back; a `mempool_present` row without a courier reads as `unknown`. The CLI produces no such hint yet. The tracker's compact State form (`State::to_compact`, `from_compact`, `Tracker::restore`) is not adopted: the CLI stores a row of inputs that every load replays (whether built, the hints in order, the raw merkle path, the chain events), never the tracker's state, so its stored path is checked again against the headers on each load; the compact form would store the word.
+- bsv-rs 0.7.0's signing digest (the node's dispatch on FORKID and CHRONICLE, the SINGLE sentinel, an explicit scriptCode). The CLI signs on two paths of its own, both with FORKID and without CHRONICLE, where the digest is unchanged: the gift claim's `compute_sighash_for_signing` (scopes 0x41 and 0xc3) and the respend's `P2PKH::unlock` through `Transaction::sign`. Every other signature is the toolbox's `wallet::signer`, which computes its own digest. `tests/signing_digest_vector.rs` pins both paths to bsv-script-lean v1.1.1 `corpus/signer/p2pkh.jsonl` row `signer-p2pkh-00001`, the row the toolbox 0.9.0 test `the_digest_the_toolbox_signs_with_is_the_nodes_for_a_p2pkh_all_forkid_spend` pins: the digest `7370…06b3` and the signed spend's txid `e418…7a96`, the control column of the row's record, judged valid by bitcoin-sv v1.2.3 `verifyscript` (cited, not re-run).
+- `bsv-wallet-mcp` is unchanged (0.3.0, 34 tools); it depends on none of the three crates.
+
 ## [0.12.0] - 2026-10-18
 
 From the stack's coin read (bsv-stack-lean #164, findings F1 to F4 and F6; Calhooon/bsv-wallet-cli #32).

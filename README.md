@@ -2,9 +2,9 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.12.0**, and crates.io carries the same version, **0.12.0**; the
+is the tag **v0.13.0**, and crates.io carries the same version, **0.13.0**; the
 repository's Releases page holds a Release per tag. It pins
-**bsv-wallet-toolbox-rs =0.8.0**, **bsv-rs =0.6.1** and **bsv-tracker =0.4.0**;
+**bsv-wallet-toolbox-rs =0.9.0**, **bsv-rs =0.7.0** and **bsv-tracker =0.6.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -12,7 +12,7 @@ repository's Releases page holds a Release per tag. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.12.0 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.13.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -221,7 +221,7 @@ The CLI's sites:
 | `src/commands/receive.rs` (C2) | WhatsOnChain `GET /tx/{txid}/beef`: `receive`, a payment's BEEF no store of ours holds |
 | `src/commands/sync.rs` (C4) | `GET /address/{address}/unspent`: a chain scan for payments to our deposit address nobody handed us; `sync` only, by hand, one explorer |
 | `src/commands/cleanup_abandoned.rs` (C7) | WhatsOnChain `GET /tx/{txid}/{vout}/spent`: who spent an outpoint, for the abandoned-transaction reconcile (no header or proof says an output is spent by someone else) |
-| the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, from Arcade when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.8.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
+| the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, from Arcade when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.9.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
 | the tracker's re-ask (`Courier`, every served pass) | a merkle path for one named transaction whose re-ask is due, through the same toolbox couriers (Arcade, then WhatsOnChain, then Bitails), checked by the tracker against the header service |
 
 ## Deliberate respend
