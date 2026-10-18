@@ -1,12 +1,19 @@
-//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints.
+//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints, and five tools
+//! over the host's own routes (0.2.0).
 //!
 //! Talks to bsv-wallet-cli at WALLET_URL (default http://localhost:3322).
 //! Every request includes the Origin header required by the wallet.
+//!
+//! The host routes: `chain_feed_status` (`GET /chain-feed`) and `tx_word`
+//! (`GET /tx/{txid}`) on the wallet; `health` (`GET /health`), `pull`
+//! (`GET /pull`) and `register` (`POST /register`, the relay's admin bearer
+//! `RELAY_ADMIN_TOKEN`) on the callback relay at RELAY_URL
+//! (`bsv-wallet-relay`). No route is added to either server.
 
 use reqwest::Client;
 use rmcp::{
-    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*, tool,
-    tool_handler, tool_router, transport::stdio, ErrorData, ServerHandler, ServiceExt,
+    handler::server::wrapper::Parameters, model::*, tool, tool_handler, tool_router,
+    transport::stdio, ErrorData, ServerHandler, ServiceExt,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -20,7 +27,10 @@ pub struct WalletMcp {
     client: Client,
     url: String,
     origin: String,
-    tool_router: ToolRouter<Self>,
+    /// The callback relay (`bsv-wallet-relay`), when one is named.
+    relay_url: Option<String>,
+    /// The relay's admin bearer, for `register`.
+    relay_admin_token: Option<String>,
 }
 
 impl WalletMcp {
@@ -41,9 +51,50 @@ impl WalletMcp {
             .json()
             .await
             .map_err(|e| Self::err(format!("JSON parse error: {e}")))?;
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&body).unwrap_or_default(),
         )]))
+    }
+
+    /// A host route: the answer's status and body (JSON when it parses,
+    /// else the text), an error for a failing status.
+    async fn host(
+        &self,
+        request: reqwest::RequestBuilder,
+        route: &str,
+    ) -> Result<CallToolResult, ErrorData> {
+        let resp = request
+            .header("Origin", &self.origin)
+            .send()
+            .await
+            .map_err(|e| Self::err(format!("HTTP error on {route}: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| Self::err(format!("body of {route}: {e}")))?;
+        let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+        if !status.is_success() {
+            let msg = body
+                .get("message")
+                .or(body.get("error"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| body.to_string());
+            return Err(Self::err(format!(
+                "{route}: HTTP {}: {msg}",
+                status.as_u16()
+            )));
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&body).unwrap_or_default(),
+        )]))
+    }
+
+    fn relay(&self) -> Result<&str, ErrorData> {
+        self.relay_url
+            .as_deref()
+            .ok_or_else(|| Self::err("RELAY_URL is not set: no callback relay is named".into()))
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<CallToolResult, ErrorData> {
@@ -70,7 +121,7 @@ impl WalletMcp {
                 .unwrap_or("unknown error");
             return Err(Self::err(format!("Wallet HTTP {}: {msg}", status.as_u16())));
         }
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&body).unwrap_or_default(),
         )]))
     }
@@ -412,6 +463,30 @@ fn default_100() -> u64 {
     100
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct TxWordParams {
+    /// The transaction id, 64 hex characters
+    pub txid: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct PullParams {
+    /// The wallet's callback token
+    pub token: String,
+    /// Return payloads with an id above this (default 0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    /// Delete payloads with an id at or below this first
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RegisterParams {
+    /// The callback token to register
+    pub token: String,
+}
+
 // ── Tool definitions ───────────────────────────────────────────
 
 #[tool_router]
@@ -421,8 +496,17 @@ impl WalletMcp {
             client: Client::new(),
             url,
             origin,
-            tool_router: Self::tool_router(),
+            relay_url: None,
+            relay_admin_token: None,
         }
+    }
+
+    /// Name the callback relay (`RELAY_URL`) and its admin bearer
+    /// (`RELAY_ADMIN_TOKEN`).
+    pub fn with_relay(mut self, url: Option<String>, admin_token: Option<String>) -> Self {
+        self.relay_url = url.map(|u| u.trim_end_matches('/').to_string());
+        self.relay_admin_token = admin_token.filter(|t| !t.is_empty());
+        self
     }
 
     // ── Custom: Balance ────────────────────────────────────────
@@ -476,7 +560,7 @@ impl WalletMcp {
             offset += limit;
         }
         let bsv = total as f64 / 100_000_000.0;
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&json!({"satoshis": total, "bsv": bsv}))
                 .unwrap_or_default(),
         )]))
@@ -745,22 +829,84 @@ impl WalletMcp {
         )
         .await
     }
+
+    // ── The host's own routes (not BRC-100) ───────────────────
+
+    #[tool(
+        description = "The daemon's chain-event feed: its stored status, its cursor and, when it stopped, the fault (GET /chain-feed). What it reports rests on the header service's events, each checked against the headers the wallet holds; null status where no feed runs."
+    )]
+    async fn chain_feed_status(&self) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/chain-feed", self.url);
+        self.host(self.client.get(url), "/chain-feed").await
+    }
+
+    #[tool(
+        description = "The tracker's word for one transaction and its evidence (GET /tx/{txid}). A mined word rests on headers and a proof (a merkle path whose root our header at its height carries); every other word rests on a hint (a broadcaster's or the wallet's own act) and claims nothing about the chain."
+    )]
+    async fn tx_word(&self, p: Parameters<TxWordParams>) -> Result<CallToolResult, ErrorData> {
+        let txid = p.0.txid.trim().to_ascii_lowercase();
+        if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ErrorData::invalid_params(
+                "txid must be 64 hex characters",
+                None,
+            ));
+        }
+        let url = format!("{}/tx/{txid}", self.url);
+        self.host(self.client.get(url), "/tx/{txid}").await
+    }
+
+    #[tool(
+        description = "The callback relay's health (GET /health on RELAY_URL). It rests on nothing about the chain: a liveness answer, not a word about any transaction."
+    )]
+    async fn health(&self) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/health", self.relay()?);
+        self.host(self.client.get(url), "/health").await
+    }
+
+    #[tool(
+        description = "Drain the wallet's queue on the callback relay (GET /pull?token=&after=&ack= on RELAY_URL): the ARC/Arcade callbacks held for this token. Each payload is a hint (a broadcaster's word); only a merkle path in it that checks against our headers becomes a proof."
+    )]
+    async fn pull(&self, p: Parameters<PullParams>) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/pull", self.relay()?);
+        let mut query = vec![
+            ("token", p.0.token.clone()),
+            ("after", p.0.after.unwrap_or(0).to_string()),
+        ];
+        if let Some(ack) = p.0.ack {
+            query.push(("ack", ack.to_string()));
+        }
+        self.host(self.client.get(url).query(&query), "/pull").await
+    }
+
+    #[tool(
+        description = "Register a callback token with the relay (POST /register on RELAY_URL, with the bearer RELAY_ADMIN_TOKEN). It rests on nothing about the chain: it names a queue for the broadcasters' hints."
+    )]
+    async fn register(&self, p: Parameters<RegisterParams>) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/register", self.relay()?);
+        let mut request = self
+            .client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .json(&json!({ "token": p.0.token }));
+        if let Some(admin) = &self.relay_admin_token {
+            request = request.bearer_auth(admin);
+        }
+        self.host(request, "/register").await
+    }
 }
 
 // ── ServerHandler ──────────────────────────────────────────────
 
 #[tool_handler]
 impl ServerHandler for WalletMcp {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::LATEST,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "BSV wallet MCP server. All 28 BRC-100 wallet endpoints plus wallet_balance."
-                    .into(),
-            ),
-        }
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::LATEST)
+            .with_instructions(
+                "BSV wallet MCP server. All 28 BRC-100 wallet endpoints plus wallet_balance, \
+                 and five tools over the host's own routes: chain_feed_status, tx_word, health, \
+                 pull, register.",
+            )
     }
 }
 
@@ -782,7 +928,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting bsv-wallet-mcp → {url}");
 
-    let server = WalletMcp::new(url, origin);
+    let server = WalletMcp::new(url, origin).with_relay(
+        env::var("RELAY_URL").ok().filter(|u| !u.is_empty()),
+        env::var("RELAY_ADMIN_TOKEN").ok(),
+    );
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("Failed to start MCP server: {e}");
     })?;
@@ -790,3 +939,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     service.waiting().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
