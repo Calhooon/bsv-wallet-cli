@@ -19,9 +19,12 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
     };
 
     let result = ctx.wallet.list_actions(args, "bsv-wallet-cli").await?;
+    // The rule an action named at the door (R1 (d)), as `underRule`.
+    let rules = crate::spend_gate::rules_of(ctx.wallet.storage().pool()).await?;
 
     if ctx.json_output {
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        let shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);
+        println!("{}", serde_json::to_string_pretty(&shown)?);
     } else {
         println!(
             "{} actions (total: {})",
@@ -30,12 +33,17 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
         );
         for action in &result.actions {
             let direction = if action.is_outgoing { "OUT" } else { "IN " };
+            let rule = rules
+                .get(&hex::encode(action.txid))
+                .map(|r| format!(" | under {r}"))
+                .unwrap_or_default();
             println!(
-                "  {} | {} | {} sats | {}",
+                "  {} | {} | {} sats | {}{}",
                 direction,
                 hex::encode(&action.txid[..4]),
                 action.satoshis,
-                action.description
+                action.description,
+                rule
             );
         }
     }

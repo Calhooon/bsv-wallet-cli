@@ -26,13 +26,36 @@
 //!    this host; `0` turns it off). **R1 (b)**: the one rule a host may name
 //!    is for its own `made` change (`Rules .made`); a received coin
 //!    (`internalizeAction`, any counterparty's payment) with no proof is
-//!    never offered, by no setting (`ruleFor` reads no `received` arm).
+//!    never offered by a host setting (`ruleFor` reads no `received` arm
+//!    host-wide); or
+//! 3. its creator's word is `pending`, the coin was received, and this one
+//!    action names the rule at the door: `allowPending: "received"` on the
+//!    served `/createAction`, `--allow-pending received` on `send`, `drain`,
+//!    `split` and `gift-send` ([`GateOptions::allow_received`]). **R1 (d)**
+//!    (the owner's ruling of 2026-10-18 00:1xZ; `lean/Wallet.lean`
+//!    `receivedPending`, `ruleFor`): the rule under the word is the
+//!    ruling's own, any creator word that claims nothing about the chain,
+//!    never a host setting, and there is no environment variable for it.
+//!    The body of every such coin was checked at internalize: the toolbox
+//!    refuses an incomplete ancestry and checks every merkle root the BEEF
+//!    carries against the header service in Strict mode
+//!    (bsv-wallet-toolbox-rs 0.8.0 `storage/sqlx/internalize_action.rs`
+//!    96-119), and `fund` refuses an invalid BEEF; so the one trusted word
+//!    is the sender's broadcast. The action records the word
+//!    (`spend_gate_actions`, [`RECEIVED_PENDING`]), shown by `actions` and
+//!    `/listActions` as `underRule`.
 //!
 //! A coin whose creator is `stale`, `rejected`, `conflicted` or `abandoned`
 //! is never offered; a coin an action of ours holds is the toolbox's lock
-//! (`spent_by`) and is never a candidate. A frozen coin has no record in
-//! this store (the feed's `frozen` event moves no tracked row at 0.9.0), so
-//! there is nothing to read for it here.
+//! (`spent_by`) and is never a candidate. A frozen coin (the feed's
+//! `frozen` event, recorded in `frozen_outpoints` by
+//! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or
+//! no rule (R6: never cleared here).
+//!
+//! Coins a caller names (`createAction`'s `inputs`, `respend`'s exact
+//! inputs) pass the same per-coin judgment ([`assess_named`]); a named coin
+//! the gate would hold refuses the action with the same `held[]` listing
+//! (the charter's `onCreate`: every input offerable).
 //!
 //! # The shape: held for the call, restored after
 //!
@@ -74,6 +97,15 @@ pub const STALE_HOLD_SECS: i64 = 600;
 const BATCH: usize = 32;
 /// Satoshis read beyond the outputs before the lazy read stops (fees).
 const FEE_MARGIN: u64 = 10_000;
+/// R1 (d)'s rule, by the ruling's name (`lean/Wallet.lean`
+/// `receivedPending`), as recorded on an action that named it.
+pub const RECEIVED_PENDING: &str = "received-pending";
+/// The door's one value for `allowPending`.
+pub const ALLOW_PENDING_RECEIVED: &str = "received";
+/// Appended to a held received `pending` coin's reason: what would offer it.
+pub const ALLOW_PENDING_HINT: &str = "offered under allowPending: received";
+/// The refusal's toolbox line when a coin a caller named is held.
+pub const NAMED_INPUT_REFUSED: &str = "an input the spend guard does not offer";
 
 /// The gate's two settings.
 #[derive(Debug, Clone)]
@@ -83,6 +115,9 @@ pub struct GateOptions {
     /// `SPEND_OWN_CHANGE` (R1 (b)): offer our own `made` change whose
     /// creator's word is `pending`.
     pub own_change: bool,
+    /// R1 (d): this one action named `allowPending: received` at the door.
+    /// Never read from the environment; off unless the caller says so.
+    pub allow_received: bool,
 }
 
 impl Default for GateOptions {
@@ -90,8 +125,15 @@ impl Default for GateOptions {
         Self {
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
             own_change: DEFAULT_SPEND_OWN_CHANGE,
+            allow_received: false,
         }
     }
+}
+
+/// The door's word: `allowPending` is on only for the one value
+/// `"received"`; absent or anything else is off.
+pub fn allow_pending(word: Option<&str>) -> bool {
+    word == Some(ALLOW_PENDING_RECEIVED)
 }
 
 impl GateOptions {
@@ -109,7 +151,14 @@ impl GateOptions {
         Self {
             spend_depth: TickOptions::from_env().spend_depth,
             own_change,
+            allow_received: false,
         }
+    }
+
+    /// These settings, with the action's word for R1 (d).
+    pub fn with_allow_received(mut self, allow: bool) -> Self {
+        self.allow_received = allow;
+        self
     }
 
     fn tick(&self) -> TickOptions {
@@ -144,7 +193,8 @@ pub struct HeldCoin {
     /// Minutes since the wallet learned of the coin.
     pub age_minutes: i64,
     /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
-    /// no proof`, `own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`.
+    /// no proof; offered under allowPending: received`, `own change,
+    /// SPEND_OWN_CHANGE=0`, `locked by <txid>`, `frozen: never offered`.
     pub reason: String,
     #[serde(skip)]
     output_id: i64,
@@ -163,13 +213,22 @@ pub struct Refusal {
 
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Insufficient funds: no offerable coin covers the action ({}; {} sats offered, {} coin(s) held back)",
-            self.toolbox,
-            self.offered_satoshis,
-            self.held.len()
-        )?;
+        if self.toolbox == NAMED_INPUT_REFUSED {
+            write!(
+                f,
+                "Access denied: {} ({} coin(s) held back)",
+                self.toolbox,
+                self.held.len()
+            )?;
+        } else {
+            write!(
+                f,
+                "Insufficient funds: no offerable coin covers the action ({}; {} sats offered, {} coin(s) held back)",
+                self.toolbox,
+                self.offered_satoshis,
+                self.held.len()
+            )?;
+        }
         for c in &self.held {
             write!(
                 f,
@@ -190,6 +249,14 @@ impl std::fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
+
+impl Refusal {
+    /// A coin the caller named is held: the action is refused before the
+    /// toolbox runs.
+    pub fn is_named_input(&self) -> bool {
+        self.toolbox == NAMED_INPUT_REFUSED
+    }
+}
 
 /// What a gated `createAction` failed on.
 #[derive(Debug)]
@@ -224,6 +291,7 @@ struct Candidate {
     origin: Origin,
     age_minutes: i64,
     proof: Option<Vec<u8>>,
+    frozen: bool,
 }
 
 /// The gate's verdict on the coins it read.
@@ -252,7 +320,44 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // The rule an action was created under (R1 (d)): the toolbox's
+    // `transactions` row is the reference's shape and not ours to widen.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS spend_gate_actions (\
+            txid TEXT PRIMARY KEY, \
+            rule TEXT NOT NULL, \
+            recorded_at INTEGER NOT NULL)",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+/// Record that the action `txid` was created under `rule`.
+pub async fn record_rule(pool: &SqlitePool, txid: &str, rule: &str) -> Result<()> {
+    ensure_schema(pool).await?;
+    sqlx::query(
+        "INSERT INTO spend_gate_actions (txid, rule, recorded_at) VALUES (?, ?, ?) \
+         ON CONFLICT(txid) DO NOTHING",
+    )
+    .bind(txid.to_ascii_lowercase())
+    .bind(rule)
+    .bind(chrono::Utc::now().timestamp())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The rule each action was created under, where one was recorded.
+pub async fn rules_of(pool: &SqlitePool) -> Result<HashMap<String, String>> {
+    ensure_schema(pool).await?;
+    let rows = sqlx::query("SELECT txid, rule FROM spend_gate_actions")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get::<String, _>("txid"), r.get::<String, _>("rule")))
+        .collect())
 }
 
 fn blocks(n: u64) -> String {
@@ -284,9 +389,11 @@ pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions)
             Some(format!("{}: never offered", reading.word))
         }
         // `pending`: the word claims nothing about the chain; only R1's
-        // rule for our own change offers it.
+        // rule for our own change (b), or the action's word for a received
+        // coin (d), offers it.
         _ => match origin {
-            Origin::Received => Some(format!("{depth}; received, no proof")),
+            Origin::Received if opts.allow_received => None,
+            Origin::Received => Some(format!("{depth}; received, no proof; {ALLOW_PENDING_HINT}")),
             Origin::Made if opts.own_change => None,
             Origin::Made => Some(format!("{depth}; own change, SPEND_OWN_CHANGE=0")),
         },
@@ -297,6 +404,7 @@ pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions)
 /// basket, unspent, its transaction `completed` or `unproven`. In the
 /// toolbox's preference: completed first, then the largest.
 async fn candidates(pool: &SqlitePool) -> Result<Vec<Candidate>> {
+    let frozen = crate::tracker_host::frozen_outpoints(pool).await?;
     let rows = sqlx::query(
         "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
                 CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
@@ -325,9 +433,16 @@ async fn candidates(pool: &SqlitePool) -> Result<Vec<Candidate>> {
             },
             age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
             proof: r.get("merkle_path"),
+            frozen: frozen.contains(&(
+                r.get::<String, _>("txid").to_ascii_lowercase(),
+                r.get::<i64, _>("vout"),
+            )),
         })
         .collect())
 }
+
+/// The frozen record's hold (R6: never cleared here).
+const FROZEN: &str = "frozen: never offered";
 
 /// The coins an action of ours holds (`spent_by` a live action): listed in
 /// a refusal, never offered.
@@ -387,6 +502,18 @@ pub async fn assess<V: WalletServices + ?Sized>(
     let mut next = 0;
     for c in &all {
         let covered = need.is_some_and(|need| out.offered_satoshis() >= need);
+        if c.frozen {
+            out.held.push(HeldCoin {
+                outpoint: format!("{}.{}", c.txid, c.vout),
+                satoshis: c.satoshis,
+                word: "frozen".to_string(),
+                origin: c.origin,
+                age_minutes: c.age_minutes,
+                reason: FROZEN.to_string(),
+                output_id: c.output_id,
+            });
+            continue;
+        }
         if !readings.contains_key(&c.txid) {
             if covered {
                 out.unread.push(c.output_id);
@@ -424,6 +551,97 @@ pub async fn assess<V: WalletServices + ?Sized>(
         }
     }
     Ok(out)
+}
+
+/// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
+/// inputs), judged coin by coin as the toolbox's own allocation is: frozen,
+/// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
+/// replaces), or a creator the gate would not offer. Returns every named
+/// coin it holds. An outpoint that is not one of this wallet's outputs is
+/// not a coin of ours and is left to the toolbox (a covenant or a foreign
+/// input carried in `inputBEEF`).
+pub async fn assess_named<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    opts: &GateOptions,
+    named: &[(String, u32)],
+    reserved_to: Option<i64>,
+) -> Result<Vec<HeldCoin>> {
+    let pool = storage.pool();
+    let frozen = crate::tracker_host::frozen_outpoints(pool).await?;
+    let mut coins = Vec::new();
+    for (txid, vout) in named {
+        let txid = txid.to_ascii_lowercase();
+        let row = sqlx::query(
+            "SELECT o.output_id, o.satoshis, o.spent_by, t.is_outgoing, \
+                    CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
+                    COALESCE(s.txid, s.reference) AS holder, p.merkle_path \
+             FROM outputs o \
+             JOIN transactions t ON o.transaction_id = t.transaction_id \
+             LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
+             LEFT JOIN proven_txs p ON p.txid = t.txid \
+             WHERE lower(t.txid) = ? AND o.vout = ?",
+        )
+        .bind(&txid)
+        .bind(i64::from(*vout))
+        .fetch_optional(pool)
+        .await?;
+        let Some(r) = row else { continue };
+        coins.push((txid, *vout, r));
+    }
+    let is_frozen = |txid: &str, vout: u32| frozen.contains(&(txid.to_string(), i64::from(vout)));
+    let is_locked = |r: &sqlx::sqlite::SqliteRow| {
+        let spent_by: Option<i64> = r.get("spent_by");
+        spent_by.is_some() && spent_by != reserved_to
+    };
+    // Only a coin neither frozen nor locked needs its creator read.
+    let creators: Vec<(String, Option<Vec<u8>>)> = coins
+        .iter()
+        .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r))
+        .map(|(t, _, r)| (t.clone(), r.get("merkle_path")))
+        .collect();
+    let readings = if creators.is_empty() {
+        HashMap::new()
+    } else {
+        read_creators(storage, services, &opts.tick(), &creators).await?
+    };
+    let mut held = Vec::new();
+    for (txid, vout, r) in coins {
+        let origin = if r.get::<i64, _>("is_outgoing") != 0 {
+            Origin::Made
+        } else {
+            Origin::Received
+        };
+        let reading = readings.get(&txid);
+        let (word, reason) = if is_frozen(&txid, vout) {
+            ("frozen".to_string(), Some(FROZEN.to_string()))
+        } else if is_locked(&r) {
+            (
+                "locked".to_string(),
+                Some(format!(
+                    "locked by {}",
+                    r.get::<Option<String>, _>("holder").unwrap_or_default()
+                )),
+            )
+        } else {
+            match reading {
+                Some(reading) => (reading.word.to_string(), hold_reason(reading, origin, opts)),
+                None => ("unknown".to_string(), Some("not read".to_string())),
+            }
+        };
+        if let Some(reason) = reason {
+            held.push(HeldCoin {
+                outpoint: format!("{txid}.{vout}"),
+                satoshis: r.get::<i64, _>("satoshis").max(0) as u64,
+                word,
+                origin,
+                age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
+                reason,
+                output_id: r.get("output_id"),
+            });
+        }
+    }
+    Ok(held)
 }
 
 /// A unique name for this call's holds.
@@ -533,6 +751,52 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     restore(storage.pool(), None)
         .await
         .map_err(GateError::Gate)?;
+    let named: Vec<(String, u32)> = args
+        .inputs
+        .iter()
+        .flatten()
+        .map(|i| {
+            (
+                bsv_sdk::primitives::to_hex(&i.outpoint.txid),
+                i.outpoint.vout,
+            )
+        })
+        .collect();
+    if !named.is_empty() {
+        let held = assess_named(storage, wallet.services(), opts, &named, None)
+            .await
+            .map_err(GateError::Gate)?;
+        if !held.is_empty() {
+            return Err(GateError::Refused(Refusal {
+                toolbox: NAMED_INPUT_REFUSED.to_string(),
+                offered_satoshis: 0,
+                held,
+            }));
+        }
+    }
+    let result = run_gated(wallet, args, originator, opts).await?;
+    // The action records the word it was created under (R1 (d)).
+    if opts.allow_received {
+        if let Some(txid) = result.txid.as_ref() {
+            record_rule(
+                storage.pool(),
+                &bsv_sdk::primitives::to_hex(txid),
+                RECEIVED_PENDING,
+            )
+            .await
+            .map_err(GateError::Gate)?;
+        }
+    }
+    Ok(result)
+}
+
+async fn run_gated<V: WalletServices + Send + Sync + 'static>(
+    wallet: &Wallet<StorageSqlx, V>,
+    args: CreateActionArgs,
+    originator: &str,
+    opts: &GateOptions,
+) -> std::result::Result<CreateActionResult, GateError> {
+    let storage = wallet.storage();
     let need = args
         .outputs
         .as_ref()

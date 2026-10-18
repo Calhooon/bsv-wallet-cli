@@ -6,7 +6,12 @@ use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput}
 
 use crate::context::WalletContext;
 
-pub async fn run(ctx: &WalletContext, address: &str, satoshis: u64) -> Result<()> {
+pub async fn run(
+    ctx: &WalletContext,
+    address: &str,
+    satoshis: u64,
+    allow_received: bool,
+) -> Result<()> {
     let lock = P2PKH::lock_from_address(address)?;
 
     let args = CreateActionArgs {
@@ -45,7 +50,7 @@ pub async fn run(ctx: &WalletContext, address: &str, satoshis: u64) -> Result<()
         &ctx.wallet,
         args,
         "bsv-wallet-cli",
-        &crate::spend_gate::GateOptions::from_env(),
+        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
     )
     .await?;
 

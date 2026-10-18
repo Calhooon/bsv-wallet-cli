@@ -9,7 +9,7 @@ use crate::context::WalletContext;
 const FEE_RESERVE_BASE: u64 = 50;
 const FEE_RESERVE_PER_INPUT: u64 = 25;
 
-pub async fn run(ctx: &WalletContext, address: &str) -> Result<()> {
+pub async fn run(ctx: &WalletContext, address: &str, allow_received: bool) -> Result<()> {
     let (balance, n_outputs) = sum_spendable(ctx).await?;
     if n_outputs == 0 {
         return Err(anyhow!("wallet has no spendable outputs"));
@@ -65,7 +65,7 @@ pub async fn run(ctx: &WalletContext, address: &str) -> Result<()> {
         &ctx.wallet,
         args,
         "bsv-wallet-cli",
-        &crate::spend_gate::GateOptions::from_env(),
+        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
     )
     .await?;
     let txid_hex = to_hex(&result.txid.expect("expected txid in result"));

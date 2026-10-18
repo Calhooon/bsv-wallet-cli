@@ -68,9 +68,13 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::address::run(&ctx).await?;
         }
-        Commands::Send { address, satoshis } => {
+        Commands::Send {
+            address,
+            satoshis,
+            allow_pending,
+        } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::send::run(&ctx, address, *satoshis).await?;
+            commands::send::run(&ctx, address, *satoshis, word(allow_pending)).await?;
         }
         Commands::Respend { txid } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -81,9 +85,18 @@ async fn main() -> Result<()> {
             satoshis,
             unlock,
             fee_utxo,
+            allow_pending,
         } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::gift_send::run(&ctx, recipient, *satoshis, unlock, *fee_utxo).await?;
+            commands::gift_send::run(
+                &ctx,
+                recipient,
+                *satoshis,
+                unlock,
+                *fee_utxo,
+                word(allow_pending),
+            )
+            .await?;
         }
         Commands::GiftInspect { txid } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -93,9 +106,12 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::gift_claim::run(&ctx, txid, *force).await?;
         }
-        Commands::Drain { address } => {
+        Commands::Drain {
+            address,
+            allow_pending,
+        } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::drain::run(&ctx, address).await?;
+            commands::drain::run(&ctx, address, word(allow_pending)).await?;
         }
         Commands::Fund { beef_hex, vout } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -141,9 +157,12 @@ async fn main() -> Result<()> {
             server::refuse_open_bind_from_env(*allow_no_token)?;
             commands::serve_fleet::run(wallet, cli.testnet, *daemon).await?;
         }
-        Commands::Split { count } => {
+        Commands::Split {
+            count,
+            allow_pending,
+        } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::split::run(&ctx, *count).await?;
+            commands::split::run(&ctx, *count, word(allow_pending)).await?;
         }
         Commands::Services => {
             commands::services::run(&cli).await?;
@@ -191,4 +210,9 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The `--allow-pending` flag as the gate's word for this one action (R1 (d)).
+fn word(allow_pending: &Option<String>) -> bool {
+    spend_gate::allow_pending(allow_pending.as_deref())
 }

@@ -74,6 +74,7 @@ pub async fn run(
     satoshis: u64,
     unlock: &str,
     fee_utxo: u64,
+    allow_received: bool,
 ) -> Result<()> {
     let pubkey = hex::decode(recipient_pubkey_hex.trim())
         .map_err(|e| anyhow!("recipient pubkey not valid hex: {e}"))?;
@@ -168,7 +169,7 @@ pub async fn run(
         &ctx.wallet,
         args,
         "bsv-wallet-cli",
-        &crate::spend_gate::GateOptions::from_env(),
+        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
     )
     .await?;
     let txid = result

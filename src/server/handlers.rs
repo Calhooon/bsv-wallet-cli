@@ -39,7 +39,6 @@ use bsv_sdk::wallet::{
     InternalizeActionArgs,
     InternalizeOutput,
     ListActionsArgs,
-    ListActionsResult,
     ListCertificatesArgs,
     ListCertificatesResult,
     // Output types
@@ -186,6 +185,12 @@ impl AppError {
     /// A gated `createAction`'s failure: the refusal keeps its listing.
     fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
         match e {
+            crate::spend_gate::GateError::Refused(refusal) if refusal.is_named_input() => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "INPUT_NOT_OFFERED",
+                message: refusal.to_string(),
+                refusal: Some(refusal),
+            },
             crate::spend_gate::GateError::Refused(refusal) => Self {
                 status: StatusCode::PAYMENT_REQUIRED,
                 code: "INSUFFICIENT_FUNDS",
@@ -387,6 +392,9 @@ pub async fn create_action(
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
+    // R1 (d): the action's word, read here at the door and nowhere else.
+    let allow_received =
+        crate::spend_gate::allow_pending(req.allow_pending.as_ref().and_then(|v| v.as_str()));
 
     // Whether this request performs an immediate broadcast (vs. no-send /
     // delayed / external-signing). Only immediate broadcasts are verified.
@@ -493,14 +501,16 @@ pub async fn create_action(
     crate::spend_guard::run(wallet.storage().pool())
         .await
         .map_err(|e| AppError::from_wallet_error(format!("Storage error: spend guard: {e}")))?;
-    // The spend gate (R1 (b), R3 (b)): the toolbox allocates only coins
-    // whose creator is mined at SPEND_DEPTH, or our own change under
-    // SPEND_OWN_CHANGE; a refusal lists every coin held back.
+    // The spend gate (R1 (b), (d), R3 (b)): the toolbox allocates only
+    // coins whose creator is mined at SPEND_DEPTH, our own change under
+    // SPEND_OWN_CHANGE, or a received pending coin under this action's
+    // `allowPending: received`; a named input passes the same judgment; a
+    // refusal lists every coin held back.
     let result = crate::spend_gate::create_action(
         &wallet,
         args,
         &originator,
-        &crate::spend_gate::GateOptions::from_env(),
+        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
     )
     .await
     .map_err(AppError::from_gate_error)?;
@@ -1008,13 +1018,39 @@ pub async fn list_actions(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
     Json(args): Json<ListActionsArgs>,
-) -> Result<Json<ListActionsResult>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet
         .list_actions(args, &originator)
         .await
         .map_err(AppError::from_wallet_error)?;
-    Ok(Json(result))
+    let rules = crate::spend_gate::rules_of(wallet.storage().pool())
+        .await
+        .map_err(|e| AppError::from_wallet_error(format!("Storage error: {e}")))?;
+    let result = serde_json::to_value(result)
+        .map_err(|e| AppError::from_wallet_error(format!("Internal error: {e}")))?;
+    Ok(Json(with_rules(result, &rules)))
+}
+
+/// Each action created under a rule the action named (R1 (d)) carries it
+/// as `underRule`; the toolbox's shape is otherwise as it gave it.
+pub fn with_rules(
+    mut actions: serde_json::Value,
+    rules: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
+    if let Some(list) = actions.get_mut("actions").and_then(|a| a.as_array_mut()) {
+        for action in list {
+            let rule = action
+                .get("txid")
+                .and_then(|t| t.as_str())
+                .and_then(|t| rules.get(&t.to_ascii_lowercase()))
+                .cloned();
+            if let (Some(rule), Some(obj)) = (rule, action.as_object_mut()) {
+                obj.insert("underRule".into(), json!(rule));
+            }
+        }
+    }
+    actions
 }
 
 /// POST /listOutputs

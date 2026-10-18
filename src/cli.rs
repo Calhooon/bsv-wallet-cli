@@ -50,6 +50,12 @@ pub enum Commands {
         address: String,
         /// Amount in satoshis
         satoshis: u64,
+        /// R1 (d): offer a received coin whose creator is not yet mined (its
+        /// ancestry proven at internalize) for this one action, recorded on it.
+        /// The one value is `received`; off by default. If the sender
+        /// double-spends, this action is conflicted
+        #[arg(long, value_name = "WORD", value_parser = ["received"])]
+        allow_pending: Option<String>,
     },
     /// Replace an accepted, silent transaction with a spend back to this wallet.
     /// Refuses while a status source holds the original; proof decides its fate.
@@ -69,6 +75,12 @@ pub enum Commands {
         /// Recipient-owned fee UTXO (sats) bundled so the claim self-funds its fee
         #[arg(long, default_value_t = 1000)]
         fee_utxo: u64,
+        /// R1 (d): offer a received coin whose creator is not yet mined (its
+        /// ancestry proven at internalize) for this one action, recorded on it.
+        /// The one value is `received`; off by default. If the sender
+        /// double-spends, this action is conflicted
+        #[arg(long, value_name = "WORD", value_parser = ["received"])]
+        allow_pending: Option<String>,
     },
     /// Inspect a time-locked gift (prove it's yours + when it unlocks; no claim)
     GiftInspect {
@@ -90,6 +102,12 @@ pub enum Commands {
     Drain {
         /// Destination address
         address: String,
+        /// R1 (d): offer a received coin whose creator is not yet mined (its
+        /// ancestry proven at internalize) for this one action, recorded on it.
+        /// The one value is `received`; off by default. If the sender
+        /// double-spends, this action is conflicted
+        #[arg(long, value_name = "WORD", value_parser = ["received"])]
+        allow_pending: Option<String>,
     },
     /// Internalize a BEEF transaction (receive funds): the routine way to receive, with the
     /// BEEF the payer hands over; checked against headers, no explorer asked
@@ -200,6 +218,12 @@ pub enum Commands {
         /// Number of output UTXOs to create
         #[arg(long, default_value_t = 3)]
         count: u32,
+        /// R1 (d): offer a received coin whose creator is not yet mined (its
+        /// ancestry proven at internalize) for this one action, recorded on it.
+        /// The one value is `received`; off by default. If the sender
+        /// double-spends, this action is conflicted
+        #[arg(long, value_name = "WORD", value_parser = ["received"])]
+        allow_pending: Option<String>,
     },
     /// Show blockchain service status
     Services,

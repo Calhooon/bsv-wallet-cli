@@ -1464,6 +1464,46 @@ pub async fn feed_cursor(storage: &StorageSqlx) -> Result<u64> {
     })
 }
 
+/// The frozen record: an outpoint the feed's `frozen` event named, with
+/// the envelope's cursor and when it was delivered. The spend gate reads it
+/// and never offers such a coin (R6: nothing here clears a row).
+async fn ensure_frozen(pool: &sqlx::SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS frozen_outpoints (\
+            txid TEXT NOT NULL, \
+            vout INTEGER NOT NULL, \
+            cursor INTEGER NOT NULL, \
+            frozen_at INTEGER NOT NULL, \
+            PRIMARY KEY (txid, vout))",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Every frozen outpoint: (lowercase txid, vout).
+pub async fn frozen_outpoints(
+    pool: &sqlx::SqlitePool,
+) -> Result<std::collections::HashSet<(String, i64)>> {
+    ensure_frozen(pool).await?;
+    let rows = sqlx::query("SELECT txid, vout FROM frozen_outpoints")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get::<String, _>("txid"), r.get::<i64, _>("vout")))
+        .collect())
+}
+
+/// How many outpoints the frozen record holds.
+pub async fn frozen_count(pool: &sqlx::SqlitePool) -> Result<u64> {
+    ensure_frozen(pool).await?;
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM frozen_outpoints")
+        .fetch_one(pool)
+        .await?;
+    Ok(n.max(0) as u64)
+}
+
 /// What one delivered envelope did to one tracked transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChainMove {
@@ -1542,7 +1582,8 @@ impl Headers for Replaced<'_> {
 /// reorg or a split names the mined rows at or above its height; a tip,
 /// the rows an earlier event marked; an invalidated block, the rows on its
 /// hash; a freeze or a tip age names none here (they are the spend and
-/// freshness guards' inputs). The header service is read only when a row
+/// freshness guards' inputs). A freeze writes its outpoint to the frozen
+/// record ([`frozen_outpoints`]) in the same transaction as the cursor. The header service is read only when a row
 /// is named: the tip and the heights of the named rows' proofs.
 pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
     storage: &StorageSqlx,
@@ -1598,7 +1639,22 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
 
     let now = clock.now();
     let mut moved = Vec::new();
+    if matches!(event, ChainEvent::Frozen { .. }) {
+        ensure_frozen(storage.pool()).await?;
+    }
     let mut tx = storage.pool().begin().await?;
+    if let ChainEvent::Frozen { outpoint } = &event {
+        sqlx::query(
+            "INSERT INTO frozen_outpoints (txid, vout, cursor, frozen_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(txid, vout) DO NOTHING",
+        )
+        .bind(outpoint.txid.to_ascii_lowercase())
+        .bind(i64::from(outpoint.vout))
+        .bind(cursor as i64)
+        .bind(now as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
     if !rows.is_empty() {
         let snapshot =
             HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
