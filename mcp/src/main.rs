@@ -1,11 +1,11 @@
-//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints, and four tools
-//! over the host's own routes (0.2.0).
+//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints, and five tools
+//! over the host's own routes (0.3.0).
 //!
 //! Talks to bsv-wallet-cli at WALLET_URL (default http://localhost:3322).
 //! Every request includes the Origin header required by the wallet.
 //!
-//! The host routes: `chain_feed_status` (`GET /chain-feed`) on the wallet;
-//! `health` (`GET /health`), `pull`
+//! The host routes: `chain_feed_status` (`GET /chain-feed`) and `tx_word`
+//! (`GET /tx/{txid}`) on the wallet; `health` (`GET /health`), `pull`
 //! (`GET /pull`) and `register` (`POST /register`, the relay's admin bearer
 //! `RELAY_ADMIN_TOKEN`) on the callback relay at RELAY_URL
 //! (`bsv-wallet-relay`). No route is added to either server.
@@ -175,6 +175,16 @@ pub struct CreateActionParams {
     /// Options: {signAndProcess: bool, noSend: bool, acceptDelayedBroadcast: bool, randomizeOutputs: bool}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
+    /// "received" offers a received coin whose creator is not yet mined (its
+    /// ancestry proven at internalize) for this one action, recorded on it
+    /// (R1 (d)); absent = off. The cost: if the sender double-spends, this
+    /// action is conflicted.
+    #[serde(
+        rename = "allowPending",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allow_pending: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -461,6 +471,12 @@ fn default_10() -> u64 {
 }
 fn default_100() -> u64 {
     100
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct TxWordParams {
+    /// The transaction id, 64 hex characters
+    pub txid: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -835,6 +851,21 @@ impl WalletMcp {
     }
 
     #[tool(
+        description = "The tracker's word for one transaction and its evidence (GET /tx/{txid}). A mined word rests on headers and a proof (a merkle path whose root our header at its height carries); every other word rests on a hint (a broadcaster's or the wallet's own act) and claims nothing about the chain."
+    )]
+    async fn tx_word(&self, p: Parameters<TxWordParams>) -> Result<CallToolResult, ErrorData> {
+        let txid = p.0.txid.trim().to_ascii_lowercase();
+        if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ErrorData::invalid_params(
+                "txid must be 64 hex characters",
+                None,
+            ));
+        }
+        let url = format!("{}/tx/{txid}", self.url);
+        self.host(self.client.get(url), "/tx/{txid}").await
+    }
+
+    #[tool(
         description = "The callback relay's health (GET /health on RELAY_URL). It rests on nothing about the chain: a liveness answer, not a word about any transaction."
     )]
     async fn health(&self) -> Result<CallToolResult, ErrorData> {
@@ -883,8 +914,8 @@ impl ServerHandler for WalletMcp {
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_instructions(
                 "BSV wallet MCP server. All 28 BRC-100 wallet endpoints plus wallet_balance, \
-                 and four tools over the host's own routes: chain_feed_status, health, pull, \
-                 register.",
+                 and five tools over the host's own routes: chain_feed_status, tx_word, health, \
+                 pull, register.",
             )
     }
 }
