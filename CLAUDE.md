@@ -57,7 +57,7 @@ node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
 ```
 
-Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
+Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_DEPTH` (default 1, the floor), `SPEND_OWN_CHANGE` (default 1; 0 holds our own unmined change), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
 
 ## E2E Testing
 
@@ -95,7 +95,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 18 | CLI compact | BEEF compaction, balance unchanged | 0 sats |
 | 19 | CLI services | Chain/height via services command | 0 sats |
 | 20 | UI (Playwright) | Database inspector UI renders, API + browser | 0 sats |
-| 21 | MCP server parity | All 29 MCP tools vs HTTP API | 0 sats |
+| 21 | MCP server parity | The 29 wallet MCP tools vs HTTP API (the five host-route tools are tested in `mcp/src/tests.rs`) | 0 sats |
 
 ### Dependencies
 
