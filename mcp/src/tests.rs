@@ -1,4 +1,4 @@
-//! The four host-route tools against an in-process stub of the wallet's
+//! The five host-route tools against an in-process stub of the wallet's
 //! and the relay's routes: their method, path, query, body and bearer as
 //! `src/server/mod.rs` and `src/relay.rs` define them. Nothing reaches the
 //! network.
@@ -15,6 +15,25 @@ async fn stub() -> String {
         .route(
             "/chain-feed",
             get(|| async { Json(json!({"status": {"state": "following"}, "cursor": "42"})) }),
+        )
+        .route(
+            "/tx/{txid}",
+            get(
+                |axum::extract::Path(txid): axum::extract::Path<String>| async move {
+                    if txid == "aa".repeat(32) {
+                        (
+                            StatusCode::OK,
+                            Json(json!({"txid": txid, "word": "mined", "height": 900, "reask": null,
+                                        "evidence": {"root": "bb".repeat(32), "height": 900}})),
+                        )
+                    } else {
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({"code": "NOT_FOUND", "message": "no word stored"})),
+                        )
+                    }
+                },
+            ),
         )
         .route(
             "/health",
@@ -56,13 +75,36 @@ fn text(result: CallToolResult) -> Value {
 }
 
 #[tokio::test]
-async fn the_four_host_tools_reach_their_routes() {
+async fn the_five_host_tools_reach_their_routes() {
     let base = stub().await;
     let mcp = WalletMcp::new(base.clone(), "http://localhost".into())
         .with_relay(Some(base.clone()), Some("admin".into()));
 
     let feed = text(mcp.chain_feed_status().await.unwrap());
     assert_eq!(feed["cursor"], "42");
+
+    let word = text(
+        mcp.tx_word(Parameters(TxWordParams {
+            txid: "AA".repeat(32),
+        }))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(
+        (&word["word"], &word["evidence"]["height"]),
+        (&json!("mined"), &json!(900))
+    );
+    let unknown = mcp
+        .tx_word(Parameters(TxWordParams {
+            txid: "cc".repeat(32),
+        }))
+        .await
+        .unwrap_err();
+    assert!(unknown.message.contains("HTTP 404"), "{}", unknown.message);
+    assert!(mcp
+        .tx_word(Parameters(TxWordParams { txid: "zz".into() }))
+        .await
+        .is_err());
 
     assert_eq!(text(mcp.health().await.unwrap())["healthy"], true);
 
@@ -106,10 +148,10 @@ async fn the_four_host_tools_reach_their_routes() {
 }
 
 #[test]
-fn the_tools_are_the_29_and_the_four() {
+fn the_tools_are_the_29_and_the_five() {
     let tools = WalletMcp::tool_router().list_all();
-    assert_eq!(tools.len(), 33);
-    for name in ["chain_feed_status", "health", "pull", "register"] {
+    assert_eq!(tools.len(), 34);
+    for name in ["chain_feed_status", "tx_word", "health", "pull", "register"] {
         let tool = tools.iter().find(|t| t.name == name).expect(name);
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(
