@@ -1336,6 +1336,97 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
     Ok(verdict)
 }
 
+/// The guard's reading of one coin's creator, for the coin gate
+/// ([`crate::spend_gate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatorReading {
+    /// The tracker's word after the guard's recheck, as its label.
+    pub word: &'static str,
+    /// How deep the creator's block is under the tip (the tip is 1); 0 for
+    /// a word with no block.
+    pub depth: u64,
+    /// A fork in progress at or below its height marks it suspect.
+    pub suspect: bool,
+    /// `mined`, checked against the headers of the moment, not suspect, at
+    /// the spend depth (floor 1): the guard offers it with no rule.
+    pub offered: bool,
+    /// Could not look (no tip, no header at the height): the fault. Nothing
+    /// is offered on it.
+    pub fault: Option<String>,
+}
+
+/// Run the spend guard over many creators against one read of the headers:
+/// the tip once, and one header per height a stored path names. Each
+/// creator is the tracked row when the tracker holds one, else the
+/// toolbox's stored merkle path (`proven_txs`, given here as its bytes)
+/// replayed as a row's input: a stored proof is checked again against the
+/// headers of the moment, never trusted by age. A creator with neither
+/// reads `unknown`. Nothing is written: the tracker's rows are not stored
+/// back and no row is adopted.
+pub async fn read_creators<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    opts: &TickOptions,
+    creators: &[(String, Option<Vec<u8>>)],
+) -> Result<HashMap<String, CreatorReading>> {
+    ensure_tables(storage).await?;
+    let params = opts.params();
+    let mut rows = Vec::with_capacity(creators.len());
+    for (txid, stored_path) in creators {
+        let mut row = match load_row(storage, txid).await? {
+            Some(row) => row,
+            None => TrackedRow {
+                built: false,
+                ..TrackedRow::new(txid)
+            },
+        };
+        if row.bump.is_none() {
+            row.bump = stored_path
+                .as_deref()
+                .and_then(|bytes| MerklePath::from_binary(bytes).ok())
+                .map(|path| path.to_hex());
+        }
+        rows.push(row);
+    }
+    let snapshot =
+        HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
+    let mut readings = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let (mut state, fault) = row.replay(&params, &snapshot);
+        let fault = match fault {
+            Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => Some(fault.to_string()),
+            _ => None,
+        };
+        let verdict = match fault {
+            Some(_) => Ok(false),
+            None => readme_spend_guard(&mut state, &params, &snapshot).and_then(|offered| {
+                Ok(offered && deep_enough(&state, &snapshot, opts.spend_depth)?)
+            }),
+        };
+        let depth = match (state.word().height(), snapshot.tip()) {
+            (Some(height), Some((tip, _))) => {
+                (u64::from(tip) + 1).saturating_sub(u64::from(height))
+            }
+            _ => 0,
+        };
+        let (offered, fault) = match verdict {
+            Ok(offered) => (offered, fault),
+            Err(e) => (false, fault.or(Some(e.to_string()))),
+        };
+        readings.insert(
+            row.txid.clone(),
+            CreatorReading {
+                word: word_label(state.word()),
+                depth,
+                suspect: state.suspect(),
+                offered,
+                fault,
+            },
+        );
+    }
+    Ok(readings)
+}
+
 /// Is the block holding a `mined` word's transaction at least
 /// `spend_depth` deep under `headers`' tip (the tip is depth 1; the stack's
 /// `Tracker.depth hd h = hd.tip + 1 - h`)? The depth reads as 1 at least

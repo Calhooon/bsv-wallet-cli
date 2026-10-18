@@ -26,6 +26,8 @@ use bsv_wallet_cli::retire_guard;
 use bsv_wallet_cli::respend;
 // The spend guard too: every spend of the binary runs it first.
 use bsv_wallet_cli::spend_guard;
+// The spend gate: the guard on the toolbox's coin selection (0.10.0).
+use bsv_wallet_cli::spend_gate;
 use clap::Parser;
 use cli::{Cli, Commands};
 use tracing_subscriber::EnvFilter;
