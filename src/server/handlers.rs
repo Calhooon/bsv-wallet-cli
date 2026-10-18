@@ -612,8 +612,7 @@ pub async fn create_action(
             // The SDK stores reference as Vec<u8> from String.into_bytes().
             // Reverse that to get the original reference string that
             // signAction/abortAction can look up in the pending tx cache.
-            let reference =
-                String::from_utf8(st.reference).unwrap_or_else(|e| hex::encode(e.into_bytes()));
+            let reference = crate::spend_gate::reference_string(&st.reference);
             McSignableTransaction {
                 tx: st.tx,
                 reference,
@@ -952,6 +951,16 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_wallet_error)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
+    // A template recorded under the door's word by its reference (R1 (d))
+    // is named by the txid it was signed as. The action is signed (and
+    // perhaps broadcast) already: a failure here is logged, not answered.
+    if let Some(t) = result.txid.as_ref() {
+        if let Err(e) =
+            crate::spend_gate::fill_txid(wallet.storage().pool(), &reference, &to_hex(t)).await
+        {
+            tracing::error!(reference = %reference, error = %e, "signAction: the rule's txid not recorded");
+        }
+    }
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
             super::post_word::post_word(wallet.storage(), &to_hex(t)).await
@@ -1024,7 +1033,7 @@ pub async fn list_actions(
         .list_actions(args, &originator)
         .await
         .map_err(AppError::from_wallet_error)?;
-    let rules = crate::spend_gate::rules_of(wallet.storage().pool())
+    let rules = crate::spend_gate::action_rules(wallet.storage().pool())
         .await
         .map_err(|e| AppError::from_wallet_error(format!("Storage error: {e}")))?;
     let result = serde_json::to_value(result)
@@ -1033,18 +1042,34 @@ pub async fn list_actions(
 }
 
 /// Each action created under a rule the action named (R1 (d)) carries it
-/// as `underRule`; the toolbox's shape is otherwise as it gave it.
+/// as `underRule`, by its txid or, a template not yet signed, by its
+/// reference; the toolbox's shape is otherwise as it gave it.
 pub fn with_rules(
     mut actions: serde_json::Value,
-    rules: &std::collections::HashMap<String, String>,
+    rules: &crate::spend_gate::ActionRules,
 ) -> serde_json::Value {
     if let Some(list) = actions.get_mut("actions").and_then(|a| a.as_array_mut()) {
         for action in list {
-            let rule = action
+            let txid = action
                 .get("txid")
                 .and_then(|t| t.as_str())
-                .and_then(|t| rules.get(&t.to_ascii_lowercase()))
-                .cloned();
+                .map(str::to_ascii_lowercase);
+            let rule = match txid {
+                Some(t) if t.bytes().all(|b| b == b'0') => {
+                    let key = crate::spend_gate::template_key(
+                        action.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                        action
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        action.get("satoshis").and_then(|v| v.as_i64()).unwrap_or(0),
+                    );
+                    rules.by_template.get(&key)
+                }
+                Some(t) => rules.by_txid.get(&t),
+                None => None,
+            }
+            .cloned();
             if let (Some(rule), Some(obj)) = (rule, action.as_object_mut()) {
                 obj.insert("underRule".into(), json!(rule));
             }
