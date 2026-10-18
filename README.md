@@ -21,10 +21,10 @@ installed by the command above. [Cargo.toml](Cargo.toml) describes the workspace
 
 ## The MCP companion
 
-`bsv-wallet-mcp` (0.2.0, on rmcp 3.5) speaks MCP over stdio and calls the
-wallet's HTTP server: the 28 wallet endpoints, `wallet_balance`, and four tools
+`bsv-wallet-mcp` (0.3.0, on rmcp 3.5) speaks MCP over stdio and calls the
+wallet's HTTP server: the 28 wallet endpoints, `wallet_balance`, and five tools
 over the host's own routes, one per route, no route added: `chain_feed_status`
-(`GET /chain-feed`), and on the callback relay
+(`GET /chain-feed`), `tx_word` (`GET /tx/{txid}`), and on the callback relay
 `health` (`GET /health`), `pull` (`GET /pull`) and `register`
 (`POST /register`, with the relay's admin bearer). Each tool's description
 says what its word rests on: headers and a proof, or a hint.
@@ -84,14 +84,17 @@ through the tracker's decoder and `Tracker::on_chain` with the daemon's
 headers: a reorg turns the words of the transactions mined at or above its
 height `stale` and asks for a new proof; a fork or a split marks them suspect
 and moves no word; a tip or a resolved split rechecks the marked ones against
-the headers. The cursor is stored after each delivery, in the same transaction
-as the tracker's rows (`tracker_meta`, `feed_cursor`).
+the headers; a freeze writes its outpoint to the frozen record,
+`frozen_outpoints` (txid, vout, the envelope's cursor, when), which the spend
+guard reads (never offered; nothing here clears a row, the charter's R6). The
+cursor is stored after each delivery, in the same transaction as the tracker's
+rows (`tracker_meta`, `feed_cursor`).
 
 A decode fault, a cursor ahead of the journal (409 `cursorAhead`), an
 `event: error` from the feed or a refused request stops the loop at its
 cursor, with no skip; the fault is in the daemon's status, `GET /chain-feed`
 (`status.fault`: its kind, the cursor it stopped at, the offending cursor, the
-text). A restart resumes from the stored cursor. A stream that ends without an
+text), with `frozenCount`, the outpoints in the frozen record. A restart resumes from the stored cursor. A stream that ends without an
 error event reconnects: the page from the cursor, then the stream with
 `Last-Event-ID`.
 
@@ -120,18 +123,46 @@ restores exactly those after. Two settings:
   no block yet. The charter's **R1 (b)**: the one rule a host may name for a
   coin whose creator is not yet mined is for its own change. A received coin
   (`internalizeAction`, any counterparty's payment) with no proof is never
-  offered, under any setting. Here the guard departs from the reference
+  offered under any host setting. Here the guard departs from the reference
   toolbox, which spends unproven coins whoever made them.
 
+One word per action, never a setting: `allowPending: "received"` in the
+served `/createAction` body (beside `options`; absent or any other value is
+off), or `--allow-pending received` on `send`, `drain`, `split` and
+`gift-send`. The charter's **R1 (d)** (the owner's ruling of 2026-10-18):
+under it, and only for that action, a received coin whose transaction has no
+block yet is offered; its body was checked at internalize (the toolbox refuses
+an incomplete ancestry and checks every proof it carries against the header
+service), so the one word trusted is the sender's broadcast. Its cost: if the
+sender double-spends, this action becomes `conflicted` and the coins of ours
+it spent are lost with it, though nothing of ours was ever lost in fact. The
+action records the word (`spend_gate_actions`), and `actions` and
+`/listActions` show it as `underRule: "received-pending"`. There is no
+environment variable for it.
+
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
-is never offered, and a coin an action of ours holds is the toolbox's lock.
+is never offered, a frozen coin is never offered, and a coin an action of ours
+holds is the toolbox's lock. Coins a caller names (`createAction`'s `inputs`,
+`respend`'s exact inputs) pass the same judgment; a named coin the guard would
+hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
+outpoint that is not one of the wallet's coins is left to the toolbox).
 When no offered coin covers the action, the refusal lists every coin held
 back: its outpoint, the word, the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
-`received, no proof`, `own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`).
+`received, no proof; offered under allowPending: received`,
+`own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`, `frozen: never offered`).
 The route answers `402 INSUFFICIENT_FUNDS` with the list under `held`; the
 commands print it. Nothing is fetched for it but the header service's tip and
 headers: no chain scan, no explorer.
+
+## One transaction's word
+
+`GET /tx/{txid}` (behind the same bearer as `/chain-feed`) serves the
+tracker's stored word for one transaction: `{txid, word, height, reask,
+evidence}`, where `evidence` is, for `mined`, the stored proof's `root` and
+`height` (the toolbox's `proven_txs`), else `null`; 404 when the tracker holds
+no word for it. A view; nothing is decided from it. The MCP tool `tx_word`
+reads it.
 
 ## Deliberate respend
 
