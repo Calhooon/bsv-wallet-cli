@@ -268,18 +268,7 @@ impl IntoResponse for AppError {
         let mut body = json!({"code": self.code, "message": self.message});
         if let Some(refusal) = &self.refusal {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
-            body["held"] = json!(refusal
-                .held
-                .iter()
-                .map(|c| json!({
-                    "outpoint": c.outpoint,
-                    "satoshis": c.satoshis,
-                    "word": c.word,
-                    "origin": c.origin,
-                    "ageMinutes": c.age_minutes,
-                    "reason": c.reason,
-                }))
-                .collect::<Vec<_>>());
+            body["held"] = refusal.held_json();
         }
         (self.status, Json(body)).into_response()
     }

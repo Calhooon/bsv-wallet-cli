@@ -811,3 +811,40 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     let rules = action_rules(pool).await.unwrap();
     assert_eq!(listed(before, &rules), vec![("unsigned".to_string(), None)]);
 }
+
+/// F4 of the stack's coin read: the refusal as one JSON object, the
+/// route's `402` body (`code`, `message`, `offeredSatoshis`, `held`), which
+/// `send`, `drain`, `split` and `gift-send` print under `--json`.
+#[test]
+fn the_refusal_as_json_is_the_routes_body() {
+    let refusal = Refusal {
+        toolbox: "Insufficient funds: need 30005, have 0".to_string(),
+        offered_satoshis: 0,
+        held: vec![HeldCoin {
+            outpoint: format!("{}.0", "9b".repeat(32)),
+            satoshis: 3_000,
+            word: "unknown".to_string(),
+            origin: Origin::Received,
+            age_minutes: 3,
+            reason: "depth 1: 0 blocks; received, no proof".to_string(),
+            output_id: 1,
+        }],
+    };
+    let json = refusal.to_json();
+    println!("{json}");
+    assert_eq!(json["code"], "INSUFFICIENT_FUNDS");
+    assert_eq!(json["offeredSatoshis"], 0);
+    assert_eq!(
+        json["held"][0]["outpoint"],
+        format!("{}.0", "9b".repeat(32))
+    );
+    assert_eq!(json["held"][0]["satoshis"], 3_000);
+    assert_eq!(json["held"][0]["origin"], "received");
+    assert_eq!(json["held"][0]["ageMinutes"], 3);
+    assert_eq!(json["message"], refusal.to_string());
+    let named = Refusal {
+        toolbox: NAMED_INPUT_REFUSED.to_string(),
+        ..refusal
+    };
+    assert_eq!(named.to_json()["code"], "INPUT_NOT_OFFERED");
+}

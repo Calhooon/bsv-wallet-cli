@@ -257,6 +257,63 @@ impl Refusal {
     pub fn is_named_input(&self) -> bool {
         self.toolbox == NAMED_INPUT_REFUSED
     }
+
+    /// The refusal's code: `INPUT_NOT_OFFERED` for a named coin held,
+    /// else `INSUFFICIENT_FUNDS`.
+    pub fn code(&self) -> &'static str {
+        if self.is_named_input() {
+            "INPUT_NOT_OFFERED"
+        } else {
+            "INSUFFICIENT_FUNDS"
+        }
+    }
+
+    /// The held coins, as the route and `--json` give them.
+    pub fn held_json(&self) -> serde_json::Value {
+        serde_json::Value::Array(
+            self.held
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "outpoint": c.outpoint,
+                        "satoshis": c.satoshis,
+                        "word": c.word,
+                        "origin": c.origin,
+                        "ageMinutes": c.age_minutes,
+                        "reason": c.reason,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The refusal as one JSON object, the route's body shape:
+    /// `{code, message, offeredSatoshis, held}`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code(),
+            "message": self.to_string(),
+            "offeredSatoshis": self.offered_satoshis,
+            "held": self.held_json(),
+        })
+    }
+}
+
+/// A command's gated `createAction`: under `--json` a refusal is printed as
+/// [`Refusal::to_json`] on stdout and the process exits 1, as the text
+/// refusal does; anything else is returned as it was.
+pub fn refused_as_json<T>(
+    result: std::result::Result<T, GateError>,
+    json: bool,
+) -> anyhow::Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(GateError::Refused(refusal)) if json => {
+            println!("{}", refusal.to_json());
+            std::process::exit(1);
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// What a gated `createAction` failed on.
@@ -499,7 +556,9 @@ pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions)
         blocks(reading.depth)
     );
     match reading.word {
-        "mined" if reading.suspect => Some("suspect: a fork at or below its height".to_string()),
+        "mined" if reading.suspect => {
+            Some("suspect: a fork or an unresolved split at or below its height".to_string())
+        }
         "mined" => Some(depth),
         "stale" | "rejected" | "conflicted" | "abandoned" => {
             Some(format!("{}: never offered", reading.word))
