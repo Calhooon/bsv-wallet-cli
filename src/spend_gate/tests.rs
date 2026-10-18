@@ -256,10 +256,9 @@ async fn the_refusal_lists_every_coin_held_back_with_its_reason() {
     let services = headers_with(&shallow, 900, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
 
-    let err = create_action(&wallet, pay(1_000), "gate.local", &opts(2, false))
-        .await
-        .err()
-        .expect("refused");
+    let Err(err) = create_action(&wallet, pay(1_000), "gate.local", &opts(2, false)).await else {
+        panic!("a coin was offered");
+    };
     println!("{err}");
     let GateError::Refused(refusal) = err else {
         panic!("not a refusal: {err}");
