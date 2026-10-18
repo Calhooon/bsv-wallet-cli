@@ -83,7 +83,8 @@ pub struct FeedFault {
 }
 
 /// The daemon's view of its feed, stored in `tracker_meta` (key
-/// `feed_status`) and served at `GET /chain-feed`.
+/// `feed_status`) and served at `GET /chain-feed`. Rewritten at every
+/// change of state and after every delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedStatus {
@@ -102,7 +103,7 @@ pub struct FeedStatus {
     pub fault: Option<FeedFault>,
     /// The last transport failure, retried.
     pub last_error: Option<String>,
-    /// Seconds since the epoch, at the last change.
+    /// Seconds since the epoch, at the last change or delivery.
     pub updated_at: u64,
 }
 
@@ -310,6 +311,11 @@ impl<V: WalletServices + ?Sized, C: Clock> Feed<'_, V, C> {
             self.status.cursor = at.to_string();
             self.status.delivered += 1;
         }
+        // The status is rewritten after every delivery (N = 1), so its
+        // cursor is the stored cursor once this write lands, while
+        // replaying and while following.
+        self.status.updated_at = self.clock.now();
+        write_status(self.storage, &self.status).await;
         for moved in &delivery.moved {
             tracing::info!(
                 cursor = at,

@@ -674,10 +674,20 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
 
 /// Spawn the served loop: one pass every `BROADCAST_RECONCILE_INTERVAL_SECS`
 /// (default 60), one summary line per pass. Disabled by
-/// `BROADCAST_RECONCILE=0`.
+/// `BROADCAST_RECONCILE=0`. Under `serve` the pass drains the wallet's
+/// Arcade SSE stream when it has one.
 pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
     db_path: &str,
+) -> Option<tokio::task::JoinHandle<()>> {
+    spawn_served_loop(wallet, arcade_sse_for(db_path))
+}
+
+/// The served loop with the SSE stream named by the caller: `daemon` passes
+/// none, its monitor holds Arcade's stream.
+pub fn spawn_served_loop(
+    wallet: std::sync::Arc<ServedWallet>,
+    sse: Option<ArcadeSse>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let enabled = std::env::var("BROADCAST_RECONCILE")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
@@ -686,7 +696,6 @@ pub fn spawn_serve_loop(
         tracing::info!("broadcast reconcile loop disabled (BROADCAST_RECONCILE=0)");
         return None;
     }
-    let sse = arcade_sse_for(db_path);
     let tracker = TickOptions::from_env();
     let interval_secs =
         env_parse("BROADCAST_RECONCILE_INTERVAL_SECS", DEFAULT_INTERVAL_SECS).max(5);

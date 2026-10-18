@@ -886,6 +886,13 @@ pub struct TickReport {
     pub tracked: usize,
     /// The wallet's own unproven transactions tracked for the first time.
     pub adopted: usize,
+    /// Proven creators of coins we hold, tracked for the first time from
+    /// the toolbox's stored proof replayed against the headers of the
+    /// moment: `mined` when its root checks.
+    pub adopted_mined: Vec<String>,
+    /// The same, whose stored root does not meet the header at its height:
+    /// tracked with the re-ask `proofFailed`, no word written.
+    pub adopted_proof_failed: Vec<String>,
     /// New hints fed.
     pub hints: usize,
     /// Re-asks run: one proof request each.
@@ -918,6 +925,8 @@ impl TickReport {
     /// Nothing moved and nothing was asked.
     pub fn is_quiet(&self) -> bool {
         self.adopted == 0
+            && self.adopted_mined.is_empty()
+            && self.adopted_proof_failed.is_empty()
             && self.hints == 0
             && self.asked == 0
             && self.reannounced.is_empty()
@@ -929,9 +938,12 @@ impl TickReport {
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "tracker tick: {} tracked ({} new), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} fault(s)",
+            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} fault(s)",
             self.tracked,
             self.adopted,
+            self.adopted_mined.len() + self.adopted_proof_failed.len(),
+            self.adopted_mined.len(),
+            self.adopted_proof_failed.len(),
             self.hints,
             self.reannounced.len(),
             self.not_final.len(),
@@ -1258,8 +1270,108 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             });
         }
     }
+    adopt_proven(storage, services, &mut snapshot, &params, now, &mut report).await?;
     write_ring(storage, &ring).await?;
     Ok(report)
+}
+
+/// Proven creators adopted per pass at most ([`adopt_proven`]).
+pub const MAX_ADOPT_PER_PASS: usize = 100;
+
+/// Track the creators the toolbox proved before the tracker held a row for
+/// them (its monitor's backstop, `check_for_proofs`, moves a transaction to
+/// `completed` with `proven_tx_id` set): every `completed` transaction with
+/// a stored proof that creates a coin we hold and has no tracker row. The
+/// stored path is replayed as the row's input against the headers of the
+/// moment, as the guard's [`read_creators`] replays it: a root that checks
+/// gives the row the word `mined` at its height with that path as its
+/// evidence; a root that does not meet the header at its height gives a row
+/// with the pending re-ask `proofFailed`, which the next pass runs (the
+/// path dropped, a fresh one asked for). A header the service could not
+/// give, or a stored path that does not parse, adopts nothing this pass.
+/// The toolbox's own rows are never written. The stack's wallet charter,
+/// section 1: about a transaction the wallet believes only the tracker's
+/// word, and each action hosts one tracker state.
+///
+/// Load: one store query per pass, and one header read per height not
+/// already read this pass, for at most [`MAX_ADOPT_PER_PASS`] creators.
+async fn adopt_proven<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    snapshot: &mut HeaderSnapshot,
+    params: &Params,
+    now: Timestamp,
+    report: &mut TickReport,
+) -> Result<()> {
+    let found = sqlx::query(
+        "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path \
+         FROM transactions t \
+         JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
+         WHERE t.txid IS NOT NULL AND t.status = 'completed' \
+           AND NOT EXISTS (SELECT 1 FROM tracker_states s WHERE s.txid = lower(t.txid)) \
+           AND EXISTS (SELECT 1 FROM outputs o \
+                       WHERE o.transaction_id = t.transaction_id AND o.spent_by IS NULL) \
+         GROUP BY lower(t.txid) ORDER BY MIN(t.transaction_id) LIMIT ?",
+    )
+    .bind(MAX_ADOPT_PER_PASS as i64)
+    .fetch_all(storage.pool())
+    .await?;
+    let mut rows = Vec::with_capacity(found.len());
+    for r in &found {
+        let txid: String = r.get("txid");
+        let path: Option<Vec<u8>> = r.get("merkle_path");
+        let Some(path) = path
+            .as_deref()
+            .and_then(|bytes| MerklePath::from_binary(bytes).ok())
+        else {
+            report.faults.push(format!(
+                "{txid}: the stored proof does not parse; not adopted"
+            ));
+            continue;
+        };
+        rows.push(TrackedRow {
+            built: r.get::<i64, _>("made") != 0,
+            bump: Some(path.to_hex()),
+            ..TrackedRow::new(&txid)
+        });
+    }
+    snapshot
+        .extend(services, rows.iter().filter_map(TrackedRow::proof_height))
+        .await;
+    for row in rows {
+        let (state, fault) = row.replay(params, &*snapshot);
+        match fault {
+            None if matches!(state.word(), Word::Mined(_)) => {
+                report.adopted_mined.push(row.txid.clone());
+            }
+            Some(CheckError::RootMismatch(_)) => {
+                tracing::warn!(
+                    marker = "tracker_adopted_proof_failed",
+                    txid = %row.txid,
+                    reask = ?state.reask(),
+                    "a proven creator's stored merkle path does not meet the active header; tracked with its re-ask"
+                );
+                report.adopted_proof_failed.push(row.txid.clone());
+            }
+            // Could not look: nothing is adopted, the next pass looks again.
+            Some(fault) => {
+                report
+                    .faults
+                    .push(format!("{}: not adopted: {fault}", row.txid));
+                continue;
+            }
+            None => {
+                report.faults.push(format!(
+                    "{}: not adopted: the stored proof gave the word {}",
+                    row.txid,
+                    word_label(state.word())
+                ));
+                continue;
+            }
+        }
+        store_row(storage, &row, &state, now).await?;
+    }
+    Ok(())
 }
 
 /// Record in the wallet what a pass's re-announces got accepted (E4): the
@@ -1330,8 +1442,10 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
         Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => return Ok(Err(fault)),
         _ => {}
     }
-    let verdict = readme_spend_guard(&mut state, &params, &snapshot)
-        .and_then(|offered| Ok(offered && deep_enough(&state, &snapshot, opts.spend_depth)?));
+    let split = under_split(state.word(), open_split_floor(storage).await?);
+    let verdict = readme_spend_guard(&mut state, &params, &snapshot).and_then(|offered| {
+        Ok(offered && !split && deep_enough(&state, &snapshot, opts.spend_depth)?)
+    });
     store_row(storage, &row, &state, clock.now()).await?;
     Ok(verdict)
 }
@@ -1345,7 +1459,8 @@ pub struct CreatorReading {
     /// How deep the creator's block is under the tip (the tip is 1); 0 for
     /// a word with no block.
     pub depth: u64,
-    /// A fork in progress at or below its height marks it suspect.
+    /// A fork in progress, or a split not yet resolved, at or below its
+    /// height marks it suspect.
     pub suspect: bool,
     /// `mined`, checked against the headers of the moment, not suspect, at
     /// the spend depth (floor 1): the guard offers it with no rule.
@@ -1390,6 +1505,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
     }
     let snapshot =
         HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
+    let split_floor = open_split_floor(storage).await?;
     let mut readings = HashMap::with_capacity(rows.len());
     for row in rows {
         let (mut state, fault) = row.replay(&params, &snapshot);
@@ -1413,13 +1529,14 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
             Ok(offered) => (offered, fault),
             Err(e) => (false, fault.or(Some(e.to_string()))),
         };
+        let split = under_split(state.word(), split_floor);
         readings.insert(
             row.txid.clone(),
             CreatorReading {
                 word: word_label(state.word()),
                 depth,
-                suspect: state.suspect(),
-                offered,
+                suspect: state.suspect() || split,
+                offered: offered && !split,
                 fault,
             },
         );
@@ -1447,6 +1564,37 @@ fn deep_enough<H: Headers>(
 // ---------------------------------------------------------------------------
 // Chain events from the header service's feed
 // ---------------------------------------------------------------------------
+
+/// The splits the feed has delivered and not yet seen resolved: each
+/// split's key and its `forkHeight` (`tracker_meta`, key `open_splits`),
+/// written in the delivery's transaction.
+async fn read_open_splits<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+) -> Result<BTreeMap<String, Height>> {
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM tracker_meta WHERE key = 'open_splits'")
+            .fetch_optional(executor)
+            .await?;
+    Ok(match value {
+        Some(v) => serde_json::from_str(&v)?,
+        None => BTreeMap::new(),
+    })
+}
+
+/// The lowest `forkHeight` of the splits still open, if any. The guard
+/// holds every coin whose creator is mined at or above it until its
+/// `splitResolved`: the header service answers one branch, and which
+/// branch stands is open (depth is the host's; the ruling of 2026-10-16,
+/// the scenario `tracker-split-observation-writes-no-word.md` column 4).
+pub async fn open_split_floor(storage: &StorageSqlx) -> Result<Option<Height>> {
+    ensure_tables(storage).await?;
+    Ok(read_open_splits(storage.pool()).await?.into_values().min())
+}
+
+/// Is a `mined` word at `height` above an open split?
+fn under_split(word: &Word, floor: Option<Height>) -> bool {
+    matches!((word, floor), (Word::Mined(m), Some(floor)) if floor <= m.height())
+}
 
 /// The feed's stored cursor: the last envelope delivered, `0` at birth.
 /// One row of `tracker_meta`, beside the tracker's rows.
@@ -1715,6 +1863,27 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             });
         }
     }
+    if let ChainEvent::Split {
+        key, fork_height, ..
+    }
+    | ChainEvent::SplitResolved {
+        key, fork_height, ..
+    } = &event
+    {
+        let mut open = read_open_splits(&mut *tx).await?;
+        if matches!(event, ChainEvent::Split { .. }) {
+            open.insert(key.clone(), *fork_height);
+        } else {
+            open.remove(key);
+        }
+        sqlx::query(
+            "INSERT INTO tracker_meta (key, value) VALUES ('open_splits', ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(serde_json::to_string(&open)?)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query(
         "INSERT INTO tracker_meta (key, value) VALUES ('feed_cursor', ?) \
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1779,6 +1948,69 @@ pub(crate) mod tests {
         .bind(user_id)
         .bind(status)
         .bind(&txid[..8])
+        .bind(txid)
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(storage.pool())
+        .await
+        .unwrap();
+    }
+
+    /// A coin of ours whose creator `txid` the toolbox's monitor proved
+    /// before the tracker saw it: the transaction `completed` with
+    /// `proven_tx_id` set to a stored proof at `height` (its root the
+    /// txid), one unspent change output of `satoshis` in the default
+    /// basket. A received coin (`is_outgoing` 0), as `fund` makes one.
+    pub(crate) async fn proven_coin(
+        storage: &StorageSqlx,
+        user_id: i64,
+        txid: &str,
+        height: u32,
+        satoshis: i64,
+    ) {
+        let basket = storage
+            .find_or_create_default_basket(user_id)
+            .await
+            .unwrap()
+            .basket_id;
+        let proven = sqlx::query(
+            "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
+             VALUES (?, ?, 0, ?, ?, ?, X'01000000', ?, ?)",
+        )
+        .bind(txid)
+        .bind(height as i64)
+        .bind("bb".repeat(32))
+        .bind(txid)
+        .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(storage.pool())
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let tx = sqlx::query(
+            "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, proven_tx_id, created_at, updated_at) \
+             VALUES (?, 'completed', ?, 0, ?, 1, 0, 'Internalize external funding', ?, X'01000000', ?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&txid[..8])
+        .bind(satoshis)
+        .bind(txid)
+        .bind(proven)
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(storage.pool())
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        sqlx::query(
+            "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, created_at, updated_at) \
+             VALUES (?, ?, ?, 0, ?, X'76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac', ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?)",
+        )
+        .bind(user_id)
+        .bind(tx)
+        .bind(basket)
+        .bind(satoshis)
         .bind(txid)
         .bind(Utc::now())
         .bind(Utc::now())
@@ -2221,5 +2453,121 @@ pub(crate) mod tests {
         let guard = readme_spend_guard(&mut state, &params, &lost);
         println!("spend guard, height unanswered: {guard:?}");
         assert_eq!(guard, Err(CheckError::Unavailable(900)));
+    }
+
+    /// F1 of the stack's coin read (bsv-stack-lean #164): the daemon's
+    /// served pass tracks the wallet's creators. An `unproven` creator is
+    /// adopted as before; a `completed` creator the toolbox's monitor proved
+    /// first is adopted by replaying its stored path against the headers of
+    /// the moment: `mined` with its evidence when the header at its height
+    /// carries the root, the re-ask `proofFailed` and no word when it does
+    /// not. A creator tracked while unproven keeps its row when the toolbox
+    /// moves it to `completed`. The toolbox's rows are not written, and the
+    /// next pass adopts nothing.
+    #[tokio::test]
+    async fn the_served_pass_adopts_an_unproven_creator_and_a_proven_completed_one() {
+        let (storage, user) = wallet_storage().await;
+        let unproven = "d1".repeat(32);
+        let earlier = "d2".repeat(32);
+        insert_tx(&storage, user, &unproven, "unproven").await;
+        insert_tx(&storage, user, &earlier, "unproven").await;
+        let services = MockWalletServices::builder().build();
+        services.set_tip_header(header_with_hash(960, &"0a".repeat(32), 0));
+        let now = Utc::now().timestamp() as u64;
+        let pass = crate::broadcast_reconcile::run_served_pass(
+            &storage,
+            &services,
+            &FixedClock(now),
+            &opts(),
+            None,
+        )
+        .await
+        .unwrap();
+        println!("{}", pass.summary());
+        assert_eq!(pass.tracker.adopted, 2);
+        assert_eq!(
+            stored_word(&storage, &earlier).await.unwrap(),
+            Some(("built".to_string(), None, None))
+        );
+
+        // The toolbox's monitor proves `earlier` (completed), and two coins
+        // arrive already proven: one whose root the header service's
+        // header at 900 carries, one whose header at 950 carries another.
+        sqlx::query("UPDATE transactions SET status = 'completed' WHERE txid = ?")
+            .bind(&earlier)
+            .execute(storage.pool())
+            .await
+            .unwrap();
+        let checks = "d3".repeat(32);
+        let moved = "d4".repeat(32);
+        proven_coin(&storage, user, &checks, 900, 3_000).await;
+        proven_coin(&storage, user, &moved, 950, 2_000).await;
+        services.set_header_for_height(header(900, &checks, 0));
+        services.set_header_for_height(header(950, &"ee".repeat(32), 0));
+        let toolbox_before: Vec<(String, String, Option<i64>)> =
+            sqlx::query_as("SELECT txid, status, proven_tx_id FROM transactions ORDER BY txid")
+                .fetch_all(storage.pool())
+                .await
+                .unwrap();
+
+        let pass = crate::broadcast_reconcile::run_served_pass(
+            &storage,
+            &services,
+            &FixedClock(now + 60),
+            &opts(),
+            None,
+        )
+        .await
+        .unwrap();
+        println!("{}", pass.summary());
+        assert_eq!(pass.tracker.adopted_mined, vec![checks.clone()]);
+        assert_eq!(pass.tracker.adopted_proof_failed, vec![moved.clone()]);
+        assert_eq!(
+            stored_word(&storage, &checks).await.unwrap(),
+            Some(("mined".to_string(), Some(900), None))
+        );
+        let row = load_row(&storage, &checks).await.unwrap().unwrap();
+        assert_eq!(
+            row.bump,
+            Some(path_of(&checks, 900)),
+            "the evidence is the stored path"
+        );
+        assert!(!row.built, "a received coin's creator was not built here");
+        assert_eq!(
+            stored_word(&storage, &moved).await.unwrap(),
+            Some((
+                "unknown".to_string(),
+                None,
+                Some("proof_failed@950".to_string())
+            ))
+        );
+        assert_eq!(
+            stored_word(&storage, &earlier).await.unwrap(),
+            Some(("built".to_string(), None, None)),
+            "a creator tracked while unproven keeps its row"
+        );
+        let toolbox_after: Vec<(String, String, Option<i64>)> =
+            sqlx::query_as("SELECT txid, status, proven_tx_id FROM transactions ORDER BY txid")
+                .fetch_all(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            toolbox_after, toolbox_before,
+            "no write to the toolbox's rows"
+        );
+        assert_eq!(services.call_count("get_merkle_path"), 0);
+
+        let pass = crate::broadcast_reconcile::run_served_pass(
+            &storage,
+            &services,
+            &FixedClock(now + 120),
+            &opts(),
+            None,
+        )
+        .await
+        .unwrap();
+        println!("{}", pass.summary());
+        assert!(pass.tracker.adopted_mined.is_empty());
+        assert!(pass.tracker.adopted_proof_failed.is_empty());
     }
 }

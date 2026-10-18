@@ -159,6 +159,15 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         callback_token,
     };
 
+    // The served pass, as `serve` runs it (`broadcast_reconcile`): the
+    // tracker's pass (the wallet's creators tracked, a proven creator
+    // adopted from its stored proof, the re-asks that are due), the sweep
+    // and the spend guard, every `BROADCAST_RECONCILE_INTERVAL_SECS`
+    // (default 60; `BROADCAST_RECONCILE=0` turns it off). No SSE drain
+    // here: the monitor holds Arcade's stream. The task lives as long as
+    // the process.
+    let _served = crate::broadcast_reconcile::spawn_served_loop(wallet_state.clone(), None);
+
     // Periodic UTXO count check + auto-reconcile abandoned txs (#18, THE
     // RELEASE RULE 2026-08-29) — per tenant, same knobs as daemon.
     let min_utxos: usize = std::env::var("MIN_UTXOS")
