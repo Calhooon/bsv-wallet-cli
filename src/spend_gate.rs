@@ -42,8 +42,9 @@
 //!    (bsv-wallet-toolbox-rs 0.8.0 `storage/sqlx/internalize_action.rs`
 //!    96-119), and `fund` refuses an invalid BEEF; so the one trusted word
 //!    is the sender's broadcast. The action records the word
-//!    (`spend_gate_actions`, [`RECEIVED_PENDING`]), shown by `actions` and
-//!    `/listActions` as `underRule`.
+//!    (`spend_gate_actions`, [`RECEIVED_PENDING`]) by its txid, or a
+//!    deferred-signing template by its reference until `signAction` names
+//!    its txid; shown by `actions` and `/listActions` as `underRule`.
 //!
 //! A coin whose creator is `stale`, `rejected`, `conflicted` or `abandoned`
 //! is never offered; a coin an action of ours holds is the toolbox's lock
@@ -322,11 +323,30 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
     .await?;
     // The rule an action was created under (R1 (d)): the toolbox's
     // `transactions` row is the reference's shape and not ours to widen.
+    // An action is named by its txid, or, a deferred-signing template with
+    // no txid yet, by the toolbox's `reference` until `signAction` gives it one.
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS spend_gate_actions (\
             txid TEXT PRIMARY KEY, \
             rule TEXT NOT NULL, \
-            recorded_at INTEGER NOT NULL)",
+            recorded_at INTEGER NOT NULL, \
+            reference TEXT)",
+    )
+    .execute(pool)
+    .await?;
+    let has_reference: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('spend_gate_actions') WHERE name = 'reference'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    if has_reference.is_none() {
+        sqlx::query("ALTER TABLE spend_gate_actions ADD COLUMN reference TEXT")
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS spend_gate_actions_reference \
+         ON spend_gate_actions (reference)",
     )
     .execute(pool)
     .await?;
@@ -348,16 +368,112 @@ pub async fn record_rule(pool: &SqlitePool, txid: &str, rule: &str) -> Result<()
     Ok(())
 }
 
-/// The rule each action was created under, where one was recorded.
+/// Record that the deferred-signing template `reference` (no txid yet) was
+/// created under `rule`; [`fill_txid`] names it by its txid once signed.
+pub async fn record_rule_by_reference(
+    pool: &SqlitePool,
+    reference: &str,
+    rule: &str,
+) -> Result<()> {
+    ensure_schema(pool).await?;
+    sqlx::query(
+        "INSERT INTO spend_gate_actions (txid, rule, recorded_at, reference) VALUES (NULL, ?, ?, ?) \
+         ON CONFLICT(reference) DO NOTHING",
+    )
+    .bind(rule)
+    .bind(chrono::Utc::now().timestamp())
+    .bind(reference)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The template `reference` was signed as `txid`: its row, where one was
+/// recorded, gains the txid and keeps the reference.
+pub async fn fill_txid(pool: &SqlitePool, reference: &str, txid: &str) -> Result<()> {
+    ensure_schema(pool).await?;
+    sqlx::query("UPDATE spend_gate_actions SET txid = ? WHERE reference = ? AND txid IS NULL")
+        .bind(txid.to_ascii_lowercase())
+        .bind(reference)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The toolbox's `reference` string of a signable transaction, as
+/// `signAction` / `abortAction` take it back.
+pub fn reference_string(reference: &[u8]) -> String {
+    String::from_utf8(reference.to_vec()).unwrap_or_else(|_| hex::encode(reference))
+}
+
+/// The rule each action was created under, where one was recorded, by
+/// txid; a template not yet signed has none (see [`ActionRules`]).
 pub async fn rules_of(pool: &SqlitePool) -> Result<HashMap<String, String>> {
     ensure_schema(pool).await?;
-    let rows = sqlx::query("SELECT txid, rule FROM spend_gate_actions")
+    let rows = sqlx::query("SELECT txid, rule FROM spend_gate_actions WHERE txid IS NOT NULL")
         .fetch_all(pool)
         .await?;
     Ok(rows
         .iter()
         .map(|r| (r.get::<String, _>("txid"), r.get::<String, _>("rule")))
         .collect())
+}
+
+/// The rules a listing shows as `underRule`: by txid, and for a template
+/// not yet signed (listed with an all-zero txid) by its shape in the
+/// listing, read off the toolbox row its reference names.
+#[derive(Debug, Default, Clone)]
+pub struct ActionRules {
+    pub by_txid: HashMap<String, String>,
+    /// [`template_key`] → rule, only where every unsigned toolbox row of
+    /// that shape carries the same rule: a shape shared with a template
+    /// under no rule, or another rule, names none.
+    pub by_template: HashMap<String, String>,
+}
+
+/// A template's shape as a listing shows it: status, description, satoshis.
+pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
+    format!("{status}\u{1f}{description}\u{1f}{satoshis}")
+}
+
+/// Every recorded rule, as a listing shows it.
+pub async fn action_rules(pool: &SqlitePool) -> Result<ActionRules> {
+    let by_txid = rules_of(pool).await?;
+    let rows = sqlx::query(
+        "SELECT t.status, t.description, t.satoshis, g.rule FROM transactions t \
+         LEFT JOIN spend_gate_actions g ON g.reference = t.reference AND g.txid IS NULL \
+         WHERE t.txid IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut shapes: HashMap<String, Option<String>> = HashMap::new();
+    let mut ambiguous = std::collections::HashSet::new();
+    for r in &rows {
+        let key = template_key(
+            &r.get::<String, _>("status"),
+            &r.get::<String, _>("description"),
+            r.get::<i64, _>("satoshis"),
+        );
+        let rule: Option<String> = r.get("rule");
+        match shapes.get(&key) {
+            Some(seen) if *seen != rule => {
+                ambiguous.insert(key);
+            }
+            Some(_) => {}
+            None => {
+                shapes.insert(key, rule);
+            }
+        }
+    }
+    let by_template = shapes
+        .into_iter()
+        .filter(|(k, _)| !ambiguous.contains(k))
+        .filter_map(|(k, rule)| rule.map(|r| (k, r)))
+        .collect();
+    Ok(ActionRules {
+        by_txid,
+        by_template,
+    })
 }
 
 fn blocks(n: u64) -> String {
@@ -775,12 +891,21 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         }
     }
     let result = run_gated(wallet, args, originator, opts).await?;
-    // The action records the word it was created under (R1 (d)).
+    // The action records the word it was created under (R1 (d)): by its
+    // txid, or a template for deferred signing by its reference.
     if opts.allow_received {
         if let Some(txid) = result.txid.as_ref() {
             record_rule(
                 storage.pool(),
                 &bsv_sdk::primitives::to_hex(txid),
+                RECEIVED_PENDING,
+            )
+            .await
+            .map_err(GateError::Gate)?;
+        } else if let Some(st) = result.signable_transaction.as_ref() {
+            record_rule_by_reference(
+                storage.pool(),
+                &reference_string(&st.reference),
                 RECEIVED_PENDING,
             )
             .await

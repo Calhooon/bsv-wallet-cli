@@ -20,7 +20,7 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
 
     let result = ctx.wallet.list_actions(args, "bsv-wallet-cli").await?;
     // The rule an action named at the door (R1 (d)), as `underRule`.
-    let rules = crate::spend_gate::rules_of(ctx.wallet.storage().pool()).await?;
+    let rules = crate::spend_gate::action_rules(ctx.wallet.storage().pool()).await?;
 
     if ctx.json_output {
         let shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);
@@ -33,10 +33,19 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
         );
         for action in &result.actions {
             let direction = if action.is_outgoing { "OUT" } else { "IN " };
-            let rule = rules
-                .get(&hex::encode(action.txid))
-                .map(|r| format!(" | under {r}"))
-                .unwrap_or_default();
+            // A template not yet signed is listed with an all-zero txid.
+            let rule = if action.txid == [0u8; 32] {
+                let status = serde_json::to_value(action.status)?;
+                rules.by_template.get(&crate::spend_gate::template_key(
+                    status.as_str().unwrap_or_default(),
+                    &action.description,
+                    action.satoshis,
+                ))
+            } else {
+                rules.by_txid.get(&hex::encode(action.txid))
+            }
+            .map(|r| format!(" | under {r}"))
+            .unwrap_or_default();
             println!(
                 "  {} | {} | {} sats | {}{}",
                 direction,

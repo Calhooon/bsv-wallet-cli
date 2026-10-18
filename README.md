@@ -137,8 +137,10 @@ service), so the one word trusted is the sender's broadcast. Its cost: if the
 sender double-spends, this action becomes `conflicted` and the coins of ours
 it spent are lost with it, though nothing of ours was ever lost in fact. The
 action records the word (`spend_gate_actions`), and `actions` and
-`/listActions` show it as `underRule: "received-pending"`. There is no
-environment variable for it.
+`/listActions` show it as `underRule: "received-pending"`. A template made
+for deferred signing (`signAndProcess: false`) records it by the action's
+`reference` and gains its txid at `signAction`; an aborted template keeps the
+record. There is no environment variable for it.
 
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
 is never offered, a frozen coin is never offered, and a coin an action of ours

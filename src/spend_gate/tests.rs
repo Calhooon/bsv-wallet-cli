@@ -449,9 +449,9 @@ async fn the_word_is_recorded_on_the_action_and_shown() {
     )
     .await
     .unwrap();
-    let rules = rules_of(storage.pool()).await.unwrap();
+    let rules = action_rules(storage.pool()).await.unwrap();
     assert_eq!(
-        rules.get(&under).map(String::as_str),
+        rules.by_txid.get(&under).map(String::as_str),
         Some("received-pending")
     );
     let shown = crate::server::handlers::with_rules(
@@ -581,4 +581,233 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
     .await
     .unwrap();
     assert!(foreign.is_empty());
+}
+
+fn listed(wallet_list: serde_json::Value, rules: &ActionRules) -> Vec<(String, Option<String>)> {
+    let shown = crate::server::handlers::with_rules(wallet_list, rules);
+    shown["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["status"].as_str().unwrap().to_string(),
+                a.get("underRule")
+                    .and_then(|r| r.as_str())
+                    .map(String::from),
+            )
+        })
+        .collect()
+}
+
+fn list_args() -> bsv_sdk::wallet::ListActionsArgs {
+    bsv_sdk::wallet::ListActionsArgs {
+        labels: vec![],
+        label_query_mode: None,
+        include_labels: None,
+        include_inputs: None,
+        include_input_source_locking_scripts: None,
+        include_input_unlocking_scripts: None,
+        include_output_locking_scripts: None,
+        include_outputs: None,
+        limit: Some(100),
+        offset: None,
+        seek_permission: None,
+    }
+}
+
+/// A deferred-signing template under the door's word, through the
+/// toolbox's own `createAction`: no txid yet, so the word is recorded by
+/// the action's reference, the listing shows it as `underRule` on the
+/// template, and aborting the template leaves the row (the record of an
+/// act is never deleted).
+#[tokio::test]
+async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    // A parseable creator with a mined parent (its BUMP the BEEF's root),
+    // so the toolbox can carry it in the template's BEEF; the parent's coin
+    // is spent, never a candidate.
+    let lock = || bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    let mut parent = bsv_sdk::transaction::Transaction::new();
+    parent
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            "aa".repeat(32),
+            0,
+        ))
+        .unwrap();
+    parent
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(9_000, lock()))
+        .unwrap();
+    let parent_id = parent.id();
+    coin(
+        &storage,
+        (user, basket),
+        &parent_id,
+        false,
+        Some(800),
+        9_000,
+        9,
+    )
+    .await;
+    for table in ["transactions", "proven_txs"] {
+        sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
+            .bind(parent.to_binary())
+            .bind(&parent_id)
+            .execute(storage.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE outputs SET spendable = 0 WHERE txid = ?")
+        .bind(&parent_id)
+        .execute(storage.pool())
+        .await
+        .unwrap();
+    let mut creator = bsv_sdk::transaction::Transaction::new();
+    creator
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            parent_id.clone(),
+            0,
+        ))
+        .unwrap();
+    creator
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(8_000, lock()))
+        .unwrap();
+    let received = creator.id();
+    coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
+    sqlx::query("UPDATE transactions SET raw_tx = ? WHERE txid = ?")
+        .bind(creator.to_binary())
+        .bind(&received)
+        .execute(storage.pool())
+        .await
+        .unwrap();
+    let services = headers_with(&parent_id, 800, 900);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        ..Default::default()
+    });
+
+    let result = create_action(
+        &wallet,
+        args,
+        "gate.local",
+        &opts(1, true).with_allow_received(true),
+    )
+    .await
+    .unwrap();
+    assert!(result.txid.is_none());
+    let reference = reference_string(&result.signable_transaction.unwrap().reference);
+    let row: (Option<String>, Option<String>, String) =
+        sqlx::query_as("SELECT txid, reference, rule FROM spend_gate_actions")
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        (None, Some(reference.clone()), RECEIVED_PENDING.to_string())
+    );
+    assert!(rules_of(wallet.storage().pool()).await.unwrap().is_empty());
+
+    let list = wallet
+        .list_actions(list_args(), "gate.local")
+        .await
+        .unwrap();
+    let rules = action_rules(wallet.storage().pool()).await.unwrap();
+    let shown = listed(serde_json::to_value(&list).unwrap(), &rules);
+    assert!(
+        shown.contains(&("unsigned".to_string(), Some("received-pending".to_string()))),
+        "{shown:?}"
+    );
+
+    wallet
+        .abort_action(
+            bsv_sdk::wallet::AbortActionArgs {
+                reference: reference.clone(),
+            },
+            "gate.local",
+        )
+        .await
+        .unwrap();
+    let kept: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT txid, reference FROM spend_gate_actions")
+            .fetch_all(wallet.storage().pool())
+            .await
+            .unwrap();
+    assert_eq!(kept, vec![(None, Some(reference))]);
+}
+
+/// Signing a template recorded by reference fills the row's txid (the
+/// reference kept): the listing shows the rule on the template before
+/// signing and on the signed action after. A template of the same shape
+/// under no rule makes the shape name no rule, never a wrong one.
+#[tokio::test]
+async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
+    let (storage, user, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let pool = storage.pool();
+    let template = |reference: &'static str| {
+        sqlx::query(
+            "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, created_at, updated_at) \
+             VALUES (?, 'unsigned', ?, 1, -1000, 1, 0, 'pay someone', ?, ?)",
+        )
+        .bind(user)
+        .bind(reference)
+        .bind(Utc::now())
+        .bind(Utc::now())
+    };
+    template("tmpl-ref").execute(pool).await.unwrap();
+    record_rule_by_reference(pool, "tmpl-ref", RECEIVED_PENDING)
+        .await
+        .unwrap();
+    // Recorded twice (a retry): one row.
+    record_rule_by_reference(pool, "tmpl-ref", RECEIVED_PENDING)
+        .await
+        .unwrap();
+    let zero = "00".repeat(32);
+    let before = serde_json::json!({"totalActions": 1, "actions": [
+        {"txid": zero, "status": "unsigned", "description": "pay someone", "satoshis": -1000},
+    ]});
+    let rules = action_rules(pool).await.unwrap();
+    assert_eq!(
+        listed(before.clone(), &rules),
+        vec![("unsigned".to_string(), Some("received-pending".to_string()))]
+    );
+
+    let signed = "e2".repeat(32);
+    sqlx::query(
+        "UPDATE transactions SET txid = ?, status = 'unproven' WHERE reference = 'tmpl-ref'",
+    )
+    .bind(&signed)
+    .execute(pool)
+    .await
+    .unwrap();
+    fill_txid(pool, "tmpl-ref", &signed.to_ascii_uppercase())
+        .await
+        .unwrap();
+    let row: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT txid, reference FROM spend_gate_actions")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(row, (Some(signed.clone()), Some("tmpl-ref".to_string())));
+    let rules = action_rules(pool).await.unwrap();
+    assert!(rules.by_template.is_empty());
+    let after = serde_json::json!({"totalActions": 1, "actions": [
+        {"txid": signed, "status": "unproven", "description": "pay someone", "satoshis": -1000},
+    ]});
+    assert_eq!(
+        listed(after, &rules),
+        vec![("unproven".to_string(), Some("received-pending".to_string()))]
+    );
+
+    // Two unsigned templates of one shape, one under the word: neither is
+    // named, the listing cannot tell them apart.
+    template("tmpl-a").execute(pool).await.unwrap();
+    template("tmpl-b").execute(pool).await.unwrap();
+    record_rule_by_reference(pool, "tmpl-a", RECEIVED_PENDING)
+        .await
+        .unwrap();
+    let rules = action_rules(pool).await.unwrap();
+    assert_eq!(listed(before, &rules), vec![("unsigned".to_string(), None)]);
 }
