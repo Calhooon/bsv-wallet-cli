@@ -27,10 +27,13 @@ use bsv_wallet_cli::respend;
 // The spend guard too: every spend of the binary runs it first.
 use bsv_wallet_cli::spend_guard;
 // The spend gate: the guard on the toolbox's coin selection (0.10.0).
+use bsv_wallet_cli::backstop_log::{BackstopFilter, BackstopLayer};
 use bsv_wallet_cli::spend_gate;
 use clap::Parser;
 use cli::{Cli, Commands};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,9 +50,16 @@ async fn main() -> Result<()> {
     };
     // Logs go to stderr so stdout stays clean machine-parseable output
     // (notably `--json`): tooling/agents can read stdout without log pollution.
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+    // Beside the filtered log, one layer reads the toolbox's two lines
+    // behind a proof its monitor's backstop stored and says which provider
+    // served the merkle path, at info (`backstop_log`).
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(filter),
+        )
+        .with(BackstopLayer::logging().with_filter(BackstopFilter))
         .init();
 
     match &cli.command {
