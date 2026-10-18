@@ -22,9 +22,9 @@ installed by the command above. [Cargo.toml](Cargo.toml) describes the workspace
 ## The MCP companion
 
 `bsv-wallet-mcp` (0.2.0, on rmcp 3.5) speaks MCP over stdio and calls the
-wallet's HTTP server: the 28 wallet endpoints, `wallet_balance`, and five tools
+wallet's HTTP server: the 28 wallet endpoints, `wallet_balance`, and four tools
 over the host's own routes, one per route, no route added: `chain_feed_status`
-(`GET /chain-feed`), `tx_word` (`GET /tx/{txid}`), and on the callback relay
+(`GET /chain-feed`), and on the callback relay
 `health` (`GET /health`), `pull` (`GET /pull`) and `register`
 (`POST /register`, with the relay's admin bearer). Each tool's description
 says what its word rests on: headers and a proof, or a hint.

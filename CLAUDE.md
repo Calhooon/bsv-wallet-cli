@@ -95,7 +95,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 18 | CLI compact | BEEF compaction, balance unchanged | 0 sats |
 | 19 | CLI services | Chain/height via services command | 0 sats |
 | 20 | UI (Playwright) | Database inspector UI renders, API + browser | 0 sats |
-| 21 | MCP server parity | The 29 wallet MCP tools vs HTTP API (the five host-route tools are tested in `mcp/src/tests.rs`) | 0 sats |
+| 21 | MCP server parity | The 33 MCP tools vs HTTP API: 29 wallet tools and the four host-route tools (which `mcp/src/tests.rs` drives against a stub) | 0 sats |
 
 ### Dependencies
 

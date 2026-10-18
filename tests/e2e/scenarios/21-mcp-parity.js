@@ -35,11 +35,11 @@ module.exports = {
       mcp.notify('notifications/initialized');
       await sleep(200);
 
-      // ─── tools/list — verify all 29 tools ───
+      // ─── tools/list — verify all 33 tools (29 wallet, four host-route) ───
       const toolsResult = await mcp.request('tools/list', {});
       const tools = toolsResult.tools || [];
-      assert(tools.length === 29,
-        `MCP should expose 29 tools, got ${tools.length}`);
+      assert(tools.length === 33,
+        `MCP should expose 33 tools, got ${tools.length}`);
 
       const toolNames = tools.map(t => t.name).sort();
       const expectedTools = [
@@ -53,6 +53,7 @@ module.exports = {
         'reveal_counterparty_key_linkage', 'reveal_specific_key_linkage',
         'sign_action', 'verify_hmac', 'verify_signature',
         'wait_for_authentication', 'wallet_balance',
+        'chain_feed_status', 'health', 'pull', 'register',
       ].sort();
 
       for (const expected of expectedTools) {
