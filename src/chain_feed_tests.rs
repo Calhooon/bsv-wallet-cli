@@ -20,7 +20,8 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::tracker_host::tests::{
-    header, header_with_hash, insert_tx, opts, path_of, proof_answer, wallet_storage, FixedClock,
+    header, header_with_hash, insert_tx, opts, path_of, proof_answer, proven_coin, wallet_storage,
+    FixedClock,
 };
 use crate::tracker_host::{feed_cursor, stored_word, tick};
 
@@ -333,6 +334,162 @@ async fn a_split_and_its_resolution_move_no_word() {
         word(&storage, &txid).await,
         ("mined".to_string(), Some(900), None)
     );
+}
+
+/// F2 of the stack's coin read (bsv-stack-lean #164), the scenario
+/// `tracker-split-observation-writes-no-word.md` column 4 on a coin whose
+/// creator the toolbox's monitor proved first (`completed`, a stored
+/// proof): the daemon's served pass adopts it `mined`, a `split` at its
+/// height marks it suspect and the gate holds the coin, and
+/// `splitResolved` rechecks it through the headers and the coin is offered
+/// again. No word moves.
+#[tokio::test]
+async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
+    let (storage, user) = wallet_storage().await;
+    let txid = "9b".repeat(32);
+    proven_coin(&storage, user, &txid, 900, 3_000).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(900, &txid, 0));
+    services.set_tip_header(header_with_hash(900, &"0a".repeat(32), 0));
+    crate::broadcast_reconcile::run_served_pass(&storage, &services, &clock(), &opts(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(900), None)
+    );
+    let gate = crate::spend_gate::GateOptions {
+        spend_depth: 1,
+        own_change: true,
+        allow_received: false,
+    };
+    let offered = |a: &crate::spend_gate::Assessment| a.offered_satoshis();
+    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+        .await
+        .unwrap();
+    println!("[before] offered {} held {:?}", offered(&a), a.held);
+    assert_eq!((offered(&a), a.held.len()), (3_000, 0));
+
+    let split = json!({
+        "v": 2, "kind": "split", "key": format!("split:{}", "5a".repeat(32)),
+        "forkHeight": 900,
+        "tips": [
+            {"hash": "a1".repeat(32), "height": 902,
+             "chainWork": format!("{}c4", "00".repeat(31)), "rungs": ["bitails", "woc"]},
+            {"hash": "a2".repeat(32), "height": 902,
+             "chainWork": format!("{}c4", "00".repeat(31)), "rungs": ["arcade"]},
+        ],
+    });
+    let (base, _) = stub(Script {
+        streams: [(200, sse(&[(1, split)]))].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(900), Some("fork@900".to_string()))
+    );
+    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+        .await
+        .unwrap();
+    println!(
+        "[during the split] offered {} held {:?}",
+        offered(&a),
+        a.held
+    );
+    assert_eq!(offered(&a), 0);
+    assert_eq!(a.held.len(), 1);
+    assert_eq!(a.held[0].outpoint, format!("{txid}.0"));
+    assert_eq!(
+        a.held[0].reason,
+        "suspect: a fork or an unresolved split at or below its height"
+    );
+    assert_eq!(
+        crate::tracker_host::open_split_floor(&storage)
+            .await
+            .unwrap(),
+        Some(900)
+    );
+
+    let resolved = json!({"v": 2, "kind": "splitResolved",
+        "key": format!("split:{}", "5a".repeat(32)), "forkHeight": 900});
+    let (base, _) = stub(Script {
+        streams: [(200, sse(&[(2, resolved)]))].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(900), None)
+    );
+    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+        .await
+        .unwrap();
+    println!(
+        "[after splitResolved] offered {} held {:?}",
+        offered(&a),
+        a.held
+    );
+    assert_eq!((offered(&a), a.held.len()), (3_000, 0));
+    assert_eq!(
+        crate::tracker_host::open_split_floor(&storage)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+/// F6 of the stack's coin read: while following, the stored status is
+/// rewritten after every delivery (N = 1), so `status.cursor` is the
+/// stored cursor and `delivered` and `updatedAt` move with it.
+#[tokio::test]
+async fn the_status_is_rewritten_after_every_delivery() {
+    let (storage, services, _) = mined_at_900().await;
+    let at = FixedClock(1_800_000_000);
+    let mut feed = Feed {
+        base: "http://127.0.0.1:9".to_string(),
+        client: reqwest::Client::new(),
+        storage: &storage,
+        services: &services,
+        clock: &at,
+        opts: &opts(),
+        status: FeedStatus {
+            source: "http://127.0.0.1:9".into(),
+            state: "following".into(),
+            cursor: "0".into(),
+            delivered: 0,
+            reconnects: 0,
+            fault: None,
+            last_error: None,
+            updated_at: 0,
+        },
+    };
+    for cursor in 1..=3u64 {
+        let height = 905 + cursor as u32;
+        let tip = json!({
+            "v": 1, "kind": "tip", "height": height, "hash": "d3".repeat(32),
+            "time": 1_700_000_000u32,
+            "header": eh(height, &"d3".repeat(32), &"d1".repeat(32), &"ef".repeat(32)),
+        });
+        feed.deliver(&cursor.to_string(), tip.to_string().as_bytes())
+            .await
+            .map_err(|_| "a delivery")
+            .unwrap();
+        let stored = read_status(&storage).await.unwrap().unwrap();
+        println!(
+            "after {cursor}: {}",
+            serde_json::to_string(&stored).unwrap()
+        );
+        assert_eq!(stored.state, "following");
+        assert_eq!(
+            stored.cursor,
+            feed_cursor(&storage).await.unwrap().to_string()
+        );
+        assert_eq!(stored.delivered, cursor);
+        assert_eq!(stored.updated_at, 1_800_000_000);
+    }
 }
 
 /// An envelope the decoder refuses stops the loop at the stored cursor:

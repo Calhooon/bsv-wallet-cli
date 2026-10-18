@@ -57,6 +57,10 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
         "src/chain_feed.rs",
         "the header service's chain-event feed (CHAINTRACKS_URL), not an explorer",
     ),
+    (
+        "src/chain_feed_tests.rs",
+        "the feed's own tests: a feed built for one delivery, its client never asked",
+    ),
     ("src/commands/cleanup_abandoned.rs", "C7"),
     (
         "src/commands/reconcile_outputs.rs",
