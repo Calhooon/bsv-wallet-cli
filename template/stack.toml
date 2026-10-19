@@ -1,0 +1,5 @@
+# The line's [deny] table, copied from bsv-stack-lean stack.toml at c319cf6.
+[deny]
+path = "template/deny.toml"
+sha256 = "cdad82c09e2c88aa8315c7bf1a26172753187ada58936a2480670d3c9afc05ee"
+stamped = "2026-10-15T12:31:13Z"

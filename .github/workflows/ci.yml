@@ -1,8 +1,9 @@
 name: CI
 
 # The machine gate. Branch protection on main requires the check names below:
-# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling) and the two
-# `Build (...)` checks that were already required. Renaming a job removes its
+# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling), the two
+# `Build (...)` checks that were already required, and `deny` (the paved road's
+# cargo-deny gate over the stack's template, adopted at 0.13.x). Renaming a job removes its
 # context and blocks every PR until the protection is updated. Every action is
 # pinned by commit sha.
 on:
@@ -124,3 +125,27 @@ jobs:
           set -o pipefail
           cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
           grep -q 'test result: ok. 5 passed' covenant.log
+
+  # The paved road's deny job, from bsv-stack-lean template/ci.yml: deny.toml is
+  # the template byte for byte (its sha256 stamped in template/stack.toml), then
+  # cargo-deny 0.20.2 from a temporary root checks advisories, bans, licenses and
+  # sources against the committed lock.
+  deny:
+    name: deny
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # The migration lane copies the stamped manifest too. No network trust
+      # or moving branch controls equality; updating the stamp is a line change.
+      - name: Check adopted template hash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, tomllib
+          stamp = tomllib.loads(pathlib.Path('template/stack.toml').read_text())['deny']
+          assert hashlib.sha256(pathlib.Path('deny.toml').read_bytes()).hexdigest() == stamp['sha256'], 'deny.toml differs from the adopted line'
+          PY
+      - run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
+      - run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
