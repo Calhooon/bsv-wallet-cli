@@ -1,0 +1,77 @@
+# Paved-road seed. Adopt byte for byte in the repository's migration lane.
+# cargo-deny 0.20.2; all four checks run, including development dependencies.
+
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+# db-urls: RustSec is the shared advisory authority; no private database.
+db-urls = ["https://github.com/RustSec/advisory-db"]
+# yanked: withdrawn releases cannot enter the paved road.
+yanked = "deny"
+# unmaintained: fail on direct and transitive abandoned dependencies.
+unmaintained = "all"
+# unsound: fail across the graph, including dependencies below bsv-rs.
+unsound = "all"
+# ignore: no fleet-wide security exemptions or severity cutoff.
+ignore = []
+
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+# multiple-versions: warn while ecosystem major versions coexist; no skips.
+multiple-versions = "warn"
+# wildcards: require an explicit version requirement.
+wildcards = "deny"
+# deny/name/wrappers: bsv-rs and immediate parents inside its dependency graph.
+# No repository outside bsv-rs is ever a wrapper. Wrappers are immediate parents,
+# not an exemption for bsv-rs's whole subtree. Re-read and re-stamp this list
+# when the line's bsv-rs pin moves.
+# reason: diagnostic text makes the migration obligation visible.
+deny = [
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs, k256 0.13.4 and p256 0.13.2.
+    { name = "sha2", wrappers = ["bsv-rs", "k256", "p256", "sqlx-core", "sqlx-macros-core", "sqlx-mysql"], reason = "Use bsv-rs hashing; the sqlx family hashes migration files (sqlx-core, sqlx-macros-core under the forced migrate feature) and the MySQL auth handshake (sqlx-mysql), no chain primitive (the owner's word of 2026-10-15: sqlx-core as a sha2 wrapper; its sqlx siblings are the same hashing read from cargo tree -i sha2 --depth 1 in the toolbox)" },
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs alone.
+    { name = "ripemd", wrappers = ["bsv-rs"], reason = "Use bsv-rs hashing" },
+    # bsv-rs 0.5.0 (8c44ad9): secp256k1 absent; retain bsv-rs alone.
+    { name = "secp256k1", wrappers = ["bsv-rs"], reason = "Use bsv-rs keys and signatures" },
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs alone.
+    { name = "k256", wrappers = ["bsv-rs"], reason = "Use bsv-rs keys and signatures" },
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs alone.
+    { name = "bs58", wrappers = ["bsv-rs"], reason = "Use bsv-rs base58check" },
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs, pbkdf2 0.12.2 and rfc6979 0.4.0.
+    { name = "hmac", wrappers = ["bsv-rs", "pbkdf2", "rfc6979"], reason = "Use bsv-rs HMAC" },
+    # bsv-rs 0.5.0 (8c44ad9): bsv-rs alone; direct consumer use is hand-rolling.
+    { name = "p256", wrappers = ["bsv-rs"], reason = "Use bsv-rs keys and signatures" },
+]
+
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+[licenses]
+# allow: each entry is an SPDX license identifier, not an inferred license.
+allow = [
+    "MIT", # Stack and permissive dependencies.
+    "Apache-2.0", # Stack and patent-grant dependencies.
+    "BSD-2-Clause", # Two-clause permissive dependencies.
+    "BSD-3-Clause", # Three-clause permissive dependencies.
+    "ISC", # Short permissive dependencies.
+    "Unicode-3.0", # Current Unicode data dependencies.
+    "Unicode-DFS-2016", # Earlier Unicode data dependencies.
+    "Zlib", # Compression dependencies.
+]
+# confidence-threshold: require a close license-text match.
+confidence-threshold = 0.9
+# MPL-2.0 is absent until a dependency demonstrates the need and is reviewed.
+
+# https://embarkstudios.github.io/cargo-deny/checks/sources/cfg.html
+[sources]
+# unknown-registry/unknown-git: reject sources outside explicit lists.
+unknown-registry = "deny"
+unknown-git = "deny"
+# allow-registry: the canonical crates.io index, also used for sparse crates.io.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# allow-git: one git source, approved by the owner's ruling of 2026-10-18 (recorded in
+# the consuming program's own tracker, relayed by him): Plonky3, which no crates.io
+# release carries yet for that program's prover; the consumer pins the full commit by rev
+# (required-git-spec below) in its own manifest, and moves to the p3-* crates on
+# crates.io as its own later issue. Any further twin needs an exact URL, approved and
+# re-stamped as a line change here, before consumers copy that new seed.
+allow-git = ["https://github.com/Plonky3/Plonky3"]
+# required-git-spec: any future allowed twin must pin a full commit via rev.
+required-git-spec = "rev"

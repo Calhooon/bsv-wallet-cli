@@ -3,6 +3,11 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [Unreleased]
+
+- The paved road's deny gate (bsv-stack-lean #105, wave lane W17): `deny.toml` is the stack's `template/deny.toml` byte for byte (sha256 `cdad82c09e2c88aa8315c7bf1a26172753187ada58936a2480670d3c9afc05ee`), `template/stack.toml` carries the line's `[deny]` table at bsv-stack-lean `c319cf6`, and CI gains the `deny` job (the hash check, then cargo-deny 0.20.2 from a temporary root, `--locked check`). The required contexts gain `deny` in the protection write, not in this commit.
+- Four advisories cleared in the lock by each dependency's own release on crates.io, no manifest change: `anyhow` 1.0.102 to 1.0.104 (RUSTSEC-2026-0190, unsound), `h2` 0.4.13 to 0.4.20 (RUSTSEC-2026-0258), `event-listener` 5.4.1 to 5.4.2 (RUSTSEC-2026-0221, unsound; `concurrent-queue` leaves the lock), `rand` 0.8.5 to 0.8.8 (RUSTSEC-2026-0097, unsound). `cargo deny --locked check`: advisories ok, bans ok, licenses ok, sources ok.
+
 ## [0.13.0] - 2026-10-18
 
 The line of the wave of 2026-10-18 (bsv-stack-lean #119): `bsv-rs` to `=0.7.0`, `bsv-wallet-toolbox-rs` to `=0.9.0` and `bsv-tracker` to `=0.6.0`, together, because the toolbox and the tracker put bsv-rs types in their public APIs. The committed lock carries one SDK version, bsv-rs 0.7.0. Supersedes the update loop's #35 (tracker 0.4.1).
