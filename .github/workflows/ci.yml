@@ -149,3 +149,27 @@ jobs:
           PY
       - run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
       - run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
+
+  # One bsv-rs per lock (bsv-stack-lean #182): a committed Cargo.lock holding
+  # two bsv-rs entries fails, the gate a self-merging stack PR stands behind.
+  locks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: One bsv-rs per committed Cargo.lock
+        run: |
+          set -euo pipefail
+          status=0
+          found=0
+          while IFS= read -r -d '' lock; do
+            found=$((found + 1))
+            n=$(grep -c '^name = "bsv-rs"$' "$lock" || true)
+            echo "$lock: $n bsv-rs"
+            if [ "$n" -gt 1 ]; then
+              echo "::error file=$lock::$n bsv-rs entries; one bsv-rs per lock"
+              status=1
+            fi
+          done < <(git ls-files -z -- 'Cargo.lock' '*/Cargo.lock')
+          [ "$found" -gt 0 ] || echo "no committed Cargo.lock"
+          exit "$status"
