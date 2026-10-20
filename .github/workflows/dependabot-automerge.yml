@@ -1,0 +1,142 @@
+# A green bsv-stack patch PR from Dependabot merges itself (bsv-stack-lean #182, docs/UPDATE-LOOP.md).
+# The shape is the agents' automerge-stack.yml, 2026-10-20; this copy rebase-merges (linear
+# history is required here) and runs on GitHub-hosted runners (a public repository).
+# Every consumer carries this file byte for byte; the stack's template leg reads each copy.
+#
+# Safety: pull_request_target runs with a write-scoped token on a PR whose head is untrusted.
+# Nothing here checks out code: every step calls the GitHub API and names the PR by number,
+# so no file of the PR is read or run. No actions/checkout, no script from the tree, no secret.
+#
+# Selection (SELECT below): author dependabot[bot], base main, head in this repository, head
+# branch dependabot/cargo/bsv-stack-<hash> (or with a directory segment), the title naming
+# "the bsv-stack group", and the title's one "from X.Y.Z to X.Y.W" keeping X.Y: a patch.
+# A minor or a major (0.6.0 to 0.7.0 came in the group's title) and a multi-update group
+# title stay by hand. A merge to main deploys nothing here: every deploy has its own gate.
+#
+# A merge done by this token starts no workflow run (GitHub's rule for GITHUB_TOKEN), so an
+# auto-merged PR gets no push run on main; its tree is the gated PR head (strict protection).
+name: Dependabot auto-merge
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to select and, if selected, arm
+        required: true
+        type: string
+      proof:
+        description: Arm even when not selected (the post-merge proof on a throwaway docs PR)
+        required: false
+        type: boolean
+        default: false
+permissions: {}
+env:
+  # jq over GET /repos/{repo}/pulls/{n}; true selects the PR. Both jobs read this one filter.
+  SELECT: >-
+    .user.login == "dependabot[bot]"
+    and .base.ref == "main"
+    and .head.repo.full_name == .base.repo.full_name
+    and (.head.ref | test("^dependabot/cargo/([^/]+/)?bsv-stack-[0-9a-f]+$"))
+    and (.title | contains("the bsv-stack group"))
+    and ([.title | match("from ([0-9]+[.][0-9]+)[.][0-9]+ to ([0-9]+[.][0-9]+)[.][0-9]+"; "g")]
+      | length == 1 and .[0].captures[0].string == .[0].captures[1].string)
+jobs:
+  arm:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: automerge-arm-${{ inputs.pr || github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ inputs.pr || github.event.pull_request.number }}
+      PROOF: ${{ inputs.proof && 'true' || 'false' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Select
+        id: select
+        env:
+          # The head Dependabot pushed, from the event; empty on workflow_dispatch.
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "pr must be a number: $PR" >&2; exit 1; }
+          pull=$(gh api "repos/$GH_REPO/pulls/$PR")
+          selected=$(jq -r "$SELECT" <<< "$pull")
+          state=$(jq -r .state <<< "$pull")
+          armed=$(jq -r '.auto_merge != null' <<< "$pull")
+          api_head=$(jq -r .head.sha <<< "$pull")
+          # Arm the event's head, never one read now: a later push (or a re-run) is not armed.
+          head=${EVENT_HEAD:-$api_head}
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "#$PR $(jq -r '.head.ref + " | " + .title' <<< "$pull"): selected=$selected state=$state armed=$armed proof=$PROOF head=$head" | tee -a "$GITHUB_STEP_SUMMARY"
+          arm=false
+          # An armed PR stays armed across Dependabot's pushes; arm only when it is not.
+          if [[ "$state" == open && "$armed" == false && ( "$selected" == true || "$PROOF" == true ) ]]; then arm=true; fi
+          if [[ "$arm" == true && "$head" != "$api_head" ]]; then
+            echo "#$PR head moved since the event ($api_head); not arming" | tee -a "$GITHUB_STEP_SUMMARY"
+            arm=false
+          fi
+          echo "arm=$arm" >> "$GITHUB_OUTPUT"
+      - name: Arm auto-merge
+        if: steps.select.outputs.arm == 'true'
+        env:
+          HEAD: ${{ steps.select.outputs.head }}
+        run: |
+          set -euo pipefail
+          # A rebase merge (linear history is required), armed only for the selected head.
+          gh pr merge "$PR" --auto --rebase --match-head-commit "$HEAD"
+          gh pr comment "$PR" --body "Auto-merge (rebase) is armed: this PR merges itself when the required checks are green on a current branch (bsv-stack-lean #182). A merge to main deploys nothing."
+          echo "#$PR armed at $HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
+  rebase:
+    # Strict protection: a push to main leaves an armed stack PR behind, and auto-merge waits.
+    # A push by this token would start no checks, so Dependabot is asked to rebase; its push does.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: write
+    concurrency:
+      group: automerge-rebase
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Ask Dependabot to rebase armed stack PRs
+        run: |
+          set -euo pipefail
+          prs=$(gh api "repos/$GH_REPO/pulls?state=open&base=main&per_page=100" --paginate \
+            --jq ".[] | select($SELECT) | select(.auto_merge != null) | \"\\(.number) \\(.head.sha)\"")
+          # The required checks differ per repository: read them from main's protection.
+          required=$(gh api "repos/$GH_REPO/branches/main" --jq '.protection.required_status_checks.contexts // [] | tojson')
+          while read -r pr sha; do
+            [[ -n "$pr" ]] || continue
+            # A red required check stays red on a rebase; asking costs a full run of the gate.
+            red=$(gh api "repos/$GH_REPO/commits/$sha/check-runs?filter=latest&per_page=100" \
+              --jq "[.check_runs[] | select(.name as \$n | $required | index(\$n)) | select(.conclusion == \"failure\" or .conclusion == \"timed_out\") | .name] | join(\",\")")
+            if [[ -n "$red" ]]; then
+              echo "#$pr: required checks red at $sha ($red), not asking for a rebase" | tee -a "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            gh pr comment "$pr" --body "@dependabot rebase"
+            echo "#$pr: asked Dependabot to rebase" | tee -a "$GITHUB_STEP_SUMMARY"
+          done <<< "$prs"
+          [[ -n "$prs" ]] || echo "no armed stack PR open" | tee -a "$GITHUB_STEP_SUMMARY"
