@@ -7,37 +7,46 @@
 //! root"). The daemon's header, reorg and review tasks repair this on their
 //! own; this verb is the same repair on demand, with a table first.
 //!
-//! For every stored proof in the height window it compares the stored merkle
-//! root with the canonical header's, lists the disagreements (a height whose
-//! header cannot be read is never stale), and, with `--execute`, runs the
-//! toolbox's `reprove_anchor` on each: a provider's validated proof for the
-//! canonical block REPLACES the stored one; the providers still naming the
-//! stored block, or faulting, RETAIN it (the monitor retries); only positive
-//! evidence (the tracker refutes the stored root, two providers answer
-//! cleanly "not mined", no provider serves a path) DEMOTES it to the
-//! pre-proof state, bytes kept, re-proved by the monitor.
+//! A stored proof is stale when, and only when, its root is not the active
+//! header's root at its height in the wallet's own headers (ruling 5 of
+//! 2026-10-20, bsv-stack-lean `docs/RULINGS-2026-10-12.md`). For every
+//! stored proof in the height window the verb reads the header at its
+//! height and lists the proofs whose root moved (a height whose header
+//! cannot be read is never stale). With `--execute` it runs the toolbox's
+//! `reprove_anchor` (bsv-wallet-toolbox-rs 0.10.0) on at most
+//! `REPROVES_PER_PASS` of them, the rest postponed to the next run. The
+//! header is read again before anything else: a root the active header carries moves
+//! nothing. A proof whose root moved is REPLACED when a provider serves a
+//! path for the active block that the ingest funnel stores now; otherwise
+//! it is DEMOTED (rulings 7a and 7b of 2026-10-20): the action is
+//! `unproven` again and reads "confirming", its inputs stay allocated to
+//! it, its change stays spendable as an unproven creator's is, nothing is
+//! released and nothing is failed, and the proof pass re-proves it. After a
+//! demotion the courier is asked once (ruling 7d): a broadcaster that knows
+//! the transaction ends the matter, and only when none knows it is it
+//! announced, once.
 //!
 //! The dry run (the default) performs NO storage write: `gather` reads the
 //! anchors and the headers and nothing else. `--execute` first raises the
 //! persisted proof LAG gate to `tip - 1` when it is 0 or below that (a stated
 //! CLI-only divergence from the reference's "survived a cycle": a wallet
 //! whose daemon is not running never sees a cycle, and a replacement proof
-//! above the gate could not be stored), then re-proves. `--execute` is
+//! above the gate is not stored now), then re-proves. `--execute` is
 //! refused when no chain tracker is configured (`CHAINTRACKS_URL=off`): a
-//! heal without a header service cannot refute anything.
+//! heal without a header service has no headers to read.
 //!
 //! The default window is the last 288 blocks and INCLUDES the un-aged tip:
-//! a replacement proof at the tip is deferred by the gate, not stored, and
-//! the monitor re-presents it. `--all` walks every stored proof, one header
-//! read per distinct height with no bound; progress is printed every 50
-//! heights.
+//! a replacement at the tip is not stored now, so the proof is demoted and
+//! the proof pass stores the replacement when its header has aged. `--all`
+//! walks every stored proof, one header read per distinct height with no
+//! bound; progress is printed every 50 heights.
 
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{bail, Context, Result};
 use bsv_wallet_toolbox::monitor::reorg_ops::{
     block_hash_of_header, merkle_root_of_header, reprove_anchor, stale_anchors_by_root,
-    ReproveOutcome, ReproveTally,
+    LostProofReask, ReproveOutcome, ReproveTally, REPROVES_PER_PASS,
 };
 use bsv_wallet_toolbox::services::WalletServices;
 use bsv_wallet_toolbox::storage::{MonitorStorage, ProvenTxAnchor};
@@ -51,7 +60,8 @@ pub const DEFAULT_WINDOW_BLOCKS: u32 = 288;
 /// How often `gather` reports progress over the distinct heights it reads.
 pub const PROGRESS_EVERY_HEIGHTS: usize = 50;
 
-/// One stale stored proof, as the table and the JSON report show it.
+/// One stored proof whose root moved, as the table and the JSON report show
+/// it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StaleRow {
     pub txid: String,
@@ -60,7 +70,8 @@ pub struct StaleRow {
     pub canonical_block_hash: String,
     pub stored_merkle_root: String,
     pub canonical_merkle_root: String,
-    /// `dry-run` before `--execute`; what `reprove_anchor` did after it.
+    /// `dry-run` before `--execute`; what `reprove_anchor` did after it, or
+    /// `postponed` past [`REPROVES_PER_PASS`].
     pub action: String,
 }
 
@@ -78,7 +89,8 @@ pub struct Plan {
     pub stale: Vec<StaleRow>,
 }
 
-/// The verb's report: the plan plus what `--execute` did.
+/// The verb's report: the plan plus what `--execute` did, counted as the
+/// toolbox's [`ReproveTally`] counts a pass.
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     #[serde(flatten)]
@@ -88,9 +100,34 @@ pub struct Report {
     pub gate_set_to: Option<u32>,
     pub replaced: u32,
     pub demoted: u32,
-    pub deferred: u32,
+    /// Demotions after which no broadcaster knew the transaction and the
+    /// one announce was made.
+    pub announced: u32,
     pub unchanged: u32,
+    /// Proofs whose root moved past [`REPROVES_PER_PASS`]: the next run.
+    pub postponed: u32,
     pub errors: Vec<String>,
+}
+
+impl Report {
+    /// The report of a run that executed nothing.
+    fn dry(plan: Plan) -> Self {
+        Self::of(plan, false, None, ReproveTally::default())
+    }
+
+    fn of(plan: Plan, executed: bool, gate_set_to: Option<u32>, tally: ReproveTally) -> Self {
+        Self {
+            plan,
+            executed,
+            gate_set_to,
+            replaced: tally.replaced,
+            demoted: tally.demoted,
+            announced: tally.announced,
+            unchanged: tally.unchanged,
+            postponed: tally.postponed,
+            errors: tally.errors,
+        }
+    }
 }
 
 /// The height window: `--all` is everything, `--since-height` a floor, else
@@ -107,8 +144,8 @@ pub fn window(tip: u32, since_height: Option<u32>, all: bool) -> (u32, u32) {
     }
 }
 
-/// Pure: the stale rows, sorted by height then txid. An anchor at a height
-/// with no canonical root is never stale.
+/// Pure: the rows whose root moved, sorted by height then txid. An anchor at
+/// a height with no canonical root is never stale.
 pub fn plan_rows(
     anchors: &[ProvenTxAnchor],
     canonical_roots: &HashMap<u32, String>,
@@ -208,15 +245,14 @@ where
 }
 
 /// Refuse the heal when no chain tracker is configured: without a header
-/// service nothing can be refuted, and a re-prove that cannot refute cannot
-/// demote or replace safely.
+/// service there is no active root to read, and the read alone decides.
 pub async fn refuse_execute_without_tracker<V: WalletServices + ?Sized>(
     services: &V,
 ) -> Result<()> {
     if services.get_chain_tracker().await.is_err() {
         bail!(
             "reproof --execute refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
-             a heal without a header service cannot refute anything. Run the dry run, or set CHAINTRACKS_URL."
+             a heal without a header service has no headers to read. Run the dry run, or set CHAINTRACKS_URL."
         );
     }
     Ok(())
@@ -225,7 +261,7 @@ pub async fn refuse_execute_without_tracker<V: WalletServices + ?Sized>(
 /// The CLI-only gate rule: raise the persisted proof LAG gate to `tip - 1`
 /// when it is 0 or below that, so a replacement proof at a buried height
 /// can be stored now instead of after a monitor cycle this wallet may never
-/// run. Returns the height it was set to, or `None` when it already stood
+/// run (a replacement the gate refuses leaves the proof demoted). Returns the height it was set to, or `None` when it already stood
 /// at or above `tip - 1`.
 pub async fn raise_gate_for_heal<S: MonitorStorage + ?Sized>(
     storage: &S,
@@ -247,8 +283,9 @@ pub async fn raise_gate_for_heal<S: MonitorStorage + ?Sized>(
     }
 }
 
-/// The heal: raise the gate, then re-prove every stale row. Returns the
-/// report; each row's `action` names what `reprove_anchor` did.
+/// The heal: raise the gate, then re-prove at most [`REPROVES_PER_PASS`]
+/// rows (the header read at each row's height decides again); the rest are
+/// postponed to the next run. Each row's `action` names what was done.
 pub async fn apply<S, V>(storage: &S, services: &V, plan: Plan) -> Result<Report>
 where
     S: MonitorStorage + ?Sized,
@@ -257,7 +294,12 @@ where
     let gate_set_to = raise_gate_for_heal(storage, plan.tip).await?;
     let mut plan = plan;
     let mut tally = ReproveTally::default();
-    for row in plan.stale.iter_mut() {
+    for (i, row) in plan.stale.iter_mut().enumerate() {
+        if i >= REPROVES_PER_PASS {
+            tally.postponed += 1;
+            row.action = "postponed to the next run".into();
+            continue;
+        }
         let anchor = ProvenTxAnchor {
             txid: row.txid.clone(),
             height: row.height,
@@ -266,32 +308,32 @@ where
         };
         let outcome = reprove_anchor(storage, services, &anchor).await;
         tally.record(&anchor.txid, &outcome);
-        row.action = match &outcome {
-            ReproveOutcome::Replaced { height, block_hash } => {
-                format!("replaced by {} {}", height, short(block_hash))
-            }
-            ReproveOutcome::Unchanged => {
-                "unchanged (the providers still name the stored block, or the tracker refutes their path); retained, the monitor retries".into()
-            }
-            ReproveOutcome::Deferred { height } => {
-                format!("deferred (height {} is above the proof gate); the monitor re-presents it", height)
-            }
-            ReproveOutcome::Demoted => {
-                "demoted to unproven (positive evidence); run `bsv-wallet tick` twice to re-prove".into()
-            }
-            ReproveOutcome::TransientError(e) => format!("retained: {}", e),
-        };
+        row.action = action_line(&outcome);
     }
-    Ok(Report {
-        plan,
-        executed: true,
-        gate_set_to,
-        replaced: tally.replaced,
-        demoted: tally.demoted,
-        deferred: tally.deferred,
-        unchanged: tally.unchanged,
-        errors: tally.errors,
-    })
+    Ok(Report::of(plan, true, gate_set_to, tally))
+}
+
+/// What one row's re-prove did, in the words the table prints.
+pub fn action_line(outcome: &ReproveOutcome) -> String {
+    match outcome {
+        ReproveOutcome::Replaced { height, block_hash } => {
+            format!("replaced by {} {}", height, short(block_hash))
+        }
+        ReproveOutcome::Unchanged => "kept: the active header carries the stored root".into(),
+        ReproveOutcome::Demoted { reask } => format!(
+            "confirming: demoted to unproven, nothing released; {}",
+            match reask {
+                LostProofReask::Known => "a broadcaster knows it, not announced".to_string(),
+                LostProofReask::Announced => "no broadcaster knew it, announced once".to_string(),
+                LostProofReask::Refused => {
+                    "a broadcaster refused it, the refusal written on its request".to_string()
+                }
+                LostProofReask::NoAnswer => "no broadcaster answered, not announced".to_string(),
+                LostProofReask::AnnounceFailed(e) => format!("the one announce failed: {e}"),
+            }
+        ),
+        ReproveOutcome::TransientError(e) => format!("retained: {e}"),
+    }
 }
 
 pub async fn run(
@@ -313,16 +355,7 @@ pub async fn run(
     let report = if execute {
         apply(storage, services, plan).await?
     } else {
-        Report {
-            plan,
-            executed: false,
-            gate_set_to: None,
-            replaced: 0,
-            demoted: 0,
-            deferred: 0,
-            unchanged: 0,
-            errors: vec![],
-        }
+        Report::dry(plan)
     };
 
     if ctx.json_output {
@@ -342,7 +375,7 @@ pub async fn run(
         if p.gate == 0 { "closed".to_string() } else { p.gate.to_string() }
     );
     if p.stale.is_empty() {
-        println!("every stored proof in the window matches the canonical header");
+        println!("every stored proof in the window carries the active header's root");
     } else {
         println!("txid             height  stored block       canonical block    action");
         for r in &p.stale {
@@ -361,23 +394,31 @@ pub async fn run(
             println!("proof gate raised to {} (tip - 1) for the heal", h);
         }
         println!(
-            "executed: {} replaced | {} demoted | {} deferred | {} unchanged | {} retained on error",
+            "executed: {} replaced | {} confirming (demoted, {} announced once) | {} kept | {} postponed | {} retained on error",
             report.replaced,
             report.demoted,
-            report.deferred,
+            report.announced,
             report.unchanged,
+            report.postponed,
             report.errors.len()
         );
         for e in &report.errors {
             println!("  retained: {}", e);
         }
         if report.demoted > 0 {
-            println!("demoted proofs are re-proved by the monitor: `bsv-wallet tick` twice (the first run queues the header, the second processes it)");
+            println!("a demoted proof's action reads confirming, its coins kept; the proof pass re-proves it (the daemon, or `bsv-wallet tick`)");
+        }
+        if report.postponed > 0 {
+            println!(
+                "{} proof(s) past the {} a run: run --execute again",
+                report.postponed, REPROVES_PER_PASS
+            );
         }
     } else if !p.stale.is_empty() {
         println!(
-            "dry run (no storage write); re-run with --execute to replace, retain or demote the {} stale proof(s)",
-            p.stale.len()
+            "dry run (no storage write); re-run with --execute to re-prove the {} proof(s) whose root moved, {} a run",
+            p.stale.len(),
+            REPROVES_PER_PASS
         );
     }
     Ok(())
@@ -399,7 +440,7 @@ mod tests {
     use super::*;
     use bsv_wallet_toolbox::services::mock::MockWalletServices;
     use bsv_wallet_toolbox::services::{BlockHeader, Services, ServicesOptions};
-    use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletStorageWriter};
+    use bsv_wallet_toolbox::{BroadcastStatus, Chain, StorageSqlx, WalletStorageWriter};
 
     fn anchor(txid: &str, height: u32, hash: &str, root: &str) -> ProvenTxAnchor {
         ProvenTxAnchor {
@@ -561,6 +602,119 @@ mod tests {
         assert!(refuse_execute_without_tracker(&mock).await.is_ok());
     }
 
+    /// Ruling 5 at execute: the header is read again and decides. A root the
+    /// active header carries again moves nothing; a root that moved, with no
+    /// replacement served, is demoted (rulings 7a, 7b: the proof row gone,
+    /// the request back to `unmined` with its bytes) and the courier is
+    /// asked once (7d): a broadcaster that knows it, so nothing announced.
+    #[tokio::test]
+    async fn execute_reads_the_header_again_demotes_a_moved_root_and_keeps_a_kept_one() {
+        let s = storage().await;
+        let (moved, kept) = ("a".repeat(64), "b".repeat(64));
+        seed_proven(&s, &moved, 100, &"11".repeat(32), &"aa".repeat(32)).await;
+        seed_proven(&s, &kept, 101, &"12".repeat(32), &"bb".repeat(32)).await;
+        let services = MockWalletServices::builder()
+            .height(102)
+            .broadcaster_statuses(vec![("arc".to_string(), BroadcastStatus::Seen)])
+            .build();
+        services.set_header_for_height(header(100, &"22".repeat(32)));
+        services.set_header_for_height(header(101, &"33".repeat(32)));
+        let plan = gather(&s, &services, None, false, &mut |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!(plan.stale.len(), 2);
+        // Before --execute runs, the active header at 101 carries the stored
+        // root again: the read at execute decides, and it moves nothing.
+        services.set_header_for_height(header(101, &"bb".repeat(32)));
+
+        let report = apply(&s, &services, plan).await.unwrap();
+
+        assert_eq!(
+            (report.demoted, report.unchanged, report.announced),
+            (1, 1, 0)
+        );
+        assert_eq!((report.replaced, report.postponed), (0, 0));
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let action = |txid: &str| {
+            report
+                .plan
+                .stale
+                .iter()
+                .find(|r| r.txid == txid)
+                .unwrap()
+                .action
+                .clone()
+        };
+        assert!(
+            action(&moved).starts_with(
+                "confirming: demoted to unproven, nothing released; a broadcaster knows it"
+            ),
+            "{}",
+            action(&moved)
+        );
+        assert_eq!(
+            action(&kept),
+            "kept: the active header carries the stored root"
+        );
+        let proofs: Vec<String> = sqlx::query_scalar("SELECT txid FROM proven_txs")
+            .fetch_all(s.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            proofs,
+            vec![kept.clone()],
+            "only the moved root's proof left"
+        );
+        let req: String = sqlx::query_scalar("SELECT status FROM proven_tx_reqs WHERE txid = ?")
+            .bind(&moved)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+        assert_eq!(req, "unmined");
+        assert_eq!(services.call_count("get_broadcaster_statuses"), 1);
+        assert_eq!(
+            services.call_count("post_beef"),
+            0,
+            "known: never announced"
+        );
+    }
+
+    /// At most `REPROVES_PER_PASS` proofs a run; the rest are postponed and
+    /// counted, untouched.
+    #[tokio::test]
+    async fn execute_reproves_a_few_a_run_and_postpones_the_rest() {
+        let s = storage().await;
+        let n = REPROVES_PER_PASS + 2;
+        for i in 0..n {
+            seed_proven(&s, &format!("{:064x}", i + 1), 100, "", &"aa".repeat(32)).await;
+        }
+        let services = MockWalletServices::builder()
+            .height(101)
+            .broadcaster_statuses(vec![("arc".to_string(), BroadcastStatus::Mined)])
+            .build();
+        services.set_header_for_height(header(100, &"22".repeat(32)));
+        let plan = gather(&s, &services, None, false, &mut |_, _| {})
+            .await
+            .unwrap();
+        let report = apply(&s, &services, plan).await.unwrap();
+        assert_eq!(report.demoted as usize, REPROVES_PER_PASS);
+        assert_eq!(report.postponed, 2);
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM proven_txs")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+        assert_eq!(left, 2, "the postponed proofs are untouched");
+        assert_eq!(
+            report
+                .plan
+                .stale
+                .iter()
+                .filter(|r| r.action == "postponed to the next run")
+                .count(),
+            2
+        );
+    }
+
     /// Progress is reported every 50 distinct heights.
     #[tokio::test]
     async fn progress_is_reported_every_fifty_heights() {
@@ -605,8 +759,9 @@ mod tests {
             gate_set_to: None,
             replaced: 0,
             demoted: 0,
-            deferred: 0,
+            announced: 0,
             unchanged: 0,
+            postponed: 0,
             errors: vec![],
         };
         let value = serde_json::to_value(&report).unwrap();
@@ -616,7 +771,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "deferred",
+                "announced",
                 "demoted",
                 "errors",
                 "executed",
@@ -626,6 +781,7 @@ mod tests {
                 "heights_unreadable",
                 "max_height",
                 "min_height",
+                "postponed",
                 "replaced",
                 "stale",
                 "stored_proofs_in_window",

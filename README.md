@@ -2,9 +2,9 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.14.0**, and crates.io carries the same version, **0.14.0**; the
+is the tag **v0.15.0**, and crates.io carries the same version, **0.15.0**; the
 repository's Releases page holds a Release per tag. It pins
-**bsv-wallet-toolbox-rs =0.9.0**, **bsv-rs =0.7.0** and **bsv-tracker =0.6.0**;
+**bsv-wallet-toolbox-rs =0.10.0**, **bsv-rs =0.7.0** and **bsv-tracker =0.7.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -12,7 +12,7 @@ repository's Releases page holds a Release per tag. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.14.0 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.15.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -137,8 +137,8 @@ broadcasters at a lock time, the follow-up of a `stale` word (below), and the
 sweep's re-check of an input held locked past its due time.
 
 A reorg is absorbed below the user (the stack's ruling 7 of 2026-10-20,
-`docs/DECISIONS-2026-10-19.md` section 8c). Once per `stale` episode the pass
-reads the transaction's status at the broadcasters (Arcade `GET /tx/{txid}`,
+`docs/DECISIONS-2026-10-19.md` section 8c). Once per `stale` episode one
+follow-up reads the transaction's status at the broadcasters (Arcade `GET /tx/{txid}`,
 classic ARC `GET /v1/tx/{txid}`). A broadcaster that knows it ends the matter,
 its word kept as a hint; when every broadcaster that answered does not know
 it, the transaction is announced once (its stored BEEF: the transaction as
@@ -146,8 +146,15 @@ bytes, its parents with their paths), never a second time in the same episode;
 a refusal the node gave writes the node's verdict (`rejected`, or `conflicted`
 with the competitors it names); no answer at all announces nothing. Load: one
 status read and at most one announce per `stale` word, at most four words a
-pass. A coin whose creator is `stale`, and the status of the action that spent
-into it, are the toolbox's door; this release leaves them at toolbox 0.9.0.
+pass. Under `daemon` the follow-up is the toolbox's monitor's (its reorg and
+review tasks demote the proof and re-ask the courier once, toolbox 0.10.0
+`reask_lost_proof`) and the pass marks the episode `monitor` and makes no read
+of its own; under `serve` and `tracker-tick`, which run no monitor, it is the
+pass's. A coin whose creator is `stale`, and the status of the action that
+spent into it, are the toolbox's door: at toolbox 0.10.0 a proof whose root
+moved is demoted, the action is `unproven` again and `actions` prints it as
+"confirming", its inputs stay allocated to it, its change stays spendable as an
+unproven creator's is, and nothing is released or failed.
 
 Every creator of a coin we hold gets a row (the stack's wallet charter,
 section 0: "About a transaction it believes only the tracker's word: each

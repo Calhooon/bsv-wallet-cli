@@ -278,20 +278,19 @@ pub enum Commands {
         max_chain_checks: usize,
     },
     /// Re-prove stored merkle proofs the chain no longer confirms (after a reorg).
-    /// Compares every stored proof's merkle root in the window with the canonical
-    /// header's and lists the disagreements. Dry-run by default (no storage write).
-    /// With --execute: a provider's validated proof for the canonical block replaces
-    /// the stored one; providers still naming the stored block, or faulting, retain
-    /// it (the monitor retries); only positive evidence (the tracker refutes the
-    /// stored root, two providers answer cleanly "not mined", no provider serves a
-    /// path) demotes it to unproven with its bytes kept. --execute first raises the
-    /// persisted proof gate to tip - 1 when it is closed or below that, and is
-    /// refused when CHAINTRACKS_URL=off (nothing can be refuted without a header
-    /// service).
+    /// Reads the header at every stored proof's height in the window and lists the
+    /// proofs whose root is not the active header's. Dry-run by default (no storage
+    /// write). With --execute, at most four a run (the rest postponed): the header is
+    /// read again and a kept root moves nothing; a provider's path for the active
+    /// block replaces the stored proof; otherwise the proof is demoted and the action
+    /// reads confirming (unproven, its coins kept, nothing released or failed), and
+    /// the courier is asked once, announced only when no broadcaster knows it.
+    /// --execute raises the persisted proof gate to tip - 1, before any re-prove, when it is closed
+    /// or below that, and is refused when CHAINTRACKS_URL=off (no headers to read).
     Reproof {
         /// Only proofs at or above this height (default: the last 288 blocks). The
-        /// window includes the un-aged tip: a replacement there is deferred by the
-        /// proof gate and re-presented by the monitor, never stored early
+        /// window includes the un-aged tip: a replacement there is not stored now,
+        /// so the proof is demoted and the proof pass stores it once aged
         #[arg(long)]
         since_height: Option<u32>,
         /// Every stored proof, whatever its height: one chaintracks read per distinct

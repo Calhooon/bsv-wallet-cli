@@ -79,6 +79,15 @@
 //! (what a coin whose creator is `stale` may do) and the action's status
 //! are the toolbox's.
 //!
+//! One rule, not two: where the toolbox's monitor runs its reorg and review
+//! tasks (the daemon, [`TickOptions::monitor_runs`]), the follow-up of the
+//! episode is the toolbox's (bsv-wallet-toolbox-rs 0.10.0
+//! `reask_lost_proof`, run once right after the demotion that starts the
+//! episode), and this pass marks the row `monitor` and reads no status and
+//! announces nothing. Where no monitor runs (`serve`, `tracker-tick`), the
+//! follow-up is this pass's. Either way one status read and at most one
+//! announce per episode.
+//!
 //! One re-ask is an announce, not a proof request: a transaction a
 //! broadcaster called not final (a forced `gift-claim` before its lock
 //! time) is kept with its BEEF and handed to the broadcasters again at the
@@ -453,7 +462,8 @@ struct TrackedRow {
     verdict: Option<StoredVerdict>,
     /// The follow-up of the current `stale` episode: `read` once the
     /// broadcasters were asked for the transaction's status, `announced`
-    /// once it was handed to them. Cleared when the word leaves `stale`.
+    /// once it was handed to them, `monitor` when the toolbox's monitor
+    /// holds it. Cleared when the word leaves `stale`.
     follow_up: Option<String>,
 }
 
@@ -1073,6 +1083,12 @@ pub struct TickOptions {
     /// of 2026-10-20 19:4xZ: the recheck lives in the crate's step, once,
     /// not in a host). `false` under `serve`, which holds no feed.
     pub feed_held: bool,
+    /// The toolbox's monitor runs its reorg or review task in this process
+    /// (the daemon): a `stale` episode's status read and its one announce
+    /// are the toolbox's (`reask_lost_proof`, after its demotion), and the
+    /// pass makes neither. `false` under `serve` and `tracker-tick`, which
+    /// run no monitor: the pass's own follow-up runs.
+    pub monitor_runs: bool,
 }
 
 impl TickOptions {
@@ -1090,6 +1106,7 @@ impl TickOptions {
             max_asks: env("TRACKER_MAX_ASKS", DEFAULT_MAX_ASKS),
             spend_depth: env("SPEND_DEPTH", DEFAULT_SPEND_DEPTH),
             feed_held: false,
+            monitor_runs: false,
         }
         .floored()
     }
@@ -1149,6 +1166,9 @@ pub struct TickReport {
     pub stale_known: Vec<String>,
     /// `stale` words no broadcaster knew, announced once and taken.
     pub stale_announced: Vec<String>,
+    /// `stale` words whose follow-up is the toolbox's monitor's
+    /// ([`TickOptions::monitor_runs`]): no status read, no announce here.
+    pub stale_to_monitor: Vec<String>,
     /// The node's verdicts written on a refused announce: `txid: word`.
     pub verdicts: Vec<String>,
     /// Faults the host reports: `txid: what failed`.
@@ -1170,6 +1190,7 @@ impl TickReport {
             && self.moved.is_empty()
             && self.stale_known.is_empty()
             && self.stale_announced.is_empty()
+            && self.stale_to_monitor.is_empty()
             && self.verdicts.is_empty()
             && self.faults.is_empty()
     }
@@ -1177,7 +1198,7 @@ impl TickReport {
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} stale followed up ({} known, {} announced, {} verdict(s)), {} fault(s)",
+            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} stale followed up ({} known, {} announced, {} verdict(s), {} the monitor's), {} fault(s)",
             self.tracked,
             self.adopted,
             self.adopted_mined.len() + self.adopted_proof_failed.len(),
@@ -1190,10 +1211,14 @@ impl TickReport {
             self.mined.len(),
             self.no_proof.len(),
             self.moved.len(),
-            self.stale_known.len() + self.stale_announced.len() + self.verdicts.len(),
+            self.stale_known.len()
+                + self.stale_announced.len()
+                + self.verdicts.len()
+                + self.stale_to_monitor.len(),
             self.stale_known.len(),
             self.stale_announced.len(),
             self.verdicts.len(),
+            self.stale_to_monitor.len(),
             self.faults.len(),
         )
     }
@@ -1434,6 +1459,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     follow_up_stale(
         storage,
         services,
+        opts.monitor_runs,
         (&params, &snapshot, now),
         &mut rows,
         &mut states,
@@ -1562,9 +1588,15 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
 /// Load: one status read and at most one announce per `stale` word, for
 /// at most [`REORG_ASKS_PER_PASS`] words a pass; bounded by our own
 /// transactions, never a sweep.
+///
+/// With `monitor_runs` the episode's follow-up is the toolbox's
+/// (`reask_lost_proof` after its demotion): the row is marked `monitor`,
+/// once, and nothing is read or announced here, so the daemon makes one
+/// status read and at most one announce per episode, not two.
 async fn follow_up_stale<V: WalletServices + ?Sized, H: Headers>(
     storage: &StorageSqlx,
     services: &V,
+    monitor_runs: bool,
     (params, headers, observed): (&Params, &H, Timestamp),
     rows: &mut [TrackedRow],
     states: &mut HashMap<TxId, State>,
@@ -1579,6 +1611,11 @@ async fn follow_up_stale<V: WalletServices + ?Sized, H: Headers>(
             continue;
         };
         if !matches!(state.word(), Word::Stale) || row.follow_up.is_some() {
+            continue;
+        }
+        if monitor_runs {
+            row.follow_up = Some("monitor".to_string());
+            report.stale_to_monitor.push(row.txid.clone());
             continue;
         }
         followed += 1;
@@ -2474,6 +2511,7 @@ pub(crate) mod tests {
             max_asks: 20,
             spend_depth: DEFAULT_SPEND_DEPTH,
             feed_held: false,
+            monitor_runs: false,
         }
     }
 

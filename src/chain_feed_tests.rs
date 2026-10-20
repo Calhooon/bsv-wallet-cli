@@ -641,7 +641,8 @@ fn reorg_of_a1(a1_hash: &str, txid: &str) -> Value {
     })
 }
 
-/// The pass's options with the feed held, as the daemon runs it.
+/// The pass's options with the feed held. The daemon also runs the
+/// monitor (`monitor_runs`); these keep the pass's own follow-up.
 fn held() -> TickOptions {
     TickOptions {
         feed_held: true,
@@ -831,6 +832,81 @@ async fn step_4_ii_a_stale_transaction_no_broadcaster_knows_is_announced_once() 
         ("mined".to_string(), Some(902), None)
     );
     assert_eq!(follow_up_of(&storage, &txid).await, None);
+}
+
+/// One rule, not two (ruling 7d (c) with toolbox 0.10.0's
+/// `reask_lost_proof`): in the daemon the toolbox's monitor runs its reorg
+/// and review tasks, which demote the stored proof and re-ask the courier
+/// once. The served pass then makes no status read and no announce for the
+/// `stale` episode, on this pass or the next: one status read and at most
+/// one announce across both. The episode's re-ask for a proof still runs.
+#[tokio::test]
+async fn in_the_daemon_a_stale_episode_is_followed_up_once_by_the_monitor_not_twice() {
+    use bsv_wallet_toolbox::monitor::reorg_ops::{reprove_anchor, LostProofReask, ReproveOutcome};
+    use bsv_wallet_toolbox::storage::ProvenTxAnchor;
+
+    let (storage, txid) = stale_at_900().await;
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .broadcaster_statuses(vec![(
+            "arcade".to_string(),
+            bsv_wallet_toolbox::BroadcastStatus::Seen,
+        )])
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+
+    // The toolbox's stored proof of T on A1 (the fixture's bytes do not
+    // hash to T, so the pass's ingest stored none), as its monitor holds it.
+    let anchor = ProvenTxAnchor {
+        txid: txid.clone(),
+        height: 900,
+        block_hash: checked_hash(&storage, &txid).await,
+        merkle_root: txid.clone(),
+    };
+    sqlx::query(
+        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx) \
+         VALUES (?, 900, 0, ?, ?, X'00', X'01000000')",
+    )
+    .bind(&anchor.txid)
+    .bind(&anchor.block_hash)
+    .bind(&anchor.merkle_root)
+    .execute(storage.pool())
+    .await
+    .unwrap();
+
+    // The monitor's path: the header read finds the root gone, the proof is
+    // demoted, the courier asked once.
+    assert_eq!(
+        reprove_anchor(&storage, &services, &anchor).await,
+        ReproveOutcome::Demoted {
+            reask: LostProofReask::Known
+        }
+    );
+    assert_eq!(services.call_count("get_broadcaster_statuses"), 1);
+
+    // The served pass, as the daemon runs it: the episode is the monitor's.
+    let daemon = TickOptions {
+        monitor_runs: true,
+        ..held()
+    };
+    let report = tick(&storage, &services, &clock(), &daemon).await.unwrap();
+    assert_eq!(report.stale_to_monitor, vec![txid.clone()]);
+    assert!(report.stale_known.is_empty() && report.stale_announced.is_empty());
+    assert_eq!(
+        follow_up_of(&storage, &txid).await.as_deref(),
+        Some("monitor")
+    );
+    let later = FixedClock(clock().0 + 10_000);
+    let report = tick(&storage, &services, &later, &daemon).await.unwrap();
+    assert!(report.stale_to_monitor.is_empty(), "marked once an episode");
+    assert_eq!(
+        services.call_count("get_broadcaster_statuses"),
+        1,
+        "one status read across both"
+    );
+    assert_eq!(services.call_count("post_beef"), 0, "at most one announce");
+    assert_eq!(word(&storage, &txid).await.0, "stale");
 }
 
 /// Step 8's evidence through the announce, ruling 7d (c): no broadcaster
