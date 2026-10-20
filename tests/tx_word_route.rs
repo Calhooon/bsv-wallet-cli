@@ -19,6 +19,7 @@ const PENDING: &str = "222222222222222222222222222222222222222222222222222222222
 const UNKNOWN: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const COIN: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 const ROOT: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+const STALE: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 
 async fn served() -> (String, Client, TempDir) {
     let tmp = TempDir::new().unwrap();
@@ -54,6 +55,21 @@ async fn served() -> (String, Client, TempDir) {
             .await
             .unwrap();
     }
+    // A transaction a reorg took out of its block (ruling 7b (b)): `stale`,
+    // its root gone, its hints `accepted` then `seen`.
+    sqlx::query("INSERT INTO tracker_states (txid, word, hints, reask) VALUES (?, 'stale', ?, ?)")
+        .bind(STALE)
+        .bind(
+            json!([
+                {"source": "arcade|accepted", "status": "accepted", "observed": 1},
+                {"source": "arcade|seen", "status": "seen", "observed": 2},
+            ])
+            .to_string(),
+        )
+        .bind("reorg@900")
+        .execute(&pool)
+        .await
+        .unwrap();
     let now = chrono::Utc::now();
     sqlx::query(
         "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
@@ -151,6 +167,23 @@ async fn the_route_serves_the_stored_word_and_its_evidence() {
     assert_eq!(status, 404, "{unknown}");
     let (status, _) = get(&client, format!("{base}/tx/nothex")).await;
     assert_eq!(status, 400);
+}
+
+/// Ruling 7b (b) of 2026-10-20 20:1xZ (bsv-stack-lean
+/// `docs/DECISIONS-2026-10-19.md` section 8c), the draft
+/// `corpus/scenarios/2026-10-20-reorg-below-the-user.md` step 3: a `stale`
+/// word is served as `stale` with its tier (the word its hints give, its
+/// status before the proof: "confirming") and the re-ask the reorg left.
+#[tokio::test]
+async fn the_route_serves_a_stale_word_with_its_tier_and_its_reask() {
+    let (base, client, _tmp) = served().await;
+    let (status, stale) = get(&client, format!("{base}/tx/{STALE}")).await;
+    assert_eq!(status, 200, "{stale}");
+    assert_eq!(
+        stale,
+        json!({"txid": STALE, "word": "stale", "tier": "seen", "height": null,
+               "reask": "reorg@900", "evidence": null})
+    );
 }
 
 #[tokio::test]

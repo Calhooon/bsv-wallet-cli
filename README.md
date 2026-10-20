@@ -82,11 +82,17 @@ are defined in [src](src); [GIFT.md](GIFT.md) documents gift flows and limits.
 (required, no default; `off` has no feed). On start it replays from its stored
 cursor (0 at birth) through `GET /events?since=<cursor>` until `hasMore` is
 false, then holds `GET /events/stream?since=<cursor>`. Every envelope goes
-through the tracker's decoder and `Tracker::on_chain` with the daemon's
-headers: a reorg turns the words of the transactions mined at or above its
-height `stale` and asks for a new proof; a fork or a split marks them suspect
-and moves no word; a tip or a resolved split rechecks the marked ones against
-the headers; a freeze writes its outpoint to the frozen record,
+through the tracker's decoder and `Tracker::on_chain` with the new branch's
+headers. A reorg names the transactions mined at or above its fork height, and
+the tracker rechecks each by its stored proof's root against the active header
+at its height (bsv-tracker 0.7.0, the stack's ruling (5) of 2026-10-20): the
+same root, the word stands and nothing is fetched; a root that is gone, the
+word is `stale` with the re-ask `reorg@<forkHeight>`, the only word the pass
+asks a proof for; a height where the header service still answers a header
+the reorg deactivated has no answer, so the word stands suspect with the
+re-ask `recheck` until the next tip. A fork or a split marks them suspect and
+moves no word; a tip or a resolved split rechecks the marked ones against the
+headers; a freeze writes its outpoint to the frozen record,
 `frozen_outpoints` (txid, vout, the envelope's cursor, when), which the spend
 guard reads (never offered; nothing here clears a row, the charter's R6). The
 cursor is stored after each delivery, in the same transaction as the tracker's
@@ -120,10 +126,28 @@ sweep and the spend guard. Under `serve` it drains the wallet's Arcade SSE
 stream before the pass; under `daemon` the monitor holds that stream and the pass drains
 none. Its load: it reads the store and asks the header service for the tip and
 the header at each height a stored path names (one read per height per pass).
-Beyond that it asks only when a row is due: a merkle path for a re-ask that is
-due (at most `TRACKER_MAX_ASKS`, default 20, per pass, through the toolbox's
-couriers, below), a re-announce to the broadcasters at a lock time, and the
+Under `daemon`, which holds the feed, the pass reads no mined row again: the
+recheck of a mined word is the tracker's own step on each chain event. Under
+`serve`, which holds no feed, it keeps the last twelve tips and reads the mined
+rows at or above a header that moved. Beyond that it asks only when a row is
+due: a merkle path for a re-ask that is due (at most `TRACKER_MAX_ASKS`,
+default 20, per pass, the words whose root moved ahead of the rest and at most
+four of them, through the toolbox's couriers, below), a re-announce to the
+broadcasters at a lock time, the follow-up of a `stale` word (below), and the
 sweep's re-check of an input held locked past its due time.
+
+A reorg is absorbed below the user (the stack's ruling 7 of 2026-10-20,
+`docs/DECISIONS-2026-10-19.md` section 8c). Once per `stale` episode the pass
+reads the transaction's status at the broadcasters (Arcade `GET /tx/{txid}`,
+classic ARC `GET /v1/tx/{txid}`). A broadcaster that knows it ends the matter,
+its word kept as a hint; when every broadcaster that answered does not know
+it, the transaction is announced once (its stored BEEF: the transaction as
+bytes, its parents with their paths), never a second time in the same episode;
+a refusal the node gave writes the node's verdict (`rejected`, or `conflicted`
+with the competitors it names); no answer at all announces nothing. Load: one
+status read and at most one announce per `stale` word, at most four words a
+pass. A coin whose creator is `stale`, and the status of the action that spent
+into it, are the toolbox's door; this release leaves them at toolbox 0.9.0.
 
 Every creator of a coin we hold gets a row (the stack's wallet charter,
 section 0: "About a transaction it believes only the tracker's word: each
@@ -205,7 +229,9 @@ headers: no chain scan, no explorer.
 tracker's stored word for one transaction: `{txid, word, height, reask,
 evidence}`, where `evidence` is, for `mined`, the stored proof's `root` and
 `height` (the toolbox's `proven_txs`), else `null`; 404 when the tracker holds
-no word for it. A view; nothing is decided from it. The MCP tool `tx_word`
+no word for it. A `stale` word adds `tier`, the word its hints give
+(`announced` or `seen`: its status before the proof, which an app reads as
+"confirming"), and its `reask` is the one the reorg left (`reorg@900`). A view; nothing is decided from it. The MCP tool `tx_word`
 reads it.
 
 ## Explorer calls (rule 28)

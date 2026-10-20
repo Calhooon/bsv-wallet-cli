@@ -11,8 +11,10 @@
 //! 2. Then hold the stream, `GET /events/stream?since=<cursor>` (SSE: an
 //!    `id:` per envelope, comment heartbeats).
 //! 3. Every envelope goes through `bsv_tracker::decode_envelope` and
-//!    `Tracker::on_chain` with the daemon's headers
-//!    ([`tracker_host::deliver_chain_event`]); the cursor is stored after
+//!    `Tracker::on_chain` with the new branch's headers: the header
+//!    service's answer, except a height where it still gives a header the
+//!    reorg deactivated ([`tracker_host::deliver_chain_event`]; bsv-tracker
+//!    0.7.0, ruling (5) of 2026-10-20); the cursor is stored after
 //!    each delivery, in the same transaction as the rows it moved, in the
 //!    database the tracker's rows live in (`tracker_meta`, key
 //!    `feed_cursor`: one row, one column).
@@ -36,7 +38,9 @@
 //! answer, a 5xx, a 429) is retried after a pause that doubles from one
 //! second to five minutes. The header service is read beyond the feed only
 //! when an envelope names a tracked transaction: its tip and the heights of
-//! the named transactions' proofs.
+//! the named transactions' proofs. With the feed held, the daemon's pass
+//! keeps no ring of tips and rereads no mined row: a proof is fetched only
+//! for a word whose root the event's recheck found gone.
 
 use std::time::Duration;
 

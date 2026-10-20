@@ -608,3 +608,258 @@ fn an_sse_message_is_read_with_its_comments_dropped() {
         Some("a\nb".into())
     );
 }
+
+// ---------------------------------------------------------------------------
+// The reorg below the user (bsv-stack-lean
+// `corpus/scenarios/2026-10-20-reorg-below-the-user.md`; rulings (5) of
+// 2026-10-20 19:4xZ and 7 of 20:1xZ, `docs/RULINGS-2026-10-12.md`)
+// ---------------------------------------------------------------------------
+
+/// The hash the wallet's row holds for T's checked header.
+async fn checked_hash(storage: &StorageSqlx, txid: &str) -> String {
+    sqlx::query_scalar("SELECT header_hash FROM tracker_states WHERE txid = ?")
+        .bind(txid)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap()
+}
+
+async fn follow_up_of(storage: &StorageSqlx, txid: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT follow_up FROM tracker_states WHERE txid = ?")
+        .bind(txid)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap()
+}
+
+/// The reorg of the draft's step 3 on the feed: `reorg(900, 1, [A1], B2)`.
+fn reorg_of_a1(a1_hash: &str, txid: &str) -> Value {
+    json!({
+        "v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
+        "deactivatedHeaders": [eh(900, a1_hash, &"b0".repeat(32), txid)],
+        "newTip": eh(901, &"b3".repeat(32), &"b2".repeat(32), &"ee".repeat(32)),
+    })
+}
+
+/// The pass's options with the feed held, as the daemon runs it.
+fn held() -> TickOptions {
+    TickOptions {
+        feed_held: true,
+        ..opts()
+    }
+}
+
+/// T `stale` with `reorg@900` after the draft's step 3: mined at 900 on
+/// A1, then the reorg on the feed with the header service on B1.
+async fn stale_at_900() -> (StorageSqlx, String) {
+    let (storage, services, txid) = mined_at_900().await;
+    let a1 = checked_hash(&storage, &txid).await;
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    let (base, _) = stub(Script {
+        pages: [page_of(&[(1, reorg_of_a1(&a1, &txid))], false)].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("stale".to_string(), None, Some("reorg@900".to_string()))
+    );
+    (storage, txid)
+}
+
+/// Step 3, ruling (5): the reorg arrives before the header service answers
+/// the new branch (it still gives A1 at 900). The crate's recheck has no
+/// header of the new branch to read, so T stands suspect with
+/// `Reask::Recheck`, never `mined` on A1's header and never `stale` by the
+/// height alone. The next tip, with the service on B1, rechecks it: A1's
+/// root is gone, T is `stale` with `reorg@900`.
+#[tokio::test]
+async fn step_3_a_reorg_before_the_service_moves_leaves_the_word_suspect_until_the_next_tip() {
+    let (storage, services, txid) = mined_at_900().await;
+    let a1 = checked_hash(&storage, &txid).await;
+    let (base, _) = stub(Script {
+        pages: [page_of(&[(1, reorg_of_a1(&a1, &txid))], false)].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(900), Some("recheck".to_string()))
+    );
+
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    let tip = json!({
+        "v": 1, "kind": "tip", "height": 902, "hash": "b4".repeat(32),
+        "time": 1_700_000_000u32,
+        "header": eh(902, &"b4".repeat(32), &"b3".repeat(32), &"ef".repeat(32)),
+    });
+    let (base, _) = stub(Script {
+        pages: [page_of(&[(2, tip)], false)].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("stale".to_string(), None, Some("reorg@900".to_string()))
+    );
+}
+
+/// Ruling (5): a reorg whose new block at 900 still carries T's root (B1
+/// holds the same transactions under another header) moves nothing: T is
+/// `mined` at 900 with no re-ask, and the daemon's pass, holding the feed,
+/// asks no proof and reads no ring.
+#[tokio::test]
+async fn a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing() {
+    let (storage, services, txid) = mined_at_900().await;
+    let a1 = checked_hash(&storage, &txid).await;
+    services.set_header_for_height(header(900, &txid, 7));
+    let (base, _) = stub(Script {
+        pages: [page_of(&[(1, reorg_of_a1(&a1, &txid))], false)].into(),
+        ..Script::default()
+    })
+    .await;
+    follow(&base, &storage, &services).await;
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(900), None)
+    );
+
+    services.reset_history();
+    let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
+    assert_eq!(report.asked, 0);
+    assert_eq!(report.tracked, 0, "{}", report.summary());
+    assert_eq!(report.moved_from, None);
+    assert_eq!(services.call_count("get_merkle_path"), 0);
+}
+
+/// Step 4 (i), ruling 7d (c): T is `stale`; the pass reads its status at
+/// the broadcaster once, the broadcaster knows it (seen), and nothing is
+/// announced. T stays `stale` with `reorg@900` (its root moved, so it is
+/// asked for a proof), now on the tier `seen`. The next pass of the same
+/// episode reads no status again.
+#[tokio::test]
+async fn step_4_i_a_broadcaster_that_knows_the_stale_transaction_is_not_told_again() {
+    let (storage, txid) = stale_at_900().await;
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .broadcaster_statuses(vec![(
+            "arcade".to_string(),
+            bsv_wallet_toolbox::BroadcastStatus::Seen,
+        )])
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+
+    let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
+    println!("{}", report.summary());
+    assert_eq!(report.stale_known, vec![txid.clone()]);
+    assert!(report.stale_announced.is_empty());
+    assert_eq!(services.call_count("get_broadcaster_statuses"), 1);
+    assert_eq!(services.call_count("post_beef"), 0);
+    assert_eq!(
+        services.call_count("get_merkle_path"),
+        1,
+        "the re-ask of a moved root"
+    );
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("stale".to_string(), None, Some("reorg@900".to_string()))
+    );
+    assert_eq!(
+        crate::tracker_host::stored_tier(&storage, &txid)
+            .await
+            .unwrap(),
+        Some("seen")
+    );
+
+    let later = FixedClock(clock().0 + 10_000);
+    tick(&storage, &services, &later, &held()).await.unwrap();
+    assert_eq!(services.call_count("get_broadcaster_statuses"), 1);
+    assert_eq!(services.call_count("post_beef"), 0);
+}
+
+/// Step 4 (ii) and step 7, ruling 7d (c): no broadcaster knows the `stale`
+/// T, so it is announced once (its stored BEEF); a later pass of the same
+/// episode announces nothing. Step 7: T's new path at 902 checks, T is
+/// `mined` at 902 and the episode's mark is gone.
+#[tokio::test]
+async fn step_4_ii_a_stale_transaction_no_broadcaster_knows_is_announced_once() {
+    let (storage, txid) = stale_at_900().await;
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .broadcaster_statuses(vec![(
+            "arcade".to_string(),
+            bsv_wallet_toolbox::BroadcastStatus::Unknown,
+        )])
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+
+    let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
+    println!("{}", report.summary());
+    assert_eq!(report.stale_announced, vec![txid.clone()]);
+    assert_eq!(services.call_count("post_beef"), 1);
+    assert_eq!(
+        follow_up_of(&storage, &txid).await.as_deref(),
+        Some("announced")
+    );
+    assert_eq!(word(&storage, &txid).await.0, "stale");
+
+    let later = FixedClock(clock().0 + 10_000);
+    tick(&storage, &services, &later, &held()).await.unwrap();
+    assert_eq!(services.call_count("get_broadcaster_statuses"), 1);
+    assert_eq!(
+        services.call_count("post_beef"),
+        1,
+        "never a second announce"
+    );
+
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(Some(path_of(&txid, 902))))
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_header_for_height(header(902, &txid, 0));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+    let later = FixedClock(clock().0 + 100_000);
+    let report = tick(&storage, &services, &later, &held()).await.unwrap();
+    assert_eq!(report.mined, vec![txid.clone()]);
+    assert_eq!(
+        word(&storage, &txid).await,
+        ("mined".to_string(), Some(902), None)
+    );
+    assert_eq!(follow_up_of(&storage, &txid).await, None);
+}
+
+/// Step 8's evidence through the announce, ruling 7d (c): no broadcaster
+/// knows the `stale` T, and the one announce is refused by the node as a
+/// double spend naming X. The refusal writes the node's verdict: T is
+/// `conflicted([X])`, and the word stands on the next load.
+#[tokio::test]
+async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
+    let (storage, txid) = stale_at_900().await;
+    let x = "d9".repeat(32);
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .broadcaster_statuses(vec![(
+            "arcade".to_string(),
+            bsv_wallet_toolbox::BroadcastStatus::Unknown,
+        )])
+        .post_beef_double_spend(&txid, &x)
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+
+    let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
+    println!("{}", report.summary());
+    assert_eq!(report.verdicts, vec![format!("{txid}: conflicted")]);
+    assert_eq!(services.call_count("post_beef"), 1);
+    assert_eq!(word(&storage, &txid).await.0, "conflicted");
+
+    let later = FixedClock(clock().0 + 10_000);
+    tick(&storage, &services, &later, &held()).await.unwrap();
+    assert_eq!(word(&storage, &txid).await.0, "conflicted");
+    assert_eq!(services.call_count("post_beef"), 1);
+}
