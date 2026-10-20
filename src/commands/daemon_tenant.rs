@@ -97,9 +97,10 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // The header service's chain-event feed: one stream, one stored
     // cursor, every envelope to the tracker (`chain_feed`). `off` has no
     // header service and so no feed.
-    if let Some(feed_url) =
-        services_env::chaintracks_url_for(std::env::var("CHAINTRACKS_URL").ok().as_deref())?
-    {
+    let feed_url =
+        services_env::chaintracks_url_for(std::env::var("CHAINTRACKS_URL").ok().as_deref())?;
+    let feed_held = feed_url.is_some();
+    if let Some(feed_url) = feed_url {
         let feed_storage = storage_arc.clone();
         let feed_services = services_arc.clone();
         eprintln!("[{port}] Chain-event feed: {feed_url}/events/stream");
@@ -164,9 +165,13 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // adopted from its stored proof, the re-asks that are due), the sweep
     // and the spend guard, every `BROADCAST_RECONCILE_INTERVAL_SECS`
     // (default 60; `BROADCAST_RECONCILE=0` turns it off). No SSE drain
-    // here: the monitor holds Arcade's stream. The task lives as long as
-    // the process.
-    let _served = crate::broadcast_reconcile::spawn_served_loop(wallet_state.clone(), None);
+    // here: the monitor holds Arcade's stream. With the feed held, the pass
+    // keeps no ring of tips: a reorg reaches the mined words through the
+    // feed and the crate's own recheck, and the pass asks a proof only for
+    // a word whose root moved (ruling (5)). The task lives as long as the
+    // process.
+    let _served =
+        crate::broadcast_reconcile::spawn_served_loop(wallet_state.clone(), None, feed_held);
 
     // Periodic UTXO count check + auto-reconcile abandoned txs (#18, THE
     // RELEASE RULE 2026-08-29) — per tenant, same knobs as daemon.

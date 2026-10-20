@@ -36,9 +36,15 @@
 //! never asks a chain index. It loads the rows that are not yet mined, feeds
 //! the new hints, ticks the clock, and runs the re-asks that are due: one
 //! proof request for one transaction, with a doubling pause between two
-//! requests for the same transaction. A mined row is read again only when
-//! the header at or below its height moved (the last twelve tips are kept
-//! to see that) or when a spend names it ([`spend_guard`]).
+//! requests for the same transaction. A word whose root moved
+//! (`Reask::Reorg`) is asked ahead of the rest, at most [`REORG_ASKS_PER_PASS`] a pass.
+//! Under the daemon, which holds the header service's feed, a mined row is
+//! read again only when a chain event names it or a spend names it
+//! ([`spend_guard`]): the recheck of a mined word against the headers is
+//! the crate's own step, once (bsv-tracker 0.7.0, ruling (5) of 2026-10-20
+//! 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`). Under `serve`,
+//! which holds no feed, the pass keeps the last twelve tips and reads the
+//! mined rows at or above a header that moved.
 //!
 //! # What the header service pushes
 //!
@@ -47,11 +53,31 @@
 //! (the mined rows at or above a fork, reorg or split height, the rows
 //! marked by an earlier event for a tip, the rows on an invalidated
 //! block's hash) are loaded into a [`Tracker`], and `Tracker::on_chain`
-//! moves their words. An event that left a row anything but a plain
-//! checked `mined` is kept on the row as one more input to replay (the
-//! `chain` column), so a `stale` or a suspect mark survives the next load;
-//! a new proof, or a stored path dropped because it no longer checks,
-//! clears it. The cursor is stored in the same transaction.
+//! rechecks each against the new branch's headers by its stored root. A
+//! word whose root is still the active header's at its height stands, its
+//! marks cleared, and nothing is fetched; a word whose root is gone is
+//! `stale` with `Reask::Reorg`, the only one the pass asks a proof for; a
+//! height where the service still answers a header the reorg deactivated
+//! has no answer, so the word stands suspect with `Reask::Recheck` until
+//! the next tip. An event that left a row anything but a plain checked
+//! `mined` is kept on the row as one more input to replay (the `chain`
+//! column), and the stored proof is replayed against the header the reorg
+//! took away, so a `stale` or a suspect mark survives the next load; a new
+//! proof, or a stored path dropped because it no longer checks, clears it.
+//! The cursor is stored in the same transaction.
+//!
+//! # A `stale` word at the broadcasters
+//!
+//! A reorg is absorbed below the user (ruling 7 of 2026-10-20 20:1xZ,
+//! bsv-stack-lean `docs/DECISIONS-2026-10-19.md` section 8c): a `stale`
+//! word is served as `stale` with its tier, the word its hints give (read
+//! as "confirming"), and its re-ask. Once per `stale` episode the pass
+//! reads the transaction's status at the broadcasters; one that knows it
+//! ends the matter, and only when every one that answered does not know it
+//! is it announced, once ([`REORG_ASKS_PER_PASS`] words a pass at most). A
+//! refusal the node gave writes the node's verdict on the row. The door
+//! (what a coin whose creator is `stale` may do) and the action's status
+//! are the toolbox's.
 //!
 //! One re-ask is an announce, not a proof request: a transaction a
 //! broadcaster called not final (a forced `gift-claim` before its lock
@@ -62,12 +88,12 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
 
 use anyhow::Result;
-use bsv_sdk::transaction::MerklePath;
+use bsv_sdk::transaction::{Beef, MerklePath};
 use bsv_sdk::wallet::{InternalizeActionArgs, WalletInterface};
 use bsv_tracker::{
     decode_envelope, ChainEnvelope, ChainEvent, CheckError, Clock, Evidence, Header, HeaderError,
-    Headers, Height, Hint, HintSource, HintStatus, HostAction, Input, Params, Proof, ProofFetcher,
-    Reask, State, Timestamp, Tracker, TxId, Word,
+    Headers, Height, Hint, HintSource, HintStatus, HostAction, Input, NodeVerdict, Params, Proof,
+    ProofFetcher, Reask, State, Timestamp, Tracker, TxId, Word,
 };
 use bsv_wallet_toolbox::services::PostBeefResult;
 use bsv_wallet_toolbox::{BroadcastStatus, StorageSqlx, WalletServices};
@@ -86,8 +112,12 @@ const MAX_BACKOFF_DOUBLINGS: u32 = 6;
 /// A transaction asked this many times in a row with no proof is not asked
 /// again until a new hint names it (about five days at the default age).
 const MAX_ASKS_PER_TX: u32 = 16;
-/// Recent tips kept to see a moved header.
+/// Recent tips kept to see a moved header (without the feed).
 const TIP_RING: usize = 12;
+/// Words whose root moved (`Reask::Reorg`) asked for a proof, and
+/// followed up at the broadcasters, per pass at most: a few, the pacing
+/// the host's (ruling (5); the bsv-tracker 0.7.0 migration note).
+pub const REORG_ASKS_PER_PASS: usize = 4;
 /// Default spend depth (`SPEND_DEPTH`), and its floor: a coin is offered
 /// when the block holding its transaction is at or below the tip.
 pub const DEFAULT_SPEND_DEPTH: Height = 1;
@@ -418,6 +448,58 @@ struct TrackedRow {
     /// `mined` (stale, or suspect), oldest first, as their envelopes.
     /// Replayed after the proof on every load.
     chain: Vec<String>,
+    /// The node's verdict, written when a broadcaster refused the one
+    /// announce of a `stale` episode (ruling 7d (c)). Replayed last.
+    verdict: Option<StoredVerdict>,
+    /// The follow-up of the current `stale` episode: `read` once the
+    /// broadcasters were asked for the transaction's status, `announced`
+    /// once it was handed to them. Cleared when the word leaves `stale`.
+    follow_up: Option<String>,
+}
+
+/// A node's verdict as the row keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum StoredVerdict {
+    Rejected { reason: String },
+    Conflicted { competitors: Vec<TxId> },
+}
+
+impl StoredVerdict {
+    fn of(verdict: &NodeVerdict) -> Self {
+        match verdict {
+            NodeVerdict::Rejected { reason } => Self::Rejected {
+                reason: reason.clone(),
+            },
+            NodeVerdict::Conflicted { competitors } => Self::Conflicted {
+                competitors: competitors.clone(),
+            },
+        }
+    }
+
+    fn verdict(&self) -> NodeVerdict {
+        match self {
+            Self::Rejected { reason } => NodeVerdict::Rejected {
+                reason: reason.clone(),
+            },
+            Self::Conflicted { competitors } => NodeVerdict::Conflicted {
+                competitors: competitors.clone(),
+            },
+        }
+    }
+}
+
+/// No headers: the view for replaying the hints alone.
+struct NoHeaders;
+
+impl Headers for NoHeaders {
+    fn header_at(&self, _height: Height) -> std::result::Result<Option<Header>, HeaderError> {
+        Ok(None)
+    }
+
+    fn tip_height(&self) -> std::result::Result<Height, HeaderError> {
+        Ok(0)
+    }
 }
 
 impl TrackedRow {
@@ -433,7 +515,35 @@ impl TrackedRow {
             reannounce_at: None,
             on_accept: None,
             chain: vec![],
+            verdict: None,
+            follow_up: None,
         }
+    }
+
+    /// The headers the stored reorgs deactivated, by height (the latest
+    /// event's header at a height it shares with an earlier one).
+    fn deactivated(&self) -> BTreeMap<Height, Header> {
+        self.chain_events()
+            .iter()
+            .flat_map(|event| deactivated_of(event).into_iter())
+            .collect()
+    }
+
+    /// The word the hints alone give (`built`, `announced`, `seen`, ...):
+    /// the tier a `stale` word stands on, its status before its proof
+    /// (ruling 7b (b): the payment reads "confirming").
+    fn tier(&self) -> &'static str {
+        let params = Params {
+            age_threshold: DEFAULT_AGE_SECS,
+        };
+        let mut state = State::new(self.txid.clone());
+        if self.built {
+            let _ = state.step(&params, &NoHeaders, Input::Host(HostAction::Build));
+        }
+        for hint in &self.hints {
+            let _ = state.step(&params, &NoHeaders, Input::Hint(hint.hint()));
+        }
+        word_label(state.word())
     }
 
     /// The stored chain events, decoded. They were decoded once before
@@ -475,20 +585,43 @@ impl TrackedRow {
     }
 
     /// Feed the stored inputs to `tracker`, as [`TrackedRow::replay`] feeds
-    /// them to one state.
-    fn replay_into<H: Headers>(&self, tracker: &mut Tracker, headers: &H) {
+    /// them to one state; `deactivated` adds the headers the event being
+    /// delivered takes away.
+    fn replay_into<H: Headers>(
+        &self,
+        tracker: &mut Tracker,
+        headers: &H,
+        deactivated: &BTreeMap<Height, Header>,
+    ) {
+        let mut gone = self.deactivated();
+        gone.extend(deactivated.iter().map(|(h, header)| (*h, header.clone())));
+        let old = OldBranch {
+            live: headers,
+            deactivated: &gone,
+        };
+        let new = NewBranch {
+            live: headers,
+            deactivated: &gone,
+        };
         tracker.track(self.txid.clone());
         if self.built {
-            let _ = tracker.apply(&self.txid, headers, Input::Host(HostAction::Build));
+            let _ = tracker.apply(&self.txid, &new, Input::Host(HostAction::Build));
         }
         for hint in &self.hints {
-            let _ = tracker.apply(&self.txid, headers, Input::Hint(hint.hint()));
+            let _ = tracker.apply(&self.txid, &new, Input::Hint(hint.hint()));
         }
         if let Some(Ok(proof)) = self.proof() {
-            let _ = tracker.apply(&self.txid, headers, Input::Evidence(Evidence::Proof(proof)));
+            let _ = tracker.apply(&self.txid, &old, Input::Evidence(Evidence::Proof(proof)));
         }
         for event in self.chain_events() {
-            let _ = tracker.apply(&self.txid, headers, Input::Evidence(Evidence::Chain(event)));
+            let _ = tracker.apply(&self.txid, &new, Input::Evidence(Evidence::Chain(event)));
+        }
+        if let Some(verdict) = &self.verdict {
+            let _ = tracker.apply(
+                &self.txid,
+                &new,
+                Input::Evidence(Evidence::Verdict(verdict.verdict())),
+            );
         }
     }
 
@@ -506,25 +639,45 @@ impl TrackedRow {
     }
 
     /// Replay the stored inputs. The stored path is checked against
-    /// `headers` like any other proof; a path that no longer checks leaves
-    /// the hint-tier word and a re-ask, and is returned as the fault.
+    /// `headers` like any other proof, except at a height a stored reorg
+    /// deactivated, where it is checked against the header it was checked
+    /// against then, so the reorg's recheck runs again on the new branch
+    /// and a `stale` word stands with its `Reask::Reorg` until a new proof.
+    /// A path that no longer checks leaves the hint-tier word and a re-ask,
+    /// and is returned as the fault.
     fn replay<H: Headers>(&self, params: &Params, headers: &H) -> (State, Option<CheckError>) {
+        let gone = self.deactivated();
+        let old = OldBranch {
+            live: headers,
+            deactivated: &gone,
+        };
+        let new = NewBranch {
+            live: headers,
+            deactivated: &gone,
+        };
         let mut state = State::new(self.txid.clone());
         if self.built {
-            let _ = state.step(params, headers, Input::Host(HostAction::Build));
+            let _ = state.step(params, &new, Input::Host(HostAction::Build));
         }
         for hint in &self.hints {
-            let _ = state.step(params, headers, Input::Hint(hint.hint()));
+            let _ = state.step(params, &new, Input::Hint(hint.hint()));
         }
         let fault = match self.proof() {
             Some(Ok(proof)) => state
-                .step(params, headers, Input::Evidence(Evidence::Proof(proof)))
+                .step(params, &old, Input::Evidence(Evidence::Proof(proof)))
                 .err(),
             Some(Err(fault)) => Some(fault),
             None => None,
         };
         for event in self.chain_events() {
-            let _ = state.step(params, headers, Input::Evidence(Evidence::Chain(event)));
+            let _ = state.step(params, &new, Input::Evidence(Evidence::Chain(event)));
+        }
+        if let Some(verdict) = &self.verdict {
+            let _ = state.step(
+                params,
+                &new,
+                Input::Evidence(Evidence::Verdict(verdict.verdict())),
+            );
         }
         (state, fault)
     }
@@ -592,11 +745,32 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
             .execute(storage.pool())
             .await?;
     }
+    // Added with the follow-up of a `stale` word (0.14.0, ruling 7d (c)).
+    for (column, sql) in [
+        (
+            "verdict",
+            "ALTER TABLE tracker_states ADD COLUMN verdict TEXT",
+        ),
+        (
+            "follow_up",
+            "ALTER TABLE tracker_states ADD COLUMN follow_up TEXT",
+        ),
+    ] {
+        let has: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = ?",
+        )
+        .bind(column)
+        .fetch_one(storage.pool())
+        .await?;
+        if has == 0 {
+            sqlx::query(sql).execute(storage.pool()).await?;
+        }
+    }
     Ok(())
 }
 
-const ROW_COLUMNS: &str =
-    "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, reannounce_at, on_accept, chain";
+const ROW_COLUMNS: &str = "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, \
+     reannounce_at, on_accept, chain, verdict, follow_up";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     let hints: String = row.get("hints");
@@ -616,6 +790,10 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
             .map(|t| t.max(0) as Timestamp),
         on_accept: row.get("on_accept"),
         chain: serde_json::from_str(&chain).unwrap_or_default(),
+        verdict: row
+            .get::<Option<String>, _>("verdict")
+            .and_then(|v| serde_json::from_str(&v).ok()),
+        follow_up: row.get("follow_up"),
     }
 }
 
@@ -654,14 +832,15 @@ async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     sqlx::query(
         "INSERT INTO tracker_states \
             (txid, built, hints, bump, word, height, header_hash, reask, asks, next_ask_at, \
-             reannounce_beef, reannounce_at, on_accept, chain, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             reannounce_beef, reannounce_at, on_accept, chain, verdict, follow_up, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(txid) DO UPDATE SET built = excluded.built, hints = excluded.hints, \
             bump = excluded.bump, word = excluded.word, height = excluded.height, \
             header_hash = excluded.header_hash, reask = excluded.reask, asks = excluded.asks, \
             next_ask_at = excluded.next_ask_at, reannounce_beef = excluded.reannounce_beef, \
             reannounce_at = excluded.reannounce_at, on_accept = excluded.on_accept, \
-            chain = excluded.chain, updated_at = excluded.updated_at",
+            chain = excluded.chain, verdict = excluded.verdict, follow_up = excluded.follow_up, \
+            updated_at = excluded.updated_at",
     )
     .bind(&row.txid)
     .bind(row.built as i64)
@@ -677,6 +856,18 @@ async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     .bind(row.reannounce_at.map(|t| t as i64))
     .bind(&row.on_accept)
     .bind(serde_json::to_string(&row.chain)?)
+    .bind(
+        row.verdict
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+    )
+    // The follow-up belongs to one `stale` episode.
+    .bind(
+        row.follow_up
+            .as_deref()
+            .filter(|_| matches!(state.word(), Word::Stale)),
+    )
     .bind(now as i64)
     .execute(executor)
     .await?;
@@ -702,6 +893,24 @@ pub async fn stored_word(
             r.get("reask"),
         )
     }))
+}
+
+/// The tier a stored `stale` word stands on: the word its hints alone give
+/// (`announced`, `seen`), its status before its proof. `None` for any
+/// other word, and for a txid the tracker holds no row for. Ruling 7b (b)
+/// of 2026-10-20 20:1xZ (bsv-stack-lean `docs/DECISIONS-2026-10-19.md`
+/// section 8c): a payment whose transaction went `stale` returns to its
+/// pre-proof status and reads "confirming".
+pub async fn stored_tier(storage: &StorageSqlx, txid: &str) -> Result<Option<&'static str>> {
+    ensure_tables(storage).await?;
+    let word: Option<String> = sqlx::query_scalar("SELECT word FROM tracker_states WHERE txid = ?")
+        .bind(txid.to_ascii_lowercase())
+        .fetch_optional(storage.pool())
+        .await?;
+    if word.as_deref() != Some("stale") {
+        return Ok(None);
+    }
+    Ok(load_row(storage, txid).await?.map(|row| row.tier()))
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +1066,13 @@ pub struct TickOptions {
     /// reads as 1. Read by [`spend_guard`], where the host decides whether
     /// a coin may be spent.
     pub spend_depth: Height,
+    /// The daemon holds the header service's chain-event feed
+    /// ([`crate::chain_feed`]): a chain event reaches the tracked rows
+    /// through [`deliver_chain_event`] and the crate's own recheck, so the
+    /// pass keeps no ring of tips and reads no mined row again (ruling (5)
+    /// of 2026-10-20 19:4xZ: the recheck lives in the crate's step, once,
+    /// not in a host). `false` under `serve`, which holds no feed.
+    pub feed_held: bool,
 }
 
 impl TickOptions {
@@ -873,6 +1089,7 @@ impl TickOptions {
             age_threshold: env("TRACKER_AGE_SECS", DEFAULT_AGE_SECS).max(1),
             max_asks: env("TRACKER_MAX_ASKS", DEFAULT_MAX_ASKS),
             spend_depth: env("SPEND_DEPTH", DEFAULT_SPEND_DEPTH),
+            feed_held: false,
         }
         .floored()
     }
@@ -927,6 +1144,13 @@ pub struct TickReport {
     /// that holds the wallet runs [`record_accepted`].
     #[serde(skip)]
     pub on_accept: Vec<(String, String)>,
+    /// `stale` words a broadcaster knows, read once this episode: no
+    /// announce (ruling 7d (c)).
+    pub stale_known: Vec<String>,
+    /// `stale` words no broadcaster knew, announced once and taken.
+    pub stale_announced: Vec<String>,
+    /// The node's verdicts written on a refused announce: `txid: word`.
+    pub verdicts: Vec<String>,
     /// Faults the host reports: `txid: what failed`.
     pub faults: Vec<String>,
     /// What the wallet's storage did with each checked proof.
@@ -944,13 +1168,16 @@ impl TickReport {
             && self.reannounced.is_empty()
             && self.not_final.is_empty()
             && self.moved.is_empty()
+            && self.stale_known.is_empty()
+            && self.stale_announced.is_empty()
+            && self.verdicts.is_empty()
             && self.faults.is_empty()
     }
 
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} fault(s)",
+            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} stale followed up ({} known, {} announced, {} verdict(s)), {} fault(s)",
             self.tracked,
             self.adopted,
             self.adopted_mined.len() + self.adopted_proof_failed.len(),
@@ -963,6 +1190,10 @@ impl TickReport {
             self.mined.len(),
             self.no_proof.len(),
             self.moved.len(),
+            self.stale_known.len() + self.stale_announced.len() + self.verdicts.len(),
+            self.stale_known.len(),
+            self.stale_announced.len(),
+            self.verdicts.len(),
             self.faults.len(),
         )
     }
@@ -1057,10 +1288,18 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     .await?;
     report.adopted = adopted.rows_affected() as usize;
 
-    // Did a header we stood on move? Then the mined rows at or above it
-    // are read again, and no other mined row is.
+    // Without the feed: did a header we stood on move? Then the mined rows
+    // at or above it are read again, and no other mined row is. With the
+    // feed the crate's own step rechecks them on the event (ruling (5)),
+    // so the pass reads no ring and no mined row.
     let mut snapshot = HeaderSnapshot::take(services, []).await;
-    let (moved_from, ring) = moved_since(services, &mut snapshot, read_ring(storage).await).await;
+    let (moved_from, ring) = if opts.feed_held {
+        (None, None)
+    } else {
+        let (moved_from, ring) =
+            moved_since(services, &mut snapshot, read_ring(storage).await).await;
+        (moved_from, Some(ring))
+    };
     report.moved_from = moved_from;
 
     let mut rows: Vec<TrackedRow> = sqlx::query(&format!(
@@ -1192,18 +1431,35 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             }
         }
     }
+    follow_up_stale(
+        storage,
+        services,
+        (&params, &snapshot, now),
+        &mut rows,
+        &mut states,
+        &mut report,
+    )
+    .await;
     for state in states.values_mut() {
         let _ = state.step(&params, &snapshot, Input::Host(HostAction::Tick(now)));
     }
 
-    // Read again: a proof for each re-ask that is due, and its header.
+    // Read again: a proof for each re-ask that is due, and its header. A
+    // word whose root moved (`Reask::Reorg`) goes ahead, a few a pass;
+    // every other re-ask fills the pass after them.
+    let is_due = |row: &&TrackedRow| {
+        states[&row.txid].reask().is_some()
+            && row.asks < MAX_ASKS_PER_TX
+            && row.next_ask_at.is_none_or(|at| at <= now)
+    };
+    let root_moved =
+        |row: &&TrackedRow| matches!(states[&row.txid].reask(), Some(Reask::Reorg { .. }));
     let due: Vec<TxId> = rows
         .iter()
-        .filter(|row| {
-            states[&row.txid].reask().is_some()
-                && row.asks < MAX_ASKS_PER_TX
-                && row.next_ask_at.is_none_or(|at| at <= now)
-        })
+        .filter(is_due)
+        .filter(root_moved)
+        .take(REORG_ASKS_PER_PASS.min(opts.max_asks))
+        .chain(rows.iter().filter(is_due).filter(|row| !root_moved(row)))
         .take(opts.max_asks)
         .map(|row| row.txid.clone())
         .collect();
@@ -1283,8 +1539,221 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         }
     }
     adopt_proven(storage, services, &mut snapshot, &params, now, &mut report).await?;
-    write_ring(storage, &ring).await?;
+    if let Some(ring) = ring {
+        write_ring(storage, &ring).await?;
+    }
     Ok(report)
+}
+
+/// The follow-up of a `stale` word at the broadcasters, ruling 7d (c) of
+/// 2026-10-20 20:1xZ (bsv-stack-lean `docs/DECISIONS-2026-10-19.md`
+/// section 8c): once per `stale` episode, the status read at the
+/// broadcasters (`get_broadcaster_statuses`: Arcade `GET /tx/{txid}`,
+/// classic ARC `GET /v1/tx/{txid}`). A broadcaster that knows the
+/// transaction ends the matter, its word kept as a hint. When every one
+/// that answered does not know it, the transaction is announced once, its
+/// stored BEEF handed over (the transaction as bytes, its parents with
+/// their paths); never a second time in the same episode. A refusal the
+/// node gave writes the node's verdict (`rejected`, or `conflicted` with
+/// the competitors it names). No answer at all announces nothing. Hints
+/// are kept on the row and replay before the proof on the next load, so
+/// the word stays `stale` with its `Reask::Reorg` until a new proof.
+///
+/// Load: one status read and at most one announce per `stale` word, for
+/// at most [`REORG_ASKS_PER_PASS`] words a pass; bounded by our own
+/// transactions, never a sweep.
+async fn follow_up_stale<V: WalletServices + ?Sized, H: Headers>(
+    storage: &StorageSqlx,
+    services: &V,
+    (params, headers, observed): (&Params, &H, Timestamp),
+    rows: &mut [TrackedRow],
+    states: &mut HashMap<TxId, State>,
+    report: &mut TickReport,
+) {
+    let mut followed = 0;
+    for row in rows.iter_mut() {
+        if followed >= REORG_ASKS_PER_PASS {
+            break;
+        }
+        let Some(state) = states.get_mut(&row.txid) else {
+            continue;
+        };
+        if !matches!(state.word(), Word::Stale) || row.follow_up.is_some() {
+            continue;
+        }
+        followed += 1;
+        let statuses = services.get_broadcaster_statuses(&row.txid).await;
+        row.follow_up = Some("read".to_string());
+        let known: Vec<(String, &'static str, HintStatus)> = statuses
+            .iter()
+            .filter_map(|(provider, status)| {
+                let (label, hint) = match status {
+                    BroadcastStatus::Accepted => ("accepted", HintStatus::Accepted),
+                    BroadcastStatus::Seen => ("seen", HintStatus::Seen),
+                    BroadcastStatus::Mined => ("mined", HintStatus::Unknown),
+                    BroadcastStatus::Rejected => (
+                        "rejected",
+                        HintStatus::Rejected {
+                            reason: "rejected".to_string(),
+                        },
+                    ),
+                    BroadcastStatus::Unknown => return None,
+                };
+                Some((provider.clone(), label, hint))
+            })
+            .collect();
+        if !known.is_empty() {
+            for (provider, label, status) in known {
+                let source = format!("{provider}|{label}");
+                if !row.hints.iter().any(|h| h.source == source) {
+                    row.hints
+                        .push(StoredHint::of(&Hint::new(source, status, observed)));
+                }
+            }
+            report.stale_known.push(row.txid.clone());
+            continue;
+        }
+        if statuses.is_empty() {
+            report.faults.push(format!(
+                "{}: stale, and no broadcaster answered the status read; not announced",
+                row.txid
+            ));
+            continue;
+        }
+        // Every broadcaster that answered does not know it: one announce.
+        row.follow_up = Some("announced".to_string());
+        let beef = match stored_beef(storage, &row.txid).await {
+            Ok(Some(beef)) => beef,
+            Ok(None) => {
+                report.faults.push(format!(
+                    "{}: stale and unknown to the broadcasters, with no stored transaction to announce",
+                    row.txid
+                ));
+                continue;
+            }
+            Err(e) => {
+                report
+                    .faults
+                    .push(format!("{}: the stored BEEF did not read: {e}", row.txid));
+                continue;
+            }
+        };
+        let results = match services
+            .post_beef(&beef, std::slice::from_ref(&row.txid))
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => {
+                report
+                    .faults
+                    .push(format!("{}: could not announce: {e}", row.txid));
+                continue;
+            }
+        };
+        if let Some(verdict) = node_verdict(&results, &row.txid) {
+            let _ = state.step(
+                params,
+                headers,
+                Input::Evidence(Evidence::Verdict(verdict.clone())),
+            );
+            row.verdict = Some(StoredVerdict::of(&verdict));
+            report
+                .verdicts
+                .push(format!("{}: {}", row.txid, word_label(state.word())));
+            continue;
+        }
+        match read_post(&results) {
+            PostAnswer::Accepted { provider } => {
+                let source = format!("{provider}|accepted");
+                if !row.hints.iter().any(|h| h.source == source) {
+                    row.hints.push(StoredHint::of(&Hint::new(
+                        source,
+                        HintStatus::Accepted,
+                        observed,
+                    )));
+                }
+                report.stale_announced.push(row.txid.clone());
+            }
+            PostAnswer::NotFinal { said, .. } | PostAnswer::Refused { said } => {
+                report.faults.push(format!(
+                    "{}: announced once, not taken and no node verdict: {said}",
+                    row.txid
+                ));
+            }
+        }
+    }
+}
+
+/// The node's verdict a broadcaster relayed on `txid`, when no broadcaster
+/// accepted it: a double spend (the competitors named, `conflicted`), or a
+/// refusal of the transaction itself (`rejected`). A service fault, a
+/// missing parent (orphan mempool) and "not final" are no verdict.
+fn node_verdict(results: &[PostBeefResult], txid: &str) -> Option<NodeVerdict> {
+    if results.iter().any(PostBeefResult::is_success) {
+        return None;
+    }
+    let ours = || {
+        results.iter().flat_map(|r| {
+            r.txid_results
+                .iter()
+                .filter(|t| t.txid.eq_ignore_ascii_case(txid))
+                .map(move |t| (r, t))
+        })
+    };
+    let competitors: Vec<TxId> = ours()
+        .filter(|(_, t)| t.double_spend)
+        .flat_map(|(_, t)| t.competing_txs.clone().unwrap_or_default())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if !competitors.is_empty() {
+        return Some(NodeVerdict::Conflicted { competitors });
+    }
+    ours()
+        .find(|(_, t)| {
+            !t.is_success()
+                && !t.service_error
+                && !t.orphan_mempool
+                && !says_not_final(t.data.as_deref().unwrap_or_default())
+        })
+        .map(|(r, t)| NodeVerdict::Rejected {
+            reason: format!(
+                "{}: {}",
+                r.name,
+                t.data.clone().unwrap_or_else(|| {
+                    if t.double_spend {
+                        "double spend".to_string()
+                    } else {
+                        t.status.clone()
+                    }
+                })
+            ),
+        })
+}
+
+/// The BEEF of one of the wallet's own transactions, from its stored
+/// request (or its transaction row): its input BEEF with the transaction
+/// merged as bytes, no path of its own.
+async fn stored_beef(storage: &StorageSqlx, txid: &str) -> Result<Option<Vec<u8>>> {
+    let row: Option<(Vec<u8>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT raw_tx, input_beef FROM proven_tx_reqs WHERE lower(txid) = ? AND raw_tx IS NOT NULL \
+         UNION ALL \
+         SELECT raw_tx, input_beef FROM transactions WHERE lower(txid) = ? AND raw_tx IS NOT NULL \
+         LIMIT 1",
+    )
+    .bind(txid.to_ascii_lowercase())
+    .bind(txid.to_ascii_lowercase())
+    .fetch_optional(storage.pool())
+    .await?;
+    let Some((raw_tx, input_beef)) = row else {
+        return Ok(None);
+    };
+    let mut beef = match input_beef.filter(|b| !b.is_empty()) {
+        Some(bytes) => Beef::from_binary(&bytes)
+            .map_err(|e| anyhow::anyhow!("the stored input BEEF does not parse: {e}"))?,
+        None => Beef::new(),
+    };
+    beef.merge_raw_tx(raw_tx, None);
+    Ok(Some(beef.to_binary()))
 }
 
 /// Proven creators adopted per pass at most ([`adopt_proven`]).
@@ -1704,38 +2173,93 @@ pub fn event_kind(event: &ChainEvent) -> &'static str {
     }
 }
 
-/// The headers a reorg replaced, over the daemon's snapshot: a stored
-/// proof is replayed against the header it was checked against (the
-/// event's deactivated header at its height, the prior tip as the tip),
-/// so the tracker sees the `mined` word the reorg takes away. The event
-/// writes no `mined` word through this view; `Tracker::on_chain` turns
-/// the words it names `stale`.
-struct Replaced<'a> {
-    snapshot: &'a HeaderSnapshot,
-    replaced: BTreeMap<Height, Header>,
-    prior_tip: Option<Height>,
+/// The headers a reorg replaced, by height: the event's deactivated
+/// headers, lowercase.
+fn deactivated_of(event: &ChainEvent) -> BTreeMap<Height, Header> {
+    let ChainEvent::Reorg {
+        deactivated_headers,
+        ..
+    } = event
+    else {
+        return BTreeMap::new();
+    };
+    deactivated_headers
+        .iter()
+        .map(|h| {
+            (
+                h.height,
+                Header {
+                    hash: h.hash.to_ascii_lowercase(),
+                    merkle_root: h.merkle_root.to_ascii_lowercase(),
+                },
+            )
+        })
+        .collect()
 }
 
-impl Headers for Replaced<'_> {
+/// The branch a reorg took away, over the host's headers: a stored proof
+/// is replayed against the header it was checked against (a deactivated
+/// header at its height; the tip no lower than the highest of them), so
+/// the tracker holds the `mined` word the reorg names. Only proofs are
+/// stepped through this view; it writes no `mined` word on the new branch.
+struct OldBranch<'a, H: Headers + ?Sized> {
+    live: &'a H,
+    deactivated: &'a BTreeMap<Height, Header>,
+}
+
+impl<H: Headers + ?Sized> Headers for OldBranch<'_, H> {
     fn header_at(&self, height: Height) -> std::result::Result<Option<Header>, HeaderError> {
-        match self.replaced.get(&height) {
+        match self.deactivated.get(&height) {
             Some(header) => Ok(Some(header.clone())),
-            None => self.snapshot.header_at(height),
+            None => self.live.header_at(height),
         }
     }
 
     fn tip_height(&self) -> std::result::Result<Height, HeaderError> {
-        match self.prior_tip {
-            Some(tip) => Ok(tip),
-            None => self.snapshot.tip_height(),
-        }
+        let live = self.live.tip_height()?;
+        Ok(self
+            .deactivated
+            .keys()
+            .next_back()
+            .map_or(live, |top| live.max(*top)))
+    }
+}
+
+/// The new branch, as the crate's recheck must see it (ruling (5) of
+/// 2026-10-20 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`; the
+/// bsv-tracker 0.7.0 migration note): the host's headers, except that a
+/// height where the header service still answers a header the reorg
+/// deactivated has no answer. A service that has not moved yet leaves the
+/// word suspect with `Reask::Recheck` until the next tip, never `mined` on
+/// the old branch's header.
+struct NewBranch<'a, H: Headers + ?Sized> {
+    live: &'a H,
+    deactivated: &'a BTreeMap<Height, Header>,
+}
+
+impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
+    fn header_at(&self, height: Height) -> std::result::Result<Option<Header>, HeaderError> {
+        let header = self.live.header_at(height)?;
+        Ok(header.filter(|h| {
+            self.deactivated
+                .get(&height)
+                .is_none_or(|gone| gone.hash != h.hash)
+        }))
+    }
+
+    fn tip_height(&self) -> std::result::Result<Height, HeaderError> {
+        self.live.tip_height()
     }
 }
 
 /// Deliver one chain envelope (already decoded, at `cursor`) to the
-/// tracked transactions it names, through `Tracker::on_chain` with the
-/// daemon's headers, and store the moved rows and the cursor in one
-/// transaction. A cursor at or below the stored one was delivered before
+/// tracked transactions it names, through `Tracker::on_chain` with the new
+/// branch's headers (`NewBranch`: a height where the service still
+/// answers a deactivated header has no answer), and store the moved rows
+/// and the cursor in one transaction. The crate rechecks each named word
+/// by its stored root (bsv-tracker 0.7.0): the same root, it stands; a
+/// moved root, `stale` with `Reask::Reorg`; no header, suspect with
+/// `Reask::Recheck` until the next tip. A cursor at or below the stored one was delivered before
 /// (delivery is at least once) and changes nothing.
 ///
 /// The rows are named by index, never by a scan of the chain: a fork, a
@@ -1818,37 +2342,24 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
     if !rows.is_empty() {
         let snapshot =
             HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
-        let (replaced, prior_tip) = match &event {
-            ChainEvent::Reorg {
-                deactivated_headers,
-                ..
-            } => (
-                deactivated_headers
-                    .iter()
-                    .map(|h| {
-                        (
-                            h.height,
-                            Header {
-                                hash: h.hash.to_ascii_lowercase(),
-                                merkle_root: h.merkle_root.to_ascii_lowercase(),
-                            },
-                        )
-                    })
-                    .collect(),
-                deactivated_headers.first().map(|h| h.height),
-            ),
-            _ => (BTreeMap::new(), None),
-        };
-        let replay_view = Replaced {
-            snapshot: &snapshot,
-            replaced,
-            prior_tip,
+        // The stored proofs replay against the branch the event (and any
+        // reorg a row keeps) took away; the event's recheck reads the new
+        // branch, with no answer at a height the service has not moved.
+        let deactivated = deactivated_of(&event);
+        let mut gone = deactivated.clone();
+        for row in &rows {
+            gone.extend(row.deactivated());
+        }
+        gone.extend(deactivated.iter().map(|(h, header)| (*h, header.clone())));
+        let new_branch = NewBranch {
+            live: &snapshot,
+            deactivated: &gone,
         };
         let mut tracker = Tracker::new(opts.params());
         for row in &rows {
-            row.replay_into(&mut tracker, &replay_view);
+            row.replay_into(&mut tracker, &snapshot, &deactivated);
         }
-        for update in tracker.on_chain(&snapshot, event.clone()) {
+        for update in tracker.on_chain(&new_branch, event.clone()) {
             let (Some(state), Some(row)) = (
                 tracker.get(&update.txid),
                 rows.iter_mut().find(|r| r.txid == update.txid),
@@ -1872,6 +2383,34 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
                 reask: state.reask().map(reask_label),
                 suspect: state.suspect(),
                 fault,
+            });
+        }
+        // A named row the event did not select (a tip names only suspect
+        // words) whose replay moved it: the stored reorg it keeps was
+        // rechecked against the new branch in the replay, the crate's own
+        // step. Its `mined` word on a moved root is `stale` now.
+        for row in rows.iter_mut() {
+            if moved.iter().any(|m| m.txid == row.txid) {
+                continue;
+            }
+            let Some(state) = tracker.get(&row.txid) else {
+                continue;
+            };
+            if matches!(state.word(), Word::Mined(_)) {
+                continue;
+            }
+            row.keep_chain(state, &event)?;
+            if matches!(state.reask(), Some(Reask::Reorg { .. })) {
+                row.asks = 0;
+                row.next_ask_at = None;
+            }
+            store_row_in(&mut *tx, row, state, now).await?;
+            moved.push(ChainMove {
+                txid: row.txid.clone(),
+                word: word_label(state.word()).to_string(),
+                reask: state.reask().map(reask_label),
+                suspect: state.suspect(),
+                fault: None,
             });
         }
     }
@@ -1934,6 +2473,7 @@ pub(crate) mod tests {
             age_threshold: 600,
             max_asks: 20,
             spend_depth: DEFAULT_SPEND_DEPTH,
+            feed_held: false,
         }
     }
 
@@ -2325,6 +2865,27 @@ pub(crate) mod tests {
             ..stored
         };
         assert_eq!(bare.hint().status, HintStatus::Unknown);
+    }
+
+    /// Ruling (2) of 2026-10-20 19:4xZ (bsv-stack-lean
+    /// `docs/RULINGS-2026-10-12.md`; bsv-tracker 0.7.0): a courier's mempool
+    /// presence on a `built` transaction reads `announced`, as a
+    /// broadcaster's acceptance does; until 0.7.0 it left `built`. A stored
+    /// row replays to the new word, and the tier it serves moves with it.
+    #[test]
+    fn a_stored_presence_hint_on_a_built_transaction_replays_to_announced() {
+        let mut row = TrackedRow::new(&"e7".repeat(32));
+        row.hints.push(StoredHint::of(&Hint::new(
+            "courier-a|mempool_present".to_string(),
+            HintStatus::MempoolPresent {
+                source: "courier-a".to_string(),
+            },
+            1_700_000_000,
+        )));
+        let (state, fault) = row.replay(&opts().params(), &NoHeaders);
+        assert_eq!(fault, None);
+        assert_eq!(word_label(state.word()), "announced");
+        assert_eq!(row.tier(), "announced");
     }
 
     /// The words that mean "not final", and one that does not.

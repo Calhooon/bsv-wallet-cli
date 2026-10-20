@@ -552,8 +552,12 @@ async fn chain_feed_status(
 /// (`tracker_host::stored_word`): `{txid, word, height, reask, evidence}`.
 /// `evidence` is, for a `mined` word, the stored proof's root and height
 /// (the toolbox's `proven_txs` row the spend gate reads), else `null`. A
-/// view for a person or an agent; nothing is decided from it. 404 when the
-/// tracker holds no word for the txid.
+/// `stale` word adds `tier`, the word its hints alone give (`announced`,
+/// `seen`: the status before its proof, read as "confirming"), and its
+/// `reask` carries the re-ask the reorg left (`reorg@<forkHeight>`). Ruling 7b (b) of 2026-10-20 20:1xZ
+/// (bsv-stack-lean `docs/DECISIONS-2026-10-19.md` section 8c). A view for
+/// a person or an agent; nothing is decided from it. 404 when the tracker
+/// holds no word for the txid.
 async fn tx_word(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
     axum::extract::Path(txid): axum::extract::Path<String>,
@@ -601,14 +605,21 @@ async fn tx_word(
     } else {
         None
     };
-    Json(json!({
+    let tier = match crate::tracker_host::stored_tier(storage, &txid).await {
+        Ok(tier) => tier,
+        Err(e) => return fault(e),
+    };
+    let mut body = json!({
         "txid": txid,
         "word": word,
         "height": height,
         "reask": reask,
         "evidence": evidence,
-    }))
-    .into_response()
+    });
+    if let Some(tier) = tier {
+        body["tier"] = json!(tier);
+    }
+    Json(body).into_response()
 }
 
 /// POST /permission-audit/reset — call immediately before the flow you measure.

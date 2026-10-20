@@ -680,14 +680,18 @@ pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    spawn_served_loop(wallet, arcade_sse_for(db_path))
+    spawn_served_loop(wallet, arcade_sse_for(db_path), false)
 }
 
 /// The served loop with the SSE stream named by the caller: `daemon` passes
-/// none, its monitor holds Arcade's stream.
+/// none, its monitor holds Arcade's stream. `feed_held`: the caller holds
+/// the header service's chain-event feed, so the tracker's pass leaves the
+/// recheck of mined words to the crate's step on each event
+/// ([`TickOptions::feed_held`]).
 pub fn spawn_served_loop(
     wallet: std::sync::Arc<ServedWallet>,
     sse: Option<ArcadeSse>,
+    feed_held: bool,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let enabled = std::env::var("BROADCAST_RECONCILE")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
@@ -696,7 +700,10 @@ pub fn spawn_served_loop(
         tracing::info!("broadcast reconcile loop disabled (BROADCAST_RECONCILE=0)");
         return None;
     }
-    let tracker = TickOptions::from_env();
+    let tracker = TickOptions {
+        feed_held,
+        ..TickOptions::from_env()
+    };
     let interval_secs =
         env_parse("BROADCAST_RECONCILE_INTERVAL_SECS", DEFAULT_INTERVAL_SECS).max(5);
     tracing::info!(
@@ -704,6 +711,7 @@ pub fn spawn_served_loop(
         tracker_age_secs = tracker.age_threshold,
         tracker_max_asks = tracker.max_asks,
         sse = sse.is_some(),
+        feed_held,
         "broadcast reconcile loop started"
     );
     Some(tokio::spawn(async move {
@@ -1485,6 +1493,7 @@ mod tests {
             age_threshold: 600,
             max_asks: 20,
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
+            feed_held: false,
         };
         let now = Utc::now().timestamp() as u64;
         let report = run_served_pass(&storage, &services, &At(now), &opts, None)
