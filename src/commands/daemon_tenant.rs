@@ -87,6 +87,12 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         monitor_opts.tasks.check_for_proofs.interval = std::time::Duration::from_secs(secs);
         monitor_opts.tasks.check_for_proofs.start_immediately = true;
     }
+    // The monitor's reorg and review tasks demote a proof whose root moved
+    // and re-ask its courier once (toolbox 0.10.0 `reask_lost_proof`): with
+    // either running, a `stale` episode's follow-up is theirs, never the
+    // served pass's too (`TickOptions::monitor_runs`).
+    let monitor_runs =
+        monitor_opts.tasks.reorg.enabled || monitor_opts.tasks.review_proven_txs.enabled;
     let monitor = Monitor::with_options(storage_arc.clone(), services_arc.clone(), monitor_opts);
     monitor
         .start()
@@ -168,10 +174,15 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // here: the monitor holds Arcade's stream. With the feed held, the pass
     // keeps no ring of tips: a reorg reaches the mined words through the
     // feed and the crate's own recheck, and the pass asks a proof only for
-    // a word whose root moved (ruling (5)). The task lives as long as the
-    // process.
-    let _served =
-        crate::broadcast_reconcile::spawn_served_loop(wallet_state.clone(), None, feed_held);
+    // a word whose root moved (ruling (5)). A `stale` word's follow-up at
+    // the broadcasters is the monitor's (`monitor_runs`). The task lives as
+    // long as the process.
+    let _served = crate::broadcast_reconcile::spawn_served_loop(
+        wallet_state.clone(),
+        None,
+        feed_held,
+        monitor_runs,
+    );
 
     // Periodic UTXO count check + auto-reconcile abandoned txs (#18, THE
     // RELEASE RULE 2026-08-29) — per tenant, same knobs as daemon.

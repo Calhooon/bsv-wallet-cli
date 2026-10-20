@@ -680,18 +680,21 @@ pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    spawn_served_loop(wallet, arcade_sse_for(db_path), false)
+    spawn_served_loop(wallet, arcade_sse_for(db_path), false, false)
 }
 
 /// The served loop with the SSE stream named by the caller: `daemon` passes
 /// none, its monitor holds Arcade's stream. `feed_held`: the caller holds
 /// the header service's chain-event feed, so the tracker's pass leaves the
 /// recheck of mined words to the crate's step on each event
-/// ([`TickOptions::feed_held`]).
+/// ([`TickOptions::feed_held`]). `monitor_runs`: the caller runs the
+/// toolbox's monitor, whose reorg and review tasks follow a `stale` episode
+/// up at the broadcasters, so the pass does not ([`TickOptions::monitor_runs`]).
 pub fn spawn_served_loop(
     wallet: std::sync::Arc<ServedWallet>,
     sse: Option<ArcadeSse>,
     feed_held: bool,
+    monitor_runs: bool,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let enabled = std::env::var("BROADCAST_RECONCILE")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
@@ -702,6 +705,7 @@ pub fn spawn_served_loop(
     }
     let tracker = TickOptions {
         feed_held,
+        monitor_runs,
         ..TickOptions::from_env()
     };
     let interval_secs =
@@ -712,6 +716,7 @@ pub fn spawn_served_loop(
         tracker_max_asks = tracker.max_asks,
         sse = sse.is_some(),
         feed_held,
+        monitor_runs,
         "broadcast reconcile loop started"
     );
     Some(tokio::spawn(async move {
@@ -1494,6 +1499,7 @@ mod tests {
             max_asks: 20,
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
             feed_held: false,
+            monitor_runs: false,
         };
         let now = Utc::now().timestamp() as u64;
         let report = run_served_pass(&storage, &services, &At(now), &opts, None)
