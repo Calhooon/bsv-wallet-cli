@@ -58,20 +58,23 @@
 //! the gate would hold refuses the action with the same `held[]` listing
 //! (the charter's `onCreate`: every input offerable).
 //!
-//! # The shape: held for the call, restored after
+//! # The shape: the offer
 //!
-//! The toolbox's allocation cannot be filtered before it runs: it is one SQL
-//! query inside `create_action`. So the gate marks every coin it does not
-//! offer as not change (`outputs.change = 0`) for the duration of the call,
-//! records each in `spend_gate_holds`, and restores exactly those after.
-//! `change`, not `spendable`: with `acceptDelayedBroadcast` the toolbox
-//! allocates without reading `spendable` (`require_spendable = !is_delayed`),
-//! but it always reads `change = 1`. A hold a crashed call left behind is
-//! restored by the next call (any hold older than [`STALE_HOLD_SECS`]).
+//! The gate names the coins it offers and the toolbox allocates from those
+//! only: one call, `Wallet::create_action_offering(args, originator,
+//! offered)` (bsv-wallet-toolbox-rs 0.11.0; bsv-wallet-cli #44 beside
+//! bsv-low #828). The toolbox's pre-check picks within the offer and its one
+//! `BEGIN IMMEDIATE` transaction locks within it, so a coin outside it is
+//! never allocated, under concurrency too, and the gate writes nothing
+//! around the door: no hold before it, no restore after it (0.15 marked
+//! every coin it did not offer `change = 0` for the call and restored it
+//! after, a write after the broadcast; LOW's finding). The one leftover is
+//! [`heal_holds`], run once at `daemon` and `serve` start for the holds a
+//! 0.15 process left behind.
 //!
 //! The coins are read in the toolbox's own preference (completed first, then
 //! the largest), a batch of creators at a time, until the coins offered
-//! cover the outputs with a margin; the coins not read are held too. Only
+//! cover the outputs with a margin; the coins not read are not offered. Only
 //! when the toolbox then finds no funds is every coin read, and the call run
 //! once more; if that fails for funds, the refusal lists every coin held
 //! back ([`Refusal`]). Nothing is fetched but the header service's tip and
@@ -80,7 +83,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult, WalletInterface};
+use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult};
 use bsv_tracker::Height;
 use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletServices};
 use serde::Serialize;
@@ -91,9 +94,6 @@ use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
 /// `SPEND_OWN_CHANGE` when unset: this host chains payments, so its own
 /// change is offered before it is mined (R1 (b)).
 pub const DEFAULT_SPEND_OWN_CHANGE: bool = true;
-/// A hold older than this was left by a call that did not finish; the next
-/// call restores it.
-pub const STALE_HOLD_SECS: i64 = 600;
 /// Creators read per batch while the offered coins do not yet cover.
 const BATCH: usize = 32;
 /// Satoshis read beyond the outputs before the lazy read stops (fees).
@@ -359,7 +359,7 @@ pub struct Assessment {
     pub offered: Vec<(i64, u64)>,
     /// Coins held back, with why.
     pub held: Vec<HeldCoin>,
-    /// Coins not read (enough was offered before them); held too.
+    /// Coins not read (enough was offered before them); not offered.
     pub unread: Vec<i64>,
 }
 
@@ -367,24 +367,19 @@ impl Assessment {
     pub fn offered_satoshis(&self) -> u64 {
         self.offered.iter().map(|(_, s)| s).sum()
     }
+
+    /// The offer: the output ids of the coins offered, as the toolbox's
+    /// `create_action_offering` takes them.
+    pub fn offer(&self) -> Vec<i64> {
+        self.offered.iter().map(|(id, _)| *id).collect()
+    }
 }
 
 async fn ensure_schema(storage: &StorageSqlx) -> Result<()> {
-    let reader = storage.pool();
-    if crate::store::has_column(reader, "spend_gate_holds", "held_at").await?
-        && crate::store::has_column(reader, "spend_gate_actions", "reference").await?
-    {
+    if crate::store::has_column(storage.pool(), "spend_gate_actions", "reference").await? {
         return Ok(());
     }
     let pool = storage.writer();
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS spend_gate_holds (\
-            output_id INTEGER PRIMARY KEY, \
-            holder TEXT NOT NULL, \
-            held_at INTEGER NOT NULL)",
-    )
-    .execute(pool)
-    .await?;
     // The rule an action was created under (R1 (d)): the toolbox's
     // `transactions` row is the reference's shape and not ours to widen.
     // An action is named by its txid, or, a deferred-signing template with
@@ -832,70 +827,31 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     Ok(held)
 }
 
-/// A unique name for this call's holds.
-fn holder() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "{}:{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
-/// Mark `ids` not change for the call: the toolbox does not allocate them.
-async fn hold(storage: &StorageSqlx, holder: &str, ids: &[i64]) -> Result<()> {
-    ensure_schema(storage).await?;
-    let now = chrono::Utc::now().timestamp();
-    let mut tx = storage.write_tx().await?;
-    for id in ids {
-        // Only a coin still change, and not held by another call, is held:
-        // restoring sets back exactly what was set here.
-        let held = sqlx::query(
-            "UPDATE outputs SET change = 0 WHERE output_id = ? AND change = 1 \
-             AND output_id NOT IN (SELECT output_id FROM spend_gate_holds)",
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if held == 1 {
-            sqlx::query(
-                "INSERT INTO spend_gate_holds (output_id, holder, held_at) VALUES (?, ?, ?)",
-            )
-            .bind(id)
-            .bind(holder)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-        }
+/// Heal the holds a 0.15 process left: every coin listed in
+/// `spend_gate_holds` that still reads `change = 0` is change again, and the
+/// list is emptied, in one transaction. 0.15 held the coins it did not offer
+/// for the call and restored them after; a call that did not finish left its
+/// holds behind. From 0.16 the gate offers instead and writes no hold, so
+/// the table is read only here (kept readable for this; nothing writes a
+/// row). Run once at `daemon` and `serve` start; a store without the table
+/// is left untouched. Returns the coins made change again.
+pub async fn heal_holds(storage: &StorageSqlx) -> Result<u64> {
+    if !crate::store::has_column(storage.pool(), "spend_gate_holds", "output_id").await? {
+        return Ok(0);
     }
-    tx.commit().await?;
-    Ok(())
-}
-
-/// Restore what `holder` held, and any hold a call that did not finish left
-/// behind ([`STALE_HOLD_SECS`]).
-pub async fn restore(storage: &StorageSqlx, holder: Option<&str>) -> Result<u64> {
-    ensure_schema(storage).await?;
-    let stale = chrono::Utc::now().timestamp() - STALE_HOLD_SECS;
     let mut tx = storage.write_tx().await?;
-    let which = "SELECT output_id FROM spend_gate_holds WHERE holder = ? OR held_at < ?";
-    let restored = sqlx::query(&format!(
-        "UPDATE outputs SET change = 1 WHERE change = 0 AND output_id IN ({which})"
-    ))
-    .bind(holder.unwrap_or(""))
-    .bind(stale)
+    let healed = sqlx::query(
+        "UPDATE outputs SET change = 1 WHERE change = 0 \
+         AND output_id IN (SELECT output_id FROM spend_gate_holds)",
+    )
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    sqlx::query("DELETE FROM spend_gate_holds WHERE holder = ? OR held_at < ?")
-        .bind(holder.unwrap_or(""))
-        .bind(stale)
+    sqlx::query("DELETE FROM spend_gate_holds")
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(restored)
+    Ok(healed)
 }
 
 fn is_insufficient(e: &bsv_sdk::Error) -> bool {
@@ -904,27 +860,16 @@ fn is_insufficient(e: &bsv_sdk::Error) -> bool {
         .contains("insufficient funds")
 }
 
-/// One toolbox call with every coin the assessment did not offer held.
-async fn run_held<V: WalletServices + Send + Sync + 'static>(
+/// One toolbox call, offered the coins the assessment offers: the door.
+async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
     args: CreateActionArgs,
     originator: &str,
     assessment: &Assessment,
-) -> std::result::Result<bsv_sdk::Result<CreateActionResult>, GateError> {
-    let pool = wallet.storage();
-    let holder = holder();
-    let ids: Vec<i64> = assessment
-        .held
-        .iter()
-        .map(|c| c.output_id)
-        .chain(assessment.unread.iter().copied())
-        .collect();
-    hold(pool, &holder, &ids).await.map_err(GateError::Gate)?;
-    let outcome = wallet.create_action(args, originator).await;
-    restore(pool, Some(&holder))
+) -> bsv_sdk::Result<CreateActionResult> {
+    wallet
+        .create_action_offering(args, originator, &assessment.offer())
         .await
-        .map_err(GateError::Gate)?;
-    Ok(outcome)
 }
 
 /// `createAction` through the gate: the toolbox allocates only coins the
@@ -936,7 +881,6 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
-    restore(storage, None).await.map_err(GateError::Gate)?;
     let named: Vec<(String, u32)> = args
         .inputs
         .iter()
@@ -998,7 +942,7 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         .await
         .map_err(GateError::Gate)?;
     let lazy = !first.unread.is_empty();
-    match run_held(wallet, args.clone(), originator, &first).await? {
+    match run_offered(wallet, args.clone(), originator, &first).await {
         Ok(result) => return Ok(result),
         Err(e) if !is_insufficient(&e) => return Err(GateError::Wallet(e)),
         Err(e) if !lazy => return Err(refusal(storage, &first, &e).await),
@@ -1008,7 +952,7 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     let full = assess(storage, wallet.services(), opts, None)
         .await
         .map_err(GateError::Gate)?;
-    match run_held(wallet, args, originator, &full).await? {
+    match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
         Err(e) if is_insufficient(&e) => Err(refusal(storage, &full, &e).await),
         Err(e) => Err(GateError::Wallet(e)),
