@@ -982,6 +982,78 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
     assert!(is_unspendable(&e), "{e}");
 }
 
+/// F9 (c) of the #44 CLI review: one offer names at most [`OFFER_CAP`]
+/// coins, the largest by value, in the order read; the rest are unread. At
+/// the cap nothing moves.
+#[test]
+fn the_offer_is_capped_at_the_largest_coins() {
+    let mut at = Assessment {
+        offered: (0..OFFER_CAP as i64)
+            .map(|i| (i, 1_000 + i as u64))
+            .collect(),
+        ..Default::default()
+    };
+    cap_offer(&mut at);
+    assert_eq!(at.offered.len(), OFFER_CAP);
+    assert!(at.unread.is_empty());
+
+    // One past the cap: the smallest coin (id 7, 1 sat) goes unread.
+    let mut over = Assessment {
+        offered: (0..=OFFER_CAP as i64)
+            .map(|i| (i, if i == 7 { 1 } else { 1_000 + i as u64 }))
+            .collect(),
+        ..Default::default()
+    };
+    cap_offer(&mut over);
+    assert_eq!(over.offered.len(), OFFER_CAP);
+    assert_eq!(over.unread, vec![7]);
+    assert_eq!(over.offered[6].0, 6);
+    assert_eq!(over.offered[7].0, 8, "the order read is kept");
+}
+
+/// F9 (c): the cap's reason, on the toolbox's own statement. An offer of
+/// [`OFFER_CAP`] ids (one real coin among them), with as many again bound
+/// beside it, still runs; an offer past SQLite's bound-variable limit
+/// (32766) does not.
+#[tokio::test]
+async fn an_offer_at_the_cap_runs_and_one_past_sqlites_limit_does_not() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (deep, deep_id) = mined_coin(&storage, (user, basket), 0xf1, 50_000, 800).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_tip_header(header_with_hash(900, &"0f".repeat(32), 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let template = || {
+        let mut args = pay(1_000);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        args
+    };
+    let ids = |n: usize| -> Vec<i64> {
+        std::iter::once(deep_id)
+            .chain((1..n as i64).map(|i| 1_000_000 + i))
+            .collect()
+    };
+    let result = wallet
+        .create_action_offering(template(), "gate.local", &ids(2 * OFFER_CAP - 64))
+        .await
+        .expect("twice the cap, less a margin, is under the limit");
+    let reference = reference_string(&result.signable_transaction.unwrap().reference);
+    wallet
+        .abort_action(bsv_sdk::wallet::AbortActionArgs { reference }, "gate.local")
+        .await
+        .unwrap();
+    let err = wallet
+        .create_action_offering(template(), "gate.local", &ids(32_767))
+        .await
+        .expect_err("past SQLite's bound-variable limit");
+    println!("{err}");
+    assert!(err.to_string().contains("too many SQL variables"), "{err}");
+}
+
 fn listed(wallet_list: serde_json::Value, rules: &ActionRules) -> Vec<(String, Option<String>)> {
     let shown = crate::server::handlers::with_rules(wallet_list, rules);
     shown["actions"]

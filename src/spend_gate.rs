@@ -104,6 +104,16 @@ pub const DEFAULT_SPEND_OWN_CHANGE: bool = true;
 const BATCH: usize = 32;
 /// Satoshis read beyond the outputs before the lazy read stops (fees).
 const FEE_MARGIN: u64 = 10_000;
+/// The most coins one offer names. The toolbox binds every offered output
+/// id, with the coins other calls in flight hold and the coins it skips, as
+/// variables of one statement (`create_action.rs` `AND o.output_id IN
+/// (...)`), and SQLite refuses a statement past its bound-variable limit
+/// (`SQLITE_MAX_VARIABLE_NUMBER`, 32766 since 3.32.0). Half of it leaves the
+/// other half for the reservations and the skips. Past the cap the largest
+/// coins by value are offered and the rest are left unread: a transaction
+/// this many inputs wide is past any fee or size a host would pay, so a
+/// shortfall the largest 16384 coins cannot cover is the funds' refusal.
+pub const OFFER_CAP: usize = 16_384;
 /// R1 (d)'s rule, by the ruling's name (`lean/Wallet.lean`
 /// `receivedPending`), as recorded on an action that named it.
 pub const RECEIVED_PENDING: &str = "received-pending";
@@ -787,7 +797,30 @@ pub async fn assess<V: WalletServices + ?Sized>(
             }),
         }
     }
+    cap_offer(&mut out);
     Ok(out)
+}
+
+/// At most [`OFFER_CAP`] coins offered: the largest by value stay offered
+/// (in the order read), the rest go unread.
+fn cap_offer(out: &mut Assessment) {
+    if out.offered.len() <= OFFER_CAP {
+        return;
+    }
+    let mut by_value: Vec<usize> = (0..out.offered.len()).collect();
+    by_value.sort_by(|a, b| out.offered[*b].1.cmp(&out.offered[*a].1).then(a.cmp(b)));
+    let mut keep = vec![false; out.offered.len()];
+    for i in &by_value[..OFFER_CAP] {
+        keep[*i] = true;
+    }
+    let offered = std::mem::take(&mut out.offered);
+    for (coin, kept) in offered.into_iter().zip(keep) {
+        if kept {
+            out.offered.push(coin);
+        } else {
+            out.unread.push(coin.0);
+        }
+    }
 }
 
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
