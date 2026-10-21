@@ -5,7 +5,7 @@ use super::*;
 use crate::tracker_host::tests::{header, header_with_hash};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::MerklePath;
-use bsv_sdk::wallet::{CreateActionOptions, CreateActionOutput};
+use bsv_sdk::wallet::{CreateActionOptions, CreateActionOutput, WalletInterface};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
@@ -333,12 +333,15 @@ async fn a_locked_coin_is_listed_by_its_holder() {
     assert_eq!(held[0].word, "locked");
 }
 
-/// A hold restores exactly what it set, and a hold a crashed call left is
-/// restored by the next call.
+/// The holds a 0.15 process left (`change = 0`, listed in
+/// `spend_gate_holds`) are change again after the one heal at start, and the
+/// list is empty; a coin not listed is untouched, and a store with no table
+/// is left as it is.
 #[tokio::test]
-async fn holds_restore_exactly_and_stale_holds_are_restored() {
+async fn the_heal_at_start_restores_the_holds_a_015_process_left() {
     let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
-    let a = coin(
+    assert_eq!(heal_holds(&storage).await.unwrap(), 0, "no table, no heal");
+    let held = coin(
         &storage,
         (user, basket),
         &"f1".repeat(32),
@@ -348,24 +351,52 @@ async fn holds_restore_exactly_and_stale_holds_are_restored() {
         1,
     )
     .await;
-    let pool = storage.pool();
-    hold(&storage, "me", &[a]).await.unwrap();
-    let change: i64 = sqlx::query_scalar("SELECT change FROM outputs WHERE output_id = ?")
-        .bind(a)
-        .fetch_one(pool)
+    let not_change = coin(
+        &storage,
+        (user, basket),
+        &"f2".repeat(32),
+        true,
+        None,
+        5_000,
+        1,
+    )
+    .await;
+    let w = storage.writer();
+    // A 0.15 table, as 0.15 made it, with one hold a crashed call left.
+    sqlx::query(
+        "CREATE TABLE spend_gate_holds (output_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, held_at INTEGER NOT NULL)",
+    )
+    .execute(w)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE outputs SET change = 0")
+        .execute(w)
         .await
         .unwrap();
-    assert_eq!(change, 0);
+    sqlx::query("INSERT INTO spend_gate_holds VALUES (?, '4242:7', 0)")
+        .bind(held)
+        .execute(w)
+        .await
+        .unwrap();
+
+    assert_eq!(heal_holds(&storage).await.unwrap(), 1);
+    let change = |id: i64| {
+        sqlx::query_scalar::<_, i64>("SELECT change FROM outputs WHERE output_id = ?")
+            .bind(id)
+            .fetch_one(storage.pool())
+    };
+    assert_eq!(change(held).await.unwrap(), 1, "the hold is healed");
     assert_eq!(
-        restore(&storage, Some("other")).await.unwrap(),
+        change(not_change).await.unwrap(),
         0,
-        "not its hold"
+        "a coin not listed is not touched"
     );
-    sqlx::query("UPDATE spend_gate_holds SET held_at = 0")
-        .execute(storage.writer())
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spend_gate_holds")
+        .fetch_one(storage.pool())
         .await
         .unwrap();
-    assert_eq!(restore(&storage, None).await.unwrap(), 1, "a stale hold");
+    assert_eq!(left, 0);
+    assert_eq!(heal_holds(&storage).await.unwrap(), 0, "healed once");
 }
 
 /// R1 (d): `allowPending: received` offers a received coin whose creator is
@@ -575,6 +606,101 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
     .await
     .unwrap();
     assert!(foreign.is_empty());
+}
+
+/// A mined coin the toolbox can carry in a BEEF: a parseable transaction
+/// whose stored proof's root is its txid at `height`. (txid, output id).
+async fn mined_coin(
+    storage: &StorageSqlx,
+    (user, basket): (i64, i64),
+    seed: u8,
+    satoshis: u64,
+    height: u32,
+) -> (String, i64) {
+    let lock = bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    let mut parent = bsv_sdk::transaction::Transaction::new();
+    parent
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            hex::encode([seed; 32]),
+            0,
+        ))
+        .unwrap();
+    parent
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(satoshis, lock))
+        .unwrap();
+    let txid = parent.id();
+    let id = coin(
+        storage,
+        (user, basket),
+        &txid,
+        false,
+        Some(height),
+        satoshis as i64,
+        9,
+    )
+    .await;
+    for table in ["transactions", "proven_txs"] {
+        sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
+            .bind(parent.to_binary())
+            .bind(&txid)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+    }
+    (txid, id)
+}
+
+/// The offer (#44, bsv-low #828): the toolbox allocates from the coins the
+/// gate offers only. Two coins it could carry: the larger, which its own
+/// preference would take first, is held at depth 2 (its block is the tip);
+/// the action takes the offered one, the held coin is untouched, and the
+/// gate wrote no hold (no `change` flipped, no `spend_gate_holds` table).
+#[tokio::test]
+async fn the_offer_allocates_only_the_offered_coins_and_writes_no_hold() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (deep, deep_id) = mined_coin(&storage, (user, basket), 0xa1, 50_000, 800).await;
+    let (tip, tip_id) = mined_coin(&storage, (user, basket), 0xa2, 90_000, 900).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_header_for_height(header(900, &tip, 0));
+    services.set_tip_header(header_with_hash(900, &tip, 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let gate = opts(2, true);
+    let a = assess(wallet.storage(), wallet.services(), &gate, None)
+        .await
+        .unwrap();
+    assert_eq!(a.offer(), vec![deep_id]);
+    assert_eq!(reason_of(&a, &tip).as_deref(), Some("depth 2: 1 block"));
+
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        ..Default::default()
+    });
+    let result = create_action(&wallet, args, "gate.local", &gate)
+        .await
+        .unwrap();
+    assert!(result.signable_transaction.is_some());
+    let spent: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as("SELECT output_id, spent_by, change FROM outputs WHERE output_id IN (?, ?) ORDER BY output_id")
+            .bind(deep_id)
+            .bind(tip_id)
+            .fetch_all(wallet.storage().pool())
+            .await
+            .unwrap();
+    assert!(spent[0].1.is_some(), "the offered coin funds it: {spent:?}");
+    assert_eq!(
+        (spent[1].1, spent[1].2),
+        (None, 1),
+        "the held coin untouched"
+    );
+    assert!(
+        !crate::store::has_column(wallet.storage().pool(), "spend_gate_holds", "output_id")
+            .await
+            .unwrap(),
+        "no hold table: the gate wrote no hold"
+    );
 }
 
 fn listed(wallet_list: serde_json::Value, rules: &ActionRules) -> Vec<(String, Option<String>)> {

@@ -462,6 +462,19 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
 }
 
 pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result<()> {
+    // Once at start (daemon and serve both come here): the holds a 0.15
+    // process left in `spend_gate_holds` are change again. The gate writes
+    // no hold from 0.16: it offers (`create_action_offering`).
+    match crate::spend_gate::heal_holds(wallet.storage()).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            coins = n,
+            "spend gate: healed the holds a 0.15 process left"
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "spend gate: the holds a 0.15 process left were not healed")
+        }
+    }
     let tls = config.tls.clone();
     let bind_addr = config.bind_addr;
     let app = make_router(wallet, config);
