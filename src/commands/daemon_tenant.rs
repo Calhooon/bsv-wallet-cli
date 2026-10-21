@@ -42,11 +42,6 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
 
     let storage = StorageSqlx::open(db).await?;
     storage.make_available().await?;
-    // busy_timeout: concurrent writes wait instead of SQLITE_BUSY (error 517).
-    sqlx::query("PRAGMA busy_timeout = 500")
-        .execute(storage.pool())
-        .await
-        .ok();
 
     let db_path = db.to_string();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
@@ -126,10 +121,6 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // The wallet needs its own storage/services (Wallet::new takes owned).
     let storage2 = StorageSqlx::open(db).await?;
     storage2.make_available().await?;
-    sqlx::query("PRAGMA busy_timeout = 500")
-        .execute(storage2.pool())
-        .await
-        .ok();
     let services2 = make_services(chain)?;
     if let Some(ref ct) = services2.chaintracks {
         storage2.set_chain_tracker(ct.clone()).await;
@@ -239,7 +230,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
             }
             if reconcile_enabled {
                 match crate::commands::cleanup_abandoned::reconcile(
-                    check_wallet.storage().pool(),
+                    check_wallet.storage(),
                     check_wallet.services(),
                     reconcile_chain,
                     reconcile_min_age_secs,

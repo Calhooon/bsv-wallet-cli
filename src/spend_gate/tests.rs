@@ -55,7 +55,7 @@ async fn coin(
     .bind(txid)
     .bind(when)
     .bind(when)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid();
@@ -71,7 +71,7 @@ async fn coin(
         .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
         .bind(when)
         .bind(when)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     }
@@ -87,7 +87,7 @@ async fn coin(
     .bind(txid)
     .bind(when)
     .bind(when)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid()
@@ -324,7 +324,7 @@ async fn a_locked_coin_is_listed_by_its_holder() {
     sqlx::query("UPDATE outputs SET spent_by = ?, spendable = 0 WHERE output_id = ?")
         .bind(spender_tx)
         .bind(id)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     let held = locked(storage.pool()).await.unwrap();
@@ -349,7 +349,7 @@ async fn holds_restore_exactly_and_stale_holds_are_restored() {
     )
     .await;
     let pool = storage.pool();
-    hold(pool, "me", &[a]).await.unwrap();
+    hold(&storage, "me", &[a]).await.unwrap();
     let change: i64 = sqlx::query_scalar("SELECT change FROM outputs WHERE output_id = ?")
         .bind(a)
         .fetch_one(pool)
@@ -357,15 +357,15 @@ async fn holds_restore_exactly_and_stale_holds_are_restored() {
         .unwrap();
     assert_eq!(change, 0);
     assert_eq!(
-        restore(pool, Some("other")).await.unwrap(),
+        restore(&storage, Some("other")).await.unwrap(),
         0,
         "not its hold"
     );
     sqlx::query("UPDATE spend_gate_holds SET held_at = 0")
-        .execute(pool)
+        .execute(storage.writer())
         .await
         .unwrap();
-    assert_eq!(restore(pool, None).await.unwrap(), 1, "a stale hold");
+    assert_eq!(restore(&storage, None).await.unwrap(), 1, "a stale hold");
 }
 
 /// R1 (d): `allowPending: received` offers a received coin whose creator is
@@ -442,14 +442,10 @@ fn only_the_word_received_opens_the_door() {
 async fn the_word_is_recorded_on_the_action_and_shown() {
     let (storage, _, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
     let under = "b7".repeat(32);
-    record_rule(
-        storage.pool(),
-        &under.to_ascii_uppercase(),
-        RECEIVED_PENDING,
-    )
-    .await
-    .unwrap();
-    let rules = action_rules(storage.pool()).await.unwrap();
+    record_rule(&storage, &under.to_ascii_uppercase(), RECEIVED_PENDING)
+        .await
+        .unwrap();
+    let rules = action_rules(&storage).await.unwrap();
     assert_eq!(
         rules.by_txid.get(&under).map(String::as_str),
         Some("received-pending")
@@ -499,9 +495,7 @@ async fn a_frozen_outpoint_is_held_under_every_rule() {
     // Delivered again (at least once): one row each, the cursor unchanged.
     freeze(&storage, &mined, 7).await;
     assert_eq!(
-        crate::tracker_host::frozen_count(storage.pool())
-            .await
-            .unwrap(),
+        crate::tracker_host::frozen_count(&storage).await.unwrap(),
         2
     );
     let services = headers_with(&mined, 900, 900);
@@ -654,13 +648,13 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
         sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
             .bind(parent.to_binary())
             .bind(&parent_id)
-            .execute(storage.pool())
+            .execute(storage.writer())
             .await
             .unwrap();
     }
     sqlx::query("UPDATE outputs SET spendable = 0 WHERE txid = ?")
         .bind(&parent_id)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     let mut creator = bsv_sdk::transaction::Transaction::new();
@@ -678,7 +672,7 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
     sqlx::query("UPDATE transactions SET raw_tx = ? WHERE txid = ?")
         .bind(creator.to_binary())
         .bind(&received)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     let services = headers_with(&parent_id, 800, 900);
@@ -708,13 +702,13 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
         row,
         (None, Some(reference.clone()), RECEIVED_PENDING.to_string())
     );
-    assert!(rules_of(wallet.storage().pool()).await.unwrap().is_empty());
+    assert!(rules_of(wallet.storage()).await.unwrap().is_empty());
 
     let list = wallet
         .list_actions(list_args(), "gate.local")
         .await
         .unwrap();
-    let rules = action_rules(wallet.storage().pool()).await.unwrap();
+    let rules = action_rules(wallet.storage()).await.unwrap();
     let shown = listed(serde_json::to_value(&list).unwrap(), &rules);
     assert!(
         shown.contains(&("unsigned".to_string(), Some("received-pending".to_string()))),
@@ -745,7 +739,7 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
 #[tokio::test]
 async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     let (storage, user, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
-    let pool = storage.pool();
+    let pool = storage.writer();
     let template = |reference: &'static str| {
         sqlx::query(
             "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, created_at, updated_at) \
@@ -757,18 +751,18 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
         .bind(Utc::now())
     };
     template("tmpl-ref").execute(pool).await.unwrap();
-    record_rule_by_reference(pool, "tmpl-ref", RECEIVED_PENDING)
+    record_rule_by_reference(&storage, "tmpl-ref", RECEIVED_PENDING)
         .await
         .unwrap();
     // Recorded twice (a retry): one row.
-    record_rule_by_reference(pool, "tmpl-ref", RECEIVED_PENDING)
+    record_rule_by_reference(&storage, "tmpl-ref", RECEIVED_PENDING)
         .await
         .unwrap();
     let zero = "00".repeat(32);
     let before = serde_json::json!({"totalActions": 1, "actions": [
         {"txid": zero, "status": "unsigned", "description": "pay someone", "satoshis": -1000},
     ]});
-    let rules = action_rules(pool).await.unwrap();
+    let rules = action_rules(&storage).await.unwrap();
     assert_eq!(
         listed(before.clone(), &rules),
         vec![("unsigned".to_string(), Some("received-pending".to_string()))]
@@ -782,7 +776,7 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     .execute(pool)
     .await
     .unwrap();
-    fill_txid(pool, "tmpl-ref", &signed.to_ascii_uppercase())
+    fill_txid(&storage, "tmpl-ref", &signed.to_ascii_uppercase())
         .await
         .unwrap();
     let row: (Option<String>, Option<String>) =
@@ -791,7 +785,7 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
             .await
             .unwrap();
     assert_eq!(row, (Some(signed.clone()), Some("tmpl-ref".to_string())));
-    let rules = action_rules(pool).await.unwrap();
+    let rules = action_rules(&storage).await.unwrap();
     assert!(rules.by_template.is_empty());
     let after = serde_json::json!({"totalActions": 1, "actions": [
         {"txid": signed, "status": "unproven", "description": "pay someone", "satoshis": -1000},
@@ -805,10 +799,10 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     // named, the listing cannot tell them apart.
     template("tmpl-a").execute(pool).await.unwrap();
     template("tmpl-b").execute(pool).await.unwrap();
-    record_rule_by_reference(pool, "tmpl-a", RECEIVED_PENDING)
+    record_rule_by_reference(&storage, "tmpl-a", RECEIVED_PENDING)
         .await
         .unwrap();
-    let rules = action_rules(pool).await.unwrap();
+    let rules = action_rules(&storage).await.unwrap();
     assert_eq!(listed(before, &rules), vec![("unsigned".to_string(), None)]);
 }
 
@@ -907,23 +901,25 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
         sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
             .bind(parent.to_binary())
             .bind(&parent_id)
-            .execute(storage.pool())
+            .execute(storage.writer())
             .await
             .unwrap();
     }
     let services = headers_with(&parent_id, 800, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
 
-    // The monitor-shaped writer: read, then write, then commit, until told.
-    let pool = wallet.storage().pool().clone();
+    // The monitor-shaped writer: read, then write, then commit, until told,
+    // on the store's writer as every writer of this crate is.
+    let storage = std::sync::Arc::new(StorageSqlx::open(path.to_str().unwrap()).await.unwrap());
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let writer = {
         let stop = stop.clone();
+        let storage = storage.clone();
         tokio::spawn(async move {
             let (mut commits, mut failures) = (0usize, 0usize);
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                 let round = async {
-                    let mut tx = pool.begin().await?;
+                    let mut tx = storage.write_tx().await?;
                     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
                         .fetch_one(&mut *tx)
                         .await?;
@@ -933,7 +929,8 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
                     .bind(n.to_string())
                     .execute(&mut *tx)
                     .await?;
-                    tx.commit().await
+                    tx.commit().await?;
+                    anyhow::Ok(())
                 };
                 match round.await {
                     Ok(()) => commits += 1,
@@ -951,7 +948,7 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
             sign_and_process: Some(false),
             ..Default::default()
         });
-        let answer = match crate::spend_guard::run(wallet.storage().pool()).await {
+        let answer = match crate::spend_guard::run(wallet.storage()).await {
             Err(e) => Err(format!("Storage error: spend guard: {e}")),
             Ok(_) => create_action(&wallet, args, "store-busy.local", &opts(1, true))
                 .await

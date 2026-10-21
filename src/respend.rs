@@ -27,7 +27,7 @@ const PROTOCOL: &str = "3241645161d8";
 
 async fn schema(storage: &StorageSqlx) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS respend_links (phantom_id INTEGER PRIMARY KEY REFERENCES transactions(transaction_id), replacement_id INTEGER NOT NULL UNIQUE REFERENCES transactions(transaction_id), settled INTEGER NOT NULL DEFAULT 0)")
-        .execute(storage.pool()).await?;
+        .execute(storage.writer()).await?;
     Ok(())
 }
 
@@ -190,7 +190,7 @@ pub async fn build_and_post(
     // toolbox's own allocation does (#29); their lock to the phantom is the
     // respend's own and is not a hold. The replacement inherits the word the
     // phantom was created under (R1 (d); `lean/Wallet.lean` `onRespend`).
-    let under_rule = crate::spend_gate::rules_of(storage.pool())
+    let under_rule = crate::spend_gate::rules_of(storage)
         .await?
         .get(&txid)
         .cloned();
@@ -310,7 +310,7 @@ pub async fn build_and_post(
         .find_or_create_default_basket(user_id)
         .await?
         .basket_id;
-    let mut transaction = storage.pool().begin().await?;
+    let mut transaction = storage.write_tx().await?;
     let current: (String,String,String) = sqlx::query_as("SELECT t.status,r.status,r.history FROM transactions t JOIN proven_tx_reqs r ON r.txid=t.txid WHERE t.transaction_id=?")
         .bind(phantom_id).fetch_one(&mut *transaction).await?;
     ensure!(
@@ -395,9 +395,9 @@ pub async fn build_and_post(
     storage
         .update_transaction_status_after_broadcast(&replacement_id, &outcome)
         .await?;
-    crate::spend_guard::run(storage.pool()).await?;
+    crate::spend_guard::run(storage).await?;
     if let Some(rule) = under_rule {
-        crate::spend_gate::record_rule(storage.pool(), &replacement_id, &rule).await?;
+        crate::spend_gate::record_rule(storage, &replacement_id, &rule).await?;
     }
     Ok(replacement_id)
 }
@@ -406,7 +406,8 @@ pub async fn build_and_post(
 /// selection. The toolbox's rollback can restore an input on an unspent
 /// hint; the host has deliberately reserved that input for two tracked
 /// competitors, so that hint must not let a third spend select it.
-pub async fn reserve_inputs(pool: &sqlx::SqlitePool) -> Result<()> {
+pub async fn reserve_inputs(storage: &StorageSqlx) -> Result<()> {
+    let pool = storage.pool();
     let exists: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='respend_links'",
     )
@@ -431,7 +432,7 @@ pub async fn reserve_inputs(pool: &sqlx::SqlitePool) -> Result<()> {
         };
         for (source, vout) in inputs {
             sqlx::query("UPDATE outputs SET spendable=0,spent_by=? WHERE user_id=? AND txid=? AND vout=? AND (spent_by IS NULL OR spent_by=?)")
-                .bind(phantom).bind(user_id).bind(source).bind(vout as i64).bind(phantom).execute(pool).await?;
+                .bind(phantom).bind(user_id).bind(source).bind(vout as i64).bind(phantom).execute(storage.writer()).await?;
         }
     }
     Ok(())
@@ -485,7 +486,7 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
         }
         let phantom: i64 = row.get("phantom_id");
         let replacement: i64 = row.get("replacement_id");
-        let mut transaction = storage.pool().begin().await?;
+        let mut transaction = storage.write_tx().await?;
         let raw: Vec<u8> = row
             .get::<Option<Vec<u8>>, _>("raw_tx")
             .context("respend reservation bytes unavailable")?;

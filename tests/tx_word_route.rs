@@ -41,7 +41,7 @@ async fn served() -> (String, Client, TempDir) {
         .await
         .unwrap()
         .basket_id;
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
 
     // The tracker's rows (the table made by the first read).
     tracker_host::stored_word(&storage, UNKNOWN).await.unwrap();

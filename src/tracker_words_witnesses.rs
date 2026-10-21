@@ -71,7 +71,7 @@ async fn insert_tx(storage: &StorageSqlx, user_id: i64, txid: &str, status: &str
     .bind(txid)
     .bind(OLD)
     .bind(Utc::now())
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid()
@@ -87,7 +87,7 @@ async fn insert_req(storage: &StorageSqlx, txid: &str, status: &str, history: &s
     .bind(history)
     .bind(OLD)
     .bind(OLD)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap();
 }
@@ -115,7 +115,7 @@ async fn insert_output(
     .bind(spent_by)
     .bind(Utc::now())
     .bind(Utc::now())
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid()
@@ -216,7 +216,7 @@ async fn the_daemon_keeps_an_announced_transaction_absent_past_the_threshold() {
     let t = "a1".repeat(32);
     let (storage, coin, _) = spent_coin_fixture(&t, "unproven", "unmined").await;
     let report = reconcile_with(
-        storage.pool(),
+        &storage,
         0,
         30,
         true,
@@ -241,7 +241,7 @@ async fn the_daemon_keeps_an_announced_transaction_absent_everywhere() {
     let t = "a2".repeat(32);
     let (storage, coin, _) = spent_coin_fixture(&t, "unproven", "unmined").await;
     let report = reconcile_with(
-        storage.pool(),
+        &storage,
         0,
         30,
         true,
@@ -263,7 +263,7 @@ async fn the_daemon_abandons_a_transaction_no_broadcaster_took() {
     let t = "a3".repeat(32);
     let (storage, coin, _) = spent_coin_fixture(&t, "sending", "unsent").await;
     let report = reconcile_with(
-        storage.pool(),
+        &storage,
         0,
         30,
         true,
@@ -460,7 +460,7 @@ async fn the_abort_door_refuses_a_transaction_a_broadcaster_took() {
         Some(t_row),
     )
     .await;
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
 
     let services = bsv_wallet_toolbox::Services::with_options(
         bsv_wallet_toolbox::Chain::Main,
@@ -562,13 +562,13 @@ async fn prove_funding(storage: &StorageSqlx, tx: &Transaction) {
     .bind(tx.to_binary())
     .bind(now)
     .bind(now)
-    .fetch_one(storage.pool())
+    .fetch_one(storage.writer())
     .await
     .unwrap();
     sqlx::query("UPDATE transactions SET proven_tx_id = ? WHERE txid = ?")
         .bind(proven)
         .bind(&txid)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
 }
@@ -624,7 +624,7 @@ async fn refused_coin() -> (StorageSqlx, PrivateKey, String, i64) {
     .bind(grand.to_binary())
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap();
     prove_funding(&storage, &grand).await;
@@ -656,7 +656,7 @@ async fn refused_coin() -> (StorageSqlx, PrivateKey, String, i64) {
     .bind(parent.to_binary())
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid();
@@ -679,7 +679,7 @@ async fn refused_coin() -> (StorageSqlx, PrivateKey, String, i64) {
     .bind(parent.to_binary())
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap();
     let coin = sqlx::query(
@@ -697,7 +697,7 @@ async fn refused_coin() -> (StorageSqlx, PrivateKey, String, i64) {
     .bind(SUFFIX)
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid();
@@ -742,7 +742,7 @@ fn accepting() -> MockWalletServices {
 #[tokio::test]
 async fn a_coin_whose_transaction_drew_an_immediate_refusal_is_not_selected() {
     let (storage, root, p, coin) = refused_coin().await;
-    crate::spend_guard::run(storage.pool()).await.unwrap();
+    crate::spend_guard::run(&storage).await.unwrap();
     let wallet = Wallet::new(Some(root), storage, accepting()).await.unwrap();
     let outcome = wallet.create_action(pay_args(), "witness.local").await;
     assert!(
@@ -775,7 +775,7 @@ async fn a_coin_whose_transaction_drew_an_immediate_refusal_is_not_selected() {
 #[tokio::test]
 async fn the_same_coin_is_selected_once_a_status_source_holds_its_transaction() {
     let (storage, root, p, coin) = refused_coin().await;
-    crate::spend_guard::run(storage.pool()).await.unwrap();
+    crate::spend_guard::run(&storage).await.unwrap();
     assert_eq!(output_state(&storage, coin).await.0, 0, "held");
 
     let holding = Arc::new(
@@ -800,7 +800,7 @@ async fn the_same_coin_is_selected_once_a_status_source_holds_its_transaction() 
     sqlx::query("UPDATE proven_tx_reqs SET updated_at = ? WHERE txid = ?")
         .bind(Utc::now() - chrono::Duration::days(1))
         .bind(&p)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     bsv_wallet_toolbox::MonitorStorage::send_waiting_transactions(
@@ -816,7 +816,7 @@ async fn the_same_coin_is_selected_once_a_status_source_holds_its_transaction() 
         .unwrap();
     assert_eq!(req, "unmined", "a status source holds it");
 
-    crate::spend_guard::run(storage.pool()).await.unwrap();
+    crate::spend_guard::run(&storage).await.unwrap();
     let wallet = Wallet::new(Some(root), storage, accepting()).await.unwrap();
     let result = wallet
         .create_action(pay_args(), "witness.local")
@@ -883,7 +883,7 @@ async fn funded() -> (StorageSqlx, PrivateKey, String) {
     .bind(parent.to_binary())
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap()
     .last_insert_rowid();
@@ -903,7 +903,7 @@ async fn funded() -> (StorageSqlx, PrivateKey, String) {
     .bind(SUFFIX)
     .bind(now)
     .bind(now)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap();
     (storage, root, p)

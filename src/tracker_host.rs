@@ -721,6 +721,17 @@ fn reask_label(reask: &Reask) -> String {
 }
 
 async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
+    // Read first: a store that has every table and column sends nothing to
+    // the writer (the read paths call this too).
+    let reader = storage.pool();
+    if crate::store::has_column(reader, "tracker_states", "follow_up").await?
+        && crate::store::has_column(reader, "tracker_states", "verdict").await?
+        && crate::store::has_column(reader, "tracker_states", "chain").await?
+        && crate::store::has_column(reader, "tracker_meta", "value").await?
+    {
+        return Ok(());
+    }
+    let writer = storage.writer();
     for sql in [
         "CREATE TABLE IF NOT EXISTS tracker_states (\
             txid TEXT PRIMARY KEY, \
@@ -741,18 +752,18 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS tracker_states_height ON tracker_states (height)",
         "CREATE TABLE IF NOT EXISTS tracker_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ] {
-        sqlx::query(sql).execute(storage.pool()).await?;
+        sqlx::query(sql).execute(writer).await?;
     }
     // Added with the chain-event feed (0.9.0); a table made before it
     // gains the column empty.
     let has_chain: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = 'chain'",
     )
-    .fetch_one(storage.pool())
+    .fetch_one(writer)
     .await?;
     if has_chain == 0 {
         sqlx::query("ALTER TABLE tracker_states ADD COLUMN chain TEXT NOT NULL DEFAULT '[]'")
-            .execute(storage.pool())
+            .execute(writer)
             .await?;
     }
     // Added with the follow-up of a `stale` word (0.14.0, ruling 7d (c)).
@@ -770,10 +781,10 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
             "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = ?",
         )
         .bind(column)
-        .fetch_one(storage.pool())
+        .fetch_one(writer)
         .await?;
         if has == 0 {
-            sqlx::query(sql).execute(storage.pool()).await?;
+            sqlx::query(sql).execute(writer).await?;
         }
     }
     Ok(())
@@ -823,7 +834,7 @@ async fn store_row(
     state: &State,
     now: Timestamp,
 ) -> Result<()> {
-    store_row_in(storage.pool(), row, state, now).await
+    store_row_in(storage.writer(), row, state, now).await
 }
 
 async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
@@ -1241,7 +1252,7 @@ async fn write_ring(storage: &StorageSqlx, ring: &[(Height, String)]) -> Result<
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
     .bind(serde_json::to_string(ring)?)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await?;
     Ok(())
 }
@@ -1309,7 +1320,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
          WHERE txid IS NOT NULL AND status IN ('unproven', 'sending')",
     )
     .bind(now as i64)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await?;
     report.adopted = adopted.rows_affected() as usize;
 
@@ -2133,7 +2144,10 @@ pub async fn feed_cursor(storage: &StorageSqlx) -> Result<u64> {
 /// The frozen record: an outpoint the feed's `frozen` event named, with
 /// the envelope's cursor and when it was delivered. The spend gate reads it
 /// and never offers such a coin (R6: nothing here clears a row).
-async fn ensure_frozen(pool: &sqlx::SqlitePool) -> Result<()> {
+async fn ensure_frozen(storage: &StorageSqlx) -> Result<()> {
+    if crate::store::has_column(storage.pool(), "frozen_outpoints", "frozen_at").await? {
+        return Ok(());
+    }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS frozen_outpoints (\
             txid TEXT NOT NULL, \
@@ -2142,18 +2156,18 @@ async fn ensure_frozen(pool: &sqlx::SqlitePool) -> Result<()> {
             frozen_at INTEGER NOT NULL, \
             PRIMARY KEY (txid, vout))",
     )
-    .execute(pool)
+    .execute(storage.writer())
     .await?;
     Ok(())
 }
 
 /// Every frozen outpoint: (lowercase txid, vout).
 pub async fn frozen_outpoints(
-    pool: &sqlx::SqlitePool,
+    storage: &StorageSqlx,
 ) -> Result<std::collections::HashSet<(String, i64)>> {
-    ensure_frozen(pool).await?;
+    ensure_frozen(storage).await?;
     let rows = sqlx::query("SELECT txid, vout FROM frozen_outpoints")
-        .fetch_all(pool)
+        .fetch_all(storage.pool())
         .await?;
     Ok(rows
         .iter()
@@ -2162,10 +2176,10 @@ pub async fn frozen_outpoints(
 }
 
 /// How many outpoints the frozen record holds.
-pub async fn frozen_count(pool: &sqlx::SqlitePool) -> Result<u64> {
-    ensure_frozen(pool).await?;
+pub async fn frozen_count(storage: &StorageSqlx) -> Result<u64> {
+    ensure_frozen(storage).await?;
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM frozen_outpoints")
-        .fetch_one(pool)
+        .fetch_one(storage.pool())
         .await?;
     Ok(n.max(0) as u64)
 }
@@ -2361,9 +2375,16 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
     let now = clock.now();
     let mut moved = Vec::new();
     if matches!(event, ChainEvent::Frozen { .. }) {
-        ensure_frozen(storage.pool()).await?;
+        ensure_frozen(storage).await?;
     }
-    let mut tx = storage.pool().begin().await?;
+    // The header service is read before the write lock: no write
+    // transaction is held across a service await.
+    let snapshot = if rows.is_empty() {
+        None
+    } else {
+        Some(HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await)
+    };
+    let mut tx = storage.write_tx().await?;
     if let ChainEvent::Frozen { outpoint } = &event {
         sqlx::query(
             "INSERT INTO frozen_outpoints (txid, vout, cursor, frozen_at) VALUES (?, ?, ?, ?) \
@@ -2376,9 +2397,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         .execute(&mut *tx)
         .await?;
     }
-    if !rows.is_empty() {
-        let snapshot =
-            HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
+    if let Some(snapshot) = snapshot {
         // The stored proofs replay against the branch the event (and any
         // reorg a row keeps) took away; the event's recheck reads the new
         // branch, with no answer at a height the service has not moved.
@@ -2541,7 +2560,7 @@ pub(crate) mod tests {
         .bind(txid)
         .bind(Utc::now())
         .bind(Utc::now())
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     }
@@ -2574,7 +2593,7 @@ pub(crate) mod tests {
         .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
         .bind(Utc::now())
         .bind(Utc::now())
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -2589,7 +2608,7 @@ pub(crate) mod tests {
         .bind(proven)
         .bind(Utc::now())
         .bind(Utc::now())
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -2604,7 +2623,7 @@ pub(crate) mod tests {
         .bind(txid)
         .bind(Utc::now())
         .bind(Utc::now())
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     }
@@ -3129,7 +3148,7 @@ pub(crate) mod tests {
         // header at 900 carries, one whose header at 950 carries another.
         sqlx::query("UPDATE transactions SET status = 'completed' WHERE txid = ?")
             .bind(&earlier)
-            .execute(storage.pool())
+            .execute(storage.writer())
             .await
             .unwrap();
         let checks = "d3".repeat(32);

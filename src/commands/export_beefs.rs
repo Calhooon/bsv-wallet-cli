@@ -236,7 +236,7 @@ mod tests {
         .bind(&raw)
         .bind(now)
         .bind(now)
-        .fetch_one(storage.pool())
+        .fetch_one(storage.writer())
         .await
         .unwrap();
         let tx_row = sqlx::query(
@@ -249,7 +249,7 @@ mod tests {
         .bind(proven_tx_id)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -264,7 +264,7 @@ mod tests {
         .bind(&txid)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
 

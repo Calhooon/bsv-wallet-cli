@@ -481,7 +481,7 @@ mod tests {
         .bind(height as i64)
         .bind(hash)
         .bind(root)
-        .execute(s.pool())
+        .execute(s.writer())
         .await
         .unwrap();
     }

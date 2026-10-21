@@ -532,7 +532,7 @@ async fn chain_feed_status(
     let storage = wallet.storage();
     let status = crate::chain_feed::read_status(storage).await;
     let cursor = crate::tracker_host::feed_cursor(storage).await;
-    let frozen = crate::tracker_host::frozen_count(storage.pool()).await;
+    let frozen = crate::tracker_host::frozen_count(storage).await;
     match (status, cursor, frozen) {
         (Ok(status), Ok(cursor), Ok(frozen)) => Json(json!({
             "status": status,

@@ -52,7 +52,7 @@ async fn setup_with_callback(
     }
 
     // Keep a pool handle for post-request verification.
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
 
     if let Some((txid, req_status, tx_status)) = seed {
         let (user, _) = storage
@@ -401,7 +401,7 @@ async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
     bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
         .await
         .expect("open the proof gate");
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
     let txid = "e".repeat(64);
     let now = chrono::Utc::now();
     sqlx::query(
@@ -645,7 +645,7 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
     let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
     tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
     storage.set_chain_tracker(Arc::new(tracker)).await;
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
     let (user, _) = storage
         .find_or_insert_user(&identity_key)
         .await

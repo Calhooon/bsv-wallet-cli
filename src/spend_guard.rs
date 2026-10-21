@@ -26,7 +26,8 @@
 //! `unprocessed`): no status source has held the transaction since.
 
 use anyhow::Result;
-use sqlx::{Row, SqlitePool};
+use bsv_wallet_toolbox::StorageSqlx;
+use sqlx::Row;
 
 use crate::server::post_word::{last_note, IMMEDIATE_HINT};
 
@@ -49,23 +50,27 @@ impl GuardReport {
     }
 }
 
-async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
+async fn ensure_schema(storage: &StorageSqlx) -> Result<()> {
+    if crate::store::has_column(storage.pool(), "spend_guard_holds", "held_at").await? {
+        return Ok(());
+    }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS spend_guard_holds (\
             output_id INTEGER PRIMARY KEY, \
             txid TEXT NOT NULL, \
             held_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     )
-    .execute(pool)
+    .execute(storage.writer())
     .await?;
     Ok(())
 }
 
 /// Release what a status source now holds, then hold every spendable coin
 /// of a transaction whose last word is an immediate-refusal hint.
-pub async fn run(pool: &SqlitePool) -> Result<GuardReport> {
-    crate::respend::reserve_inputs(pool).await?;
-    ensure_schema(pool).await?;
+pub async fn run(storage: &StorageSqlx) -> Result<GuardReport> {
+    crate::respend::reserve_inputs(storage).await?;
+    ensure_schema(storage).await?;
+    let pool = storage.pool();
     let mut report = GuardReport::default();
 
     // 1. Release.
@@ -82,12 +87,12 @@ pub async fn run(pool: &SqlitePool) -> Result<GuardReport> {
         if tx_status == "failed" || matches!(req_status.as_str(), "invalid" | "doubleSpend") {
             sqlx::query("DELETE FROM spend_guard_holds WHERE txid = ?")
                 .bind(&txid)
-                .execute(pool)
+                .execute(storage.writer())
                 .await?;
             report.dropped.push(txid);
         } else if tx_status == "completed" || matches!(req_status.as_str(), "unmined" | "completed")
         {
-            let mut tx = pool.begin().await?;
+            let mut tx = storage.write_tx().await?;
             sqlx::query(
                 "UPDATE outputs SET spendable = 1 WHERE spendable = 0 AND spent_by IS NULL \
                  AND output_id IN (SELECT output_id FROM spend_guard_holds WHERE txid = ?)",
@@ -125,7 +130,7 @@ pub async fn run(pool: &SqlitePool) -> Result<GuardReport> {
         if last_note(&history, IMMEDIATE_HINT).is_none() {
             continue;
         }
-        let mut tx = pool.begin().await?;
+        let mut tx = storage.write_tx().await?;
         sqlx::query("INSERT OR IGNORE INTO spend_guard_holds (output_id, txid) VALUES (?, ?)")
             .bind(output_id)
             .bind(&txid)

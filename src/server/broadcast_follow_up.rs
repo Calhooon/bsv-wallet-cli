@@ -583,7 +583,7 @@ mod tests {
         .bind(&parent_txid)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -595,7 +595,7 @@ mod tests {
         .bind(TXID_HEX)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -611,7 +611,7 @@ mod tests {
         .bind(tx_id)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -626,7 +626,7 @@ mod tests {
         .bind(TXID_HEX)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid();
@@ -637,7 +637,7 @@ mod tests {
         .bind(TXID_HEX)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
         (storage, input_id, own_id)

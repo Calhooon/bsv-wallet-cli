@@ -21,10 +21,6 @@ pub async fn run(cli: &Cli) -> Result<()> {
 
     let storage = StorageSqlx::open(&cli.db).await?;
     storage.make_available().await?;
-    sqlx::query("PRAGMA busy_timeout = 500")
-        .execute(storage.pool())
-        .await
-        .ok();
 
     // Shared env-driven services config — see services_env.rs.
     let services = {

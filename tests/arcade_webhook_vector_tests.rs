@@ -104,7 +104,7 @@ async fn server_with(
     storage
         .set_chain_tracker(Arc::new(SharedTracker(headers)))
         .await;
-    let pool = storage.pool().clone();
+    let pool = storage.writer().clone();
 
     let (user, _) = storage
         .find_or_insert_user(&identity_key)

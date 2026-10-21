@@ -43,7 +43,7 @@ pub async fn run(
     };
 
     // A coin whose transaction drew no accepting word is not selected.
-    crate::spend_guard::run(ctx.wallet.storage().pool()).await?;
+    crate::spend_guard::run(ctx.wallet.storage()).await?;
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
     let result = crate::spend_gate::refused_as_json(

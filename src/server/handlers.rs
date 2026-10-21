@@ -522,7 +522,7 @@ pub async fn create_action(
     let _guard = spending_lock.lock().await;
     // A coin whose transaction drew no accepting word on its immediate post,
     // with no status source holding it, is not selected (`spend_guard`).
-    crate::spend_guard::run(wallet.storage().pool())
+    crate::spend_guard::run(wallet.storage())
         .await
         .map_err(|e| AppError::from_wallet_error(format!("Storage error: spend guard: {e}")))?;
     // The spend gate (R1 (b), (d), R3 (b)): the toolbox allocates only
@@ -979,8 +979,7 @@ pub async fn sign_action(
     // is named by the txid it was signed as. The action is signed (and
     // perhaps broadcast) already: a failure here is logged, not answered.
     if let Some(t) = result.txid.as_ref() {
-        if let Err(e) =
-            crate::spend_gate::fill_txid(wallet.storage().pool(), &reference, &to_hex(t)).await
+        if let Err(e) = crate::spend_gate::fill_txid(wallet.storage(), &reference, &to_hex(t)).await
         {
             tracing::error!(reference = %reference, error = %e, "signAction: the rule's txid not recorded");
         }
@@ -1057,7 +1056,7 @@ pub async fn list_actions(
         .list_actions(args, &originator)
         .await
         .map_err(AppError::from_wallet_error)?;
-    let rules = crate::spend_gate::action_rules(wallet.storage().pool())
+    let rules = crate::spend_gate::action_rules(wallet.storage())
         .await
         .map_err(|e| AppError::from_wallet_error(format!("Storage error: {e}")))?;
     let result = serde_json::to_value(result)
