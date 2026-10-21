@@ -129,8 +129,8 @@ pub fn txid_of(raw: &[u8]) -> String {
 }
 
 /// The `marker` field of every event logged while a [`Markers::capture`]
-/// guard lives on this thread, with the event's `txid` and `error` when it
-/// carries them. A `#[tokio::test]` runs on one thread, so a capture taken
+/// guard lives on this thread, with the event's `txid`, `error` and message when
+/// it carries them. A `#[tokio::test]` runs on one thread, so a capture taken
 /// at its start sees every line the test's awaits log.
 #[derive(Clone, Default)]
 pub struct Markers(Arc<Mutex<Vec<Marked>>>);
@@ -141,6 +141,7 @@ pub struct Marked {
     pub marker: String,
     pub txid: Option<String>,
     pub error: Option<String>,
+    pub message: Option<String>,
 }
 
 impl Markers {
@@ -180,6 +181,7 @@ impl Marked {
             "marker" => self.marker = value,
             "txid" => self.txid = Some(value),
             "error" => self.error = Some(value),
+            "message" => self.message = Some(value),
             _ => {}
         }
     }
