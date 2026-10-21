@@ -222,6 +222,48 @@ mod tests {
         assert_eq!(shared.matches("StorageSqlx::open(").count(), 1);
     }
 
+    /// D2 of the #44 delta review: no command opens the wallet file beside
+    /// its context's store (`reconcile-outputs` once kept its own pool). A
+    /// command opens the file itself only when it carries no Wallet at all:
+    /// `init` (it creates the file), `tick` (a Monitor alone) and `ui` (the
+    /// read-only inspector), each exactly once. Every file in
+    /// `src/commands/` is read, so a new command is held to the rule too.
+    #[test]
+    fn no_command_opens_the_wallet_file_beside_its_store() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        let alone = ["init.rs", "tick.rs", "ui.rs"];
+        let mut read = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let src = std::fs::read_to_string(&path).unwrap();
+            read += 1;
+            if alone.contains(&name.as_str()) {
+                assert_eq!(direct_opens(&src), 1, "{name} opens its file once");
+                let prod = production(&src);
+                for wallet in ["WalletContext", "Wallet::new(", "open_shared("] {
+                    assert!(!prod.contains(wallet), "{name} carries no Wallet");
+                }
+            } else {
+                assert_eq!(direct_opens(&src), 0, "{name} opens the wallet file itself");
+            }
+        }
+        assert!(
+            read > 20,
+            "read {read} command files from {}",
+            dir.display()
+        );
+        let reconcile = production(include_str!("commands/reconcile_outputs.rs"));
+        assert_eq!(direct_opens(reconcile), 0);
+        assert_eq!(
+            reconcile.matches("ctx.wallet.storage().writer()").count(),
+            1
+        );
+    }
+
     /// A real SQLITE_BUSY: two connections on one file, the second asking
     /// for the write lock the first holds, with no busy timeout.
     #[tokio::test]
