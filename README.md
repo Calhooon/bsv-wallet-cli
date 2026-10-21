@@ -174,10 +174,16 @@ the toolbox moves to `completed` while a row exists keeps its row. So
 
 Every coin the binary offers to `createAction` (the served `/createAction`,
 `send`, `drain`, `split`, `gift-send`) passes the spend guard
-([src/spend_gate.rs](src/spend_gate.rs)). The toolbox picks the coins inside
-its own query, so the guard holds every coin it does not offer for the length
-of the call (the coin's `change` flag, recorded in `spend_gate_holds`) and
-restores exactly those after. Two settings:
+([src/spend_gate.rs](src/spend_gate.rs)). The guard offers: it names the coins
+it offers and the toolbox allocates from those only, in one call
+(`Wallet::create_action_offering`, bsv-wallet-toolbox-rs 0.11.0). The toolbox
+picks within the offer and locks within it inside its one `BEGIN IMMEDIATE`
+transaction, so a coin outside the offer is never allocated, concurrent calls
+included, and the guard writes nothing around the call. (Through 0.15.0 the
+guard held every coin it did not offer by its `change` flag for the call and
+restored it after, a write after the broadcast; a `daemon` or `serve` start
+makes change again any coin a 0.15 process left held in `spend_gate_holds`.)
+Two settings:
 
 - `SPEND_DEPTH` (default 1, and the floor: a smaller number reads as 1): the
   depth the block holding a coin's transaction must reach, checked against the
@@ -202,11 +208,13 @@ an incomplete ancestry and checks every proof it carries against the header
 service), so the one word trusted is the sender's broadcast. Its cost: if the
 sender double-spends, this action becomes `conflicted` and the coins of ours
 it spent are lost with it, though nothing of ours was ever lost in fact. The
-action records the word (`spend_gate_actions`), and `actions` and
-`/listActions` show it as `underRule: "received-pending"`. A template made
-for deferred signing (`signAndProcess: false`) records it by the action's
-`reference` and gains its txid at `signAction`; an aborted template keeps the
-record. There is no environment variable for it.
+action carries the word as its label, `spend-gate:received-pending`, which the
+toolbox writes with the action in its one transaction (nothing is written after
+the call), and `actions` and `/listActions` show it as `underRule:
+"received-pending"`. A template made for deferred signing (`signAndProcess:
+false`) carries the label from its creation through `signAction`; an aborted
+template keeps it. The records a 0.15 store made (`spend_gate_actions`) keep
+answering. There is no environment variable for it.
 
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
 is never offered; a coin whose creator is `mined` at or above the
@@ -230,10 +238,32 @@ on stdout, `{"code":"INSUFFICIENT_FUNDS","message","offeredSatoshis","held":[...
 (`INPUT_NOT_OFFERED` for a named coin), exit 1. Nothing is fetched for it but the header service's tip and
 headers: no chain scan, no explorer.
 
-A store busy answer (SQLite 5, 6 or 517, or the toolbox's `Store busy:`) is
-`503 STORE_BUSY` with `Retry-After: 1`, body `{"code":"STORE_BUSY","message"}`,
-never `400` (#44). A transaction that opens IMMEDIATE can only fail at BEGIN,
-so a 503 means nothing was written and a client may retry blind.
+## The served answers
+
+A refused call answers `{"code", "message"}` (the gate's refusals add
+`offeredSatoshis` and `held`), with the status by the error's class:
+
+| status | `code` | when |
+|---|---|---|
+| 400 | `VALIDATION_ERROR`, `INVALID_BEEF`, `ERROR` | the caller's request (`Validation error:`, `Invalid argument:`; `Invalid BEEF at byte N`) |
+| 401 | `AUTHENTICATION_REQUIRED` | `Authentication required`, `Invalid identity key:` |
+| 402 | `INSUFFICIENT_FUNDS` | no offered coin covers the action; `held` lists every coin held back |
+| 403 | `ACCESS_DENIED`, `INPUT_NOT_OFFERED` | `Access denied:`; a named input the spend guard would hold |
+| 404 | `NOT_FOUND` | `Entity not found:` |
+| 409 | `CONFLICT` | `Duplicate entity:`, `Invalid operation:` |
+| 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
+| 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
+| 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
+| 503 | `STORE_BUSY` | the store busy (#44): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
+
+`503 STORE_BUSY` is answered by the error's type, never its words: the
+toolbox's `WalletBusy` from a wallet door, or a read or write of the spend
+gate or guard before the door that hit SQLite's busy (code 5, 517 included) or
+the writer's ceiling. Nothing was written, built, locked or posted: repeat the
+same call after `Retry-After`. The word `STORE_BUSY` is in no 4xx body. Under
+`--json`, `send`, `drain`, `split` and `gift-send` print the same body and
+exit 1. CORS: `Access-Control-Expose-Headers` carries `Retry-After`, so a
+browser caller can read it.
 
 ## One transaction's word
 

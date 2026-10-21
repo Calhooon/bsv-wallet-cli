@@ -53,11 +53,12 @@ All 28 endpoints, organized by batch:
   - 401 — `Authentication required`, `Invalid identity key:`
   - 403 — `Access denied:`
   - 404 — `Entity not found:`, `not found:`
-  - 409 — `Duplicate entity:`, `Invalid operation:`
+  - 409 — `Duplicate entity:`, `Invalid operation:`; `UNSPENDABLE_COIN` for `Unspendable coin:` (the coin named under `coin`)
   - 400 — `Validation error:`, `Invalid argument:`, `Origin header required`
   - 500 — `Storage error:`, `Database error:`, `Internal error:`
   - 502 — `Service error:`, `Network error:`, `Broadcast failed:`
   - Default: 400
+  - 503 `STORE_BUSY` with `Retry-After: 1` is never a prefix: `AppError::store_busy` is built only from the store busy by its type (`bsv_sdk::Error::WalletBusy` from a wallet door; a spend gate or guard fault before the door whose chain holds SQLite's code 5 or the writer's acquire timeout, `crate::store::is_store_busy`). CORS exposes `Retry-After` (#44).
   - Response body: `{"code": "ERROR_CODE", "message": "..."}`. Errors are also logged via `tracing::warn`.
 - **Layer ordering**: the last layer added runs first: the body limit, tracing, the extensions, auth, then the JSON body is read (`lenient_json_body`), then CORS. Auth runs before any body is read. The body cap is 50 MiB (`BODY_CAP`) on every route but the two BEEF doors (`BEEF_DOORS`: `/createAction`, `/internalizeAction`), which have none: a valid BEEF is never refused for its size, the body is held whole, and the toolbox refuses invalid bytes only (`INVALID_BEEF`, 400, the offset and the kind). `ServerConfig` and `SpendingLock` are injected via axum `Extension`, not per-handler.
 - **AtomicBEEF in createAction response**: The SDK returns standard BEEF with ancestors. The handler converts it to AtomicBEEF via `Beef::from_binary()` + `to_binary_atomic(&txid_hex)`. Falls back to raw tx bytes if conversion fails. Clients (x402, worm) expect AtomicBEEF format in the `tx` response field.
