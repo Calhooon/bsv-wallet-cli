@@ -23,7 +23,7 @@
 //!     unknown / unconfirmed competitor ⇒ untouched and REPORTED (an unknown
 //!     never moves money either way). Bounded per pass (`--max-chain-checks`).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bsv_sdk::transaction::Transaction;
 use sqlx::Row;
 use std::future::Future;
@@ -204,15 +204,12 @@ where
     Ok(report)
 }
 
-pub async fn run(
-    ctx: &WalletContext,
-    db_path: &str,
-    execute: bool,
-    max_chain_checks: usize,
-) -> Result<()> {
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path))
-        .await
-        .with_context(|| format!("failed to open {} (is the daemon running?)", db_path))?;
+pub async fn run(ctx: &WalletContext, execute: bool, max_chain_checks: usize) -> Result<()> {
+    // The context's store, never a second open of the file (D2 of the #44
+    // delta review): its writer, the one connection every write in this
+    // process queues on. Every statement below is a single autocommit and
+    // no connection is held across a probe's network await.
+    let pool = ctx.wallet.storage().writer().clone();
     let client = reqwest::Client::new();
     let base = receive::woc_base(ctx.chain);
     let report = reconcile_outputs_with(&pool, execute, max_chain_checks, |src, vout| {

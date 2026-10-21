@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
             max_chain_checks,
         } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::reconcile_outputs::run(&ctx, &cli.db, *execute, *max_chain_checks).await?;
+            commands::reconcile_outputs::run(&ctx, *execute, *max_chain_checks).await?;
         }
         Commands::Reproof {
             since_height,
