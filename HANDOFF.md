@@ -193,8 +193,12 @@ right now; the funder wallet (`e2e-funder/`, 0.15.0 binary at
 `~/bsv/targets/bsv-wallet-cli-0150/release/bsv-wallet`) holds 14,227 sats, a
 run funds 50,000 by default (FUND_AMOUNT) and must come back but for fees: a
 top-up from the main wallet is the owner's call (asked). The run happens ONCE,
-on the repinned release binary, with the funder daemon started from
-`e2e-funder/` on :3320.
+on the repinned release binary. The funder daemon runs on :3320 on the 0.16.0
+binary (pid 91957, log /Volumes/Lanes/out/bsv-wallet-cli/cli44-e2e/funder-daemon.log)
+with CHAINTRACKS_URL=https://rust-chaintracks.dev-a3e.workers.dev, the
+production header service the other daemons use (api.calhouninfra.com answered
+521 on 2026-10-21; the memory corrected). The harness's spawned wallets inherit
+the environment: export CHAINTRACKS_URL before `node tests/e2e/run.js`.
 
 ### Lanes
 
