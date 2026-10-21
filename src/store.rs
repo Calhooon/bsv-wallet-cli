@@ -164,6 +164,64 @@ mod tests {
         assert!(!is_store_busy(&anyhow::Error::new(read)));
     }
 
+    /// The production half of a source file: everything before its first
+    /// `#[cfg(test)]` (a test module opens its own in-memory stores).
+    fn production(src: &str) -> &str {
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
+
+    /// The ways a source file can open the wallet file itself.
+    fn direct_opens(src: &str) -> usize {
+        let src = production(src);
+        [
+            "StorageSqlx::open(",
+            "SqlitePool::connect(",
+            ".connect_with(",
+        ]
+        .iter()
+        .map(|door| src.matches(door).count())
+        .sum()
+    }
+
+    /// D1 of the #44 delta review: each command that runs a Monitor or a
+    /// server beside a Wallet opens its file once. The daemon (and
+    /// `serve-fleet --daemon`, per seat) opens it only through
+    /// `store::open_shared`; `serve` and `serve-fleet` take it from
+    /// `WalletContext::load_with`, the one open in `context.rs`. A second
+    /// open for the Wallet beside the Monitor's store passes every
+    /// behavioural test, so the sources are read here.
+    #[test]
+    fn the_daemon_tenant_opens_its_file_only_through_open_shared() {
+        let tenant = production(include_str!("commands/daemon_tenant.rs"));
+        assert_eq!(tenant.matches("StorageSqlx::open(").count(), 0);
+        assert_eq!(tenant.matches("store::open_shared(").count(), 1);
+        assert_eq!(direct_opens(tenant), 0);
+        assert_eq!(tenant.matches("WalletContext").count(), 0);
+
+        let daemon = production(include_str!("commands/daemon.rs"));
+        assert_eq!(direct_opens(daemon), 0);
+        assert_eq!(daemon.matches("WalletContext").count(), 0);
+        assert_eq!(daemon.matches("daemon_tenant::start(").count(), 1);
+
+        let serve = production(include_str!("commands/serve.rs"));
+        assert_eq!(direct_opens(serve), 0);
+        assert_eq!(serve.matches("open_shared(").count(), 0);
+
+        // Per seat: the daemon's composition or a context, never both.
+        let fleet = production(include_str!("commands/serve_fleet.rs"));
+        assert_eq!(direct_opens(fleet), 0);
+        assert_eq!(fleet.matches("open_shared(").count(), 0);
+        assert_eq!(fleet.matches("daemon_tenant::start(").count(), 1);
+        assert_eq!(fleet.matches("WalletContext::load_with(").count(), 1);
+
+        let context = production(include_str!("context.rs"));
+        assert_eq!(context.matches("StorageSqlx::open(").count(), 1);
+        assert_eq!(direct_opens(context), 1);
+
+        let shared = production(include_str!("store.rs"));
+        assert_eq!(shared.matches("StorageSqlx::open(").count(), 1);
+    }
+
     /// A real SQLITE_BUSY: two connections on one file, the second asking
     /// for the write lock the first holds, with no busy timeout.
     #[tokio::test]
