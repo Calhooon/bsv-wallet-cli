@@ -200,14 +200,24 @@ pub async fn apply_presence_report(
             .mark_transaction_seen_on_network_by(txid, provider)
             .await
         {
-            tracing::warn!(txid = %txid, error = %e, "could not record the network presence");
+            tracing::warn!(
+                marker = "post_broadcast_follow_up_write_failed",
+                txid = %txid,
+                error = %e,
+                "could not record the network presence"
+            );
         }
         if evidence == NetworkEvidence::Mined {
             if let Err(e) = storage
                 .record_broadcast_status(txid, provider, evidence.memory_status())
                 .await
             {
-                tracing::warn!(txid = %txid, error = %e, "could not record the mined evidence");
+                tracing::warn!(
+                    marker = "post_broadcast_follow_up_write_failed",
+                    txid = %txid,
+                    error = %e,
+                    "could not record the mined evidence"
+                );
             }
         }
         if !ancestors.is_empty() {
@@ -220,7 +230,12 @@ pub async fn apply_presence_report(
                 )
                 .await
             {
-                tracing::warn!(txid = %txid, error = %e, "could not credit the ancestors");
+                tracing::warn!(
+                    marker = "post_broadcast_follow_up_write_failed",
+                    txid = %txid,
+                    error = %e,
+                    "could not credit the ancestors"
+                );
             }
         }
         tracing::info!(
@@ -313,7 +328,12 @@ pub async fn retire_rejected_broadcast(
             None
         }
         Err(e) => {
-            tracing::error!(txid = %txid, error = %e, "failed to retire absent broadcast");
+            tracing::error!(
+                marker = "post_broadcast_follow_up_write_failed",
+                txid = %txid,
+                error = %e,
+                "failed to retire absent broadcast"
+            );
             None
         }
     }
@@ -766,6 +786,65 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(memory, "mined");
+    }
+
+    /// F5 of the #44 CLI review: every write of the follow-up after the
+    /// door that fails is logged with the marker
+    /// `post_broadcast_follow_up_write_failed`, the txid and the error,
+    /// and never becomes the call's error (it has none to return).
+    #[tokio::test]
+    async fn a_failed_follow_up_write_is_logged_with_its_marker() {
+        use bsv_wallet_toolbox::services::mock::MockWalletServices;
+        let (markers, _guard) = crate::test_support::Markers::capture();
+        let (storage, _, _) = seeded_storage().await;
+        // A req the presence report would lift, so its write is attempted.
+        sqlx::query("UPDATE proven_tx_reqs SET status = 'sending' WHERE txid = ?")
+            .bind(TXID_HEX)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        for table in [
+            "broadcast_seen",
+            "transactions",
+            "proven_tx_reqs",
+            "outputs",
+        ] {
+            for op in ["INSERT", "UPDATE"] {
+                sqlx::query(&format!(
+                    "CREATE TRIGGER fault_{op}_{table} BEFORE {op} ON {table} \
+                     BEGIN SELECT RAISE(ABORT, 'injected follow-up fault'); END"
+                ))
+                .execute(storage.writer())
+                .await
+                .unwrap();
+            }
+        }
+        let mut r = report(BroadcastVerification::Confirmed);
+        r.evidence = Some(NetworkEvidence::Mined);
+        apply_presence_report(
+            &storage,
+            &MockWalletServices::new(),
+            TXID_HEX,
+            &["11".repeat(32)],
+            &r,
+        )
+        .await;
+        assert!(
+            retire_rejected_broadcast(&storage, &MockWalletServices::new(), TXID_HEX)
+                .await
+                .is_none()
+        );
+        let failed = markers.named("post_broadcast_follow_up_write_failed");
+        println!("{:?}", markers.all());
+        assert_eq!(
+            failed.len(),
+            4,
+            "the presence, the mined evidence, the ancestors and the retire"
+        );
+        for line in failed {
+            assert_eq!(line.txid.as_deref(), Some(TXID_HEX));
+            assert!(line.error.is_some_and(|e| !e.is_empty()));
+        }
     }
 
     #[tokio::test]
