@@ -463,6 +463,18 @@ pub async fn label_in(
     Ok(())
 }
 
+/// Strip R1 (d)'s label from a caller's labels, in any case or padding.
+/// The label is the gate's record of the door's word: a caller who could
+/// write it would read as `underRule` and grant a respend the received
+/// rule without ever naming `allowPending`. Every door a caller's labels
+/// pass (the gate's `createAction`, the served `internalizeAction`) strips
+/// it; `signAction` takes no labels.
+pub fn strip_rule_label(labels: &mut Option<Vec<String>>) {
+    if let Some(labels) = labels.as_mut() {
+        labels.retain(|l| !l.trim().eq_ignore_ascii_case(RECEIVED_PENDING_LABEL));
+    }
+}
+
 /// The rule a label names, if it is one of the gate's.
 pub fn rule_of_label(label: &str) -> Option<&'static str> {
     (label == RECEIVED_PENDING_LABEL).then_some(RECEIVED_PENDING)
@@ -949,12 +961,14 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // The action carries the word it was created under (R1 (d)) as its
     // label: the toolbox writes it inside the action's one transaction, and
     // nothing is written after the door.
+    // A caller's own copy of the label is stripped first (F4 of the #44 CLI
+    // review): only the door's word writes it.
     let mut args = args;
+    strip_rule_label(&mut args.labels);
     if opts.allow_received {
-        let labels = args.labels.get_or_insert_with(Vec::new);
-        if !labels.iter().any(|l| l == RECEIVED_PENDING_LABEL) {
-            labels.push(RECEIVED_PENDING_LABEL.to_string());
-        }
+        args.labels
+            .get_or_insert_with(Vec::new)
+            .push(RECEIVED_PENDING_LABEL.to_string());
     }
     run_gated(wallet, args, originator, opts).await
 }

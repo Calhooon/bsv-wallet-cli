@@ -214,3 +214,23 @@ async fn cors_exposes_retry_after() {
         .map(|v| v.to_str().unwrap().to_ascii_lowercase());
     assert_eq!(exposed.as_deref(), Some("retry-after"));
 }
+
+/// F4 of the #44 CLI review: the served `internalizeAction` strips a
+/// caller's copy of the gate's rule label; its other labels pass.
+#[test]
+fn internalize_strips_the_gate_rule_label() {
+    let req: McInternalizeActionReq = serde_json::from_value(serde_json::json!({
+        "tx": [1, 2, 3],
+        "outputs": [],
+        "description": "a payment",
+        "labels": ["spend-gate:received-pending", "invoice", " Spend-Gate:received-pending"]
+    }))
+    .unwrap();
+    let args = internalize_args(req);
+    assert_eq!(args.labels, Some(vec!["invoice".to_string()]));
+    let req: McInternalizeActionReq = serde_json::from_value(serde_json::json!({
+        "tx": [1], "outputs": [], "description": "no labels"
+    }))
+    .unwrap();
+    assert_eq!(internalize_args(req).labels, None);
+}

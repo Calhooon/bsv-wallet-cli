@@ -881,6 +881,80 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     );
 }
 
+/// F4 of the #44 CLI review: a caller's own copy of the rule's label, in
+/// any case or padding, without `allowPending`, is stripped before the
+/// door: the action is stored without it, the listing shows no
+/// `underRule`, and no rule is recorded, so nothing (a respend's
+/// `allow_received` among them) reads it as granted. Under the door's word
+/// the label is written once.
+#[tokio::test]
+async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (deep, _) = mined_coin(&storage, (user, basket), 0xd1, 50_000, 800).await;
+    let (other, _) = mined_coin(&storage, (user, basket), 0xd2, 50_000, 800).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_tip_header(header_with_hash(900, &other, 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let forged = || {
+        let mut args = pay(1_000);
+        args.labels = Some(vec![
+            RECEIVED_PENDING_LABEL.to_string(),
+            " Spend-Gate:Received-Pending ".to_string(),
+            "mine".to_string(),
+        ]);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        args
+    };
+
+    let result = create_action(&wallet, forged(), "gate.local", &opts(1, true))
+        .await
+        .unwrap();
+    let reference = reference_string(&result.signable_transaction.unwrap().reference);
+    assert_eq!(labels_of(wallet.storage(), &reference).await, vec!["mine"]);
+    let rules = action_rules(wallet.storage()).await.unwrap();
+    assert!(rules.by_txid.is_empty() && rules.by_template.is_empty());
+    let list = wallet
+        .list_actions(list_args(), "gate.local")
+        .await
+        .unwrap();
+    let shown = listed(serde_json::to_value(&list).unwrap(), &rules);
+    assert!(
+        shown.contains(&("unsigned".to_string(), None))
+            && shown.iter().all(|(_, rule)| rule.is_none()),
+        "{shown:?}"
+    );
+
+    // Under the door's word the label is the gate's, written once.
+    let result = create_action(
+        &wallet,
+        forged(),
+        "gate.local",
+        &opts(1, true).with_allow_received(true),
+    )
+    .await
+    .unwrap();
+    let reference = reference_string(&result.signable_transaction.unwrap().reference);
+    assert_eq!(
+        labels_of(wallet.storage(), &reference).await,
+        vec!["mine", RECEIVED_PENDING_LABEL]
+    );
+
+    let mut labels = Some(vec![
+        "x".to_string(),
+        "SPEND-GATE:RECEIVED-PENDING".to_string(),
+    ]);
+    strip_rule_label(&mut labels);
+    assert_eq!(labels, Some(vec!["x".to_string()]));
+    let mut none = None;
+    strip_rule_label(&mut none);
+    assert_eq!(none, None);
+}
+
 /// The labels the toolbox stored on the action whose reference is
 /// `reference`.
 async fn labels_of(storage: &StorageSqlx, reference: &str) -> Vec<String> {
