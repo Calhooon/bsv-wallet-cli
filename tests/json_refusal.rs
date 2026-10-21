@@ -4,7 +4,9 @@
 //! as a user runs it, on a throwaway wallet made by `init` (no coin, so
 //! nothing is built, signed or broadcast) with `CHAINTRACKS_URL=off`.
 //! `drain` and `split` stop before the gate on an empty wallet; they print
-//! through the same call (`spend_gate::refused_as_json`).
+//! through the same calls (`spend_gate::refused_as_json`,
+//! `spend_gate::busy_as_json`). The store busy (#44) prints as the route's
+//! 503 body, `{code: STORE_BUSY, message}`, and exits 1 the same way.
 
 use std::process::Command;
 use tempfile::TempDir;
@@ -61,4 +63,68 @@ fn a_refused_spend_under_json_prints_the_refusal_as_json_and_exits_1() {
             .unwrap()
             .contains("Insufficient funds"));
     }
+}
+
+/// The store busy under `--json` (#44): another process holds the wallet
+/// file's write lock past the store's ceiling while `send` and `gift-send`
+/// run; each prints `{code: STORE_BUSY, message}` and exits 1, nothing
+/// built or posted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_store_under_json_prints_store_busy_and_exits_1() {
+    use sqlx::{ConnectOptions, Connection};
+    let dir = TempDir::new().expect("temp dir");
+    let init = wallet(&dir)
+        .args(["--db", "wallet.db", "init"])
+        .output()
+        .expect("run init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    // A first command opens the store (its schema settled), then the lock.
+    let warm = wallet(&dir)
+        .args(["--db", "wallet.db", "--json", "balance"])
+        .output()
+        .expect("run balance");
+    assert!(
+        warm.status.success(),
+        "balance: {}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    let mut other = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("wallet.db"))
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut other)
+        .await
+        .unwrap();
+    let g = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    let runs: [&[&str]; 2] = [
+        &["send", "12tRsyKopKkn5kpxhgNUZ7WaddmU8b8X3w", "30000"],
+        &["gift-send", g, "30000", "--unlock", "2030-01-01"],
+    ];
+    for args in runs {
+        let out = wallet(&dir)
+            .args(["--db", "wallet.db", "--json"])
+            .args(args)
+            .output()
+            .expect("run the command");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        println!("{args:?}: {stdout}");
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stdout}{stderr}");
+        let json: serde_json::Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|e| panic!("{args:?}: not JSON ({e}): {stdout}{stderr}"));
+        assert_eq!(json["code"], "STORE_BUSY", "{json}");
+        assert_eq!(json.as_object().unwrap().len(), 2, "{json}");
+        assert!(
+            json["message"].as_str().is_some_and(|m| !m.is_empty()),
+            "{json}"
+        );
+    }
+    sqlx::query("ROLLBACK").execute(&mut other).await.unwrap();
+    other.close().await.unwrap();
 }

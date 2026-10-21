@@ -308,7 +308,8 @@ impl Refusal {
 
 /// A command's gated `createAction`: under `--json` a refusal is printed as
 /// [`Refusal::to_json`] on stdout and the process exits 1, as the text
-/// refusal does; anything else is returned as it was.
+/// refusal does, and so is the store busy, as [`busy_json`] (#44);
+/// anything else is returned as it was.
 pub fn refused_as_json<T>(
     result: std::result::Result<T, GateError>,
     json: bool,
@@ -319,8 +320,32 @@ pub fn refused_as_json<T>(
             println!("{}", refusal.to_json());
             std::process::exit(1);
         }
+        Err(e) if json && e.is_store_busy() => {
+            println!("{}", busy_json(&e.to_string()));
+            std::process::exit(1);
+        }
         Err(e) => Err(e.into()),
     }
+}
+
+/// A command's spend-guard run before the gate: under `--json` the store
+/// busy is printed as [`busy_json`] and the process exits 1; anything else
+/// is returned as it was.
+pub fn busy_as_json<T>(result: anyhow::Result<T>, json: bool) -> anyhow::Result<T> {
+    match result {
+        Err(e) if json && crate::store::is_store_busy(&e) => {
+            println!("{}", busy_json(&format!("Storage error: spend guard: {e}")));
+            std::process::exit(1);
+        }
+        other => other,
+    }
+}
+
+/// The store busy as one JSON object, the route's 503 body: `{code:
+/// "STORE_BUSY", message}`. Nothing was written, built, locked or posted;
+/// the same command may be repeated.
+pub fn busy_json(message: &str) -> serde_json::Value {
+    serde_json::json!({"code": "STORE_BUSY", "message": message})
 }
 
 /// What a gated `createAction` failed on.
@@ -345,6 +370,19 @@ impl std::fmt::Display for GateError {
 }
 
 impl std::error::Error for GateError {}
+
+impl GateError {
+    /// The store busy, by its type (#44): the toolbox's `WalletBusy` from
+    /// the door, or a pre-door read or write that hit SQLite's busy or the
+    /// writer's ceiling. Never by its words.
+    pub fn is_store_busy(&self) -> bool {
+        match self {
+            Self::Wallet(bsv_sdk::Error::WalletBusy { .. }) => true,
+            Self::Gate(e) => crate::store::is_store_busy(e),
+            _ => false,
+        }
+    }
+}
 
 /// A candidate coin, as the toolbox would see it.
 #[derive(Debug, Clone)]
