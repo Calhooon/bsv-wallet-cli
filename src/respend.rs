@@ -397,11 +397,53 @@ pub async fn build_and_post(
             details: vec![e.to_string()],
         },
     };
-    storage
+    // The replacement is posted: from here a store fault is logged with its
+    // marker, never the call's error, and the answer is the replacement's
+    // txid.
+    if let Err(e) = storage
         .update_transaction_status_after_broadcast(&replacement_id, &outcome)
-        .await?;
-    crate::spend_guard::run(storage).await?;
+        .await
+    {
+        tracing::error!(
+            marker = "post_broadcast_status_write_failed",
+            txid = %replacement_id,
+            error = %e,
+            "respend posted; the status write after the post failed"
+        );
+    }
+    if let Err(e) = crate::spend_guard::run(storage).await {
+        tracing::error!(
+            marker = "post_broadcast_guard_failed",
+            txid = %replacement_id,
+            error = %e,
+            "respend posted; the spend guard after the post failed"
+        );
+    }
     Ok(replacement_id)
+}
+
+/// The proof request's word for a posted replacement, read tolerantly:
+/// `unknown` when there is no request or the read fails (logged with the
+/// marker `post_broadcast_request_read_failed`). The replacement is posted;
+/// its answer never fails on this read.
+pub async fn request_word(storage: &StorageSqlx, txid: &str) -> String {
+    match sqlx::query_scalar::<_, String>("SELECT status FROM proven_tx_reqs WHERE txid=?")
+        .bind(txid)
+        .fetch_optional(storage.pool())
+        .await
+    {
+        Ok(Some(word)) => word,
+        Ok(None) => "unknown".to_string(),
+        Err(e) => {
+            tracing::error!(
+                marker = "post_broadcast_request_read_failed",
+                txid = %txid,
+                error = %e,
+                "respend posted; its request could not be read"
+            );
+            "unknown".to_string()
+        }
+    }
 }
 
 /// Retain the exact input reservations of an unsettled replacement before
