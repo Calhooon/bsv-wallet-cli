@@ -1133,16 +1133,19 @@ fn the_refusal_as_json_is_the_routes_body() {
     assert_eq!(named.to_json()["code"], "INPUT_NOT_OFFERED");
 }
 
-/// Calhooon/bsv-wallet-cli #44: on one wallet file, a writer shaped like
-/// the daemon's monitor (a pooled transaction that reads a row, then
-/// writes, then commits) runs while `createAction` takes the served
-/// handler's path (the spend guard, then the gate's `createAction`; a
-/// template, aborted after). Every `createAction` answers without a store
-/// error. On toolbox 0.10.0 the toolbox's deferred `BEGIN` reads under a
-/// WAL snapshot and writes after the writer committed: SQLite answers 517
-/// (`SQLITE_BUSY_SNAPSHOT`), which `busy_timeout` never waits out.
+/// Calhooon/bsv-wallet-cli #44, the witness: on one wallet file, a writer
+/// shaped like the daemon's monitor (a transaction that reads a row, then
+/// writes, then commits, on its own store's writer through `write_tx`, as
+/// the daemon's monitor holds its own store) runs while `createAction`
+/// takes the served handler's path (the spend guard, then the gate's
+/// `createAction`; a template, aborted after) for 300 rounds. Every
+/// `createAction` and every abort answers without a store error, and no
+/// writer transaction fails. On toolbox 0.10.0 (e0ff758) the toolbox's
+/// deferred `BEGIN` read under a WAL snapshot and wrote after the writer
+/// committed: SQLite answered 517 (`SQLITE_BUSY_SNAPSHOT`), which
+/// `busy_timeout` never waits out. From 0.11.0 every transaction opens
+/// `BEGIN IMMEDIATE`, and the loser waits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "#44: fails on toolbox 0.10.0 with code 517 (or 5); the follow-up lane un-ignores it once the toolbox's single writer lands"]
 async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
     const ROUNDS: usize = 300;
     let dir = tempfile::TempDir::new().unwrap();
@@ -1247,20 +1250,17 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
         match answer {
             Ok(result) => {
                 let reference = reference_string(&result.signable_transaction.unwrap().reference);
-                // The abort is a write too; retried until it lands, so the
-                // coin is free for the next round.
-                for _ in 0..50 {
-                    let aborted = wallet
-                        .abort_action(
-                            bsv_sdk::wallet::AbortActionArgs {
-                                reference: reference.clone(),
-                            },
-                            "store-busy.local",
-                        )
-                        .await;
-                    if aborted.is_ok() {
-                        break;
-                    }
+                // The abort is a write too, and answers no store error
+                // either: the coin is free for the next round.
+                if let Err(e) = wallet
+                    .abort_action(
+                        bsv_sdk::wallet::AbortActionArgs { reference },
+                        "store-busy.local",
+                    )
+                    .await
+                {
+                    store_error = Some((round, format!("abortAction: {e}")));
+                    break;
                 }
             }
             Err(e) => {
@@ -1275,4 +1275,142 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
     if let Some((round, e)) = store_error {
         panic!("createAction round {round} of {ROUNDS} answered a store error: {e}");
     }
+    assert_eq!(failures, 0, "a monitor-shaped transaction failed");
+    assert!(commits > 0, "the writer ran beside the calls");
+}
+
+/// What a store holds that an action could change: every output's state,
+/// the transactions, labels and the sequence counters.
+async fn store_state(storage: &StorageSqlx) -> Vec<String> {
+    let mut state: Vec<String> = sqlx::query_scalar(
+        "SELECT output_id || ':' || spendable || ':' || change || ':' || COALESCE(spent_by, '-') FROM outputs ORDER BY output_id",
+    )
+    .fetch_all(storage.pool())
+    .await
+    .unwrap();
+    for table in [
+        "transactions",
+        "tx_labels",
+        "tx_labels_map",
+        "proven_tx_reqs",
+    ] {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        state.push(format!("{table}={n}"));
+    }
+    state.extend(
+        sqlx::query_scalar::<_, String>(
+            "SELECT name || '=' || seq FROM sqlite_sequence ORDER BY name",
+        )
+        .fetch_all(storage.pool())
+        .await
+        .unwrap(),
+    );
+    state
+}
+
+/// A busy before the door (#44): another process holds the file's write
+/// lock past the store's ceiling while the served handler's path runs (the
+/// spend guard's first write, then the gate's). Each answers 503
+/// STORE_BUSY with `Retry-After: 1`, nothing is posted and the store is
+/// unchanged; with the lock released, the same call succeeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_before_the_door_answers_503_with_nothing_posted_and_the_coins_unchanged() {
+    use axum::response::IntoResponse;
+    use sqlx::{ConnectOptions, Connection};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wallet.db");
+    let root = PrivateKey::random();
+    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    storage
+        .migrate("busy-before", &root.public_key().to_hex())
+        .await
+        .unwrap();
+    storage.make_available().await.unwrap();
+    let (user, _) = storage
+        .find_or_insert_user(&root.public_key().to_hex())
+        .await
+        .unwrap();
+    let basket = storage
+        .find_or_create_default_basket(user.user_id)
+        .await
+        .unwrap()
+        .basket_id;
+    let (deep, _) = mined_coin(&storage, (user.user_id, basket), 0xc1, 50_000, 800).await;
+    let services = MockWalletServices::builder().post_beef_success().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_tip_header(header_with_hash(900, &"0e".repeat(32), 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let before = store_state(wallet.storage()).await;
+
+    // Another process on the file holds the write lock.
+    let mut other = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut other)
+        .await
+        .unwrap();
+
+    let answers = [
+        crate::server::handlers::AppError::from_pre_door(
+            crate::spend_guard::run(wallet.storage())
+                .await
+                .expect_err("the guard's first write waits out the ceiling"),
+            "spend guard",
+        ),
+        crate::server::handlers::AppError::from_gate_error(
+            create_action(&wallet, pay(1_000), "busy.local", &opts(1, true))
+                .await
+                .expect_err("the gate's first write waits out the ceiling"),
+        ),
+    ];
+    for answer in answers {
+        let response = answer.into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .unwrap(),
+            "1"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        println!("{body}");
+        assert_eq!(body["code"], "STORE_BUSY");
+        assert_eq!(body.as_object().unwrap().len(), 2, "{body}");
+    }
+    assert_eq!(
+        wallet.services().call_count("post_beef"),
+        0,
+        "nothing posted"
+    );
+    assert_eq!(
+        store_state(wallet.storage()).await,
+        before,
+        "the store unchanged"
+    );
+
+    // The lock released, the same call goes through the door.
+    sqlx::query("ROLLBACK").execute(&mut other).await.unwrap();
+    other.close().await.unwrap();
+    crate::spend_guard::run(wallet.storage()).await.unwrap();
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        ..Default::default()
+    });
+    create_action(&wallet, args, "busy.local", &opts(1, true))
+        .await
+        .unwrap();
 }

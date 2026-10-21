@@ -193,7 +193,7 @@ impl AppError {
 
     /// A pre-door fault of the spend gate or the spend guard: the store
     /// busy by its type, else a 500 in the gate's words.
-    fn from_pre_door(e: anyhow::Error, words: &str) -> Self {
+    pub(crate) fn from_pre_door(e: anyhow::Error, words: &str) -> Self {
         let message = format!("Storage error: {words}: {e}");
         if crate::store::is_store_busy(&e) {
             Self::store_busy(message)
@@ -227,7 +227,7 @@ impl AppError {
     }
 
     /// A gated `createAction`'s failure: the refusal keeps its listing.
-    fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
+    pub(crate) fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
         match e {
             crate::spend_gate::GateError::Refused(refusal) if refusal.is_named_input() => Self {
                 status: StatusCode::FORBIDDEN,
