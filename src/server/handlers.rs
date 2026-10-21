@@ -124,7 +124,7 @@ pub struct AppError {
     code: &'static str,
     message: String,
     /// The spend gate's refusal: every coin held back, and why.
-    refusal: Option<crate::spend_gate::Refusal>,
+    refusal: Option<Box<crate::spend_gate::Refusal>>,
 }
 
 impl AppError {
@@ -233,13 +233,13 @@ impl AppError {
                 status: StatusCode::FORBIDDEN,
                 code: "INPUT_NOT_OFFERED",
                 message: refusal.to_string(),
-                refusal: Some(refusal),
+                refusal: Some(Box::new(refusal)),
             },
             crate::spend_gate::GateError::Refused(refusal) => Self {
                 status: StatusCode::PAYMENT_REQUIRED,
                 code: "INSUFFICIENT_FUNDS",
                 message: refusal.to_string(),
-                refusal: Some(refusal),
+                refusal: Some(Box::new(refusal)),
             },
             crate::spend_gate::GateError::Wallet(e) => Self::from_wallet_error(e),
             crate::spend_gate::GateError::Gate(e) => Self::from_pre_door(e, "spend gate"),

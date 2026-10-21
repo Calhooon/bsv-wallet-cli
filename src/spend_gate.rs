@@ -230,6 +230,19 @@ pub struct Refusal {
     /// Satoshis the gate offered.
     pub offered_satoshis: u64,
     pub held: Vec<HeldCoin>,
+    /// Offerable coins past the offer's cap, not offered (D3 of the #44
+    /// delta review): named in the refusal's text, never silently absent.
+    #[serde(skip)]
+    pub capped: Option<Capped>,
+}
+
+/// Offerable coins left out of an offer by its cap ([`OFFER_CAP`]): how
+/// many, their satoshis, and the cap they were past.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capped {
+    pub coins: usize,
+    pub satoshis: u64,
+    pub cap: usize,
 }
 
 impl std::fmt::Display for Refusal {
@@ -244,11 +257,19 @@ impl std::fmt::Display for Refusal {
         } else {
             write!(
                 f,
-                "Insufficient funds: no offerable coin covers the action ({}; {} sats offered, {} coin(s) held back)",
+                "Insufficient funds: no offerable coin covers the action ({}; {} sats offered, {} coin(s) held back",
                 self.toolbox,
                 self.offered_satoshis,
                 self.held.len()
             )?;
+            if let Some(c) = &self.capped {
+                write!(
+                    f,
+                    "; {} coins ({} sats) beyond the offer's cap of {}, the largest offered",
+                    c.coins, c.satoshis, c.cap
+                )?;
+            }
+            write!(f, ")")?;
         }
         for c in &self.held {
             write!(
@@ -417,8 +438,11 @@ pub struct Assessment {
     pub offered: Vec<(i64, u64)>,
     /// Coins held back, with why.
     pub held: Vec<HeldCoin>,
-    /// Coins not read (enough was offered before them); not offered.
+    /// Coins not read (enough was offered before them), and the coins past
+    /// the offer's cap; not offered.
     pub unread: Vec<i64>,
+    /// The offerable coins the cap left out of the offer (also `unread`).
+    pub capped: Option<Capped>,
 }
 
 impl Assessment {
@@ -797,30 +821,39 @@ pub async fn assess<V: WalletServices + ?Sized>(
             }),
         }
     }
-    cap_offer(&mut out);
+    cap_offer(&mut out, OFFER_CAP);
     Ok(out)
 }
 
-/// At most [`OFFER_CAP`] coins offered: the largest by value stay offered
-/// (in the order read), the rest go unread.
-fn cap_offer(out: &mut Assessment) {
-    if out.offered.len() <= OFFER_CAP {
+/// At most `cap` ([`OFFER_CAP`]) coins offered: the largest by value stay
+/// offered (in the order read), the rest go unread and are counted in
+/// `capped`, so a refusal names them.
+fn cap_offer(out: &mut Assessment, cap: usize) {
+    if out.offered.len() <= cap {
         return;
     }
     let mut by_value: Vec<usize> = (0..out.offered.len()).collect();
     by_value.sort_by(|a, b| out.offered[*b].1.cmp(&out.offered[*a].1).then(a.cmp(b)));
     let mut keep = vec![false; out.offered.len()];
-    for i in &by_value[..OFFER_CAP] {
+    for i in &by_value[..cap] {
         keep[*i] = true;
     }
     let offered = std::mem::take(&mut out.offered);
+    let mut capped = Capped {
+        coins: 0,
+        satoshis: 0,
+        cap,
+    };
     for (coin, kept) in offered.into_iter().zip(keep) {
         if kept {
             out.offered.push(coin);
         } else {
             out.unread.push(coin.0);
+            capped.coins += 1;
+            capped.satoshis += coin.1;
         }
     }
+    out.capped = Some(capped);
 }
 
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
@@ -1034,6 +1067,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
                 toolbox: NAMED_INPUT_REFUSED.to_string(),
                 offered_satoshis: 0,
                 held,
+                capped: None,
             }));
         }
     }
@@ -1103,6 +1137,7 @@ async fn refusal(storage: &StorageSqlx, assessment: &Assessment, e: &bsv_sdk::Er
             .to_string(),
         offered_satoshis: assessment.offered_satoshis(),
         held,
+        capped: assessment.capped,
     })
 }
 
