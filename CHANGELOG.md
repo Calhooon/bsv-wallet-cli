@@ -3,8 +3,7 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
-## Unreleased
-
+## [0.16.0] - 2026-10-21
 0.16.0: the CLI's half of Calhooon/bsv-wallet-cli #44 beside bsv-low #828. A served `/createAction` answered `400` with `database is locked (code 517)` (`SQLITE_BUSY_SNAPSHOT`: a deferred `BEGIN` read under a WAL snapshot and wrote after the monitor's commit); and LOW's land condition, the spend gate writing nothing around the toolbox's door. Pins: `bsv-wallet-toolbox-rs` `=0.10.0` to `=0.11.0`, `bsv-rs` `=0.7.0` to `=0.8.0`, `bsv-tracker` `=0.7.0` to `=0.8.0`; the lock carries one bsv-rs, 0.8.0. A minor: the 503's rule, the 409, and `pool()` no longer writes.
 
 - Every write on the store's writer. The toolbox opens two pools over the file: `pool()` is the reader (`query_only`), `writer()` one connection, `write_tx()` `BEGIN IMMEDIATE` on it. The CLI's ten transactions (`respend` 2, `spend_gate` 1 (`heal_holds`), `spend_guard` 2, `tracker_host` 1, `cleanup_abandoned` 4) open on `write_tx`, its single-statement writes run on a connection of `writer()` acquired through `store::writer` (a writer not acquired within the ceiling is the toolbox's typed `StoreBusy`), and every test seed that wrote through `pool()` moved. The schema helpers read first and send their DDL to the writer only when something is missing (`src/store.rs`). A chain event's header snapshot is taken before its transaction, so no write lock is held across a service await. `cleanup-abandoned` and the daemon's reconcile pass use the context's store instead of a second pool on the file. The three `PRAGMA busy_timeout = 500` sites (`tick`, the daemon tenant twice) are gone: they lowered the store's 5000 on one reader connection. `clippy.toml` disallows sqlx's `Pool::begin`, `begin_with`, `Connection::begin` and `Acquire::begin`.
