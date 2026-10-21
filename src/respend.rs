@@ -27,7 +27,7 @@ const PROTOCOL: &str = "3241645161d8";
 
 async fn schema(storage: &StorageSqlx) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS respend_links (phantom_id INTEGER PRIMARY KEY REFERENCES transactions(transaction_id), replacement_id INTEGER NOT NULL UNIQUE REFERENCES transactions(transaction_id), settled INTEGER NOT NULL DEFAULT 0)")
-        .execute(storage.writer()).await?;
+        .execute(&mut *crate::store::writer(storage).await?).await?;
     Ok(())
 }
 
@@ -476,7 +476,7 @@ pub async fn reserve_inputs(storage: &StorageSqlx) -> Result<()> {
         };
         for (source, vout) in inputs {
             sqlx::query("UPDATE outputs SET spendable=0,spent_by=? WHERE user_id=? AND txid=? AND vout=? AND (spent_by IS NULL OR spent_by=?)")
-                .bind(phantom).bind(user_id).bind(source).bind(vout as i64).bind(phantom).execute(storage.writer()).await?;
+                .bind(phantom).bind(user_id).bind(source).bind(vout as i64).bind(phantom).execute(&mut *crate::store::writer(storage).await?).await?;
         }
     }
     Ok(())

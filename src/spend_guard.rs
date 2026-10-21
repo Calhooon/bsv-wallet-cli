@@ -60,7 +60,7 @@ async fn ensure_schema(storage: &StorageSqlx) -> Result<()> {
             txid TEXT NOT NULL, \
             held_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     )
-    .execute(storage.writer())
+    .execute(&mut *crate::store::writer(storage).await?)
     .await?;
     Ok(())
 }
@@ -87,7 +87,7 @@ pub async fn run(storage: &StorageSqlx) -> Result<GuardReport> {
         if tx_status == "failed" || matches!(req_status.as_str(), "invalid" | "doubleSpend") {
             sqlx::query("DELETE FROM spend_guard_holds WHERE txid = ?")
                 .bind(&txid)
-                .execute(storage.writer())
+                .execute(&mut *crate::store::writer(storage).await?)
                 .await?;
             report.dropped.push(txid);
         } else if tx_status == "completed" || matches!(req_status.as_str(), "unmined" | "completed")

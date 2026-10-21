@@ -1465,7 +1465,6 @@ fn the_gate_error_is_the_store_busy_by_its_type_only() {
             detail: "Store busy: sqlite code 5".to_string(),
             retry_after_ms: None,
         }),
-        GateError::Gate(anyhow::Error::new(sqlx::Error::PoolTimedOut)),
         GateError::Gate(anyhow::Error::new(bsv_wallet_toolbox::Error::StoreBusy {
             reason: bsv_wallet_toolbox::StoreBusyReason::WriterNotAcquired,
         })),
@@ -1479,6 +1478,8 @@ fn the_gate_error_is_the_store_busy_by_its_type_only() {
         )),
         GateError::Gate(anyhow::anyhow!("Store busy: sqlite code 517")),
         GateError::Gate(anyhow::Error::new(sqlx::Error::RowNotFound)),
+        // A bare pool timeout: the reader's, as far as it says.
+        GateError::Gate(anyhow::Error::new(sqlx::Error::PoolTimedOut)),
     ];
     for e in &not {
         assert!(!e.is_store_busy(), "{e}");
