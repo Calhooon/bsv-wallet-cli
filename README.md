@@ -209,12 +209,15 @@ service), so the one word trusted is the sender's broadcast. Its cost: if the
 sender double-spends, this action becomes `conflicted` and the coins of ours
 it spent are lost with it, though nothing of ours was ever lost in fact. The
 action carries the word as its label, `spend-gate:received-pending`, which the
-toolbox writes with the action in its one transaction (nothing is written after
-the call), and `actions` and `/listActions` show it as `underRule:
+toolbox writes with the action in its one transaction (the gate writes nothing
+after the call), and `actions` and `/listActions` show it as `underRule:
 "received-pending"`. A template made for deferred signing (`signAndProcess:
 false`) carries the label from its creation through `signAction`; an aborted
-template keeps it. The records a 0.15 store made (`spend_gate_actions`) keep
-answering. There is no environment variable for it.
+template keeps it. The label is the gate's alone: a caller's own
+`spend-gate:received-pending` (in any case) is stripped from `createAction`'s
+and `internalizeAction`'s labels, so it grants nothing. The records a 0.15
+store made (`spend_gate_actions`) keep answering. There is no environment
+variable for it.
 
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
 is never offered; a coin whose creator is `mined` at or above the
@@ -254,13 +257,23 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
 | 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
-| 503 | `STORE_BUSY` | the store busy (#44): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
+| 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 
 `503 STORE_BUSY` is answered by the error's type, never its words: the
 toolbox's `WalletBusy` from a wallet door, or a read or write of the spend
 gate or guard before the door that hit SQLite's busy (code 5, 517 included) or
-the writer's ceiling. Nothing was written, built, locked or posted: repeat the
-same call after `Retry-After`. The word `STORE_BUSY` is in no 4xx body. Under
+the writer's acquire ceiling (a reader's pool timeout is a plain storage
+fault, 500). It is answered only when nothing was written, built, locked or
+posted by the call: repeat the same call after `Retry-After`. The other half
+of the rule: once a call has posted its transaction, a store fault after the
+post is never the call's error. The answer is the post's truth with its txid,
+and the fault is logged with a marker: the served `createAction`'s follow-up
+writes (`post_broadcast_follow_up_write_failed`), `respend`'s status write,
+guard and request read (`post_broadcast_status_write_failed`,
+`post_broadcast_guard_failed`, `post_broadcast_request_read_failed`), and
+`split`'s self-internalize (`post_broadcast_split_internalize_failed`, which
+adds `"selfInternalized": false` under `--json`). The word `STORE_BUSY` is in
+no 4xx body. Under
 `--json`, `send`, `drain`, `split` and `gift-send` print the same body and
 exit 1. CORS: `Access-Control-Expose-Headers` carries `Retry-After`, so a
 browser caller can read it.
