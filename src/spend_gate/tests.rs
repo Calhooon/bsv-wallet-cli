@@ -1133,6 +1133,39 @@ fn the_refusal_as_json_is_the_routes_body() {
     assert_eq!(named.to_json()["code"], "INPUT_NOT_OFFERED");
 }
 
+/// The store busy by its type, for `--json` and the route alike; the
+/// toolbox's words in a plain error are not it.
+#[test]
+fn the_gate_error_is_the_store_busy_by_its_type_only() {
+    let busy = [
+        GateError::Wallet(bsv_sdk::Error::WalletBusy {
+            detail: "Store busy: sqlite code 5".to_string(),
+            retry_after_ms: None,
+        }),
+        GateError::Gate(anyhow::Error::new(sqlx::Error::PoolTimedOut)),
+        GateError::Gate(anyhow::Error::new(bsv_wallet_toolbox::Error::StoreBusy {
+            reason: bsv_wallet_toolbox::StoreBusyReason::WriterNotAcquired,
+        })),
+    ];
+    for e in &busy {
+        assert!(e.is_store_busy(), "{e}");
+    }
+    let not = [
+        GateError::Wallet(bsv_sdk::Error::WalletError(
+            "Store busy: sqlite code 5".to_string(),
+        )),
+        GateError::Gate(anyhow::anyhow!("Store busy: sqlite code 517")),
+        GateError::Gate(anyhow::Error::new(sqlx::Error::RowNotFound)),
+    ];
+    for e in &not {
+        assert!(!e.is_store_busy(), "{e}");
+    }
+    assert_eq!(
+        busy_json("m"),
+        serde_json::json!({"code": "STORE_BUSY", "message": "m"})
+    );
+}
+
 /// Calhooon/bsv-wallet-cli #44, the witness: on one wallet file, a writer
 /// shaped like the daemon's monitor (a transaction that reads a row, then
 /// writes, then commits, on its own store's writer through `write_tx`, as
