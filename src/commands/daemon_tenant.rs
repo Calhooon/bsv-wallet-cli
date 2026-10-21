@@ -20,7 +20,6 @@ use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::{ListOutputsArgs, WalletInterface};
 use bsv_wallet_toolbox::{
     ArcadeMonitorConfig, Chain, Monitor, MonitorOptions, Services, StorageSqlx, Wallet,
-    WalletStorageWriter,
 };
 use std::sync::Arc;
 
@@ -40,8 +39,9 @@ pub struct TenantHandle {
 pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Result<TenantHandle> {
     let root_key = PrivateKey::from_hex(root_key_hex)?;
 
-    let storage = StorageSqlx::open(db).await?;
-    storage.make_available().await?;
+    // One store over the file (`store::open_shared`): the wallet's handle
+    // and the monitor's share one writer pool and one reservation set.
+    let (storage, storage_arc) = crate::store::open_shared(db).await?;
 
     let db_path = db.to_string();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
@@ -64,7 +64,6 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     if let Some(ref ct) = services.chaintracks {
         storage.set_chain_tracker(ct.clone()).await;
     }
-    let storage_arc = Arc::new(storage);
     let services_arc = Arc::new(services);
 
     let mut monitor_opts = MonitorOptions::default();
@@ -118,14 +117,11 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         });
     }
 
-    // The wallet needs its own storage/services (Wallet::new takes owned).
-    let storage2 = StorageSqlx::open(db).await?;
-    storage2.make_available().await?;
+    // The wallet takes its store and services by value: the store's other
+    // handle (its chain tracker, set above, is every handle's) and its own
+    // `Services`.
     let services2 = make_services(chain)?;
-    if let Some(ref ct) = services2.chaintracks {
-        storage2.set_chain_tracker(ct.clone()).await;
-    }
-    let wallet = Wallet::new(Some(root_key), storage2, services2)
+    let wallet = Wallet::new(Some(root_key), storage, services2)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     let wallet_state = server::make_wallet_state(wallet);
