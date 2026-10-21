@@ -104,12 +104,15 @@ async fn the_typed_wallet_busy_from_the_door_is_503_retry_after_one() {
 
 /// A pre-door gate fault: SQLite's busy or the writer's acquire ceiling is
 /// 503 by its type; the toolbox's `Store busy:` words in a plain error are
-/// not, and any other fault is the gate's 500.
+/// not, nor a bare pool timeout (the reader's), and any other fault is the
+/// gate's 500.
 #[tokio::test]
 async fn a_pre_door_fault_is_503_only_when_it_is_the_store_busy() {
     use crate::spend_gate::GateError;
     let typed = [
-        anyhow::Error::new(sqlx::Error::PoolTimedOut),
+        anyhow::Error::new(bsv_wallet_toolbox::Error::StoreBusy {
+            reason: bsv_wallet_toolbox::StoreBusyReason::WriterNotAcquired,
+        }),
         anyhow::Error::new(bsv_wallet_toolbox::Error::StoreBusy {
             reason: bsv_wallet_toolbox::StoreBusyReason::SqliteBusy { code: 5 },
         }),
@@ -130,6 +133,8 @@ async fn a_pre_door_fault_is_503_only_when_it_is_the_store_busy() {
     for e in [
         anyhow::anyhow!("Store busy: sqlite code 5"),
         anyhow::Error::new(sqlx::Error::RowNotFound),
+        // A bare pool timeout (the reader's 30 s acquire): a storage fault.
+        anyhow::Error::new(sqlx::Error::PoolTimedOut),
     ] {
         let (status, retry, body) = answer(AppError::from_gate_error(GateError::Gate(e))).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
@@ -137,7 +142,9 @@ async fn a_pre_door_fault_is_503_only_when_it_is_the_store_busy() {
         assert!(retry.is_none());
     }
     let (status, _, body) = answer(AppError::from_pre_door(
-        anyhow::Error::new(sqlx::Error::PoolTimedOut),
+        anyhow::Error::new(bsv_wallet_toolbox::Error::StoreBusy {
+            reason: bsv_wallet_toolbox::StoreBusyReason::WriterNotAcquired,
+        }),
         "spend guard",
     ))
     .await;

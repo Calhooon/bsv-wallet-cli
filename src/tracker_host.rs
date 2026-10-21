@@ -731,7 +731,7 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     {
         return Ok(());
     }
-    let writer = storage.writer();
+    let mut writer = crate::store::writer(storage).await?;
     for sql in [
         "CREATE TABLE IF NOT EXISTS tracker_states (\
             txid TEXT PRIMARY KEY, \
@@ -752,18 +752,18 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS tracker_states_height ON tracker_states (height)",
         "CREATE TABLE IF NOT EXISTS tracker_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ] {
-        sqlx::query(sql).execute(writer).await?;
+        sqlx::query(sql).execute(&mut *writer).await?;
     }
     // Added with the chain-event feed (0.9.0); a table made before it
     // gains the column empty.
     let has_chain: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = 'chain'",
     )
-    .fetch_one(writer)
+    .fetch_one(&mut *writer)
     .await?;
     if has_chain == 0 {
         sqlx::query("ALTER TABLE tracker_states ADD COLUMN chain TEXT NOT NULL DEFAULT '[]'")
-            .execute(writer)
+            .execute(&mut *writer)
             .await?;
     }
     // Added with the follow-up of a `stale` word (0.14.0, ruling 7d (c)).
@@ -781,10 +781,10 @@ async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
             "SELECT COUNT(*) FROM pragma_table_info('tracker_states') WHERE name = ?",
         )
         .bind(column)
-        .fetch_one(writer)
+        .fetch_one(&mut *writer)
         .await?;
         if has == 0 {
-            sqlx::query(sql).execute(writer).await?;
+            sqlx::query(sql).execute(&mut *writer).await?;
         }
     }
     Ok(())
@@ -834,7 +834,7 @@ async fn store_row(
     state: &State,
     now: Timestamp,
 ) -> Result<()> {
-    store_row_in(storage.writer(), row, state, now).await
+    store_row_in(&mut *crate::store::writer(storage).await?, row, state, now).await
 }
 
 async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
@@ -1252,7 +1252,7 @@ async fn write_ring(storage: &StorageSqlx, ring: &[(Height, String)]) -> Result<
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
     .bind(serde_json::to_string(ring)?)
-    .execute(storage.writer())
+    .execute(&mut *crate::store::writer(storage).await?)
     .await?;
     Ok(())
 }
@@ -1320,7 +1320,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
          WHERE txid IS NOT NULL AND status IN ('unproven', 'sending')",
     )
     .bind(now as i64)
-    .execute(storage.writer())
+    .execute(&mut *crate::store::writer(storage).await?)
     .await?;
     report.adopted = adopted.rows_affected() as usize;
 
@@ -2156,7 +2156,7 @@ async fn ensure_frozen(storage: &StorageSqlx) -> Result<()> {
             frozen_at INTEGER NOT NULL, \
             PRIMARY KEY (txid, vout))",
     )
-    .execute(storage.writer())
+    .execute(&mut *crate::store::writer(storage).await?)
     .await?;
     Ok(())
 }

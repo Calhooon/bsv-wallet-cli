@@ -129,9 +129,14 @@ async fn write_status(storage: &StorageSqlx, status: &FeedStatus) {
         "INSERT INTO tracker_meta (key, value) VALUES ('feed_status', ?) \
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
-    .bind(serde_json::to_string(status).unwrap_or_default())
-    .execute(storage.writer())
-    .await;
+    .bind(serde_json::to_string(status).unwrap_or_default());
+    let written = match crate::store::writer(storage).await {
+        Ok(mut writer) => written
+            .execute(&mut *writer)
+            .await
+            .map_err(anyhow::Error::from),
+        Err(e) => Err(e),
+    };
     if let Err(e) = written {
         tracing::warn!(error = %e, "chain feed: the status was not stored");
     }
