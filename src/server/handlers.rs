@@ -689,31 +689,7 @@ pub async fn internalize_action(
     Json(req): Json<McInternalizeActionReq>,
 ) -> Result<Json<McInternalizeActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
-
-    let args = InternalizeActionArgs {
-        tx: req.tx,
-        outputs: req
-            .outputs
-            .into_iter()
-            .map(|o| InternalizeOutput {
-                output_index: o.output_index,
-                protocol: o.protocol,
-                payment_remittance: o.payment_remittance.map(|p| WalletPayment {
-                    derivation_prefix: p.derivation_prefix,
-                    derivation_suffix: p.derivation_suffix,
-                    sender_identity_key: p.sender_identity_key,
-                }),
-                insertion_remittance: o.insertion_remittance.map(|i| BasketInsertion {
-                    basket: i.basket,
-                    custom_instructions: i.custom_instructions,
-                    tags: i.tags,
-                }),
-            })
-            .collect(),
-        description: req.description,
-        labels: req.labels,
-        seek_permission: None,
-    };
+    let args = internalize_args(req);
 
     let output_count = args.outputs.len();
     let subject = super::post_word::atomic_subject(&args.tx);
@@ -739,6 +715,40 @@ pub async fn internalize_action(
         accepted: result.accepted,
         broadcast,
     }))
+}
+
+/// The toolbox's `internalizeAction` arguments for a caller's request, the
+/// gate's rule label stripped from its labels.
+pub(crate) fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
+    let mut args = InternalizeActionArgs {
+        tx: req.tx,
+        outputs: req
+            .outputs
+            .into_iter()
+            .map(|o| InternalizeOutput {
+                output_index: o.output_index,
+                protocol: o.protocol,
+                payment_remittance: o.payment_remittance.map(|p| WalletPayment {
+                    derivation_prefix: p.derivation_prefix,
+                    derivation_suffix: p.derivation_suffix,
+                    sender_identity_key: p.sender_identity_key,
+                }),
+                insertion_remittance: o.insertion_remittance.map(|i| BasketInsertion {
+                    basket: i.basket,
+                    custom_instructions: i.custom_instructions,
+                    tags: i.tags,
+                }),
+            })
+            .collect(),
+        description: req.description,
+        labels: req.labels,
+        seek_permission: None,
+    };
+    // The rule's label is the gate's to write, never a caller's (F4 of the
+    // #44 CLI review): a forged one would read as underRule and grant a
+    // respend the received rule.
+    crate::spend_gate::strip_rule_label(&mut args.labels);
+    args
 }
 
 // --- Helpers ---
