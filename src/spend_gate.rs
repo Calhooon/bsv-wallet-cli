@@ -80,8 +80,9 @@
 //! The coins are read in the toolbox's own preference (completed first, then
 //! the largest), a batch of creators at a time, until the coins offered
 //! cover the outputs with a margin; the coins not read are not offered. Only
-//! when the toolbox then finds no funds is every coin read, and the call run
-//! once more; if that fails for funds, the refusal lists every coin held
+//! when the toolbox then finds no funds (or draws `Unspendable coin:`, a
+//! coin offered it cannot carry) is every coin read, and the call run once
+//! more; if that fails for funds, the refusal lists every coin held
 //! back ([`Refusal`]). Nothing is fetched but the header service's tip and
 //! headers: no chain scan, no explorer.
 
@@ -950,6 +951,12 @@ fn is_insufficient(e: &bsv_sdk::Error) -> bool {
         .contains("insufficient funds")
 }
 
+/// The toolbox's `Unspendable coin:` refusal (409): a coin it was offered
+/// cannot be carried, and the other coins offered do not cover the action.
+fn is_unspendable(e: &bsv_sdk::Error) -> bool {
+    e.to_string().contains("Unspendable coin:")
+}
+
 /// One toolbox call, offered the coins the assessment offers: the door.
 async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
@@ -1031,6 +1038,9 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     let lazy = !first.unread.is_empty();
     match run_offered(wallet, args.clone(), originator, &first).await {
         Ok(result) => return Ok(result),
+        // An unspendable coin in the lazy offer: the coins not read may
+        // cover without it (F7 of the #44 CLI review).
+        Err(e) if lazy && is_unspendable(&e) => {}
         Err(e) if !is_insufficient(&e) => return Err(GateError::Wallet(e)),
         Err(e) if !lazy => return Err(refusal(storage, &first, &e).await),
         Err(_) => {}
