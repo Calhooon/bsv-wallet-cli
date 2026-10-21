@@ -1565,7 +1565,8 @@ fn the_gate_error_is_the_store_busy_by_its_type_only() {
 /// Calhooon/bsv-wallet-cli #44, the witness: on one wallet file, a writer
 /// shaped like the daemon's monitor (a transaction that reads a row, then
 /// writes, then commits, on its own store's writer through `write_tx`, as
-/// the daemon's monitor holds its own store) runs while `createAction`
+/// a second process on the file holds its own store: a CLI command beside
+/// the daemon, or a 0.15 daemon's monitor) runs while `createAction`
 /// takes the served handler's path (the spend guard, then the gate's
 /// `createAction`; a template, aborted after) for 300 rounds. Every
 /// `createAction` and every abort answers without a store error, and no
@@ -1706,6 +1707,119 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
     }
     assert_eq!(failures, 0, "a monitor-shaped transaction failed");
     assert!(commits > 0, "the writer ran beside the calls");
+}
+
+/// One store per file per process (F9 (b) of the #44 CLI review), the
+/// daemon's shape: the file opened once by `store::open_shared`, a toolbox
+/// `Monitor` over the one handle and the served `Wallet` over the other, as
+/// `daemon_tenant::start` builds them. The writer the monitor's handle holds
+/// is the wallet's writer (one connection, none idle). Then 100 rounds of
+/// the monitor's pass beside the served handler's path (the spend guard,
+/// the gate's `createAction`, the abort): no store error, one writer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_daemons_monitor_and_its_served_create_action_share_one_writer() {
+    const ROUNDS: usize = 100;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wallet.db");
+    let root = PrivateKey::random();
+    {
+        // `init`'s step: the schema, then the file closed.
+        let made = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+        made.migrate("one-store", &root.public_key().to_hex())
+            .await
+            .unwrap();
+    }
+    let (storage, monitor_store) = crate::store::open_shared(path.to_str().unwrap())
+        .await
+        .unwrap();
+    let (user, _) = storage
+        .find_or_insert_user(&root.public_key().to_hex())
+        .await
+        .unwrap();
+    let basket = storage
+        .find_or_create_default_basket(user.user_id)
+        .await
+        .unwrap()
+        .basket_id;
+    let lock = bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    let mut parent = bsv_sdk::transaction::Transaction::new();
+    parent
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            "ab".repeat(32),
+            0,
+        ))
+        .unwrap();
+    parent
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(100_000, lock))
+        .unwrap();
+    let parent_id = parent.id();
+    coin(
+        &storage,
+        (user.user_id, basket),
+        &parent_id,
+        false,
+        Some(800),
+        100_000,
+        9,
+    )
+    .await;
+    for table in ["transactions", "proven_txs"] {
+        sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
+            .bind(parent.to_binary())
+            .bind(&parent_id)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+    }
+    let wallet = Wallet::new(Some(root), storage, headers_with(&parent_id, 800, 900))
+        .await
+        .unwrap();
+    let monitor = bsv_wallet_toolbox::Monitor::new(
+        monitor_store.clone(),
+        std::sync::Arc::new(MockWalletServices::new()),
+    );
+
+    {
+        let held = monitor_store.writer().acquire().await.unwrap();
+        assert_eq!(wallet.storage().writer().size(), 1);
+        assert_eq!(
+            wallet.storage().writer().num_idle(),
+            0,
+            "the writer the monitor's handle holds is the served wallet's writer"
+        );
+        drop(held);
+    }
+
+    for round in 1..=ROUNDS {
+        let mut args = pay(1_000);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        let served = async {
+            crate::spend_guard::run(wallet.storage())
+                .await
+                .map_err(|e| format!("Storage error: spend guard: {e}"))?;
+            create_action(&wallet, args, "one-store.local", &opts(1, true))
+                .await
+                .map_err(|e| e.to_string())
+        };
+        let (answer, pass) = tokio::join!(served, monitor.run_once());
+        if let Err(e) = pass {
+            panic!("round {round}: the monitor's pass beside createAction: {e:?}");
+        }
+        let result = answer
+            .unwrap_or_else(|e| panic!("round {round}: createAction beside the monitor: {e}"));
+        let reference = reference_string(&result.signable_transaction.unwrap().reference);
+        wallet
+            .abort_action(
+                bsv_sdk::wallet::AbortActionArgs { reference },
+                "one-store.local",
+            )
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: abortAction: {e}"));
+    }
+    assert_eq!(wallet.storage().writer().size(), 1, "one writer connection");
 }
 
 /// What a store holds that an action could change: every output's state,

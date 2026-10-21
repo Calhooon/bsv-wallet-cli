@@ -29,6 +29,27 @@ pub async fn has_column(reader: &SqlitePool, table: &str, column: &str) -> Resul
     Ok(n > 0)
 }
 
+/// One store per file per process (F9 (b) of the #44 CLI review): the file
+/// opened once, made available, and answered as two handles of the one
+/// store, the first for the `Wallet` (which takes its store by value), the
+/// second for the `Monitor` and the chain feed (which take an `Arc`). A
+/// `StorageSqlx` clone shares the reader, the one-connection writer, the
+/// in-flight reservations and every other piece of state (toolbox 0.11.0),
+/// so every writer in the process queues on the one fair writer pool, never
+/// on SQLite's busy handler between two pools.
+pub async fn open_shared(
+    db: &str,
+) -> Result<(
+    bsv_wallet_toolbox::StorageSqlx,
+    std::sync::Arc<bsv_wallet_toolbox::StorageSqlx>,
+)> {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    let store = bsv_wallet_toolbox::StorageSqlx::open(db).await?;
+    store.make_available().await?;
+    let monitors = std::sync::Arc::new(store.clone());
+    Ok((store, monitors))
+}
+
 /// One connection of the store's writer, for this crate's single-statement
 /// writes: a writer not acquired within its ceiling is the toolbox's typed
 /// `StoreBusy { WriterNotAcquired }`, as `write_tx` answers. The acquire is
