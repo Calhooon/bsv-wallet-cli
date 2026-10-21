@@ -3,6 +3,13 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## Unreleased
+
+The belt of Calhooon/bsv-wallet-cli #44: a seat daemon's `/createAction` answered `400` with `database is locked (code 517)`. `bsv-wallet-toolbox-rs` stays `=0.10.0`; the structural fix (one writer, `BEGIN IMMEDIATE`) is the toolbox's.
+
+- A store busy answer is `503 STORE_BUSY` with `Retry-After: 1`, never `400`; the body keeps `{code, message}`. `AppError::classify` reads the toolbox's typed `Store busy:` (its single writer's error) and today's messages carrying SQLite 5, 6 or 517: `database is locked`, `database table is locked`, `(code N)` and sqlx's `(code: N)` (the form 0.10.0 actually prints: `SQLx error: error returned from database: (code: 517) database is locked`). A transaction that opens IMMEDIATE can only fail at BEGIN, so a 503 means nothing was written and a client may retry blind. Tests: `store_busy_prefix_is_503`, `busy_snapshot_517_is_503`, `busy_5_is_503`, `locked_6_is_503`, `database_is_locked_alone_is_503`, `other_store_errors_are_not_busy`, `store_busy_answers_retry_after_one` (`src/server/handlers.rs`).
+- The reproduction, `create_action_beside_a_monitor_shaped_writer_answers_no_store_error` (`src/spend_gate/tests.rs`), ignored: on one wallet file, a writer shaped like the monitor (a pooled transaction that reads, writes, commits) beside 300 rounds of the served handler's `createAction` path (the spend guard, the gate, a template aborted after). On 0.10.0 every run fails within four rounds, with 517 or 5. The follow-up lane un-ignores it once the toolbox's writer lands, and moves the CLI's own transaction sites onto it.
+
 ## [0.15.0] - 2026-10-20
 
 The CLI on bsv-wallet-toolbox-rs 0.10.0, the reorg below the user in the toolbox (the stack's rulings 5 and 7 of 2026-10-20, bsv-stack-lean `docs/RULINGS-2026-10-12.md` 19:4xZ to 20:1xZ; `docs/DECISIONS-2026-10-19.md` section 8c). The `reproof` verb's output and the status word `actions` prints change, so a minor.

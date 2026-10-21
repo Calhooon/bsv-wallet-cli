@@ -133,7 +133,11 @@ impl AppError {
         // Strip "wallet error: " prefix the SDK wraps errors with
         let clean = msg.strip_prefix("wallet error: ").unwrap_or(msg);
 
-        if clean.starts_with("Insufficient funds:") || clean.starts_with("insufficient funds:") {
+        if Self::is_store_busy(clean) {
+            (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY")
+        } else if clean.starts_with("Insufficient funds:")
+            || clean.starts_with("insufficient funds:")
+        {
             (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS")
         } else if clean.starts_with("Authentication required")
             || clean.starts_with("Invalid identity key:")
@@ -168,6 +172,28 @@ impl AppError {
         } else {
             (StatusCode::BAD_REQUEST, "ERROR")
         }
+    }
+
+    /// SQLite answered busy (5), locked (6) or busy-snapshot (517) (#44):
+    /// the toolbox's typed `Store busy:` from its single writer on, and
+    /// today's messages carrying the code, in SQLite's words or sqlx's
+    /// `(code: N)` (a wrapper may sit in front, as the spend guard's does).
+    /// A transaction that opens IMMEDIATE can only fail at BEGIN, so nothing
+    /// was written and the caller may retry blind.
+    fn is_store_busy(clean: &str) -> bool {
+        const MARKS: [&str; 8] = [
+            "database is locked",
+            "database table is locked",
+            "(code 517)",
+            "(code 5)",
+            "(code 6)",
+            "(code: 517)",
+            "(code: 5)",
+            "(code: 6)",
+        ];
+        clean.starts_with("Store busy:")
+            || clean.contains(": Store busy:")
+            || MARKS.iter().any(|m| clean.contains(m))
     }
 
     /// Create from a wallet/SDK error (the most common path).
@@ -269,6 +295,15 @@ impl IntoResponse for AppError {
         if let Some(refusal) = &self.refusal {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
+        }
+        if self.code == "STORE_BUSY" {
+            // Nothing was written; one second is the writer's turn.
+            return (
+                self.status,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(body),
+            )
+                .into_response();
         }
         (self.status, Json(body)).into_response()
     }
@@ -1233,4 +1268,100 @@ pub async fn reveal_specific_key_linkage(
         .await
         .map_err(AppError::from_wallet_error)?;
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn busy(msg: &str) {
+        assert_eq!(
+            AppError::classify(msg),
+            (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY"),
+            "{msg}"
+        );
+    }
+
+    /// The toolbox's typed error from its single writer on (#44).
+    #[test]
+    fn store_busy_prefix_is_503() {
+        busy("Store busy: sqlite code 5");
+        busy("wallet error: Store busy: sqlite code 517");
+        busy("Storage error: spend guard: Store busy: sqlite code 6");
+    }
+
+    /// The 517 the seat daemon answered 400 (#44), in sqlx's words and the
+    /// issue's.
+    #[test]
+    fn busy_snapshot_517_is_503() {
+        busy("wallet error: SQLx error: error returned from database: (code: 517) database is locked");
+        busy("database is locked (code 517)");
+    }
+
+    #[test]
+    fn busy_5_is_503() {
+        busy(
+            "wallet error: SQLx error: error returned from database: (code: 5) database is locked",
+        );
+        busy("Database error: (code 5)");
+        busy("Storage error: spend guard: error returned from database: (code: 5) database is locked");
+    }
+
+    #[test]
+    fn locked_6_is_503() {
+        busy("SQLx error: error returned from database: (code: 6) database table is locked");
+        busy("Database error: database table is locked: outputs (code 6)");
+    }
+
+    #[test]
+    fn database_is_locked_alone_is_503() {
+        busy("Database error: database is locked");
+    }
+
+    /// Another store failure keeps its class; a code that merely starts
+    /// with 5 is not busy.
+    #[test]
+    fn other_store_errors_are_not_busy() {
+        assert_eq!(
+            AppError::classify("Database error: no such table: outputs"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
+        );
+        assert_eq!(
+            AppError::classify(
+                "SQLx error: error returned from database: (code: 19) UNIQUE constraint failed"
+            ),
+            (StatusCode::BAD_REQUEST, "ERROR")
+        );
+        assert_eq!(
+            AppError::classify("Database error: (code 51)"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
+        );
+    }
+
+    /// A store-busy answer is 503 with `Retry-After: 1` and the body
+    /// `{code, message}`; any other answer carries no `Retry-After`.
+    #[tokio::test]
+    async fn store_busy_answers_retry_after_one() {
+        let msg = "wallet error: SQLx error: error returned from database: (code: 517) database is locked";
+        let response = AppError::from_wallet_error(msg).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .unwrap(),
+            "1"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body, json!({"code": "STORE_BUSY", "message": msg}));
+
+        let other = AppError::from_wallet_error("Insufficient funds: need 5").into_response();
+        assert!(other
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .is_none());
+    }
 }
