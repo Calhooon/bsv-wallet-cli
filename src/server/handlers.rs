@@ -975,15 +975,6 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_wallet_error)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
-    // A template recorded under the door's word by its reference (R1 (d))
-    // is named by the txid it was signed as. The action is signed (and
-    // perhaps broadcast) already: a failure here is logged, not answered.
-    if let Some(t) = result.txid.as_ref() {
-        if let Err(e) = crate::spend_gate::fill_txid(wallet.storage(), &reference, &to_hex(t)).await
-        {
-            tracing::error!(reference = %reference, error = %e, "signAction: the rule's txid not recorded");
-        }
-    }
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
             super::post_word::post_word(wallet.storage(), &to_hex(t)).await

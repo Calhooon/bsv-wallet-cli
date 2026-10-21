@@ -340,6 +340,11 @@ pub async fn build_and_post(
         .bind(user_id).bind(&reference).bind(-(fee as i64)).bind(&input_beef).bind(&replacement_id).bind(replacement.to_binary()).bind(now).bind(now).fetch_one(&mut *transaction).await?;
     sqlx::query("INSERT INTO outputs (user_id,transaction_id,basket_id,vout,satoshis,locking_script,txid,type,spendable,change,derivation_prefix,derivation_suffix,provided_by,purpose,output_description,created_at,updated_at) VALUES (?,?,?,0,?,?,'','P2PKH',0,1,?,?,'storage','change','Replacement change',?,?)")
         .bind(user_id).bind(new_row).bind(basket).bind(amount as i64).bind(change_lock.to_binary()).bind(prefix).bind(suffix).bind(now).bind(now).execute(&mut *transaction).await?;
+    // The replacement inherits the phantom's rule as its label, written
+    // with its row.
+    if let Some(rule) = under_rule.as_deref() {
+        crate::spend_gate::label_in(&mut transaction, user_id, new_row, rule).await?;
+    }
     sqlx::query("INSERT INTO respend_links (phantom_id,replacement_id) VALUES (?,?)")
         .bind(phantom_id)
         .bind(new_row)
@@ -396,9 +401,6 @@ pub async fn build_and_post(
         .update_transaction_status_after_broadcast(&replacement_id, &outcome)
         .await?;
     crate::spend_guard::run(storage).await?;
-    if let Some(rule) = under_rule {
-        crate::spend_gate::record_rule(storage, &replacement_id, &rule).await?;
-    }
     Ok(replacement_id)
 }
 
