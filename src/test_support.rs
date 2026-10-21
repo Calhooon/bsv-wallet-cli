@@ -127,3 +127,70 @@ pub fn txid_of(raw: &[u8]) -> String {
         .expect("a transaction")
         .id()
 }
+
+/// The `marker` field of every event logged while a [`Markers::capture`]
+/// guard lives on this thread, with the event's `txid` and `error` when it
+/// carries them. A `#[tokio::test]` runs on one thread, so a capture taken
+/// at its start sees every line the test's awaits log.
+#[derive(Clone, Default)]
+pub struct Markers(Arc<Mutex<Vec<Marked>>>);
+
+/// One marked line.
+#[derive(Debug, Clone, Default)]
+pub struct Marked {
+    pub marker: String,
+    pub txid: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Markers {
+    pub fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let markers = Self::default();
+        let subscriber = tracing_subscriber::registry().with(markers.clone());
+        (markers, tracing::subscriber::set_default(subscriber))
+    }
+
+    pub fn all(&self) -> Vec<Marked> {
+        self.0.lock().unwrap().clone()
+    }
+
+    /// The lines marked `marker`.
+    pub fn named(&self, marker: &str) -> Vec<Marked> {
+        self.all()
+            .into_iter()
+            .filter(|m| m.marker == marker)
+            .collect()
+    }
+}
+
+impl tracing::field::Visit for Marked {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.set(field.name(), value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.set(field.name(), format!("{value:?}"));
+    }
+}
+
+impl Marked {
+    fn set(&mut self, name: &str, value: String) {
+        match name {
+            "marker" => self.marker = value,
+            "txid" => self.txid = Some(value),
+            "error" => self.error = Some(value),
+            _ => {}
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Markers {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        let mut marked = Marked::default();
+        event.record(&mut marked);
+        if !marked.marker.is_empty() {
+            self.0.lock().unwrap().push(marked);
+        }
+    }
+}
