@@ -993,7 +993,7 @@ fn the_offer_is_capped_at_the_largest_coins() {
             .collect(),
         ..Default::default()
     };
-    cap_offer(&mut at);
+    cap_offer(&mut at, OFFER_CAP);
     assert_eq!(at.offered.len(), OFFER_CAP);
     assert!(at.unread.is_empty());
 
@@ -1004,11 +1004,63 @@ fn the_offer_is_capped_at_the_largest_coins() {
             .collect(),
         ..Default::default()
     };
-    cap_offer(&mut over);
+    cap_offer(&mut over, OFFER_CAP);
     assert_eq!(over.offered.len(), OFFER_CAP);
     assert_eq!(over.unread, vec![7]);
     assert_eq!(over.offered[6].0, 6);
     assert_eq!(over.offered[7].0, 8, "the order read is kept");
+}
+
+/// D3 of the #44 delta review: the coins past the offer's cap are neither
+/// offered nor held back, so the refusal names them, their count and their
+/// satoshis. The cap is lowered to 2 here; the production cap is
+/// [`OFFER_CAP`].
+#[tokio::test]
+async fn a_refusal_names_the_coins_past_the_offers_cap() {
+    let mut assessment = Assessment {
+        offered: vec![(1, 500), (2, 40), (3, 900), (4, 60), (5, 700)],
+        ..Default::default()
+    };
+    cap_offer(&mut assessment, 2);
+    assert_eq!(assessment.offer(), vec![3, 5], "the largest two, in order");
+    assert_eq!(assessment.unread, vec![1, 2, 4]);
+    assert_eq!(
+        assessment.capped,
+        Some(Capped {
+            coins: 3,
+            satoshis: 600,
+            cap: 2
+        })
+    );
+
+    let (storage, _, _) = storage_for(&PrivateKey::random().public_key().to_hex()).await;
+    let toolbox =
+        bsv_sdk::Error::WalletError("Insufficient funds: need 5000, have 1600".to_string());
+    let GateError::Refused(refused) = refusal(&storage, &assessment, &toolbox).await else {
+        panic!("a shortfall is the refusal");
+    };
+    assert_eq!(refused.capped, assessment.capped);
+    assert_eq!(
+        refused.to_string(),
+        "Insufficient funds: no offerable coin covers the action \
+         (Insufficient funds: need 5000, have 1600; 1600 sats offered, 0 coin(s) held back; \
+         3 coins (600 sats) beyond the offer's cap of 2, the largest offered)"
+    );
+    assert_eq!(refused.to_json()["message"], refused.to_string());
+
+    // Under the cap nothing is capped and the refusal's words are as before.
+    let mut under = Assessment {
+        offered: vec![(1, 500), (2, 40)],
+        ..Default::default()
+    };
+    cap_offer(&mut under, 2);
+    assert_eq!(under.capped, None);
+    let GateError::Refused(plain) = refusal(&storage, &under, &toolbox).await else {
+        panic!("a shortfall is the refusal");
+    };
+    assert!(plain
+        .to_string()
+        .ends_with("540 sats offered, 0 coin(s) held back)"));
 }
 
 /// F9 (c): the cap's reason, on the toolbox's own statement. An offer of
@@ -1508,6 +1560,7 @@ fn the_refusal_as_json_is_the_routes_body() {
             reason: "depth 1: 0 blocks; received, no proof".to_string(),
             output_id: 1,
         }],
+        capped: None,
     };
     let json = refusal.to_json();
     println!("{json}");

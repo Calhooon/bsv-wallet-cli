@@ -210,6 +210,7 @@ pub async fn build_and_post(
                 toolbox: crate::spend_gate::NAMED_INPUT_REFUSED.to_string(),
                 offered_satoshis: 0,
                 held,
+                capped: None,
             }
         );
     }
