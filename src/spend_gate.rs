@@ -491,8 +491,8 @@ pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
 /// reference of a template, which names its txid once signed). Reads only.
 pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
     let pool = storage.pool();
-    // (txid or NULL, status, description, satoshis, rule): one row per
-    // toolbox action that carries a rule.
+    // (txid or NULL, reference, label): one row per toolbox action that
+    // carries the gate's label.
     let labelled = sqlx::query(
         "SELECT lower(t.txid) AS txid, t.reference, l.label FROM transactions t \
          JOIN tx_labels_map m ON m.transaction_id = t.transaction_id AND m.is_deleted = 0 \
@@ -513,7 +513,9 @@ pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
                 by_txid.insert(txid, rule.to_string());
             }
             None => {
-                by_reference.insert(r.get("reference"), rule.to_string());
+                if let Some(reference) = r.get::<Option<String>, _>("reference") {
+                    by_reference.insert(reference, rule.to_string());
+                }
             }
         }
     }
@@ -553,7 +555,9 @@ pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
             &r.get::<String, _>("description"),
             r.get::<i64, _>("satoshis"),
         );
-        let rule: Option<String> = by_reference.get(&r.get::<String, _>("reference")).cloned();
+        let rule: Option<String> = r
+            .get::<Option<String>, _>("reference")
+            .and_then(|reference| by_reference.get(&reference).cloned());
         match shapes.get(&key) {
             Some(seen) if *seen != rule => {
                 ambiguous.insert(key);
