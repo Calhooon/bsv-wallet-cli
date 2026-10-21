@@ -848,3 +848,144 @@ fn the_refusal_as_json_is_the_routes_body() {
     };
     assert_eq!(named.to_json()["code"], "INPUT_NOT_OFFERED");
 }
+
+/// Calhooon/bsv-wallet-cli #44: on one wallet file, a writer shaped like
+/// the daemon's monitor (a pooled transaction that reads a row, then
+/// writes, then commits) runs while `createAction` takes the served
+/// handler's path (the spend guard, then the gate's `createAction`; a
+/// template, aborted after). Every `createAction` answers without a store
+/// error. On toolbox 0.10.0 the toolbox's deferred `BEGIN` reads under a
+/// WAL snapshot and writes after the writer committed: SQLite answers 517
+/// (`SQLITE_BUSY_SNAPSHOT`), which `busy_timeout` never waits out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "#44: fails on toolbox 0.10.0 with code 517 (or 5); the follow-up lane un-ignores it once the toolbox's single writer lands"]
+async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
+    const ROUNDS: usize = 300;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wallet.db");
+    let root = PrivateKey::random();
+    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    storage
+        .migrate("store-busy", &root.public_key().to_hex())
+        .await
+        .unwrap();
+    storage.make_available().await.unwrap();
+    let (user, _) = storage
+        .find_or_insert_user(&root.public_key().to_hex())
+        .await
+        .unwrap();
+    let basket = storage
+        .find_or_create_default_basket(user.user_id)
+        .await
+        .unwrap()
+        .basket_id;
+
+    // One mined, parseable coin (its BUMP the header's root at 800).
+    let lock = bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    let mut parent = bsv_sdk::transaction::Transaction::new();
+    parent
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            "aa".repeat(32),
+            0,
+        ))
+        .unwrap();
+    parent
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(100_000, lock))
+        .unwrap();
+    let parent_id = parent.id();
+    coin(
+        &storage,
+        (user.user_id, basket),
+        &parent_id,
+        false,
+        Some(800),
+        100_000,
+        9,
+    )
+    .await;
+    for table in ["transactions", "proven_txs"] {
+        sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
+            .bind(parent.to_binary())
+            .bind(&parent_id)
+            .execute(storage.pool())
+            .await
+            .unwrap();
+    }
+    let services = headers_with(&parent_id, 800, 900);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+
+    // The monitor-shaped writer: read, then write, then commit, until told.
+    let pool = wallet.storage().pool().clone();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            let (mut commits, mut failures) = (0usize, 0usize);
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let round = async {
+                    let mut tx = pool.begin().await?;
+                    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    sqlx::query(
+                        "INSERT INTO monitor_events (event, details) VALUES ('store-busy', ?)",
+                    )
+                    .bind(n.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await
+                };
+                match round.await {
+                    Ok(()) => commits += 1,
+                    Err(_) => failures += 1,
+                }
+            }
+            (commits, failures)
+        })
+    };
+
+    let mut store_error = None;
+    for round in 1..=ROUNDS {
+        let mut args = pay(1_000);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        let answer = match crate::spend_guard::run(wallet.storage().pool()).await {
+            Err(e) => Err(format!("Storage error: spend guard: {e}")),
+            Ok(_) => create_action(&wallet, args, "store-busy.local", &opts(1, true))
+                .await
+                .map_err(|e| e.to_string()),
+        };
+        match answer {
+            Ok(result) => {
+                let reference = reference_string(&result.signable_transaction.unwrap().reference);
+                // The abort is a write too; retried until it lands, so the
+                // coin is free for the next round.
+                for _ in 0..50 {
+                    let aborted = wallet
+                        .abort_action(
+                            bsv_sdk::wallet::AbortActionArgs {
+                                reference: reference.clone(),
+                            },
+                            "store-busy.local",
+                        )
+                        .await;
+                    if aborted.is_ok() {
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                store_error = Some((round, e));
+                break;
+            }
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (commits, failures) = writer.await.unwrap();
+    println!("writer: {commits} commits, {failures} failed transactions");
+    if let Some((round, e)) = store_error {
+        panic!("createAction round {round} of {ROUNDS} answered a store error: {e}");
+    }
+}

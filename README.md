@@ -230,6 +230,11 @@ on stdout, `{"code":"INSUFFICIENT_FUNDS","message","offeredSatoshis","held":[...
 (`INPUT_NOT_OFFERED` for a named coin), exit 1. Nothing is fetched for it but the header service's tip and
 headers: no chain scan, no explorer.
 
+A store busy answer (SQLite 5, 6 or 517, or the toolbox's `Store busy:`) is
+`503 STORE_BUSY` with `Retry-After: 1`, body `{"code":"STORE_BUSY","message"}`,
+never `400` (#44). A transaction that opens IMMEDIATE can only fail at BEGIN,
+so a 503 means nothing was written and a client may retry blind.
+
 ## One transaction's word
 
 `GET /tx/{txid}` (behind the same bearer as `/chain-feed`) serves the
