@@ -399,6 +399,161 @@ async fn the_heal_at_start_restores_the_holds_a_015_process_left() {
     assert_eq!(heal_holds(&storage).await.unwrap(), 0, "healed once");
 }
 
+/// A 0.15 hold table with one hold on `held` and every coin `change = 0`,
+/// as a crashed 0.15 call left it.
+async fn a_015_hold(storage: &StorageSqlx, held: i64) {
+    let w = storage.writer();
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS spend_gate_holds (output_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, held_at INTEGER NOT NULL)",
+    )
+    .execute(w)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE outputs SET change = 0")
+        .execute(w)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spend_gate_holds VALUES (?, '4242:7', 0)")
+        .bind(held)
+        .execute(w)
+        .await
+        .unwrap();
+}
+
+async fn change_of(storage: &StorageSqlx, id: i64) -> i64 {
+    sqlx::query_scalar("SELECT change FROM outputs WHERE output_id = ?")
+        .bind(id)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap()
+}
+
+/// F6 of the #44 CLI review: the spending commands' heal reads first. With
+/// no table, or an empty one, it never asks for the writer: it answers at
+/// once while another process holds the file's write lock. With a hold it
+/// heals, once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_commands_heal_reads_first_and_heals_only_a_hold() {
+    use sqlx::{ConnectOptions, Connection};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wallet.db");
+    let identity = "02".to_string() + &"ab".repeat(32);
+    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    storage.migrate("heal", &identity).await.unwrap();
+    storage.make_available().await.unwrap();
+    let (user, _) = storage.find_or_insert_user(&identity).await.unwrap();
+    let basket = storage
+        .find_or_create_default_basket(user.user_id)
+        .await
+        .unwrap()
+        .basket_id;
+    let held = coin(
+        &storage,
+        (user.user_id, basket),
+        &"f3".repeat(32),
+        true,
+        None,
+        5_000,
+        1,
+    )
+    .await;
+    sqlx::query(
+        "CREATE TABLE spend_gate_holds (output_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, held_at INTEGER NOT NULL)",
+    )
+    .execute(storage.writer())
+    .await
+    .unwrap();
+
+    let mut other = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut other)
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(heal_if_held(&storage).await.unwrap(), 0);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "an empty table is read, the writer never asked: {:?}",
+        started.elapsed()
+    );
+    sqlx::query("ROLLBACK").execute(&mut other).await.unwrap();
+    other.close().await.unwrap();
+
+    a_015_hold(&storage, held).await;
+    heal_before_spend(&storage).await;
+    assert_eq!(change_of(&storage, held).await, 1, "the hold is healed");
+    assert_eq!(heal_if_held(&storage).await.unwrap(), 0, "healed once");
+}
+
+/// F6 of the #44 CLI review: a heal that failed at the served start is
+/// owed, and the next served request tries it again: while it still fails
+/// (a fault on the outputs table) it stays owed and the request is
+/// answered; once it succeeds the coin is change again and nothing is owed.
+#[tokio::test]
+async fn a_served_request_retries_the_heal_a_failed_start_owed() {
+    use tower::ServiceExt;
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let held = coin(
+        &storage,
+        (user, basket),
+        &"f4".repeat(32),
+        true,
+        None,
+        5_000,
+        1,
+    )
+    .await;
+    a_015_hold(&storage, held).await;
+    sqlx::query(
+        "CREATE TRIGGER fault_heal BEFORE UPDATE ON outputs \
+         BEGIN SELECT RAISE(ABORT, 'injected heal fault'); END",
+    )
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    let services = bsv_wallet_toolbox::Services::with_options(
+        bsv_wallet_toolbox::Chain::Main,
+        bsv_wallet_toolbox::ServicesOptions::mainnet(),
+    )
+    .unwrap();
+    let wallet =
+        crate::server::make_wallet_state(Wallet::new(Some(root), storage, services).await.unwrap());
+    assert!(
+        heal_if_held(wallet.storage()).await.is_err(),
+        "the start's heal fails"
+    );
+    let owed = crate::server::HealOwed::owed();
+    let app = crate::server::make_router_owing(
+        wallet.clone(),
+        crate::server::ServerConfig::default(),
+        owed.clone(),
+    );
+    let request = || {
+        axum::http::Request::get("/isAuthenticated")
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+
+    let response = app.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert!(owed.is_owed(), "still failing: still owed");
+    assert_eq!(change_of(wallet.storage(), held).await, 0);
+
+    sqlx::query("DROP TRIGGER fault_heal")
+        .execute(wallet.storage().writer())
+        .await
+        .unwrap();
+    let response = app.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert!(!owed.is_owed(), "healed: nothing owed");
+    assert_eq!(change_of(wallet.storage(), held).await, 1);
+}
+
 /// R1 (d): `allowPending: received` offers a received coin whose creator is
 /// `pending`, and nothing else changes: our own change is offered either
 /// way (R1 (b)), a mined coin at the tip (one block deep) is offered at a

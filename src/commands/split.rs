@@ -161,6 +161,8 @@ pub async fn run(ctx: &WalletContext, count: u32, allow_received: bool) -> Resul
         }),
     };
 
+    // The holds a 0.15 process left are healed first, when there are any.
+    crate::spend_gate::heal_before_spend(ctx.wallet.storage()).await;
     // A coin whose transaction drew no accepting word is not selected.
     crate::spend_gate::busy_as_json(
         crate::spend_guard::run(ctx.wallet.storage()).await,
