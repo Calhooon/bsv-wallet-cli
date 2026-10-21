@@ -611,3 +611,107 @@ async fn respend_refuses_an_input_the_gate_holds() {
     assert_eq!(words(&f).await, before);
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
 }
+
+/// Every marked line: (marker, txid).
+type MarkedLines = Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+
+/// The marker of every line logged while the guard lives on this thread.
+fn capture_markers() -> (MarkedLines, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt;
+    struct Capture(MarkedLines);
+    #[derive(Default)]
+    struct Line(String, Option<String>);
+    impl tracing::field::Visit for Line {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            self.record_debug(field, &value);
+        }
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            let value = format!("{value:?}").trim_matches('"').to_string();
+            match field.name() {
+                "marker" => self.0 = value,
+                "txid" => self.1 = Some(value),
+                _ => {}
+            }
+        }
+    }
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Capture {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut line = Line::default();
+            event.record(&mut line);
+            if !line.0.is_empty() {
+                self.0.lock().unwrap().push((line.0, line.1));
+            }
+        }
+    }
+    let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry().with(Capture(lines.clone()));
+    (lines, tracing::subscriber::set_default(subscriber))
+}
+
+/// F3 of the #44 CLI review: once the replacement is posted, the status
+/// write and the spend guard after it fail (a fault injected on each), and
+/// the call still answers the replacement's txid, each fault logged with
+/// its marker and the txid. The request's word is read tolerantly: the req
+/// the failed status write left, `unknown` for none, and `unknown` with a
+/// marker when the read itself fails.
+#[tokio::test]
+async fn a_store_fault_after_the_replacement_is_posted_is_logged_and_answers_its_txid() {
+    let (lines, _guard) = capture_markers();
+    let f = fixture().await;
+    let s = f.wallet.storage();
+    // The status write advances the replacement's req to 'unmined'; the
+    // guard's first write re-reserves the phantom's coin. Both refused.
+    for fault in [
+        "CREATE TRIGGER fault_status BEFORE UPDATE OF status ON proven_tx_reqs \
+         WHEN NEW.status = 'unmined' AND OLD.status <> 'unmined' \
+         BEGIN SELECT RAISE(ABORT, 'injected fault after the post'); END"
+            .to_string(),
+        format!(
+            "CREATE TRIGGER fault_guard BEFORE UPDATE ON outputs WHEN OLD.output_id = {} \
+             BEGIN SELECT RAISE(ABORT, 'injected fault after the post'); END",
+            f.coin
+        ),
+    ] {
+        sqlx::query(&fault).execute(s.writer()).await.unwrap();
+    }
+    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    let replacement = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
+        .await
+        .expect("a fault after the post is never the respend's error");
+    assert_eq!(absent.call_count("post_beef"), 1);
+    let marked = lines.lock().unwrap().clone();
+    println!("{marked:?}");
+    for marker in [
+        "post_broadcast_status_write_failed",
+        "post_broadcast_guard_failed",
+    ] {
+        assert!(
+            marked
+                .iter()
+                .any(|(m, t)| m == marker && t.as_deref() == Some(replacement.as_str())),
+            "{marker} with the replacement's txid: {marked:?}"
+        );
+    }
+    let left = bsv_wallet_cli::respend::request_word(s, &replacement).await;
+    assert_ne!(left, "unmined", "the failed status write left the req");
+    assert_eq!(
+        bsv_wallet_cli::respend::request_word(s, &"ee".repeat(32)).await,
+        "unknown"
+    );
+    s.pool().close().await;
+    assert_eq!(
+        bsv_wallet_cli::respend::request_word(s, &replacement).await,
+        "unknown"
+    );
+    assert!(lines
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(m, t)| m == "post_broadcast_request_read_failed"
+            && t.as_deref() == Some(replacement.as_str())));
+}

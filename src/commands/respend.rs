@@ -21,10 +21,8 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
         &sources,
     )
     .await?;
-    let request: String = sqlx::query_scalar("SELECT status FROM proven_tx_reqs WHERE txid=?")
-        .bind(&replacement)
-        .fetch_one(ctx.wallet.storage().pool())
-        .await?;
+    // Posted: the request's word is read tolerantly, never the error.
+    let request = crate::respend::request_word(ctx.wallet.storage(), &replacement).await;
     let word = crate::server::post_word::post_word(ctx.wallet.storage(), &replacement).await;
     if ctx.json_output {
         println!(
