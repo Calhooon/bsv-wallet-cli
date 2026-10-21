@@ -84,4 +84,60 @@ mod tests {
             sqlx::Error::RowNotFound
         )));
     }
+
+    /// A real SQLITE_BUSY: two connections on one file, the second asking
+    /// for the write lock the first holds, with no busy timeout.
+    #[tokio::test]
+    async fn sqlites_own_busy_is_busy() {
+        use sqlx::sqlite::SqliteConnectOptions;
+        use sqlx::{ConnectOptions, Connection};
+        let dir = tempfile::TempDir::new().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(dir.path().join("busy.db"))
+            .create_if_missing(true)
+            .busy_timeout(std::time::Duration::ZERO);
+        let mut holder = options.connect().await.unwrap();
+        sqlx::query("CREATE TABLE t (x INTEGER)")
+            .execute(&mut holder)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut holder)
+            .await
+            .unwrap();
+        let mut other = options.connect().await.unwrap();
+        let err = sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut other)
+            .await
+            .expect_err("the write lock is held");
+        println!("{err}");
+        assert!(sqlx_is_busy(&err));
+        assert!(is_store_busy(
+            &anyhow::Error::new(err).context("spend gate")
+        ));
+        let write = sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(&mut other)
+            .await
+            .expect_err("still locked");
+        assert!(
+            sqlx_is_busy(&write),
+            "a write under the held lock is busy too"
+        );
+        sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+        // A constraint (2067) is not busy.
+        sqlx::query("CREATE UNIQUE INDEX tx ON t (x)")
+            .execute(&mut holder)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(&mut holder)
+            .await
+            .unwrap();
+        let unique = sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(&mut holder)
+            .await
+            .expect_err("a duplicate");
+        assert!(!sqlx_is_busy(&unique), "{unique}");
+        holder.close().await.unwrap();
+    }
 }

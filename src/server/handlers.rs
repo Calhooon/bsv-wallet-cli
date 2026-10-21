@@ -133,11 +133,9 @@ impl AppError {
         // Strip "wallet error: " prefix the SDK wraps errors with
         let clean = msg.strip_prefix("wallet error: ").unwrap_or(msg);
 
-        if Self::is_store_busy(clean) {
-            (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY")
-        } else if clean.starts_with("Insufficient funds:")
-            || clean.starts_with("insufficient funds:")
-        {
+        // The store busy is never read from words: only its type answers 503
+        // (`store_busy`). A message that merely says so keeps its class.
+        if clean.starts_with("Insufficient funds:") || clean.starts_with("insufficient funds:") {
             (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS")
         } else if clean.starts_with("Authentication required")
             || clean.starts_with("Invalid identity key:")
@@ -147,6 +145,10 @@ impl AppError {
             (StatusCode::FORBIDDEN, "ACCESS_DENIED")
         } else if clean.starts_with("Entity not found:") || clean.starts_with("not found:") {
             (StatusCode::NOT_FOUND, "NOT_FOUND")
+        } else if clean.starts_with("Unspendable coin:") {
+            // The wallet's own coin, its stored ancestry incomplete: neither
+            // a shortfall nor the caller's bad input (toolbox 0.11.0).
+            (StatusCode::CONFLICT, "UNSPENDABLE_COIN")
         } else if clean.starts_with("Duplicate entity:") || clean.starts_with("Invalid operation:")
         {
             (StatusCode::CONFLICT, "CONFLICT")
@@ -174,30 +176,46 @@ impl AppError {
         }
     }
 
-    /// SQLite answered busy (5), locked (6) or busy-snapshot (517) (#44):
-    /// the toolbox's typed `Store busy:` from its single writer on, and
-    /// today's messages carrying the code, in SQLite's words or sqlx's
-    /// `(code: N)` (a wrapper may sit in front, as the spend guard's does).
-    /// A transaction that opens IMMEDIATE can only fail at BEGIN, so nothing
-    /// was written and the caller may retry blind.
-    fn is_store_busy(clean: &str) -> bool {
-        const MARKS: [&str; 8] = [
-            "database is locked",
-            "database table is locked",
-            "(code 517)",
-            "(code 5)",
-            "(code 6)",
-            "(code: 517)",
-            "(code: 5)",
-            "(code: 6)",
-        ];
-        clean.starts_with("Store busy:")
-            || clean.contains(": Store busy:")
-            || MARKS.iter().any(|m| clean.contains(m))
+    /// The store busy (#44): 503 `STORE_BUSY`, `Retry-After: 1`. Nothing
+    /// was written, built, locked or posted; the same call may be repeated
+    /// unchanged. Built only from a typed busy: the toolbox's
+    /// `WalletBusy` from a wallet door, or a pre-door gate or guard fault
+    /// that is SQLite's busy or the writer's acquire ceiling
+    /// ([`crate::store::is_store_busy`]).
+    fn store_busy(message: String) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "STORE_BUSY",
+            message,
+            refusal: None,
+        }
     }
 
-    /// Create from a wallet/SDK error (the most common path).
-    fn from_wallet_error(e: impl std::fmt::Display) -> Self {
+    /// A pre-door fault of the spend gate or the spend guard: the store
+    /// busy by its type, else a 500 in the gate's words.
+    fn from_pre_door(e: anyhow::Error, words: &str) -> Self {
+        let message = format!("Storage error: {words}: {e}");
+        if crate::store::is_store_busy(&e) {
+            Self::store_busy(message)
+        } else {
+            Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR",
+                message,
+                refusal: None,
+            }
+        }
+    }
+
+    /// Create from a wallet/SDK error (the most common path). The SDK's
+    /// `WalletBusy` is the store busy, by its type; everything else is
+    /// classified by its prefix.
+    fn from_wallet_error<E: std::fmt::Display + 'static>(e: E) -> Self {
+        if let Some(bsv_sdk::Error::WalletBusy { .. }) =
+            (&e as &dyn std::any::Any).downcast_ref::<bsv_sdk::Error>()
+        {
+            return Self::store_busy(e.to_string());
+        }
         let message = e.to_string();
         let (status, code) = Self::classify(&message);
         Self {
@@ -223,7 +241,8 @@ impl AppError {
                 message: refusal.to_string(),
                 refusal: Some(refusal),
             },
-            other => Self::from_wallet_error(other),
+            crate::spend_gate::GateError::Wallet(e) => Self::from_wallet_error(e),
+            crate::spend_gate::GateError::Gate(e) => Self::from_pre_door(e, "spend gate"),
         }
     }
 
@@ -296,6 +315,11 @@ impl IntoResponse for AppError {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
         }
+        if self.code == "UNSPENDABLE_COIN" {
+            if let Some(coin) = unspendable_coin(&self.message) {
+                body["coin"] = json!(coin);
+            }
+        }
         if self.code == "STORE_BUSY" {
             // Nothing was written; one second is the writer's turn.
             return (
@@ -307,6 +331,15 @@ impl IntoResponse for AppError {
         }
         (self.status, Json(body)).into_response()
     }
+}
+
+/// The coin an `Unspendable coin: <txid.vout>: ...` refusal names.
+fn unspendable_coin(message: &str) -> Option<&str> {
+    let rest = &message[message.find("Unspendable coin: ")? + "Unspendable coin: ".len()..];
+    rest.split(':')
+        .next()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
 }
 
 /// GET /isAuthenticated
@@ -524,7 +557,7 @@ pub async fn create_action(
     // with no status source holding it, is not selected (`spend_guard`).
     crate::spend_guard::run(wallet.storage())
         .await
-        .map_err(|e| AppError::from_wallet_error(format!("Storage error: spend guard: {e}")))?;
+        .map_err(|e| AppError::from_pre_door(e, "spend guard"))?;
     // The spend gate (R1 (b), (d), R3 (b)): the toolbox allocates only
     // coins whose creator is mined at SPEND_DEPTH, our own change under
     // SPEND_OWN_CHANGE, or a received pending coin under this action's
@@ -1261,97 +1294,4 @@ pub async fn reveal_specific_key_linkage(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn busy(msg: &str) {
-        assert_eq!(
-            AppError::classify(msg),
-            (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY"),
-            "{msg}"
-        );
-    }
-
-    /// The toolbox's typed error from its single writer on (#44).
-    #[test]
-    fn store_busy_prefix_is_503() {
-        busy("Store busy: sqlite code 5");
-        busy("wallet error: Store busy: sqlite code 517");
-        busy("Storage error: spend guard: Store busy: sqlite code 6");
-    }
-
-    /// The 517 the seat daemon answered 400 (#44), in sqlx's words and the
-    /// issue's.
-    #[test]
-    fn busy_snapshot_517_is_503() {
-        busy("wallet error: SQLx error: error returned from database: (code: 517) database is locked");
-        busy("database is locked (code 517)");
-    }
-
-    #[test]
-    fn busy_5_is_503() {
-        busy(
-            "wallet error: SQLx error: error returned from database: (code: 5) database is locked",
-        );
-        busy("Database error: (code 5)");
-        busy("Storage error: spend guard: error returned from database: (code: 5) database is locked");
-    }
-
-    #[test]
-    fn locked_6_is_503() {
-        busy("SQLx error: error returned from database: (code: 6) database table is locked");
-        busy("Database error: database table is locked: outputs (code 6)");
-    }
-
-    #[test]
-    fn database_is_locked_alone_is_503() {
-        busy("Database error: database is locked");
-    }
-
-    /// Another store failure keeps its class; a code that merely starts
-    /// with 5 is not busy.
-    #[test]
-    fn other_store_errors_are_not_busy() {
-        assert_eq!(
-            AppError::classify("Database error: no such table: outputs"),
-            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
-        );
-        assert_eq!(
-            AppError::classify(
-                "SQLx error: error returned from database: (code: 19) UNIQUE constraint failed"
-            ),
-            (StatusCode::BAD_REQUEST, "ERROR")
-        );
-        assert_eq!(
-            AppError::classify("Database error: (code 51)"),
-            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
-        );
-    }
-
-    /// A store-busy answer is 503 with `Retry-After: 1` and the body
-    /// `{code, message}`; any other answer carries no `Retry-After`.
-    #[tokio::test]
-    async fn store_busy_answers_retry_after_one() {
-        let msg = "wallet error: SQLx error: error returned from database: (code: 517) database is locked";
-        let response = AppError::from_wallet_error(msg).into_response();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            response
-                .headers()
-                .get(axum::http::header::RETRY_AFTER)
-                .unwrap(),
-            "1"
-        );
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body, json!({"code": "STORE_BUSY", "message": msg}));
-
-        let other = AppError::from_wallet_error("Insufficient funds: need 5").into_response();
-        assert!(other
-            .headers()
-            .get(axum::http::header::RETRY_AFTER)
-            .is_none());
-    }
-}
+mod tests;
