@@ -144,7 +144,8 @@ async fn auth_middleware(headers: HeaderMap, request: Request, next: Next) -> Re
 
 /// Build the axum Router with all 28 WalletInterface endpoints.
 pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
-    let cors = CorsLayer::very_permissive();
+    // A browser caller reads `Retry-After` on a 503 STORE_BUSY (#44).
+    let cors = CorsLayer::very_permissive().expose_headers([axum::http::header::RETRY_AFTER]);
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC

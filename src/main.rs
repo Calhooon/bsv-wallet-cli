@@ -29,6 +29,8 @@ use bsv_wallet_cli::spend_guard;
 // The spend gate: the guard on the toolbox's coin selection (0.10.0).
 use bsv_wallet_cli::backstop_log::{BackstopFilter, BackstopLayer};
 use bsv_wallet_cli::spend_gate;
+// The store's two doors and the typed busy.
+use bsv_wallet_cli::store;
 use clap::Parser;
 use cli::{Cli, Commands};
 use tracing_subscriber::layer::SubscriberExt;
