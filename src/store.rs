@@ -134,11 +134,9 @@ mod tests {
     async fn only_the_writers_acquire_timeout_is_busy() {
         let storage = bsv_wallet_toolbox::StorageSqlx::in_memory().await.unwrap();
         let held = storage.writer().acquire().await.unwrap();
-        let started = std::time::Instant::now();
         let err = writer(&storage)
             .await
             .expect_err("the one writer is held past the ceiling");
-        println!("{err} after {:?}", started.elapsed());
         assert!(is_store_busy(&err), "{err}");
         assert!(matches!(
             err.downcast_ref::<bsv_wallet_toolbox::Error>(),

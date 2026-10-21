@@ -835,7 +835,6 @@ mod tests {
                 .is_none()
         );
         let failed = markers.named("post_broadcast_follow_up_write_failed");
-        println!("{:?}", markers.all());
         assert_eq!(
             failed.len(),
             4,
