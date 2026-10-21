@@ -369,7 +369,14 @@ impl Assessment {
     }
 }
 
-async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
+async fn ensure_schema(storage: &StorageSqlx) -> Result<()> {
+    let reader = storage.pool();
+    if crate::store::has_column(reader, "spend_gate_holds", "held_at").await?
+        && crate::store::has_column(reader, "spend_gate_actions", "reference").await?
+    {
+        return Ok(());
+    }
+    let pool = storage.writer();
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS spend_gate_holds (\
             output_id INTEGER PRIMARY KEY, \
@@ -411,8 +418,9 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Record that the action `txid` was created under `rule`.
-pub async fn record_rule(pool: &SqlitePool, txid: &str, rule: &str) -> Result<()> {
-    ensure_schema(pool).await?;
+pub async fn record_rule(storage: &StorageSqlx, txid: &str, rule: &str) -> Result<()> {
+    ensure_schema(storage).await?;
+    let pool = storage.writer();
     sqlx::query(
         "INSERT INTO spend_gate_actions (txid, rule, recorded_at) VALUES (?, ?, ?) \
          ON CONFLICT(txid) DO NOTHING",
@@ -428,11 +436,12 @@ pub async fn record_rule(pool: &SqlitePool, txid: &str, rule: &str) -> Result<()
 /// Record that the deferred-signing template `reference` (no txid yet) was
 /// created under `rule`; [`fill_txid`] names it by its txid once signed.
 pub async fn record_rule_by_reference(
-    pool: &SqlitePool,
+    storage: &StorageSqlx,
     reference: &str,
     rule: &str,
 ) -> Result<()> {
-    ensure_schema(pool).await?;
+    ensure_schema(storage).await?;
+    let pool = storage.writer();
     sqlx::query(
         "INSERT INTO spend_gate_actions (txid, rule, recorded_at, reference) VALUES (NULL, ?, ?, ?) \
          ON CONFLICT(reference) DO NOTHING",
@@ -447,8 +456,9 @@ pub async fn record_rule_by_reference(
 
 /// The template `reference` was signed as `txid`: its row, where one was
 /// recorded, gains the txid and keeps the reference.
-pub async fn fill_txid(pool: &SqlitePool, reference: &str, txid: &str) -> Result<()> {
-    ensure_schema(pool).await?;
+pub async fn fill_txid(storage: &StorageSqlx, reference: &str, txid: &str) -> Result<()> {
+    ensure_schema(storage).await?;
+    let pool = storage.writer();
     sqlx::query("UPDATE spend_gate_actions SET txid = ? WHERE reference = ? AND txid IS NULL")
         .bind(txid.to_ascii_lowercase())
         .bind(reference)
@@ -465,8 +475,9 @@ pub fn reference_string(reference: &[u8]) -> String {
 
 /// The rule each action was created under, where one was recorded, by
 /// txid; a template not yet signed has none (see [`ActionRules`]).
-pub async fn rules_of(pool: &SqlitePool) -> Result<HashMap<String, String>> {
-    ensure_schema(pool).await?;
+pub async fn rules_of(storage: &StorageSqlx) -> Result<HashMap<String, String>> {
+    ensure_schema(storage).await?;
+    let pool = storage.pool();
     let rows = sqlx::query("SELECT txid, rule FROM spend_gate_actions WHERE txid IS NOT NULL")
         .fetch_all(pool)
         .await?;
@@ -494,8 +505,9 @@ pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
 }
 
 /// Every recorded rule, as a listing shows it.
-pub async fn action_rules(pool: &SqlitePool) -> Result<ActionRules> {
-    let by_txid = rules_of(pool).await?;
+pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
+    let by_txid = rules_of(storage).await?;
+    let pool = storage.pool();
     let rows = sqlx::query(
         "SELECT t.status, t.description, t.satoshis, g.rule FROM transactions t \
          LEFT JOIN spend_gate_actions g ON g.reference = t.reference AND g.txid IS NULL \
@@ -578,8 +590,9 @@ pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions)
 /// Every coin the toolbox could allocate: a change output of a default
 /// basket, unspent, its transaction `completed` or `unproven`. In the
 /// toolbox's preference: completed first, then the largest.
-async fn candidates(pool: &SqlitePool) -> Result<Vec<Candidate>> {
-    let frozen = crate::tracker_host::frozen_outpoints(pool).await?;
+async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
+    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
+    let pool = storage.pool();
     let rows = sqlx::query(
         "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
                 CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
@@ -664,7 +677,7 @@ pub async fn assess<V: WalletServices + ?Sized>(
     opts: &GateOptions,
     need: Option<u64>,
 ) -> Result<Assessment> {
-    let all = candidates(storage.pool()).await?;
+    let all = candidates(storage).await?;
     let tick = opts.tick();
     let mut by_creator: Vec<(String, Option<Vec<u8>>)> = Vec::new();
     for c in &all {
@@ -742,8 +755,8 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     named: &[(String, u32)],
     reserved_to: Option<i64>,
 ) -> Result<Vec<HeldCoin>> {
+    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
     let pool = storage.pool();
-    let frozen = crate::tracker_host::frozen_outpoints(pool).await?;
     let mut coins = Vec::new();
     for (txid, vout) in named {
         let txid = txid.to_ascii_lowercase();
@@ -831,10 +844,10 @@ fn holder() -> String {
 }
 
 /// Mark `ids` not change for the call: the toolbox does not allocate them.
-async fn hold(pool: &SqlitePool, holder: &str, ids: &[i64]) -> Result<()> {
-    ensure_schema(pool).await?;
+async fn hold(storage: &StorageSqlx, holder: &str, ids: &[i64]) -> Result<()> {
+    ensure_schema(storage).await?;
     let now = chrono::Utc::now().timestamp();
-    let mut tx = pool.begin().await?;
+    let mut tx = storage.write_tx().await?;
     for id in ids {
         // Only a coin still change, and not held by another call, is held:
         // restoring sets back exactly what was set here.
@@ -863,10 +876,10 @@ async fn hold(pool: &SqlitePool, holder: &str, ids: &[i64]) -> Result<()> {
 
 /// Restore what `holder` held, and any hold a call that did not finish left
 /// behind ([`STALE_HOLD_SECS`]).
-pub async fn restore(pool: &SqlitePool, holder: Option<&str>) -> Result<u64> {
-    ensure_schema(pool).await?;
+pub async fn restore(storage: &StorageSqlx, holder: Option<&str>) -> Result<u64> {
+    ensure_schema(storage).await?;
     let stale = chrono::Utc::now().timestamp() - STALE_HOLD_SECS;
-    let mut tx = pool.begin().await?;
+    let mut tx = storage.write_tx().await?;
     let which = "SELECT output_id FROM spend_gate_holds WHERE holder = ? OR held_at < ?";
     let restored = sqlx::query(&format!(
         "UPDATE outputs SET change = 1 WHERE change = 0 AND output_id IN ({which})"
@@ -898,7 +911,7 @@ async fn run_held<V: WalletServices + Send + Sync + 'static>(
     originator: &str,
     assessment: &Assessment,
 ) -> std::result::Result<bsv_sdk::Result<CreateActionResult>, GateError> {
-    let pool = wallet.storage().pool();
+    let pool = wallet.storage();
     let holder = holder();
     let ids: Vec<i64> = assessment
         .held
@@ -923,9 +936,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
-    restore(storage.pool(), None)
-        .await
-        .map_err(GateError::Gate)?;
+    restore(storage, None).await.map_err(GateError::Gate)?;
     let named: Vec<(String, u32)> = args
         .inputs
         .iter()
@@ -955,20 +966,16 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     if opts.allow_received {
         if let Some(txid) = result.txid.as_ref() {
             record_rule(
-                storage.pool(),
+                storage,
                 &bsv_sdk::primitives::to_hex(txid),
                 RECEIVED_PENDING,
             )
             .await
             .map_err(GateError::Gate)?;
         } else if let Some(st) = result.signable_transaction.as_ref() {
-            record_rule_by_reference(
-                storage.pool(),
-                &reference_string(&st.reference),
-                RECEIVED_PENDING,
-            )
-            .await
-            .map_err(GateError::Gate)?;
+            record_rule_by_reference(storage, &reference_string(&st.reference), RECEIVED_PENDING)
+                .await
+                .map_err(GateError::Gate)?;
         }
     }
     Ok(result)

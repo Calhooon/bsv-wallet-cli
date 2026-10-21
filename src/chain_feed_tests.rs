@@ -871,7 +871,7 @@ async fn in_the_daemon_a_stale_episode_is_followed_up_once_by_the_monitor_not_tw
     .bind(&anchor.txid)
     .bind(&anchor.block_hash)
     .bind(&anchor.merkle_root)
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await
     .unwrap();
 

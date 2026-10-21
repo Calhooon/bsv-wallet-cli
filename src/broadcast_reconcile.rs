@@ -663,7 +663,7 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
     };
     let tracker = crate::tracker_host::tick(storage, services, clock, tracker).await?;
     let sweep = run_sweep(storage, services, true).await?;
-    let guard = crate::spend_guard::run(storage.pool()).await?;
+    let guard = crate::spend_guard::run(storage).await?;
     Ok(ServedPassReport {
         sse_events,
         tracker,
@@ -1258,7 +1258,7 @@ mod tests {
         .bind(txid)
         .bind(created_at)
         .bind(Utc::now())
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid()
@@ -1288,7 +1288,7 @@ mod tests {
         .bind(spent_by)
         .bind(now)
         .bind(now)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap()
         .last_insert_rowid()
@@ -1396,7 +1396,7 @@ mod tests {
             "UPDATE broadcast_seen SET seen_at = datetime('now', '-31 minutes') WHERE txid = ?",
         )
         .bind(&txid)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
         note_absence(&storage, &txid, 40, 30).await;

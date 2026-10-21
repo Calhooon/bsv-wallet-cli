@@ -111,10 +111,10 @@ async fn fixture() -> Fixture {
     let now = Utc::now();
     let funding_row: i64 = sqlx::query_scalar(
         "INSERT INTO transactions (user_id,status,reference,is_outgoing,satoshis,version,lock_time,description,txid,raw_tx,created_at,updated_at) VALUES (?,'completed','funding',0,100000,1,0,'fixture',?,?,?,?) RETURNING transaction_id")
-        .bind(user.user_id).bind(funding.id()).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.pool()).await.unwrap();
+        .bind(user.user_id).bind(funding.id()).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     let coin: i64 = sqlx::query_scalar(
         "INSERT INTO outputs (user_id,transaction_id,basket_id,vout,satoshis,locking_script,txid,type,spendable,change,derivation_prefix,derivation_suffix,provided_by,purpose,output_description,created_at,updated_at) VALUES (?,?,?,0,100000,?,?,'P2PKH',1,1,?,?,'storage','change','fixture',?,?) RETURNING output_id")
-        .bind(user.user_id).bind(funding_row).bind(basket).bind(lock.to_binary()).bind(funding.id()).bind(prefix).bind(suffix).bind(now).bind(now).fetch_one(storage.pool()).await.unwrap();
+        .bind(user.user_id).bind(funding_row).bind(basket).bind(lock.to_binary()).bind(funding.id()).bind(prefix).bind(suffix).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     let funding_proof = MerklePath {
         block_height: 800,
         path: vec![vec![MerklePathLeaf {
@@ -126,11 +126,11 @@ async fn fixture() -> Fixture {
     }
     .to_binary();
     let proven_id: i64 = sqlx::query_scalar("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) VALUES (?,800,0,?,?,?,?,?,?) RETURNING proven_tx_id")
-        .bind(funding.id()).bind("bb".repeat(32)).bind(funding.id()).bind(funding_proof).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.pool()).await.unwrap();
+        .bind(funding.id()).bind("bb".repeat(32)).bind(funding.id()).bind(funding_proof).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     sqlx::query("UPDATE transactions SET proven_tx_id=? WHERE transaction_id=?")
         .bind(proven_id)
         .bind(funding_row)
-        .execute(storage.pool())
+        .execute(storage.writer())
         .await
         .unwrap();
     let services = status_source("", "unknown", BroadcastStatus::Unknown);
@@ -314,7 +314,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     assert_eq!(words(&f).await, ("failed".into(), "doubleSpend".into()));
     // A stale positive unspent hint from the rollback helper cannot let a
     // subsequent CLI spend select these deliberately reserved inputs.
-    bsv_wallet_cli::spend_guard::run(s.pool()).await.unwrap();
+    bsv_wallet_cli::spend_guard::run(s).await.unwrap();
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
     // Deliver the replacement's own proof through the existing ingest funnel.
     s.ingest_merkle_proof(
@@ -425,7 +425,7 @@ async fn respend_refuses_an_input_outside_the_wallet() {
     let f = fixture().await;
     sqlx::query("DELETE FROM outputs WHERE output_id=?")
         .bind(f.coin)
-        .execute(f.wallet.storage().pool())
+        .execute(f.wallet.storage().writer())
         .await
         .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
@@ -445,7 +445,7 @@ async fn respend_refuses_a_phantom_with_competitor_proof_already_recorded() {
     // Initial state for this control, not a host status mutation under test.
     sqlx::query("UPDATE proven_tx_reqs SET status='doubleSpend' WHERE txid=?")
         .bind(&f.phantom)
-        .execute(f.wallet.storage().pool())
+        .execute(f.wallet.storage().writer())
         .await
         .unwrap();
     let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
@@ -507,7 +507,7 @@ async fn a_refused_replacement_is_a_retryable_hint_and_cannot_be_built_twice() {
         BroadcastStatus::Unknown,
     ));
     WalletStorageProvider::set_services(s, accepting.clone() as Arc<dyn WalletServices>);
-    sqlx::query("UPDATE proven_tx_reqs SET updated_at='2026-01-01T00:00:00+00:00',created_at='2026-01-01T00:00:00+00:00' WHERE txid=?").bind(&replacement).execute(s.pool()).await.unwrap();
+    sqlx::query("UPDATE proven_tx_reqs SET updated_at='2026-01-01T00:00:00+00:00',created_at='2026-01-01T00:00:00+00:00' WHERE txid=?").bind(&replacement).execute(s.writer()).await.unwrap();
     s.send_waiting_transactions(std::time::Duration::ZERO)
         .await
         .unwrap();
@@ -548,7 +548,7 @@ async fn served_pass_recovers_a_durable_build_interrupted_before_processing() {
     // Inject a crash boundary between the committed host build and toolbox
     // processing; no post has happened, but the exact signed act is durable.
     sqlx::query("CREATE TRIGGER interrupt_respend BEFORE INSERT ON proven_tx_reqs BEGIN SELECT RAISE(FAIL,'mock interruption before processing'); END")
-        .execute(s.pool()).await.unwrap();
+        .execute(s.writer()).await.unwrap();
     let err = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
         .await
         .unwrap_err();
@@ -559,7 +559,7 @@ async fn served_pass_recovers_a_durable_build_interrupted_before_processing() {
     let replacement: String = sqlx::query_scalar("SELECT t.txid FROM respend_links l JOIN transactions t ON t.transaction_id=l.replacement_id WHERE l.phantom_id=?")
         .bind(f.phantom_row).fetch_one(s.pool()).await.unwrap();
     sqlx::query("DROP TRIGGER interrupt_respend")
-        .execute(s.pool())
+        .execute(s.writer())
         .await
         .unwrap();
     bsv_wallet_cli::broadcast_reconcile::run_sweep(s, &absent, true)

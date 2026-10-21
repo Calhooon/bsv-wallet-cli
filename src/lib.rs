@@ -13,6 +13,7 @@ pub mod respend;
 pub mod services_env;
 pub mod spend_gate;
 pub mod spend_guard;
+pub mod store;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tracker_host;

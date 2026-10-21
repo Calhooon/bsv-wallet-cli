@@ -170,17 +170,18 @@ async fn an_invalid_beef_over_the_old_body_cap_is_refused_at_its_byte() {
 
 /// `/createAction`'s `inputBEEF` takes a body over the old cap: what answers
 /// is the empty wallet's funding (a fee of 2 satoshis, nothing to pay it
-/// with), not a size.
+/// with), not a size. The tracker carries the BEEF's root: from toolbox
+/// 0.11.0 the caller's roots are read before any allocation (#44).
 #[tokio::test]
 async fn create_action_takes_an_input_beef_over_the_old_body_cap() {
-    let (tx, _) = atomic_beef(big_tx(14_000_000));
+    let (tx, txid) = atomic_beef(big_tx(14_000_000));
     let body = serde_json::to_vec(&json!({
         "description": "an input BEEF over the old cap",
         "inputBEEF": tx,
     }))
     .unwrap();
     assert!(body.len() > OLD_CAP);
-    let (base, _tmp) = setup(None, None).await;
+    let (base, _tmp) = setup(Some(txid), None).await;
 
     let (status, got) = post(&format!("{base}/createAction"), body, None).await;
 

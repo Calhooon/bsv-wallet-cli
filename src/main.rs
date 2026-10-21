@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
         }
         Commands::CleanupAbandoned { execute } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::cleanup_abandoned::run(&ctx, &cli.db, *execute).await?;
+            commands::cleanup_abandoned::run(&ctx, *execute).await?;
         }
         Commands::ReconcileBroadcasts {
             execute,

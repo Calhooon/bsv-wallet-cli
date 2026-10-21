@@ -130,7 +130,7 @@ async fn write_status(storage: &StorageSqlx, status: &FeedStatus) {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
     .bind(serde_json::to_string(status).unwrap_or_default())
-    .execute(storage.pool())
+    .execute(storage.writer())
     .await;
     if let Err(e) = written {
         tracing::warn!(error = %e, "chain feed: the status was not stored");

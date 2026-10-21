@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bsv_wallet_toolbox::services::UtxoVerdict;
-use bsv_wallet_toolbox::{Chain, WalletServices};
+use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletServices};
 use sqlx::Row;
 use std::future::Future;
 
@@ -163,11 +163,12 @@ impl ReconcileReport {
 /// past the threshold) retires the req; a transaction the chain index knows
 /// is left alone (the `failed` verdict is the suspect one there).
 ///
-/// Operates on the caller-provided pool so the daemon reuses its existing
-/// connection rather than opening a second one (the wallet DB is not in WAL
-/// mode and a fresh pool would lack the daemon's `busy_timeout`).
+/// Operates on the caller's store: its reads on the reader, its writes in
+/// `write_tx` transactions on the store's one writer (bsv-wallet-cli #44),
+/// so the daemon's pass queues behind its own `createAction` instead of
+/// racing it on a second connection.
 pub async fn reconcile<V: WalletServices>(
-    pool: &sqlx::SqlitePool,
+    storage: &StorageSqlx,
     services: &V,
     chain: Chain,
     min_age_secs: i64,
@@ -176,8 +177,9 @@ pub async fn reconcile<V: WalletServices>(
     let verifier = BroadcastVerifier::single_pass(chain);
     let client = reqwest::Client::new();
     let base = receive::woc_base(chain);
+    let pool = storage.pool();
     reconcile_with(
-        pool,
+        storage,
         min_age_secs,
         absence_minutes_from_env(),
         execute,
@@ -478,7 +480,7 @@ fn has_conflict(our_txid: &str, inputs: &[InputSpend]) -> bool {
 /// [`reconcile`] with both chain probes injected — the seam the cells drive
 /// (the real probes hit four networks; the RULE is what is under test).
 pub async fn reconcile_with<P, PF, I, IF>(
-    pool: &sqlx::SqlitePool,
+    storage: &StorageSqlx,
     min_age_secs: i64,
     absence_minutes: i64,
     execute: bool,
@@ -491,6 +493,7 @@ where
     I: Fn(String, u32) -> IF,
     IF: Future<Output = InputSpend>,
 {
+    let pool = storage.pool();
     let mut report = ReconcileReport {
         absence_minutes,
         ..ReconcileReport::default()
@@ -568,7 +571,7 @@ where
     }
 
     if !dead.is_empty() {
-        let mut tx = pool.begin().await?;
+        let mut tx = storage.write_tx().await?;
         for (tx_id, our_txid, answers) in &dead {
             for (input, answer) in answers {
                 match answer {
@@ -609,18 +612,18 @@ where
         }
         tx.commit().await.context("commit per-input release")?;
         let ids: Vec<i64> = dead.iter().map(|(id, _, _)| *id).collect();
-        let phantoms = remove_phantom_outputs(pool, &ids).await?;
+        let phantoms = remove_phantom_outputs(storage, &ids).await?;
         let targets: Vec<(i64, String)> = dead
             .iter()
             .map(|(id, txid, _)| (*id, txid.clone()))
             .collect();
-        let (failed, reqs) = mark_failed(pool, &targets).await?;
+        let (failed, reqs) = mark_failed(storage, &targets).await?;
         report.failed = failed;
         report.reqs_retired += reqs;
         report.phantom_count = phantoms.0;
         report.phantom_sats = phantoms.1;
     }
-    report.reqs_retired += retire_stale_reqs(pool, &retire_reqs).await?;
+    report.reqs_retired += retire_stale_reqs(storage, &retire_reqs).await?;
     report.applied = true;
     Ok(report)
 }
@@ -694,13 +697,16 @@ async fn select_stale_reqs(
     .await?)
 }
 
-pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()> {
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path))
-        .await
-        .with_context(|| format!("failed to open {} (is the daemon running?)", db_path))?;
-
+pub async fn run(ctx: &WalletContext, execute: bool) -> Result<()> {
     // Operator-initiated: no age guard (inspect every unproven tx).
-    let report = reconcile(&pool, ctx.wallet.services(), ctx.chain, 0, execute).await?;
+    let report = reconcile(
+        ctx.wallet.storage(),
+        ctx.wallet.services(),
+        ctx.chain,
+        0,
+        execute,
+    )
+    .await?;
 
     if report.checked == 0 && report.stale_reqs_checked == 0 {
         println!("No unproven (or stale sending) transactions found, and no stale proof requests.");
@@ -886,10 +892,10 @@ pub async fn run(ctx: &WalletContext, db_path: &str, execute: bool) -> Result<()
     Ok(())
 }
 
-async fn remove_phantom_outputs(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<(u64, u64)> {
+async fn remove_phantom_outputs(storage: &StorageSqlx, ids: &[i64]) -> Result<(u64, u64)> {
     let mut count = 0u64;
     let mut sats = 0u64;
-    let mut tx = pool.begin().await?;
+    let mut tx = storage.write_tx().await?;
     for id in ids {
         let outs = sqlx::query(
             "SELECT output_id, satoshis FROM outputs \
@@ -920,8 +926,8 @@ async fn remove_phantom_outputs(pool: &sqlx::SqlitePool, ids: &[i64]) -> Result<
 /// about it every minute; the unfail canary still re-verifies `invalid`
 /// reqs of failed transactions against the chain with backoff, so a wrong
 /// verdict here is recoverable.
-async fn mark_failed(pool: &sqlx::SqlitePool, targets: &[(i64, String)]) -> Result<(u64, u64)> {
-    let mut tx = pool.begin().await?;
+async fn mark_failed(storage: &StorageSqlx, targets: &[(i64, String)]) -> Result<(u64, u64)> {
+    let mut tx = storage.write_tx().await?;
     let mut failed = 0u64;
     let mut reqs = 0u64;
     for (id, txid) in targets {
@@ -949,9 +955,9 @@ async fn mark_failed(pool: &sqlx::SqlitePool, targets: &[(i64, String)]) -> Resu
 /// Retire stale proof requests: each `(proven_tx_req_id, status seen)` goes
 /// to `invalid` only if it is still at the status the pass saw (a proof
 /// that landed meanwhile wins).
-async fn retire_stale_reqs(pool: &sqlx::SqlitePool, reqs: &[(i64, String)]) -> Result<u64> {
+async fn retire_stale_reqs(storage: &StorageSqlx, reqs: &[(i64, String)]) -> Result<u64> {
     let mut count = 0u64;
-    let mut tx = pool.begin().await?;
+    let mut tx = storage.write_tx().await?;
     for (id, status) in reqs {
         let res = sqlx::query(
             "UPDATE proven_tx_reqs SET status = 'invalid', attempts = attempts + 1, \
@@ -974,8 +980,11 @@ mod tests {
     use bsv_wallet_toolbox::{BROADCAST_PROVIDER_CHAIN, PROVIDER_ARCADE_V2};
     use sqlx::Row;
 
-    async fn mem_pool_with(rows: &[(&str, &str, &str)]) -> sqlx::SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    /// A store over hand-made tables (no migration): the reader and the one
+    /// writer of `StorageSqlx`, as the daemon's pass runs on them.
+    async fn mem_pool_with(rows: &[(&str, &str, &str)]) -> StorageSqlx {
+        let store = StorageSqlx::in_memory().await.unwrap();
+        let pool = store.writer().clone();
         sqlx::query(
             "CREATE TABLE transactions (
                 transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1013,7 +1022,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        pool
+        store
     }
 
     async fn insert_req(pool: &sqlx::SqlitePool, txid: &str, status: &str, attempts: i64) {
@@ -1091,7 +1100,7 @@ mod tests {
     /// and the age comes out of both.
     #[tokio::test]
     async fn selects_iso8601_and_space_format_rows() {
-        let pool = mem_pool_with(&[
+        let store = mem_pool_with(&[
             (
                 "aa".repeat(32).leak(),
                 "unproven",
@@ -1105,6 +1114,7 @@ mod tests {
             ), // wrong status
         ])
         .await;
+        let pool = store.writer().clone();
         let rows = select_stale_unproven(&pool, 0).await.unwrap();
         let txids: Vec<String> = rows.iter().map(|r| r.get("txid")).collect();
         assert_eq!(
@@ -1126,7 +1136,8 @@ mod tests {
     #[tokio::test]
     async fn min_age_guard_respected_across_formats() {
         // "now" in both formats via SQLite itself
-        let pool = mem_pool_with(&[]).await;
+        let store = mem_pool_with(&[]).await;
+        let pool = store.writer().clone();
         sqlx::query(
             "INSERT INTO transactions (txid, status, created_at) VALUES
              ('fresh_iso', 'unproven', strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
@@ -1158,12 +1169,13 @@ mod tests {
     /// Seed one stale `unproven` tx (id 1, txid `ab…`) whose input is output 1
     /// (coin of parent tx 99 `cd…`:0, locked: spent_by = 1) and whose own
     /// phantom change is output 2, with its `unmined` proof request.
-    async fn rule_fixture() -> sqlx::SqlitePool {
+    async fn rule_fixture() -> StorageSqlx {
         rule_fixture_aged("2020-01-01T00:00:00+00:00").await
     }
 
-    async fn rule_fixture_aged(created_at: &str) -> sqlx::SqlitePool {
-        let pool = mem_pool_with(&[("ab".repeat(32).leak(), "unproven", created_at)]).await;
+    async fn rule_fixture_aged(created_at: &str) -> StorageSqlx {
+        let store = mem_pool_with(&[("ab".repeat(32).leak(), "unproven", created_at)]).await;
+        let pool = store.writer().clone();
         sqlx::query(
             "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES (99, ?, 'completed', '2019-12-31T00:00:00+00:00')",
         )
@@ -1180,14 +1192,15 @@ mod tests {
         .await
         .unwrap();
         insert_req(&pool, &"ab".repeat(32), "unmined", 1).await;
-        pool
+        store
     }
 
     /// [`rule_fixture`] for a transaction no broadcaster took: its post drew
     /// no accepting word (`sending`, its request `unsent`, the toolbox 0.7.4's
     /// hint shape). The host may abandon it.
-    async fn rule_fixture_built() -> sqlx::SqlitePool {
-        let pool = rule_fixture().await;
+    async fn rule_fixture_built() -> StorageSqlx {
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
         sqlx::query("UPDATE transactions SET status = 'sending' WHERE transaction_id = 1")
             .execute(&pool)
             .await
@@ -1196,7 +1209,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        pool
+        store
     }
 
     async fn lock(pool: &sqlx::SqlitePool, output_id: i64) -> (i64, Option<i64>) {
@@ -1212,9 +1225,10 @@ mod tests {
     /// probe must keep the tx and release NOTHING, even under --execute.
     #[tokio::test]
     async fn a_lone_index_miss_is_inconclusive_and_releases_nothing() {
-        let pool = rule_fixture().await;
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1236,9 +1250,10 @@ mod tests {
     /// A tx ANY source still holds, with no chain-index answer, is kept.
     #[tokio::test]
     async fn a_held_tx_is_kept() {
-        let pool = rule_fixture().await;
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1259,9 +1274,10 @@ mod tests {
     /// took is kept (`tracker_words_witnesses`).
     #[tokio::test]
     async fn a_definitive_absence_abandons_and_restores_under_execute() {
-        let pool = rule_fixture_built().await;
+        let store = rule_fixture_built().await;
+        let pool = store.writer().clone();
         let dry = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             false,
@@ -1283,7 +1299,7 @@ mod tests {
         );
 
         let wet = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1317,10 +1333,11 @@ mod tests {
     /// change dies, the tx fails — and the presence probe is not even asked.
     #[tokio::test]
     async fn a_held_tx_whose_input_is_chain_spent_by_another_confirmed_tx_is_dead() {
-        let pool = rule_fixture().await;
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
         let probed = std::cell::Cell::new(false);
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1363,9 +1380,10 @@ mod tests {
     /// go either way); the presence probe decides, and a held tx is kept.
     #[tokio::test]
     async fn an_unconfirmed_competitor_does_not_kill_a_held_tx() {
-        let pool = rule_fixture().await;
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1387,9 +1405,9 @@ mod tests {
     /// The tx's OWN spend of its input (it mined) is never a conflict.
     #[tokio::test]
     async fn our_own_confirmed_spend_is_not_a_conflict() {
-        let pool = rule_fixture().await;
+        let store = rule_fixture().await;
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1410,9 +1428,10 @@ mod tests {
     /// Abandonment by absence releases per input: UNKNOWN stays locked.
     #[tokio::test]
     async fn a_definitive_absence_keeps_an_unknown_input_locked() {
-        let pool = rule_fixture_built().await;
+        let store = rule_fixture_built().await;
+        let pool = store.writer().clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1444,9 +1463,10 @@ mod tests {
     /// the threshold, nothing written, re-asked.
     #[tokio::test]
     async fn a_seen_forever_transaction_past_the_threshold_is_named_and_kept() {
-        let pool = rule_fixture_aged("2026-01-01T00:00:00+00:00").await;
+        let store = rule_fixture_aged("2026-01-01T00:00:00+00:00").await;
+        let pool = store.writer().clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1470,7 +1490,8 @@ mod tests {
     /// nothing written, surfaced with its age.
     #[tokio::test]
     async fn a_seen_but_absent_tx_younger_than_the_threshold_is_on_the_clock() {
-        let pool = mem_pool_with(&[]).await;
+        let store = mem_pool_with(&[]).await;
+        let pool = store.writer().clone();
         sqlx::query(
             "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES
              (1, ?, 'unproven', strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-5 minutes'))",
@@ -1485,7 +1506,7 @@ mod tests {
             .unwrap();
         insert_req(&pool, &"ab".repeat(32), "unmined", 0).await;
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1520,7 +1541,8 @@ mod tests {
     /// JSON-404, WhatsOnChain 404).
     #[tokio::test]
     async fn the_june_shape_a_failed_tx_whose_req_the_proof_pass_still_polls() {
-        let pool = mem_pool_with(&[]).await;
+        let store = mem_pool_with(&[]).await;
+        let pool = store.writer().clone();
         let june: [(&str, i64, i64); 3] = [
             ("e9512972dc4f57b6", 2, 14),
             ("ca29779e41865656", 1, 15),
@@ -1547,7 +1569,7 @@ mod tests {
         let probed = std::cell::RefCell::new(Vec::new());
 
         let dry = reconcile_with(
-            &pool,
+            &store,
             3600,
             30,
             false,
@@ -1579,7 +1601,7 @@ mod tests {
         }
 
         let wet = reconcile_with(
-            &pool,
+            &store,
             3600,
             30,
             true,
@@ -1610,7 +1632,7 @@ mod tests {
 
         // The next pass finds nothing left to do.
         let again = reconcile_with(
-            &pool,
+            &store,
             3600,
             30,
             true,
@@ -1632,7 +1654,8 @@ mod tests {
     /// stale `known` so the proof gets fetched.
     #[tokio::test]
     async fn the_september_shape_a_mined_tx_arcade_still_calls_in_flight_is_kept() {
-        let pool = mem_pool_with(&[]).await;
+        let store = mem_pool_with(&[]).await;
+        let pool = store.writer().clone();
         let ours = format!("f5258b036f7b2694{}", "0".repeat(48));
         sqlx::query(
             "INSERT INTO transactions (transaction_id, txid, status, created_at) VALUES
@@ -1656,7 +1679,7 @@ mod tests {
         insert_req(&pool, &ours, "unmined", 1).await;
         let spender = ours.clone();
         let report = reconcile_with(
-            &pool,
+            &store,
             3600,
             30,
             true,
@@ -1697,7 +1720,7 @@ mod tests {
     /// it for the next pass.
     #[tokio::test]
     async fn a_stale_req_the_chain_index_knows_or_cannot_judge_is_kept() {
-        let pool = mem_pool_with(&[
+        let store = mem_pool_with(&[
             (
                 "11".repeat(32).leak(),
                 "failed",
@@ -1710,10 +1733,11 @@ mod tests {
             ),
         ])
         .await;
+        let pool = store.writer().clone();
         insert_req(&pool, &"11".repeat(32), "unmined", 3).await;
         insert_req(&pool, &"22".repeat(32), "callback", 0).await;
         let report = reconcile_with(
-            &pool,
+            &store,
             0,
             30,
             true,
@@ -1748,7 +1772,7 @@ mod tests {
     /// the min-age guard) is never a stale-req candidate.
     #[tokio::test]
     async fn stale_req_candidates_are_polled_reqs_of_old_failed_txs_only() {
-        let pool = mem_pool_with(&[
+        let store = mem_pool_with(&[
             (
                 "11".repeat(32).leak(),
                 "failed",
@@ -1771,6 +1795,7 @@ mod tests {
             ),
         ])
         .await;
+        let pool = store.writer().clone();
         sqlx::query(
             "INSERT INTO transactions (txid, status, created_at) VALUES (?, 'failed', strftime('%Y-%m-%dT%H:%M:%f+00:00','now'))",
         )
@@ -1784,7 +1809,7 @@ mod tests {
         insert_req(&pool, &"44".repeat(32), "unmined", 0).await;
         insert_req(&pool, &"55".repeat(32), "unmined", 0).await;
         let report = reconcile_with(
-            &pool,
+            &store,
             3600,
             30,
             true,
