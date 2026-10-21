@@ -143,7 +143,63 @@ async fn auth_middleware(headers: HeaderMap, request: Request, next: Next) -> Re
 }
 
 /// Build the axum Router with all 28 WalletInterface endpoints.
+/// The start-time heal of a 0.15 process's holds is still owed: it failed
+/// at start (the store busy, say), so the next served request tries it
+/// again, until one succeeds.
+#[derive(Clone, Default)]
+pub struct HealOwed(Arc<std::sync::atomic::AtomicBool>);
+
+impl HealOwed {
+    pub fn owed() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(true)))
+    }
+
+    #[allow(dead_code)] // read by the tests
+    pub fn is_owed(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The heal of a 0.15 process's holds, at start or owed by a start that
+/// failed: logged either way, never a request's error.
+async fn heal_at_start(wallet: &WalletState) -> bool {
+    match crate::spend_gate::heal_if_held(wallet.storage()).await {
+        Ok(0) => true,
+        Ok(n) => {
+            tracing::info!(
+                coins = n,
+                "spend gate: healed the holds a 0.15 process left"
+            );
+            true
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "spend gate: the holds a 0.15 process left were not healed; the next request tries again");
+            false
+        }
+    }
+}
+
+/// A request after a start whose heal failed tries the heal once more,
+/// before the request, after auth. Its own answer is unchanged by it.
+async fn heal_owed(
+    axum::extract::State(wallet): axum::extract::State<WalletState>,
+    axum::Extension(owed): axum::Extension<HealOwed>,
+    request: Request,
+    next: middleware::Next,
+) -> Response {
+    if owed.0.swap(false, std::sync::atomic::Ordering::SeqCst) && !heal_at_start(&wallet).await {
+        owed.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    next.run(request).await
+}
+
+#[allow(dead_code)] // the binary serves through `run`; the tests build it
 pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
+    make_router_owing(wallet, config, HealOwed::default())
+}
+
+/// [`make_router`], with the start-time heal owed when `owed` says so.
+pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOwed) -> Router {
     // A browser caller reads `Retry-After` on a 503 STORE_BUSY (#44).
     let cors = CorsLayer::very_permissive().expose_headers([axum::http::header::RETRY_AFTER]);
     let cfg = config.clone();
@@ -249,12 +305,14 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
         // The last layer added runs first: body limit, trace, the
         // extensions, then auth BEFORE the body is read (an uncapped BEEF
         // door is open only to the wallet's own caller), then the body.
+        .layer(middleware::from_fn_with_state(wallet.clone(), heal_owed))
         .layer(cors)
         .layer(middleware::from_fn(lenient_json_body))
         .layer(middleware::from_fn(auth_middleware))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
+        .layer(axum::Extension(owed))
         .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(BODY_CAP))
         .with_state(wallet)
@@ -465,20 +523,16 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
 pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result<()> {
     // Once at start (daemon and serve both come here): the holds a 0.15
     // process left in `spend_gate_holds` are change again. The gate writes
-    // no hold from 0.16: it offers (`create_action_offering`).
-    match crate::spend_gate::heal_holds(wallet.storage()).await {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(
-            coins = n,
-            "spend gate: healed the holds a 0.15 process left"
-        ),
-        Err(e) => {
-            tracing::warn!(error = %e, "spend gate: the holds a 0.15 process left were not healed")
-        }
-    }
+    // no hold from 0.16: it offers (`create_action_offering`). A heal that
+    // fails here is owed, and the next served request tries it again.
+    let owed = if heal_at_start(&wallet).await {
+        HealOwed::default()
+    } else {
+        HealOwed::owed()
+    };
     let tls = config.tls.clone();
     let bind_addr = config.bind_addr;
-    let app = make_router(wallet, config);
+    let app = make_router_owing(wallet, config, owed);
     let addr = SocketAddr::from((bind_addr, port));
 
     #[cfg(feature = "tls")]

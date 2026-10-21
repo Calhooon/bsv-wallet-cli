@@ -72,8 +72,10 @@
 //! around the door: no hold before it, no restore after it (0.15 marked
 //! every coin it did not offer `change = 0` for the call and restored it
 //! after, a write after the broadcast; LOW's finding). The one leftover is
-//! [`heal_holds`], run once at `daemon` and `serve` start for the holds a
-//! 0.15 process left behind.
+//! [`heal_holds`] for the holds a 0.15 process left behind: run once at
+//! `daemon` and `serve` start (retried on the next served request when it
+//! failed), and before the gate in `send`, `drain`, `split` and `gift-send`
+//! when a hold is there ([`heal_if_held`]).
 //!
 //! The coins are read in the toolbox's own preference (completed first, then
 //! the largest), a batch of creators at a time, until the coins offered
@@ -884,8 +886,10 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
 /// for the call and restored them after; a call that did not finish left its
 /// holds behind. From 0.16 the gate offers instead and writes no hold, so
 /// the table is read only here (kept readable for this; nothing writes a
-/// row). Run once at `daemon` and `serve` start; a store without the table
-/// is left untouched. Returns the coins made change again.
+/// row). Run once at `daemon` and `serve` start (and on the next served
+/// request when that failed), and in a spending command's gated path
+/// ([`heal_before_spend`]); a store without the table is left untouched.
+/// Returns the coins made change again.
 pub async fn heal_holds(storage: &StorageSqlx) -> Result<u64> {
     if !crate::store::has_column(storage.pool(), "spend_gate_holds", "output_id").await? {
         return Ok(0);
@@ -903,6 +907,41 @@ pub async fn heal_holds(storage: &StorageSqlx) -> Result<u64> {
         .await?;
     tx.commit().await?;
     Ok(healed)
+}
+
+/// [`heal_holds`] only when there is a hold to heal: a read on the reader
+/// first (the table, then `EXISTS` a row), so a store with nothing to heal
+/// never queues for the writer. Returns the coins made change again.
+pub async fn heal_if_held(storage: &StorageSqlx) -> Result<u64> {
+    if !crate::store::has_column(storage.pool(), "spend_gate_holds", "output_id").await? {
+        return Ok(0);
+    }
+    let held: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spend_gate_holds)")
+        .fetch_one(storage.pool())
+        .await?;
+    if !held {
+        return Ok(0);
+    }
+    heal_holds(storage).await
+}
+
+/// The heal in a spending command's gated path (`send`, `drain`, `split`,
+/// `gift-send`): a user who never runs `daemon` or `serve` still gets back
+/// the coins a 0.15 process held. Logged either way, never the command's
+/// error: a coin left held is only not offered, and the gate's refusal
+/// stays true.
+pub async fn heal_before_spend(storage: &StorageSqlx) {
+    match heal_if_held(storage).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            coins = n,
+            "spend gate: healed the holds a 0.15 process left"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "spend gate: the holds a 0.15 process left were not healed"
+        ),
+    }
 }
 
 fn is_insufficient(e: &bsv_sdk::Error) -> bool {
