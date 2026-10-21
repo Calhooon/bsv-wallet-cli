@@ -467,13 +467,43 @@ fn only_the_word_received_opens_the_door() {
     assert!(!GateOptions::default().allow_received);
 }
 
-/// The record of the word: an action created under R1 (d) carries it, and
-/// `actions` / `/listActions` show it as `underRule` on that action only.
+/// A 0.15 store's `spend_gate_actions`, as 0.15 made it: from 0.16 the
+/// table is read, never created or written.
+async fn a_015_rule_table(storage: &StorageSqlx) {
+    sqlx::query(
+        "CREATE TABLE spend_gate_actions (txid TEXT PRIMARY KEY, rule TEXT NOT NULL, \
+         recorded_at INTEGER NOT NULL, reference TEXT)",
+    )
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX spend_gate_actions_reference ON spend_gate_actions (reference)",
+    )
+    .execute(storage.writer())
+    .await
+    .unwrap();
+}
+
+/// A 0.15 record of the word keeps answering: an action recorded under
+/// R1 (d) by its txid is shown as `underRule` on that action only, and the
+/// read writes nothing (no table is made on a store without one).
 #[tokio::test]
-async fn the_word_is_recorded_on_the_action_and_shown() {
+async fn a_015_record_of_the_word_keeps_answering() {
     let (storage, _, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    assert!(action_rules(&storage).await.unwrap().by_txid.is_empty());
+    assert!(
+        !crate::store::has_column(storage.pool(), "spend_gate_actions", "txid")
+            .await
+            .unwrap(),
+        "a read makes no table"
+    );
+    a_015_rule_table(&storage).await;
     let under = "b7".repeat(32);
-    record_rule(&storage, &under.to_ascii_uppercase(), RECEIVED_PENDING)
+    sqlx::query("INSERT INTO spend_gate_actions (txid, rule, recorded_at) VALUES (?, ?, 0)")
+        .bind(&under)
+        .bind(RECEIVED_PENDING)
+        .execute(storage.writer())
         .await
         .unwrap();
     let rules = action_rules(&storage).await.unwrap();
@@ -737,12 +767,12 @@ fn list_args() -> bsv_sdk::wallet::ListActionsArgs {
 }
 
 /// A deferred-signing template under the door's word, through the
-/// toolbox's own `createAction`: no txid yet, so the word is recorded by
-/// the action's reference, the listing shows it as `underRule` on the
-/// template, and aborting the template leaves the row (the record of an
-/// act is never deleted).
+/// toolbox's own `createAction`: no txid yet, the word is the template's
+/// label (written by the toolbox with it), the listing shows it as
+/// `underRule` on the template, and aborting the template leaves the label
+/// (the record of an act is never deleted).
 #[tokio::test]
-async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
+async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
     // A parseable creator with a mined parent (its BUMP the BEEF's root),
@@ -819,14 +849,9 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
     .unwrap();
     assert!(result.txid.is_none());
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
-    let row: (Option<String>, Option<String>, String) =
-        sqlx::query_as("SELECT txid, reference, rule FROM spend_gate_actions")
-            .fetch_one(wallet.storage().pool())
-            .await
-            .unwrap();
     assert_eq!(
-        row,
-        (None, Some(reference.clone()), RECEIVED_PENDING.to_string())
+        labels_of(wallet.storage(), &reference).await,
+        vec![RECEIVED_PENDING_LABEL]
     );
     assert!(rules_of(wallet.storage()).await.unwrap().is_empty());
 
@@ -850,21 +875,37 @@ async fn a_template_under_the_word_is_recorded_by_reference_and_kept_aborted() {
         )
         .await
         .unwrap();
-    let kept: Vec<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT txid, reference FROM spend_gate_actions")
-            .fetch_all(wallet.storage().pool())
-            .await
-            .unwrap();
-    assert_eq!(kept, vec![(None, Some(reference))]);
+    assert_eq!(
+        labels_of(wallet.storage(), &reference).await,
+        vec![RECEIVED_PENDING_LABEL]
+    );
 }
 
-/// Signing a template recorded by reference fills the row's txid (the
-/// reference kept): the listing shows the rule on the template before
-/// signing and on the signed action after. A template of the same shape
-/// under no rule makes the shape name no rule, never a wrong one.
+/// The labels the toolbox stored on the action whose reference is
+/// `reference`.
+async fn labels_of(storage: &StorageSqlx, reference: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT l.label FROM transactions t \
+         JOIN tx_labels_map m ON m.transaction_id = t.transaction_id AND m.is_deleted = 0 \
+         JOIN tx_labels l ON l.tx_label_id = m.tx_label_id AND l.is_deleted = 0 \
+         WHERE t.reference = ? ORDER BY l.label",
+    )
+    .bind(reference)
+    .fetch_all(storage.pool())
+    .await
+    .unwrap()
+}
+
+/// A 0.15 template recorded by reference keeps answering: the listing
+/// shows the rule on the template before signing and on the signed action
+/// after, with nothing written at the sign (the reference names its txid at
+/// the read). A template of the same shape under no rule makes the shape
+/// name no rule, never a wrong one; a labelled template is named by its
+/// label first.
 #[tokio::test]
-async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
+async fn a_015_template_record_answers_before_and_after_its_signing() {
     let (storage, user, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    a_015_rule_table(&storage).await;
     let pool = storage.writer();
     let template = |reference: &'static str| {
         sqlx::query(
@@ -876,14 +917,15 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
         .bind(Utc::now())
         .bind(Utc::now())
     };
+    let record = |reference: &'static str| {
+        sqlx::query(
+            "INSERT INTO spend_gate_actions (txid, rule, recorded_at, reference) VALUES (NULL, ?, 0, ?)",
+        )
+        .bind(RECEIVED_PENDING)
+        .bind(reference)
+    };
     template("tmpl-ref").execute(pool).await.unwrap();
-    record_rule_by_reference(&storage, "tmpl-ref", RECEIVED_PENDING)
-        .await
-        .unwrap();
-    // Recorded twice (a retry): one row.
-    record_rule_by_reference(&storage, "tmpl-ref", RECEIVED_PENDING)
-        .await
-        .unwrap();
+    record("tmpl-ref").execute(pool).await.unwrap();
     let zero = "00".repeat(32);
     let before = serde_json::json!({"totalActions": 1, "actions": [
         {"txid": zero, "status": "unsigned", "description": "pay someone", "satoshis": -1000},
@@ -898,19 +940,20 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     sqlx::query(
         "UPDATE transactions SET txid = ?, status = 'unproven' WHERE reference = 'tmpl-ref'",
     )
-    .bind(&signed)
+    .bind(signed.to_ascii_uppercase())
     .execute(pool)
     .await
     .unwrap();
-    fill_txid(&storage, "tmpl-ref", &signed.to_ascii_uppercase())
-        .await
-        .unwrap();
     let row: (Option<String>, Option<String>) =
         sqlx::query_as("SELECT txid, reference FROM spend_gate_actions")
-            .fetch_one(pool)
+            .fetch_one(storage.pool())
             .await
             .unwrap();
-    assert_eq!(row, (Some(signed.clone()), Some("tmpl-ref".to_string())));
+    assert_eq!(
+        row,
+        (None, Some("tmpl-ref".to_string())),
+        "nothing written at the sign"
+    );
     let rules = action_rules(&storage).await.unwrap();
     assert!(rules.by_template.is_empty());
     let after = serde_json::json!({"totalActions": 1, "actions": [
@@ -925,11 +968,132 @@ async fn signing_a_template_fills_the_txid_and_the_listing_follows() {
     // named, the listing cannot tell them apart.
     template("tmpl-a").execute(pool).await.unwrap();
     template("tmpl-b").execute(pool).await.unwrap();
-    record_rule_by_reference(&storage, "tmpl-a", RECEIVED_PENDING)
+    record("tmpl-a").execute(pool).await.unwrap();
+    let rules = action_rules(&storage).await.unwrap();
+    assert_eq!(
+        listed(before.clone(), &rules),
+        vec![("unsigned".to_string(), None)]
+    );
+    // Both labelled: the shape names the rule.
+    for reference in ["tmpl-a", "tmpl-b"] {
+        let id: i64 =
+            sqlx::query_scalar("SELECT transaction_id FROM transactions WHERE reference = ?")
+                .bind(reference)
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        let mut conn = storage.writer().acquire().await.unwrap();
+        label_in(&mut conn, user, id, RECEIVED_PENDING)
+            .await
+            .unwrap();
+    }
+    let rules = action_rules(&storage).await.unwrap();
+    assert_eq!(
+        listed(before, &rules),
+        vec![("unsigned".to_string(), Some("received-pending".to_string()))]
+    );
+}
+
+/// The writer connection's changes and commits, counted by SQLite's own
+/// hooks: (rows changed, transactions committed).
+async fn count_writes(
+    storage: &StorageSqlx,
+) -> std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64)> {
+    use std::sync::atomic::Ordering;
+    let counts = std::sync::Arc::new((
+        std::sync::atomic::AtomicU64::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+    ));
+    let mut conn = storage.writer().acquire().await.unwrap();
+    let mut handle = conn.lock_handle().await.unwrap();
+    let changes = counts.clone();
+    handle.set_update_hook(move |_| {
+        changes.0.fetch_add(1, Ordering::SeqCst);
+    });
+    let commits = counts.clone();
+    handle.set_commit_hook(move || {
+        commits.1.fetch_add(1, Ordering::SeqCst);
+        true
+    });
+    counts
+}
+
+tokio::task_local! {
+    /// Tests only: called as the toolbox's door returns inside the gate.
+    pub(super) static AT_THE_DOOR: std::sync::Arc<dyn Fn() + Send + Sync>;
+}
+
+/// No write after the door (#44): through the gate, a `createAction` under
+/// the door's word (its label the toolbox's to write) and a plain one, each
+/// funded, count the writer's row changes and commits as the toolbox's door
+/// returns and as the gate returns: equal. The writer is the store's one
+/// connection, so every write of this process is counted.
+#[tokio::test]
+async fn the_gate_writes_nothing_after_the_door() {
+    use std::sync::atomic::Ordering;
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (deep, _) = mined_coin(&storage, (user, basket), 0xb1, 50_000, 800).await;
+    let (deep2, _) = mined_coin(&storage, (user, basket), 0xb2, 50_000, 801).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_header_for_height(header(801, &deep2, 0));
+    services.set_tip_header(header_with_hash(901, &"0d".repeat(32), 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    // The tables a first read makes, made now: the count is the action's.
+    crate::tracker_host::frozen_count(wallet.storage())
         .await
         .unwrap();
-    let rules = action_rules(&storage).await.unwrap();
-    assert_eq!(listed(before, &rules), vec![("unsigned".to_string(), None)]);
+    let counts = count_writes(wallet.storage()).await;
+
+    for allow in [true, false] {
+        let mut args = pay(1_000);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        let at_door = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen = {
+            let (counts, at_door) = (counts.clone(), at_door.clone());
+            std::sync::Arc::new(move || {
+                *at_door.lock().unwrap() = Some((
+                    counts.0.load(Ordering::SeqCst),
+                    counts.1.load(Ordering::SeqCst),
+                ));
+            }) as std::sync::Arc<dyn Fn() + Send + Sync>
+        };
+        let before = (
+            counts.0.load(Ordering::SeqCst),
+            counts.1.load(Ordering::SeqCst),
+        );
+        let result = AT_THE_DOOR
+            .scope(
+                seen,
+                create_action(
+                    &wallet,
+                    args,
+                    "gate.local",
+                    &opts(1, true).with_allow_received(allow),
+                ),
+            )
+            .await
+            .unwrap();
+        let after = (
+            counts.0.load(Ordering::SeqCst),
+            counts.1.load(Ordering::SeqCst),
+        );
+        let door = at_door.lock().unwrap().expect("the door was reached");
+        println!("allowPending {allow}: before {before:?}, at the door {door:?}, after {after:?}");
+        assert!(door.1 > before.1, "the door committed the action");
+        assert_eq!(after, door, "allowPending {allow}: a write after the door");
+        let reference = reference_string(&result.signable_transaction.unwrap().reference);
+        assert_eq!(
+            labels_of(wallet.storage(), &reference)
+                .await
+                .contains(&RECEIVED_PENDING_LABEL.to_string()),
+            allow
+        );
+    }
 }
 
 /// F4 of the stack's coin read: the refusal as one JSON object, the

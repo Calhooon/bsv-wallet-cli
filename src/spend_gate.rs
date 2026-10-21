@@ -41,10 +41,13 @@
 //!    carries against the header service in Strict mode
 //!    (bsv-wallet-toolbox-rs 0.8.0 `storage/sqlx/internalize_action.rs`
 //!    96-119), and `fund` refuses an invalid BEEF; so the one trusted word
-//!    is the sender's broadcast. The action records the word
-//!    (`spend_gate_actions`, [`RECEIVED_PENDING`]) by its txid, or a
-//!    deferred-signing template by its reference until `signAction` names
-//!    its txid; shown by `actions` and `/listActions` as `underRule`.
+//!    is the sender's broadcast. The action carries the word as a label,
+//!    [`RECEIVED_PENDING_LABEL`], appended to its labels before the door, so
+//!    the toolbox writes it inside the action's one transaction (a
+//!    deferred-signing template keeps it when `signAction` signs it); shown
+//!    by `actions` and `/listActions` as `underRule`. A 0.15 store's
+//!    records (`spend_gate_actions`, by txid or by reference) keep
+//!    answering; nothing writes them from 0.16.
 //!
 //! A coin whose creator is `stale`, `rejected`, `conflicted` or `abandoned`
 //! is never offered; a coin an action of ours holds is the toolbox's lock
@@ -101,6 +104,10 @@ const FEE_MARGIN: u64 = 10_000;
 /// R1 (d)'s rule, by the ruling's name (`lean/Wallet.lean`
 /// `receivedPending`), as recorded on an action that named it.
 pub const RECEIVED_PENDING: &str = "received-pending";
+/// R1 (d)'s rule as the action's label: the toolbox writes it with the
+/// action, in its one transaction (bsv-wallet-cli #44). The host writes
+/// nothing about the rule after the door.
+pub const RECEIVED_PENDING_LABEL: &str = "spend-gate:received-pending";
 /// The door's one value for `allowPending`.
 pub const ALLOW_PENDING_RECEIVED: &str = "received";
 /// Appended to a held received `pending` coin's reason: what would offer it.
@@ -375,111 +382,52 @@ impl Assessment {
     }
 }
 
-async fn ensure_schema(storage: &StorageSqlx) -> Result<()> {
-    if crate::store::has_column(storage.pool(), "spend_gate_actions", "reference").await? {
-        return Ok(());
-    }
-    let pool = storage.writer();
-    // The rule an action was created under (R1 (d)): the toolbox's
-    // `transactions` row is the reference's shape and not ours to widen.
-    // An action is named by its txid, or, a deferred-signing template with
-    // no txid yet, by the toolbox's `reference` until `signAction` gives it one.
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS spend_gate_actions (\
-            txid TEXT PRIMARY KEY, \
-            rule TEXT NOT NULL, \
-            recorded_at INTEGER NOT NULL, \
-            reference TEXT)",
-    )
-    .execute(pool)
-    .await?;
-    let has_reference: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM pragma_table_info('spend_gate_actions') WHERE name = 'reference'",
-    )
-    .fetch_optional(pool)
-    .await?;
-    if has_reference.is_none() {
-        sqlx::query("ALTER TABLE spend_gate_actions ADD COLUMN reference TEXT")
-            .execute(pool)
-            .await?;
-    }
-    sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS spend_gate_actions_reference \
-         ON spend_gate_actions (reference)",
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Record that the action `txid` was created under `rule`.
-pub async fn record_rule(storage: &StorageSqlx, txid: &str, rule: &str) -> Result<()> {
-    ensure_schema(storage).await?;
-    let pool = storage.writer();
-    sqlx::query(
-        "INSERT INTO spend_gate_actions (txid, rule, recorded_at) VALUES (?, ?, ?) \
-         ON CONFLICT(txid) DO NOTHING",
-    )
-    .bind(txid.to_ascii_lowercase())
-    .bind(rule)
-    .bind(chrono::Utc::now().timestamp())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Record that the deferred-signing template `reference` (no txid yet) was
-/// created under `rule`; [`fill_txid`] names it by its txid once signed.
-pub async fn record_rule_by_reference(
-    storage: &StorageSqlx,
-    reference: &str,
-    rule: &str,
-) -> Result<()> {
-    ensure_schema(storage).await?;
-    let pool = storage.writer();
-    sqlx::query(
-        "INSERT INTO spend_gate_actions (txid, rule, recorded_at, reference) VALUES (NULL, ?, ?, ?) \
-         ON CONFLICT(reference) DO NOTHING",
-    )
-    .bind(rule)
-    .bind(chrono::Utc::now().timestamp())
-    .bind(reference)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// The template `reference` was signed as `txid`: its row, where one was
-/// recorded, gains the txid and keeps the reference.
-pub async fn fill_txid(storage: &StorageSqlx, reference: &str, txid: &str) -> Result<()> {
-    ensure_schema(storage).await?;
-    let pool = storage.writer();
-    sqlx::query("UPDATE spend_gate_actions SET txid = ? WHERE reference = ? AND txid IS NULL")
-        .bind(txid.to_ascii_lowercase())
-        .bind(reference)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
 /// The toolbox's `reference` string of a signable transaction, as
 /// `signAction` / `abortAction` take it back.
 pub fn reference_string(reference: &[u8]) -> String {
     String::from_utf8(reference.to_vec()).unwrap_or_else(|_| hex::encode(reference))
 }
 
-/// The rule each action was created under, where one was recorded, by
-/// txid; a template not yet signed has none (see [`ActionRules`]).
+/// The rule each action was created under, by txid; a template not yet
+/// signed has none (see [`ActionRules`]).
 pub async fn rules_of(storage: &StorageSqlx) -> Result<HashMap<String, String>> {
-    ensure_schema(storage).await?;
-    let pool = storage.pool();
-    let rows = sqlx::query("SELECT txid, rule FROM spend_gate_actions WHERE txid IS NOT NULL")
-        .fetch_all(pool)
-        .await?;
-    Ok(rows
-        .iter()
-        .map(|r| (r.get::<String, _>("txid"), r.get::<String, _>("rule")))
-        .collect())
+    Ok(action_rules(storage).await?.by_txid)
+}
+
+/// Label the action `transaction_id` with `rule`'s label inside the
+/// caller's open transaction: for an act that writes its own action row
+/// (`respend`), as the toolbox does for one through the door.
+pub async fn label_in(
+    conn: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    transaction_id: i64,
+    rule: &str,
+) -> Result<()> {
+    if rule != RECEIVED_PENDING {
+        anyhow::bail!("no label for the rule {rule:?}");
+    }
+    let label_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tx_labels (user_id, label) VALUES (?, ?) \
+         ON CONFLICT(label, user_id) DO UPDATE SET is_deleted = 0 RETURNING tx_label_id",
+    )
+    .bind(user_id)
+    .bind(RECEIVED_PENDING_LABEL)
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO tx_labels_map (tx_label_id, transaction_id) VALUES (?, ?) \
+         ON CONFLICT(tx_label_id, transaction_id) DO UPDATE SET is_deleted = 0",
+    )
+    .bind(label_id)
+    .bind(transaction_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// The rule a label names, if it is one of the gate's.
+pub fn rule_of_label(label: &str) -> Option<&'static str> {
+    (label == RECEIVED_PENDING_LABEL).then_some(RECEIVED_PENDING)
 }
 
 /// The rules a listing shows as `underRule`: by txid, and for a template
@@ -499,13 +447,62 @@ pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
     format!("{status}\u{1f}{description}\u{1f}{satoshis}")
 }
 
-/// Every recorded rule, as a listing shows it.
+/// Every recorded rule, as a listing shows it: the action's label first
+/// ([`RECEIVED_PENDING_LABEL`], written by the toolbox with the action),
+/// then a 0.15 store's `spend_gate_actions` rows (by txid, or by the
+/// reference of a template, which names its txid once signed). Reads only.
 pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
-    let by_txid = rules_of(storage).await?;
     let pool = storage.pool();
+    // (txid or NULL, status, description, satoshis, rule): one row per
+    // toolbox action that carries a rule.
+    let labelled = sqlx::query(
+        "SELECT lower(t.txid) AS txid, t.reference, l.label FROM transactions t \
+         JOIN tx_labels_map m ON m.transaction_id = t.transaction_id AND m.is_deleted = 0 \
+         JOIN tx_labels l ON l.tx_label_id = m.tx_label_id AND l.is_deleted = 0 \
+         WHERE l.label = ?",
+    )
+    .bind(RECEIVED_PENDING_LABEL)
+    .fetch_all(pool)
+    .await?;
+    let mut by_txid: HashMap<String, String> = HashMap::new();
+    let mut by_reference: HashMap<String, String> = HashMap::new();
+    for r in &labelled {
+        let Some(rule) = rule_of_label(&r.get::<String, _>("label")) else {
+            continue;
+        };
+        match r.get::<Option<String>, _>("txid") {
+            Some(txid) => {
+                by_txid.insert(txid, rule.to_string());
+            }
+            None => {
+                by_reference.insert(r.get("reference"), rule.to_string());
+            }
+        }
+    }
+    // A 0.15 store's records, read where the label says nothing.
+    if crate::store::has_column(pool, "spend_gate_actions", "reference").await? {
+        let legacy = sqlx::query(
+            "SELECT lower(COALESCE(g.txid, t.txid)) AS txid, g.reference, g.rule \
+             FROM spend_gate_actions g LEFT JOIN transactions t ON t.reference = g.reference",
+        )
+        .fetch_all(pool)
+        .await?;
+        for r in &legacy {
+            let rule: String = r.get("rule");
+            match r.get::<Option<String>, _>("txid") {
+                Some(txid) => {
+                    by_txid.entry(txid).or_insert(rule);
+                }
+                None => {
+                    if let Some(reference) = r.get::<Option<String>, _>("reference") {
+                        by_reference.entry(reference).or_insert(rule);
+                    }
+                }
+            }
+        }
+    }
     let rows = sqlx::query(
-        "SELECT t.status, t.description, t.satoshis, g.rule FROM transactions t \
-         LEFT JOIN spend_gate_actions g ON g.reference = t.reference AND g.txid IS NULL \
+        "SELECT t.status, t.description, t.satoshis, t.reference FROM transactions t \
          WHERE t.txid IS NULL",
     )
     .fetch_all(pool)
@@ -518,7 +515,7 @@ pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
             &r.get::<String, _>("description"),
             r.get::<i64, _>("satoshis"),
         );
-        let rule: Option<String> = r.get("rule");
+        let rule: Option<String> = by_reference.get(&r.get::<String, _>("reference")).cloned();
         match shapes.get(&key) {
             Some(seen) if *seen != rule => {
                 ambiguous.insert(key);
@@ -867,9 +864,12 @@ async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     originator: &str,
     assessment: &Assessment,
 ) -> bsv_sdk::Result<CreateActionResult> {
-    wallet
+    let answer = wallet
         .create_action_offering(args, originator, &assessment.offer())
-        .await
+        .await;
+    #[cfg(test)]
+    let _ = tests::AT_THE_DOOR.try_with(|at| at());
+    answer
 }
 
 /// `createAction` through the gate: the toolbox allocates only coins the
@@ -904,25 +904,17 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
             }));
         }
     }
-    let result = run_gated(wallet, args, originator, opts).await?;
-    // The action records the word it was created under (R1 (d)): by its
-    // txid, or a template for deferred signing by its reference.
+    // The action carries the word it was created under (R1 (d)) as its
+    // label: the toolbox writes it inside the action's one transaction, and
+    // nothing is written after the door.
+    let mut args = args;
     if opts.allow_received {
-        if let Some(txid) = result.txid.as_ref() {
-            record_rule(
-                storage,
-                &bsv_sdk::primitives::to_hex(txid),
-                RECEIVED_PENDING,
-            )
-            .await
-            .map_err(GateError::Gate)?;
-        } else if let Some(st) = result.signable_transaction.as_ref() {
-            record_rule_by_reference(storage, &reference_string(&st.reference), RECEIVED_PENDING)
-                .await
-                .map_err(GateError::Gate)?;
+        let labels = args.labels.get_or_insert_with(Vec::new);
+        if !labels.iter().any(|l| l == RECEIVED_PENDING_LABEL) {
+            labels.push(RECEIVED_PENDING_LABEL.to_string());
         }
     }
-    Ok(result)
+    run_gated(wallet, args, originator, opts).await
 }
 
 async fn run_gated<V: WalletServices + Send + Sync + 'static>(
