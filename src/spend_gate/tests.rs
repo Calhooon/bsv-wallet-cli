@@ -888,6 +888,100 @@ async fn the_offer_allocates_only_the_offered_coins_and_writes_no_hold() {
     );
 }
 
+/// F7 of the #44 CLI review: the lazy read offers the larger coin alone
+/// (it covers the action), and the toolbox cannot carry it (its parent is
+/// not stored): `Unspendable coin:`. The gate reads every coin and runs the
+/// call once more, and the smaller coin, unread the first time, funds it.
+/// With no other coin the answer stays the toolbox's 409.
+#[tokio::test]
+async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let lock = || bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    // Two coins of our own change, both unproven: the big one's parent is
+    // not stored, the small one's parent is mined and stored.
+    let (parent, parent_id) = mined_coin(&storage, (user, basket), 0xe0, 40_000, 800).await;
+    sqlx::query("UPDATE outputs SET spendable = 0, change = 0 WHERE output_id = ?")
+        .bind(parent_id)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for (spends, satoshis) in [("e1".repeat(32), 90_000u64), (parent.clone(), 30_000)] {
+        let mut creator = bsv_sdk::transaction::Transaction::new();
+        creator
+            .add_input(bsv_sdk::transaction::TransactionInput::new(spends, 0))
+            .unwrap();
+        creator
+            .add_output(bsv_sdk::transaction::TransactionOutput::new(
+                satoshis,
+                lock(),
+            ))
+            .unwrap();
+        let id = coin(
+            &storage,
+            (user, basket),
+            &creator.id(),
+            true,
+            None,
+            satoshis as i64,
+            1,
+        )
+        .await;
+        sqlx::query("UPDATE transactions SET raw_tx = ? WHERE txid = ?")
+            .bind(creator.to_binary())
+            .bind(creator.id())
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    let (big_id, small_id) = (ids[0], ids[1]);
+    let services = headers_with(&parent, 800, 900);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let gate = opts(1, true);
+    let lazy = assess(wallet.storage(), wallet.services(), &gate, Some(11_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        lazy.offer(),
+        vec![big_id],
+        "the lazy read offers the big coin"
+    );
+    assert_eq!(lazy.unread, vec![small_id]);
+    let template = || {
+        let mut args = pay(1_000);
+        args.options = Some(CreateActionOptions {
+            sign_and_process: Some(false),
+            ..Default::default()
+        });
+        args
+    };
+    let direct = wallet
+        .create_action_offering(template(), "gate.local", &lazy.offer())
+        .await
+        .expect_err("the big coin alone cannot be carried");
+    assert!(is_unspendable(&direct), "{direct}");
+
+    let result = create_action(&wallet, template(), "gate.local", &gate)
+        .await
+        .unwrap();
+    assert!(result.signable_transaction.is_some());
+    let spent: Option<i64> = sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
+        .bind(small_id)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert!(spent.is_some(), "the coin read the second time funds it");
+
+    // No other coin: the toolbox's own word, 409.
+    let Err(GateError::Wallet(e)) = create_action(&wallet, template(), "gate.local", &gate).await
+    else {
+        panic!("the big coin alone is unspendable");
+    };
+    assert!(is_unspendable(&e), "{e}");
+}
+
 fn listed(wallet_list: serde_json::Value, rules: &ActionRules) -> Vec<(String, Option<String>)> {
     let shown = crate::server::handlers::with_rules(wallet_list, rules);
     shown["actions"]
