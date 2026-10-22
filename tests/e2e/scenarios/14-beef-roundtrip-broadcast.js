@@ -39,6 +39,7 @@ module.exports = {
 
     const sendAmount = 5000; // 5000 sats — enough to be meaningful
     const result = await walletA.client.post('createAction', {
+      allowPending: walletA.client.allowPending,
       description: 'E2E BEEF round-trip test: A→B',
       outputs: [{
         lockingScript,
@@ -81,6 +82,7 @@ module.exports = {
     const aLockingScript = buildP2PKH(aPubkey.publicKey);
 
     const returnResult = await walletB.client.post('createAction', {
+      allowPending: walletB.client.allowPending,
       description: 'E2E BEEF round-trip test: B→A (return)',
       outputs: [{
         lockingScript: aLockingScript,

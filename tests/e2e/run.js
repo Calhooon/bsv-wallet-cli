@@ -141,9 +141,10 @@ async function main() {
       }
     }
 
-    // Teardown
-    if (walletB) teardownWallet(walletB);
-    if (walletA) teardownWallet(walletA);
+    // Teardown: a failed run keeps both wallet directories (keys and logs)
+    const keep = results.some(r => r.status === 'FAIL') || results.length < scenarios.length;
+    if (walletB) teardownWallet(walletB, { keep });
+    if (walletA) teardownWallet(walletA, { keep });
 
     // Final accounting
     const funderClient = new WalletClient(FUNDER_PORT, 'funder');

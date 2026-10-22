@@ -190,7 +190,7 @@ class WalletClient {
    * A sends sats to B. B internalizes the AtomicBEEF directly. No WoC needed.
    * Returns { txid, satsSent }.
    */
-  async transferTo(recipientWallet, satoshis, description = 'e2e transfer') {
+  async transferTo(recipientWallet, satoshis, description = 'e2e transfer', opts = {}) {
     // Get recipient's BRC-29 derived address
     const bKey = await recipientWallet.getPublicKey(
       [2, '3241645161d8'],
@@ -205,7 +205,7 @@ class WalletClient {
       satoshis,
       outputDescription: description,
       tags: ['e2e-test'],
-    }], description);
+    }], description, opts);
 
     // Find which vout matches the recipient's script
     const vout = findVoutByScript(result.tx, lockingScript, satoshis);
