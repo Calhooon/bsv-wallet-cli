@@ -221,6 +221,19 @@ wherever the main wallet lives now (the funder imports it with `fund <beef>` or
 the courier `receive <txid>`), or name a wallet on this machine the captain may
 spend from. No spend made.
 
+**The top-up made (2026-10-22 01:36 UTC, on the owner's word "you do it" and
+"port 3321 works too"):** the owner's desktop MetaNet wallet on :3321 paid
+100,000 sats to the funder's deposit address by a plain `/createAction`
+(txid 4617addc6a9ee7264ca3c8b749bc7856079f663c32b3e1f7225f2ff85ea8bec8, vout 0,
+broadcast by the desktop wallet, GorillaPool ARC accepted the funder's
+re-announce; TAAL answered an error on the same bytes). The funder daemon was
+stopped, `fund <atomic beef> --vout 0` internalized it on the 0.16.0 binary,
+the daemon restarted (pid 30944, same log). Funder balance 114,227 sats, the
+100,000 unmined; the gate offers a received coin only at `mined`, depth 1, so
+the e2e run waits for the funder's own proof record (proven_txs) of that txid,
+not the explorer's word. bob-wallet was reconciled in dry-run only (13 of its
+22 rows unknown to the chain; nothing applied, nothing spent from it).
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
