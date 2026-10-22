@@ -29,8 +29,8 @@ use sqlx::Row;
 use std::future::Future;
 
 use crate::commands::cleanup_abandoned::{probe_input_spend, stored_locking_script, InputSpend};
-use crate::commands::receive;
 use crate::context::WalletContext;
+use crate::explorers::Explorers;
 
 #[derive(Default, Debug, Clone)]
 pub struct OutputsReport {
@@ -210,16 +210,14 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_chain_checks: usize) ->
     // process queues on. Every statement below is a single autocommit and
     // no connection is held across a probe's network await.
     let pool = ctx.wallet.storage().writer().clone();
-    let client = reqwest::Client::new();
-    let base = receive::woc_base(ctx.chain);
+    let explorers = Explorers::from_env(ctx.chain);
     let report = reconcile_outputs_with(&pool, execute, max_chain_checks, |src, vout| {
-        let c = client.clone();
+        let explorers = explorers.clone();
         let pool = &pool;
         async move {
             let script = stored_locking_script(pool, &src, vout).await;
             probe_input_spend(
-                &c,
-                base,
+                &explorers,
                 ctx.wallet.services(),
                 &src,
                 vout,

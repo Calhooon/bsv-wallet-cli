@@ -16,6 +16,9 @@
 //! | `PUBLIC_CALLBACK_URL` | Public HTTPS URL Arcade should POST status webhooks to (`X-CallbackUrl`) |
 //! | `TAAL_API_KEY` | TAAL ARC key sent as `Authorization: Bearer <key>` |
 //! | `MAIN_TAAL_API_KEY` | TAAL ARC key sent as raw `Authorization: <key>` (TAAL accepts no Bearer prefix) |
+//! | `WOC_API_KEY` | WhatsOnChain key, sent as `woc-api-key` and `Authorization: Bearer` by the toolbox's provider and the CLI's own WhatsOnChain rung (optional) |
+//! | `BITAILS_API_KEY` | Bitails key (optional) |
+//! | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it (no key exists) |
 
 use anyhow::{Context, Result};
 use bsv_wallet_toolbox::{
@@ -83,6 +86,40 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
         );
     }
     Ok(())
+}
+
+/// The environment variable holding the WhatsOnChain API key.
+pub const WOC_API_KEY_ENV: &str = "WOC_API_KEY";
+
+/// The environment variable holding the Bitails API key.
+pub const BITAILS_API_KEY_ENV: &str = "BITAILS_API_KEY";
+
+/// The environment variable that moves (or, empty, turns off) BananaBlocks.
+pub const BANANABLOCKS_BASE_ENV: &str = "BANANABLOCKS_BASE";
+
+/// A key from its configured value: empty or blank is no key.
+pub fn api_key_for(configured: Option<&str>) -> Option<String> {
+    configured
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(str::to_string)
+}
+
+/// The BananaBlocks base from its configured value, in the toolbox's
+/// terms (`ServicesOptions::bananablocks_base`): unset is `None` (the
+/// chain's default); set is the value as given, so an empty one is off.
+pub fn bananablocks_base_for(configured: Option<&str>) -> Option<String> {
+    configured.map(|v| v.trim().to_string())
+}
+
+/// `WOC_API_KEY`, when set and not blank.
+pub fn woc_api_key_from_env() -> Option<String> {
+    api_key_for(std::env::var(WOC_API_KEY_ENV).ok().as_deref())
+}
+
+/// `BANANABLOCKS_BASE` in the toolbox's terms ([`bananablocks_base_for`]).
+pub fn bananablocks_base_from_env() -> Option<String> {
+    bananablocks_base_for(std::env::var(BANANABLOCKS_BASE_ENV).ok().as_deref())
 }
 
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
@@ -209,6 +246,16 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
         opts = opts.with_break_glass_explorer_headers(true);
     }
 
+    // The explorers (bsv-wallet-cli #50): WhatsOnChain, BananaBlocks and
+    // Bitails, each the others' fallback in the toolbox's ladders.
+    if let Some(key) = woc_api_key_from_env() {
+        opts = opts.with_woc_api_key(key);
+    }
+    if let Some(key) = api_key_for(std::env::var(BITAILS_API_KEY_ENV).ok().as_deref()) {
+        opts = opts.with_bitails_api_key(key);
+    }
+    opts.bananablocks_base = bananablocks_base_from_env();
+
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
     // that provider is the failover behind Arcade).
     // - TAAL_API_KEY       → `Authorization: Bearer <key>`
@@ -315,6 +362,44 @@ mod tests {
         assert!(err.to_string().starts_with("tick refused"), "{err}");
         assert!(err.to_string().contains("CHAINTRACKS_URL=off"), "{err}");
         assert!(require_chain_tracker_to_prove("tick", true).is_ok());
+    }
+
+    /// `BANANABLOCKS_BASE`: unset the chain's default, empty off, a URL
+    /// moves it; the toolbox reads the value so.
+    #[test]
+    fn bananablocks_base_unset_is_the_default_and_empty_is_off() {
+        let opts = |configured: Option<&str>| ServicesOptions {
+            bananablocks_base: bananablocks_base_for(configured),
+            ..ServicesOptions::mainnet()
+        };
+        assert_eq!(
+            opts(None).bananablocks_base_for(Chain::Main).as_deref(),
+            Some("https://bananablocks.com/api/v1")
+        );
+        assert_eq!(
+            opts(None).bananablocks_base_for(Chain::Test).as_deref(),
+            Some("https://test.bananablocks.com/api/v1")
+        );
+        for off in [Some(""), Some("  ")] {
+            assert_eq!(
+                opts(off).bananablocks_base_for(Chain::Main),
+                None,
+                "{off:?}"
+            );
+        }
+        assert_eq!(
+            opts(Some(" https://mirror.example/api/v1 "))
+                .bananablocks_base_for(Chain::Main)
+                .as_deref(),
+            Some("https://mirror.example/api/v1")
+        );
+    }
+
+    #[test]
+    fn a_blank_api_key_is_no_key() {
+        assert_eq!(api_key_for(None), None);
+        assert_eq!(api_key_for(Some("  ")), None);
+        assert_eq!(api_key_for(Some(" k ")).as_deref(), Some("k"));
     }
 
     #[test]

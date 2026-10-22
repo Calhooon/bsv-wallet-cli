@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "bsv-wallet-cli"
-version = "0.16.1"
+version = "0.17.0"
 edition = "2021"
 license = "MIT"
 authors = ["John Calhoun"]
@@ -29,7 +29,7 @@ name = "bsv-wallet-relay"
 path = "src/bin/bsv-wallet-relay.rs"
 
 [dependencies]
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "=0.11.0", features = ["sqlite"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "=0.12.0", features = ["sqlite"] }
 bsv-sdk = { package = "bsv-rs", version = "=0.8.1", features = ["full"] }
 bsv-tracker = "=0.8.0"
 tokio = { version = "1", features = ["full"] }
@@ -57,3 +57,9 @@ tls = ["axum-server"]
 async-trait = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+# TEMPORARY until 0.12.0 is on crates.io; the captain replaces it with the pin.
+# bsv-wallet-toolbox-rs PR 43 (lane/bananablocks, 1633898): BananaBlocks as the
+# third explorer, the fault-moves-on rule (bsv-wallet-cli #50).
+[patch.crates-io]
+bsv-wallet-toolbox-rs = { path = "/Volumes/Lanes/worktrees/bsv-wallet-toolbox-rs/bananablocks" }

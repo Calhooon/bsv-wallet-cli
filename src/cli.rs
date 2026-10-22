@@ -1,3 +1,7 @@
+// The doc comments in this file are clap's `--help` text, read in a
+// terminal: `<seat-dir>:<port>` is a placeholder there, not an HTML tag.
+#![allow(rustdoc::invalid_html_tags)]
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]

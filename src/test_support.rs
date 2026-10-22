@@ -10,11 +10,16 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
-use axum::http::{header, StatusCode, Uri};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 
-type Routes = Arc<HashMap<String, (u16, String)>>;
+type Routes = Arc<HashMap<String, (u16, String, Vec<(String, String)>)>>;
 type Hits = Arc<Mutex<Vec<String>>>;
+type Sent = Arc<Mutex<Vec<HashMap<String, String>>>>;
+
+/// One route of [`Fixture::start_with_headers`]: path, status, body and
+/// response headers.
+pub type HeaderedRoute<'a> = (&'a str, u16, &'a str, &'a [(&'a str, &'a str)]);
 
 /// A local HTTP server answering a fixed table of `path -> (status, body)`.
 /// A path (with its query) not in the table gets `fallback`. Every request
@@ -23,21 +28,42 @@ pub struct Fixture {
     /// `http://127.0.0.1:<port>`, no trailing slash.
     pub base: String,
     hits: Hits,
+    sent: Sent,
 }
 
 impl Fixture {
     /// Serve `routes`; any other path answers `fallback` (a status).
     pub async fn start(routes: &[(&str, u16, &str)], fallback: u16) -> Self {
+        let routes: Vec<HeaderedRoute> = routes
+            .iter()
+            .map(|(p, s, b)| (*p, *s, *b, &[][..]))
+            .collect();
+        Self::start_with_headers(&routes, fallback).await
+    }
+
+    /// [`Fixture::start`] with response headers per route (a 429's
+    /// `Retry-After`).
+    pub async fn start_with_headers(routes: &[HeaderedRoute<'_>], fallback: u16) -> Self {
         let table: Routes = Arc::new(
             routes
                 .iter()
-                .map(|(p, s, b)| (p.to_string(), (*s, b.to_string())))
+                .map(|(p, s, b, h)| {
+                    let headers = h
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    (p.to_string(), (*s, b.to_string(), headers))
+                })
                 .collect(),
         );
         let hits: Hits = Arc::new(Mutex::new(Vec::new()));
-        let app = axum::Router::new()
-            .fallback(serve)
-            .with_state((table, hits.clone(), fallback));
+        let sent: Sent = Arc::new(Mutex::new(Vec::new()));
+        let app = axum::Router::new().fallback(serve).with_state((
+            table,
+            hits.clone(),
+            sent.clone(),
+            fallback,
+        ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -48,7 +74,14 @@ impl Fixture {
         Self {
             base: format!("http://{addr}"),
             hits,
+            sent,
         }
+    }
+
+    /// The request headers of every request so far, in order (names
+    /// lowercase).
+    pub fn headers(&self) -> Vec<HashMap<String, String>> {
+        self.sent.lock().unwrap().clone()
     }
 
     /// Every path (with its query) requested so far, in order.
@@ -67,27 +100,47 @@ impl Fixture {
     }
 }
 
-async fn serve(State((table, hits, fallback)): State<(Routes, Hits, u16)>, uri: Uri) -> Response {
+async fn serve(
+    State((table, hits, sent, fallback)): State<(Routes, Hits, Sent, u16)>,
+    request_headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    sent.lock().unwrap().push(
+        request_headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
+            .collect(),
+    );
     let path = uri
         .path_and_query()
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| uri.path().to_string());
     hits.lock().unwrap().push(path.clone());
-    let (status, body) = table
-        .get(&path)
-        .cloned()
-        .unwrap_or((fallback, String::new()));
+    let (status, body, extra) =
+        table
+            .get(&path)
+            .cloned()
+            .unwrap_or((fallback, String::new(), Vec::new()));
     let content_type = if body.starts_with('{') || body.starts_with('[') {
         "application/json"
     } else {
         "text/plain"
     };
-    (
+    let mut response = (
         StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         [(header::CONTENT_TYPE, content_type)],
         body,
     )
-        .into_response()
+        .into_response();
+    for (name, value) in extra {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    response
 }
 
 /// A P2PKH locking script over `hash160`.

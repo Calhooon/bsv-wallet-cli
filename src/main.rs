@@ -6,6 +6,7 @@ mod broadcast_verify;
 mod cli;
 mod commands;
 mod context;
+mod explorers;
 mod server;
 mod services_env;
 #[cfg(test)]

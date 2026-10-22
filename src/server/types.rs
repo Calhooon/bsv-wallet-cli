@@ -183,7 +183,7 @@ pub struct McSignableTransaction {
     /// The unsigned transaction bytes (number array).
     pub tx: Vec<u8>,
     /// The reference string for signAction/abortAction.
-    /// NOTE: The SDK stores this as Vec<u8> (from String.into_bytes()) then hex-encodes it.
+    /// NOTE: The SDK stores this as `Vec<u8>` (from `String.into_bytes()`) then hex-encodes it.
     /// We reverse that: convert bytes back to the original String so signAction/abortAction
     /// can look it up correctly in the wallet's pending transaction cache.
     pub reference: String,

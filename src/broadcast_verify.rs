@@ -77,7 +77,7 @@
 //!   (held or seen) means the broadcast was not silently dropped. A
 //!   freshly-minted txid we just created cannot be known to a third party
 //!   unless it really propagated. So any held / seen answer → `Confirmed`.
-//! * **Absence is trusted from almost nobody.** See [`AbsenceAuthority`]: a 404
+//! * **Absence is trusted from almost nobody.** See `AbsenceAuthority`: a 404
 //!   (or a fatal verdict) is evidence only from the broadcaster we personally
 //!   submitted through (scope) or from a real chain+mempool index after its
 //!   indexing window has elapsed (time), and we require **both** before
@@ -93,10 +93,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::{
-    services::ARCADE_V2_MAINNET, BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN,
-    BROADCAST_PROVIDER_NETWORK, PROVIDER_ARCADE_V2,
+    services::{providers::BananaBlocks, ARCADE_V2_MAINNET},
+    BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
+    PROVIDER_ARCADE_V2,
 };
 use reqwest::Client;
+
+use crate::explorers::woc_base;
 
 /// Default number of probe rounds before an absence may become definitive.
 ///
@@ -229,6 +232,9 @@ pub struct PresenceReport {
     pub evidence_provider: &'static str,
     /// The chain index's own answer.
     pub chain_index: ChainIndexAnswer,
+    /// Which chain index gave a positive (`whatsonchain`, `bitails`,
+    /// `bananablocks`), so an audit can see which rung answered (#50).
+    pub chain_index_by: Option<&'static str>,
     /// The broadcaster we submitted through reports a fatal verdict
     /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`).
     pub broadcaster_fatal: bool,
@@ -248,6 +254,7 @@ impl PresenceReport {
             evidence: None,
             evidence_provider: BROADCAST_PROVIDER_NETWORK,
             chain_index: ChainIndexAnswer::Unknown,
+            chain_index_by: None,
             broadcaster_fatal: false,
             network_absent: false,
         }
@@ -335,6 +342,12 @@ enum SourceKind {
     /// `src/services/providers/bitails.rs:757-776,841-847`, the toolbox's
     /// own read of the same route).
     BitailsIndex,
+    /// BananaBlocks `/tx/{txid}`, read through the toolbox's provider
+    /// (`get_status_for_txids`: `mined` with a block, `known` without one,
+    /// `unknown` on a 404). Its index lags the mempool, so its `unknown` is
+    /// a gap, never an absence vote; its `mined` and `known` are presence
+    /// (bsv-wallet-cli #50; toolbox 0.12.0 reads it so in its own ladder).
+    BananaBlocksIndex,
 }
 
 /// Absence votes gathered during one probe round, grouped by authority class.
@@ -483,6 +496,7 @@ fn build_sources(
     chain: Chain,
     plane: &BroadcastPlane,
     taal_key: Option<String>,
+    bananablocks_base: Option<&str>,
 ) -> Vec<StatusSource> {
     let mut sources = vec![StatusSource {
         name: plane.name(),
@@ -525,6 +539,13 @@ fn build_sources(
         absence: AbsenceAuthority::ChainIndex,
         kind: SourceKind::BitailsIndex,
     });
+    // Break-glass (Rule 28, C1; bsv-wallet-cli #50): the third chain index,
+    // for the same question (each explorer has its own rate limits, so when
+    // one fails the next is asked). Its presence counts; its 404 does not
+    // (its index lags the mempool), so absence stays the other two's.
+    if let Some(base) = bananablocks_base {
+        sources.push(bananablocks_source(base));
+    }
 
     // Third-party ARC stores: extra chances to observe presence, never a vote
     // for absence (see AbsenceAuthority::None). Skipped when they *are* the
@@ -558,6 +579,22 @@ fn build_sources(
     sources
 }
 
+/// BananaBlocks as a chain index of the verifier, at `base`.
+fn bananablocks_source(base: &str) -> StatusSource {
+    // Break-glass (Rule 28, C1; #50): the third chain index, asked whether
+    // the network has a transaction we sent (no header, proof or own-index
+    // answer while it is unmined). The request is the toolbox provider's
+    // (`BananaBlocks::get_status_for_txids`, its pace and Retry-After);
+    // this template names the route for diagnostics.
+    StatusSource {
+        name: "bananablocks",
+        url_template: format!("{}/tx/{{txid}}", normalize_base(base)),
+        auth: None,
+        absence: AbsenceAuthority::ChainIndex,
+        kind: SourceKind::BananaBlocksIndex,
+    }
+}
+
 /// Verifies that a broadcast tx actually reached the network.
 ///
 /// Cheap to clone (shares the reqwest connection pool). Built once and shared
@@ -574,6 +611,9 @@ pub struct BroadcastVerifier {
     /// shared by every clone (Rule 28: a rotating start, so one explorer is
     /// not the fixed first word).
     rotation: Arc<AtomicUsize>,
+    /// The BananaBlocks provider its chain-index source is read through
+    /// (the process's, so its pace and Retry-After are shared).
+    bananablocks: Option<Arc<BananaBlocks>>,
 }
 
 impl BroadcastVerifier {
@@ -608,14 +648,19 @@ impl BroadcastVerifier {
 
         let plane = BroadcastPlane::from_env(chain);
         tracing::debug!(plane = ?plane, "broadcast verifier plane");
+        let bananablocks = crate::explorers::Explorers::from_env(chain)
+            .bananablocks()
+            .cloned();
+        let bananablocks_base = bananablocks.as_ref().map(|bb| bb.base_url().to_string());
 
         Self {
             client: Client::new(),
-            sources: build_sources(chain, &plane, taal_key),
+            sources: build_sources(chain, &plane, taal_key, bananablocks_base.as_deref()),
             attempts,
             delay: Duration::from_millis(delay_ms),
             enabled,
             rotation: Arc::default(),
+            bananablocks,
         }
     }
 
@@ -698,20 +743,21 @@ impl BroadcastVerifier {
                     }
                     chain_indexes_asked = true;
                     match self.ask_chain_indexes(txid).await {
-                        ChainIndexAnswer::Present(evidence) => {
+                        (ChainIndexAnswer::Present(evidence), by) => {
                             // Chain evidence: the answer for everyone.
                             report.verification = BroadcastVerification::Confirmed;
                             report.evidence = Some(evidence);
                             report.evidence_provider = BROADCAST_PROVIDER_CHAIN;
                             report.chain_index = ChainIndexAnswer::Present(evidence);
+                            report.chain_index_by = by;
                             return report;
                         }
-                        ChainIndexAnswer::Absent => round.votes.record(src.absence),
-                        ChainIndexAnswer::Unknown => {}
+                        (ChainIndexAnswer::Absent, _) => round.votes.record(src.absence),
+                        (ChainIndexAnswer::Unknown, _) => {}
                     }
                     continue;
                 }
-                match probe(&self.client, src, txid).await {
+                match self.probe(src, txid).await {
                     Presence::Present(evidence) => {
                         if src.absence == AbsenceAuthority::Broadcaster {
                             round.broadcaster_answered = true;
@@ -844,41 +890,107 @@ impl BroadcastVerifier {
             delay: Duration::ZERO,
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         }
     }
 
-    /// The chain indexes' one answer for `txid` (Rule 28, C1).
+    /// This verifier with BananaBlocks at `base` as a chain index (tests and
+    /// tools: a fixture in its place).
+    #[allow(dead_code)]
+    pub fn with_bananablocks(mut self, base: &str) -> Self {
+        match BananaBlocks::with_base(base, None) {
+            Ok(provider) => {
+                self.sources.push(bananablocks_source(base));
+                self.bananablocks = Some(Arc::new(provider));
+            }
+            Err(e) => tracing::warn!(base, error = %e, "BananaBlocks could not be set up"),
+        }
+        self
+    }
+
+    /// The chain indexes' one answer for `txid` (Rule 28, C1), with the
+    /// index that gave a positive.
     ///
     /// The start rotates. A positive from the index that gives it ends the
-    /// question (the others are not asked). Absence is every index
-    /// answering 404; an index that could not look (a fault, a timeout, a
-    /// status that is neither 200 nor 404) leaves the answer `Unknown`,
-    /// whatever the others said. With one index configured its answer is
-    /// the answer.
-    async fn ask_chain_indexes(&self, txid: &str) -> ChainIndexAnswer {
+    /// question (the others are not asked). Absence is every index whose
+    /// 404 is a verdict answering 404 (WhatsOnChain and Bitails; BananaBlocks'
+    /// `unknown` is a gap, never a vote, #50); an index that could not look
+    /// (a fault, a 429, a timeout, a status that is neither 200 nor 404)
+    /// leaves the answer `Unknown`, whatever the others said. With one
+    /// voting index configured its answer is the answer.
+    async fn ask_chain_indexes(&self, txid: &str) -> (ChainIndexAnswer, Option<&'static str>) {
         let indexes: Vec<&StatusSource> = self
             .sources
             .iter()
             .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
             .collect();
         if indexes.is_empty() {
-            return ChainIndexAnswer::Unknown;
+            return (ChainIndexAnswer::Unknown, None);
         }
         let start = self.rotation.fetch_add(1, Ordering::Relaxed) % indexes.len();
         let mut absent = 0;
+        let mut voters = 0;
+        let mut could_not_look = false;
         for offset in 0..indexes.len() {
             let src = indexes[(start + offset) % indexes.len()];
-            match probe(&self.client, src, txid).await {
-                Presence::Present(evidence) => return ChainIndexAnswer::Present(evidence),
-                Presence::Absent => absent += 1,
-                Presence::Held | Presence::Fatal | Presence::Unknown => {}
+            let votes = src.kind != SourceKind::BananaBlocksIndex;
+            if votes {
+                voters += 1;
+            }
+            match self.probe(src, txid).await {
+                Presence::Present(evidence) => {
+                    return (ChainIndexAnswer::Present(evidence), Some(src.name))
+                }
+                Presence::Absent if votes => absent += 1,
+                Presence::Absent | Presence::Held | Presence::Fatal | Presence::Unknown => {
+                    if votes {
+                        could_not_look = true;
+                    }
+                }
             }
         }
-        if absent == indexes.len() {
-            ChainIndexAnswer::Absent
+        if voters > 0 && absent == voters && !could_not_look {
+            (ChainIndexAnswer::Absent, None)
         } else {
-            ChainIndexAnswer::Unknown
+            (ChainIndexAnswer::Unknown, None)
         }
+    }
+
+    /// Probe a single source for a txid's presence: BananaBlocks through
+    /// the toolbox's provider, every other source by its URL.
+    async fn probe(&self, src: &StatusSource, txid: &str) -> Presence {
+        if src.kind != SourceKind::BananaBlocksIndex {
+            return probe(&self.client, src, txid).await;
+        }
+        let Some(bb) = &self.bananablocks else {
+            return Presence::Unknown;
+        };
+        let started = Instant::now();
+        let answer = bb.get_status_for_txids(&[txid.to_string()]).await;
+        let (status, presence) = match &answer {
+            Ok(found) => match found
+                .results
+                .iter()
+                .find(|r| r.txid.eq_ignore_ascii_case(txid))
+                .map(|r| r.status.as_str())
+            {
+                Some("mined") => ("mined", Presence::Present(NetworkEvidence::Mined)),
+                Some("known") => ("known", Presence::Present(NetworkEvidence::Seen)),
+                // Not in its index: a gap, not a verdict.
+                Some(_) => ("unknown", Presence::Unknown),
+                None => ("fault", Presence::Unknown),
+            },
+            Err(e) => {
+                tracing::debug!(source = src.name, error = %e, "broadcast probe: could not look");
+                if matches!(e, bsv_wallet_toolbox::Error::RateLimited { .. }) {
+                    ("rate limited", Presence::Unknown)
+                } else {
+                    ("fault", Presence::Unknown)
+                }
+            }
+        };
+        crate::explorers::log_call(src.name, "status", status, started);
+        presence
     }
 }
 
@@ -916,6 +1028,8 @@ fn presence_of_body(src: &StatusSource, body: &str) -> Presence {
                 Presence::Present(NetworkEvidence::Seen)
             }
         }
+        // Read through the toolbox's provider, never by a body here.
+        SourceKind::BananaBlocksIndex => Presence::Unknown,
         SourceKind::BitailsIndex => {
             let mined = json
                 .as_ref()
@@ -957,14 +1071,25 @@ fn presence_of_body(src: &StatusSource, body: &str) -> Presence {
     }
 }
 
-/// Probe a single source for a txid's presence.
+/// Probe a single source for a txid's presence by its URL.
 async fn probe(client: &Client, src: &StatusSource, txid: &str) -> Presence {
     let url = src.url_template.replace("{txid}", txid);
     let mut req = client.get(&url).timeout(PROBE_TIMEOUT);
     if let Some(auth) = &src.auth {
         req = req.header("Authorization", auth);
     }
-    match req.send().await {
+    let started = Instant::now();
+    let sent = req.send().await;
+    // Every explorer call is logged with its provider, status and time
+    // (#50); the broadcasters' polls stay at debug.
+    if src.absence == AbsenceAuthority::ChainIndex {
+        let status = match &sent {
+            Ok(resp) => resp.status().as_str().to_string(),
+            Err(_) => "error".to_string(),
+        };
+        crate::explorers::log_call(src.name, "status", &status, started);
+    }
+    match sent {
         Ok(resp) => {
             let status = resp.status().as_u16();
             match status {
@@ -1037,13 +1162,6 @@ fn gorillapool_arc_url(chain: Chain) -> Option<&'static str> {
         Chain::Main => Some("https://arc.gorillapool.io"),
         // GorillaPool testnet ARC is not commonly used; omit it.
         Chain::Test => None,
-    }
-}
-
-fn woc_base(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
-        Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
     }
 }
 
@@ -1181,7 +1299,7 @@ mod tests {
             BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())),
             BroadcastPlane::resolve(Chain::Main, false, Some(SYNTHETIC_ARC.to_string())),
         ] {
-            let sources = build_sources(Chain::Main, &plane, None);
+            let sources = build_sources(Chain::Main, &plane, None, None);
             assert_eq!(sources[0].absence, AbsenceAuthority::Broadcaster);
             assert_eq!(sources[0].kind, plane.kind());
             assert!(
@@ -1196,14 +1314,14 @@ mod tests {
     #[test]
     fn arcade_broadcaster_probe_is_keyless_even_when_a_taal_key_exists() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         assert!(sources[0].auth.is_none());
     }
 
     #[test]
     fn classic_broadcaster_probe_carries_the_taal_key_when_present() {
         let plane = BroadcastPlane::resolve(Chain::Main, false, None);
-        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         assert_eq!(sources[0].auth.as_deref(), Some(SYNTHETIC_KEY));
     }
 
@@ -1211,7 +1329,7 @@ mod tests {
     fn keyless_taal_is_not_probed_at_all() {
         // Without a key TAAL answers 401 → Unknown: pure latency, zero signal.
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(Chain::Main, &plane, None);
+        let sources = build_sources(Chain::Main, &plane, None, None);
         assert!(!sources.iter().any(|s| s.name == "arc-taal"));
     }
 
@@ -1224,7 +1342,7 @@ mod tests {
             false,
             Some("https://arc.gorillapool.io".to_string()),
         );
-        let sources = build_sources(Chain::Main, &plane, None);
+        let sources = build_sources(Chain::Main, &plane, None, None);
         let gp_rows: Vec<_> = sources
             .iter()
             .filter(|s| s.url_template.contains("arc.gorillapool.io"))
@@ -1244,7 +1362,7 @@ mod tests {
         // broadcast through Arcade, its 404 is the EXPECTED answer and carries
         // no information. Marking it authoritative caused false "funds not sent".
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()));
+        let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         for s in sources.iter().filter(|s| s.name.starts_with("arc-")) {
             assert_eq!(
                 s.absence,
@@ -1258,7 +1376,7 @@ mod tests {
     #[test]
     fn whatsonchain_is_the_chain_index_authority() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(Chain::Main, &plane, None);
+        let sources = build_sources(Chain::Main, &plane, None, None);
         let woc = sources.iter().find(|s| s.name == "whatsonchain").unwrap();
         assert_eq!(woc.absence, AbsenceAuthority::ChainIndex);
         assert_eq!(woc.kind, SourceKind::ChainIndex);
@@ -1446,6 +1564,7 @@ mod tests {
             delay: Duration::from_millis(0),
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         }
     }
 
@@ -1847,6 +1966,7 @@ mod tests {
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         };
         // 13 gaps: 250+500+1000+2000 then 9 × 2.5 s, plus 5 s slack — long
         // enough for a real mempool index to catch up, and hard-bounded so a
@@ -1869,6 +1989,7 @@ mod tests {
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         };
         let gaps: Vec<u64> = (1..v.attempts)
             .map(|r| v.delay_before_round(r).as_millis() as u64)
@@ -1914,6 +2035,7 @@ mod tests {
             delay: Duration::from_millis(DEFAULT_DELAY_MS),
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         };
         let started = std::time::Instant::now();
         assert_eq!(
@@ -1943,6 +2065,7 @@ mod tests {
             delay: Duration::from_millis(200),
             enabled: true,
             rotation: Arc::default(),
+            bananablocks: None,
         };
         // Schedule under a 200 ms cap: 250→200, 500→200, 1000→200.
         assert!((1..4).all(|r| verifier.delay_before_round(r) == Duration::from_millis(200)));
@@ -2023,7 +2146,7 @@ mod tests {
     #[test]
     fn bitails_is_a_second_chain_index() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(Chain::Main, &plane, None);
+        let sources = build_sources(Chain::Main, &plane, None, None);
         let indexes: Vec<_> = sources
             .iter()
             .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
@@ -2089,5 +2212,145 @@ mod tests {
                 Presence::Present(NetworkEvidence::Seen)
             );
         }
+    }
+
+    /// #50: BananaBlocks is the third chain index when it is on, read
+    /// through the toolbox's provider, and left out when it is off.
+    #[test]
+    fn bananablocks_is_the_third_chain_index_when_on() {
+        let plane = BroadcastPlane::resolve(Chain::Main, true, None);
+        let on = build_sources(
+            Chain::Main,
+            &plane,
+            None,
+            Some("https://bb.example/api/v1/"),
+        );
+        let indexes: Vec<(&str, SourceKind)> = on
+            .iter()
+            .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
+            .map(|s| (s.name, s.kind))
+            .collect();
+        assert_eq!(
+            indexes,
+            vec![
+                ("whatsonchain", SourceKind::ChainIndex),
+                ("bitails", SourceKind::BitailsIndex),
+                ("bananablocks", SourceKind::BananaBlocksIndex),
+            ]
+        );
+        assert_eq!(
+            on.iter()
+                .find(|s| s.name == "bananablocks")
+                .map(|s| s.url_template.as_str()),
+            Some("https://bb.example/api/v1/tx/{txid}")
+        );
+        let off = build_sources(Chain::Main, &plane, None, None);
+        assert!(!off.iter().any(|s| s.kind == SourceKind::BananaBlocksIndex));
+    }
+
+    /// #50: a 429 at WhatsOnChain moves the question on at once, and
+    /// BananaBlocks' `mined` (a block on its `/tx/{txid}`) is chain evidence,
+    /// named by the rung that gave it.
+    #[tokio::test]
+    async fn bananablocks_mined_is_chain_evidence_named_by_its_rung() {
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        let limited = chain_index_fixture(429, "").await;
+        let block = "cc".repeat(32);
+        let bb = chain_index_fixture(
+            200,
+            &format!(r#"{{"txid":"{TXID}","block_hash":"{block}","block_height":972169}}"#),
+        )
+        .await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+            chain_index("whatsonchain", &limited.base),
+        ])
+        .with_bananablocks(&bb.base);
+
+        let started = Instant::now();
+        let report = verifier.verify_report(TXID).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "a 429 was slept on"
+        );
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(
+            report.chain_index,
+            ChainIndexAnswer::Present(NetworkEvidence::Mined)
+        );
+        assert_eq!(report.chain_index_by, Some("bananablocks"));
+        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_CHAIN);
+
+        // Known without a block: seen on the network.
+        let known = chain_index_fixture(200, &format!(r#"{{"txid":"{TXID}"}}"#)).await;
+        let verifier = verifier_with(vec![chain_index("whatsonchain", &limited.base)])
+            .with_bananablocks(&known.base);
+        let (answer, by) = verifier.ask_chain_indexes(TXID).await;
+        assert_eq!(answer, ChainIndexAnswer::Present(NetworkEvidence::Seen));
+        assert_eq!(by, Some("bananablocks"));
+    }
+
+    /// #50, the rule's rows at the chain indexes: BananaBlocks' 404 is a
+    /// gap, never an absence vote. Two clean 404s (WhatsOnChain, Bitails)
+    /// are absence whatever BananaBlocks lacks; one 404 with a fault and
+    /// BananaBlocks' gap is "could not decide".
+    #[tokio::test]
+    async fn bananablocks_unknown_is_a_gap_and_a_negative_needs_two_clean_404s() {
+        let woc_absent = chain_index_fixture(404, "").await;
+        let bitails_absent = chain_index_fixture(404, "").await;
+        let bitails_down = chain_index_fixture(503, "").await;
+        let bb_gap = chain_index_fixture(404, "").await;
+
+        let two_clean = verifier_with(vec![
+            chain_index("whatsonchain", &woc_absent.base),
+            source_kind(
+                "bitails",
+                &bitails_absent.base,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::BitailsIndex,
+            ),
+        ])
+        .with_bananablocks(&bb_gap.base);
+        for _ in 0..3 {
+            assert_eq!(
+                two_clean.ask_chain_indexes(TXID).await,
+                (ChainIndexAnswer::Absent, None),
+                "every start of the rotation"
+            );
+        }
+
+        let one_and_a_fault = verifier_with(vec![
+            chain_index("whatsonchain", &woc_absent.base),
+            source_kind(
+                "bitails",
+                &bitails_down.base,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::BitailsIndex,
+            ),
+        ])
+        .with_bananablocks(&bb_gap.base);
+        assert_eq!(
+            one_and_a_fault.ask_chain_indexes(TXID).await,
+            (ChainIndexAnswer::Unknown, None)
+        );
+
+        // BananaBlocks alone is never absence.
+        let alone = verifier_with(vec![]).with_bananablocks(&bb_gap.base);
+        assert_eq!(
+            alone.ask_chain_indexes(TXID).await,
+            (ChainIndexAnswer::Unknown, None)
+        );
+    }
+
+    /// The WhatsOnChain mempool body carries no `confirmations` field
+    /// (overlay #606): it is presence, seen, not "unconfirmed absent".
+    #[test]
+    fn the_woc_mempool_body_without_confirmations_is_seen() {
+        let woc = chain_index("whatsonchain", "http://127.0.0.1:1");
+        let body = format!(r#"{{"txid":"{TXID}","hash":"{TXID}","size":191,"vin":[],"vout":[]}}"#);
+        assert_eq!(
+            presence_of_body(&woc, &body),
+            Presence::Present(NetworkEvidence::Seen)
+        );
     }
 }

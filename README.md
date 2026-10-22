@@ -2,9 +2,9 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.16.1**, and crates.io carries the same version, **0.16.1**; the
+is the tag **v0.17.0**, and crates.io carries the same version, **0.17.0**; the
 repository's Releases page holds a Release per tag. It pins
-**bsv-wallet-toolbox-rs =0.10.0**, **bsv-rs =0.7.0** and **bsv-tracker =0.7.0**;
+**bsv-wallet-toolbox-rs =0.12.0**, **bsv-rs =0.8.1** and **bsv-tracker =0.8.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -12,7 +12,7 @@ repository's Releases page holds a Release per tag. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.16.1 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.17.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -74,6 +74,14 @@ The server implements the wallet interface and serializes spending operations.
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. Configuration and defaults
 are defined in [src](src); [GIFT.md](GIFT.md) documents gift flows and limits.
+
+The explorers ([src/services_env.rs](src/services_env.rs), 0.17.0):
+
+| variable | effect |
+|---|---|
+| `WOC_API_KEY` | WhatsOnChain key, sent as `woc-api-key` and `Authorization: Bearer`; optional |
+| `BITAILS_API_KEY` | Bitails key; optional |
+| `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it; BananaBlocks takes no key and paces itself at 60 requests a minute |
 
 ## The chain-event feed
 
@@ -294,14 +302,24 @@ reads it.
 Every explorer call is deleted, because a header, a proof or our own index
 already answers, or it is a break-glass read that says why at its site
 ([tests/rule_28_sites.rs](tests/rule_28_sites.rs) holds the CLI's own list).
+
+Since 0.17.0 (#50, the owner's word of 2026-10-22: each scanner has its own
+rate limits, so when one fails we go to the next) every chain question asks
+WhatsOnChain, BananaBlocks and Bitails as each other's fallbacks: a fault (a
+429, a timeout, a 5xx, a malformed body) moves to the next rung at once and is
+never read as "unspent" or "absent"; a negative needs a second provider's
+clean answer; no rung sleeps on a 429, and a rate-limited rung is skipped
+without a request until its Retry-After passes. Every explorer call is logged
+at info with marker `explorer_call`, `provider`, `call`, `status` and `ms`.
+
 The CLI's sites:
 
 | site | what it asks, and when |
 |---|---|
-| `src/broadcast_verify.rs` (C1) | WhatsOnChain `GET /tx/hash/{txid}`, Bitails `GET /tx/{txid}`: after a send, whether the network holds what a broadcaster took |
-| `src/commands/receive.rs` (C2) | WhatsOnChain `GET /tx/{txid}/beef`: `receive`, a payment's BEEF no store of ours holds |
-| `src/commands/sync.rs` (C4) | `GET /address/{address}/unspent`: a chain scan for payments to our deposit address nobody handed us; `sync` only, by hand, one explorer |
-| `src/commands/cleanup_abandoned.rs` (C7) | WhatsOnChain `GET /tx/{txid}/{vout}/spent`: who spent an outpoint, for the abandoned-transaction reconcile (no header or proof says an output is spent by someone else) |
+| `src/broadcast_verify.rs` (C1) | WhatsOnChain `GET /tx/hash/{txid}`, Bitails `GET /tx/{txid}`, BananaBlocks `GET /tx/{txid}` (through the toolbox's provider; its 404 is a gap, never an absence vote): after a send, whether the network holds what a broadcaster took. The start rotates; absence is WhatsOnChain's and Bitails' clean 404s both; the report names the index that answered (`chain_index_by`) |
+| `src/explorers.rs` (C2) | `receive`, a payment's BEEF no store of ours holds: WhatsOnChain `GET /tx/{txid}/beef`, then BananaBlocks `GET /tx/{txid}/hex` (bytes that hash to the txid) with the proof the wallet's services checked against the header service, then the toolbox's `get_beef` |
+| `src/commands/sync.rs` (C4) | a chain scan for payments to our deposit address nobody handed us, through the toolbox's `get_utxo_status` by script hash (WhatsOnChain and Bitails, a rotating start; BananaBlocks holds no script's unspent set); `sync` only, by hand. An empty set needs both explorers; a set one explorer gave is that explorer's word, and an outpoint of ours missing from it is only a question for the spend probe, never "spent" |
+| `src/explorers.rs` (C7) | who spent an outpoint (no header or proof says an output is spent by someone else): WhatsOnChain `GET /tx/{txid}/{vout}/spent` and BananaBlocks `GET /txo/{txid}/{vout}/spend`, a rotating start; a name from either is bound by the spender's own bytes and proven by its merkle path; then the toolbox's `is_utxo` (three explorers, a negative from two). Asked by `cleanup-abandoned`, `reconcile-outputs`, the daemon's sweep and `sync --reconcile-spent` |
 | the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, from Arcade when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.9.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
 | the tracker's re-ask (`Courier`, every served pass) | a merkle path for one named transaction whose re-ask is due, through the same toolbox couriers (Arcade, then WhatsOnChain, then Bitails), checked by the tracker against the header service |
 

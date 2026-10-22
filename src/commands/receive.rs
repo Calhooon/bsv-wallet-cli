@@ -1,23 +1,13 @@
 use anyhow::{anyhow, Context, Result};
-use bsv_sdk::transaction::{Beef, Transaction};
+use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
 use bsv_wallet_toolbox::services::GetBeefResult;
-use bsv_wallet_toolbox::{Chain, WalletServices};
+use bsv_wallet_toolbox::WalletServices;
 use std::future::Future;
 
 use crate::brc29;
 use crate::commands::fund;
 use crate::context::WalletContext;
-
-/// WhatsOnChain's API base: the explorer behind the three break-glass
-/// reads the commands still make themselves (Rule 28: C2 here, C4 in
-/// `sync`, C7 in the spend probe). Every other chain question goes through
-/// the wallet's services or the header service.
-pub fn woc_base(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
-        Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
-    }
-}
+use crate::explorers::{Explorers, PROVIDER_BANANABLOCKS, PROVIDER_WHATSONCHAIN};
 
 pub async fn run(ctx: &WalletContext, txid: &str, vout: Option<u32>) -> Result<()> {
     let (resolved_vout, accepted) = receive_txid(ctx, txid, vout).await?;
@@ -45,21 +35,24 @@ pub(crate) async fn receive_txid(
     txid: &str,
     vout: Option<u32>,
 ) -> Result<(u32, bool)> {
-    receive_txid_from(ctx, woc_base(ctx.chain), txid, vout).await
+    let explorers = Explorers::from_env(ctx.chain);
+    receive_txid_from(ctx, &explorers, ctx.wallet.services(), txid, vout).await
 }
 
-pub(crate) async fn receive_txid_from(
+/// Receive `txid` through the courier ladder at `explorers`, with
+/// `services` the toolbox's ladders (the proof for BananaBlocks' bytes, and
+/// the second courier).
+pub(crate) async fn receive_txid_from<V: WalletServices>(
     ctx: &WalletContext,
-    base: &str,
+    explorers: &Explorers,
+    services: &V,
     txid: &str,
     vout: Option<u32>,
 ) -> Result<(u32, bool)> {
-    let client = reqwest::Client::new();
     let deposit_script = brc29::deposit_script(&ctx.root_key)?;
 
-    let services = ctx.wallet.services();
     let (beef_bytes, resolved_vout, courier) =
-        fetch_beef_and_vout(&client, base, txid, vout, &deposit_script, || {
+        fetch_beef_and_vout(explorers, services, txid, vout, &deposit_script, || {
             second_courier(services, txid)
         })
         .await?;
@@ -78,36 +71,54 @@ pub(crate) async fn receive_txid_from(
 /// holds this answer and it is fetched. What is fetched is self-verifying:
 /// the BEEF is internalized, its transaction hashes to the txid and its
 /// merkle paths meet the header service's roots, so the courier is trusted
-/// for nothing but delivery. Two couriers: WhatsOnChain's BEEF route, and
-/// behind it `second` (the toolbox's `get_beef`). A transport fault falls through;
-/// a delivered body with incomplete ancestry is refused at internalization.
-/// when neither delivers, the error says what each said ("could not
-/// look"), and nothing is concluded about the payment.
-async fn fetch_beef_and_vout<S, SF>(
-    client: &reqwest::Client,
-    base: &str,
+/// for nothing but delivery. A ladder of couriers (bsv-wallet-cli #50: each
+/// explorer has its own rate limits, so when one fails we go to the next):
+/// WhatsOnChain's BEEF route; BananaBlocks' bytes (bound to the txid) with
+/// the proof the wallet's services checked against the header service; and
+/// behind them `second` (the toolbox's `get_beef`). A fault (a 429 among
+/// them) moves to the next rung at once; a delivered body with incomplete
+/// ancestry is refused at internalization. When none delivers, the error
+/// says what each said ("could not look"), and nothing is concluded about
+/// the payment.
+async fn fetch_beef_and_vout<V, S, SF>(
+    explorers: &Explorers,
+    services: &V,
     txid: &str,
     vout: Option<u32>,
     deposit_script: &[u8],
     second: S,
 ) -> Result<(Vec<u8>, u32, &'static str)>
 where
+    V: WalletServices,
     S: FnOnce() -> SF,
     SF: Future<Output = Result<Vec<u8>>>,
 {
-    let (beef_bytes, courier) = match first_courier(client, base, txid).await {
-        Ok(bytes) => (bytes, "WhatsOnChain"),
-        Err(first) => {
+    let mut said: Vec<String> = Vec::new();
+    let mut delivered = None;
+    match explorers.woc_beef(txid).await {
+        Ok(bytes) => delivered = Some((bytes, PROVIDER_WHATSONCHAIN)),
+        Err(fault) => said.push(fault),
+    }
+    if delivered.is_none() && explorers.bananablocks().is_some() {
+        match bananablocks_courier(explorers, services, txid).await {
+            Ok(bytes) => delivered = Some((bytes, PROVIDER_BANANABLOCKS)),
+            Err(fault) => said.push(fault),
+        }
+    }
+    let (beef_bytes, courier) = match delivered {
+        Some(found) => found,
+        None => {
             tracing::warn!(
                 marker = "break_glass_beef_courier",
                 txid = %txid,
-                error = %first,
-                "the first BEEF courier did not deliver; asking the second"
+                error = %said.join("; "),
+                "the explorer couriers did not deliver; asking the wallet's services"
             );
             let bytes = second().await.map_err(|second| {
                 anyhow!(
                     "no courier delivered a BEEF for {txid} (could not look): \
-                     WhatsOnChain: {first}; the wallet's services: {second}"
+                     {}; the wallet's services: {second}",
+                    said.join("; ")
                 )
             })?;
             (bytes, "wallet services")
@@ -122,27 +133,41 @@ where
     Ok((beef_bytes, resolved_vout, courier))
 }
 
-/// WhatsOnChain's `/tx/{txid}/beef`: the transaction with its proofs, hex.
-///
-/// Break-glass (Rule 28, C2): a courier. Nothing we hold answers "the BEEF
-/// of a payment nobody handed us"; what this returns is checked against
-/// the header service when it is internalized, so the explorer is trusted
-/// for delivery alone, and `second_courier` stands behind it.
-async fn first_courier(client: &reqwest::Client, base: &str, txid: &str) -> Result<Vec<u8>> {
-    let beef_hex = client
-        .get(format!("{}/tx/{}/beef", base, txid))
-        .send()
-        .await
-        .with_context(|| format!("WoC BEEF fetch failed for {}", txid))?
-        .error_for_status()?
-        .text()
-        .await?;
-    Ok(hex::decode(beef_hex.trim())?)
+/// The BananaBlocks rung: its `/tx/{txid}/hex` bytes (the toolbox's
+/// provider binds them to the txid: other bytes are a fault) with the
+/// proof the wallet's services return only after its root met the header
+/// service. No proof (an unmined payment, whose ancestry only its sender's
+/// BEEF carries) is a fault here: the next courier is asked.
+async fn bananablocks_courier<V: WalletServices>(
+    explorers: &Explorers,
+    services: &V,
+    txid: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    let raw = explorers.bananablocks_raw_tx(txid).await?;
+    let path = match services.get_merkle_path(txid, false).await {
+        Ok(found) => found.merkle_path.ok_or_else(|| {
+            format!(
+                "{PROVIDER_BANANABLOCKS}: the bytes, but no proof the header service checked ({})",
+                found.error.as_deref().unwrap_or("not mined")
+            )
+        })?,
+        Err(e) => {
+            return Err(format!(
+                "{PROVIDER_BANANABLOCKS}: the bytes, but the proof could not be had: {e}"
+            ))
+        }
+    };
+    let path = MerklePath::from_hex(&path)
+        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the proof does not parse: {e}"))?;
+    let mut beef = Beef::new();
+    let bump = beef.merge_bump(path);
+    beef.merge_raw_tx(raw, Some(bump));
+    Ok(beef.to_binary())
 }
 
 /// The second courier: the toolbox's `get_beef`, which carries the bytes
-/// from either explorer (hashed to the txid) and a merkle path only after
-/// its root met the header service.
+/// from its raw-tx ladder (WhatsOnChain, BananaBlocks, Bitails; hashed to
+/// the txid) and a merkle path only after its root met the header service.
 async fn second_courier<V: WalletServices>(services: &V, txid: &str) -> Result<Vec<u8>> {
     let found = services
         .get_beef(txid, &[])
@@ -196,7 +221,35 @@ pub(crate) mod tests {
     use super::*;
     use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
     use bsv_sdk::transaction::{Beef, MerklePath};
-    use bsv_wallet_toolbox::services::mock::MockWalletServices;
+    use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
+    use bsv_wallet_toolbox::services::GetMerklePathResult;
+    use bsv_wallet_toolbox::Chain;
+
+    /// The courier ladder with WhatsOnChain its one explorer, at a fixture.
+    pub(crate) fn woc_only(base: &str) -> Explorers {
+        Explorers::at(Some(base), None, None)
+    }
+
+    /// Services whose merkle path ladder returns `path` (a checked proof).
+    fn proving(path: Option<String>) -> MockWalletServices {
+        MockWalletServices::builder()
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                error: path.is_none().then(|| "not mined".to_string()),
+                merkle_path: path,
+                header: None,
+                notes: vec![],
+            }))
+            .build()
+    }
+
+    /// A mined payment to `ours`: its bytes and its proof (BUMP hex).
+    fn mined_payment(ours: &[u8]) -> (String, Vec<u8>, String) {
+        let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, ours.to_vec())]);
+        let txid = txid_of(&raw);
+        let path = MerklePath::from_coinbase_txid(&txid, 900_000).to_hex();
+        (txid, raw, path)
+    }
 
     pub(crate) async fn stub_context() -> WalletContext {
         use bsv_sdk::primitives::PrivateKey;
@@ -247,9 +300,15 @@ pub(crate) mod tests {
         let courier = Fixture::start(&[(&route, 200, &body)], 500).await;
         // Exercise both output discovery and an explicitly named output.
         for vout in [None, Some(0)] {
-            let error = receive_txid_from(&ctx, &courier.base, &txid, vout)
-                .await
-                .unwrap_err();
+            let error = receive_txid_from(
+                &ctx,
+                &woc_only(&courier.base),
+                &MockWalletServices::new(),
+                &txid,
+                vout,
+            )
+            .await
+            .unwrap_err();
             let text = error.to_string();
             assert!(
                 text.contains(&txid)
@@ -293,8 +352,8 @@ pub(crate) mod tests {
         let explorer = Fixture::start(&[(&beef_route, 200, &beef.to_hex())], 500).await;
 
         let got = fetch_beef_and_vout(
-            &reqwest::Client::new(),
-            &explorer.base,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
             &txid,
             None,
             &ours,
@@ -309,8 +368,8 @@ pub(crate) mod tests {
 
         // A named output is taken as named.
         let (_, vout, _) = fetch_beef_and_vout(
-            &reqwest::Client::new(),
-            &explorer.base,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
             &txid,
             Some(0),
             &ours,
@@ -341,8 +400,8 @@ pub(crate) mod tests {
         let explorer = Fixture::start(&[], 500).await;
         let services = MockWalletServices::new();
         let got = fetch_beef_and_vout(
-            &reqwest::Client::new(),
-            &explorer.base,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
             &txid,
             Some(0),
             &p2pkh([0xdb; 20]),
@@ -365,8 +424,8 @@ pub(crate) mod tests {
         let explorer = Fixture::start(&[(&route, 200, "0100beef")], 500).await;
         let services = MockWalletServices::new();
         let (bytes, _, _) = fetch_beef_and_vout(
-            &reqwest::Client::new(),
-            &explorer.base,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
             &txid,
             Some(0),
             &p2pkh([0xdb; 20]),
@@ -378,14 +437,107 @@ pub(crate) mod tests {
         assert_eq!(services.call_count("get_beef"), 0);
     }
 
+    /// #50: a 429 at WhatsOnChain reaches BananaBlocks in the same call,
+    /// with no sleep; BananaBlocks' bytes with the proof the services
+    /// checked are the BEEF, and the second courier is not asked. The
+    /// closed rung is skipped, without a request, on the next receive.
+    #[tokio::test]
+    async fn a_woc_429_reaches_bananablocks_at_once_and_its_bytes_carry_the_proof() {
+        let ours = p2pkh([0xdb; 20]);
+        let (txid, raw, path) = mined_payment(&ours);
+        let beef_route = format!("/tx/{txid}/beef");
+        let woc =
+            Fixture::start_with_headers(&[(&beef_route, 429, "", &[("retry-after", "30")])], 500)
+                .await;
+        let hex_route = format!("/tx/{txid}/hex");
+        let bb = Fixture::start(&[(&hex_route, 200, &hex::encode(&raw))], 404).await;
+        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
+        let services = proving(Some(path.clone()));
+
+        for round in 0..2 {
+            let started = std::time::Instant::now();
+            let (bytes, vout, courier) =
+                fetch_beef_and_vout(&explorers, &services, &txid, None, &ours, no_second_courier)
+                    .await
+                    .unwrap();
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "slept"
+            );
+            assert_eq!(courier, "BananaBlocks", "round {round}");
+            assert_eq!(vout, 0);
+            let beef = Beef::from_binary(&bytes).unwrap();
+            let held = beef.find_txid(&txid).expect("the payment");
+            assert_eq!(held.raw_tx(), Some(raw.as_slice()));
+            assert_eq!(beef.bumps.len(), 1, "the checked proof rides along");
+        }
+        assert_eq!(woc.count(&beef_route), 1, "the closed rung was asked again");
+        assert_eq!(bb.count(&hex_route), 2);
+        assert_eq!(services.call_count("get_beef"), 0);
+    }
+
+    /// BananaBlocks' bytes that do not hash to the txid are a fault, and
+    /// bytes with no proof the header service checked (an unmined payment)
+    /// are not a BEEF this rung can hand on: the second courier is asked.
+    #[tokio::test]
+    async fn the_bananablocks_rung_moves_on_without_bound_bytes_or_a_checked_proof() {
+        let ours = p2pkh([0xdb; 20]);
+        let (txid, raw, path) = mined_payment(&ours);
+        let other = raw_tx(&[(&"22".repeat(32), 0)], &[(5, ours.clone())]);
+        let woc = Fixture::start(&[], 503).await;
+        let hex_route = format!("/tx/{txid}/hex");
+
+        let wrong = Fixture::start(&[(&hex_route, 200, &hex::encode(&other))], 404).await;
+        let services = proving(Some(path));
+        let err = fetch_beef_and_vout(
+            &Explorers::at(Some(&woc.base), Some(&wrong.base), None),
+            &services,
+            &txid,
+            Some(0),
+            &ours,
+            || async { Err(anyhow!("the services' ladder: down")) },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("could not look"), "{err}");
+        assert!(err.contains("WhatsOnChain: HTTP 503"), "{err}");
+        assert!(err.contains("BananaBlocks: "), "{err}");
+        assert!(err.contains("the services' ladder: down"), "{err}");
+        assert_eq!(services.call_count("get_merkle_path"), 0, "unbound bytes");
+
+        let right = Fixture::start(&[(&hex_route, 200, &hex::encode(&raw))], 404).await;
+        let unproven = proving(None);
+        let (_, _, courier) = fetch_beef_and_vout(
+            &Explorers::at(Some(&woc.base), Some(&right.base), None),
+            &unproven,
+            &txid,
+            Some(0),
+            &ours,
+            || second_courier(&unproven, &txid),
+        )
+        .await
+        .unwrap();
+        assert_eq!(courier, "wallet services");
+        assert_eq!(unproven.call_count("get_merkle_path"), 1);
+        assert_eq!(unproven.call_count("get_beef"), 1);
+    }
+
+    /// The courier ladder from the environment: BananaBlocks on by default.
+    #[test]
+    fn the_courier_ladder_has_bananablocks_by_default() {
+        let explorers = Explorers::configured(Chain::Main, None, None);
+        assert!(explorers.bananablocks().is_some());
+    }
+
     /// Neither courier delivering is "could not look", with what each said.
     #[tokio::test]
     async fn no_courier_delivering_is_could_not_look_with_both_reasons() {
         let txid = "ab".repeat(32);
         let explorer = Fixture::start(&[], 503).await;
         let err = fetch_beef_and_vout(
-            &reqwest::Client::new(),
-            &explorer.base,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
             &txid,
             Some(0),
             &p2pkh([0xdb; 20]),
