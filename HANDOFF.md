@@ -300,6 +300,29 @@ the funder received it: 148,830. Spent by the run: 1,942 sats, within the
 sats apart from stranded ones and names stranded sats as their own failure.
 No Rust changed; the e2e gate is met.
 
+**Tagged and published (2026-10-22 11:1xZ to 11:3xZ):** PR 46 rebase-merged
+(main 5e3264b, the branch deleted); `v0.16.0` annotated on that commit and
+pushed; release run 39768248997 success; crates.io bsv-wallet-cli 0.16.0;
+the GitHub release carries the three binaries. LOW got the tag message with
+items 1 to 4 and the green light (msg 0ce601ad…); #44 (already closed by the
+merge) got the evidence comment. The local main had 54 unpushed HANDOFF-only
+commits (the captain's journal, every line of it present in the release
+branch's HANDOFF but three superseded ones): saved on branch
+`handoff-journal-local` (7512a45), local main reset to origin/main.
+
+**The stack's scenario landed (the stack captain, 11:1xZ):** lane/cli44-scenario
+acc2d10 is on the stack's main as 07180d1 (picked as 806338e); the two red
+generated-doc legs were drift, re-rendered at the pick; 32 PASS at the
+landing; the worktree and branch removed. The four asks (S9, the busy hosting
+row, R8 (a)/(i), the events row (a)) are with the owner as options; the word
+comes through the stack captain. A second bsv-rs finding from the scenario's
+Boundary, beside the BEEF-order one above: bsv-rs 0.8.0 keys WalletBusy on
+the HTTP 503 alone (http_json.rs, the SERVICE_UNAVAILABLE branch), so a
+proxy's 503 in front of a wallet that never ran reads as the wallet's promise
+that nothing was written; the proposed rule reads the body's word STORE_BUSY
+(and ERR_SERVER_BUSY). Both findings belong to a bsv-rs 0.8.1, which would
+move this crate's pin.
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
@@ -351,7 +374,7 @@ bsv-rs 0.8.0, which has the defect, and a 0.8.1 would move the pin.
 | cli44-toolbox-fix8 | bsv-wallet-toolbox-rs (on the box) | code | DONE: three commits, tip f60771d pushed (J1, J2, J3 exactly); 1191/0, 1296/0, clippy, fmt, deny, doc; tries=1 fails both tests | THE TOOLBOX BRANCH IS COMPLETE: 31 commits, six reviews |
 | release toolbox 0.11.0 | bsv-wallet-toolbox-rs | captain | PR #41: the five required checks green after the captain's one-line CI fix (the deprecated `fetch_update` in a test hook, now a compare-exchange loop); MERGED (rebase) 2026-10-21 at ebcfe43, tagged `v0.11.0`; release run 39682136729 success; crates.io carries bsv-wallet-toolbox-rs 0.11.0 | the lesson in every lane brief from here: clippy under RUSTFLAGS=-Dwarnings on the newest stable, as CI does |
 | cli44-cli-repin | bsv-wallet-cli (the studio) | code | DONE (second attempt, foreground): d178465 pushed = 3c3d9bb + the repin; the dev patch gone | the registry's 0.11.0 src identical to tag v0.11.0 in all 96 files; the lock: toolbox 0.11.0, one bsv-rs 0.8.0, tracker 0.8.0, no patch (the base lock had been stale at bsv-rs 0.7.0 against the =0.8.0 pin); workspace tests, integration 57, clippy, clippy under RUSTFLAGS=-Dwarnings, fmt, deny, the soak (55,696 commits, 0 failed) all green. THE CLI BRANCH IS RELEASE-READY: the captain's release commit (0.16.0, the heading, HANDOFF.md) and PR next; e2e once before the tag |
-| release CLI 0.16.0 | bsv-wallet-cli | captain | PR #46 CLEAN: Test, Clippy, Rustfmt, vectors, deny, locks, Build x2 all green on 7a240ee; the 0.16.0 binary built from the release branch into ~/bsv/targets/bsv-wallet-cli-0160 and linked at target/release/bsv-wallet (the checkout stays on release/0.16.0 until the e2e run); WAITING on the owner's word for the e2e funder (14,227 sats held; 50,000 per run by default); then e2e ONCE, rebase-merge, tag `v0.16.0`, the tag publishes and builds the binaries, LOW gets the version and sha | from here HANDOFF.md is edited on the release branch itself (it lands with the PR); local main is synced from it after |
+| release CLI 0.16.0 | bsv-wallet-cli | captain | DONE 2026-10-22: PR #46 rebase-merged, main 5e3264b, tagged `v0.16.0` (tag object 42f0894); release run 39768248997 success (tag check, nine CI jobs, three binaries on the GitHub release, publish); crates.io carries bsv-wallet-cli 0.16.0 at 11:3xZ | the e2e gate: run 3 22/22 on the 0.16.0 binary; LOW sent the tag message (items 1 to 4) and the green light; #44 commented with the evidence |
 
 **HANDOFF.md lives only on the local main (origin main is protected; every change lands by PR): the 0.16.0 release PR carries it.**
 
