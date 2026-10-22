@@ -58,8 +58,16 @@ async function main() {
     console.log(`  Wallet A: :3323 (${walletA.identityKey.slice(0, 12)}...)  ${walletA.address}`);
     console.log(`  Wallet B: :3324 (${walletB.identityKey.slice(0, 12)}...)  ${walletB.address}`);
 
-    // Fund wallet A
-    const fundAmount = parseInt(process.env.FUND_AMOUNT || '50000');
+    // Fund wallet A. Scenario 22 needs 50,000 in A at its start and the
+    // scenarios before it move about 40,000 out of A (to B, and fees), so a
+    // full run funds 100,000; the sweeps bring all but fees back. The funder
+    // must hold the funding and its fee, or the run stops here, before any
+    // wallet is started or any sat moves.
+    const fundAmount = parseInt(process.env.FUND_AMOUNT || '100000');
+    if (funderBalanceBefore < fundAmount + 1_000) {
+      console.error(`ERROR: funder holds ${funderBalanceBefore.toLocaleString()} sats; a run funds ${fundAmount.toLocaleString()} and needs ${(fundAmount + 1_000).toLocaleString()} (FUND_AMOUNT lowers it; scenario 22 needs 50,000 in A at its start)`);
+      process.exit(1);
+    }
     console.log(`  Funding A with ${fundAmount.toLocaleString()} sats from funder...`);
     const funded = await fundWallet(walletA, fundAmount);
     console.log(`  Funded: txid=${funded.txid.slice(0, 16)}...`);
