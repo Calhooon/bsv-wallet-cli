@@ -15,7 +15,7 @@ module.exports = {
 
     // A sends to B via CLI with --json
     const rawResult = execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json send "${walletB.address}" ${sendAmount}`,
+      `cd "${walletA.dir}" && "${BSV}" --json send --allow-pending received "${walletB.address}" ${sendAmount}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
 

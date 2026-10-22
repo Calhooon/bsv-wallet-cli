@@ -3,10 +3,20 @@
  * Wraps all 28 endpoints with proper Origin header and JSON handling.
  */
 class WalletClient {
-  constructor(port, name = `wallet:${port}`) {
+  /**
+   * `allowPending: 'received'` names the spend gate's word R1 (d) on every
+   * createAction this client makes: a received coin whose creator is not yet
+   * mined (its ancestry proven at internalize) is offered for that action and
+   * the action is recorded under the rule. A test wallet is funded by the
+   * funder's just-broadcast payment and spends in the same block, so its
+   * spends carry the word; the funder's own client never does (its coins are
+   * mined or its own change).
+   */
+  constructor(port, name = `wallet:${port}`, { allowPending } = {}) {
     this.base = `http://localhost:${port}`;
     this.name = name;
     this.origin = 'http://e2e-test';
+    this.allowPending = allowPending;
   }
 
   async post(endpoint, body = {}) {
@@ -72,9 +82,11 @@ class WalletClient {
 
   // --- Transactions ---
   async createAction(outputs, description, opts = {}) {
+    const allowPending = opts.allowPending ?? this.allowPending;
     return this.post('createAction', {
       outputs,
       description,
+      ...(allowPending ? { allowPending } : {}),
       options: {
         signAndProcess: opts.signAndProcess ?? true,
         acceptDelayedBroadcast: opts.acceptDelayedBroadcast ?? false,

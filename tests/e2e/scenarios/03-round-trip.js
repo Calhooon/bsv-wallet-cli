@@ -17,7 +17,7 @@ module.exports = {
 
     // Step 1: A sends 15k to B via CLI
     const send1 = JSON.parse(extractJson(execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json send "${walletB.address}" 15000`,
+      `cd "${walletA.dir}" && "${BSV}" --json send --allow-pending received "${walletB.address}" 15000`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim()));
 
@@ -32,7 +32,7 @@ module.exports = {
 
     // Step 2: B sends 7k back to A via CLI (tests freshly internalized funds are spendable)
     const send2 = JSON.parse(extractJson(execSync(
-      `cd "${walletB.dir}" && "${BSV}" --json send "${walletA.address}" 7000`,
+      `cd "${walletB.dir}" && "${BSV}" --json send --allow-pending received "${walletA.address}" 7000`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim()));
 

@@ -33,8 +33,12 @@ async function startWallet(port, name) {
     detached: false,
   });
 
-  // Wait for health
-  const client = new WalletClient(port, name);
+  // Wait for health. A test wallet's only coins are received payments not
+  // yet mined (the funder's, then the other wallet's), which the spend gate
+  // holds from a plain spend (R1 (d), 0.15.0); the client names the gate's
+  // word on every spend it makes, as the CLI scenarios do with
+  // `--allow-pending received`.
+  const client = new WalletClient(port, name, { allowPending: 'received' });
   for (let i = 0; i < 20; i++) {
     try {
       await client.isAuthenticated();
@@ -46,7 +50,10 @@ async function startWallet(port, name) {
   }
 
   const identityKey = await client.identityKey();
-  const addrResult = execSync(`cd "${dir}" && "${BSV}" address`, { encoding: 'utf-8' }).trim();
+  // `address` prints the BRC-29 deposit address on its first line and the
+  // gift pubkey on a second; the address is the first line alone.
+  const addrResult = execSync(`cd "${dir}" && "${BSV}" address`, { encoding: 'utf-8' })
+    .trim().split('\n')[0].trim();
 
   return { dir, proc, client, identityKey, address: addrResult, port };
 }
@@ -130,15 +137,29 @@ async function sweepToFunder(wallet) {
     }
   }
 
+  // What the sweep left behind stays the wallet's: teardown keeps a
+  // directory holding more than dust, with the key in its .env, instead of
+  // deleting the only way to spend it.
+  const left = await wallet.client.balance().catch(() => balance - swept);
+  wallet.left = left >= 600 ? left : 0;
+
   return swept;
 }
 
-/** Kill wallet process and remove temp dir. */
+/**
+ * Kill the wallet process and remove its temp dir, unless the sweep left
+ * funds in it (`wallet.left`, set by sweepToFunder): then the directory is
+ * kept and named, since its .env is the only key to those sats.
+ */
 function teardownWallet(wallet) {
   if (wallet.proc && !wallet.proc.killed) {
     wallet.proc.kill('SIGTERM');
   }
   if (wallet.dir && fs.existsSync(wallet.dir)) {
+    if (wallet.left) {
+      console.log(`  KEPT ${wallet.dir}: ${wallet.left} sats remain; the key is in its .env (recover with \`bsv-wallet drain <funder address>\` once offerable)`);
+      return;
+    }
     fs.rmSync(wallet.dir, { recursive: true, force: true });
   }
 }
