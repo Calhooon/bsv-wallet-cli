@@ -169,7 +169,7 @@ impl Explorers {
     /// The rungs at explicit bases (a fixture in a test, a mirror): `None`
     /// leaves that rung out. The WhatsOnChain rung's gate is its own, never
     /// the process's, so a test's 429 never carries into another case.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // the binary builds through `from_env`; the tests and the library's callers call this
     pub fn at(woc: Option<&str>, bananablocks: Option<&str>, woc_api_key: Option<String>) -> Self {
         let woc = woc.map(|base| {
             (
