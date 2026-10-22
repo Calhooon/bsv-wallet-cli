@@ -472,6 +472,138 @@ Still to launch, in order:
 - bsv-wallet-cli: main at d26a501 (v0.15.0), toolbox pinned `=0.10.0`.
 - bsv-wallet-toolbox-rs: main at 83b38d3 (v0.10.0).
 
+## The explorer ladder wave: toolbox 0.12.0 and CLI 0.17.0 (2026-10-22, 17:0xZ to 22:3xZ)
+
+**The rule (the owner's, 2026-10-22, "each has like rate limits so if one
+fails we just go to the next").** Every chain check is a ladder: WhatsOnChain,
+BananaBlocks and Bitails are each other's fallbacks; a fault moves to the next
+rung at once; a negative ("unspent", "not listed", "absent") needs a second
+provider's clean answer; "could not look" is an error, never "nothing there".
+The captain's decided readings, proven by exhaustive tests in the toolbox:
+the UTXO ladder (an unspent needs two clean answers, a not-listed needs two, a
+bound spender stands on one, the verdict independent of the rotation start:
+the 64-combination test from every start) and the status ladder (an absence
+needs two chain indexes, WhatsOnChain and Bitails; BananaBlocks' 404 is a
+gap; two unknowns turn a broadcaster's known to unknown; one chain index's
+unknown never stands alone: the 81-row test from both starts). FaultKind
+Transient/Deterministic/RateLimited, only Transient retried. RateGate::shared
+per host and key: BananaBlocks burst 30 then 0.5/s (60 the first minute, 30 a
+minute sustained under its 80 limit); WhatsOnChain's key as the `woc-api-key`
+header, no 429 sleeps anywhere.
+
+**BananaBlocks (no key).** base https://bananablocks.com/api/v1 (testnet
+test.bananablocks.com/api/v1): `/tx/{txid}/hex`, `/tx/{txid}`,
+`/txo/{txid}/{vout}` (script_pubkey, spent, spent_txid; no script_hash),
+`/tx/{txid}/proof` (TSC, target = block root), `/address/{addr}/utxos`
+(?limit= up to 1000, cursor paging, hasMore; by address only, every
+script-hash route 404). A mempool gap exists (the review's live counterexample
+659e6e1d…/826718bf…:0).
+
+**Toolbox 0.12.0 (PR 43, seven commits over 0.11.2, five reviews folded;
+main 1d0fec2, tag v0.12.0, crates.io 0.12.0 at 21:5xZ).** The lane's first
+run was placed on the box by the load picker and died with the box's SSH
+(exit 255, nothing committed); relaunched `--host studio`. Rebased onto the
+stack's 0.11.2 (= 0.11.1's content: #42 points 1, 2, 4, 5; 0.11.1's tag fired
+no release run): Cargo.toml ours (0.12.0), CHANGELOG 0.12.0 above 0.11.2 and
+0.11.1, error.rs keeps RateLimited and FailedAncestor. Reconciled: Arcade's
+holding words (RECEIVED, SENT_TO_NETWORK, ACCEPTED_BY_NETWORK) come out
+unknown and a broadcaster's unknown is a gap, never an absence vote (witness
+`arcades_holding_word_is_a_gap_in_the_status_ladder` with the row holding
+word + WhatsOnChain unknown + Bitails fault = None); nothing in the branch
+hands an explorer's word to a release path (the boundary is `is_utxo`,
+services.rs, which 0.12.0 makes stricter; main's release paths through it:
+un_fail, locked_inputs.rs:351, poisoned_chain.rs:721, 0.11.1's changelog
+lists the locked-input one as open); a retire on a competitor's checked proof
+never asks a status source. `get_utxo_leads(script_hash, format) ->
+UtxoLeads { leads: [UtxoLead { txid, vout, satoshis, listed_by }], answered,
+faults, partial }`: discovery, never a verdict; the union of every explorer's
+unspent list keyed by outpoint (txid lowercased); every page read through the
+gate (WhatsOnChain nextPageToken, Bitails limit/from with a probe past the
+cap, BananaBlocks cursor; LEAD_PAGES_MAX 10 pages of 1000); a list cut short
+(the cap, or a later page unreadable or 429) keeps its leads and is named in
+`partial`; a malformed page, or any txid not 64 hex, is that explorer's
+deterministic fault and none of its leads are kept; BananaBlocks asked only
+for the exact 25-byte P2PKH template in the Script format (0x00 main, 0x6f
+test); Err(NoExplorerAnswered) only when none answered. The mock has
+`get_utxo_leads_response` (unset: built from the status response without
+moving its count). Test infrastructure: the lead tests deadlocked at 16 or
+more test threads on macOS (mockito's shared pool of 20 servers, scenes
+taking theirs one at a time; passes at 10, hangs at 16, CI's Linux pool is
+50); fixed by `services::mock_server()` (src/services/mod.rs): servers built
+outside the pool, recycled through a free list; proven at 24 and 64 threads;
+the cost is file descriptors growing with concurrent tests (the parent
+already failed at a 256 limit). A Bitails list of exactly 10,000 is complete
+(one more request, limit=1&from=10000). The structs stay plain (no
+non_exhaustive; the CLI builds them with ..Default::default()).
+
+**CLI 0.17.0 (PR 51, twelve commits; main e1a6758, tag v0.17.0).**
+`src/explorers.rs`: the CLI's own rungs (WhatsOnChain with the toolbox
+provider's gate, `shared_woc_gate`, so a 429 either side meets closes both;
+`Explorers::at` keeps a private gate for tests); every explorer call logs
+marker `explorer_call`. `receive`: WhatsOnChain /beef, then BananaBlocks /hex
+with the services' checked proof, then `get_beef`. The spend probe
+(`probe_input_spend`): step 1 WhatsOnChain /spent and BananaBlocks /txo (its
+script_pubkey must hash to the asked script; another script, the empty one
+included, is a fault) with a rotating start, a name bound by the spender's
+bytes and proof; step 2 `is_utxo` over three explorers (two clean answers
+each way). `broadcast_verify`: BananaBlocks /tx as a third chain index read
+through the toolbox's provider; its 404 a gap; its `known` a presence word
+like a broadcaster's SEEN, never chain evidence, a mined from any index
+outranks it; `chain_index_by` names the index; `ask_chain_indexes` returns a
+`ChainIndexReply`. `sync`: `get_utxo_leads` with the deposit script in the
+Script format (BananaBlocks by address); a cut-short list is still a lead
+list; `--json` adds `unspent_listed_by`, `unspent_could_not_look`,
+`unspent_leads` (each lead's listed_by), `unspent_partial`; the summary line
+says "N explorers answered (M cut short)" and, when every list was cut short,
+that it was not a full look; `--reconcile-spent`: an outpoint missing from
+the leads is a question for the spend probe only. Fixtures hold their test
+server's port for the process (`hold_port`, src/test_support.rs) so a gate
+keyed by a fixture's base never carries a 429 into another test. The
+deliberate respend witnessed under 0.12.0 (tests/respend_witness.rs): a
+phantom permits only once Arcade stops SEEN; a single gap refuses and
+releases nothing. Environment (src/services_env.rs): WOC_API_KEY,
+BITAILS_API_KEY, BANANABLOCKS_BASE (unset the chain's default, empty off, a
+URL moves it). The repin: the temporary [patch.crates-io] path to the
+toolbox worktree replaced by the registry lock (the lock gained the source
+and checksum lines only; `cargo update -p` refuses a package that was a
+patch, `cargo fetch` rewrote the entry). Gates green against crates.io
+0.12.0: fmt, clippy, workspace 501 tests, doc. CI on PR 51 was red while the
+path patch stood (GitHub's runners cannot see the worktree) and green at the
+repin.
+
+**The e2e gate.** The release build in ~/bsv/targets/bsv-wallet-cli-0170
+(the harness links target/release/bsv-wallet and target/release/bsv-wallet-mcp
+point there; the October-17 MCP file moved to
+~/bsv/targets/bsv-wallet-cli-0161/release/bsv-wallet-mcp.old-oct17). One run:
+22/22, funder 148,830 to 147,040, net 1,790 sats, leak 1,049, nothing kept
+(log /Volumes/Lanes/out/bsv-wallet-cli/cli44-e2e/e2e-run-20261022T220326Z.log).
+
+**Told.** LOW (items 1 to 4: the ladder, sync's leads, the environment, the
+0.11.1 rules underneath) and the stack keeper (0.12.0's content, the
+reconcile, the mockito fix) at 22:2xZ; #50 commented with the evidence and
+closed.
+
+**The release.** Run 39862565333 success at 22:4xZ: the tag check, the nine CI jobs, publish, three binaries (x86_64 and aarch64 darwin, x86_64 linux) on the GitHub release; crates.io carries bsv-wallet-cli 0.17.0.
+
+| lane | repo | class | result | notes |
+|---|---|---|---|---|
+| bananablocks-leads (first) | toolbox (the box) | code | DIED: SSH to box.local timed out (exit 255), nothing committed | relaunched --host studio |
+| bananablocks-rebase-leads | toolbox (studio, Opus) | code | DONE: rebased onto 41da5da, 10a653f reconcile, 8f0b4ae get_utxo_leads; all gates | the BananaBlocks probe: by address only |
+| bananablocks-leads-review | toolbox (studio, Opus) | review | FOLD: M1 a bad txid emitted; M2 a list cut short reported full; L1 non-minimal push; L2 the mock's default; L3 the witness row | |
+| bananablocks-fold4 | toolbox (studio, Opus, worktree bananablocks-fold) | code | DONE 6f958f3: every page read, partial, bad txid a fault, the P2PKH template, the mock, the witness row | probes: WoC pages by nextPageToken, Bitails by limit/from, BananaBlocks by cursor |
+| bananablocks-review5 | toolbox (studio, Opus) | review | FOLD: M1 the mockito pool hang at 16+ threads (already in the parent); L1 exactly 10,000; L2 the limit assumption; L3 the mock's side effects; four test gaps | 216/216 twice at 10 threads |
+| bananablocks-fold5 | toolbox (studio, Opus) | code | DONE 06b5212: mock_server() outside the pool, 24 and 64 threads 49/49 in 4.4 s; the rest | the captain read the hunks; the CLI workspace green against it |
+| release toolbox 0.12.0 | toolbox | captain | PR 43 rebase-merged at 1d0fec2, tag v0.12.0, release run 39859774259 success, crates.io 0.12.0 | |
+| bananablocks-fold (CLI) | CLI (studio, Opus) | code | DONE 80db50f: M1 sync leads, M2 the shared gate, L2-L5, the respend witnesses | |
+| bananablocks-partial (CLI) | CLI (studio, Opus) | code | DONE c970426: partial in sync, the trait end to end, the allow's reason | |
+| release CLI 0.17.0 | CLI | captain | the repin cbb99b0 (captain, foreground), PR 51 ready, rebase-merged at e1a6758, e2e 22/22, tag v0.17.0 | |
+
+Open after this wave: toolbox #44 (is_utxo returns the bound spender);
+0.11.1's open point 3 and the locked-input release path through is_utxo
+(the stack's); whether BananaBlocks lists mempool or non-P2PKH outputs under
+an address (unverified); no live run of get_utxo_leads against the real
+routes beyond the probes.
+
 ## Other open issues (not in this wave)
 
 #39 backstop fetches proofs from an explorer (rule 21); #38 self-send
