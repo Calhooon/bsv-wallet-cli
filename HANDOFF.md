@@ -234,6 +234,40 @@ the e2e run waits for the funder's own proof record (proven_txs) of that txid,
 not the explorer's word. bob-wallet was reconciled in dry-run only (13 of its
 22 rows unknown to the chain; nothing applied, nothing spent from it).
 
+**The e2e runs of 2026-10-22 (the harness was stale, not the wallet):**
+run 1 (01:49Z, log e2e-run-20261022T014948Z.log): 9/22; every spending
+scenario answered 402 "no offerable coin ... offered under allowPending:
+received": the test wallet's only coin is the funder's received, unmined
+payment, which the 0.15 gate (R1 (d)) holds from a plain spend; the harness
+had not run since the gate landed (its last change 2026-04-02). Also `address`
+prints two lines now and the harness took both. The harness deleted wallet A
+with 50,000 sats in it (teardown removed the dir, key included): LOST.
+Fix f2d6fc4: the test wallets' client names allowPending: received on every
+createAction, the CLI scenarios pass --allow-pending received, the address is
+one line, a failed sweep keeps the dir. Run 2 (01:52Z, log
+e2e-run-20261022T015259Z.log): 17/22; from scenario 14 on A's HTTP answers
+hung 180 s after each action went through: serve was spawned with stderr on a
+pipe nobody read, and the log (bsv_wallet=info,tower_http=info) filled it.
+Scenario 15's nosend locked A's 7,563 and the abort never ran; A (0 at the
+read) and B (5,000 paid to it, never internalized) were deleted: LOST ~12,563
+more. Fix 56b4e2b: the wallet's log goes to serve.log in its dir, the funder's
+funding transfer names the word (its coins after a run are the sweeps,
+received and unmined), a failed run keeps both dirs. Fix c029d4e: a full run
+funds 100,000 (scenario 22 needs 50,000 in A at its start and the earlier
+scenarios move ~40,000 out of A; the April runs funded ~300,000), and the run
+refuses when the funder cannot cover it; CLAUDE.md updated. Losses in all:
+~62,563 sats of the owner's, named here. LOW told STOP after run 1; nothing
+tagged.
+
+**The second top-up (02:03Z) is UNSIGNED on the desktop wallet:** the
+request for another 100,000 exceeded the MetaNet client's per-origin spending
+allowance (its "Renew spending permission" actions), the client waits on a
+prompt on the owner's screen, the HTTP request timed out at 120 s. No second
+request was sent (approving the prompt would sign the first). A watcher polls
+the funder's address for the payment; on arrival: stop the funder daemon,
+`receive <txid>`, restart. The funder holds 50,772 (all three coins offerable
+under the word); run 3 needs 101,000.
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
