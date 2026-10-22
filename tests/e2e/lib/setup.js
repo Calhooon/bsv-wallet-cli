@@ -27,11 +27,19 @@ async function startWallet(port, name) {
   // because internalized txs are spent via BEEF which includes the parent tx
   // (already broadcast by the sender). The monitor would actually interfere by
   // trying to re-broadcast internalized txs and saturating ARC connections.
+  // The wallet's log goes to a file in its directory, never to a pipe this
+  // harness does not read: a full pipe blocks every request that logs (the
+  // 2026-10-22 run hung at 180 s from scenario 14 on, after the actions
+  // themselves went through). The file is kept with the directory when a
+  // run fails (see teardownWallet), so a failure has the wallet's own log.
+  const logPath = path.join(dir, 'serve.log');
+  const logFd = fs.openSync(logPath, 'a');
   const proc = spawn(BSV, ['--port', String(port), 'serve'], {
     cwd: dir,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     detached: false,
   });
+  fs.closeSync(logFd);
 
   // Wait for health. A test wallet's only coins are received payments not
   // yet mined (the funder's, then the other wallet's), which the spend gate
@@ -44,7 +52,7 @@ async function startWallet(port, name) {
       await client.isAuthenticated();
       break;
     } catch {
-      if (i === 19) throw new Error(`${name} on :${port} failed to start`);
+      if (i === 19) throw new Error(`${name} on :${port} failed to start (its log: ${logPath})`);
       await sleep(500);
     }
   }
@@ -55,7 +63,7 @@ async function startWallet(port, name) {
   const addrResult = execSync(`cd "${dir}" && "${BSV}" address`, { encoding: 'utf-8' })
     .trim().split('\n')[0].trim();
 
-  return { dir, proc, client, identityKey, address: addrResult, port };
+  return { dir, proc, client, identityKey, address: addrResult, port, logPath };
 }
 
 /**
@@ -64,8 +72,12 @@ async function startWallet(port, name) {
  * The recipient internalizes the AtomicBEEF directly — no WoC needed.
  */
 async function fundWallet(wallet, satoshis) {
+  // The funder's coins are its own change and the sweeps the last run sent
+  // back, received and not yet mined: the funding names the gate's word for
+  // those, the one spend the funder makes under it (its own just-broadcast
+  // top-ups, whose ancestry it checked at internalize).
   const funderClient = new WalletClient(FUNDER_PORT, 'funder');
-  const result = await funderClient.transferTo(wallet.client, satoshis, 'e2e funding');
+  const result = await funderClient.transferTo(wallet.client, satoshis, 'e2e funding', { allowPending: 'received' });
   return { txid: result.txid, sats: satoshis };
 }
 
@@ -148,16 +160,19 @@ async function sweepToFunder(wallet) {
 
 /**
  * Kill the wallet process and remove its temp dir, unless the sweep left
- * funds in it (`wallet.left`, set by sweepToFunder): then the directory is
- * kept and named, since its .env is the only key to those sats.
+ * funds in it (`wallet.left`, set by sweepToFunder) or the run asks to keep
+ * it (`keep`, a failed run): then the directory is kept and named, since its
+ * .env is the only key to those sats and serve.log the only record of what
+ * the wallet did.
  */
-function teardownWallet(wallet) {
+function teardownWallet(wallet, { keep = false } = {}) {
   if (wallet.proc && !wallet.proc.killed) {
     wallet.proc.kill('SIGTERM');
   }
   if (wallet.dir && fs.existsSync(wallet.dir)) {
-    if (wallet.left) {
-      console.log(`  KEPT ${wallet.dir}: ${wallet.left} sats remain; the key is in its .env (recover with \`bsv-wallet drain <funder address>\` once offerable)`);
+    if (wallet.left || keep) {
+      const why = wallet.left ? `${wallet.left} sats remain; the key is in its .env (recover with \`bsv-wallet drain <funder address>\` once offerable)` : 'the run failed';
+      console.log(`  KEPT ${wallet.dir}: ${why}; its log is serve.log there`);
       return;
     }
     fs.rmSync(wallet.dir, { recursive: true, force: true });
