@@ -2,7 +2,7 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.16.0**, and crates.io carries the same version, **0.16.0**; the
+is the tag **v0.16.1**, and crates.io carries the same version, **0.16.1**; the
 repository's Releases page holds a Release per tag. It pins
 **bsv-wallet-toolbox-rs =0.10.0**, **bsv-rs =0.7.0** and **bsv-tracker =0.7.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
@@ -12,7 +12,7 @@ repository's Releases page holds a Release per tag. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.16.0 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.16.1 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
