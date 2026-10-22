@@ -3,6 +3,12 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.16.1] - 2026-10-22
+0.16.1: the pin moves to bsv-rs =0.8.1 (bsv-wallet-toolbox-rs =0.11.0 and bsv-tracker =0.8.0 unchanged). No CLI code changes.
+
+- bsv-rs 0.8.1: the atomic BEEF rule is judged on the subject's graph (BRC-95), not wire position. 0.8.0 refused an atomic BEEF whose raw unproven ancestor sat after the proven transaction that spends it, the order the TypeScript SDK 2.x writer emits: five x402 refunds were refused by a served wallet (bsv-dd P0-65). Both readers now accept every entry reachable from the subject through the inputs of raw entries and refuse nothing 0.8.0 accepted; the refusal names the earliest entry the walk from the subject does not reach. The crate's atomic writer emits the BRC-95 closure cut at proofs, as the TypeScript 3.x and Go writers do, so what this wallet hands over is accepted by every reader; a wallet's `createAction` BEEFs shrink by what no reader needs. The stream's Cursor format is BSC3; a BSC2 cursor still reads. The owner's ruling of 2026-10-22 (the stack's DECISIONS-2026-10-19.md section 10; epoch channel lines 1044 and 1046); the upstream findings filed as bsv-blockchain/BRCs#350, ts-stack#1320, go-sdk#384.
+- The e2e harness since 0.16.0 (on main already): the sweep retries short by the refusal's named shortfall; the budget judges spent sats apart from stranded ones.
+
 ## [0.16.0] - 2026-10-21
 0.16.0: the CLI's half of Calhooon/bsv-wallet-cli #44 beside bsv-low #828. A served `/createAction` answered `400` with `database is locked (code 517)` (`SQLITE_BUSY_SNAPSHOT`: a deferred `BEGIN` read under a WAL snapshot and wrote after the monitor's commit); and LOW's land condition, the spend gate writing nothing around the toolbox's door. Pins: `bsv-wallet-toolbox-rs` `=0.10.0` to `=0.11.0`, `bsv-rs` `=0.7.0` to `=0.8.0`, `bsv-tracker` `=0.7.0` to `=0.8.0`; the lock carries one bsv-rs, 0.8.0. A minor: the 503's rule, the 409, and `pool()` no longer writes.
 
