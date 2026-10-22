@@ -21,9 +21,10 @@ pub enum InputSpend {
     /// as an input; `confirmed` = we hold a merkle proof of that spend
     /// whose root the header service checked.
     SpentBy { txid: String, confirmed: bool },
-    /// Cannot say: could not look, no spender named while no explorer
-    /// lists the outpoint as unspent (a phantom parent reads this way), or
-    /// one explorer's negative the other could not confirm. Never released.
+    /// Cannot say: could not look, no spender named while the explorers
+    /// do not list the outpoint as unspent (a phantom parent reads this
+    /// way), or one explorer's answer (unspent or not listed) no second
+    /// explorer confirmed. Never released.
     Unknown,
 }
 
@@ -257,11 +258,16 @@ pub(crate) async fn stored_locking_script(
 ///    through to step 2, as a fault does.
 /// 2. **Is it unspent?** The toolbox's `is_utxo` (its Rule 28 item 5):
 ///    WhatsOnChain, BananaBlocks and Bitails (toolbox 0.12.0) with a
-///    rotating start, a positive from the one that gives it, a negative
-///    only from two. `Unspent` is the outpoint in an unspent set, so its
-///    parent exists. Explorers agreeing it is not unspent while no spender
-///    is named (a phantom parent, or an index behind) is `Unknown`: no
-///    spender can be proven. Anything else is `Unknown`.
+///    rotating start, asked until two agree. "Unspent" is a negative too
+///    ("no spender") and acting on it releases a coin, so it needs two
+///    explorers' clean answers, as "not listed" does (the toolbox's
+///    `UTXO_POSITIVE_PROVIDERS` and `UTXO_NEGATIVE_PROVIDERS`, two of the
+///    three); one explorer's answer with the others faulting, or one
+///    unspent against one not listed, is "could not look". `Unspent` is
+///    the outpoint in two unspent sets, so its parent exists. Explorers
+///    agreeing it is not unspent while no spender is named (a phantom
+///    parent, or an index behind) is `Unknown`: no spender can be proven.
+///    Anything else is `Unknown`.
 ///
 /// Without `locking_script` the unspent set cannot be asked (it is keyed
 /// by script hash) and the answer is `Unknown`.
@@ -2428,9 +2434,11 @@ mod tests {
 
     /// #50, the rule's rows at the probe: one rung's negative ("no spend
     /// known") with the other faulting is not an answer, and the unspent
-    /// question's negative needs two explorers (the toolbox's `is_utxo`):
-    /// one negative and faults is "could not decide"; a positive from any
-    /// one unspent set is `Unspent`.
+    /// question needs two explorers' clean answers either way (the
+    /// toolbox's `is_utxo`, two of the three for "unspent" and for "not
+    /// listed"): one answer and faults is "could not decide"; two "not
+    /// listed" with no spender named is `Unknown`; only the ladder's
+    /// two-explorer unspent (`is_utxo` true) is `Unspent`.
     #[tokio::test]
     async fn one_negative_and_faults_is_could_not_decide() {
         use crate::explorers::Explorers;
