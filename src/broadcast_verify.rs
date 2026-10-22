@@ -232,8 +232,12 @@ pub struct PresenceReport {
     pub evidence_provider: &'static str,
     /// The chain index's own answer.
     pub chain_index: ChainIndexAnswer,
-    /// Which chain index gave a positive (`whatsonchain`, `bitails`,
-    /// `bananablocks`), so an audit can see which rung answered (#50).
+    /// Which chain index answered with presence (`whatsonchain`,
+    /// `bitails`, `bananablocks`), so an audit can see which rung answered
+    /// (#50): the index whose chain evidence `chain_index` is, or, when no
+    /// index gave chain evidence, `bananablocks` for its `known`, a presence
+    /// word read as a broadcaster's `SEEN` (never a proof and never chain
+    /// evidence; `chain_index` is then not `Present`).
     pub chain_index_by: Option<&'static str>,
     /// The broadcaster we submitted through reports a fatal verdict
     /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`).
@@ -345,8 +349,13 @@ enum SourceKind {
     /// BananaBlocks `/tx/{txid}`, read through the toolbox's provider
     /// (`get_status_for_txids`: `mined` with a block, `known` without one,
     /// `unknown` on a 404). Its index lags the mempool, so its `unknown` is
-    /// a gap, never an absence vote; its `mined` and `known` are presence
-    /// (bsv-wallet-cli #50; toolbox 0.12.0 reads it so in its own ladder).
+    /// a gap, never an absence vote. Its `mined` is chain evidence, as every
+    /// index's is; its `known` is presence and nothing more, a word read as
+    /// a broadcaster's `SEEN` (toolbox 0.11.1 and 0.12.0: a status source's
+    /// `known` ranks below a checked proof and never makes a status
+    /// source a chain index): it never stops the other indexes being asked,
+    /// a `mined` from any of them outranks it, and it does not stand
+    /// against their two clean 404s (bsv-wallet-cli #50).
     BananaBlocksIndex,
 }
 
@@ -519,7 +528,7 @@ fn build_sources(
     // broadcaster we submitted to is asked ahead of these, and once mined
     // the proof is the fact. So an explorer is asked, in the fallback
     // shape: two of them, the start rotating between them
-    // (`ask_chain_indexes`), a positive from the one that gives it, a
+    // (`ask_chain_indexes`), chain evidence from the one that gives it, a
     // negative only from both, and "could not look" kept apart from both.
     sources.push(StatusSource {
         name: "whatsonchain",
@@ -541,8 +550,9 @@ fn build_sources(
     });
     // Break-glass (Rule 28, C1; bsv-wallet-cli #50): the third chain index,
     // for the same question (each explorer has its own rate limits, so when
-    // one fails the next is asked). Its presence counts; its 404 does not
-    // (its index lags the mempool), so absence stays the other two's.
+    // one fails the next is asked). Its `mined` counts as chain evidence,
+    // its `known` as a presence word only, and its 404 not at all (its index
+    // lags the mempool), so absence stays the other two's.
     if let Some(base) = bananablocks_base {
         sources.push(bananablocks_source(base));
     }
@@ -742,19 +752,23 @@ impl BroadcastVerifier {
                         continue;
                     }
                     chain_indexes_asked = true;
-                    match self.ask_chain_indexes(txid).await {
-                        (ChainIndexAnswer::Present(evidence), by) => {
+                    let reply = self.ask_chain_indexes(txid).await;
+                    match reply.answer {
+                        ChainIndexAnswer::Present(evidence) => {
                             // Chain evidence: the answer for everyone.
                             report.verification = BroadcastVerification::Confirmed;
                             report.evidence = Some(evidence);
                             report.evidence_provider = BROADCAST_PROVIDER_CHAIN;
                             report.chain_index = ChainIndexAnswer::Present(evidence);
-                            report.chain_index_by = by;
+                            report.chain_index_by = reply.by;
                             return report;
                         }
-                        (ChainIndexAnswer::Absent, _) => round.votes.record(src.absence),
-                        (ChainIndexAnswer::Unknown, _) => {}
+                        ChainIndexAnswer::Absent => round.votes.record(src.absence),
+                        ChainIndexAnswer::Unknown => {}
                     }
+                    // BananaBlocks' `known`: a presence word, as a
+                    // broadcaster's `SEEN` is.
+                    round.index_word = reply.known_by;
                     continue;
                 }
                 match self.probe(src, txid).await {
@@ -795,7 +809,8 @@ impl BroadcastVerifier {
             }
             let settled = round.held
                 || round.broadcaster_evidence.is_some()
-                || round.third_party_evidence.is_some();
+                || round.third_party_evidence.is_some()
+                || round.index_word.is_some();
             last = Some(round);
 
             // A store holding (or having seen) the tx settles the verdict
@@ -830,13 +845,22 @@ impl BroadcastVerifier {
             } else if let Some((evidence, provider)) = round.broadcaster_evidence {
                 report.evidence = Some(evidence);
                 report.evidence_provider = provider;
+            } else if round.index_word.is_some() {
+                // BananaBlocks' `known`: seen, credited as the network's
+                // word, never as the chain's.
+                report.evidence = Some(NetworkEvidence::Seen);
+                report.evidence_provider = BROADCAST_PROVIDER_NETWORK;
             }
+            report.chain_index_by = round.index_word;
+            // Like a broadcaster's `SEEN`, BananaBlocks' `known` does not
+            // stand against the two voting indexes' clean 404s.
             report.network_absent = round.votes.chain_index
                 && round.broadcaster_answered
                 && round.third_party_evidence.is_none();
             let held = round.held
                 || round.broadcaster_evidence.is_some()
-                || round.third_party_evidence.is_some();
+                || round.third_party_evidence.is_some()
+                || round.index_word.is_some();
             report.verification = if held {
                 BroadcastVerification::Confirmed
             } else if round.votes.is_definitive() {
@@ -909,23 +933,31 @@ impl BroadcastVerifier {
     }
 
     /// The chain indexes' one answer for `txid` (Rule 28, C1), with the
-    /// index that gave a positive.
+    /// index that gave it.
     ///
-    /// The start rotates. A positive from the index that gives it ends the
-    /// question (the others are not asked). Absence is every index whose
-    /// 404 is a verdict answering 404 (WhatsOnChain and Bitails; BananaBlocks'
-    /// `unknown` is a gap, never a vote, #50); an index that could not look
-    /// (a fault, a 429, a timeout, a status that is neither 200 nor 404)
-    /// leaves the answer `Unknown`, whatever the others said. With one
-    /// voting index configured its answer is the answer.
-    async fn ask_chain_indexes(&self, txid: &str) -> (ChainIndexAnswer, Option<&'static str>) {
+    /// The start rotates. Chain evidence from the index that gives it ends
+    /// the question (the others are not asked): a `mined`, or a voting
+    /// index's mempool hit. BananaBlocks' `known` is not chain evidence: it
+    /// is kept as a presence word (`known_by`) and the others are still
+    /// asked, so a `mined` from any of them outranks it. Absence is every
+    /// index whose 404 is a verdict answering 404 (WhatsOnChain and Bitails;
+    /// BananaBlocks' `unknown` is a gap, never a vote, #50); an index that
+    /// could not look (a fault, a 429, a timeout, a status that is neither
+    /// 200 nor 404) leaves the answer `Unknown`, whatever the others said.
+    /// With one voting index configured its answer is the answer.
+    async fn ask_chain_indexes(&self, txid: &str) -> ChainIndexReply {
+        let mut reply = ChainIndexReply {
+            answer: ChainIndexAnswer::Unknown,
+            by: None,
+            known_by: None,
+        };
         let indexes: Vec<&StatusSource> = self
             .sources
             .iter()
             .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
             .collect();
         if indexes.is_empty() {
-            return (ChainIndexAnswer::Unknown, None);
+            return reply;
         }
         let start = self.rotation.fetch_add(1, Ordering::Relaxed) % indexes.len();
         let mut absent = 0;
@@ -938,8 +970,14 @@ impl BroadcastVerifier {
                 voters += 1;
             }
             match self.probe(src, txid).await {
+                Presence::Present(NetworkEvidence::Seen) if !votes => {
+                    reply.known_by = Some(src.name);
+                }
                 Presence::Present(evidence) => {
-                    return (ChainIndexAnswer::Present(evidence), Some(src.name))
+                    reply.answer = ChainIndexAnswer::Present(evidence);
+                    reply.by = Some(src.name);
+                    reply.known_by = None;
+                    return reply;
                 }
                 Presence::Absent if votes => absent += 1,
                 Presence::Absent | Presence::Held | Presence::Fatal | Presence::Unknown => {
@@ -950,10 +988,9 @@ impl BroadcastVerifier {
             }
         }
         if voters > 0 && absent == voters && !could_not_look {
-            (ChainIndexAnswer::Absent, None)
-        } else {
-            (ChainIndexAnswer::Unknown, None)
+            reply.answer = ChainIndexAnswer::Absent;
         }
+        reply
     }
 
     /// Probe a single source for a txid's presence: BananaBlocks through
@@ -1010,6 +1047,21 @@ struct RoundResult {
     broadcaster_evidence: Option<(NetworkEvidence, &'static str)>,
     /// A store we did not submit to reported network-level presence.
     third_party_evidence: Option<NetworkEvidence>,
+    /// The chain index whose presence word (BananaBlocks' `known`) is all
+    /// the indexes gave: seen, never chain evidence.
+    index_word: Option<&'static str>,
+}
+
+/// The chain indexes' one answer (`BroadcastVerifier::ask_chain_indexes`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChainIndexReply {
+    /// Chain evidence, every voting index's clean 404, or neither.
+    answer: ChainIndexAnswer,
+    /// The index whose chain evidence `answer` is.
+    by: Option<&'static str>,
+    /// When `answer` is not chain evidence: the index that answered with a
+    /// presence word only (BananaBlocks' `known`).
+    known_by: Option<&'static str>,
 }
 
 /// Read a 200 body according to the source kind.
@@ -2281,13 +2333,78 @@ mod tests {
         assert_eq!(report.chain_index_by, Some("bananablocks"));
         assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_CHAIN);
 
-        // Known without a block: seen on the network.
+        // Known without a block: a presence word, never chain evidence
+        // (the review's L4; this half answered `Present(Seen)` by
+        // BananaBlocks before it).
         let known = chain_index_fixture(200, &format!(r#"{{"txid":"{TXID}"}}"#)).await;
         let verifier = verifier_with(vec![chain_index("whatsonchain", &limited.base)])
             .with_bananablocks(&known.base);
-        let (answer, by) = verifier.ask_chain_indexes(TXID).await;
-        assert_eq!(answer, ChainIndexAnswer::Present(NetworkEvidence::Seen));
-        assert_eq!(by, Some("bananablocks"));
+        let reply = verifier.ask_chain_indexes(TXID).await;
+        assert_eq!(reply.answer, ChainIndexAnswer::Unknown);
+        assert_eq!(reply.by, None);
+        assert_eq!(reply.known_by, Some("bananablocks"));
+    }
+
+    /// L4 of the #50 review: BananaBlocks' `known` is presence, never a
+    /// proof and never chain evidence. A `mined` from another index
+    /// outranks it whichever is asked first, and is named; BananaBlocks'
+    /// `known` alone confirms the broadcast as a broadcaster's `SEEN` does,
+    /// credited as the network's word (never the chain's), named in
+    /// `chain_index_by`, and it does not stand against WhatsOnChain's and
+    /// Bitails' two clean 404s. Red at the base: the `known` ended the
+    /// question as chain evidence, so WhatsOnChain's `mined` behind it was
+    /// never asked, and the chain was credited.
+    #[tokio::test]
+    async fn a_mined_outranks_bananablocks_known_and_known_is_never_chain_evidence() {
+        let known = chain_index_fixture(200, &format!(r#"{{"txid":"{TXID}"}}"#)).await;
+        let mined = chain_index_fixture(
+            200,
+            &format!(r#"{{"txid":"{TXID}","confirmations":3,"blockheight":972169}}"#),
+        )
+        .await;
+        let verifier = verifier_with(vec![chain_index("whatsonchain", &mined.base)])
+            .with_bananablocks(&known.base);
+        for _ in 0..2 {
+            let report = verifier.verify_report(TXID).await;
+            assert_eq!(
+                report.chain_index,
+                ChainIndexAnswer::Present(NetworkEvidence::Mined),
+                "every start of the rotation"
+            );
+            assert_eq!(report.chain_index_by, Some("whatsonchain"));
+            assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_CHAIN);
+        }
+        assert_eq!(mined.total(), 2, "the mined index was asked behind known");
+        assert_eq!(
+            known.total(),
+            1,
+            "one start of the rotation asked known first"
+        );
+
+        let broadcaster = mock_status_server(StatusCode::NOT_FOUND).await;
+        let woc_absent = chain_index_fixture(404, "").await;
+        let bitails_absent = chain_index_fixture(404, "").await;
+        let verifier = verifier_with(vec![
+            source("broadcaster", &broadcaster, AbsenceAuthority::Broadcaster),
+            chain_index("whatsonchain", &woc_absent.base),
+            source_kind(
+                "bitails",
+                &bitails_absent.base,
+                AbsenceAuthority::ChainIndex,
+                SourceKind::BitailsIndex,
+            ),
+        ])
+        .with_bananablocks(&known.base);
+        let report = verifier.verify_report(TXID).await;
+        assert_eq!(report.verification, BroadcastVerification::Confirmed);
+        assert_eq!(report.evidence, Some(NetworkEvidence::Seen));
+        assert_eq!(report.evidence_provider, BROADCAST_PROVIDER_NETWORK);
+        assert_eq!(report.chain_index, ChainIndexAnswer::Absent);
+        assert_eq!(report.chain_index_by, Some("bananablocks"));
+        assert!(
+            report.network_absent,
+            "a presence word stood against two clean 404s"
+        );
     }
 
     /// #50, the rule's rows at the chain indexes: BananaBlocks' 404 is a
@@ -2313,8 +2430,8 @@ mod tests {
         .with_bananablocks(&bb_gap.base);
         for _ in 0..3 {
             assert_eq!(
-                two_clean.ask_chain_indexes(TXID).await,
-                (ChainIndexAnswer::Absent, None),
+                two_clean.ask_chain_indexes(TXID).await.answer,
+                ChainIndexAnswer::Absent,
                 "every start of the rotation"
             );
         }
@@ -2330,15 +2447,19 @@ mod tests {
         ])
         .with_bananablocks(&bb_gap.base);
         assert_eq!(
-            one_and_a_fault.ask_chain_indexes(TXID).await,
-            (ChainIndexAnswer::Unknown, None)
+            one_and_a_fault.ask_chain_indexes(TXID).await.answer,
+            ChainIndexAnswer::Unknown
         );
 
         // BananaBlocks alone is never absence.
         let alone = verifier_with(vec![]).with_bananablocks(&bb_gap.base);
         assert_eq!(
             alone.ask_chain_indexes(TXID).await,
-            (ChainIndexAnswer::Unknown, None)
+            ChainIndexReply {
+                answer: ChainIndexAnswer::Unknown,
+                by: None,
+                known_by: None,
+            }
         );
     }
 
