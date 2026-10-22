@@ -26,7 +26,11 @@ pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
 /// each lead is received only after its bytes hash to its txid and its
 /// proof meets the header service (`receive`). An empty set is every
 /// answering explorer's empty list; no explorer answering at all is "could
-/// not look", an error, never an empty list.
+/// not look", an error, never an empty list. An explorer whose list was cut
+/// short (toolbox 0.12.0's `UtxoLeads::partial`: the page cap of
+/// `LEAD_PAGES_MAX` pages of 1000, or a later page it could not read) still
+/// answered: its leads are leads like any other, and the sync says it was
+/// cut short (`cut_short_note`).
 async fn unspent_at<V: WalletServices>(services: &V, script: &[u8]) -> Result<UtxoLeads> {
     let started = Instant::now();
     let found = services
@@ -49,6 +53,36 @@ async fn unspent_at<V: WalletServices>(services: &V, script: &[u8]) -> Result<Ut
         ));
     }
     Ok(found)
+}
+
+/// What the scan's summary says when a list was cut short: `None` when
+/// every answering explorer listed everything it had. A sync whose every
+/// answering list was cut short is not a full look: the outputs past the
+/// cap are reached by a later sync only if the explorers' ordering brings
+/// them into the pages read, which nothing promises.
+fn cut_short_note(scan: &UtxoLeads) -> Option<String> {
+    let cut = scan
+        .answered
+        .iter()
+        .filter(|name| scan.partial.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    if cut.is_empty() {
+        return None;
+    }
+    let mut note = format!(
+        "{} explorers answered ({} cut short: {})",
+        scan.answered.len(),
+        cut.len(),
+        cut.join("+")
+    );
+    if cut.len() == scan.answered.len() {
+        note.push_str(
+            "; every answering list was cut short, so this was not a full look: \
+             an output past the cap is not promised to a later sync",
+        );
+    }
+    Some(note)
 }
 
 /// The explorers that could not look, `name: fault`, for a message.
@@ -109,37 +143,36 @@ async fn sync_leads<V: WalletServices>(
         address = %address,
         listed = unspent.len(),
         listed_by = %listed_by,
+        cut_short = %scan.partial.join("+"),
         could_not_look = %faults_of(&scan),
         "the deposit address's unspent leads"
     );
 
     let known = known_outpoints(ctx).await?;
 
-    let mut refused = 0u32;
-    let mut received = 0u32;
-    let mut skipped = 0u32;
-    let mut sats_in = 0u64;
+    let mut tally = Tally::default();
 
     for u in unspent {
         let outpoint = format!("{}.{}", u.txid, u.vout);
         if known.contains(&outpoint) {
-            skipped += 1;
+            tally.skipped += 1;
             continue;
         }
         // A lead, not a verdict: `receive` binds the bytes to the txid and
         // checks the proof against the header service before it stores
-        // anything, whichever explorer listed it and however many did.
+        // anything, whichever explorer listed it and however many did; a
+        // lead from a list cut short is no different.
         match receive::receive_txid_from(ctx, explorers, services, &u.txid, Some(u.vout)).await {
             Ok((_, true)) => {
-                received += 1;
-                sats_in += u.satoshis.unwrap_or(0);
+                tally.received += 1;
+                tally.sats_in += u.satoshis.unwrap_or(0);
             }
             Ok((_, false)) => {
-                refused += 1;
+                tally.refused += 1;
                 eprintln!("not accepted: {}", outpoint);
             }
             Err(e) => {
-                refused += 1;
+                tally.refused += 1;
                 eprintln!("failed {}: {:#}", outpoint, e);
             }
         }
@@ -158,11 +191,9 @@ async fn sync_leads<V: WalletServices>(
     // Missing from the leads is never itself "spent" (#50): the leads may
     // be one explorer's word, and an explorer that could not look listed
     // nothing, so a missing outpoint is only a question for the probe, and
-    // what it cannot decide is "could not decide".
-    let mut reconciled = 0u32;
-    let mut reconcile_checked = 0u32;
-    let mut spent_unproven = 0u32;
-    let mut unknown = 0u32;
+    // what it cannot decide is "could not decide". A list cut short
+    // (`scan.partial`) leaves out what lies past its pages, and that too is
+    // only a question for the probe.
     if reconcile_spent {
         let chain_unspent: HashSet<String> = unspent
             .iter()
@@ -180,21 +211,21 @@ async fn sync_leads<V: WalletServices>(
             let Ok(vout) = vout.parse::<u32>() else {
                 continue;
             };
-            reconcile_checked += 1;
+            tally.reconcile_checked += 1;
             let script = stored_locking_script(pool, txid, vout).await;
             let answer =
                 probe_input_spend(explorers, services, txid, vout, script.as_deref()).await;
             match reconcile_step(&answer) {
                 ReconcileStep::Keep => {}
                 ReconcileStep::LeaveUnproven => {
-                    spent_unproven += 1;
+                    tally.spent_unproven += 1;
                     eprintln!(
                         "spent by a transaction we hold no proof of yet (left alone): {}",
                         op
                     );
                 }
                 ReconcileStep::LeaveUnknown => {
-                    unknown += 1;
+                    tally.unknown += 1;
                     eprintln!(
                         "could not decide (no spender named and not in an unspent set, or could not look): {}",
                         op
@@ -220,7 +251,7 @@ async fn sync_leads<V: WalletServices>(
                         .await
                     {
                         Ok(_) => {
-                            reconciled += 1;
+                            tally.reconciled += 1;
                             eprintln!("reconciled spent: {}", op);
                         }
                         Err(e) => eprintln!("relinquish failed {}: {}", op, e),
@@ -231,56 +262,84 @@ async fn sync_leads<V: WalletServices>(
     }
 
     if ctx.json_output {
-        println!(
-            "{}",
-            serde_json::json!({
-                "address": address,
-                "unspent_on_chain": unspent.len(),
-                "unspent_listed_by": scan.answered,
-                "unspent_could_not_look": scan.faults.iter().map(|(name, _)| name).collect::<Vec<_>>(),
-                "unspent_leads": unspent
-                    .iter()
-                    .map(|u| serde_json::json!({
-                        "outpoint": format!("{}.{}", u.txid, u.vout),
-                        "listed_by": u.listed_by,
-                    }))
-                    .collect::<Vec<_>>(),
-                "received": received,
-                "refused": refused,
-                "skipped": skipped,
-                "sats_received": sats_in,
-                "reconcile_checked": reconcile_checked,
-                "reconciled_spent": reconciled,
-                "spent_unproven": spent_unproven,
-                "unknown": unknown,
-            })
-        );
+        println!("{}", json_report(address, &scan, &tally));
     } else {
-        println!(
-            "Sync complete: {} on chain (listed by {}), {} new received ({} sats), {} already known",
-            unspent.len(),
-            listed_by,
-            received,
-            sats_in,
-            skipped
-        );
+        println!("{}", summary_line(&scan, &tally));
         // A money verb must never finish SILENT about what it did (or did not)
         // touch: "checked 0" (nothing qualified) and "checked 12, relinquished
         // 0" (all verified live) are different facts a drain decision rests on.
         if reconcile_spent {
             println!(
                 "Reconcile: {} outpoint(s) chain-checked, {} relinquished as spent (proven), {} spent but not proven yet (left alone), {} undecided (left alone; run cleanup-abandoned)",
-                reconcile_checked, reconciled, spent_unproven, unknown
+                tally.reconcile_checked, tally.reconciled, tally.spent_unproven, tally.unknown
             );
         }
     }
 
-    if refused > 0 {
+    if tally.refused > 0 {
         return Err(anyhow!(
-            "sync refused {refused} outpoint(s); other outpoints were processed"
+            "sync refused {} outpoint(s); other outpoints were processed",
+            tally.refused
         ));
     }
     Ok(())
+}
+
+/// What one sync did, counted.
+#[derive(Debug, Default)]
+struct Tally {
+    received: u32,
+    refused: u32,
+    skipped: u32,
+    sats_in: u64,
+    reconcile_checked: u32,
+    reconciled: u32,
+    spent_unproven: u32,
+    unknown: u32,
+}
+
+/// `sync --json`: the scan (who listed, who could not look, whose list was
+/// cut short, each lead) and what was done with it.
+fn json_report(address: &str, scan: &UtxoLeads, tally: &Tally) -> serde_json::Value {
+    serde_json::json!({
+        "address": address,
+        "unspent_on_chain": scan.leads.len(),
+        "unspent_listed_by": scan.answered,
+        "unspent_could_not_look": scan.faults.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+        "unspent_partial": scan.partial,
+        "unspent_leads": scan.leads
+            .iter()
+            .map(|u| serde_json::json!({
+                "outpoint": format!("{}.{}", u.txid, u.vout),
+                "listed_by": u.listed_by,
+            }))
+            .collect::<Vec<_>>(),
+        "received": tally.received,
+        "refused": tally.refused,
+        "skipped": tally.skipped,
+        "sats_received": tally.sats_in,
+        "reconcile_checked": tally.reconcile_checked,
+        "reconciled_spent": tally.reconciled,
+        "spent_unproven": tally.spent_unproven,
+        "unknown": tally.unknown,
+    })
+}
+
+/// The human summary of the scan and what was received.
+fn summary_line(scan: &UtxoLeads, tally: &Tally) -> String {
+    let mut line = format!(
+        "Sync complete: {} on chain (listed by {}), {} new received ({} sats), {} already known",
+        scan.leads.len(),
+        scan.answered.join("+"),
+        tally.received,
+        tally.sats_in,
+        tally.skipped
+    );
+    if let Some(note) = cut_short_note(scan) {
+        line.push_str("; ");
+        line.push_str(&note);
+    }
+    line
 }
 
 /// What `--reconcile-spent` does with one probe answer.
@@ -351,8 +410,9 @@ mod tests {
 
     use crate::commands::receive::tests::{stub, stub_context};
     use crate::test_support::{raw_tx, txid_of, Fixture};
+    use bsv_wallet_toolbox::services::mock::MockWalletServicesBuilder;
     use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
-    use bsv_wallet_toolbox::{GetMerklePathResult, UtxoLead};
+    use bsv_wallet_toolbox::{GetMerklePathResult, GetUtxoStatusResult, UtxoLead};
 
     /// The toolbox's `get_utxo_leads`, answered: `answered` listed
     /// `outputs` (`txid`, `vout`, satoshis, who listed it) and `faults`
@@ -377,22 +437,26 @@ mod tests {
                 .iter()
                 .map(|f| (f.to_string(), "Rate limited".to_string()))
                 .collect(),
+            ..Default::default()
         }
     }
 
     /// A merkle path for `txid` as the services return it after its root
     /// met the header service.
     fn proved(txid: &str) -> MockWalletServices {
+        proved_by(MockWalletServices::builder(), txid).build()
+    }
+
+    /// `builder` with a merkle path for `txid` (as [`proved`]).
+    fn proved_by(builder: MockWalletServicesBuilder, txid: &str) -> MockWalletServicesBuilder {
         let path = bsv_sdk::transaction::MerklePath::from_coinbase_txid(txid, 900_000).to_hex();
-        MockWalletServices::builder()
-            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-                name: Some("Services".to_string()),
-                merkle_path: Some(path),
-                header: None,
-                error: None,
-                notes: vec![],
-            }))
-            .build()
+        builder.get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+            name: Some("Services".to_string()),
+            merkle_path: Some(path),
+            header: None,
+            error: None,
+            notes: vec![],
+        }))
     }
 
     /// A stub context whose header service takes the root of a proof at
@@ -514,9 +578,12 @@ mod tests {
     }
 
     /// M1: no explorer answered the scan (WhatsOnChain, Bitails and
-    /// BananaBlocks all could not look: the toolbox's `NoExplorerAnswered`):
-    /// the sync is an error that says "could not look", never an empty
-    /// sync, and nothing is received or probed on it. (Was
+    /// BananaBlocks all could not look): the sync is an error that says
+    /// "could not look", never an empty sync, and nothing is received or
+    /// probed on it. Both shapes come through the `WalletServices` trait
+    /// (`unspent_at`): the toolbox's `Error::NoExplorerAnswered` (the mock
+    /// derives it from an unspent list that could not be read), and an
+    /// answer naming no explorer that answered. (Was
     /// `no_explorer_giving_the_set_is_could_not_look_never_empty`, on the
     /// verdict ladder.)
     #[tokio::test]
@@ -524,18 +591,168 @@ mod tests {
         let ctx = stub_context().await;
         let fixture = Fixture::start(&[], 500).await;
         let explorers = Explorers::at(Some(&fixture.base), Some(&fixture.base), None);
-        // The mock answers `get_utxo_leads` with the trait's default, the
-        // toolbox's `Error::NoExplorerAnswered`.
-        let none = MockWalletServices::new();
-        for reconcile in [false, true] {
-            let err = run_from(&ctx, reconcile, &explorers, &none)
-                .await
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("could not look"), "{err}");
+        let erred = MockWalletServices::builder()
+            .get_utxo_status_response(MockResponse::Error(
+                MockErrorKind::ServiceError,
+                "Rate limited".to_string(),
+            ))
+            .build();
+        let unanswered = MockWalletServices::builder()
+            .get_utxo_leads_response(MockResponse::Success(leads(
+                &[],
+                &["WhatsOnChain", "Bitails", "BananaBlocks"],
+                &[],
+            )))
+            .build();
+        for none in [&erred, &unanswered] {
+            for reconcile in [false, true] {
+                let err = run_from(&ctx, reconcile, &explorers, none)
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains("could not look"), "{err}");
+            }
+            assert_eq!(none.call_count("get_utxo_leads"), 2);
         }
+        assert!(
+            erred
+                .get_utxo_leads(&"00".repeat(25), None)
+                .await
+                .is_err_and(|e| matches!(e, bsv_wallet_toolbox::Error::NoExplorerAnswered { .. })),
+            "the trait's own could-not-look"
+        );
         assert_eq!(fixture.total(), 0, "nothing was received or probed");
         assert!(known_outpoints(&ctx).await.unwrap().is_empty());
+    }
+
+    /// 6f958f3 (toolbox `UtxoLeads::partial`): a list cut short is still a
+    /// list. Through the trait end to end (`run_from`, `unspent_at`, the
+    /// mock's `get_utxo_leads_response`): BananaBlocks' list was cut short
+    /// at the page cap and is the only one naming the payment;
+    /// WhatsOnChain listed everything it had (nothing). The lead is
+    /// received after its bytes and proof check, as any other.
+    #[tokio::test]
+    async fn a_cut_short_explorers_leads_are_received_through_the_trait() {
+        let ctx = headed_context().await;
+        let (raw, txid) = payment(&ctx, 0x35, 1900);
+        let mut scan = leads(
+            &["WhatsOnChain", "BananaBlocks"],
+            &["Bitails"],
+            &[(&txid, 0, 1900, &["BananaBlocks"])],
+        );
+        scan.partial = vec!["BananaBlocks".to_string()];
+        let services = proved_by(MockWalletServices::builder(), &txid)
+            .get_utxo_leads_response(MockResponse::Success(scan))
+            .build();
+        let woc = Fixture::start(&[], 404).await;
+        let hex_route = format!("/tx/{txid}/hex");
+        let bb = Fixture::start(&[(&hex_route, 200, &hex::encode(&raw))], 404).await;
+        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
+
+        run_from(&ctx, false, &explorers, &services)
+            .await
+            .expect("the sync completes on a list cut short");
+        assert_eq!(services.call_count("get_utxo_leads"), 1);
+        assert_eq!(bb.hits(), vec![hex_route]);
+        let known = known_outpoints(&ctx).await.unwrap();
+        assert_eq!(known, HashSet::from([format!("{txid}.0")]));
+    }
+
+    /// An explorer's unspent list through the trait as the mock derives it
+    /// when no leads are set (from `get_utxo_status_response`'s details):
+    /// the one lead is received, listed by the provider that answered.
+    #[tokio::test]
+    async fn a_list_through_the_trait_is_received() {
+        let ctx = headed_context().await;
+        let (raw, txid) = payment(&ctx, 0x36, 2100);
+        let services = proved_by(MockWalletServices::builder(), &txid)
+            .get_utxo_status_response(MockResponse::Success(GetUtxoStatusResult {
+                name: "WhatsOnChain".to_string(),
+                status: "success".to_string(),
+                is_utxo: Some(true),
+                details: vec![bsv_wallet_toolbox::UtxoDetail {
+                    txid: txid.clone(),
+                    index: 0,
+                    satoshis: 2100,
+                    height: Some(900_000),
+                }],
+                error: None,
+            }))
+            .build();
+        let beef_route = format!("/tx/{txid}/beef");
+        let woc = Fixture::start(&[], 404).await;
+        let hex_route = format!("/tx/{txid}/hex");
+        let bb = Fixture::start(&[(&hex_route, 200, &hex::encode(&raw))], 404).await;
+        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
+
+        run_from(&ctx, false, &explorers, &services)
+            .await
+            .expect("the sync completes");
+        assert_eq!(woc.hits(), vec![beef_route]);
+        let known = known_outpoints(&ctx).await.unwrap();
+        assert_eq!(known, HashSet::from([format!("{txid}.0")]));
+    }
+
+    /// `--json`'s `unspent_partial` names each explorer whose list was cut
+    /// short (empty when none was), beside who answered and who could not.
+    #[test]
+    fn unspent_partial_names_the_cut_short_explorer() {
+        let txid = "ab".repeat(32);
+        let mut scan = leads(
+            &["WhatsOnChain", "BananaBlocks"],
+            &["Bitails"],
+            &[(&txid, 0, 1000, &["WhatsOnChain", "BananaBlocks"])],
+        );
+        let full = json_report("addr", &scan, &Tally::default());
+        assert_eq!(full["unspent_partial"], serde_json::json!([]));
+        scan.partial = vec!["BananaBlocks".to_string()];
+        let report = json_report("addr", &scan, &Tally::default());
+        assert_eq!(
+            report["unspent_partial"],
+            serde_json::json!(["BananaBlocks"])
+        );
+        assert_eq!(
+            report["unspent_listed_by"],
+            serde_json::json!(["WhatsOnChain", "BananaBlocks"])
+        );
+        assert_eq!(
+            report["unspent_could_not_look"],
+            serde_json::json!(["Bitails"])
+        );
+        assert_eq!(report["unspent_on_chain"], 1);
+    }
+
+    /// The summary line says how many answering explorers were cut short,
+    /// and when every one was, that this was not a full look.
+    #[test]
+    fn the_summary_line_says_a_list_was_cut_short() {
+        let tally = Tally {
+            received: 1,
+            sats_in: 1000,
+            ..Default::default()
+        };
+        let mut scan = leads(&["WhatsOnChain", "BananaBlocks"], &["Bitails"], &[]);
+        let line = summary_line(&scan, &tally);
+        assert_eq!(
+            line,
+            "Sync complete: 0 on chain (listed by WhatsOnChain+BananaBlocks), 1 new received (1000 sats), 0 already known"
+        );
+
+        scan.partial = vec!["BananaBlocks".to_string()];
+        let line = summary_line(&scan, &tally);
+        assert!(
+            line.ends_with("; 2 explorers answered (1 cut short: BananaBlocks)"),
+            "{line}"
+        );
+        assert!(!line.contains("not a full look"), "{line}");
+
+        scan.partial = vec!["WhatsOnChain".to_string(), "BananaBlocks".to_string()];
+        let line = summary_line(&scan, &tally);
+        assert!(
+            line.contains("2 explorers answered (2 cut short: WhatsOnChain+BananaBlocks)"),
+            "{line}"
+        );
+        assert!(line.contains("not a full look"), "{line}");
     }
 
     /// M1: a lead is not a verdict. A lead one explorer listed is received
