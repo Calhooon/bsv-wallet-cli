@@ -161,6 +161,10 @@ async function main() {
     const passed = results.filter(r => r.status === 'PASS').length;
     const total = results.length;
     const netCost = funderBalanceBefore - funderBalanceAfter;
+    // Sats a kept wallet still holds are stranded, not spent: the key is in
+    // its directory (teardown named it). The budget judges what was spent.
+    const stranded = (walletA?.left || 0) + (walletB?.left || 0);
+    const spent = netCost - stranded;
 
     console.log('');
     console.log('================================================================');
@@ -180,6 +184,7 @@ async function main() {
     console.log(`  Funder before: ${funderBalanceBefore.toLocaleString()} sats`);
     console.log(`  Funder after:  ${funderBalanceAfter.toLocaleString()} sats`);
     console.log(`  Net cost:      ${netCost.toLocaleString()} sats`);
+    if (stranded) console.log(`  Stranded:      ${stranded.toLocaleString()} sats in kept wallets (recoverable); spent: ${spent.toLocaleString()} sats`);
     console.log(`  Scenario leak: ${totalLeak.toLocaleString()} sats (sum of per-scenario A+B deltas)`);
     console.log('================================================================');
 
@@ -187,8 +192,12 @@ async function main() {
     // Expected: ~1,300 sats (fees) + ~2,000 (pending internalized outputs not yet spendable).
     // Anything over 5K indicates a real leak.
     const MAX_ACCEPTABLE_COST = 5_000;
-    if (netCost > MAX_ACCEPTABLE_COST) {
-      console.log(`  BUDGET EXCEEDED: net cost ${netCost} > max ${MAX_ACCEPTABLE_COST} sats`);
+    if (spent > MAX_ACCEPTABLE_COST) {
+      console.log(`  BUDGET EXCEEDED: spent ${spent} > max ${MAX_ACCEPTABLE_COST} sats`);
+      process.exit(1);
+    }
+    if (stranded) {
+      console.log(`  STRANDED: ${stranded} sats remain in kept wallets; recover them before the next run`);
       process.exit(1);
     }
 
