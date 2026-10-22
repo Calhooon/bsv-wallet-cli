@@ -24,6 +24,11 @@ pub type HeaderedRoute<'a> = (&'a str, u16, &'a str, &'a [(&'a str, &'a str)]);
 /// A local HTTP server answering a fixed table of `path -> (status, body)`.
 /// A path (with its query) not in the table gets `fallback`. Every request
 /// is recorded.
+///
+/// Its port is never handed to another fixture in the process (see
+/// [`hold_port`]): the toolbox keys a provider's rate gate by its base URL
+/// (`BananaBlocks::with_base`, `RateGate::shared`), so a recycled port would
+/// carry one test's 429 or spent token bucket into the next.
 pub struct Fixture {
     /// `http://127.0.0.1:<port>`, no trailing slash.
     pub base: String,
@@ -67,6 +72,7 @@ impl Fixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
+        let listener = hold_port(listener);
         let addr: SocketAddr = listener.local_addr().expect("local addr");
         tokio::spawn(async move {
             axum::serve(listener, app).await.ok();
@@ -98,6 +104,22 @@ impl Fixture {
     pub fn total(&self) -> usize {
         self.hits().len()
     }
+}
+
+/// The listening sockets of every fixture this process started, held
+/// open for the process's life (no one accepts on them once their test's
+/// runtime is gone), so the OS never hands a fixture's port to a later one.
+static HELD_PORTS: Mutex<Vec<std::net::TcpListener>> = Mutex::new(Vec::new());
+
+/// `listener`, with a duplicate of its socket kept in [`HELD_PORTS`].
+fn hold_port(listener: tokio::net::TcpListener) -> tokio::net::TcpListener {
+    let std = listener.into_std().expect("std listener");
+    let held = std.try_clone().expect("a duplicate of the listener");
+    HELD_PORTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(held);
+    tokio::net::TcpListener::from_std(std).expect("tokio listener")
 }
 
 async fn serve(
@@ -247,5 +269,24 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Markers {
         if !marked.marker.is_empty() {
             self.0.lock().unwrap().push(marked);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// L5 of the #50 review: a fixture's port stays bound after its test's
+    /// runtime is gone, so no later fixture (and no gate the toolbox keys by
+    /// a fixture's base URL) is handed it. Red without `hold_port`: the
+    /// bind succeeds once the runtime has dropped the server.
+    #[test]
+    fn a_fixtures_port_is_never_recycled() {
+        let addr = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { Fixture::start(&[], 404).await.base });
+        let addr = addr.trim_start_matches("http://").to_string();
+        let again = std::net::TcpListener::bind(&addr);
+        assert!(again.is_err(), "{addr} was free for another fixture");
     }
 }
