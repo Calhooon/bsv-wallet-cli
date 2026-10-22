@@ -10,7 +10,7 @@
 //! holds it for the break-glass reads the CLI still makes itself:
 //!
 //! - who spent an outpoint (the spend probe's step 1): WhatsOnChain's
-//!   `/tx/{txid}/{vout}/spent` and BananaBlocks' `/txo/{txid}/{vout}/spend`,
+//!   `/tx/{txid}/{vout}/spent` and BananaBlocks' `/txo/{txid}/{vout}`,
 //!   a rotating start, a fault moving to the next rung at once;
 //! - a payment's bytes for `receive`: WhatsOnChain's `/tx/{txid}/beef`, then
 //!   BananaBlocks' `/tx/{txid}/hex` (bytes that hash to the txid);
@@ -30,8 +30,9 @@ use bsv_wallet_toolbox::services::providers::whatsonchain::WOC_API_KEY_HEADER;
 use bsv_wallet_toolbox::services::providers::{
     BananaBlocks, OutpointSpend, RateGate, BANANABLOCKS_NAME,
 };
+use bsv_wallet_toolbox::services::traits::convert_script_hash;
 use bsv_wallet_toolbox::services::GetRawTxResult;
-use bsv_wallet_toolbox::{Chain, ServicesOptions};
+use bsv_wallet_toolbox::{Chain, GetUtxoStatusOutputFormat, ServicesOptions};
 use reqwest::StatusCode;
 
 /// The name WhatsOnChain answers under in this module's results and logs.
@@ -178,11 +179,15 @@ impl Explorers {
     /// knows no spend (a word, not an answer: it is also what an index
     /// behind, or a parent that does not exist, says). `Err`: could not
     /// look (a 429, a closed rung, a timeout, a 5xx, a malformed body).
+    /// With `script`, BananaBlocks' answer is about the asked output only
+    /// when its `script_pubkey` hashes to the script's hash; another
+    /// script, the empty one included, is a fault.
     pub async fn spender(
         &self,
         rung: Rung,
         txid: &str,
         vout: u32,
+        script: Option<&[u8]>,
     ) -> Result<Option<String>, String> {
         match rung {
             Rung::WhatsOnChain => {
@@ -217,16 +222,30 @@ impl Explorers {
                     return Err(format!("{PROVIDER_BANANABLOCKS}: off"));
                 };
                 let started = Instant::now();
-                let answer = bb.get_spend(txid, vout).await;
+                let answer = bb.get_txo(txid, vout).await;
                 let status = match &answer {
                     Ok(_) => "200".to_string(),
                     Err(e) => fault_status(e),
                 };
                 log_call(PROVIDER_BANANABLOCKS, "spend", &status, started);
-                match answer {
-                    Ok(OutpointSpend::SpentBy(spender)) => Ok(Some(spender.to_ascii_lowercase())),
-                    Ok(OutpointSpend::Unspent) => Ok(None),
-                    Err(e) => Err(format!("{PROVIDER_BANANABLOCKS}: {e}")),
+                let txo = answer.map_err(|e| format!("{PROVIDER_BANANABLOCKS}: {e}"))?;
+                if let Some(script) = script {
+                    let asked = convert_script_hash(
+                        &hex::encode(script),
+                        Some(GetUtxoStatusOutputFormat::Script),
+                    )
+                    .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: {e}"))?;
+                    if txo.script_hash != asked {
+                        return Err(format!(
+                            "{PROVIDER_BANANABLOCKS}: txo {txid}.{vout}: its script hashes to {}, \
+                             not the asked {asked}",
+                            txo.script_hash
+                        ));
+                    }
+                }
+                match txo.spend {
+                    OutpointSpend::SpentBy(spender) => Ok(Some(spender.to_ascii_lowercase())),
+                    OutpointSpend::Unspent => Ok(None),
                 }
             }
         }
@@ -410,36 +429,66 @@ mod tests {
         )
         .await;
         let explorers = Explorers::at(Some(&fixture.base), None, None);
-        let ask = |vout| explorers.spender(Rung::WhatsOnChain, SRC, vout);
+        let ask = |vout| explorers.spender(Rung::WhatsOnChain, SRC, vout, None);
         assert_eq!(ask(0).await, Ok(Some(spender)));
         assert_eq!(ask(1).await, Ok(None));
         assert!(ask(2).await.unwrap_err().contains("names no spender"));
         assert!(ask(3).await.unwrap_err().contains("503"));
     }
 
-    /// BananaBlocks' spend route through the toolbox's provider: the
-    /// recorded bodies of the 2026-10-22 probe.
+    /// BananaBlocks' `/txo/{txid}/{vout}` through the toolbox's provider:
+    /// the recorded shape of the 2026-10-22 probe. With the asked script,
+    /// an output under another script is a fault, never an answer.
     #[tokio::test]
-    async fn bananablocks_spend_route_is_read_through_the_toolbox() {
+    async fn bananablocks_txo_route_is_read_through_the_toolbox() {
         let spender = "cc".repeat(32);
+        let script = crate::test_support::p2pkh([0xdb; 20]);
+        let held = hex::encode(&script);
+        let other = hex::encode(crate::test_support::p2pkh([0xdc; 20]));
         let fixture = Fixture::start(
             &[
                 (
-                    &format!("/txo/{SRC}/0/spend"),
+                    &format!("/txo/{SRC}/0"),
                     200,
-                    &format!(r#"{{"spent":true,"spentTxid":"{spender}"}}"#),
+                    &format!(
+                        r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}","spend_scope":"mempool"}}"#
+                    ),
                 ),
-                (&format!("/txo/{SRC}/1/spend"), 200, r#"{"spent":false}"#),
-                (&format!("/txo/{SRC}/2/spend"), 404, ""),
+                (
+                    &format!("/txo/{SRC}/1"),
+                    200,
+                    &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
+                ),
+                (&format!("/txo/{SRC}/2"), 404, ""),
+                (
+                    &format!("/txo/{SRC}/3"),
+                    200,
+                    &format!(
+                        r#"{{"script_pubkey":"{other}","spent":true,"spent_txid":"{spender}"}}"#
+                    ),
+                ),
+                (
+                    &format!("/txo/{SRC}/4"),
+                    200,
+                    r#"{"script_pubkey":"","spent":false}"#,
+                ),
             ],
             500,
         )
         .await;
         let explorers = Explorers::at(None, Some(&fixture.base), None);
-        let ask = |vout| explorers.spender(Rung::BananaBlocks, SRC, vout);
+        let ask = |vout| explorers.spender(Rung::BananaBlocks, SRC, vout, Some(&script));
         assert_eq!(ask(0).await, Ok(Some(spender)));
         assert_eq!(ask(1).await, Ok(None));
         assert!(ask(2).await.is_err(), "a 404 is a fault, never unspent");
+        assert!(
+            ask(3).await.unwrap_err().contains("not the asked"),
+            "another script is a fault"
+        );
+        assert!(
+            ask(4).await.unwrap_err().contains("not the asked"),
+            "the empty script is a fault"
+        );
     }
 
     /// A 429 is a fault at once, and the rung is skipped without a request
@@ -451,9 +500,9 @@ mod tests {
             Fixture::start_with_headers(&[(&route, 429, "", &[("retry-after", "30")])], 500).await;
         let explorers = Explorers::at(Some(&fixture.base), None, None);
         let started = Instant::now();
-        let first = explorers.spender(Rung::WhatsOnChain, SRC, 0).await;
+        let first = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
         assert!(first.unwrap_err().contains("Rate limited"));
-        let second = explorers.spender(Rung::WhatsOnChain, SRC, 0).await;
+        let second = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
         assert!(second.unwrap_err().contains("Rate limited"));
         assert_eq!(fixture.count(&route), 1, "the closed rung was asked again");
         assert!(
@@ -467,7 +516,7 @@ mod tests {
     async fn the_woc_api_key_is_sent() {
         let fixture = Fixture::start(&[], 404).await;
         let explorers = Explorers::at(Some(&fixture.base), None, Some("k-123".to_string()));
-        let _ = explorers.spender(Rung::WhatsOnChain, SRC, 0).await;
+        let _ = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
         let headers = fixture.headers();
         let sent = headers.last().expect("a request");
         assert_eq!(

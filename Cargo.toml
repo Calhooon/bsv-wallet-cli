@@ -59,7 +59,7 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 # TEMPORARY until 0.12.0 is on crates.io; the captain replaces it with the pin.
-# bsv-wallet-toolbox-rs PR 43 (lane/bananablocks, 1633898): BananaBlocks as the
+# bsv-wallet-toolbox-rs PR 43 (lane/bananablocks, ad3f36c): BananaBlocks as the
 # third explorer, the fault-moves-on rule (bsv-wallet-cli #50).
 [patch.crates-io]
 bsv-wallet-toolbox-rs = { path = "/Volumes/Lanes/worktrees/bsv-wallet-toolbox-rs/bananablocks" }

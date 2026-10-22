@@ -499,8 +499,17 @@ mod tests {
             500,
         )
         .await;
-        let spend_route = format!("/txo/{txid}/1/spend");
-        let bb = Fixture::start(&[(&spend_route, 200, r#"{"spent":false}"#)], 404).await;
+        let spend_route = format!("/txo/{txid}/1");
+        let held = hex::encode(brc29::deposit_script(&ctx.root_key).unwrap());
+        let bb = Fixture::start(
+            &[(
+                &spend_route,
+                200,
+                &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
+            )],
+            404,
+        )
+        .await;
         let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
         let services = MockWalletServices::builder()
             .get_utxo_status_response(listed("WoC", &[(&txid, 0, 1500)]))

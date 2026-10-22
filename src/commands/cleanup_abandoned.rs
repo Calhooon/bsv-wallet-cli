@@ -241,9 +241,10 @@ pub(crate) async fn stored_locking_script(
 /// 1. **Who spent it?** A ladder (bsv-wallet-cli #50, the owner's word of
 ///    2026-10-22: each scanner has its own rate limits, so when one fails
 ///    we go to the next): WhatsOnChain's `/tx/{txid}/{vout}/spent` and
-///    BananaBlocks' `/txo/{txid}/{vout}/spend`, the start rotating between
+///    BananaBlocks' `/txo/{txid}/{vout}`, the start rotating between
 ///    them ([`Explorers::spender_rungs`]). A fault (a 429, a rung closed by
-///    its Retry-After, a timeout, a 5xx, a malformed body) moves to the next
+///    its Retry-After, a timeout, a 5xx, a malformed body, BananaBlocks'
+///    output under another script than `locking_script`) moves to the next
 ///    rung at once. A name from either is a positive and is then checked
 ///    twice, in this order (E1): the named transaction's own bytes must
 ///    hash to the name and hold the outpoint among their inputs, and
@@ -281,7 +282,7 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
     let mut asked: Vec<String> = Vec::new();
     let mut unreadable = false;
     for rung in explorers.spender_rungs() {
-        let spender = match explorers.spender(rung, src, vout).await {
+        let spender = match explorers.spender(rung, src, vout, locking_script).await {
             Ok(Some(spender)) => spender,
             Ok(None) => continue,
             Err(fault) => {
@@ -2245,12 +2246,14 @@ mod tests {
         let woc =
             Fixture::start_with_headers(&[(&spent_route, 429, "", &[("retry-after", "30")])], 500)
                 .await;
-        let spend_route = format!("/txo/{src}/0/spend");
+        let script = p2pkh([0xdb; 20]);
+        let held = hex::encode(&script);
+        let spend_route = format!("/txo/{src}/0");
         let bb = Fixture::start(
             &[(
                 &spend_route,
                 200,
-                &format!(r#"{{"spent":true,"spentTxid":"{spender}"}}"#),
+                &format!(r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}"}}"#),
             )],
             404,
         )
@@ -2270,7 +2273,7 @@ mod tests {
         // BananaBlocks first.
         for round in 0..2 {
             let started = std::time::Instant::now();
-            let answer = probe_input_spend(&explorers, &services, &src, 0, None).await;
+            let answer = probe_input_spend(&explorers, &services, &src, 0, Some(&script)).await;
             assert_eq!(
                 answer,
                 InputSpend::SpentBy {
@@ -2309,6 +2312,8 @@ mod tests {
         let src = "aa".repeat(32);
         let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
         let spender = txid_of(&spender_bytes);
+        let script = p2pkh([0xdb; 20]);
+        let held = hex::encode(&script);
         let services = || {
             MockWalletServices::builder()
                 .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
@@ -2323,9 +2328,9 @@ mod tests {
         let woc_none = Fixture::start(&[], 404).await;
         let bb_named = Fixture::start(
             &[(
-                &format!("/txo/{src}/0/spend"),
+                &format!("/txo/{src}/0"),
                 200,
-                &format!(r#"{{"spent":true,"spentTxid":"{spender}"}}"#),
+                &format!(r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}"}}"#),
             )],
             404,
         )
@@ -2340,14 +2345,19 @@ mod tests {
         )
         .await;
         let bb_unspent = Fixture::start(
-            &[(&format!("/txo/{src}/0/spend"), 200, r#"{"spent":false}"#)],
+            &[(
+                &format!("/txo/{src}/0"),
+                200,
+                &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
+            )],
             404,
         )
         .await;
         for (woc, bb) in [(&woc_none, &bb_named), (&woc_named, &bb_unspent)] {
             let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
             for round in 0..2 {
-                let answer = probe_input_spend(&explorers, &services(), &src, 0, None).await;
+                let answer =
+                    probe_input_spend(&explorers, &services(), &src, 0, Some(&script)).await;
                 assert_eq!(
                     answer,
                     InputSpend::SpentBy {
@@ -2362,6 +2372,58 @@ mod tests {
         // only when it stood first.
         assert_eq!(woc_none.total(), 1, "{:?}", woc_none.hits());
         assert_eq!(bb_unspent.total(), 1, "{:?}", bb_unspent.hits());
+    }
+
+    /// #50, the toolbox's `/txo/{txid}/{vout}` fold: BananaBlocks answers
+    /// for an output under another script than the asked one, naming a
+    /// spender whose bytes would bind. The answer is about some other
+    /// output: a fault, so the rung moves on (WhatsOnChain knows no spend)
+    /// to the unspent set, and the name is never fetched.
+    #[tokio::test]
+    async fn a_bananablocks_txo_under_another_script_is_a_fault_that_moves_on() {
+        use crate::explorers::Explorers;
+        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
+        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
+        use bsv_wallet_toolbox::services::GetRawTxResult;
+        let src = "aa".repeat(32);
+        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
+        let spender = txid_of(&spender_bytes);
+        let script = p2pkh([0xdb; 20]);
+        let other = hex::encode(p2pkh([0xdc; 20]));
+        let woc_none = Fixture::start(&[], 404).await;
+        let txo_route = format!("/txo/{src}/0");
+        let bb_other = Fixture::start(
+            &[(
+                &txo_route,
+                200,
+                &format!(r#"{{"script_pubkey":"{other}","spent":true,"spent_txid":"{spender}"}}"#),
+            )],
+            404,
+        )
+        .await;
+        let explorers = Explorers::at(Some(&woc_none.base), Some(&bb_other.base), None);
+        let services = MockWalletServices::builder()
+            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
+                name: "MockProvider".to_string(),
+                txid: String::new(),
+                raw_tx: Some(spender_bytes),
+                error: None,
+                could_not_look: false,
+            }))
+            .build();
+        // Both starts: the mismatch is passed over whichever rung is first.
+        for round in 0..2 {
+            let answer = probe_input_spend(&explorers, &services, &src, 0, Some(&script)).await;
+            assert_eq!(answer, InputSpend::Unspent, "round {round}");
+        }
+        assert_eq!(bb_other.count(&txo_route), 2, "{:?}", bb_other.hits());
+        assert_eq!(woc_none.total(), 2, "{:?}", woc_none.hits());
+        assert_eq!(
+            services.call_count("get_raw_tx"),
+            0,
+            "a name from another output was fetched"
+        );
+        assert_eq!(services.call_count("is_utxo"), 2);
     }
 
     /// #50, the rule's rows at the probe: one rung's negative ("no spend
