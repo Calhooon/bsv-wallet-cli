@@ -400,6 +400,109 @@ async fn respend_refuses_while_a_status_source_holds_the_phantom() {
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
 }
 
+/// The status sources answering `result` for the phantom, Arcade's own
+/// word `broadcaster`.
+fn status_answer(
+    result: GetStatusForTxidsResult,
+    broadcaster: BroadcastStatus,
+) -> MockWalletServices {
+    MockWalletServices::builder()
+        .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
+            "mock",
+            &[],
+        )]))
+        .get_status_for_txids_response(MockResponse::Success(result))
+        .broadcaster_statuses(vec![("mock".into(), broadcaster)])
+        .build()
+}
+
+/// The respend under toolbox 0.12.0 (0.11.1: Arcade's `known` for its
+/// SEEN words only; two chain indexes' `unknown` stand even against a
+/// broadcaster's `known`, so the status ladder answers `unknown` for a
+/// phantom Arcade still calls SEEN). The ladder's `unknown` is not
+/// enough: while Arcade's own word is a SEEN word, or one of its holding
+/// words (`RECEIVED`, `ACCEPTED_BY_NETWORK`: `known` no longer in the
+/// ladder, `Accepted` in Arcade's own word), the respend refuses before
+/// anything is built or posted, and nothing is released; once Arcade
+/// stops (a 404, `Unknown`) it permits, and still releases nothing.
+#[tokio::test]
+async fn a_phantom_permits_only_once_arcade_stops_seen() {
+    let f = fixture().await;
+    let s = f.wallet.storage();
+    let before = words(&f).await;
+    for word in [
+        "SEEN_MULTIPLE_NODES",
+        "SEEN_ON_NETWORK",
+        "RECEIVED",
+        "ACCEPTED_BY_NETWORK",
+    ] {
+        let held = status_source(
+            &f.phantom,
+            "unknown",
+            BroadcastStatus::from_arcade_status(word),
+        );
+        headed(&held, &f.funding);
+        let err = build_and_post(s, &held, &f.root, &f.phantom, &["mock"])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("holds"), "{word}: {err}");
+        assert_eq!(held.call_count("post_beef"), 0, "{word}");
+        assert_eq!(words(&f).await, before, "{word}");
+        assert_eq!(
+            coin_state(&f, f.coin).await,
+            (false, Some(f.phantom_row)),
+            "{word}"
+        );
+    }
+    let stopped = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&stopped, &f.funding);
+    build_and_post(s, &stopped, &f.root, &f.phantom, &["mock"])
+        .await
+        .expect("Arcade stopped: the respend permits");
+    assert_eq!(stopped.call_count("post_beef"), 1);
+    assert_eq!(words(&f).await, before);
+    assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
+}
+
+/// The respend under toolbox 0.12.0: a single gap, one chain index that
+/// could not look while the other answered `unknown`, is no absence. The
+/// ladder leaves the phantom out and says "could not look" (`status:
+/// "error"` when it was the only txid asked; `success` with the error when
+/// others were), and the respend refuses on either shape: nothing built,
+/// nothing posted, nothing released.
+#[tokio::test]
+async fn a_single_gap_at_the_status_ladder_refuses_and_releases_nothing() {
+    let f = fixture().await;
+    let s = f.wallet.storage();
+    let before = words(&f).await;
+    for status in ["error", "success"] {
+        let gap = status_answer(
+            GetStatusForTxidsResult {
+                name: "Services".into(),
+                status: status.into(),
+                error: Some(format!(
+                    "could not look: no chain index answered {}",
+                    f.phantom
+                )),
+                results: vec![],
+            },
+            BroadcastStatus::Unknown,
+        );
+        headed(&gap, &f.funding);
+        let err = build_and_post(s, &gap, &f.root, &f.phantom, &["mock"])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unavailable"), "{status}: {err}");
+        assert_eq!(gap.call_count("post_beef"), 0, "{status}");
+        assert_eq!(words(&f).await, before, "{status}");
+        assert_eq!(
+            coin_state(&f, f.coin).await,
+            (false, Some(f.phantom_row)),
+            "{status}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn respend_refuses_unavailable_status_sources_without_posting() {
     let f = fixture().await;
