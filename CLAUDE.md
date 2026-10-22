@@ -51,7 +51,7 @@ cargo test --test integration
 
 # E2E tests (Node.js, requires funder wallet on :3320)
 # See "E2E Testing" section below for full setup.
-node tests/e2e/run.js                   # all 21 scenarios
+node tests/e2e/run.js                   # all 22 scenarios
 node tests/e2e/run.js --scenario 16     # single scenario
 node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
@@ -61,7 +61,7 @@ Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_D
 
 ## E2E Testing
 
-The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 21 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
+The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 22 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
 
 ### E2E Funder Wallet
 
@@ -69,7 +69,9 @@ A dedicated funder wallet on port 3320 provides initial funds and receives sweep
 
 - **Location**: `e2e-funder/` directory (gitignored — contains wallet.db and .env)
 - **Port**: 3320 (configurable via `FUNDER_PORT` env var)
-- **Default funding**: 50,000 sats per run (configurable via `FUND_AMOUNT` env var)
+- **Default funding**: 100,000 sats per run (configurable via `FUND_AMOUNT` env var; scenario 22 needs 50,000 in wallet A at its start and the scenarios before it move about 40,000 out of A). The run refuses at start when the funder holds less than the funding plus 1,000.
+- **The spend gate's word**: a test wallet's coins are received payments not yet mined, which the gate holds from a plain spend (R1 (d), 0.15.0). The harness names `allowPending: received` on every spend a test wallet makes (the HTTP client's default; `--allow-pending received` on the CLI scenarios' `send` and `split`), and on the funder's funding transfer (its coins after a run are the sweeps, received and unmined). The funder's client never passes it otherwise.
+- **Wallet logs**: each test wallet's `serve` log goes to `serve.log` in its temp directory; a failed run keeps both directories (keys and logs) and names them.
 - **SwiftBar**: Blue "E2E" icon in menu bar (`~/bsv-wallet-cli-runner/e2e-funder.30s.sh`)
 
 **Setup (first time only):**
@@ -85,7 +87,7 @@ cd e2e-funder && ../target/release/bsv-wallet init
 cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 ```
 
-### Scenario Coverage (21 scenarios)
+### Scenario Coverage (22 scenarios)
 
 | # | Name | Tests | Cost |
 |---|------|-------|------|
@@ -96,6 +98,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 19 | CLI services | Chain/height via services command | 0 sats |
 | 20 | UI (Playwright) | Database inspector UI renders, API + browser | 0 sats |
 | 21 | MCP server parity | The 34 MCP tools vs HTTP API: 29 wallet tools and the five host-route tools (which `mcp/src/tests.rs` drives against a stub) | 0 sats |
+| 22 | Rapid internalize + spend | 10 cycles A→B, B internalizes and returns; no phantom UTXOs (needs 50,000 in A at its start) | fees only |
 
 ### Dependencies
 
