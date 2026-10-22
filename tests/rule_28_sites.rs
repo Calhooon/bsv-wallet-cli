@@ -3,10 +3,16 @@
 //! answers the question, or it is an irreducible break-glass read that says
 //! so at its site.
 //!
-//! This reads the crate's own source. The CLI holds five explorer request
-//! lines; each must carry, in the lines directly above it, the reason no
-//! header, proof or own-index answer exists. A sixth site, or one that
-//! loses its reason, fails here.
+//! This reads the crate's own source. The CLI holds the explorer request
+//! lines below; each must carry, in the lines directly above it, the reason
+//! no header, proof or own-index answer exists. A site not listed, or one
+//! that loses its reason, fails here.
+//!
+//! 0.17.0 (#50): the CLI's own WhatsOnChain requests moved into one rung
+//! (`src/explorers.rs`, behind its rate gate) with BananaBlocks beside it;
+//! `sync`'s address scan left the CLI for the toolbox's ladder
+//! (`get_utxo_status`), so `sync.rs`, `receive.rs`, `cleanup_abandoned.rs`
+//! and `reconcile_outputs.rs` hold no request and no client.
 
 use std::path::{Path, PathBuf};
 
@@ -23,18 +29,23 @@ const SITES: &[(&str, &str, &str)] = &[
         "Break-glass (Rule 28, C1)",
     ),
     (
-        "src/commands/receive.rs",
-        r#"format!("{}/tx/{}/beef", base, txid)"#,
+        "src/broadcast_verify.rs",
+        r#"format!("{}/tx/{{txid}}", normalize_base(base))"#,
+        "Break-glass (Rule 28, C1; #50)",
+    ),
+    (
+        "src/explorers.rs",
+        r#"self.client.get(format!("{}{}", woc.base, path))"#,
+        "Break-glass (Rule 28, C2 and C7)",
+    ),
+    (
+        "src/explorers.rs",
+        r#"format!("/tx/{txid}/beef")"#,
         "Break-glass (Rule 28, C2)",
     ),
     (
-        "src/commands/sync.rs",
-        r#"format!("{}/address/{}/unspent", base, address)"#,
-        "Break-glass (Rule 28, C4)",
-    ),
-    (
-        "src/commands/cleanup_abandoned.rs",
-        r#"format!("{}/tx/{}/{}/spent", base, src, vout)"#,
+        "src/explorers.rs",
+        r#"format!("/tx/{txid}/{vout}/spent")"#,
         "Break-glass (Rule 28, C7)",
     ),
 ];
@@ -48,10 +59,9 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
         "src/broadcast_verify.rs",
         "C1, and the broadcasters' own status reads",
     ),
-    ("src/commands/receive.rs", "C2"),
     (
-        "src/commands/sync.rs",
-        "C4, and the client it hands the spend probe",
+        "src/explorers.rs",
+        "C2 and C7: the WhatsOnChain rung of the courier and spender ladders (#50)",
     ),
     (
         "src/chain_feed.rs",
@@ -60,11 +70,6 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
     (
         "src/chain_feed_tests.rs",
         "the feed's own tests: a feed built for one delivery, its client never asked",
-    ),
-    ("src/commands/cleanup_abandoned.rs", "C7"),
-    (
-        "src/commands/reconcile_outputs.rs",
-        "the client it hands the spend probe (C7)",
     ),
     (
         "src/commands/daemon_tenant.rs",

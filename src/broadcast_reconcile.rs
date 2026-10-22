@@ -413,7 +413,7 @@ pub async fn run_pass(
         }
         match classify(&presence) {
             Probe::Chain(evidence) => {
-                credit_chain(storage, txid, evidence).await;
+                credit_chain(storage, txid, evidence, presence.chain_index_by).await;
                 match evidence {
                     NetworkEvidence::Seen => report.seen.push(txid.clone()),
                     NetworkEvidence::Mined => report.mined.push(txid.clone()),
@@ -836,7 +836,12 @@ async fn credit_provider(
 /// Record chain evidence for `txid` and `chain|seen` for its unproven
 /// parents (presence of the child on the chain index implies the parents
 /// connected).
-async fn credit_chain(storage: &StorageSqlx, txid: &str, evidence: NetworkEvidence) {
+async fn credit_chain(
+    storage: &StorageSqlx,
+    txid: &str,
+    evidence: NetworkEvidence,
+    by: Option<&'static str>,
+) {
     if let Err(e) = storage
         .mark_transaction_seen_on_network_by(txid, BROADCAST_PROVIDER_CHAIN)
         .await
@@ -868,11 +873,17 @@ async fn credit_chain(storage: &StorageSqlx, txid: &str, evidence: NetworkEviden
                 txid = %txid,
                 ?evidence,
                 parents = parents.len(),
+                chain_index = by.unwrap_or("unnamed"),
                 "chain index has it: the transaction and its unproven parents connected"
             );
         }
         Ok(_) => {
-            tracing::info!(txid = %txid, ?evidence, "chain index has it");
+            tracing::info!(
+                txid = %txid,
+                ?evidence,
+                chain_index = by.unwrap_or("unnamed"),
+                "chain index has it"
+            );
         }
         Err(e) => tracing::warn!(txid = %txid, error = %e, "could not list the parents"),
     }
@@ -1185,7 +1196,7 @@ mod tests {
             );
         }
         // Only the chain index's own row exempts it.
-        credit_chain(&storage, &t, NetworkEvidence::Seen).await;
+        credit_chain(&storage, &t, NetworkEvidence::Seen, Some("whatsonchain")).await;
         let records = storage
             .broadcast_records(None, std::slice::from_ref(&t))
             .await
@@ -1726,5 +1737,57 @@ mod tests {
         assert_eq!(tx_status(&storage, &"22".repeat(32)).await, "failed");
         assert_eq!(tx_status(&storage, &"33".repeat(32)).await, "failed");
         assert_eq!(output_state(&storage, g0).await, (1, None));
+    }
+
+    /// #50: the hand-run pass asks the chain indexes through the verifier,
+    /// so BananaBlocks is a rung there too: WhatsOnChain rate limited, the
+    /// broadcaster not holding it, BananaBlocks placing it in a block. The
+    /// pass records it mined, in one probe, with no sleep.
+    #[tokio::test]
+    async fn the_pass_hears_bananablocks_when_whatsonchain_is_rate_limited() {
+        let (storage, user_id, _basket) = wallet_storage().await;
+        let old = (Utc::now() - chrono::Duration::minutes(31)).to_rfc3339();
+        let txid = "22".repeat(32);
+        insert_tx(&storage, user_id, &txid, "unproven", &old).await;
+        let broadcaster = mock_server(
+            StatusCode::NOT_FOUND,
+            r#"{"error":"transaction not found"}"#,
+        )
+        .await;
+        let limited = mock_server(StatusCode::TOO_MANY_REQUESTS, "").await;
+        let block = "cc".repeat(32);
+        let bb = crate::test_support::Fixture::start(
+            &[(
+                &format!("/tx/{txid}"),
+                200,
+                &format!(r#"{{"txid":"{txid}","block_hash":"{block}","block_height":972169}}"#),
+            )],
+            404,
+        )
+        .await;
+        let verifier = BroadcastVerifier::explicit(true, &broadcaster, Some(&limited))
+            .with_bananablocks(&bb.base);
+        let services = MockWalletServices::new();
+        let opts = ReconcileOptions {
+            execute: true,
+            max_probes: 20,
+            max_age_hours: None,
+            absence_minutes: 30,
+            max_locked_checks: 20,
+            sse: None,
+        };
+
+        let started = std::time::Instant::now();
+        let report = run_pass(&storage, &services, &verifier, &opts)
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "slept"
+        );
+        assert_eq!(report.probed, 1);
+        assert_eq!(report.mined, vec![txid.clone()]);
+        assert!(report.absent.is_empty() && report.inconclusive.is_empty());
+        assert_eq!(bb.total(), 1);
     }
 }

@@ -1804,7 +1804,7 @@ async fn stored_beef(storage: &StorageSqlx, txid: &str) -> Result<Option<Vec<u8>
     Ok(Some(beef.to_binary()))
 }
 
-/// Proven creators adopted per pass at most ([`adopt_proven`]).
+/// Proven creators adopted per pass at most (`adopt_proven`).
 pub const MAX_ADOPT_PER_PASS: usize = 100;
 
 /// Track the creators the toolbox proved before the tracker held a row for

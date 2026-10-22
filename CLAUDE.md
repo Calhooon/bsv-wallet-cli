@@ -30,6 +30,7 @@ src/
   - Field names: MetaNet Client uses `protocolID` / `keyID` (capital D). Use `#[serde(alias = "protocolID")]` since `rename_all = "camelCase"` produces lowercase `d`.
 - **SpendingLock**: A FIFO mutex serializes `createAction` calls. With limited UTXOs, concurrent spending races on SQLite's write lock. Non-spending endpoints (crypto, queries) run fully concurrent.
 - **Daemon vs Serve**: `daemon` = Monitor (background sync tasks) + HTTP server. `serve` = HTTP server only (dev mode, no background sync).
+- **The explorer ladder (0.17.0, #50; the owner's word of 2026-10-22)**: each chain scanner has its own rate limits, so when one fails we go to the next. Every chain question that leaves the wallet asks WhatsOnChain, BananaBlocks and Bitails as each other's fallbacks: the toolbox's ladders (=0.12.0: `get_raw_tx`, `get_merkle_path`, `get_utxo_status`, `get_status_for_txids`, `is_utxo`) and the CLI's own rungs in `src/explorers.rs` (the spend probe's "who spent it": WoC `/spent` and BananaBlocks `/txo/.../spend`, a rotating start; `receive`'s couriers: WoC `/beef`, then BananaBlocks `/hex` with the services' checked proof, then `get_beef`) and `broadcast_verify`'s chain indexes (WoC, Bitails, BananaBlocks). A fault (a 429, a timeout, a 5xx, a malformed body, bytes that do not hash to the txid) is "could not look": it moves to the next rung at once and is never "unspent" or "absent". A negative needs a second provider's clean answer (BananaBlocks' 404 is a gap, never a vote). No rung sleeps on a 429: the rung is skipped without a request until its Retry-After passes (the toolbox's `RateGate`). Every explorer call logs `explorer_call` at info with `provider`, `call`, `status`, `ms`. The spend gate and the tracker read the wallet's own proof records, never an explorer.
 
 ## Development
 
@@ -57,7 +58,7 @@ node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
 ```
 
-Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_DEPTH` (default 1, the floor), `SPEND_OWN_CHANGE` (default 1; 0 holds our own unmined change), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
+Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_DEPTH` (default 1, the floor), `SPEND_OWN_CHANGE` (default 1; 0 holds our own unmined change), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `WOC_API_KEY` and `BITAILS_API_KEY` (optional explorer keys), `BANANABLOCKS_BASE` (unset = the chain's default, empty = off), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
 
 ## E2E Testing
 

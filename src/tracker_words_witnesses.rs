@@ -164,6 +164,7 @@ fn seen_by_arcade_absent_from_chain() -> PresenceReport {
         evidence: Some(NetworkEvidence::Seen),
         evidence_provider: PROVIDER_ARCADE_V2,
         chain_index: ChainIndexAnswer::Absent,
+        chain_index_by: None,
         broadcaster_fatal: false,
         network_absent: true,
     }
@@ -175,6 +176,7 @@ fn absent_everywhere() -> PresenceReport {
         evidence: None,
         evidence_provider: bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
         chain_index: ChainIndexAnswer::Absent,
+        chain_index_by: None,
         broadcaster_fatal: false,
         network_absent: true,
     }
