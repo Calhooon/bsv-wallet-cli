@@ -27,7 +27,7 @@ module.exports = {
 
     // ─── Split into 3 UTXOs via CLI ───
     const splitRaw = execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json split --count ${SPLIT_COUNT}`,
+      `cd "${walletA.dir}" && "${BSV}" --json split --allow-pending received --count ${SPLIT_COUNT}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
     const splitResult = parseCliJson(splitRaw);
@@ -66,7 +66,7 @@ module.exports = {
     // Send a small amount from A to B — this uses split outputs as inputs
     const sendAmount = 1000;
     const sendRaw = execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json send "${walletB.address}" ${sendAmount}`,
+      `cd "${walletA.dir}" && "${BSV}" --json send --allow-pending received "${walletB.address}" ${sendAmount}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
     const sendResult = parseCliJson(sendRaw);
