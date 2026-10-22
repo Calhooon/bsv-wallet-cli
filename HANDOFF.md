@@ -200,6 +200,43 @@ production header service the other daemons use (api.calhouninfra.com answered
 521 on 2026-10-21; the memory corrected). The harness's spawned wallets inherit
 the environment: export CHAINTRACKS_URL before `node tests/e2e/run.js`.
 
+**The funder top-up, blocked on the wallet (2026-10-21, owner's green light
+given):** the owner said go; the "main wallet" the memory names (deposit
+address 19Xh3PH7exNnBC5mmYVfrBKQnjLyya93vm, identity 034aa446..., the worm's
+wallet) holds 19,816,671 sats on chain in 34 UTXOs, but no wallet database on
+this Mac or on /Volumes/Lanes carries that identity (every wallet.db scanned by
+users.identity_key and by spendable outputs at its hash160), and no .env on the
+machine derives it; the checkout's own ROOT_KEY derives
+1699U2kLDdU1tyr8DEEYqms5xK9XgscB2K (7,207 sats on chain, the checkout's
+wallet.db is empty). The desktop MetaNet wallet on :3321 is the owner's
+(registry: never used by tests) and lists no spendable default output. The
+bsv-dd wallets in the vault (x402 15.6M, return 38.5M, gifts 4.6M) belong to
+that project's captain and were written today. `~/bsv/bob-wallet` is April's
+e2e wallet-A (its db says 550,034 spendable; its deposit address holds
+5,000,000 on chain the db does not know). The minimum fund amount is 50,000:
+scenario 22 (rapid-internalize-spend) needs 10 x 5,000 and scenario 03 sends
+15,000, so FUND_AMOUNT cannot be lowered. The ask to the owner: either send
+~100,000 sats to the funder's address 1DgDKDU4cxMekmj8ZrQKmXEVutPuHjybpX from
+wherever the main wallet lives now (the funder imports it with `fund <beef>` or
+the courier `receive <txid>`), or name a wallet on this machine the captain may
+spend from. No spend made.
+
+**LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
+answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
+verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
+unchanged since 0.15.0, the one first-open write is `heal_holds` when
+spend_gate_holds has rows, rollback to 0.15 clean but for underRule on
+0.16-made allowPending actions); items 1 (tag, sha, crates.io) and 3 (tests
+added since 30bb1f060, expected none) go the minute the tag exists.
+
+**A bsv-rs finding relayed by the owner (2026-10-21, from the bsv-dd x402
+captain):** the in-memory BEEF structure check in bsv-rs refuses the TypeScript
+SDK's order (proven transactions first, unproven ancestors after) as
+UnrelatedTransaction while the streaming reader accepts the same bytes; the fix
+belongs in bsv-rs (judge the atomic rule on the graph, not wire position). That
+captain carries the fix in their queue; recorded here because 0.16.0 pins
+bsv-rs 0.8.0, which has the defect, and a 0.8.1 would move the pin.
+
 ### Lanes
 
 | lane | repo | class | state | brief |
