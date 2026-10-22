@@ -20,6 +20,11 @@
 //! No rung sleeps on a 429: it is a fault returned at once, and the rung is
 //! skipped without a request until its Retry-After passes (the toolbox's
 //! `RateGate`; BananaBlocks also paces itself at 60 requests a minute).
+//! The process's rungs spend one budget per host with the toolbox's
+//! providers: the WhatsOnChain rung passes the toolbox WhatsOnChain
+//! provider's gate (`WhatsOnChain::rate_gate`, the process's for its base
+//! and key) and the BananaBlocks rung is the toolbox's provider, so a 429
+//! either side meets closes the rung for both until Retry-After passes.
 //! Every call is logged at info with its provider, status and milliseconds
 //! (marker `explorer_call`), so an audit can see which rung answered.
 
@@ -34,6 +39,7 @@ use bsv_wallet_toolbox::services::providers::{
 use bsv_wallet_toolbox::services::traits::convert_script_hash;
 use bsv_wallet_toolbox::services::GetRawTxResult;
 use bsv_wallet_toolbox::{Chain, GetUtxoStatusOutputFormat, ServicesOptions};
+use bsv_wallet_toolbox::{WhatsOnChain, WhatsOnChainConfig};
 use reqwest::StatusCode;
 
 /// The name WhatsOnChain answers under in this module's results and logs.
@@ -42,8 +48,9 @@ pub const PROVIDER_WHATSONCHAIN: &str = "WhatsOnChain";
 /// The name BananaBlocks answers under (the toolbox's).
 pub const PROVIDER_BANANABLOCKS: &str = BANANABLOCKS_NAME;
 
-/// How long a WhatsOnChain 429 without a Retry-After closes the rung (the
-/// toolbox's WhatsOnChain provider uses the same second).
+/// How long a WhatsOnChain 429 without a Retry-After closes a private rung
+/// (`Explorers::at`; the toolbox's WhatsOnChain provider uses the same
+/// second for the process's).
 const WOC_DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(1);
 
 /// The longest one explorer request may take.
@@ -78,7 +85,33 @@ impl Rung {
 struct WocRung {
     base: String,
     api_key: Option<String>,
-    gate: RateGate,
+    /// The process's gate for the base and key ([`shared_woc_gate`]), or a
+    /// private one ([`Explorers::at`]).
+    gate: Arc<RateGate>,
+}
+
+/// The toolbox WhatsOnChain provider's gate for `chain` and `api_key`: the
+/// process's for that base and key (`RateGate::shared` inside
+/// `WhatsOnChain::new`), the one every `Services` of the process passes, so
+/// the CLI's rung and the toolbox's ladders spend one budget and a 429
+/// either side meets closes both until its Retry-After passes.
+fn shared_woc_gate(chain: Chain, api_key: Option<String>) -> Arc<RateGate> {
+    match WhatsOnChain::new(
+        chain,
+        WhatsOnChainConfig {
+            api_key,
+            timeout_secs: None,
+        },
+    ) {
+        Ok(provider) => Arc::clone(provider.rate_gate()),
+        Err(e) => {
+            tracing::warn!(error = %e, "WhatsOnChain's shared gate could not be read; the rung keeps a gate of its own");
+            Arc::new(RateGate::new(
+                PROVIDER_WHATSONCHAIN,
+                WOC_DEFAULT_RETRY_AFTER,
+            ))
+        }
+    }
 }
 
 /// The explorer rungs of one process (or one test).
@@ -124,12 +157,37 @@ impl Explorers {
             ..ServicesOptions::default()
         };
         let bananablocks = options.bananablocks_base_for(chain);
-        Self::at(Some(woc_base(chain)), bananablocks.as_deref(), woc_api_key)
+        let woc_api_key = woc_api_key.filter(|k| !k.trim().is_empty());
+        let gate = shared_woc_gate(chain, woc_api_key.clone());
+        Self::with_woc_gate(
+            Some((woc_base(chain), gate)),
+            bananablocks.as_deref(),
+            woc_api_key,
+        )
     }
 
     /// The rungs at explicit bases (a fixture in a test, a mirror): `None`
-    /// leaves that rung out.
+    /// leaves that rung out. The WhatsOnChain rung's gate is its own, never
+    /// the process's, so a test's 429 never carries into another case.
     pub fn at(woc: Option<&str>, bananablocks: Option<&str>, woc_api_key: Option<String>) -> Self {
+        let woc = woc.map(|base| {
+            (
+                base,
+                Arc::new(RateGate::new(
+                    PROVIDER_WHATSONCHAIN,
+                    WOC_DEFAULT_RETRY_AFTER,
+                )),
+            )
+        });
+        Self::with_woc_gate(woc, bananablocks, woc_api_key)
+    }
+
+    /// The rungs with the WhatsOnChain rung at `woc`'s base behind its gate.
+    fn with_woc_gate(
+        woc: Option<(&str, Arc<RateGate>)>,
+        bananablocks: Option<&str>,
+        woc_api_key: Option<String>,
+    ) -> Self {
         let bananablocks = bananablocks.and_then(|base| match BananaBlocks::with_base(base, None) {
             Ok(provider) => Some(Arc::new(provider)),
             Err(e) => {
@@ -142,10 +200,10 @@ impl Explorers {
                 .timeout(EXPLORER_TIMEOUT)
                 .build()
                 .unwrap_or_default(),
-            woc: woc.map(|base| WocRung {
+            woc: woc.map(|(base, gate)| WocRung {
                 base: base.trim().trim_end_matches('/').to_string(),
                 api_key: woc_api_key.filter(|k| !k.trim().is_empty()),
-                gate: RateGate::new(PROVIDER_WHATSONCHAIN, WOC_DEFAULT_RETRY_AFTER),
+                gate,
             }),
             bananablocks,
             rotation: AtomicUsize::new(0),
@@ -510,6 +568,70 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "a 429 was slept on"
         );
+    }
+
+    /// M2 of the review: the process's WhatsOnChain rung passes the toolbox
+    /// provider's gate for its base and key, so a 429 either side meets
+    /// closes the rung for both: one the toolbox's gate took closes the
+    /// CLI's rung without a request, and one the CLI's rung met closes the
+    /// toolbox provider's. A key is its own budget, and `Explorers::at`'s
+    /// gate is its own. Red at the base: the rung held a second gate.
+    #[tokio::test]
+    async fn the_whatsonchain_rung_shares_the_toolbox_providers_gate() {
+        let toolbox = |key: &str| {
+            WhatsOnChain::new(
+                Chain::Main,
+                WhatsOnChainConfig {
+                    api_key: Some(key.to_string()),
+                    timeout_secs: None,
+                },
+            )
+            .unwrap()
+        };
+        let mut retry_after = reqwest::header::HeaderMap::new();
+        retry_after.insert("retry-after", "30".parse().unwrap());
+
+        // The toolbox's side met the 429: the CLI's rung is closed and
+        // asks nothing (a fixture at its base would have counted it).
+        let key = "m2-toolbox-side";
+        let process =
+            Explorers::configured(Chain::Main, Some(key.to_string()), Some(String::new()));
+        let gate = Arc::clone(&process.woc.as_ref().unwrap().gate);
+        assert!(Arc::ptr_eq(&gate, toolbox(key).rate_gate()));
+        let fixture = Fixture::start(&[], 404).await;
+        let rung = Explorers::with_woc_gate(Some((&fixture.base, Arc::clone(&gate))), None, None);
+        let _ = toolbox(key).rate_gate().close(&retry_after);
+        let closed = rung.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        assert!(closed.unwrap_err().contains("Rate limited"));
+        assert_eq!(fixture.total(), 0, "the closed rung made a request");
+
+        // The CLI's rung met the 429: the toolbox provider's gate is closed.
+        let key = "m2-cli-side";
+        let gate = Arc::clone(
+            &Explorers::configured(Chain::Main, Some(key.to_string()), Some(String::new()))
+                .woc
+                .unwrap()
+                .gate,
+        );
+        let route = format!("/tx/{SRC}/0/spent");
+        let limited =
+            Fixture::start_with_headers(&[(&route, 429, "", &[("retry-after", "30")])], 500).await;
+        let rung = Explorers::with_woc_gate(Some((&limited.base, gate)), None, None);
+        assert!(toolbox(key).rate_gate().admit().is_ok());
+        let met = rung.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        assert!(met.unwrap_err().contains("Rate limited"));
+        assert!(
+            toolbox(key).rate_gate().admit().is_err(),
+            "the toolbox's gate is open after the CLI's 429"
+        );
+
+        // Another key is another budget; a test's rungs share nothing.
+        assert!(toolbox("m2-other-key").rate_gate().admit().is_ok());
+        let private = Explorers::at(Some(&limited.base), None, Some(key.to_string()));
+        assert!(!Arc::ptr_eq(
+            &private.woc.as_ref().unwrap().gate,
+            toolbox(key).rate_gate()
+        ));
     }
 
     /// A configured key is sent as `woc-api-key` and as a bearer token.
