@@ -282,6 +282,24 @@ funder's address holds 10,000 (old) and 36,658 (B's sweep, height 972119), its
 pending on the desktop wallet, held to 16:10Z; LOW on the stop (record 1041);
 run 3 not started.
 
+**Run 3 (2026-10-22 10:55:57Z, log e2e-run-20261022T105557Z.log under
+/Volumes/Lanes/out/bsv-wallet-cli/cli44-e2e/): 22 of 22 PASS.** The owner
+approved the desktop wallet's prompt at 10:55Z (a "Renew spending permission"
+action signed; the held-open top-up errored on a stale reference in the
+client, a fresh request then signed at once: ee7423ed…, 100,000 to the funder,
+couriered in by `fund`, funder 150,772). The run exited 1 on its budget line
+only: wallet B's full sweep (70,405 of 70,705) was refused "need 70724, have
+70705" (the 300-sat fee margin was 19 short for a 13-input sweep), the halving
+retry swept 35,202 and left 35,360 in B's kept dir. The 13 "coins held back"
+in that refusal are B's own spent inputs (locked by its earlier txids), not
+gate holds: all of B's balance was offered. The captain drained B back to the
+funder (5d355f65…, 34,985 after a 375 fee, `--allow-pending received`) and
+the funder received it: 148,830. Spent by the run: 1,942 sats, within the
+5,000 budget. Harness fix (this commit): the sweep retry reads the refusal's
+"need N, have M" and retries short by exactly that; the budget judges spent
+sats apart from stranded ones and names stranded sats as their own failure.
+No Rust changed; the e2e gate is met.
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables

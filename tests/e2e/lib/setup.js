@@ -141,7 +141,13 @@ async function sweepToFunder(wallet) {
       }
       if (attempt < 3) {
         const prev = sweepAmount;
-        sweepAmount = Math.floor(sweepAmount / 2);
+        // The wallet's refusal names the shortfall ("need N, have M"): the
+        // fee outran the margin. Retry short by exactly that plus a little,
+        // so the sweep takes the whole balance less the fee; halve only
+        // when the refusal says something else.
+        const short = /need (\d+), have (\d+)/.exec(e.message || '');
+        const shortfall = short ? parseInt(short[1]) - parseInt(short[2]) : 0;
+        sweepAmount = shortfall > 0 ? sweepAmount - shortfall - 50 : Math.floor(sweepAmount / 2);
         console.log(`  ${wallet.client.name}: sweep ${prev} failed (${e.message.slice(0, 60)}), retrying with ${sweepAmount}`);
       } else {
         console.log(`  WARNING: ${wallet.client.name}: could not sweep (${sweepAmount} sats stuck: ${e.message.slice(0, 80)})`);
