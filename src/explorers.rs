@@ -6,7 +6,8 @@
 //! "absent") needs a second provider's clean answer; "could not look" is
 //! never "nothing there". The toolbox's services hold that rule for the
 //! questions they answer (`get_raw_tx`, `get_merkle_path`,
-//! `get_utxo_status`, `get_status_for_txids`, toolbox 0.12.0). This module
+//! `get_utxo_status`, `get_status_for_txids`, and `get_utxo_leads` for
+//! `sync`'s discovery, toolbox 0.12.0). This module
 //! holds it for the break-glass reads the CLI still makes itself:
 //!
 //! - who spent an outpoint (the spend probe's step 1): WhatsOnChain's
