@@ -323,6 +323,75 @@ that nothing was written; the proposed rule reads the body's word STORE_BUSY
 (and ERR_SERVER_BUSY). Both findings belong to a bsv-rs 0.8.1, which would
 move this crate's pin.
 
+## The bsv-rs 0.8.1 wave and CLI 0.16.1 (2026-10-22, 11:4xZ to 15:1xZ)
+
+**The defect and the ruling.** bsv-rs 0.8.0 judged the atomic BEEF rule by wire
+position (the Lean's NL-1 Tip: the subject the last raw transaction, every other
+entry spent by a later one) in both readers; BRC-95 states a graph rule; the
+TypeScript SDK 2.x writer emits a raw unproven ancestor after the proven
+transaction that spends it (the bsv-dd x402 refunds wallet C refused, P0-65).
+The owner ruled, on the stack's DECISIONS-2026-10-19.md section 10 and epoch
+channel line 1044 (12:03Z, "yes to all 3"): (a) the graph rule, BRC-62's
+ordering clause kept; (c) example_atomic_parent reads unrelatedTransaction;
+(d) BRC-95 vectors upstream. A second question from the review: the current
+TypeScript reference (ts-stack 4d0ea63, sdk 3.x) cuts the graph at each
+proof, refusing the shape the ruled rule accepts; the owner kept the rule
+(13:23Z, line 1046, "I agree with your recommendation"): readers follow every
+raw ancestor, the writer emits the closure cut at proofs as TS 3 and Go do.
+Settled on the ruled text's letter with the stack keeper: the refusal names
+the earliest entry, by the trie order, the walk from the subject does not
+reach (the Lean's walk).
+
+**bsv-rs 0.8.1.** Lane lane/atomic-graph (code, Opus): PR 72, four commits
+(c1837d1 the graph rule in both readers, one predicate; eda49f5 the review's
+folds: TS 3's cut stated, the two TS-3-refused vectors `intended`, the
+edge set only under a subject, a BSC2 cursor read as BSC3; 55404b6 the atomic
+writer emits the BRC-95 closure; bf46677 the refusal names the earliest
+unreached entry, the edges kept per raw entry under a subject, spec_size and
+work pins moved to the Lean's own numbers at 3bb286e). Review lane (Opus):
+RELEASE WITH FIXES, 6 findings, all folded; its proof that 0.8.1 accepts a
+superset of 0.8.0 (0.8.0's stream tests pass but for the moved words).
+Verified downstream before the tag against the PR's head: this crate's suite
+446/0 (the CLI pins bsv-rs exactly, so the patch needed the pin moved to
+0.8.1 in the throwaway), the toolbox 0.11.0 suite 1,191/0 (CI's commands).
+Merged (rebase), tagged v0.8.1 at bf46677, release run 39795082316 success,
+crates.io 0.8.1 at 14:40Z. The stack's BEEF door runner re-ran on it: every
+structural verdict agrees, the three ruled words included (wrong_subject
+278, unrelated 278, example_atomic_parent 521). Downstream to re-check when
+they move to 0.8.x: bsv-messagebox-cloudflare-public's beef_door.rs tip_of
+hard-checks the cursor magic (BSC3 now carries the input count and the
+edges); pinned =0.7.0 so nothing broke.
+
+**CLI 0.16.1.** PR 48 (one commit bf0634f: the pin =0.8.1, CHANGELOG, README,
+lock; no code), rebase-merged, tagged v0.16.1, release run 39799648326
+success, crates.io 0.16.1 at 15:08Z, three binaries. LOW and the stack keeper
+have the tag messages; the bsv-dd captain told wallet C moves off 0.15.0.
+The e2e harness binary link moved to ~/bsv/targets/bsv-wallet-cli-0161.
+
+**Upstream, on the owner's green light ("you have the green light for that"),
+from the Calgooon account:** bsv-blockchain/BRCs#350 (BRC-95's two readings,
+a wording proposed: membership through every raw ancestor, sufficiency up to
+the proofs); ts-stack#1320 (the 3.x reader refuses the 2.x writer's bytes;
+2.x accepts and writes unrelated entries; mergeRawTx's reversed txid; no
+corpus vectors) since bsv-blockchain/ts-sdk is archived; go-sdk#384 (no
+unrelated rule at all); the corpus PR ts-stack#1321 (vectors/sdk/transactions/
+atomic-beef.json, 8 vectors registered in META.json under BRC-95 and BRC-62,
+validator 78 files / 6,714 vectors clean; PARITY_MATRIX.json is generated and
+untouched).
+
+**LOW's loop 43 question (13:5xZ), resolved by LOW with no defect:** two fleet
+seats answered 402 while holding a fat pool; every coin was unproven after a
+69-minute block gap, their payouts received without the word and their own
+hops chained, so the only offerable coin was the last hop's change, under the
+stake. The gate's rule is 0.15.0's unchanged (hold_reason: own made change
+offered under SPEND_OWN_CHANGE=1 with no ancestry condition; a received
+pending coin needs the word; a headers fault holds every coin). The fleet's
+RUST_LOG excluded bsv_wallet, which is why the 402's held list (WARN
+"request error" at bsv_wallet::server::handlers, one line per held coin; the
+body's `held`) was not in its logs; LOW adds bsv_wallet=info and records the
+body. The toolbox's "stored ancestry is incomplete; picking again without it"
+is a different door, answered 409 UNSPENDABLE_COIN, never 402.
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
