@@ -268,6 +268,20 @@ the funder's address for the payment; on arrival: stop the funder daemon,
 `receive <txid>`, restart. The funder holds 50,772 (all three coins offerable
 under the word); run 3 needs 101,000.
 
+**The top-up prompt overnight (02:03Z to 10:10Z, 2026-10-22):** no approval
+came. Learned: the MetaNet client holds an unsigned action only while the HTTP
+request that asked for it stays connected; when the request times out
+client-side the action drops off `listActions` (the count fell 8027 to 8026
+each time), so the two "disappearances" of the top-up were the captain's own
+timeouts, not a dismissal by the owner. A held-open request spends nothing
+until the owner clicks the client's spending-permission prompt; the captain
+re-posted it three times (30 min, 6 h, 6 h), one pending at a time, never two.
+The chain watcher on the funder's address saw nothing over 150 minutes; the
+funder's address holds 10,000 (old) and 36,658 (B's sweep, height 972119), its
+4,114 own change sits on a derived address: 50,772. At 10:10Z one request is
+pending on the desktop wallet, held to 16:10Z; LOW on the stop (record 1041);
+run 3 not started.
+
 **LOW's four asks at the tag (bsv-low record 1037, 2026-10-21):** items 2 and 4
 answered in the interim (lock figures 0.11.0 / 0.8.0 / 0.8.0; the upgrade rule
 verified: no migration between toolbox 0.10.0 and 0.11.0, the CLI's tables
