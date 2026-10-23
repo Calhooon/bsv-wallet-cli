@@ -1,32 +1,33 @@
 //! Rule A6 (#73): a task is started from the daemon's task table, where its
-//! lifetime and its shutdown are seen. `tokio::spawn` (and the other spawn
-//! doors) in the shipped code lives in the task table files; every other
-//! file that spawns today is listed with its count and why.
+//! lifetime and its shutdown are seen. The spawn doors of the shipped code
+//! (`spawn(`, `spawn_blocking(`, `spawn_local(`, by any path, as a method,
+//! or bare after a `use`, and the `use` that brings the name in, one site
+//! each) are counted file by file: the task table's own
+//! sites (`src/commands/daemon_tenant.rs`, `src/broadcast_reconcile.rs`) by
+//! their exact number, so a new task is a deliberate entry, and every other
+//! file that spawns today with its count and why. A spawn through a helper
+//! (`spawn_served_loop`) is the helper's one site, not its callers'.
 
 mod arch_support;
 
-use arch_support::{count, hits, judge};
+use arch_support::{calls, hits, judge, words};
 
-/// The task table: the daemon's tenant loop, the broadcast reconcile loops
-/// it and `serve` start, and the server's router.
-const TABLE: &[&str] = &[
-    "src/commands/daemon_tenant.rs",
-    "src/broadcast_reconcile.rs",
-    "src/server/mod.rs",
-];
-
-/// The doors that start a task or a thread.
-const DOORS: &[&str] = &[
-    "tokio::spawn(",
-    "task::spawn(",
-    "spawn_blocking(",
-    "spawn_local(",
-    "thread::spawn(",
-];
+/// The doors that start a task or a thread, by name.
+const DOORS: &[&str] = &["spawn", "spawn_blocking", "spawn_local"];
 
 /// `(file, today's count, why)`. Only shrinks.
 const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/backstop_log.rs", 1, "the backstop log's writer task"),
+    (
+        "src/broadcast_reconcile.rs",
+        2,
+        "the task table: the reconcile loop daemon and serve start, and its SSE drain",
+    ),
+    (
+        "src/commands/daemon_tenant.rs",
+        4,
+        "the task table: the chain feed, the abandoned reconcile, the relay poll, the server",
+    ),
     (
         "src/commands/serve_fleet.rs",
         2,
@@ -42,10 +43,13 @@ const ALLOWED: &[(&str, usize, &str)] = &[
 #[test]
 fn tasks_start_only_from_the_task_table() {
     let found = hits(|l| {
-        if TABLE.contains(&l.source.file.as_str()) {
-            return 0;
-        }
-        DOORS.iter().map(|d| count(l.bare, d)).sum()
+        let doors: usize = DOORS.iter().map(|d| calls(l.bare, &format!("{d}("))).sum();
+        let imports: usize = if l.is_use() {
+            DOORS.iter().map(|d| words(l.bare, d)).sum()
+        } else {
+            0
+        };
+        doors + imports
     });
     judge("A6: a task spawned outside the task table", &found, ALLOWED);
 }

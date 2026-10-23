@@ -1,12 +1,13 @@
 //! Rule A2 (#73): SQL lives behind the storage boundary. The boundary is
 //! `src/store.rs` (the crate's own tables beside the toolbox's) and the
-//! toolbox itself; every other file that holds an `sqlx` query call or an
-//! SQL statement in a string literal is listed with its count, and #89
-//! moves them behind the boundary.
+//! toolbox itself; every other file that holds an `sqlx` query call (by
+//! path, `sqlx::query(`, or bare after a `use sqlx::query`, and that `use`
+//! itself) or an SQL statement in a string literal is listed with its
+//! count, and #89 moves them behind the boundary.
 
 mod arch_support;
 
-use arch_support::{count, hits, judge};
+use arch_support::{calls, count, hits, judge, words};
 
 /// The storage boundary.
 const BOUNDARY: &[&str] = &["src/store.rs"];
@@ -25,18 +26,23 @@ const STATEMENTS: &[&str] = &[
     "PRAGMA ",
 ];
 
-/// The `sqlx` calls that run a statement.
+/// The `sqlx` functions and macros that run a statement, by name: by path
+/// (`sqlx::query(`) or bare (after a `use sqlx::query`). A method of the
+/// same name (`.query(`, a request builder's) is not one of them.
 const CALLS: &[&str] = &[
-    "sqlx::query(",
-    "sqlx::query_as(",
-    "sqlx::query_as::<",
-    "sqlx::query_scalar(",
-    "sqlx::query_scalar::<",
-    "sqlx::raw_sql(",
+    "query(",
+    "query_as(",
+    "query_as::<",
+    "query_scalar(",
+    "query_scalar::<",
+    "raw_sql(",
     "query!(",
     "query_as!(",
     "query_scalar!(",
 ];
+
+/// The same functions as names a `use` brings in.
+const NAMES: &[&str] = &["query", "query_as", "query_scalar", "raw_sql"];
 
 /// `(file, today's SQL sites, why)`. Only shrinks; #89 empties it.
 const ALLOWED: &[(&str, usize, &str)] = &[
@@ -101,8 +107,16 @@ fn sql_lives_behind_the_storage_boundary() {
         }
         let strings = l.strings();
         let statements: usize = STATEMENTS.iter().map(|w| count(&strings, w)).sum();
-        let calls: usize = CALLS.iter().map(|c| count(l.bare, c)).sum();
-        statements + calls
+        let calls: usize = CALLS
+            .iter()
+            .map(|c| calls(l.bare, c).saturating_sub(count(l.bare, &format!(".{c}"))))
+            .sum();
+        let imports: usize = if l.is_use() {
+            NAMES.iter().map(|n| words(l.bare, n)).sum()
+        } else {
+            0
+        };
+        statements + calls + imports
     });
     judge("A2: SQL outside the storage boundary", &found, ALLOWED);
 }
