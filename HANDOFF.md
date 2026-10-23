@@ -691,8 +691,18 @@ header-service transport fault: one retry, then 503 HEADERS_UNAVAILABLE
 with Retry-After, never 402 INSUFFICIENT_FUNDS) stays open for a later
 minor, from LOW's ask.
 
+Later the same hour: LOW's move to 0.17.1 landed on its four hosts at
+17:0xZ (record 1136; 0.17.2 goes in by the same recipe before its loop 47),
+and LOW asked for a scoped allowPending (its loop 46, pair 32: the one word
+offers every received unproven coin, so a funder that cannot vouch for a
+seat's other received coin withholds it and its own top-up lands held);
+filed as CLI #63 (`--allow-pending received --coin txid:vout`, repeatable;
+`allowPending: {"received": ["txid:vout"]}` on the served /createAction;
+only the named received coins offered, the rest held), a later minor.
+
 Open after this wave: CLI #59 (the gate's answer on a header-service
-transport fault); bsv-rs #73 (a bare 503 as a typed transport fault);
+transport fault); CLI #63 (the scoped allowPending word); bsv-rs #73 (a
+bare 503 as a typed transport fault);
 toolbox #44 (is_utxo returns the bound spender);
 0.11.1's open point 3 and the locked-input release path through is_utxo
 (the stack's); whether BananaBlocks lists mempool or non-P2PKH outputs under
