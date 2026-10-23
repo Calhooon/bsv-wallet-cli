@@ -759,9 +759,20 @@ bsv-rs #73 and toolbox #44 handed to the stack keeper on John's word (#44
 confirmed: fewer explorer calls for the same answer, nothing near
 break-glass); the CLI re-pins when they publish.
 
-Open after this wave: the return to the recipient seat (John's word);
-bsv-rs #73 and toolbox #44 (the stack keeper's); the funder daemon on
-0.17.1; 0.11.1's open point 3 and the locked-input release path through
+Later the same hour, John's word ("of course green light") on both: the
+return went, txid e6c4751859ba44e16db60da6da79603fb93da1aff2e2a89c8cc03f268dfcc3c9,
+60,331 sats, a BRC-29 wallet payment from the e2e funder to the seat's
+identity (outputIndex 0; the AtomicBEEF and remittance in the seat's
+inbox; captain-zanaadu internalizes it on the seat and updates the row);
+the funder daemon restarted onto the 0.18.0 binary at 20:42Z (pid 24508,
+same directory, log and two environment variables; the old 44352 stopped
+clean), balance 138,834 after the return. The stack keeper has bsv-rs #73
+(0.8.2) and toolbox #44 (0.13.0) in lanes and sends the versions when they
+are on the index; the witness wallet stays on 0.17.2 until the re-pin.
+
+Open after this wave: bsv-rs #73 and toolbox #44 (the stack keeper's; the
+CLI re-pins when they publish); the seat's internalize of the return
+(zanaadu's); 0.11.1's open point 3 and the locked-input release path through
 is_utxo (the stack's); whether BananaBlocks lists mempool or non-P2PKH
 outputs under an address (unverified); no live run of get_utxo_leads
 against the real routes beyond the probes.
