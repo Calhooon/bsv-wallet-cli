@@ -307,9 +307,10 @@ async fn the_refusal_lists_every_coin_held_back_with_its_reason() {
     assert_eq!(spent, 0, "nothing allocated");
 }
 
-/// A coin an action of ours holds is listed `locked by <txid>`.
+/// A coin a live action of ours consumed is listed `spent by <txid>
+/// (unproven)`: an input spent for good, never a hold (#53).
 #[tokio::test]
-async fn a_locked_coin_is_listed_by_its_holder() {
+async fn a_consumed_coin_is_listed_as_spent_by_its_spender() {
     let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
     let parent = "e1".repeat(32);
     let spender = "e2".repeat(32);
@@ -329,7 +330,7 @@ async fn a_locked_coin_is_listed_by_its_holder() {
         .unwrap();
     let held = locked(storage.pool()).await.unwrap();
     assert_eq!(held.len(), 1);
-    assert_eq!(held[0].reason, format!("locked by {spender}"));
+    assert_eq!(held[0].reason, format!("spent by {spender} (unproven)"));
     assert_eq!(held[0].word, "locked");
 }
 
@@ -2009,4 +2010,30 @@ async fn a_busy_before_the_door_answers_503_with_nothing_posted_and_the_coins_un
     create_action(&wallet, args, "busy.local", &opts(1, true))
         .await
         .unwrap();
+}
+
+/// #53: the spent-by reason names the spender's state, never a hold.
+#[test]
+fn the_spent_by_reason_names_the_spenders_state() {
+    let t = "e2".repeat(32);
+    assert_eq!(
+        spent_by_reason(&t, None),
+        format!("spent by {t} (unproven)")
+    );
+    assert_eq!(
+        spent_by_reason(&t, Some("unproven")),
+        format!("spent by {t} (unproven)")
+    );
+    assert_eq!(
+        spent_by_reason(&t, Some("sending")),
+        format!("spent by {t} (unproven)")
+    );
+    assert_eq!(
+        spent_by_reason(&t, Some("completed")),
+        format!("spent by {t}")
+    );
+    assert_eq!(
+        spent_by_reason(&t, Some("failed")),
+        format!("spent by {t} (failed)")
+    );
 }

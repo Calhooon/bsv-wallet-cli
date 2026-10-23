@@ -233,8 +233,8 @@ is never offered; a coin whose creator is `mined` at or above the
 `splitResolved` (the open splits are kept in `tracker_meta`, `open_splits`,
 written in the delivery's transaction; the scenario
 `tracker-split-observation-writes-no-word.md` column 4), with the reason
-`suspect: a fork or an unresolved split at or below its height`; a frozen coin is never offered, and a coin an action of ours
-holds is the toolbox's lock. Coins a caller names (`createAction`'s `inputs`,
+`suspect: a fork or an unresolved split at or below its height`; a frozen coin is never offered, and a coin a live action of ours
+consumed is spent: an input of that action, never a hold that clears. Coins a caller names (`createAction`'s `inputs`,
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
 outpoint that is not one of the wallet's coins is left to the toolbox).
@@ -242,7 +242,10 @@ When no offered coin covers the action, the refusal lists every coin held
 back: its outpoint, the word, the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
-`own change, SPEND_OWN_CHANGE=0`, `locked by <txid>`, `frozen: never offered`).
+`own change, SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never offered`).
+`spent by <txid> (unproven)` names an input the live action `<txid>` consumed,
+spent for good; the coin leaves the listing when that spender is completed (its
+proof lands) or failed.
 The route answers `402 INSUFFICIENT_FUNDS` with the list under `held`; the
 commands print it, and under `--json` print the route's body as one JSON object
 on stdout, `{"code":"INSUFFICIENT_FUNDS","message","offeredSatoshis","held":[...]}`
@@ -338,6 +341,21 @@ not the wallet's reserved P2PKH outputs, changed reservations, insufficient
 fee coverage, and an already tracked replacement. Silence must be established;
 an unavailable source is not silence. A refused post of the replacement is
 still a retryable hint.
+
+## The repair passes' report
+
+`reconcile-outputs` and `cleanup-abandoned` print a measured balance line, the
+default basket's spendable sum (the rows `balance` counts) read before the pass
+and after it: `Balance (default basket): B1 -> B2 (delta)`. Below it, one line
+per basket for the rows the pass turned off (`spendable` 1 to 0, counted from
+the updates that changed a row): `Turned off: N rows, S sats in <basket>`;
+`cleanup-abandoned` adds `Turned on: ...` for the inputs it restored. A protocol
+output in another basket turns off without the balance moving. In
+`reconcile-outputs`, phase (a) counts only rows that were spendable; a row it
+finds already off is linked to its spender and named on its own line, `already
+off: N rows, S sats`. A dry run prints the balance once and the `Would turn
+off` lines. The passes write the store under a running daemon; restart it to
+refresh its in-memory view.
 
 ## Build and gate
 

@@ -8,6 +8,9 @@ use crate::broadcast_reconcile::absence_minutes_from_env;
 use crate::broadcast_verify::{
     BroadcastVerification, BroadcastVerifier, ChainIndexAnswer, PresenceReport,
 };
+use crate::commands::balance::{
+    balance_line, default_basket_sats, tally, tally_lines, BasketTally, BASKET_NAME_SQL,
+};
 use crate::context::WalletContext;
 use crate::explorers::Explorers;
 
@@ -106,6 +109,19 @@ pub struct ReconcileReport {
     /// Phantom outputs of abandoned txs invalidated (spendable=0).
     pub phantom_count: u64,
     pub phantom_sats: u64,
+    /// The default basket's spendable sum (what `balance` reads) before the
+    /// pass (#53).
+    pub balance_before: u64,
+    /// The same read after the pass; `None` on a dry run. The CLI reads it
+    /// again after the descendants' retirement, so its line covers that too.
+    pub balance_after: Option<u64>,
+    /// Rows this pass turned off (`spendable` 1 -> 0: a relinquished input
+    /// that was on, a phantom output), per basket; on a dry run, the rows it
+    /// would.
+    pub turned_off: Vec<BasketTally>,
+    /// Rows this pass turned on (a restored input that was off), per basket;
+    /// on a dry run, the rows it would.
+    pub turned_on: Vec<BasketTally>,
 }
 
 impl ReconcileReport {
@@ -392,16 +408,20 @@ type DeadCandidate = (i64, String, Vec<(TrackedInput, InputSpend)>);
 struct TrackedInput {
     output_id: i64,
     satoshis: i64,
+    /// `spendable = 1` when read (a locked input is normally off).
+    spendable: bool,
+    basket: String,
     source_txid: String,
     vout: u32,
 }
 
 async fn tracked_inputs(pool: &sqlx::SqlitePool, tx_id: i64) -> Result<Vec<TrackedInput>> {
-    let rows = sqlx::query(
-        "SELECT o.output_id, o.satoshis, o.vout, t.txid AS src \
+    let rows = sqlx::query(&format!(
+        "SELECT o.output_id, o.satoshis, o.spendable, o.vout, t.txid AS src, \
+         {BASKET_NAME_SQL} AS basket \
          FROM outputs o JOIN transactions t ON t.transaction_id = o.transaction_id \
-         WHERE o.spent_by = ?",
-    )
+         WHERE o.spent_by = ?"
+    ))
     .bind(tx_id)
     .fetch_all(pool)
     .await?;
@@ -410,6 +430,8 @@ async fn tracked_inputs(pool: &sqlx::SqlitePool, tx_id: i64) -> Result<Vec<Track
         .map(|r| TrackedInput {
             output_id: r.get("output_id"),
             satoshis: r.get::<i64, _>("satoshis"),
+            spendable: r.get::<i64, _>("spendable") == 1,
+            basket: r.get::<String, _>("basket"),
             source_txid: r.get::<String, _>("src"),
             vout: r.get::<i64, _>("vout") as u32,
         })
@@ -518,6 +540,7 @@ where
     let pool = storage.pool();
     let mut report = ReconcileReport {
         absence_minutes,
+        balance_before: default_basket_sats(pool).await?,
         ..ReconcileReport::default()
     };
     let rows = select_stale_unproven(pool, min_age_secs).await?;
@@ -588,7 +611,28 @@ where
         }
     }
 
-    if !execute || (dead.is_empty() && retire_reqs.is_empty()) {
+    if !execute {
+        // The rows the pass would move, read as they stand.
+        for (tx_id, our_txid, answers) in &dead {
+            for (input, answer) in answers {
+                match release_of(our_txid, answer) {
+                    Release::Restore if !input.spendable => {
+                        tally(&mut report.turned_on, &input.basket, input.satoshis)
+                    }
+                    Release::Relinquish if input.spendable => {
+                        tally(&mut report.turned_off, &input.basket, input.satoshis)
+                    }
+                    _ => {}
+                }
+            }
+            for (_, sats, basket) in phantom_rows(pool, *tx_id).await? {
+                tally(&mut report.turned_off, &basket, sats);
+            }
+        }
+        return Ok(report);
+    }
+    if dead.is_empty() && retire_reqs.is_empty() {
+        report.balance_after = Some(report.balance_before);
         return Ok(report);
     }
 
@@ -596,35 +640,65 @@ where
         let mut tx = storage.write_tx().await?;
         for (tx_id, our_txid, answers) in &dead {
             for (input, answer) in answers {
-                match answer {
-                    InputSpend::Unspent => {
-                        sqlx::query(
+                match release_of(our_txid, answer) {
+                    Release::Restore => {
+                        // Turned on only if it was off: the guarded UPDATE says.
+                        let on = sqlx::query(
                             "UPDATE outputs SET spendable = 1, spent_by = NULL, \
-                             updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                             updated_at = CURRENT_TIMESTAMP \
+                             WHERE output_id = ? AND spent_by = ? AND spendable = 0",
                         )
                         .bind(input.output_id)
                         .bind(tx_id)
                         .execute(&mut *tx)
-                        .await?;
+                        .await?
+                        .rows_affected()
+                            == 1;
+                        if on {
+                            tally(&mut report.turned_on, &input.basket, input.satoshis);
+                        } else {
+                            sqlx::query(
+                                "UPDATE outputs SET spendable = 1, spent_by = NULL, \
+                                 updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                            )
+                            .bind(input.output_id)
+                            .bind(tx_id)
+                            .execute(&mut *tx)
+                            .await?;
+                        }
                         report.restored_count += 1;
                         report.restored_sats += input.satoshis.max(0) as u64;
                     }
-                    InputSpend::SpentBy {
-                        txid,
-                        confirmed: true,
-                    } if !txid.eq_ignore_ascii_case(our_txid) => {
-                        sqlx::query(
+                    Release::Relinquish => {
+                        // Turned off only if it was on (a locked input
+                        // normally reads `spendable = 0` already).
+                        let off = sqlx::query(
                             "UPDATE outputs SET spendable = 0, spent_by = NULL, \
-                             updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                             updated_at = CURRENT_TIMESTAMP \
+                             WHERE output_id = ? AND spent_by = ? AND spendable = 1",
                         )
                         .bind(input.output_id)
                         .bind(tx_id)
                         .execute(&mut *tx)
-                        .await?;
+                        .await?
+                        .rows_affected()
+                            == 1;
+                        if off {
+                            tally(&mut report.turned_off, &input.basket, input.satoshis);
+                        } else {
+                            sqlx::query(
+                                "UPDATE outputs SET spendable = 0, spent_by = NULL, \
+                                 updated_at = CURRENT_TIMESTAMP WHERE output_id = ? AND spent_by = ?",
+                            )
+                            .bind(input.output_id)
+                            .bind(tx_id)
+                            .execute(&mut *tx)
+                            .await?;
+                        }
                         report.relinquished_count += 1;
                         report.relinquished_sats += input.satoshis.max(0) as u64;
                     }
-                    _ => {
+                    Release::KeepLocked => {
                         // Unknown, or a spend the chain would not vouch for as
                         // confirmed: stays LOCKED by the failed tx.
                         report.kept_locked_count += 1;
@@ -634,7 +708,7 @@ where
         }
         tx.commit().await.context("commit per-input release")?;
         let ids: Vec<i64> = dead.iter().map(|(id, _, _)| *id).collect();
-        let phantoms = remove_phantom_outputs(storage, &ids).await?;
+        let phantoms = remove_phantom_outputs(storage, &ids, &mut report.turned_off).await?;
         let targets: Vec<(i64, String)> = dead
             .iter()
             .map(|(id, txid, _)| (*id, txid.clone()))
@@ -647,7 +721,45 @@ where
     }
     report.reqs_retired += retire_stale_reqs(storage, &retire_reqs).await?;
     report.applied = true;
+    report.balance_after = Some(default_basket_sats(pool).await?);
     Ok(report)
+}
+
+/// What abandoning does to one tracked input, from its chain answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Release {
+    /// Verified unspent: back to spendable, unlocked.
+    Restore,
+    /// Chain-spent by a DIFFERENT, CONFIRMED tx: unspendable, unlocked.
+    Relinquish,
+    /// Anything else: stays locked by the failed tx.
+    KeepLocked,
+}
+
+fn release_of(our_txid: &str, answer: &InputSpend) -> Release {
+    match answer {
+        InputSpend::Unspent => Release::Restore,
+        InputSpend::SpentBy {
+            txid,
+            confirmed: true,
+        } if !txid.eq_ignore_ascii_case(our_txid) => Release::Relinquish,
+        _ => Release::KeepLocked,
+    }
+}
+
+/// An abandoned tx's own outputs that still read spendable (its phantoms):
+/// `(output_id, satoshis, basket)`.
+async fn phantom_rows<'e, E>(executor: E, tx_id: i64) -> Result<Vec<(i64, i64, String)>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    Ok(sqlx::query_as(&format!(
+        "SELECT o.output_id, o.satoshis, {BASKET_NAME_SQL} AS basket FROM outputs o \
+         WHERE o.transaction_id = ? AND o.spendable = 1"
+    ))
+    .bind(tx_id)
+    .fetch_all(executor)
+    .await?)
 }
 
 /// SQL for a row's age in whole minutes, tolerant of both timestamp forms
@@ -721,7 +833,7 @@ async fn select_stale_reqs(
 
 pub async fn run(ctx: &WalletContext, execute: bool) -> Result<()> {
     // Operator-initiated: no age guard (inspect every unproven tx).
-    let report = reconcile(
+    let mut report = reconcile(
         ctx.wallet.storage(),
         ctx.wallet.services(),
         ctx.chain,
@@ -878,9 +990,19 @@ pub async fn run(ctx: &WalletContext, execute: bool) -> Result<()> {
 
     if !execute {
         println!();
+        println!("{}", balance_line(report.balance_before, None));
+        for line in tally_lines("Would turn off", &report.turned_off) {
+            println!("{}", line);
+        }
+        for line in tally_lines("Would turn on", &report.turned_on) {
+            println!("{}", line);
+        }
+        println!();
         println!("Dry run. Re-run with --execute to apply.");
         return Ok(());
     }
+    // The descendants' retirement wrote too: read the balance after it.
+    report.balance_after = Some(default_basket_sats(ctx.wallet.storage().pool()).await?);
 
     println!();
     println!("Applied:");
@@ -907,28 +1029,44 @@ pub async fn run(ctx: &WalletContext, execute: bool) -> Result<()> {
     );
     println!();
     println!(
-        "Net balance delta: {:+} sats. Restart the daemon to refresh its in-memory view.",
-        report.restored_sats as i64 - report.phantom_sats as i64 - report.relinquished_sats as i64
+        "{}",
+        balance_line(report.balance_before, report.balance_after)
     );
+    for line in tally_lines("Turned off", &report.turned_off) {
+        println!("{}", line);
+    }
+    for line in tally_lines("Turned on", &report.turned_on) {
+        println!("{}", line);
+    }
+    println!("Restart the daemon to refresh its in-memory view.");
 
     Ok(())
 }
 
-async fn remove_phantom_outputs(storage: &StorageSqlx, ids: &[i64]) -> Result<(u64, u64)> {
+async fn remove_phantom_outputs(
+    storage: &StorageSqlx,
+    ids: &[i64],
+    turned_off: &mut Vec<BasketTally>,
+) -> Result<(u64, u64)> {
     let mut count = 0u64;
     let mut sats = 0u64;
     let mut tx = storage.write_tx().await?;
     for id in ids {
-        let outs = sqlx::query(
-            "SELECT output_id, satoshis FROM outputs \
-             WHERE transaction_id = ? AND spendable = 1",
-        )
-        .bind(id)
-        .fetch_all(&mut *tx)
-        .await?;
-        for r in &outs {
-            count += 1;
-            sats += r.get::<i64, _>("satoshis") as u64;
+        for (output_id, satoshis, basket) in phantom_rows(&mut *tx, *id).await? {
+            let off = sqlx::query(
+                "UPDATE outputs SET spendable = 0, updated_at = CURRENT_TIMESTAMP \
+                 WHERE output_id = ? AND spendable = 1",
+            )
+            .bind(output_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                == 1;
+            if off {
+                count += 1;
+                sats += satoshis.max(0) as u64;
+                tally(turned_off, &basket, satoshis);
+            }
         }
         sqlx::query(
             "UPDATE outputs SET spendable = 0, updated_at = CURRENT_TIMESTAMP \
@@ -1026,7 +1164,21 @@ mod tests {
                 output_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transaction_id INTEGER NOT NULL, spendable INTEGER NOT NULL DEFAULT 0,
                 spent_by INTEGER, satoshis INTEGER NOT NULL DEFAULT 0, vout INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT)",
+                basket_id INTEGER, updated_at TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE output_baskets (
+                basket_id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                is_deleted INTEGER NOT NULL DEFAULT 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO output_baskets (basket_id, name) VALUES (1, 'default'), (2, 'protocol')",
         )
         .execute(&pool)
         .await
@@ -1248,6 +1400,184 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    /// Put rule-fixture outputs in a basket: `(output_id, basket_id, spendable)`.
+    async fn place(pool: &sqlx::SqlitePool, rows: &[(i64, i64, i64)]) {
+        for (id, basket, spendable) in rows {
+            sqlx::query("UPDATE outputs SET basket_id = ?, spendable = ? WHERE output_id = ?")
+                .bind(basket)
+                .bind(spendable)
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The measured move of the default basket's balance; `None` on a dry run.
+    fn delta(r: &ReconcileReport) -> Option<i64> {
+        r.balance_after.map(|a| a as i64 - r.balance_before as i64)
+    }
+
+    /// The conflict verdict's chain answer: a stranger's confirmed spend.
+    async fn spent_by_a_stranger(_s: String, _v: u32) -> InputSpend {
+        InputSpend::SpentBy {
+            txid: "98".repeat(32),
+            confirmed: true,
+        }
+    }
+
+    /// #53: an input relinquished from a non-default basket (and the dead
+    /// tx's phantom there) turns rows off without moving the balance: the
+    /// measured delta is 0, the rows show under their basket, and a
+    /// default-basket coin the pass never touched is the whole balance.
+    #[tokio::test]
+    async fn a_relinquished_output_in_another_basket_leaves_the_balance_where_it_was() {
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
+        place(&pool, &[(1, 2, 1), (2, 2, 1)]).await;
+        sqlx::query("INSERT INTO outputs (transaction_id, spendable, satoshis, vout, basket_id) VALUES (99, 1, 700, 1, 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let r = reconcile_with(
+            &store,
+            0,
+            30,
+            true,
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
+            spent_by_a_stranger,
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.conflicted.len(), 1);
+        assert_eq!((r.relinquished_count, r.relinquished_sats), (1, 5000));
+        assert_eq!((r.balance_before, r.balance_after), (700, Some(700)));
+        assert_eq!(delta(&r), Some(0));
+        assert_eq!(
+            r.turned_off,
+            vec![BasketTally {
+                basket: "protocol".into(),
+                rows: 2,
+                sats: 9000
+            }]
+        );
+        assert!(r.turned_on.is_empty());
+    }
+
+    /// #53: a relinquished input that already read `spendable = 0` (the
+    /// usual locked input) was never in the balance: it is relinquished and
+    /// unlocked, and not among the rows turned off. Only the phantom change
+    /// turns off, and the balance moves by it alone.
+    #[tokio::test]
+    async fn a_relinquished_input_already_off_is_not_turned_off() {
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
+        place(&pool, &[(1, 1, 0), (2, 1, 1)]).await;
+        let r = reconcile_with(
+            &store,
+            0,
+            30,
+            true,
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
+            spent_by_a_stranger,
+        )
+        .await
+        .unwrap();
+        assert_eq!((r.relinquished_count, r.relinquished_sats), (1, 5000));
+        assert_eq!(lock(&pool, 1).await, (0, None), "relinquished and unlocked");
+        assert_eq!(
+            r.turned_off,
+            vec![BasketTally {
+                basket: "default".into(),
+                rows: 1,
+                sats: 4000
+            }],
+            "the phantom only"
+        );
+        assert_eq!(delta(&r), Some(-4000));
+    }
+
+    /// #53: the measured delta equals the default-basket rows turned off
+    /// (an input that was on, relinquished, and the phantom change), and the
+    /// dry run names the same rows with the balance read once.
+    #[tokio::test]
+    async fn the_measured_delta_equals_the_default_basket_rows_turned_off() {
+        let store = rule_fixture().await;
+        let pool = store.writer().clone();
+        place(&pool, &[(1, 1, 1), (2, 1, 1)]).await;
+        let dry = reconcile_with(
+            &store,
+            0,
+            30,
+            false,
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
+            spent_by_a_stranger,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dry.balance_after, None, "a dry run reads the balance once");
+        let wet = reconcile_with(
+            &store,
+            0,
+            30,
+            true,
+            |_txid| async { presence(BroadcastVerification::Confirmed) },
+            spent_by_a_stranger,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dry.turned_off, wet.turned_off, "the dry run names the rows");
+        assert_eq!(wet.balance_before, 9000);
+        let off: u64 = wet
+            .turned_off
+            .iter()
+            .filter(|t| t.basket == "default")
+            .map(|t| t.sats)
+            .sum();
+        assert_eq!(off, 9000);
+        assert_eq!(delta(&wet), Some(-(off as i64)));
+        assert_eq!(
+            balance_line(wet.balance_before, wet.balance_after),
+            "Balance (default basket): 9000 -> 0 (-9000 sats)"
+        );
+    }
+
+    /// #53: a restored input turns on, and the measured delta is what was
+    /// turned on less what was turned off in the default basket.
+    #[tokio::test]
+    async fn a_restored_input_turns_on_and_the_delta_nets_it_against_the_phantom() {
+        let store = rule_fixture_built().await;
+        let pool = store.writer().clone();
+        place(&pool, &[(1, 1, 0), (2, 1, 1)]).await;
+        let r = reconcile_with(
+            &store,
+            0,
+            30,
+            true,
+            |_txid| async { absent_everywhere() },
+            |_s, _v| async { InputSpend::Unspent },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r.turned_on,
+            vec![BasketTally {
+                basket: "default".into(),
+                rows: 1,
+                sats: 5000
+            }]
+        );
+        assert_eq!(
+            r.turned_off,
+            vec![BasketTally {
+                basket: "default".into(),
+                rows: 1,
+                sats: 4000
+            }]
+        );
+        assert_eq!((r.balance_before, delta(&r)), (4000, Some(1000)));
     }
 
     /// RED→GREEN: the old verdict was a single WoC 404 — exactly what a fresh
