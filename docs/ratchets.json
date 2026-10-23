@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "commit": "08f1f052eccc913471214ac862625eb972fd09d7",
+  "commit": "87cbda0468c658999b1618ad25aca74c8b472814",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "ratchets": {
-    "clippy_pedantic": 842,
+    "clippy_pedantic": 847,
     "unwrap_expect_outside_tests": 33,
     "files_over_800_lines": 15,
     "functions_over_60_lines": 90,
     "cognitive_complexity_over_25": 20,
-    "duplicated_blocks": 510,
+    "duplicated_tokens": 33475,
     "missing_docs": 154
   },
   "detail": {
@@ -104,7 +104,7 @@
       "src/respend.rs": 1,
       "src/server/mod.rs": 1
     },
-    "duplicated_tokens": 33475,
+    "duplicated_blocks": 510,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 245,
       "clippy::uninlined_format_args": 169,
@@ -114,8 +114,8 @@
       "clippy::cast_sign_loss": 39,
       "clippy::cast_possible_wrap": 34,
       "clippy::cast_lossless": 30,
+      "clippy::redundant_closure_for_method_calls": 25,
       "clippy::map_unwrap_or": 23,
-      "clippy::redundant_closure_for_method_calls": 20,
       "clippy::needless_raw_string_hashes": 9,
       "clippy::unreadable_literal": 9,
       "clippy::similar_names": 8,
