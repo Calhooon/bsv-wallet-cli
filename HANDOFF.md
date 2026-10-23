@@ -709,6 +709,63 @@ toolbox #44 (is_utxo returns the bound spender);
 an address (unverified); no live run of get_utxo_leads against the real
 routes beyond the probes.
 
+2026-10-23, later: 0.18.0 released (John's word "love it all go" on #59
+and #63). PR 65 (db2f32b): #59, a coin held because the header service did
+not answer is marked as held on the service (`CreatorReading.headers_fault`,
+`HeldCoin.headers_fault`), its reason the service's own error; the gate
+reads those creators once more after two seconds, once per call; when the
+coins still held on the fault could have covered the action (or every named
+input is held on it) the answer is `503 HEADERS_UNAVAILABLE` with
+`Retry-After: 2` and the refusal's body, never `402 INSUFFICIENT_FUNDS`.
+#63, `AllowPending { Off, Received, ReceivedOnly }`: the served body takes
+`{"received": ["txid:vout", ...]}`, the commands `--coin TXID:VOUT` with
+`--allow-pending received`; only the named received coins are offered, the
+rest held "not named under allowPending: received"; a named coin that is not
+a received coin the wallet could spend under the word is a 400 before the
+door. Ten new tests; CI green; `cargo deny` green. PR 66 (901703a): the
+harness's ports and guard (below). Tag v0.18.0 at 901703a; release run
+40016864586 green, crates.io 0.18.0, three binaries. The funder daemon stays on
+the 0.17.1 binary (PID 44352; John's call to move it). The harness runs
+`~/bsv/targets/bsv-wallet-cli-0180`.
+
+The incident of the gate's first run (20261023T195137Z, 19/23): the
+harness's default port for wallet A, 3323, is the port
+`~/bsv/prod-test-wallets/REGISTRY.md` reserves for its `recipient` seat
+(identity 035593a9, "soak funder", in use by captain-zanaadu since
+19:40Z), and that seat's daemon (pid 12037, `~/.cargo/bin/bsv-wallet daemon
+--port 3323`, started 15:40Z) was serving. The harness's own `serve` died
+"Address already in use", its health check answered from the seat's daemon,
+and the run funded the seat 100,000 (a02cf56f...), drove the scenarios
+through it (its four CLI scenarios failed: the CLI read the directory's key,
+the HTTP answers were the seat's) and swept 105,174 from it to the e2e
+funder (e8636a66...): about 60,331 of the seat's own sats (60,413 before,
+82 after) sit in the e2e funder, the run's fees from the seat's side about
+1,755. Nothing lost; the seat's daemon untouched. Captain-zanaadu told at
+once (the txids; it noted the seat's registry row) and asked for the return
+as a BRC-29 wallet payment of 60,331 to the seat's identity, the AtomicBEEF
+and remittance left in `~/bsv/prod-test-wallets/recipient/inbox/`; the
+return is a spend from John's funder and waits on his word (the prepared
+script: this session's scratchpad `return-recipient-seat.js`). The fix (PR
+66): `startWallet` refuses a port that already answers and checks the
+server's identity against the directory's key; defaults 3370 (A), 3371 (B),
+3372 (C), off every registry port; the second run (20261023T195902Z) 23/23,
+net cost 2,140. Seven leftover `/tmp/bsv-wallet-wallet-*` directories from
+today's earlier runs (dust: 97, 47, 172, 23 sats, three at 0) were removed.
+
+Also today: John's MCP config (both `.claude.json` files) reduced to one
+`bsv-wallet` entry on the checkout's `target/release/bsv-wallet-mcp`
+symlink, port 3322; the worm-era entry removed (memory `mcp-config-entry`).
+bsv-rs #73 and toolbox #44 handed to the stack keeper on John's word (#44
+confirmed: fewer explorer calls for the same answer, nothing near
+break-glass); the CLI re-pins when they publish.
+
+Open after this wave: the return to the recipient seat (John's word);
+bsv-rs #73 and toolbox #44 (the stack keeper's); the funder daemon on
+0.17.1; 0.11.1's open point 3 and the locked-input release path through
+is_utxo (the stack's); whether BananaBlocks lists mempool or non-P2PKH
+outputs under an address (unverified); no live run of get_utxo_leads
+against the real routes beyond the probes.
+
 ## Other open issues (not in this wave)
 
 #39 backstop fetches proofs from an explorer (rule 21); #38 self-send
