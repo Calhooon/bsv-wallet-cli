@@ -24,15 +24,15 @@ One binary, two doors. A CLI command (`src/main.rs:68-229`, one arm per
 (`src/context.rs:19`) and calls one `run` in `src/commands/`. An HTTP server
 (`src/server/mod.rs:202`, `make_router_owing`) serves the 28 BRC-100
 endpoints of `src/server/handlers.rs` in the MetaNet Client's JSON
-(`src/server/types.rs`), plus four routes that are not BRC-100
-(`/permission-audit`, `/chain-feed`, `/tx/{txid}`, `/arc-callback`,
-`src/server/mod.rs:225-304`). Both doors stand on the same engine, the
+(`src/server/types.rs`), plus five routes that are not BRC-100
+(`/permission-audit`, `/permission-audit/reset`, `/chain-feed`,
+`/tx/{txid}`, `/arc-callback`, `src/server/mod.rs:225-304`). Both doors stand on the same engine, the
 toolbox `bsv-wallet-toolbox-rs` (`Wallet<StorageSqlx, Services>`: the
 coins, the locks, the signing, the posting, the monitor), and the toolbox on
 `bsv-rs`. Around the toolbox's doors this crate adds the hosts of two stack
 machines: the spend gate (`src/spend_gate.rs`, the wallet charter's section
 2 applied to coin selection) and the tracker host (`src/tracker_host.rs`,
-the tracker charter's section 6: one word per transaction, written only from
+the tracker charter's sections 0 and 2: one word per transaction, written only from
 headers and proofs). `daemon` (`src/commands/daemon.rs:10` through
 `src/commands/daemon_tenant.rs:39`) runs the toolbox's monitor, the header
 service's chain-event feed (`src/chain_feed.rs:167`), the served pass
@@ -71,8 +71,9 @@ flowchart TD
 body cap (none on the two BEEF doors, `src/server/mod.rs:238-245`),
 tracing, the extensions (`ServerConfig`, the `SpendingLock`, the
 `BroadcastVerifier`), the bearer auth (`auth_middleware`,
-`src/server/mod.rs:110`) before any body is read, then the lenient JSON body
-and CORS. `create_action` (`src/server/handlers.rs:473`) reads the
+`src/server/mod.rs:110`) before any body is read, then the lenient JSON body,
+CORS, and `heal_owed` (`src/server/mod.rs:308`), which retries the start's
+heal before any handler runs. `create_action` (`src/server/handlers.rs:473`) reads the
 originator from `Origin` or `Originator` (`extract_originator`,
 `src/server/handlers.rs:102`), reads the action's word for R1 (d) from the
 body's `allowPending` and nowhere else
@@ -158,8 +159,11 @@ allocates within the offer and locks within it in its one write transaction
 `src/spend_gate/tests.rs:845`), signs, and posts to the broadcasters it is
 configured with (`src/services_env.rs:228`, the one env-to-services
 resolver) `[D]` the toolbox's internals beyond what the tests drive. When
-it answers `Insufficient funds` on a lazy offer, every coin is read and the
-call made once more (`src/spend_gate.rs:1525-1554`); when that fails for
+it answers `Insufficient funds` or `Unspendable coin:` on a lazy offer, every
+coin is read and the call made once more (`src/spend_gate.rs:1525-1554`; the
+unspendable case held by
+`an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin`,
+`src/spend_gate/tests.rs:898`); when that fails for
 funds the refusal lists every coin held back with its reason and the coins
 live actions hold (`refusal`, `src/spend_gate.rs:1557`; `locked`,
 `src/spend_gate.rs:981`), and when the coins held on the header service's
@@ -224,8 +228,9 @@ commands print the same body and exit 1 (`refused_as_json`,
 toolbox's `transactions` and `proven_tx_reqs`. The served pass
 (`run_served_pass`, `src/broadcast_reconcile.rs:653`, every
 `BROADCAST_RECONCILE_INTERVAL_SECS`, spawned by `spawn_served_loop`,
-`src/broadcast_reconcile.rs:693`, from `src/commands/serve.rs:44` or
-`src/commands/daemon_tenant.rs:167`) runs the tracker's pass
+`src/broadcast_reconcile.rs:693`, from `src/commands/daemon_tenant.rs:167`
+or through `spawn_serve_loop`, `src/broadcast_reconcile.rs:679`, from
+`src/commands/serve.rs:44`) runs the tracker's pass
 (`tracker_host::tick`, `src/tracker_host.rs:1304`): every `unproven` or
 `sending` transaction of the wallet is adopted at `built`
 (`src/tracker_host.rs:1317-1325`), the broadcasters' words in the broadcast
@@ -251,8 +256,13 @@ above a fork, reorg or split height; marked rows for a tip; the rows on an
 invalidated block's hash; `src/tracker_host.rs:2361-2394`) are replayed
 against the new branch's headers, read before the write lock
 (`src/tracker_host.rs:2403-2408`), and `Tracker::on_chain` rechecks each by
-its stored root: the same root, the word stands; the root gone, `stale`
-with the re-ask `reorg@<forkHeight>`; no header, suspect until the next tip.
+its stored root: the same root, the word stands
+(`a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing`,
+`src/chain_feed_tests.rs:716`); the root gone, `stale` with the re-ask
+`reorg@<forkHeight>` (`a_reorg_on_the_feed_stales_the_word_and_the_new_proof_mines_it`,
+`src/chain_feed_tests.rs:192`); no header, suspect until the next tip
+(`step_3_a_reorg_before_the_service_moves_leaves_the_word_suspect_until_the_next_tip`,
+`src/chain_feed_tests.rs:679`).
 A freeze writes `frozen_outpoints` (`src/tracker_host.rs:2409-2420`); the
 cursor is written in the same transaction (`tracker_meta`, `feed_cursor`).
 A fault stops the loop at its cursor and is served at `GET /chain-feed`
@@ -282,7 +292,7 @@ flowchart TD
 
 **Hop 1, the door.** `internalize_action` (`src/server/handlers.rs:716`)
 reads the originator, maps the MetaNet body to `InternalizeActionArgs`
-(`internalize_args`, `src/server/handlers.rs:755`: `paymentRemittance` and
+(`internalize_args`, `src/server/handlers.rs:752`: `paymentRemittance` and
 `insertionRemittance` passed through, `basket` and `tags` kept) and strips
 the gate's rule label from the caller's labels
 (`src/server/handlers.rs:777-780`, `strip_rule_label`,
@@ -491,7 +501,7 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/services_env.rs` | 430 | The one env-to-`ServicesOptions` resolver: `CHAINTRACKS_URL` required, break-glass headers, explorer keys, Arcade runtime, the callback token | wallet host (plumbing) |
 | `src/store.rs` | 320 | The store's two doors (reader pool, one writer), `open_shared` (one store per file per process), the busy told by its type | wallet host |
 | `src/spend_gate.rs` | 1593 | The spend gate: the offer, the word and its scope, the refusal, the header-fault retry, the holds' heal | wallet host |
-| `src/spend_gate/tests.rs` | 2439 | The gate's tests (32), with the write counter at the door | wallet host |
+| `src/spend_gate/tests.rs` | 2439 | The gate's tests (36: 30 tokio, 6 plain), with the write counter at the door | wallet host |
 | `src/spend_guard.rs` | 155 | The guard against an immediate-refusal hint: holds a coin whose creator no status source holds | wallet host |
 | `src/tracker_host.rs` | 3247 | The tracker host: `HeaderSnapshot`, `Courier`, `MemoryHints`, the rows, `tick`, `read_creators`, `spend_guard`, `deliver_chain_event`, the frozen record | tracker host |
 | `src/tracker_words_witnesses.rs` | 962 | Tests: every retire path and the abort door driven on a taken and an untaken transaction; the guard on a refused coin | tracker host |
