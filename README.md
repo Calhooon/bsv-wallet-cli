@@ -2,7 +2,7 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.17.2**, and crates.io carries the same version, **0.17.2**; the
+is the tag **v0.18.0**, and crates.io carries the same version, **0.18.0**; the
 repository's Releases page holds a Release per tag. It pins
 **bsv-wallet-toolbox-rs =0.12.1**, **bsv-rs =0.8.1** and **bsv-tracker =0.8.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
@@ -12,7 +12,7 @@ repository's Releases page holds a Release per tag. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.17.2 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.18.0 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -227,6 +227,24 @@ and `internalizeAction`'s labels, so it grants nothing. The records a 0.15
 store made (`spend_gate_actions`) keep answering. There is no environment
 variable for it.
 
+The word may name the coins it reaches (0.18.0, #63, from LOW's fleet: a
+funder that just paid a seat can vouch for that coin and not for a payout
+the seat received from elsewhere): `allowPending: {"received": ["txid:vout",
+...]}` in the served body, or `--allow-pending received --coin txid:vout`
+(repeatable; `txid.vout` as the listings print it is taken too) on the
+commands. Only the named received coins are offered under the word; every
+other received unproven coin is held as without it, with the reason
+`received, no proof; not named under allowPending: received`; the action
+carries the same label. A named coin that is not a received coin this wallet
+could spend under the word (not one of its coins, its own change, a coin
+another action consumed, a `nosend`) refuses the call before anything is
+read, `400 VALIDATION_ERROR` naming the coin and why; a named coin already
+mined is offered as any mined coin (the word is moot for it, not wrong). An
+empty list is off; an object of another shape is the caller's 400; the
+string form `"received"` stays every received coin. The scope narrows what
+the word reaches and never widens it. The MCP tool `create_action` carries
+the string form only.
+
 A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
 is never offered; a coin whose creator is `mined` at or above the
 `forkHeight` of a `split` the feed delivered is held until that split's
@@ -252,6 +270,24 @@ on stdout, `{"code":"INSUFFICIENT_FUNDS","message","offeredSatoshis","held":[...
 (`INPUT_NOT_OFFERED` for a named coin), exit 1. Nothing is fetched for it but the header service's tip and
 headers: no chain scan, no explorer.
 
+A coin whose creator the guard could not check because the header service
+did not answer (its tip, or a header the check needs: a transport fault, an
+outage) is held `headers unavailable: <the service's own error>` and marked
+as held on the service, no verdict on the coin (0.18.0, #59, seen on the
+0.17.1 gate and on LOW's funder the same day: a two-second blink held every
+coin and the caller read `INSUFFICIENT_FUNDS` as a balance). The guard reads
+those creators once more after a two-second pause, once per call, and when
+the coins still held on the fault could have covered the action (with what
+was offered, the outputs' sum at least), or every named input is held on it,
+the answer is "could not verify now": `503 HEADERS_UNAVAILABLE`, header
+`Retry-After: 2`, the body the refusal's (`message` naming the service's
+error, `offeredSatoshis`, `held`); the commands print the same body under
+`--json`, exit 1. Nothing was written, built, locked or posted: ask again
+after the pause. A shortfall the faulted coins could not have covered is the
+funds' refusal whatever the service said. A header the snapshot simply does
+not hold (a block above its tip) is not the service's fault and is not
+retried.
+
 ## The served answers
 
 A refused call answers `{"code", "message"}` (the gate's refusals add
@@ -269,6 +305,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
+| 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
 
 `503 STORE_BUSY` is answered by the error's type, never its words: the
 toolbox's `WalletBusy` from a wallet door, or a read or write of the spend

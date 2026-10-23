@@ -14,7 +14,11 @@ const DEFAULT_DERIVATION_PREFIX: &str = "SfKxPIJNgdI=";
 const DEFAULT_DERIVATION_SUFFIX: &str = "NaGLC6fMH50=";
 const BRC29_PROTOCOL: &str = "3241645161d8";
 
-pub async fn run(ctx: &WalletContext, count: u32, allow_received: bool) -> Result<()> {
+pub async fn run(
+    ctx: &WalletContext,
+    count: u32,
+    allow_pending: crate::spend_gate::AllowPending,
+) -> Result<()> {
     if count < 2 {
         anyhow::bail!("Split count must be at least 2");
     }
@@ -175,7 +179,7 @@ pub async fn run(ctx: &WalletContext, count: u32, allow_received: bool) -> Resul
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
-            &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
+            &crate::spend_gate::GateOptions::from_env().with_allow_pending(allow_pending),
         )
         .await,
         ctx.json_output,

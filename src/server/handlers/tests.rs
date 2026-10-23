@@ -241,3 +241,75 @@ fn internalize_strips_the_gate_rule_label() {
     .unwrap();
     assert_eq!(internalize_args(req).labels, None);
 }
+
+/// "Could not verify now" (#59): the gate's refusal on the header service's
+/// fault is 503 `HEADERS_UNAVAILABLE` with `Retry-After`, its body the
+/// refusal's (`offeredSatoshis`, `held`), never 402.
+#[tokio::test]
+async fn the_header_services_fault_is_503_headers_unavailable_with_retry_after() {
+    use crate::spend_gate::{GateError, HeldCoin, Origin, Refusal};
+    let held = HeldCoin {
+        outpoint: format!("{}.0", "9c".repeat(32)),
+        satoshis: 50_000,
+        word: "mined".to_string(),
+        origin: Origin::Received,
+        age_minutes: 9,
+        reason: "headers unavailable: Service error: get_chain_tip_header: no header service answered (chaintracks: timeout)".to_string(),
+        headers_fault: true,
+        output_id: 0,
+    };
+    let refusal = Refusal {
+        toolbox: "Insufficient funds: need 1005, have 0".to_string(),
+        offered_satoshis: 0,
+        held: vec![held],
+        capped: None,
+        headers_fault: Some(
+            "Service error: get_chain_tip_header: no header service answered (chaintracks: timeout)"
+                .to_string(),
+        ),
+    };
+    let message = refusal.to_string();
+    let (status, retry, body) =
+        answer(AppError::from_gate_error(GateError::Refused(refusal))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        retry.as_deref(),
+        Some(
+            crate::spend_gate::HEADERS_RETRY_AFTER_SECS
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(body["code"], "HEADERS_UNAVAILABLE");
+    assert_eq!(body["message"], message);
+    assert!(
+        message.starts_with("Could not verify now: the header service did not answer ("),
+        "{message}"
+    );
+    assert_eq!(body["offeredSatoshis"], 0);
+    assert!(body["held"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .starts_with("headers unavailable: "));
+    assert!(
+        !message.contains("Insufficient funds: no offerable coin"),
+        "{message}"
+    );
+}
+
+/// A scoped word naming a coin the wallet could not spend under it (#63)
+/// is the caller's 400, with no `Retry-After` and no listing.
+#[tokio::test]
+async fn a_scope_naming_a_wrong_coin_is_the_callers_400() {
+    let message = "Invalid argument: allowPending: received names ab:0, which is not a received coin this wallet could spend under it: not a coin of this wallet".to_string();
+    let (status, retry, body) = answer(AppError::from_gate_error(
+        crate::spend_gate::GateError::Scope(message.clone()),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(retry.is_none());
+    assert_eq!(
+        body,
+        json!({"code": "VALIDATION_ERROR", "message": message})
+    );
+}

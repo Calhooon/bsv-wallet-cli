@@ -227,8 +227,24 @@ impl AppError {
     }
 
     /// A gated `createAction`'s failure: the refusal keeps its listing.
+    /// "Could not verify now" (#59: the header service's fault held the
+    /// coins that could have covered it) is 503 `HEADERS_UNAVAILABLE` with
+    /// `Retry-After`, never a verdict; a scoped word naming a coin that is
+    /// not one the wallet could spend under it (#63) is the caller's 400.
     pub(crate) fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
         match e {
+            crate::spend_gate::GateError::Refused(refusal) if refusal.is_headers_fault() => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: crate::spend_gate::HEADERS_UNAVAILABLE,
+                message: refusal.to_string(),
+                refusal: Some(Box::new(refusal)),
+            },
+            crate::spend_gate::GateError::Scope(message) => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "VALIDATION_ERROR",
+                message,
+                refusal: None,
+            },
             crate::spend_gate::GateError::Refused(refusal) if refusal.is_named_input() => Self {
                 status: StatusCode::FORBIDDEN,
                 code: "INPUT_NOT_OFFERED",
@@ -325,6 +341,19 @@ impl IntoResponse for AppError {
             return (
                 self.status,
                 [(axum::http::header::RETRY_AFTER, "1")],
+                Json(body),
+            )
+                .into_response();
+        }
+        if self.code == crate::spend_gate::HEADERS_UNAVAILABLE {
+            // Nothing was written, built, locked or posted: the header
+            // service did not answer, twice; ask again after the pause.
+            return (
+                self.status,
+                [(
+                    axum::http::header::RETRY_AFTER,
+                    crate::spend_gate::HEADERS_RETRY_AFTER_SECS.to_string(),
+                )],
                 Json(body),
             )
                 .into_response();
@@ -449,9 +478,10 @@ pub async fn create_action(
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
-    // R1 (d): the action's word, read here at the door and nowhere else.
-    let allow_received =
-        crate::spend_gate::allow_pending(req.allow_pending.as_ref().and_then(|v| v.as_str()));
+    // R1 (d): the action's word, read here at the door and nowhere else:
+    // `"received"`, or the scoped `{"received": ["txid:vout", ...]}` (#63).
+    let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
+        .map_err(|message| AppError::from(anyhow::anyhow!("Invalid argument: {message}")))?;
 
     // Whether this request performs an immediate broadcast (vs. no-send /
     // delayed / external-signing). Only immediate broadcasts are verified.
@@ -567,7 +597,7 @@ pub async fn create_action(
         &wallet,
         args,
         &originator,
-        &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
+        &crate::spend_gate::GateOptions::from_env().with_allow_pending(allow_pending),
     )
     .await
     .map_err(AppError::from_gate_error)?;

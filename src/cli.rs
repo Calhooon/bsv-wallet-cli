@@ -60,6 +60,11 @@ pub enum Commands {
         /// double-spends, this action is conflicted
         #[arg(long, value_name = "WORD", value_parser = ["received"])]
         allow_pending: Option<String>,
+        /// With `--allow-pending received`: offer only this received coin under
+        /// the word (repeatable; `txid:vout`). Every other received coin without
+        /// a proof is held as without the word
+        #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
+        coins: Vec<String>,
     },
     /// Replace an accepted, silent transaction with a spend back to this wallet.
     /// Refuses while a status source holds the original; proof decides its fate.
@@ -85,6 +90,11 @@ pub enum Commands {
         /// double-spends, this action is conflicted
         #[arg(long, value_name = "WORD", value_parser = ["received"])]
         allow_pending: Option<String>,
+        /// With `--allow-pending received`: offer only this received coin under
+        /// the word (repeatable; `txid:vout`). Every other received coin without
+        /// a proof is held as without the word
+        #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
+        coins: Vec<String>,
     },
     /// Inspect a time-locked gift (prove it's yours + when it unlocks; no claim)
     GiftInspect {
@@ -112,6 +122,11 @@ pub enum Commands {
         /// double-spends, this action is conflicted
         #[arg(long, value_name = "WORD", value_parser = ["received"])]
         allow_pending: Option<String>,
+        /// With `--allow-pending received`: offer only this received coin under
+        /// the word (repeatable; `txid:vout`). Every other received coin without
+        /// a proof is held as without the word
+        #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
+        coins: Vec<String>,
     },
     /// Internalize a BEEF transaction (receive funds): the routine way to receive, with the
     /// BEEF the payer hands over; checked against headers, no explorer asked
@@ -228,6 +243,11 @@ pub enum Commands {
         /// double-spends, this action is conflicted
         #[arg(long, value_name = "WORD", value_parser = ["received"])]
         allow_pending: Option<String>,
+        /// With `--allow-pending received`: offer only this received coin under
+        /// the word (repeatable; `txid:vout`). Every other received coin without
+        /// a proof is held as without the word
+        #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
+        coins: Vec<String>,
     },
     /// Show blockchain service status
     Services,

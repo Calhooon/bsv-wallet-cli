@@ -211,6 +211,7 @@ pub async fn build_and_post(
                 offered_satoshis: 0,
                 held,
                 capped: None,
+                headers_fault: None,
             }
         );
     }

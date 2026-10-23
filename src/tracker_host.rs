@@ -1994,9 +1994,28 @@ pub struct CreatorReading {
     /// `mined`, checked against the headers of the moment, not suspect, at
     /// the spend depth (floor 1): the guard offers it with no rule.
     pub offered: bool,
-    /// Could not look (no tip, no header at the height): the fault. Nothing
-    /// is offered on it.
+    /// Could not look (no tip, no header at the height, a stored path that
+    /// does not parse): the fault. Nothing is offered on it. For the
+    /// header service's own fault (`CheckError::Headers`) this is the
+    /// service's error in its own words, not the variant's name.
     pub fault: Option<String>,
+    /// The fault is the header service's: its tip or a header the pass
+    /// needed could not be read (a transport fault, an outage), so a later
+    /// read may answer where this one did not. Never set for a snapshot that
+    /// simply holds no header at the height (`Unavailable`), a path that
+    /// does not parse, or a root that does not match (bsv-wallet-cli #59).
+    pub headers_fault: bool,
+}
+
+/// A check fault as a reading carries it: the header service's own error for
+/// a `Headers` fault (the toolbox's words, e.g. "Service error:
+/// get_chain_tip_header: no header service answered (...)"), the variant
+/// otherwise.
+fn fault_text(fault: &CheckError) -> String {
+    match fault {
+        CheckError::Headers(e) => e.to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Run the spend guard over many creators against one read of the headers:
@@ -2039,7 +2058,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
     for row in rows {
         let (mut state, fault) = row.replay(&params, &snapshot);
         let fault = match fault {
-            Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => Some(fault.to_string()),
+            Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => Some(fault),
             _ => None,
         };
         let verdict = match fault {
@@ -2056,8 +2075,9 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
         };
         let (offered, fault) = match verdict {
             Ok(offered) => (offered, fault),
-            Err(e) => (false, fault.or(Some(e.to_string()))),
+            Err(e) => (false, fault.or(Some(e))),
         };
+        let headers_fault = matches!(fault, Some(CheckError::Headers(_)));
         let split = under_split(state.word(), split_floor);
         readings.insert(
             row.txid.clone(),
@@ -2066,7 +2086,8 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
                 depth,
                 suspect: state.suspect() || split,
                 offered: offered && !split,
-                fault,
+                fault: fault.as_ref().map(fault_text),
+                headers_fault,
             },
         );
     }
