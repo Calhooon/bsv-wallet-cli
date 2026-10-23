@@ -749,7 +749,7 @@ pub async fn internalize_action(
 
 /// The toolbox's `internalizeAction` arguments for a caller's request, the
 /// gate's rule label stripped from its labels.
-pub(crate) fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
+pub fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
     let mut args = InternalizeActionArgs {
         tx: req.tx,
         outputs: req
