@@ -1,0 +1,73 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/verifyHmac",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "data": [
+        111,
+        116,
+        104,
+        101,
+        114
+      ],
+      "hmac": [
+        217,
+        246,
+        242,
+        133,
+        227,
+        227,
+        227,
+        200,
+        160,
+        226,
+        151,
+        232,
+        105,
+        11,
+        102,
+        145,
+        153,
+        139,
+        162,
+        246,
+        52,
+        32,
+        113,
+        10,
+        202,
+        245,
+        148,
+        249,
+        83,
+        118,
+        154,
+        89
+      ],
+      "keyID": "1",
+      "protocolID": [
+        2,
+        "wire test"
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERROR",
+      "message": "wallet error: HMAC is not valid"
+    }
+  }
+}

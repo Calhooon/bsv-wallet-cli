@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/isAuthenticated",
+    "headers": {
+      "origin": "https://app.example"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "https://app.example",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "authenticated": true
+    }
+  }
+}

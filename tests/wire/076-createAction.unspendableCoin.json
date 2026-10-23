@@ -1,0 +1,35 @@
+{
+  "world": "received",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "wire incomplete ancestry",
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 1000
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "UNSPENDABLE_COIN",
+      "coin": "6666666666666666666666666666666666666666666666666666666666666666.0",
+      "message": "wallet error: Unspendable coin: 6666666666666666666666666666666666666666666666666666666666666666.0: its stored ancestry is incomplete, ancestor(s) not stored: [6666666666666666666666666666666666666666666666666666666666666666]; createAction fetches none, and the wallet's other coins do not cover the action"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/internalizeAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "wire invalid beef",
+      "outputs": [
+        {
+          "outputIndex": 0,
+          "paymentRemittance": {
+            "derivationPrefix": "d2lyZQ==",
+            "derivationSuffix": "d2lyZQ==",
+            "senderIdentityKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          },
+          "protocol": "wallet payment"
+        }
+      ],
+      "tx": [
+        222,
+        173,
+        190,
+        239
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INVALID_BEEF",
+      "message": "wallet error: Invalid BEEF at byte 0: BadVersion"
+    }
+  }
+}

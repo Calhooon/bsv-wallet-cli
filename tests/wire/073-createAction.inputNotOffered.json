@@ -1,0 +1,53 @@
+{
+  "world": "tracked",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "allowPending": "received",
+      "description": "wire frozen coin",
+      "inputs": [
+        {
+          "inputDescription": "named",
+          "outpoint": "4444444444444444444444444444444444444444444444444444444444444444.0",
+          "unlockingScriptLength": 107
+        }
+      ],
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 1000
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INPUT_NOT_OFFERED",
+      "held": [
+        {
+          "ageMinutes": "<minutes>",
+          "origin": "received",
+          "outpoint": "4444444444444444444444444444444444444444444444444444444444444444.0",
+          "reason": "frozen: never offered",
+          "satoshis": 50000,
+          "word": "frozen"
+        }
+      ],
+      "message": "Access denied: an input the spend guard does not offer (1 coin(s) held back)\n  4444444444444444444444444444444444444444444444444444444444444444.0 50000 sats: frozen, received, <minutes> min old: frozen: never offered",
+      "offeredSatoshis": 0
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "world": "tracked",
+  "request": {
+    "method": "GET",
+    "path": "/tx/2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "evidence": null,
+      "height": null,
+      "reask": "age",
+      "txid": "2222222222222222222222222222222222222222222222222222222222222222",
+      "word": "seen"
+    }
+  }
+}

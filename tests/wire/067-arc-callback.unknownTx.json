@@ -1,0 +1,27 @@
+{
+  "world": "callback",
+  "request": {
+    "method": "POST",
+    "path": "/arc-callback",
+    "headers": {
+      "authorization": "Bearer wire-callback"
+    },
+    "json": {
+      "txStatus": "SEEN_ON_NETWORK",
+      "txid": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "action": "StatusIgnored",
+      "ok": true
+    }
+  }
+}
