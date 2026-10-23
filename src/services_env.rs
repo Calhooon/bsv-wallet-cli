@@ -19,8 +19,16 @@
 //! | `WOC_API_KEY` | WhatsOnChain key, sent as `woc-api-key` and `Authorization: Bearer` by the toolbox's provider and the CLI's own WhatsOnChain rung (optional) |
 //! | `BITAILS_API_KEY` | Bitails key (optional) |
 //! | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it (no key exists) |
+//! | `WOC_BASE` | WhatsOnChain API base for the CLI's own rungs (the spend probe, `receive`'s courier, the broadcast verifier's chain index): unset or blank is the chain's default, a URL moves it (a fixture, a mirror). The toolbox's own WhatsOnChain provider keeps its default until it takes a base (bsv-wallet-cli #74) |
+//! | `BITAILS_BASE` | Bitails API base for the broadcast verifier's chain index: unset or blank is the chain's default, a URL moves it. The toolbox's own Bitails provider keeps its default until it takes a base (#74) |
+//! | `ARC_GORILLAPOOL_URL` | The GorillaPool ARC, the toolbox's second broadcaster and the verifier's third-party store: unset is the chain's default (mainnet only), empty leaves it out, a URL moves it |
 
 use anyhow::{Context, Result};
+use bsv_wallet_toolbox::services::providers::{
+    arc::ARC_GORILLAPOOL,
+    bitails::{BITAILS_MAINNET_URL, BITAILS_TESTNET_URL},
+    whatsonchain::{WOC_MAINNET_URL, WOC_TESTNET_URL},
+};
 use bsv_wallet_toolbox::{
     services::{ArcadeConfig, ARCADE_V2_MAINNET},
     ArcConfig, Chain, ServicesOptions,
@@ -120,6 +128,99 @@ pub fn woc_api_key_from_env() -> Option<String> {
 /// `BANANABLOCKS_BASE` in the toolbox's terms ([`bananablocks_base_for`]).
 pub fn bananablocks_base_from_env() -> Option<String> {
     bananablocks_base_for(std::env::var(BANANABLOCKS_BASE_ENV).ok().as_deref())
+}
+
+/// The environment variable that moves WhatsOnChain's API base for the
+/// CLI's own rungs (bsv-wallet-cli #74).
+pub const WOC_BASE_ENV: &str = "WOC_BASE";
+
+/// The environment variable that moves Bitails' API base for the CLI's own
+/// rungs (#74).
+pub const BITAILS_BASE_ENV: &str = "BITAILS_BASE";
+
+/// The environment variable that moves (or, empty, leaves out) the
+/// GorillaPool ARC (#74).
+pub const ARC_GORILLAPOOL_URL_ENV: &str = "ARC_GORILLAPOOL_URL";
+
+/// A base URL from its configured value: unset or blank is `None` (the
+/// default stands), else the value without surrounding whitespace or a
+/// trailing slash.
+pub fn base_for(configured: Option<&str>) -> Option<String> {
+    configured
+        .map(|v| v.trim().trim_end_matches('/'))
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// The bases of the explorers and the third-party broadcaster the CLI's
+/// own rungs ask (`explorers.rs`, `broadcast_verify.rs`): WhatsOnChain and
+/// Bitails always on, at the chain's default or where `WOC_BASE` /
+/// `BITAILS_BASE` point; GorillaPool at the chain's default (mainnet only),
+/// where `ARC_GORILLAPOOL_URL` points, or left out when it is empty. A
+/// hermetic run points all three at a local stub (#74).
+///
+/// The toolbox's own WhatsOnChain and Bitails providers do not take a base
+/// (`ServicesOptions` has `bananablocks_base` alone); GorillaPool's URL is
+/// its `arc_gorillapool_url`, set from here by
+/// [`services_options_from_env`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerBases {
+    /// WhatsOnChain's API base, no trailing slash.
+    pub woc: String,
+    /// Bitails' API base, no trailing slash.
+    pub bitails: String,
+    /// The GorillaPool ARC's base, `None` when it is left out.
+    pub gorillapool: Option<String>,
+}
+
+impl ExplorerBases {
+    /// The chain's defaults, the toolbox's constants.
+    pub fn defaults(chain: Chain) -> Self {
+        let (woc, bitails, gorillapool) = match chain {
+            Chain::Main => (WOC_MAINNET_URL, BITAILS_MAINNET_URL, Some(ARC_GORILLAPOOL)),
+            // GorillaPool's testnet ARC is not commonly used; the toolbox
+            // leaves it out too (`ServicesOptions::testnet`).
+            Chain::Test => (WOC_TESTNET_URL, BITAILS_TESTNET_URL, None),
+        };
+        Self {
+            woc: woc.trim_end_matches('/').to_string(),
+            bitails: bitails.trim_end_matches('/').to_string(),
+            gorillapool: gorillapool.map(str::to_string),
+        }
+    }
+
+    /// The bases from their configured values: unset or blank is the
+    /// default; for GorillaPool, unset is the default and an empty or blank
+    /// value leaves it out.
+    pub fn configured(
+        chain: Chain,
+        woc: Option<&str>,
+        bitails: Option<&str>,
+        gorillapool: Option<&str>,
+    ) -> Self {
+        let defaults = Self::defaults(chain);
+        Self {
+            woc: base_for(woc).unwrap_or(defaults.woc),
+            bitails: base_for(bitails).unwrap_or(defaults.bitails),
+            gorillapool: match gorillapool {
+                None => defaults.gorillapool,
+                Some(v) => base_for(Some(v)),
+            },
+        }
+    }
+
+    /// The bases from `WOC_BASE`, `BITAILS_BASE` and `ARC_GORILLAPOOL_URL`.
+    pub fn from_env(chain: Chain) -> Self {
+        let woc = std::env::var(WOC_BASE_ENV).ok();
+        let bitails = std::env::var(BITAILS_BASE_ENV).ok();
+        let gorillapool = std::env::var(ARC_GORILLAPOOL_URL_ENV).ok();
+        Self::configured(
+            chain,
+            woc.as_deref(),
+            bitails.as_deref(),
+            gorillapool.as_deref(),
+        )
+    }
 }
 
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
@@ -255,6 +356,9 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
         opts = opts.with_bitails_api_key(key);
     }
     opts.bananablocks_base = bananablocks_base_from_env();
+    // GorillaPool, the toolbox's second broadcaster: the chain's default,
+    // moved or left out by `ARC_GORILLAPOOL_URL` (#74).
+    opts.arc_gorillapool_url = ExplorerBases::from_env(chain).gorillapool;
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
     // that provider is the failover behind Arcade).
@@ -400,6 +504,60 @@ mod tests {
         assert_eq!(api_key_for(None), None);
         assert_eq!(api_key_for(Some("  ")), None);
         assert_eq!(api_key_for(Some(" k ")).as_deref(), Some("k"));
+    }
+
+    /// `WOC_BASE` and `BITAILS_BASE` (#74): unset or blank is the chain's
+    /// default, a URL moves the rung, a trailing slash is dropped.
+    #[test]
+    fn explorer_bases_default_and_move() {
+        let main = ExplorerBases::defaults(Chain::Main);
+        assert_eq!(main.woc, "https://api.whatsonchain.com/v1/bsv/main");
+        assert_eq!(main.bitails, "https://api.bitails.io");
+        assert_eq!(
+            main.gorillapool.as_deref(),
+            Some("https://arc.gorillapool.io")
+        );
+        let test = ExplorerBases::defaults(Chain::Test);
+        assert_eq!(test.woc, "https://api.whatsonchain.com/v1/bsv/test");
+        assert_eq!(test.bitails, "https://test-api.bitails.io");
+        assert_eq!(test.gorillapool, None);
+
+        for blank in [None, Some(""), Some("  ")] {
+            assert_eq!(
+                ExplorerBases::configured(Chain::Main, blank, blank, None),
+                main,
+                "{blank:?}"
+            );
+        }
+        let moved = ExplorerBases::configured(
+            Chain::Main,
+            Some(" http://127.0.0.1:3380/woc/ "),
+            Some("http://127.0.0.1:3380/bitails"),
+            Some("http://127.0.0.1:3380/arc"),
+        );
+        assert_eq!(moved.woc, "http://127.0.0.1:3380/woc");
+        assert_eq!(moved.bitails, "http://127.0.0.1:3380/bitails");
+        assert_eq!(
+            moved.gorillapool.as_deref(),
+            Some("http://127.0.0.1:3380/arc")
+        );
+    }
+
+    /// `ARC_GORILLAPOOL_URL` (#74): unset is the chain's default, empty or
+    /// blank leaves GorillaPool out, a URL moves it.
+    #[test]
+    fn gorillapool_unset_is_the_default_and_empty_is_out() {
+        let at =
+            |v: Option<&str>| ExplorerBases::configured(Chain::Main, None, None, v).gorillapool;
+        assert_eq!(at(None).as_deref(), Some("https://arc.gorillapool.io"));
+        assert_eq!(at(Some("")), None);
+        assert_eq!(at(Some("  ")), None);
+        assert_eq!(
+            at(Some("https://gp.example/")).as_deref(),
+            Some("https://gp.example")
+        );
+        assert_eq!(base_for(None), None);
+        assert_eq!(base_for(Some(" / ")), None);
     }
 
     #[test]

@@ -56,14 +56,6 @@ const WOC_DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(1);
 /// The longest one explorer request may take.
 const EXPLORER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// WhatsOnChain's API base for a chain.
-pub fn woc_base(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
-        Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
-    }
-}
-
 /// One rung of the spender question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rung {
@@ -135,8 +127,9 @@ impl Explorers {
             Chain::Test => &TEST,
         };
         cell.get_or_init(|| {
-            Arc::new(Self::configured(
+            Arc::new(Self::configured_at(
                 chain,
+                &crate::services_env::ExplorerBases::from_env(chain).woc,
                 crate::services_env::woc_api_key_from_env(),
                 crate::services_env::bananablocks_base_from_env(),
             ))
@@ -144,11 +137,29 @@ impl Explorers {
         .clone()
     }
 
-    /// The rungs for `chain`: WhatsOnChain at its base, BananaBlocks at
-    /// `bananablocks_base` (`None` the chain's default, empty off: the
-    /// toolbox's `ServicesOptions::bananablocks_base_for`).
+    /// The rungs for `chain`: WhatsOnChain at the chain's default base,
+    /// BananaBlocks at `bananablocks_base` (`None` the chain's default,
+    /// empty off: the toolbox's `ServicesOptions::bananablocks_base_for`).
+    #[allow(dead_code)] // the binary builds through `from_env` (the configured bases); the tests call this
     pub fn configured(
         chain: Chain,
+        woc_api_key: Option<String>,
+        bananablocks_base: Option<String>,
+    ) -> Self {
+        Self::configured_at(
+            chain,
+            &crate::services_env::ExplorerBases::defaults(chain).woc,
+            woc_api_key,
+            bananablocks_base,
+        )
+    }
+
+    /// [`Explorers::configured`] with the WhatsOnChain rung at `woc` (the
+    /// chain's default, or where `WOC_BASE` points: a stub, a mirror; #74),
+    /// behind the process's gate for the chain and key.
+    pub fn configured_at(
+        chain: Chain,
+        woc: &str,
         woc_api_key: Option<String>,
         bananablocks_base: Option<String>,
     ) -> Self {
@@ -159,11 +170,7 @@ impl Explorers {
         let bananablocks = options.bananablocks_base_for(chain);
         let woc_api_key = woc_api_key.filter(|k| !k.trim().is_empty());
         let gate = shared_woc_gate(chain, woc_api_key.clone());
-        Self::with_woc_gate(
-            Some((woc_base(chain), gate)),
-            bananablocks.as_deref(),
-            woc_api_key,
-        )
+        Self::with_woc_gate(Some((woc, gate)), bananablocks.as_deref(), woc_api_key)
     }
 
     /// The rungs at explicit bases (a fixture in a test, a mirror): `None`
