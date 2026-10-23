@@ -1,0 +1,14 @@
+# Lane oracle-dependents: docs/DEPENDENTS.md and the consumers' recorded calls (#110)
+
+**Repository.** `bsv-wallet-cli`, your worktree on a branch from `origin/beta`. `docs/lanes/README.md` binds you. Three hours.
+
+**Read in this order.** #110 and the epic #106 (its section "The three crates and their dependents" names every consumer). The x402 skill's wallet client, `~/.claude/plugins/marketplaces/calgooon-x402/skills/x402/lib/metanet.py` and `scripts/brc31_helpers.py` (the exact JSON the server must match: `isAuthenticated`, `getPublicKey`, `createSignature`, `createAction`, `internalizeAction`), the MCP companion `mcp/src/main.rs` (the 34 tools and the bodies they post), LOW's funder's calls as `~/bsv/bsv-low` documents them (read only; never its secrets file; if the repo is not readable, say so and take the shapes from bsv-wallet-cli #63's text: `createAction` with `allowPending` as the string and as the scoped object), the harness client `tests/e2e/lib/wallet-client.js` (what the scenarios send), and `README.md`'s "The served answers". The stack's `~/bsv/bsv-stack-lean/docs/APP-CONTRACT.md` and the keeper's versions page `docs/p0/versions-2026-10-10.md` for the shape of a dependents record.
+
+**The work.**
+1. `docs/DEPENDENTS.md`: one row per consumer of this binary (LOW's fleet, the stack's witness spend wallet, the x402 skill, the MCP clients, the apps' x402 payers in `~/bsv/agents`, `~/bsv/zanaadu`, `~/bsv/teragunv2` where their code calls a MetaNet-compatible wallet), with: what it calls (endpoints, MCP tools, or CLI commands under `--json`), the version it runs today where known, its captain, and the canary order (the stack's witness wallet and LOW's fleet on the previous version until a release has soaked a day). Mark every unverified cell `[D]`.
+2. `tests/wire/consumers/`: one recorded exchange per consumer call shape (request and normalized response), in the fixture format the fixtures lane (#69, `lane/oracle-fixtures`, running beside you; coordinate by reading its branch if it exists, else use the shape `{"request":{method,path,headers,body},"response":{status,headers,body}}` and say so), produced by driving the router in-process as `src/server/handlers/tests.rs` does. A test `tests/wire_consumers.rs` that replays them and fails on a byte of difference, naming the consumer.
+3. `RELEASING.md`: a paragraph on announcing a beta prerelease to each captain with the fixtures' diff since the last minor.
+
+**Bounds.** Docs, fixtures and one test; nothing under `src/`; `Cargo.toml` untouched. Never a secret, a hostname of a deployment, or an account id in anything you write (LOW's hosts are "four hosts"). If the fixtures lane's format lands first, adopt it; if yours lands first, the captain reconciles.
+
+**Report.** `REPORT: STATUS done|blocked`, the base and tip commits, the consumers' table, the fixture count per consumer, the commands and their tails, the six tests each choice passes.
