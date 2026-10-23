@@ -10,7 +10,9 @@ class WalletClient {
    * the action is recorded under the rule. A test wallet is funded by the
    * funder's just-broadcast payment and spends in the same block, so its
    * spends carry the word; the funder's own client never does (its coins are
-   * mined or its own change).
+   * mined or its own change). The scoped form, `allowPending: { received:
+   * ['txid:vout', ...] }` (0.18.0, #63), offers only the named received coins
+   * under the word; a call passes it in `opts.allowPending` (scenario 23).
    */
   constructor(port, name = `wallet:${port}`, { allowPending } = {}) {
     this.base = `http://localhost:${port}`;
@@ -31,7 +33,12 @@ class WalletClient {
     try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
     if (!resp.ok) {
       const msg = data.message || data.error || data._raw || text || `HTTP ${resp.status}`;
-      throw new Error(`${this.name} /${endpoint} ${resp.status}: ${msg}`);
+      // The status and the body ride on the error, so a scenario can read a
+      // refusal's `code` and `held` (the spend gate's answers).
+      const err = new Error(`${this.name} /${endpoint} ${resp.status}: ${msg}`);
+      err.status = resp.status;
+      err.body = data;
+      throw err;
     }
     return data;
   }

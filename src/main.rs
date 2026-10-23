@@ -85,9 +85,11 @@ async fn main() -> Result<()> {
             address,
             satoshis,
             allow_pending,
+            coins,
         } => {
+            let allow_pending = word(allow_pending, coins)?;
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::send::run(&ctx, address, *satoshis, word(allow_pending)).await?;
+            commands::send::run(&ctx, address, *satoshis, allow_pending).await?;
         }
         Commands::Respend { txid } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -99,17 +101,12 @@ async fn main() -> Result<()> {
             unlock,
             fee_utxo,
             allow_pending,
+            coins,
         } => {
+            let allow_pending = word(allow_pending, coins)?;
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::gift_send::run(
-                &ctx,
-                recipient,
-                *satoshis,
-                unlock,
-                *fee_utxo,
-                word(allow_pending),
-            )
-            .await?;
+            commands::gift_send::run(&ctx, recipient, *satoshis, unlock, *fee_utxo, allow_pending)
+                .await?;
         }
         Commands::GiftInspect { txid } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -122,9 +119,11 @@ async fn main() -> Result<()> {
         Commands::Drain {
             address,
             allow_pending,
+            coins,
         } => {
+            let allow_pending = word(allow_pending, coins)?;
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::drain::run(&ctx, address, word(allow_pending)).await?;
+            commands::drain::run(&ctx, address, allow_pending).await?;
         }
         Commands::Fund { beef_hex, vout } => {
             let ctx = context::WalletContext::load(&cli).await?;
@@ -173,9 +172,11 @@ async fn main() -> Result<()> {
         Commands::Split {
             count,
             allow_pending,
+            coins,
         } => {
+            let allow_pending = word(allow_pending, coins)?;
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::split::run(&ctx, *count, word(allow_pending)).await?;
+            commands::split::run(&ctx, *count, allow_pending).await?;
         }
         Commands::Services => {
             commands::services::run(&cli).await?;
@@ -225,7 +226,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// The `--allow-pending` flag as the gate's word for this one action (R1 (d)).
-fn word(allow_pending: &Option<String>) -> bool {
-    spend_gate::allow_pending(allow_pending.as_deref())
+/// The `--allow-pending` flag, with its `--coin`s, as the gate's word for
+/// this one action (R1 (d); the scope, #63). Read before the wallet is
+/// opened: a coin that does not parse is the caller's error, not the
+/// wallet's.
+fn word(allow_pending: &Option<String>, coins: &[String]) -> Result<spend_gate::AllowPending> {
+    spend_gate::AllowPending::from_cli(allow_pending.as_deref(), coins)
+        .map_err(|e| anyhow::anyhow!("Invalid argument: {e}"))
 }

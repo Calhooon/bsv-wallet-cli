@@ -85,8 +85,38 @@
 //! more; if that fails for funds, the refusal lists every coin held
 //! back ([`Refusal`]). Nothing is fetched but the header service's tip and
 //! headers: no chain scan, no explorer.
+//!
+//! # The word's scope (#63, 0.18.0)
+//!
+//! The word may name the coins it reaches: `allowPending: {"received":
+//! ["txid:vout", ...]}` on the served `/createAction`, `--allow-pending
+//! received --coin txid:vout` (repeatable) on the commands
+//! ([`AllowPending::ReceivedOnly`]). Only the named received coins are
+//! offered under it; every other received unproven coin is held as without
+//! the word, its reason naming the scope ([`NOT_NAMED_HINT`]). A named coin
+//! that is not a received coin this wallet could spend (not ours, own
+//! change, consumed by another action, a nosend) refuses the action before
+//! the door, naming it ([`GateError::Scope`]). The scope narrows what the
+//! word reaches and never widens it; the string form `"received"` stays
+//! every received coin.
+//!
+//! # The header service's fault (#59, 0.18.0)
+//!
+//! A coin whose creator the gate could not check because the header service
+//! did not answer (its tip or a header the check needs: a transport fault,
+//! an outage) is held "headers unavailable: <the service's error>", and the
+//! hold is marked as the service's ([`HeldCoin::headers_fault`]). Such a
+//! hold is no verdict about the wallet: the gate reads those creators once
+//! more after [`HEADER_RETRY_PAUSE`], once per gated call, and when the
+//! coins still held on the fault could have covered the action (with what
+//! was offered, the outputs' sum at least), the answer is "could not
+//! verify now" ([`Refusal::headers_fault`], code `HEADERS_UNAVAILABLE`, the
+//! route's 503 with `Retry-After`), never `INSUFFICIENT_FUNDS`. A shortfall
+//! the faulted coins could not have covered is the funds' refusal as
+//! before. A named input held on the fault alone is the same answer.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::Result;
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult};
@@ -125,6 +155,20 @@ pub const RECEIVED_PENDING_LABEL: &str = "spend-gate:received-pending";
 pub const ALLOW_PENDING_RECEIVED: &str = "received";
 /// Appended to a held received `pending` coin's reason: what would offer it.
 pub const ALLOW_PENDING_HINT: &str = "offered under allowPending: received";
+/// Appended to a held received `pending` coin's reason when the action's
+/// word is scoped and does not name it (#63).
+pub const NOT_NAMED_HINT: &str = "not named under allowPending: received";
+/// The pause before the one re-read of the creators the header service did
+/// not answer for (#59): the blink seen on the 0.17.1 gate and on LOW's
+/// vultr funder lasted about two seconds.
+pub const HEADER_RETRY_PAUSE: Duration = Duration::from_secs(2);
+/// The route's `Retry-After` on `HEADERS_UNAVAILABLE`, in seconds.
+pub const HEADERS_RETRY_AFTER_SECS: u64 = 2;
+/// The refusal's code when the header service's fault held the coins that
+/// could have covered the action (#59).
+pub const HEADERS_UNAVAILABLE: &str = "HEADERS_UNAVAILABLE";
+/// The reason prefix of a coin held on the header service's fault.
+const HEADERS_UNAVAILABLE_PREFIX: &str = "headers unavailable: ";
 /// The refusal's toolbox line when a coin a caller named is held.
 pub const NAMED_INPUT_REFUSED: &str = "an input the spend guard does not offer";
 
@@ -136,9 +180,9 @@ pub struct GateOptions {
     /// `SPEND_OWN_CHANGE` (R1 (b)): offer our own `made` change whose
     /// creator's word is `pending`.
     pub own_change: bool,
-    /// R1 (d): this one action named `allowPending: received` at the door.
+    /// R1 (d): this one action's word at the door ([`AllowPending`]).
     /// Never read from the environment; off unless the caller says so.
-    pub allow_received: bool,
+    pub allow_pending: AllowPending,
 }
 
 impl Default for GateOptions {
@@ -146,7 +190,7 @@ impl Default for GateOptions {
         Self {
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
             own_change: DEFAULT_SPEND_OWN_CHANGE,
-            allow_received: false,
+            allow_pending: AllowPending::Off,
         }
     }
 }
@@ -155,6 +199,134 @@ impl Default for GateOptions {
 /// `"received"`; absent or anything else is off.
 pub fn allow_pending(word: Option<&str>) -> bool {
     word == Some(ALLOW_PENDING_RECEIVED)
+}
+
+/// R1 (d)'s word at the door, as one action names it: off, every received
+/// unproven coin, or only the named received coins (#63).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AllowPending {
+    /// No received unproven coin is offered.
+    #[default]
+    Off,
+    /// `allowPending: "received"`, `--allow-pending received`: every
+    /// received unproven coin of the wallet is offered.
+    Received,
+    /// `allowPending: {"received": ["txid:vout", ...]}`, `--allow-pending
+    /// received --coin txid:vout` (repeatable): only the named received
+    /// coins are offered under the word; every other received unproven coin
+    /// is held as without it. Never empty (an empty list is [`Self::Off`]);
+    /// sorted, no repeats; txids lowercased.
+    ReceivedOnly(Vec<(String, u32)>),
+}
+
+impl AllowPending {
+    /// The word is on for this action: the action carries its label.
+    pub fn is_on(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// The word reaches the received coin `txid:vout`.
+    pub fn reaches(&self, txid: &str, vout: u32) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Received => true,
+            Self::ReceivedOnly(coins) => coins.iter().any(|(t, v)| t == txid && *v == vout),
+        }
+    }
+
+    /// The coins a scoped word names; none for the other two.
+    pub fn named(&self) -> &[(String, u32)] {
+        match self {
+            Self::ReceivedOnly(coins) => coins,
+            _ => &[],
+        }
+    }
+
+    /// The served `/createAction`'s `allowPending`: absent is off; the
+    /// string `"received"` is every received coin and any other string is
+    /// off (as 0.15 read it); an object `{"received": ["txid:vout", ...]}`
+    /// is the scope (an empty list is off); an object of another shape, or
+    /// an outpoint that does not parse, is the caller's error. Any other
+    /// JSON value is off.
+    pub fn from_json(value: Option<&serde_json::Value>) -> std::result::Result<Self, String> {
+        const SHAPE: &str = "allowPending: an object is {\"received\": [\"txid:vout\", ...]}";
+        match value {
+            None => Ok(Self::Off),
+            Some(serde_json::Value::String(word)) => Ok(if allow_pending(Some(word)) {
+                Self::Received
+            } else {
+                Self::Off
+            }),
+            Some(serde_json::Value::Object(map)) => {
+                if map.len() != 1 {
+                    return Err(SHAPE.to_string());
+                }
+                let Some(items) = map.get(ALLOW_PENDING_RECEIVED).and_then(|v| v.as_array()) else {
+                    return Err(SHAPE.to_string());
+                };
+                let mut coins = Vec::with_capacity(items.len());
+                for item in items {
+                    let Some(text) = item.as_str() else {
+                        return Err(SHAPE.to_string());
+                    };
+                    coins.push(parse_outpoint(text)?);
+                }
+                Ok(Self::scoped(coins))
+            }
+            Some(_) => Ok(Self::Off),
+        }
+    }
+
+    /// A command's `--allow-pending <WORD>` with its `--coin <TXID:VOUT>`s:
+    /// the word alone is every received coin; with coins, only those; a
+    /// coin without the word is the caller's error.
+    pub fn from_cli(word: Option<&str>, coins: &[String]) -> std::result::Result<Self, String> {
+        if !allow_pending(word) {
+            if coins.is_empty() {
+                return Ok(Self::Off);
+            }
+            return Err(
+                "--coin names a coin under --allow-pending received, which is not given"
+                    .to_string(),
+            );
+        }
+        if coins.is_empty() {
+            return Ok(Self::Received);
+        }
+        let coins = coins
+            .iter()
+            .map(|c| parse_outpoint(c))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(Self::scoped(coins))
+    }
+
+    fn scoped(mut coins: Vec<(String, u32)>) -> Self {
+        coins.sort();
+        coins.dedup();
+        if coins.is_empty() {
+            Self::Off
+        } else {
+            Self::ReceivedOnly(coins)
+        }
+    }
+}
+
+/// An outpoint as a caller writes it, `txid:vout` (or `txid.vout`, as the
+/// listings print one): the txid 64 hex characters, lowercased here.
+pub fn parse_outpoint(text: &str) -> std::result::Result<(String, u32), String> {
+    let text = text.trim();
+    let Some((txid, vout)) = text.rsplit_once([':', '.']) else {
+        return Err(format!("{text:?} is not an outpoint (txid:vout)"));
+    };
+    if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "{text:?} is not an outpoint: the txid is not 64 hex characters"
+        ));
+    }
+    let vout: u32 = vout
+        .parse()
+        .map_err(|_| format!("{text:?} is not an outpoint: the vout is not a number"))?;
+    Ok((txid.to_ascii_lowercase(), vout))
 }
 
 impl GateOptions {
@@ -172,13 +344,24 @@ impl GateOptions {
         Self {
             spend_depth: TickOptions::from_env().spend_depth,
             own_change,
-            allow_received: false,
+            allow_pending: AllowPending::Off,
         }
     }
 
-    /// These settings, with the action's word for R1 (d).
+    /// These settings, with the action's word for R1 (d): every received
+    /// coin, or none.
     pub fn with_allow_received(mut self, allow: bool) -> Self {
-        self.allow_received = allow;
+        self.allow_pending = if allow {
+            AllowPending::Received
+        } else {
+            AllowPending::Off
+        };
+        self
+    }
+
+    /// These settings, with the action's word for R1 (d) as given (#63).
+    pub fn with_allow_pending(mut self, word: AllowPending) -> Self {
+        self.allow_pending = word;
         self
     }
 
@@ -220,8 +403,14 @@ pub struct HeldCoin {
     /// action of ours consumed, spent for good; it leaves the listing when
     /// that spender is completed (its proof lands) or failed (#53).
     pub reason: String,
+    /// The hold is the header service's fault (`headers unavailable:
+    /// <its error>`), no verdict on the coin: a later read may offer it
+    /// (#59).
     #[serde(skip)]
-    output_id: i64,
+    pub headers_fault: bool,
+    /// The store's output id; not in the JSON.
+    #[serde(skip)]
+    pub output_id: i64,
 }
 
 /// The refusal: no offered coin covers the action. Every coin held back is
@@ -237,6 +426,12 @@ pub struct Refusal {
     /// delta review): named in the refusal's text, never silently absent.
     #[serde(skip)]
     pub capped: Option<Capped>,
+    /// "Could not verify now" (#59): the header service's error, when its
+    /// fault held coins that could have covered the action (or every named
+    /// input held is held on it). The code is then `HEADERS_UNAVAILABLE`,
+    /// never a verdict about the wallet.
+    #[serde(skip)]
+    pub headers_fault: Option<String>,
 }
 
 /// Offerable coins left out of an offer by its cap ([`OFFER_CAP`]): how
@@ -250,7 +445,24 @@ pub struct Capped {
 
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.toolbox == NAMED_INPUT_REFUSED {
+        if let Some(fault) = &self.headers_fault {
+            let on_fault = self.held.iter().filter(|c| c.headers_fault);
+            let (coins, sats) = on_fault.fold((0usize, 0u64), |(n, s), c| (n + 1, s + c.satoshis));
+            if self.toolbox == NAMED_INPUT_REFUSED {
+                write!(
+                    f,
+                    "Could not verify now: the header service did not answer ({fault}); a named input is held on it, no verdict ({coins} coin(s), {sats} sats)"
+                )?;
+            } else {
+                write!(
+                    f,
+                    "Could not verify now: the header service did not answer ({fault}); {coins} coin(s), {sats} sats, held on it, no verdict ({}; {} sats offered, {} coin(s) held back)",
+                    self.toolbox,
+                    self.offered_satoshis,
+                    self.held.len()
+                )?;
+            }
+        } else if self.toolbox == NAMED_INPUT_REFUSED {
             write!(
                 f,
                 "Access denied: {} ({} coin(s) held back)",
@@ -302,14 +514,22 @@ impl Refusal {
         self.toolbox == NAMED_INPUT_REFUSED
     }
 
-    /// The refusal's code: `INPUT_NOT_OFFERED` for a named coin held,
-    /// else `INSUFFICIENT_FUNDS`.
+    /// The refusal's code: `HEADERS_UNAVAILABLE` when the header service's
+    /// fault is the reason (#59), else `INPUT_NOT_OFFERED` for a named coin
+    /// held, else `INSUFFICIENT_FUNDS`.
     pub fn code(&self) -> &'static str {
-        if self.is_named_input() {
+        if self.headers_fault.is_some() {
+            HEADERS_UNAVAILABLE
+        } else if self.is_named_input() {
             "INPUT_NOT_OFFERED"
         } else {
             "INSUFFICIENT_FUNDS"
         }
+    }
+
+    /// "Could not verify now": the header service's fault, not a verdict.
+    pub fn is_headers_fault(&self) -> bool {
+        self.headers_fault.is_some()
     }
 
     /// The held coins, as the route and `--json` give them.
@@ -361,6 +581,13 @@ pub fn refused_as_json<T>(
             println!("{}", busy_json(&e.to_string()));
             std::process::exit(1);
         }
+        Err(GateError::Scope(message)) if json => {
+            println!(
+                "{}",
+                serde_json::json!({"code": "VALIDATION_ERROR", "message": message})
+            );
+            std::process::exit(1);
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -394,6 +621,9 @@ pub enum GateError {
     Wallet(bsv_sdk::Error),
     /// The store or the header service failed under the gate.
     Gate(anyhow::Error),
+    /// The caller's scoped word names a coin that is not a received coin
+    /// this wallet could spend (#63): the caller's error, before the door.
+    Scope(String),
 }
 
 impl std::fmt::Display for GateError {
@@ -402,6 +632,7 @@ impl std::fmt::Display for GateError {
             Self::Refused(r) => r.fmt(f),
             Self::Wallet(e) => e.fmt(f),
             Self::Gate(e) => write!(f, "Storage error: spend gate: {e}"),
+            Self::Scope(message) => f.write_str(message),
         }
     }
 }
@@ -446,6 +677,9 @@ pub struct Assessment {
     pub unread: Vec<i64>,
     /// The offerable coins the cap left out of the offer (also `unread`).
     pub capped: Option<Capped>,
+    /// The header service did not answer for some creators and they were
+    /// read once more after [`HEADER_RETRY_PAUSE`] (#59).
+    pub headers_retried: bool,
 }
 
 impl Assessment {
@@ -639,10 +873,16 @@ fn blocks(n: u64) -> String {
     }
 }
 
-/// Why `reading` holds a coin of `origin`, or `None` when it is offered.
-pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions) -> Option<String> {
+/// Why `reading` holds the coin `outpoint` of `origin`, or `None` when it
+/// is offered.
+pub fn hold_reason(
+    reading: &CreatorReading,
+    origin: Origin,
+    outpoint: (&str, u32),
+    opts: &GateOptions,
+) -> Option<String> {
     if let Some(fault) = &reading.fault {
-        return Some(format!("headers unavailable: {fault}"));
+        return Some(format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}"));
     }
     if reading.offered {
         return None;
@@ -665,7 +905,10 @@ pub fn hold_reason(reading: &CreatorReading, origin: Origin, opts: &GateOptions)
         // rule for our own change (b), or the action's word for a received
         // coin (d), offers it.
         _ => match origin {
-            Origin::Received if opts.allow_received => None,
+            Origin::Received if opts.allow_pending.reaches(outpoint.0, outpoint.1) => None,
+            Origin::Received if opts.allow_pending.is_on() => {
+                Some(format!("{depth}; received, no proof; {NOT_NAMED_HINT}"))
+            }
             Origin::Received => Some(format!("{depth}; received, no proof; {ALLOW_PENDING_HINT}")),
             Origin::Made if opts.own_change => None,
             Origin::Made => Some(format!("{depth}; own change, SPEND_OWN_CHANGE=0")),
@@ -765,6 +1008,7 @@ async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
                 &r.get::<Option<String>, _>("holder").unwrap_or_default(),
                 None,
             ),
+            headers_fault: false,
             output_id: r.get("output_id"),
         })
         .collect())
@@ -772,11 +1016,37 @@ async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
 
 /// Read the coins and judge each. With `need`, stop reading once the coins
 /// offered reach it (the rest are `unread`); with `None`, read every coin.
+/// The header service is read once; [`assess_retrying`] is the door's
+/// read.
 pub async fn assess<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
     opts: &GateOptions,
     need: Option<u64>,
+) -> Result<Assessment> {
+    assess_inner(storage, services, opts, need, false).await
+}
+
+/// [`assess`], and when the header service did not answer for a batch's
+/// creators, those creators read once more after [`HEADER_RETRY_PAUSE`]
+/// (#59): once per assessment, and only when `retry` (the door's first
+/// read; its full read retries only if the first did not).
+pub async fn assess_retrying<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    opts: &GateOptions,
+    need: Option<u64>,
+    retry: bool,
+) -> Result<Assessment> {
+    assess_inner(storage, services, opts, need, retry).await
+}
+
+async fn assess_inner<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    opts: &GateOptions,
+    need: Option<u64>,
+    retry: bool,
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
     let tick = opts.tick();
@@ -799,6 +1069,7 @@ pub async fn assess<V: WalletServices + ?Sized>(
                 origin: c.origin,
                 age_minutes: c.age_minutes,
                 reason: FROZEN.to_string(),
+                headers_fault: false,
                 output_id: c.output_id,
             });
             continue;
@@ -820,12 +1091,41 @@ pub async fn assess<V: WalletServices + ?Sized>(
                 .collect();
             next = end;
             readings.extend(read_creators(storage, services, &tick, &batch).await?);
+            if retry && !out.headers_retried {
+                let faulted: Vec<_> = batch
+                    .iter()
+                    .filter(|(t, _)| readings.get(t).is_some_and(|r| r.headers_fault))
+                    .cloned()
+                    .collect();
+                if !faulted.is_empty() {
+                    out.headers_retried = true;
+                    let fault = readings
+                        .get(&faulted[0].0)
+                        .and_then(|r| r.fault.clone())
+                        .unwrap_or_default();
+                    tracing::warn!(
+                        creators = faulted.len(),
+                        pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
+                        fault = %fault,
+                        "spend gate: the header service did not answer; reading it once more"
+                    );
+                    tokio::time::sleep(HEADER_RETRY_PAUSE).await;
+                    let again = read_creators(storage, services, &tick, &faulted).await?;
+                    let answered = again.values().filter(|r| !r.headers_fault).count();
+                    tracing::info!(
+                        creators = faulted.len(),
+                        answered,
+                        "spend gate: the header service read once more"
+                    );
+                    readings.extend(again);
+                }
+            }
         }
         let Some(reading) = readings.get(&c.txid) else {
             out.unread.push(c.output_id);
             continue;
         };
-        match hold_reason(reading, c.origin, opts) {
+        match hold_reason(reading, c.origin, (&c.txid, c.vout as u32), opts) {
             None if !covered => out.offered.push((c.output_id, c.satoshis)),
             None => out.unread.push(c.output_id),
             Some(reason) => out.held.push(HeldCoin {
@@ -835,6 +1135,7 @@ pub async fn assess<V: WalletServices + ?Sized>(
                 origin: c.origin,
                 age_minutes: c.age_minutes,
                 reason,
+                headers_fault: reading.headers_fault,
                 output_id: c.output_id,
             }),
         }
@@ -935,6 +1236,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             Origin::Received
         };
         let reading = readings.get(&txid);
+        let mut headers_fault = false;
         let (word, reason) = if is_frozen(&txid, vout) {
             ("frozen".to_string(), Some(FROZEN.to_string()))
         } else if is_locked(&r) {
@@ -947,7 +1249,13 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             )
         } else {
             match reading {
-                Some(reading) => (reading.word.to_string(), hold_reason(reading, origin, opts)),
+                Some(reading) => {
+                    headers_fault = reading.headers_fault;
+                    (
+                        reading.word.to_string(),
+                        hold_reason(reading, origin, (&txid, vout), opts),
+                    )
+                }
                 None => ("unknown".to_string(), Some("not read".to_string())),
             }
         };
@@ -959,6 +1267,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
                 origin,
                 age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
                 reason,
+                headers_fault,
                 output_id: r.get("output_id"),
             });
         }
@@ -1066,6 +1375,14 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
+    // A scoped word names coins this wallet could spend under it, or it is
+    // the caller's error (#63), before anything is read for the action.
+    if let Some(error) = check_scope(storage, opts.allow_pending.named())
+        .await
+        .map_err(GateError::Gate)?
+    {
+        return Err(GateError::Scope(error));
+    }
     let named: Vec<(String, u32)> = args
         .inputs
         .iter()
@@ -1078,15 +1395,37 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         })
         .collect();
     if !named.is_empty() {
-        let held = assess_named(storage, wallet.services(), opts, &named, None)
+        let mut held = assess_named(storage, wallet.services(), opts, &named, None)
             .await
             .map_err(GateError::Gate)?;
+        // A named coin held on the header service's fault is read once
+        // more (#59), as the allocation's coins are.
+        if held.iter().any(|c| c.headers_fault) {
+            tracing::warn!(
+                coins = held.iter().filter(|c| c.headers_fault).count(),
+                pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
+                "spend gate: the header service did not answer for a named input; reading it once more"
+            );
+            tokio::time::sleep(HEADER_RETRY_PAUSE).await;
+            held = assess_named(storage, wallet.services(), opts, &named, None)
+                .await
+                .map_err(GateError::Gate)?;
+        }
         if !held.is_empty() {
+            // Every named input must be offerable: one held by a rule is
+            // the refusal; held on the service's fault alone, it is "could
+            // not verify now".
+            let headers_fault = if held.iter().all(|c| c.headers_fault) {
+                held.iter().find_map(service_error)
+            } else {
+                None
+            };
             return Err(GateError::Refused(Refusal {
                 toolbox: NAMED_INPUT_REFUSED.to_string(),
                 offered_satoshis: 0,
                 held,
                 capped: None,
+                headers_fault,
             }));
         }
     }
@@ -1097,12 +1436,74 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // review): only the door's word writes it.
     let mut args = args;
     strip_rule_label(&mut args.labels);
-    if opts.allow_received {
+    if opts.allow_pending.is_on() {
         args.labels
             .get_or_insert_with(Vec::new)
             .push(RECEIVED_PENDING_LABEL.to_string());
     }
     run_gated(wallet, args, originator, opts).await
+}
+
+/// The header service's error a coin is held on, from its reason.
+fn service_error(coin: &HeldCoin) -> Option<String> {
+    coin.headers_fault
+        .then(|| coin.reason.strip_prefix(HEADERS_UNAVAILABLE_PREFIX))
+        .flatten()
+        .map(str::to_string)
+}
+
+/// The coins a scoped word names (#63), checked before the door: each must
+/// be a received coin this wallet could spend under the word (an output of
+/// ours, change of the default basket, not consumed, its transaction
+/// `completed` or `unproven`, not an action of ours). The first that is not
+/// is the caller's error, naming it and why: the word never reaches own
+/// change, a nosend, a coin another action consumed, or a coin that is not
+/// ours. A named coin already mined is offered as any mined coin is: the
+/// word is moot for it, not wrong.
+async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<Option<String>> {
+    let pool = storage.pool();
+    for (txid, vout) in named {
+        let row = sqlx::query(
+            "SELECT o.change, o.spent_by, t.is_outgoing, t.status, b.name AS basket, \
+                    COALESCE(s.txid, s.reference) AS holder \
+             FROM outputs o \
+             JOIN transactions t ON o.transaction_id = t.transaction_id \
+             LEFT JOIN output_baskets b ON o.basket_id = b.basket_id \
+             LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
+             WHERE lower(t.txid) = ? AND o.vout = ?",
+        )
+        .bind(txid)
+        .bind(i64::from(*vout))
+        .fetch_optional(pool)
+        .await?;
+        let why = match row {
+            None => "not a coin of this wallet".to_string(),
+            Some(r) => {
+                let status: String = r.get("status");
+                if r.get::<i64, _>("is_outgoing") != 0 {
+                    "own change of an action of this wallet, not a received coin".to_string()
+                } else if r.get::<Option<i64>, _>("spent_by").is_some() {
+                    format!(
+                        "spent by {}",
+                        r.get::<Option<String>, _>("holder")
+                            .unwrap_or_else(|| "an action of this wallet".to_string())
+                    )
+                } else if !matches!(status.as_str(), "completed" | "unproven") {
+                    format!("its transaction is {status}")
+                } else if r.get::<Option<String>, _>("basket").as_deref() != Some("default")
+                    || r.get::<i64, _>("change") != 1
+                {
+                    "not a change coin of the default basket".to_string()
+                } else {
+                    continue;
+                }
+            }
+        };
+        return Ok(Some(format!(
+            "Invalid argument: allowPending: received names {txid}:{vout}, which is not a received coin this wallet could spend under it: {why}"
+        )));
+    }
+    Ok(None)
 }
 
 async fn run_gated<V: WalletServices + Send + Sync + 'static>(
@@ -1112,13 +1513,13 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
-    let need = args
+    let outputs = args
         .outputs
         .as_ref()
         .map(|o| o.iter().map(|x| x.satoshis).sum::<u64>())
-        .unwrap_or(0)
-        .saturating_add(FEE_MARGIN);
-    let first = assess(storage, wallet.services(), opts, Some(need))
+        .unwrap_or(0);
+    let need = outputs.saturating_add(FEE_MARGIN);
+    let first = assess_inner(storage, wallet.services(), opts, Some(need), true)
         .await
         .map_err(GateError::Gate)?;
     let lazy = !first.unread.is_empty();
@@ -1128,26 +1529,53 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         // cover without it (F7 of the #44 CLI review).
         Err(e) if lazy && is_unspendable(&e) => {}
         Err(e) if !is_insufficient(&e) => return Err(GateError::Wallet(e)),
-        Err(e) if !lazy => return Err(refusal(storage, &first, &e).await),
+        Err(e) if !lazy => return Err(refusal(storage, &first, &e, outputs).await),
         Err(_) => {}
     }
-    // The lazy read left coins unread: read every coin and try once more.
-    let full = assess(storage, wallet.services(), opts, None)
-        .await
-        .map_err(GateError::Gate)?;
+    // The lazy read left coins unread: read every coin and try once more
+    // (the header service read once more only if the first read did not).
+    let full = assess_inner(
+        storage,
+        wallet.services(),
+        opts,
+        None,
+        !first.headers_retried,
+    )
+    .await
+    .map_err(GateError::Gate)?;
     match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
-        Err(e) if is_insufficient(&e) => Err(refusal(storage, &full, &e).await),
+        Err(e) if is_insufficient(&e) => Err(refusal(storage, &full, &e, outputs).await),
         Err(e) => Err(GateError::Wallet(e)),
     }
 }
 
-async fn refusal(storage: &StorageSqlx, assessment: &Assessment, e: &bsv_sdk::Error) -> GateError {
+/// The funds' refusal, or "could not verify now" (#59) when the coins held
+/// on the header service's fault, with what was offered, reach `outputs`
+/// (the outputs' sum, the floor of what the action needs: a shortfall they
+/// could not have covered is the funds' refusal whatever the service said).
+async fn refusal(
+    storage: &StorageSqlx,
+    assessment: &Assessment,
+    e: &bsv_sdk::Error,
+    outputs: u64,
+) -> GateError {
     let mut held = assessment.held.clone();
     match locked(storage.pool()).await {
         Ok(mut l) => held.append(&mut l),
         Err(fault) => return GateError::Gate(fault),
     }
+    let on_fault: u64 = held
+        .iter()
+        .filter(|c| c.headers_fault)
+        .map(|c| c.satoshis)
+        .sum();
+    let headers_fault =
+        if on_fault > 0 && assessment.offered_satoshis().saturating_add(on_fault) >= outputs {
+            held.iter().find_map(service_error)
+        } else {
+            None
+        };
     let toolbox = e.to_string();
     GateError::Refused(Refusal {
         toolbox: toolbox
@@ -1157,6 +1585,7 @@ async fn refusal(storage: &StorageSqlx, assessment: &Assessment, e: &bsv_sdk::Er
         offered_satoshis: assessment.offered_satoshis(),
         held,
         capped: assessment.capped,
+        headers_fault,
     })
 }
 

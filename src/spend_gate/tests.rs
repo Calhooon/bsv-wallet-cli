@@ -109,7 +109,7 @@ fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
     GateOptions {
         spend_depth,
         own_change,
-        allow_received: false,
+        allow_pending: AllowPending::Off,
     }
 }
 
@@ -619,8 +619,8 @@ fn only_the_word_received_opens_the_door() {
     for off in [None, Some(""), Some("Received"), Some("all"), Some("true")] {
         assert!(!allow_pending(off), "{off:?}");
     }
-    assert!(!GateOptions::from_env().allow_received);
-    assert!(!GateOptions::default().allow_received);
+    assert_eq!(GateOptions::from_env().allow_pending, AllowPending::Off);
+    assert_eq!(GateOptions::default().allow_pending, AllowPending::Off);
 }
 
 /// A 0.15 store's `spend_gate_actions`, as 0.15 made it: from 0.16 the
@@ -1037,7 +1037,7 @@ async fn a_refusal_names_the_coins_past_the_offers_cap() {
     let (storage, _, _) = storage_for(&PrivateKey::random().public_key().to_hex()).await;
     let toolbox =
         bsv_sdk::Error::WalletError("Insufficient funds: need 5000, have 1600".to_string());
-    let GateError::Refused(refused) = refusal(&storage, &assessment, &toolbox).await else {
+    let GateError::Refused(refused) = refusal(&storage, &assessment, &toolbox, 5_000).await else {
         panic!("a shortfall is the refusal");
     };
     assert_eq!(refused.capped, assessment.capped);
@@ -1056,7 +1056,7 @@ async fn a_refusal_names_the_coins_past_the_offers_cap() {
     };
     cap_offer(&mut under, 2);
     assert_eq!(under.capped, None);
-    let GateError::Refused(plain) = refusal(&storage, &under, &toolbox).await else {
+    let GateError::Refused(plain) = refusal(&storage, &under, &toolbox, 5_000).await else {
         panic!("a shortfall is the refusal");
     };
     assert!(plain
@@ -1559,9 +1559,11 @@ fn the_refusal_as_json_is_the_routes_body() {
             origin: Origin::Received,
             age_minutes: 3,
             reason: "depth 1: 0 blocks; received, no proof".to_string(),
+            headers_fault: false,
             output_id: 1,
         }],
         capped: None,
+        headers_fault: None,
     };
     let json = refusal.to_json();
     println!("{json}");
@@ -2036,4 +2038,402 @@ fn the_spent_by_reason_names_the_spenders_state() {
         spent_by_reason(&t, Some("failed")),
         format!("spent by {t} (failed)")
     );
+}
+
+// ---------------------------------------------------------------------------
+// The word's scope (#63)
+// ---------------------------------------------------------------------------
+
+/// The scoped word offers only the received coins it names: a second
+/// received unproven coin is held with the scope named in its reason, and
+/// own change keeps its own rule.
+#[tokio::test]
+async fn the_scoped_word_offers_only_the_named_received_coins() {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"cd".repeat(32))).await;
+    let named = "b1".repeat(32);
+    let other = "b2".repeat(32);
+    let made = "b3".repeat(32);
+    let n = coin(&storage, (user, basket), &named, false, None, 4_000, 3).await;
+    coin(&storage, (user, basket), &other, false, None, 5_000, 3).await;
+    let m = coin(&storage, (user, basket), &made, true, None, 3_000, 2).await;
+    let services = headers_with(&"0c".repeat(32), 900, 900);
+    let scoped = AllowPending::ReceivedOnly(vec![(named.clone(), 0)]);
+
+    let gate = opts(1, true).with_allow_pending(scoped.clone());
+    let mut a = assess(&storage, &services, &gate, None).await.unwrap();
+    a.offered.sort();
+    assert_eq!(a.offered, vec![(n, 4_000), (m, 3_000)]);
+    assert_eq!(
+        reason_of(&a, &other).as_deref(),
+        Some("depth 1: 0 blocks; received, no proof; not named under allowPending: received")
+    );
+    assert_eq!(reason_of(&a, &named), None);
+
+    // Own change under SPEND_OWN_CHANGE=0 keeps its reason; the scope says
+    // nothing about it.
+    let gate = opts(1, false).with_allow_pending(scoped.clone());
+    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    assert_eq!(a.offered, vec![(n, 4_000)]);
+    assert_eq!(
+        reason_of(&a, &made).as_deref(),
+        Some("depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0")
+    );
+
+    // The scope reaches a coin by vout: the same txid at another vout is
+    // not named.
+    let gate =
+        opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(named.clone(), 1)]));
+    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    assert_eq!(
+        reason_of(&a, &named).as_deref(),
+        Some("depth 1: 0 blocks; received, no proof; not named under allowPending: received")
+    );
+}
+
+/// A scoped word is the word: the action carries R1 (d)'s label. A named
+/// coin already mined is offered as any mined coin (the word is moot for
+/// it, not wrong), so a scope naming it passes the door.
+#[tokio::test]
+async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (mined, _) = mined_coin(&storage, (user, basket), 0xb4, 50_000, 900).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(900, &mined, 0));
+    services.set_tip_header(header_with_hash(900, &mined, 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let gate =
+        opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(mined.clone(), 0)]));
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        ..Default::default()
+    });
+    let result = create_action(&wallet, args, "gate.local", &gate)
+        .await
+        .unwrap();
+    let reference = reference_string(&result.signable_transaction.unwrap().reference);
+    assert_eq!(
+        labels_of(wallet.storage(), &reference).await,
+        vec![RECEIVED_PENDING_LABEL.to_string()]
+    );
+}
+
+/// A scoped word naming a coin that is not a received coin this wallet
+/// could spend under it is the caller's error before the door, naming the
+/// coin and why: not ours, own change, consumed by another action, a
+/// nosend. Nothing is read for the action and nothing allocated.
+#[tokio::test]
+async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let received = "c1".repeat(32);
+    let made = "c2".repeat(32);
+    let spent = "c3".repeat(32);
+    let nosend = "c4".repeat(32);
+    coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
+    coin(&storage, (user, basket), &made, true, None, 8_000, 5).await;
+    coin(&storage, (user, basket), &spent, false, None, 8_000, 5).await;
+    sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
+        .bind(&spent)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    coin(&storage, (user, basket), &nosend, false, None, 8_000, 5).await;
+    sqlx::query("UPDATE transactions SET status = 'nosend' WHERE txid = ?")
+        .bind(&nosend)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    let services = headers_with(&"0c".repeat(32), 900, 900);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+
+    let cases: Vec<(String, &str)> = vec![
+        ("c9".repeat(32), "not a coin of this wallet"),
+        (
+            made.clone(),
+            "own change of an action of this wallet, not a received coin",
+        ),
+        (spent.clone(), "spent by "),
+        (nosend.clone(), "its transaction is nosend"),
+    ];
+    for (txid, why) in cases {
+        let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
+            (received.clone(), 0),
+            (txid.clone(), 0),
+        ]));
+        let Err(GateError::Scope(message)) =
+            create_action(&wallet, pay(1_000), "gate.local", &gate).await
+        else {
+            panic!("{txid} passed the scope check");
+        };
+        assert!(
+            message.starts_with(&format!(
+                "Invalid argument: allowPending: received names {txid}:0, which is not a received coin this wallet could spend under it: {why}"
+            )),
+            "{message}"
+        );
+        assert_eq!(
+            wallet.services().total_calls(),
+            0,
+            "nothing read for {txid}"
+        );
+    }
+    let spent_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE spent_by IS NOT NULL")
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+    assert_eq!(spent_count, 1, "nothing allocated");
+}
+
+/// The served `allowPending` and the commands' flags, parsed: the string
+/// `"received"` is every received coin, any other string off; an object
+/// names the scope (sorted, no repeats, `txid.vout` taken as the listings
+/// print it, an empty list off); a bad shape or outpoint is the caller's
+/// error; `--coin` without the word is the caller's error.
+#[test]
+fn the_word_is_parsed_from_the_route_and_the_flags() {
+    use serde_json::json;
+    let t1 = "a1".repeat(32);
+    let t2 = "A2".repeat(32);
+    assert_eq!(AllowPending::from_json(None).unwrap(), AllowPending::Off);
+    assert_eq!(
+        AllowPending::from_json(Some(&json!("received"))).unwrap(),
+        AllowPending::Received
+    );
+    for off in [json!("all"), json!(true), json!(1), json!(["received"])] {
+        assert_eq!(
+            AllowPending::from_json(Some(&off)).unwrap(),
+            AllowPending::Off,
+            "{off}"
+        );
+    }
+    assert_eq!(
+        AllowPending::from_json(Some(
+            &json!({"received": [format!("{t2}:1"), format!("{t1}.0"), format!("{t2}:1")]})
+        ))
+        .unwrap(),
+        AllowPending::ReceivedOnly(vec![(t1.clone(), 0), (t2.to_ascii_lowercase(), 1)])
+    );
+    assert_eq!(
+        AllowPending::from_json(Some(&json!({"received": []}))).unwrap(),
+        AllowPending::Off
+    );
+    for bad in [
+        json!({"received": "received"}),
+        json!({"all": [format!("{t1}:0")]}),
+        json!({"received": [1]}),
+        json!({"received": [format!("{t1}:0")], "more": 1}),
+    ] {
+        let err = AllowPending::from_json(Some(&bad)).unwrap_err();
+        assert!(
+            err.starts_with("allowPending: an object is"),
+            "{bad}: {err}"
+        );
+    }
+    let err = AllowPending::from_json(Some(&json!({"received": ["abc:0"]}))).unwrap_err();
+    assert!(err.contains("not an outpoint"), "{err}");
+    let err = AllowPending::from_json(Some(&json!({"received": [format!("{t1}:x")]}))).unwrap_err();
+    assert!(err.contains("vout is not a number"), "{err}");
+
+    let coin = format!("{t1}:0");
+    assert_eq!(
+        AllowPending::from_cli(None, &[]).unwrap(),
+        AllowPending::Off
+    );
+    assert_eq!(
+        AllowPending::from_cli(Some("received"), &[]).unwrap(),
+        AllowPending::Received
+    );
+    assert_eq!(
+        AllowPending::from_cli(Some("received"), std::slice::from_ref(&coin)).unwrap(),
+        AllowPending::ReceivedOnly(vec![(t1.clone(), 0)])
+    );
+    assert!(AllowPending::from_cli(None, &[coin])
+        .unwrap_err()
+        .contains("--allow-pending received"));
+
+    let word = AllowPending::ReceivedOnly(vec![(t1.clone(), 0)]);
+    assert!(word.is_on());
+    assert!(word.reaches(&t1, 0));
+    assert!(!word.reaches(&t1, 1));
+    assert!(!AllowPending::Off.is_on());
+    assert!(AllowPending::Received.reaches(&t2, 7));
+}
+
+// ---------------------------------------------------------------------------
+// The header service's fault (#59)
+// ---------------------------------------------------------------------------
+
+/// A mined coin the gate could carry, and a header service that does not
+/// answer for its tip.
+async fn a_coin_under_an_outage(
+    satoshis: u64,
+) -> (Wallet<StorageSqlx, MockWalletServices>, String) {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (mined, _) = mined_coin(&storage, (user, basket), 0xe1, satoshis, 900).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(900, &mined, 0));
+    services.set_tip_unavailable();
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    (wallet, mined)
+}
+
+/// The header service does not answer: the coin is held on its fault, in
+/// the service's own words; the gate reads once more after the pause and,
+/// the coin having covered the action, answers "could not verify now"
+/// (`HEADERS_UNAVAILABLE`), never the funds' verdict. The tip was read
+/// twice and nothing was allocated.
+#[tokio::test]
+async fn a_header_service_fault_is_read_once_more_and_is_could_not_verify_now() {
+    let (wallet, mined) = a_coin_under_an_outage(50_000).await;
+    let started = std::time::Instant::now();
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, pay(1_000), "gate.local", &opts(1, true)).await
+    else {
+        panic!("the coin was offered with no header");
+    };
+    assert!(started.elapsed() >= HEADER_RETRY_PAUSE, "no pause");
+    assert_eq!(wallet.services().call_count("get_chain_tip_header"), 2);
+    assert_eq!(refusal.code(), "HEADERS_UNAVAILABLE");
+    assert!(refusal.is_headers_fault());
+    assert_eq!(refusal.held.len(), 1);
+    let coin = &refusal.held[0];
+    assert_eq!(coin.outpoint, format!("{mined}.0"));
+    assert!(coin.headers_fault);
+    assert_eq!(
+        coin.reason,
+        "headers unavailable: Service error: mock: the chain tip header is unavailable"
+    );
+    assert_eq!(
+        refusal.headers_fault.as_deref(),
+        Some("Service error: mock: the chain tip header is unavailable")
+    );
+    let text = refusal.to_string();
+    assert!(
+        text.starts_with("Could not verify now: the header service did not answer (Service error: mock: the chain tip header is unavailable); 1 coin(s), 50000 sats, held on it, no verdict ("),
+        "{text}"
+    );
+    assert!(!text.contains("HeaderError("), "{text}");
+    assert_eq!(refusal.to_json()["code"], "HEADERS_UNAVAILABLE");
+    assert_eq!(refusal.to_json()["message"], text);
+    let spent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE spent_by IS NOT NULL")
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(spent, 0, "nothing allocated");
+}
+
+/// A shortfall the faulted coins could not have covered is the funds'
+/// refusal whatever the service said: the coin is held on the fault (and
+/// read once more), but 500 sats never pay 1,000.
+#[tokio::test]
+async fn a_shortfall_the_faulted_coins_could_not_cover_stays_insufficient_funds() {
+    let (wallet, _) = a_coin_under_an_outage(500).await;
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, pay(1_000), "gate.local", &opts(1, true)).await
+    else {
+        panic!("the coin was offered with no header");
+    };
+    assert_eq!(wallet.services().call_count("get_chain_tip_header"), 2);
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    assert!(refusal.held[0].headers_fault);
+    assert!(
+        refusal.to_string().starts_with("Insufficient funds"),
+        "{refusal}"
+    );
+}
+
+/// The service answers on the re-read: the coin is offered and the
+/// assessment says it was read twice. Without the door's retry
+/// (`assess`), one read and the hold.
+#[tokio::test]
+async fn the_re_read_offers_the_coin_when_the_service_answers_again() {
+    let (wallet, mined) = a_coin_under_an_outage(50_000).await;
+    let gate = opts(1, true);
+    let once = assess(wallet.storage(), wallet.services(), &gate, None)
+        .await
+        .unwrap();
+    assert!(!once.headers_retried);
+    assert!(once.offered.is_empty());
+    assert!(once.held[0].headers_fault);
+    assert_eq!(wallet.services().call_count("get_chain_tip_header"), 1);
+
+    let recover = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        wallet
+            .services()
+            .set_tip_header(header_with_hash(900, &mined, 0));
+    };
+    let (twice, ()) = tokio::join!(
+        assess_retrying(wallet.storage(), wallet.services(), &gate, None, true),
+        recover
+    );
+    let twice = twice.unwrap();
+    assert!(twice.headers_retried);
+    assert_eq!(twice.offered.len(), 1);
+    assert!(twice.held.is_empty(), "{:?}", twice.held);
+    assert_eq!(wallet.services().call_count("get_chain_tip_header"), 3);
+}
+
+/// A named input held on the service's fault alone is "could not verify
+/// now" (read once more first); a named input held by a rule beside it is
+/// the refusal, as every named input must be offerable.
+#[tokio::test]
+async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
+    let (wallet, mined) = a_coin_under_an_outage(50_000).await;
+    let user: i64 = sqlx::query_scalar("SELECT user_id FROM users")
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    let basket: i64 =
+        sqlx::query_scalar("SELECT basket_id FROM output_baskets WHERE name = 'default'")
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+    let received = "e2".repeat(32);
+    coin(
+        wallet.storage(),
+        (user, basket),
+        &received,
+        false,
+        None,
+        8_000,
+        5,
+    )
+    .await;
+    let input = |txid: &str| bsv_sdk::wallet::CreateActionInput {
+        outpoint: bsv_sdk::wallet::Outpoint::from_string(&format!("{txid}.0")).unwrap(),
+        input_description: "named".to_string(),
+        unlocking_script: None,
+        unlocking_script_length: Some(107),
+        sequence_number: None,
+    };
+
+    let mut args = pay(1_000);
+    args.inputs = Some(vec![input(&mined)]);
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, args, "gate.local", &opts(1, true)).await
+    else {
+        panic!("the named coin passed with no header");
+    };
+    assert_eq!(wallet.services().call_count("get_chain_tip_header"), 2);
+    assert_eq!(refusal.code(), "HEADERS_UNAVAILABLE");
+    assert!(refusal.is_named_input());
+    assert!(
+        refusal.to_string().starts_with("Could not verify now: the header service did not answer (Service error: mock: the chain tip header is unavailable); a named input is held on it, no verdict (1 coin(s), 50000 sats)"),
+        "{refusal}"
+    );
+
+    let mut args = pay(1_000);
+    args.inputs = Some(vec![input(&mined), input(&received)]);
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, args, "gate.local", &opts(1, true)).await
+    else {
+        panic!("the named coins passed");
+    };
+    assert_eq!(refusal.code(), "INPUT_NOT_OFFERED");
+    assert_eq!(refusal.held.len(), 2);
 }

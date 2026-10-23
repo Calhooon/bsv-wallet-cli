@@ -10,7 +10,7 @@ pub async fn run(
     ctx: &WalletContext,
     address: &str,
     satoshis: u64,
-    allow_received: bool,
+    allow_pending: crate::spend_gate::AllowPending,
 ) -> Result<()> {
     let lock = P2PKH::lock_from_address(address)?;
 
@@ -56,7 +56,7 @@ pub async fn run(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
-            &crate::spend_gate::GateOptions::from_env().with_allow_received(allow_received),
+            &crate::spend_gate::GateOptions::from_env().with_allow_pending(allow_pending),
         )
         .await,
         ctx.json_output,
