@@ -3,7 +3,8 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
-## [Unreleased]
+## [0.17.1] - 2026-10-23
+0.17.1: the repair passes measure the balance and the spend gate names a consumed input as spent (#53). Pins unchanged: `bsv-wallet-toolbox-rs` `=0.12.0`, `bsv-rs` `=0.8.1`, `bsv-tracker` `=0.8.0`. A patch: no new command, flag or environment; two report lines and one listing reason reworded, their figures measured.
 
 #53 (LOW's fleet audit, 2026-10-23, seats p3, p7, p35: `reconcile-outputs --execute` printed "Net balance delta: -365540 sats" while `balance --json` read the same satoshis before and after).
 
