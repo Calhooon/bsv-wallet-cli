@@ -35,3 +35,6 @@ base and PR target `main` by the captain's word.
 
 **Left for the captain.** The PR into `main`, the tag `v0.18.1`, the publish,
 the mainnet e2e gate, `main` into `beta`, HANDOFF.
+
+
+**Landing note (the captain, 2026-10-23).** The cold review of PR 128 found two toolbox-side gaps the probe move would expose (an unreadable spender name falling through to the unspent hint; no spender named with the header service off), filed on the toolbox. The probe change was taken out of 0.18.1 at landing; 0.18.1 is the two pins (toolbox =0.13.0 and bsv-rs =0.8.2, the second added by the captain beyond this lane's bounds, recorded here). The probe moves in the patch that pins the toolbox fix.
