@@ -208,14 +208,17 @@ pub struct HeldCoin {
     pub outpoint: String,
     pub satoshis: u64,
     /// The creator's tracker word (`mined`, `unknown`, `built`, ...), or
-    /// `locked` for a coin an action of ours holds.
+    /// `locked` for a coin a live action of ours consumed as an input.
     pub word: String,
     pub origin: Origin,
     /// Minutes since the wallet learned of the coin.
     pub age_minutes: i64,
     /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
     /// no proof; offered under allowPending: received`, `own change,
-    /// SPEND_OWN_CHANGE=0`, `locked by <txid>`, `frozen: never offered`.
+    /// SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never
+    /// offered`. `spent by` is never a hold: the coin is an input a live
+    /// action of ours consumed, spent for good; it leaves the listing when
+    /// that spender is completed (its proof lands) or failed (#53).
     pub reason: String,
     #[serde(skip)]
     output_id: i64,
@@ -712,11 +715,26 @@ async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
         .collect())
 }
 
+/// The reason for a coin an action of ours consumed: `spent by <txid>
+/// (unproven)` while the spender is live (any status but `completed` or
+/// `failed`; `None` = known live), `spent by <txid>` once it is completed,
+/// `spent by <txid> (failed)` for a failed spender not yet released.
+pub(crate) fn spent_by_reason(spender: &str, spender_status: Option<&str>) -> String {
+    match spender_status {
+        Some("completed") => format!("spent by {spender}"),
+        Some("failed") => format!("spent by {spender} (failed)"),
+        _ => format!("spent by {spender} (unproven)"),
+    }
+}
+
 /// The frozen record's hold (R6: never cleared here).
 const FROZEN: &str = "frozen: never offered";
 
-/// The coins an action of ours holds (`spent_by` a live action): listed in
-/// a refusal, never offered.
+/// The coins a live action of ours consumed (`spent_by` an action not yet
+/// `completed` or `failed`): listed in a refusal as `spent by <txid>
+/// (unproven)`, never offered. Not a hold that clears: each is an input that
+/// action spent for good, and it leaves the listing when the spender is
+/// completed (its proof lands) or failed (#53).
 async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
     let rows = sqlx::query(
         "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
@@ -743,9 +761,9 @@ async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
                 Origin::Received
             },
             age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
-            reason: format!(
-                "locked by {}",
-                r.get::<Option<String>, _>("holder").unwrap_or_default()
+            reason: spent_by_reason(
+                &r.get::<Option<String>, _>("holder").unwrap_or_default(),
+                None,
             ),
             output_id: r.get("output_id"),
         })
@@ -878,7 +896,8 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         let row = sqlx::query(
             "SELECT o.output_id, o.satoshis, o.spent_by, t.is_outgoing, \
                     CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                    COALESCE(s.txid, s.reference) AS holder, p.merkle_path \
+                    COALESCE(s.txid, s.reference) AS holder, s.status AS spender_status, \
+                    p.merkle_path \
              FROM outputs o \
              JOIN transactions t ON o.transaction_id = t.transaction_id \
              LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
@@ -921,9 +940,9 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         } else if is_locked(&r) {
             (
                 "locked".to_string(),
-                Some(format!(
-                    "locked by {}",
-                    r.get::<Option<String>, _>("holder").unwrap_or_default()
+                Some(spent_by_reason(
+                    &r.get::<Option<String>, _>("holder").unwrap_or_default(),
+                    r.get::<Option<String>, _>("spender_status").as_deref(),
                 )),
             )
         } else {
