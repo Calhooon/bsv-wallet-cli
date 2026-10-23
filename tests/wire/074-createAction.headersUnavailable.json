@@ -1,0 +1,46 @@
+{
+  "world": "headers-down",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "wire headers down",
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 1000
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "retry-after": "2",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "HEADERS_UNAVAILABLE",
+      "held": [
+        {
+          "ageMinutes": "<minutes>",
+          "origin": "received",
+          "outpoint": "6666666666666666666666666666666666666666666666666666666666666666.0",
+          "reason": "headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",
+          "satoshis": 50000,
+          "word": "built"
+        }
+      ],
+      "message": "Could not verify now: the header service did not answer (Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)); 1 coin(s), 50000 sats, held on it, no verdict (Insufficient funds: need 1005, have 0; 0 sats offered, 1 coin(s) held back)\n  6666666666666666666666666666666666666666666666666666666666666666.0 50000 sats: built, received, <minutes> min old: headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",
+      "offeredSatoshis": 0
+    }
+  }
+}

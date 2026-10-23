@@ -1,0 +1,47 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/listCertificates",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "certifiers": [
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      ],
+      "types": [
+        "dGVzdA=="
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalCertificates": 1,
+      "certificates": [
+        {
+          "certificate": {
+            "certificateType": "dGVzdA==",
+            "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
+            "serialNumber": "AQID",
+            "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
+            "signature": "deadbeef",
+            "fields": {
+              "name": "wire"
+            }
+          },
+          "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        }
+      ]
+    }
+  }
+}

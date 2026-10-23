@@ -1,0 +1,24 @@
+{
+  "world": "callback",
+  "request": {
+    "method": "POST",
+    "path": "/arc-callback",
+    "json": {
+      "txStatus": "MINED",
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "UNAUTHORIZED",
+      "message": "invalid or missing callback token"
+    }
+  }
+}

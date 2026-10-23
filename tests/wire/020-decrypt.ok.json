@@ -1,0 +1,90 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/decrypt",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "ciphertext": [
+        67,
+        235,
+        10,
+        58,
+        150,
+        72,
+        239,
+        64,
+        143,
+        10,
+        51,
+        111,
+        218,
+        66,
+        249,
+        235,
+        164,
+        141,
+        131,
+        123,
+        11,
+        112,
+        52,
+        251,
+        161,
+        6,
+        254,
+        68,
+        76,
+        31,
+        76,
+        85,
+        161,
+        185,
+        3,
+        46,
+        158,
+        136,
+        86,
+        129,
+        8,
+        94,
+        152,
+        124,
+        223,
+        53,
+        88,
+        226,
+        122,
+        43,
+        16,
+        152
+      ],
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "keyID": "1",
+      "protocolID": [
+        2,
+        "wire test"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "plaintext": [
+        119,
+        105,
+        114,
+        101
+      ]
+    }
+  }
+}

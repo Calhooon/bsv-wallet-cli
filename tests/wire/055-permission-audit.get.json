@@ -1,0 +1,114 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/permission-audit"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "count": 11,
+      "entries": [
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "getPublicKey",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 0
+        },
+        {
+          "counterparty": "self",
+          "keyID": "1",
+          "method": "getPublicKey",
+          "originator": "wire.test",
+          "protocolLevel": 1,
+          "protocolName": "wire test",
+          "seq": 1
+        },
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "createSignature",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 2
+        },
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "createSignature",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 3
+        },
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "encrypt",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 4
+        },
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "decrypt",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 5
+        },
+        {
+          "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "keyID": "1",
+          "method": "createHmac",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 6
+        },
+        {
+          "counterparty": "self",
+          "keyID": "ab � cd",
+          "method": "getPublicKey",
+          "originator": "wire.test",
+          "protocolLevel": 2,
+          "protocolName": "wire test",
+          "seq": 7
+        },
+        {
+          "description": "wire unfunded",
+          "method": "createAction",
+          "originator": "wire.test",
+          "satoshis": 1000,
+          "seq": 8
+        },
+        {
+          "description": "wire bad word",
+          "method": "createAction",
+          "originator": "wire.test",
+          "satoshis": 1000,
+          "seq": 9
+        },
+        {
+          "description": "wire foreign coin",
+          "method": "createAction",
+          "originator": "wire.test",
+          "satoshis": 1000,
+          "seq": 10
+        }
+      ]
+    }
+  }
+}

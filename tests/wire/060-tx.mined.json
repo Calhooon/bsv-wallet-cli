@@ -1,0 +1,26 @@
+{
+  "world": "tracked",
+  "request": {
+    "method": "GET",
+    "path": "/tx/1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "evidence": {
+        "height": 900000,
+        "root": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "height": 900000,
+      "reask": null,
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+      "word": "mined"
+    }
+  }
+}
