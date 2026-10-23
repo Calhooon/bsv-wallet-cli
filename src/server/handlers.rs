@@ -478,14 +478,13 @@ pub async fn create_action(
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
-    // R1 (d): the action's word, read here at the door and nowhere else:
-    // `"received"`, or the scoped `{"received": ["txid:vout", ...]}` (#63).
-    let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
-        .map_err(|message| AppError::from(anyhow::anyhow!("Invalid argument: {message}")))?;
+    // The request to the toolbox's arguments and the door's `allowPending`
+    // word (`create_action_args`; the fuzz target `served_json` calls it).
+    let (args, allow_pending) = create_action_args(req)?;
 
     // Whether this request performs an immediate broadcast (vs. no-send /
     // delayed / external-signing). Only immediate broadcasts are verified.
-    let (opt_no_send, opt_accept_delayed) = req
+    let (opt_no_send, opt_accept_delayed) = args
         .options
         .as_ref()
         .map(|o| {
@@ -495,73 +494,6 @@ pub async fn create_action(
             )
         })
         .unwrap_or((false, false));
-
-    let outputs = req
-        .outputs
-        .map(|outs| {
-            outs.into_iter()
-                .map(|o| {
-                    Ok(CreateActionOutput {
-                        locking_script: hex::decode(&o.locking_script)?,
-                        satoshis: o.satoshis,
-                        output_description: o.output_description,
-                        basket: o.basket,
-                        custom_instructions: o.custom_instructions,
-                        tags: o.tags,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .transpose()?;
-
-    // Map caller-provided explicit inputs (e.g. a covenant spend carrying a full
-    // unlockingScript). An absent/empty list stays `Some(vec![])` so the wallet
-    // auto-selects its own funding UTXOs — the prior behaviour for plain sends.
-    // Before this, the handler discarded `inputs`/`inputBEEF`/`lockTime`, so any
-    // covenant input was silently dropped and the tx was funded from change.
-    let inputs = match req.inputs {
-        Some(reqs) if !reqs.is_empty() => {
-            let mut mapped = Vec::with_capacity(reqs.len());
-            for i in reqs {
-                let outpoint = Outpoint::from_string(&i.outpoint)
-                    .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
-                let unlocking_script = match i.unlocking_script {
-                    Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
-                    None => None,
-                };
-                mapped.push(CreateActionInput {
-                    outpoint,
-                    input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
-                    unlocking_script,
-                    unlocking_script_length: i.unlocking_script_length,
-                    sequence_number: i.sequence_number,
-                });
-            }
-            Some(mapped)
-        }
-        _ => Some(vec![]),
-    };
-
-    let args = CreateActionArgs {
-        description: req.description,
-        input_beef: req.input_beef,
-        inputs,
-        outputs,
-        lock_time: req.lock_time,
-        version: None,
-        labels: req.labels,
-        options: req.options.map(|o| CreateActionOptions {
-            accept_delayed_broadcast: o.accept_delayed_broadcast,
-            randomize_outputs: o.randomize_outputs,
-            sign_and_process: o.sign_and_process,
-            no_send: o.no_send,
-            trust_self: match o.trust_self.as_deref() {
-                Some("known") => Some(TrustSelf::Known),
-                _ => None,
-            },
-            ..Default::default()
-        }),
-    };
 
     let output_count = args.outputs.as_ref().map(|o| o.len()).unwrap_or(0);
     let total_sats: u64 = args
@@ -779,6 +711,86 @@ pub fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
     // respend the received rule.
     crate::spend_gate::strip_rule_label(&mut args.labels);
     args
+}
+
+/// The toolbox's `createAction` arguments for a caller's request, with the
+/// door's `allowPending` word. The handler calls it (then the lock, the
+/// guard, the gate); the fuzz target `served_json` calls it with no store.
+pub fn create_action_args(
+    req: McCreateActionReq,
+) -> Result<(CreateActionArgs, crate::spend_gate::AllowPending)> {
+    // R1 (d): the action's word, read here at the door and nowhere else:
+    // `"received"`, or the scoped `{"received": ["txid:vout", ...]}` (#63).
+    let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
+        .map_err(|message| anyhow::anyhow!("Invalid argument: {message}"))?;
+
+    let outputs = req
+        .outputs
+        .map(|outs| {
+            outs.into_iter()
+                .map(|o| {
+                    Ok(CreateActionOutput {
+                        locking_script: hex::decode(&o.locking_script)?,
+                        satoshis: o.satoshis,
+                        output_description: o.output_description,
+                        basket: o.basket,
+                        custom_instructions: o.custom_instructions,
+                        tags: o.tags,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+
+    // Map caller-provided explicit inputs (e.g. a covenant spend carrying a full
+    // unlockingScript). An absent/empty list stays `Some(vec![])` so the wallet
+    // auto-selects its own funding UTXOs — the prior behaviour for plain sends.
+    // Before this, the handler discarded `inputs`/`inputBEEF`/`lockTime`, so any
+    // covenant input was silently dropped and the tx was funded from change.
+    let inputs = match req.inputs {
+        Some(reqs) if !reqs.is_empty() => {
+            let mut mapped = Vec::with_capacity(reqs.len());
+            for i in reqs {
+                let outpoint = Outpoint::from_string(&i.outpoint)
+                    .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
+                let unlocking_script = match i.unlocking_script {
+                    Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
+                    None => None,
+                };
+                mapped.push(CreateActionInput {
+                    outpoint,
+                    input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
+                    unlocking_script,
+                    unlocking_script_length: i.unlocking_script_length,
+                    sequence_number: i.sequence_number,
+                });
+            }
+            Some(mapped)
+        }
+        _ => Some(vec![]),
+    };
+
+    let args = CreateActionArgs {
+        description: req.description,
+        input_beef: req.input_beef,
+        inputs,
+        outputs,
+        lock_time: req.lock_time,
+        version: None,
+        labels: req.labels,
+        options: req.options.map(|o| CreateActionOptions {
+            accept_delayed_broadcast: o.accept_delayed_broadcast,
+            randomize_outputs: o.randomize_outputs,
+            sign_and_process: o.sign_and_process,
+            no_send: o.no_send,
+            trust_self: match o.trust_self.as_deref() {
+                Some("known") => Some(TrustSelf::Known),
+                _ => None,
+            },
+            ..Default::default()
+        }),
+    };
+    Ok((args, allow_pending))
 }
 
 // --- Helpers ---

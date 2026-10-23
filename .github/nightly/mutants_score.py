@@ -4,9 +4,11 @@
 Usage: mutants_score.py <outcomes.json or a directory holding them>...
 
 Reads every `outcomes.json` given (one per shard), and prints a Markdown
-table of each file's score: caught / (caught + missed + timeout) * 100, a
-timeout counting as caught (the tests did not pass on the mutant) and an
-unviable mutant (one that does not build) counting nowhere. The floors are
+table of each file's score: caught / (caught + missed + timeout) * 100. A
+timeout is its own column and is never caught: a mutant whose tests ran
+past the limit was not shown wrong by a test (it may be a loop the mutant
+made, or a slow test), so it weighs against the score as a miss does. An
+unviable mutant (one that does not build) counts nowhere. The floors are
 `MUTANTS_FLOORS`, a JSON object of file to percent; a file the object does
 not name has the floor 80. The table goes to `$GITHUB_STEP_SUMMARY` when it
 is set. Exit 1 when a floored file scores below its floor or when a floored
@@ -62,7 +64,7 @@ def main(args):
             score, mark = "none", "no outcome"
             failed = True
         else:
-            value = 100.0 * (caught + timeout) / judged
+            value = 100.0 * caught / judged
             score = f"{value:.1f}"
             mark = "below the floor" if value < floor else "ok"
             failed |= value < floor

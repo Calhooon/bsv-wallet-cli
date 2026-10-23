@@ -1,16 +1,15 @@
 //! The served `/createAction` and `/internalizeAction` bodies as the door
 //! reads them: the lenient-JSON layer (`sanitize_lone_surrogates`), serde
-//! into the MetaNet Client shapes, then the handler's argument mapping
-//! (`create_action`'s, mirrored in this crate's library; `internalize_args`,
-//! called). No store. None may panic; the sanitizer is idempotent; no rule
-//! label survives an internalize's mapping.
+//! into the MetaNet Client shapes, then the handlers' argument mappings
+//! (`create_action_args`, `internalize_args`, called). No store. None may
+//! panic; the sanitizer is idempotent; no rule label survives an
+//! internalize's mapping.
 #![no_main]
 
-use bsv_wallet_cli::server::handlers::internalize_args;
+use bsv_wallet_cli::server::handlers::{create_action_args, internalize_args};
 use bsv_wallet_cli::server::sanitize_lone_surrogates;
 use bsv_wallet_cli::server::types::{McCreateActionReq, McInternalizeActionReq};
 use bsv_wallet_cli::spend_gate::rule_of_label;
-use bsv_wallet_cli_fuzz::create_action_mapping;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -22,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     if let Ok(req) = serde_json::from_slice::<McCreateActionReq>(&body) {
-        let _ = create_action_mapping(req);
+        let _ = create_action_args(req);
     }
     if let Ok(req) = serde_json::from_slice::<McInternalizeActionReq>(&body) {
         let outputs = req.outputs.len();

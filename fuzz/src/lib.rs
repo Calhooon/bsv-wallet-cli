@@ -1,20 +1,16 @@
 //! What the fuzz targets share: the transaction and BEEF builders of the
-//! tree's tests (`src/test_support.rs`), and the steps of the served doors
-//! that are written inline in an async handler, so a target cannot call
-//! them without a wallet and a store.
+//! tree's tests (`src/test_support.rs`), and the one step of a door that
+//! is written inline in the toolbox's async `Wallet::internalize_action`,
+//! so a target cannot call it without a wallet and a store.
 //!
-//! Each mirror names the lines it copies. A mirror drifts when its source
-//! changes; `docs/NIGHTLY.md` lists them, and the cure is to lift the
-//! source into a function the target calls (named in the lane's report).
+//! The mirror names the lines it copies. It drifts when its source changes;
+//! `docs/NIGHTLY.md` names it, and the cure is a function in the toolbox
+//! the target calls. The CLI's own door mappings are functions the targets
+//! call (`server::handlers::create_action_args`, `internalize_args`).
 
 use bsv_sdk::primitives::{PrivateKey, PublicKey};
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
-use bsv_sdk::wallet::{
-    Counterparty, CreateActionArgs, CreateActionInput, CreateActionOptions, CreateActionOutput,
-    InternalizeActionArgs, KeyDeriver, Outpoint, Protocol, SecurityLevel, TrustSelf,
-};
-use bsv_wallet_cli::server::types::McCreateActionReq;
-use bsv_wallet_cli::spend_gate::AllowPending;
+use bsv_sdk::wallet::{Counterparty, InternalizeActionArgs, KeyDeriver, Protocol, SecurityLevel};
 
 /// The tests' synthetic root key (0x01 x32), never anyone's wallet.
 pub fn synthetic_root() -> PrivateKey {
@@ -99,85 +95,6 @@ pub fn brc29_key(
             true,
         )
         .ok()
-}
-
-/// The served `/createAction` body to the toolbox's arguments, with the
-/// door's `allowPending` word and the audited total. Mirror of
-/// `src/server/handlers.rs` `create_action`, from the `allowPending` read
-/// to `total_sats` (no store, no lock, no broadcast). Production builds
-/// without overflow checks, and so does `cargo fuzz` by default: the total
-/// wraps here as it does in the shipped binary.
-pub fn create_action_mapping(
-    req: McCreateActionReq,
-) -> anyhow::Result<(CreateActionArgs, AllowPending, u64)> {
-    use anyhow::Context;
-    let allow_pending = AllowPending::from_json(req.allow_pending.as_ref())
-        .map_err(|message| anyhow::anyhow!("Invalid argument: {message}"))?;
-    let outputs = req
-        .outputs
-        .map(|outs| {
-            outs.into_iter()
-                .map(|o| {
-                    Ok(CreateActionOutput {
-                        locking_script: hex::decode(&o.locking_script)?,
-                        satoshis: o.satoshis,
-                        output_description: o.output_description,
-                        basket: o.basket,
-                        custom_instructions: o.custom_instructions,
-                        tags: o.tags,
-                    })
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .transpose()?;
-    let inputs = match req.inputs {
-        Some(reqs) if !reqs.is_empty() => {
-            let mut mapped = Vec::with_capacity(reqs.len());
-            for i in reqs {
-                let outpoint = Outpoint::from_string(&i.outpoint)
-                    .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
-                let unlocking_script = match i.unlocking_script {
-                    Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
-                    None => None,
-                };
-                mapped.push(CreateActionInput {
-                    outpoint,
-                    input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
-                    unlocking_script,
-                    unlocking_script_length: i.unlocking_script_length,
-                    sequence_number: i.sequence_number,
-                });
-            }
-            Some(mapped)
-        }
-        _ => Some(vec![]),
-    };
-    let args = CreateActionArgs {
-        description: req.description,
-        input_beef: req.input_beef,
-        inputs,
-        outputs,
-        lock_time: req.lock_time,
-        version: None,
-        labels: req.labels,
-        options: req.options.map(|o| CreateActionOptions {
-            accept_delayed_broadcast: o.accept_delayed_broadcast,
-            randomize_outputs: o.randomize_outputs,
-            sign_and_process: o.sign_and_process,
-            no_send: o.no_send,
-            trust_self: match o.trust_self.as_deref() {
-                Some("known") => Some(TrustSelf::Known),
-                _ => None,
-            },
-            ..Default::default()
-        }),
-    };
-    let total_sats: u64 = args
-        .outputs
-        .as_ref()
-        .map(|o| o.iter().map(|x| x.satoshis).sum())
-        .unwrap_or(0);
-    Ok((args, allow_pending, total_sats))
 }
 
 /// The toolbox wallet's checks of an internalize before its store is
