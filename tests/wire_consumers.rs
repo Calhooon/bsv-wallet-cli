@@ -37,25 +37,100 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
-// The consumers. Every one must have at least one fixture, and every
-// fixture must name one of them (`docs/DEPENDENTS.md` has a row for each).
+// The consumers and the fixtures each one must have, by file name. The list
+// is the corpus's manifest: a fixture deleted or renamed, or a file no case
+// names, fails the replay naming it (a case added or renamed in the
+// recorder is added or renamed here in the same commit). Every fixture
+// must name its consumer (`docs/DEPENDENTS.md` has a row for each).
 // ---------------------------------------------------------------------------
 
-const CONSUMERS: [&str; 7] = [
+const CONSUMERS: [(&str, &[&str]); 7] = [
     // LOW's fleet: the daemon's HTTP on four hosts, its funder's spends.
-    "low-fleet",
+    (
+        "low-fleet",
+        &[
+            "01-isAuthenticated.json",
+            "02-getVersion.json",
+            "03-getPublicKey.identity.json",
+            "04-getPublicKey.brc29Self.json",
+            "05-createSignature.hashToDirectlySign.json",
+            "06-createHmac.handSecret.json",
+            "07-listActions.hopLedger.json",
+            "08-createAction.stake.json",
+            "09-createAction.allowPending.json",
+            "10-createAction.scoped.json",
+            "11-internalizeAction.potPayout.json",
+            "12-getPublicKey.harnessBearer.json",
+        ],
+    ),
     // The stack's witness spend wallet (bsv-stack-lean).
-    "stack-witness",
-    // The x402 skill's wallet client (lib/metanet.py, scripts/brc31_helpers.py).
-    "x402-skill",
+    ("stack-witness", &["01-txWord.json"]),
+    // The x402 skill's wallet client (lib/metanet.py, lib/auth_request.py,
+    // scripts/brc31_helpers.py).
+    (
+        "x402-skill",
+        &[
+            "01-isAuthenticated.json",
+            "02-getPublicKey.identity.json",
+            "03-getPublicKey.payment.json",
+            "04-createSignature.auth.json",
+            "05-createAction.payment.json",
+            "06-createAction.executeAction.json",
+            "07-internalizeAction.refund.json",
+            "08-verifySignature.response.json",
+        ],
+    ),
     // The MCP companion (mcp/src/main.rs) on behalf of its clients.
-    "mcp",
+    (
+        "mcp",
+        &[
+            "01-is_authenticated.json",
+            "02-get_height.json",
+            "03-get_public_key.identity.json",
+            "04-create_signature.json",
+            "05-wallet_balance.json",
+            "06-list_actions.json",
+            "07-create_action.allowPending.json",
+            "08-create_action.json",
+            "09-relinquish_output.json",
+            "10-chain_feed_status.json",
+            "11-tx_word.json",
+        ],
+    ),
     // The apps' x402 payers (~/bsv/agents, ~/bsv/zanaadu, ~/bsv/teragunv2).
-    "app-payers",
+    (
+        "app-payers",
+        &[
+            "01-agents.createAction.noSend.json",
+            "02-agents.abortAction.json",
+            "03-zanaadu.getPublicKey.identity.json",
+            "04-zanaadu.createAction.fund.json",
+            "05-teragunv2.getPublicKey.payment.json",
+            "06-teragunv2.createAction.pack.json",
+        ],
+    ),
     // dolphinmilk: the 0.1.23 crate's server in-process, called over HTTP.
-    "dolphinmilk",
+    (
+        "dolphinmilk",
+        &[
+            "01-getVersion.json",
+            "02-listOutputs.balance.json",
+            "03-createAction.x402.json",
+        ],
+    ),
     // The e2e harness's client (tests/e2e/lib/wallet-client.js).
-    "e2e-harness",
+    (
+        "e2e-harness",
+        &[
+            "01-getPublicKey.brc29.json",
+            "02-createSignature.json",
+            "03-listOutputs.balance.json",
+            "04-createAction.transferTo.json",
+            "05-createAction.scoped.json",
+            "06-relinquishOutput.json",
+            "07-isAuthenticated.bearer.json",
+        ],
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -256,27 +331,7 @@ fn normalize(v: J) -> J {
 }
 
 fn normalize_text(s: &str) -> String {
-    replace_number_before(
-        &replace_number_after(s, "127.0.0.1:", "<port>"),
-        " min old",
-        "<minutes>",
-    )
-}
-
-fn replace_number_after(s: &str, marker: &str, placeholder: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find(marker) {
-        out.push_str(&rest[..at + marker.len()]);
-        rest = &rest[at + marker.len()..];
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits > 0 {
-            out.push_str(placeholder);
-        }
-        rest = &rest[digits..];
-    }
-    out.push_str(rest);
-    out
+    replace_number_before(s, " min old", "<minutes>")
 }
 
 fn replace_number_before(s: &str, marker: &str, placeholder: &str) -> String {
@@ -744,6 +799,12 @@ async fn record_low_fleet(r: &mut Recorder) {
     // The same body with the e2e route's word: a received coin is offered
     // and chosen, and the build stops at signing (see [`P2PKH`]): the
     // answer is past the gate, where without the word it is 402.
+    //
+    // A known wrong shape, pinned as the server's answer today: a signing
+    // fault is a 400 `ERROR` carrying the toolbox's internal message (a
+    // derived hash160, "Transaction aborted"). Typed errors (#81) and the
+    // fixtures oracle (#69) fix it; this fixture and the scoped one below
+    // change with that fix, in its own commit.
     r.case(Call {
         consumer: C,
         call: "createAction.allowPending",
@@ -759,6 +820,7 @@ async fn record_low_fleet(r: &mut Recorder) {
     })
     .await;
     // #63's scoped word: only the funder's top-up (PENDING_B) is offered.
+    // The answer is the same known wrong shape as the word's above (#81).
     r.case(Call {
         consumer: C,
         call: "createAction.scoped",
@@ -953,8 +1015,8 @@ async fn record_dolphinmilk(r: &mut Recorder) {
     .await;
 }
 
-/// The x402 skill (calgooon-x402 1.1.1): every call goes through
-/// `lib/metanet.py`'s `_call` (POST, `Origin: http://localhost`, JSON),
+/// The x402 skill (calgooon-x402 1.1.4 at `dc00cde`): every call goes
+/// through `lib/metanet.py`'s `_call` (POST, `Origin: http://localhost`, JSON),
 /// and `SKILL.md`'s health check is a plain GET.
 async fn record_x402_skill(r: &mut Recorder) {
     const C: &str = "x402-skill";
@@ -1047,6 +1109,28 @@ async fn record_x402_skill(r: &mut Recorder) {
             &format!(
                 r#"{{"tx":{},"outputs":[{{"outputIndex":0,"protocol":"wallet payment","paymentRemittance":{{"derivationPrefix":"SfKxPIJNgdI=","derivationSuffix":"NaGLC6fMH50=","senderIdentityKey":"{G}"}}}}],"description":"Refund: 1000 sats (txid: 0000000000000000...)"}}"#,
                 bytes_array(&[1, 1, 1, 1, 0, 0, 0, 0])
+            ),
+        ),
+    })
+    .await;
+    // 1.1.4: the server's signed response, checked by the wallet under the
+    // same protocol, keyID "<server nonce> <client nonce>". The signature
+    // is the one fixture 04 answers (made for the server, not by it), so
+    // the answer is the wallet's word on a signature that does not verify:
+    // a 400 `ERROR`, not `{"valid": false}` (the skill reads either as
+    // "BAD SIGNATURE"; the shape is #81's).
+    r.case(Call {
+        consumer: C,
+        call: "verifySignature.response",
+        source: "skills/x402/lib/auth_request.py verify_response",
+        world: "fresh",
+        request: post(
+            "/verifySignature",
+            O,
+            &format!(
+                r#"{{"data":{},"signature":{},"protocolID":[2,"auth message signature"],"keyID":"bm9uY2Uy bm9uY2Ux","counterparty":"{G}"}}"#,
+                bytes_array(b"x402 response payload"),
+                bytes_array(&hex::decode("30440220016d22b66a0ffb4489cfe9334921368f1b0b19cc51861a9da7091a81c6b2ddac02206743cbd5919e91afec26e8f2d95487d7da34c797ff86796d2fe329a5d93485bb").unwrap())
             ),
         ),
     })
@@ -1289,8 +1373,8 @@ fn consumers_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire/consumers")
 }
 
-/// Every fixture, by consumer directory then file name.
-fn read_fixtures(dir: &Path) -> Vec<(String, Fixture)> {
+/// Every file under a consumer's directory, sorted.
+fn list_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
         let sub = entry.unwrap().path();
@@ -1298,15 +1382,18 @@ fn read_fixtures(dir: &Path) -> Vec<(String, Fixture)> {
             continue;
         }
         for file in std::fs::read_dir(&sub).unwrap() {
-            let path = file.unwrap().path();
-            if path.extension().is_some_and(|x| x == "json") {
-                files.push(path);
-            }
+            files.push(file.unwrap().path());
         }
     }
     files.sort();
     files
+}
+
+/// Every fixture, by consumer directory then file name.
+fn read_fixtures(dir: &Path) -> Vec<(String, Fixture)> {
+    list_files(dir)
         .into_iter()
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .map(|p| {
             let text = std::fs::read_to_string(&p).unwrap();
             let fixture: Fixture =
@@ -1347,18 +1434,27 @@ fn diff(want: &str, got: &str) -> String {
     out
 }
 
-/// What the corpus must keep: a fixture for every consumer, every fixture
-/// a known consumer's, in its own directory.
-fn judge(fixtures: &[(String, Fixture)]) -> Vec<String> {
+/// What the corpus must keep: every file of [`CONSUMERS`]' list on disk,
+/// nothing on disk the list does not name, every fixture a known
+/// consumer's, in its own directory.
+fn judge(dir: &Path, fixtures: &[(String, Fixture)]) -> Vec<String> {
     let mut gaps = Vec::new();
-    let seen: BTreeSet<&str> = fixtures.iter().map(|(_, f)| f.consumer.as_str()).collect();
-    for consumer in CONSUMERS {
-        if !seen.contains(consumer) {
-            gaps.push(format!("consumer {consumer}: no fixture"));
-        }
+    let on_disk: BTreeSet<String> = list_files(dir)
+        .iter()
+        .map(|p| p.strip_prefix(dir).unwrap().to_string_lossy().into_owned())
+        .collect();
+    let listed: BTreeSet<String> = CONSUMERS
+        .iter()
+        .flat_map(|(consumer, files)| files.iter().map(move |f| format!("{consumer}/{f}")))
+        .collect();
+    for file in listed.difference(&on_disk) {
+        gaps.push(format!("{file}: listed, missing (deleted or renamed?)"));
+    }
+    for file in on_disk.difference(&listed) {
+        gaps.push(format!("{file}: on disk, not in the list (CONSUMERS)"));
     }
     for (file, f) in fixtures {
-        if !CONSUMERS.contains(&f.consumer.as_str()) {
+        if !CONSUMERS.iter().any(|(c, _)| *c == f.consumer) {
             gaps.push(format!("{file}: unknown consumer {}", f.consumer));
         }
         if !file.starts_with(&format!("{}/", f.consumer)) {
@@ -1433,7 +1529,7 @@ async fn record_or_replay() {
             ));
         }
     }
-    let gaps = judge(&fixtures);
+    let gaps = judge(&dir, &fixtures);
     println!(
         "{} consumer fixtures replayed ({}), {} differ, {} gaps",
         fixtures.len(),
