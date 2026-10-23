@@ -1,0 +1,17 @@
+{
+  "world": "auth",
+  "request": {
+    "method": "GET",
+    "path": "/chain-feed"
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "UNAUTHORIZED",
+      "message": "Invalid or missing bearer token"
+    }
+  }
+}

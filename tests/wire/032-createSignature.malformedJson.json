@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "content-type": "application/json",
+      "origin": "http://wire.test"
+    },
+    "raw": "{\"data\": [1"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": "Failed to parse the request body as JSON: data: EOF while parsing a list at line 1 column 11"
+  }
+}

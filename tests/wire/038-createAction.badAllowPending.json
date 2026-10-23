@@ -1,0 +1,37 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "allowPending": "everything",
+      "description": "wire bad word",
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 1000
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INSUFFICIENT_FUNDS",
+      "held": [],
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 0 sats offered, 0 coin(s) held back)",
+      "offeredSatoshis": 0
+    }
+  }
+}

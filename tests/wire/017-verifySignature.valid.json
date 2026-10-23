@@ -1,0 +1,111 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/verifySignature",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "data": [
+        119,
+        105,
+        114,
+        101
+      ],
+      "forSelf": true,
+      "keyID": "1",
+      "protocolID": [
+        2,
+        "wire test"
+      ],
+      "signature": [
+        48,
+        69,
+        2,
+        33,
+        0,
+        188,
+        212,
+        51,
+        70,
+        158,
+        63,
+        65,
+        235,
+        0,
+        83,
+        93,
+        169,
+        117,
+        181,
+        93,
+        34,
+        133,
+        174,
+        102,
+        131,
+        24,
+        211,
+        110,
+        64,
+        140,
+        20,
+        102,
+        168,
+        230,
+        1,
+        179,
+        251,
+        2,
+        32,
+        38,
+        145,
+        240,
+        12,
+        69,
+        102,
+        148,
+        237,
+        137,
+        136,
+        111,
+        77,
+        212,
+        111,
+        134,
+        21,
+        65,
+        42,
+        147,
+        38,
+        78,
+        191,
+        197,
+        60,
+        248,
+        110,
+        210,
+        186,
+        165,
+        248,
+        13,
+        115
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "valid": true
+    }
+  }
+}

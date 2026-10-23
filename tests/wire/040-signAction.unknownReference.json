@@ -1,0 +1,28 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/signAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "reference": "bm8tc3VjaC1yZWZlcmVuY2U=",
+      "spends": {}
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERROR",
+      "message": "wallet error: No pending transaction found for reference: bm8tc3VjaC1yZWZlcmVuY2U="
+    }
+  }
+}

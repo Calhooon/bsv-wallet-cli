@@ -1,0 +1,31 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "keyID": "1",
+      "protocolID": [
+        2,
+        "wire test"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "02394ec133cdc693aa1ba6a5af60dc7091a0b109b0d0034da7cacb812b27371251"
+    }
+  }
+}

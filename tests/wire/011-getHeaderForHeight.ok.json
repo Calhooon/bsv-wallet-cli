@@ -1,0 +1,26 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getHeaderForHeight",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "height": 900000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "header": "000000200000000000000000000000000000000000000000000000000000000000000000666666666666666666666666666666666666666666666666666666666666666600f15365bd09041807000000"
+    }
+  }
+}

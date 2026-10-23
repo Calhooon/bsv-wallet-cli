@@ -1,0 +1,25 @@
+{
+  "world": "callback",
+  "request": {
+    "method": "POST",
+    "path": "/arc-callback",
+    "headers": {
+      "content-type": "application/json",
+      "x-callbacktoken": "wire-callback"
+    },
+    "raw": "{\"txid\":"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "BAD_JSON",
+      "message": "EOF while parsing a value at line 1 column 8"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/noSuchCall",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {}
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": ""
+  }
+}
