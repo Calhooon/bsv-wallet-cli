@@ -1,15 +1,23 @@
 //! Rule A1 (#73): the process environment is read in one place. Every
-//! `env::var` (and `var_os`) of the shipped code lives in
-//! `src/services_env.rs` or `src/config.rs` (the config module of #80, not
-//! yet written); every other file that reads one today is listed with its
-//! count, and #80 empties the list.
+//! `env::var` and `env::var_os` of the shipped code lives in
+//! `src/services_env.rs`; every other file that reads one today is listed
+//! with its count, and #80 empties the list (#80's `src/config.rs` joins the
+//! homes when it exists, not before).
+//!
+//! A read is a call of `var(` or `var_os(` by any path (`std::env::var(`,
+//! `env::var_os(`, `e::var(`) or bare (after a `use std::env::var`), and the
+//! `use` that brings the name in (`use std::env::var`, `use std::env::{var
+//! as v}`), one site each.
 
 mod arch_support;
 
-use arch_support::{count, hits, judge};
+use arch_support::{calls, hits, judge, words};
 
 /// The files that may read the environment freely.
-const HOMES: &[&str] = &["src/services_env.rs", "src/config.rs"];
+const HOMES: &[&str] = &["src/services_env.rs"];
+
+/// The readers, by name.
+const READS: &[&str] = &["var", "var_os"];
 
 /// `(file, today's reads, why)`. Only shrinks; #80 empties it.
 const ALLOWED: &[(&str, usize, &str)] = &[
@@ -33,7 +41,13 @@ fn the_environment_is_read_only_in_the_config_module() {
         if HOMES.contains(&l.source.file.as_str()) {
             return 0;
         }
-        count(l.bare, "env::var")
+        let reads: usize = READS.iter().map(|r| calls(l.bare, &format!("{r}("))).sum();
+        let imports: usize = if l.is_use() {
+            READS.iter().map(|r| words(l.bare, r)).sum()
+        } else {
+            0
+        };
+        reads + imports
     });
     judge("A1: env reads outside the config module", &found, ALLOWED);
 }

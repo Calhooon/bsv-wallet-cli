@@ -5,15 +5,19 @@
 //! Two views of each file, both keeping every newline so a hit keeps its
 //! line number:
 //! - `code`: comments and test code blanked, string literals kept (the SQL
-//!   rule, the prefix rule and the explorer rule read string contents).
+//!   rule and the explorer rule read string contents).
 //! - `bare`: `code` with string and char literal contents blanked too (the
-//!   unwrap, spawn and env rules count calls, never a word in a message).
+//!   unwrap, spawn, env and prefix rules count calls, never a word in a
+//!   message).
 //!
 //! Test code is every item a `#[cfg(test)]` attribute carries (a
-//! `mod tests { .. }` block, a single function, a statement) and every file
-//! such an attribute declares (`#[cfg(test)] mod tests;`, with its
-//! `#[path = ".."]` when it has one): `src/test_support.rs`,
-//! `src/tracker_words_witnesses.rs`, the `tests.rs` files.
+//! `mod tests { .. }` block, a function, a statement, a field, a variant, a
+//! match arm) and every file such an attribute declares (`#[cfg(test)]
+//! mod tests;`, with its `#[path = ".."]` when it has one):
+//! `src/test_support.rs`, `src/tracker_words_witnesses.rs`, the `tests.rs`
+//! files. Both are read from the comment-blanked text, so an attribute
+//! spelled in a comment or a string literal carries nothing and declares
+//! nothing.
 
 #![allow(dead_code)]
 
@@ -58,51 +62,92 @@ pub fn sources() -> Vec<Source> {
         .collect()
 }
 
-/// The files a `#[cfg(test)] mod name;` declares, resolved as rustc does:
-/// beside `lib.rs`, `main.rs` and `mod.rs`, in a directory of the declaring
-/// file's name otherwise, at its `#[path]` when one is given.
+/// The attribute that makes an item, or the file it declares, test code.
+const CFG_TEST: &str = "#[cfg(test)]";
+
+/// The files the `#[cfg(test)] mod name;` declarations of `paths` resolve
+/// to.
 pub fn test_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
         let text = std::fs::read_to_string(p).expect("a source file");
-        let lines: Vec<&str> = text.lines().map(str::trim).collect();
-        let dir = p.parent().expect("a directory");
-        let stem = p.file_stem().expect("a name").to_string_lossy().to_string();
-        let home = if ["lib", "main", "mod"].contains(&stem.as_str()) {
-            dir.to_path_buf()
-        } else {
-            dir.join(&stem)
-        };
-        for (i, line) in lines.iter().enumerate() {
-            if *line != "#[cfg(test)]" {
-                continue;
-            }
-            let mut path = None;
-            for next in &lines[i + 1..] {
-                if let Some(rest) = next.strip_prefix("#[path = \"") {
-                    path = rest.strip_suffix("\"]").map(|r| dir.join(r));
-                    continue;
-                }
-                if next.starts_with("#[") {
-                    continue;
-                }
-                let decl = next
-                    .trim_start_matches("pub(crate) ")
-                    .trim_start_matches("pub ");
-                if let Some(name) = decl.strip_prefix("mod ").and_then(|d| d.strip_suffix(';')) {
-                    let file = path.take().unwrap_or_else(|| {
-                        let flat = home.join(format!("{name}.rs"));
-                        if flat.exists() {
-                            flat
-                        } else {
-                            home.join(name).join("mod.rs")
-                        }
-                    });
-                    out.push(file);
-                }
+        let (code, bare) = lexed(&text);
+        out.extend(declared_test_files(p, &code, &bare));
+    }
+    out
+}
+
+/// The files one file's `#[cfg(test)] mod name;` declarations resolve to,
+/// as rustc resolves them: beside `lib.rs`, `main.rs` and `mod.rs`, in a
+/// directory of the declaring file's name otherwise, at its `#[path]` when
+/// one is given. Read from the file's comment-blanked views (`lexed`):
+/// `bare` says where an attribute and a declaration are, `code` holds the
+/// `#[path = ".."]` text. A `mod tests { .. }` block declares no file.
+pub fn declared_test_files(file: &Path, code: &[char], bare: &[char]) -> Vec<PathBuf> {
+    let dir = file.parent().expect("a directory");
+    let stem = file
+        .file_stem()
+        .expect("a name")
+        .to_string_lossy()
+        .to_string();
+    let home = if ["lib", "main", "mod"].contains(&stem.as_str()) {
+        dir.to_path_buf()
+    } else {
+        dir.join(&stem)
+    };
+    let n = bare.len();
+    let skip_space = |mut j: usize| {
+        while j < n && bare[j].is_whitespace() {
+            j += 1;
+        }
+        j
+    };
+    let mut out = Vec::new();
+    for at in occurrences(bare, CFG_TEST) {
+        let mut j = at + CFG_TEST.len();
+        // Further attributes; `#[path = ".."]` names the file.
+        let mut path = None;
+        loop {
+            j = skip_space(j);
+            if !starts(bare, j, "#[") {
                 break;
             }
+            let close = (j..n).find(|&k| bare[k] == ']').unwrap_or(n);
+            if starts(bare, j, "#[path = \"") {
+                let open = j + "#[path = \"".len();
+                let end = (open..close)
+                    .rev()
+                    .find(|&k| code[k] == '"')
+                    .unwrap_or(open);
+                path = Some(dir.join(code[open..end].iter().collect::<String>()));
+            }
+            j = (close + 1).min(n);
         }
+        // `pub`, `pub(crate)`, `pub(super)`, `pub(in ..)`.
+        if starts(bare, j, "pub") {
+            j += 3;
+            if j < n && bare[j] == '(' {
+                j = (j..n).find(|&k| bare[k] == ')').map_or(n, |k| k + 1);
+            }
+            j = skip_space(j);
+        }
+        if !starts(bare, j, "mod") || !bare.get(j + 3).is_some_and(|c| c.is_whitespace()) {
+            continue;
+        }
+        j = skip_space(j + 3);
+        let name: String = bare[j..].iter().take_while(|c| is_ident(**c)).collect();
+        j = skip_space(j + name.chars().count());
+        if name.is_empty() || bare.get(j) != Some(&';') {
+            continue;
+        }
+        out.push(path.unwrap_or_else(|| {
+            let flat = home.join(format!("{name}.rs"));
+            if flat.exists() {
+                flat
+            } else {
+                home.join(name).join("mod.rs")
+            }
+        }));
     }
     out
 }
@@ -125,19 +170,47 @@ fn relative(path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn is_ident(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Whether `chars` holds `word` at `at`.
+fn starts(chars: &[char], at: usize, word: &str) -> bool {
+    let w: Vec<char> = word.chars().collect();
+    chars.len() >= at + w.len() && chars[at..at + w.len()] == w[..]
+}
+
+/// Where `word` occurs in `chars`, in order.
+fn occurrences(chars: &[char], word: &str) -> Vec<usize> {
+    let w: Vec<char> = word.chars().collect();
+    (0..(chars.len() + 1).saturating_sub(w.len()))
+        .filter(|&i| chars[i..i + w.len()] == w[..])
+        .collect()
+}
+
+/// Blanks `[from, to)` of `v`, keeping its newlines.
+fn blank(v: &mut [char], from: usize, to: usize) {
+    for c in &mut v[from..to] {
+        if *c != '\n' {
+            *c = ' ';
+        }
+    }
+}
+
 /// The two views of one file's text: `(code, bare)`.
 pub fn views(text: &str) -> (String, String) {
+    let (mut code, mut bare) = lexed(text);
+    blank_test_items(&mut code, &mut bare);
+    (code.into_iter().collect(), bare.into_iter().collect())
+}
+
+/// `text` with its comments blanked (`code`), and with its string and char
+/// literal contents blanked as well (`bare`), as char vectors of the text's
+/// length. Test items are still in place; `views` blanks them.
+pub fn lexed(text: &str) -> (Vec<char>, Vec<char>) {
     let chars: Vec<char> = text.chars().collect();
     let mut code = chars.clone();
     let mut bare = chars.clone();
-    let blank = |v: &mut Vec<char>, from: usize, to: usize| {
-        for c in &mut v[from..to] {
-            if *c != '\n' {
-                *c = ' ';
-            }
-        }
-    };
-    let ident = |c: char| c.is_alphanumeric() || c == '_';
     let n = chars.len();
     let mut i = 0;
     while i < n {
@@ -166,8 +239,8 @@ pub fn views(text: &str) -> (String, String) {
             i = j;
         } else if c == 'r'
             && (i == 0
-                || !ident(chars[i - 1])
-                || (chars[i - 1] == 'b' && (i < 2 || !ident(chars[i - 2]))))
+                || !is_ident(chars[i - 1])
+                || (chars[i - 1] == 'b' && (i < 2 || !is_ident(chars[i - 2]))))
             && matches!(next, Some('"') | Some('#'))
         {
             // A raw string `r"..."`, `r#"..."#`, or a raw identifier `r#name`.
@@ -213,38 +286,99 @@ pub fn views(text: &str) -> (String, String) {
             i += 1;
         }
     }
-    // Test items: each `#[cfg(test)]` through the end of the item it carries.
-    let attr: Vec<char> = "#[cfg(test)]".chars().collect();
+    (code, bare)
+}
+
+/// Blanks each `#[cfg(test)]` through the end of the item it carries, in
+/// both views. Sequential, so an attribute inside a blanked item is gone
+/// before it is looked for.
+fn blank_test_items(code: &mut [char], bare: &mut [char]) {
+    let attr: Vec<char> = CFG_TEST.chars().collect();
+    let n = bare.len();
     let mut i = 0;
     while i + attr.len() <= n {
         if bare[i..i + attr.len()] != attr[..] {
             i += 1;
             continue;
         }
-        let mut j = i + attr.len();
-        let mut depth = 0usize;
-        let end = loop {
-            if j >= n {
-                break n;
-            }
-            match bare[j] {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break j + 1;
-                    }
-                }
-                ';' if depth == 0 => break j + 1,
-                _ => {}
-            }
-            j += 1;
-        };
-        blank(&mut code, i, end);
-        blank(&mut bare, i, end);
-        i = end;
+        let end = item_end(bare, i + attr.len());
+        blank(code, i, end);
+        blank(bare, i, end);
+        i = end.max(i + attr.len());
     }
-    (code.into_iter().collect(), bare.into_iter().collect())
+}
+
+/// The words an item or a statement opens with. A field, a variant or a
+/// match arm opens with a name or a pattern instead, and a `,` ends it.
+const ITEM_WORDS: &[&str] = &[
+    "fn",
+    "pub",
+    "mod",
+    "use",
+    "struct",
+    "enum",
+    "union",
+    "impl",
+    "trait",
+    "type",
+    "const",
+    "static",
+    "let",
+    "unsafe",
+    "async",
+    "extern",
+    "macro_rules",
+];
+
+/// Where the item an attribute carries ends (exclusive), walking `bare`
+/// from `from`, the end of the attribute: after the `;` of a declaration or
+/// a statement, after the brace that closes a block item (a `let` waits for
+/// its `;`); after the `,` of a field, a variant or a match arm, or before
+/// the brace that closes their holder when they are its last. Braces,
+/// parentheses and brackets nest, so a `,` inside them is not an end, and
+/// an item's own commas (`fn f<A, B>(a, b)`) are passed because it opens
+/// with an item word.
+fn item_end(bare: &[char], from: usize) -> usize {
+    let n = bare.len();
+    let skip_space = |mut j: usize| {
+        while j < n && bare[j].is_whitespace() {
+            j += 1;
+        }
+        j
+    };
+    // The word the item opens with, past any further attributes.
+    let mut j = skip_space(from);
+    while starts(bare, j, "#[") {
+        j = (j..n).find(|&k| bare[k] == ']').map_or(n, |k| k + 1);
+        j = skip_space(j);
+    }
+    let word: String = bare[j.min(n)..]
+        .iter()
+        .take_while(|c| is_ident(**c))
+        .collect();
+    let item = ITEM_WORDS.contains(&word.as_str());
+    let statement = word == "let";
+    let mut depth = 0usize;
+    while j < n {
+        match bare[j] {
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => {
+                if depth == 0 {
+                    // The last field, variant or arm of its holder.
+                    return j;
+                }
+                depth -= 1;
+                if depth == 0 && bare[j] == '}' && !statement {
+                    return j + 1;
+                }
+            }
+            ';' if depth == 0 => return j + 1,
+            ',' if depth == 0 && !item => return j + 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    n
 }
 
 /// One hit: the file, its 1-based line, the line's text.
@@ -271,6 +405,11 @@ impl Line<'_> {
             .zip(self.bare.chars())
             .map(|(c, b)| if c != b { c } else { ' ' })
             .collect()
+    }
+
+    /// Whether the line is a `use` declaration.
+    pub fn is_use(&self) -> bool {
+        self.bare.split_whitespace().any(|w| w == "use")
     }
 }
 
@@ -347,31 +486,38 @@ pub fn judge(rule: &str, found: &[Hit], allowed: &[(&str, usize, &str)]) {
     );
 }
 
-/// The 1-based lines `[from, to]` of the item whose header holds `needle`
-/// (in `bare`), through its closing brace; `None` if the file has none.
-pub fn item_lines(s: &Source, needle: &str) -> Option<(usize, usize)> {
-    let at = s.bare.find(needle)?;
-    let open = at + s.bare[at..].find('{')?;
-    let mut depth = 0usize;
-    let mut close = None;
-    for (k, c) in s.bare[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    close = Some(open + k);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let line_of = |byte: usize| s.bare[..byte].matches('\n').count() + 1;
-    Some((line_of(at), line_of(close?)))
-}
-
 /// How many times `needle` occurs in `line`.
 pub fn count(line: &str, needle: &str) -> usize {
     line.matches(needle).count()
+}
+
+/// How many times `word` stands alone in `line`, an identifier boundary on
+/// both sides: `use tokio::task::{spawn as go}` names `spawn` once,
+/// `spawn_blocking` not at all.
+pub fn words(line: &str, word: &str) -> usize {
+    line.match_indices(word)
+        .filter(|(at, _)| {
+            let before = !line[..*at].chars().next_back().is_some_and(is_ident);
+            let after = !line[at + word.len()..].chars().next().is_some_and(is_ident);
+            before && after
+        })
+        .count()
+}
+
+/// How many times `line` calls `name` (a name with its `(`, as `unwrap(`),
+/// at an identifier boundary: `x.unwrap(`, `Option::unwrap(` and a bare
+/// `unwrap(` (a name brought in by a `use`) each count once; `my_unwrap(`
+/// does not, nor does the definition `fn unwrap(`.
+pub fn calls(line: &str, name: &str) -> usize {
+    line.match_indices(name)
+        .filter(|(at, _)| {
+            let before = &line[..*at];
+            let boundary = !before.chars().next_back().is_some_and(is_ident);
+            let definition = before
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|d| !d.ends_with(is_ident));
+            boundary && !definition
+        })
+        .count()
 }

@@ -4,7 +4,8 @@
 //! code only in `src/explorers.rs` (the CLI's rungs, #50) and
 //! `src/broadcast_verify.rs` (the chain indexes of C1). Every other file
 //! that names one today is listed with its count and why. Comments are not
-//! read; a name in a string literal is.
+//! read; a name in a string literal is. A name built in pieces or read from
+//! a setting is not seen (docs/ARCH-RULES.md, the known limits).
 
 mod arch_support;
 
