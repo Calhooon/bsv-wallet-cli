@@ -4,7 +4,7 @@ A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.1**, and crates.io carries the same version, **0.18.1**; the
 repository's Releases page holds a Release per tag. It pins
-**bsv-wallet-toolbox-rs =0.13.0**, **bsv-rs =0.8.1** and **bsv-tracker =0.8.0**;
+**bsv-wallet-toolbox-rs =0.13.0**, **bsv-rs =0.8.2** and **bsv-tracker =0.8.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
