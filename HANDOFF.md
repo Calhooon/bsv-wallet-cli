@@ -598,6 +598,23 @@ closed.
 | bananablocks-partial (CLI) | CLI (studio, Opus) | code | DONE c970426: partial in sync, the trait end to end, the allow's reason | |
 | release CLI 0.17.0 | CLI | captain | the repin cbb99b0 (captain, foreground), PR 51 ready, rebase-merged at e1a6758, e2e 22/22, tag v0.17.0 | |
 
+**2026-10-23, LOW's fleet audit (#53, PR 54, main 31ce13e, unreleased).**
+LOW's seats p3, p7, p35 (0.16.1) saw `reconcile-outputs --execute` print
+"Net balance delta: -365540 sats" while `balance --json` read the same
+satoshis before and after. The line was a sum over the rows the pass turned
+off in every basket, never a measurement, and `balance` reads the default
+basket only (protocol outputs in another basket, spent on chain by the
+counterparty, are relinquished and counted); phase (a) also counted rows
+already off. Fixed: both repair commands read the default basket's spendable
+sum (the toolbox's list_outputs filter) before and after and print the
+balance's own move, then the rows turned off (and on) per basket; phase (a)
+counts only rows that were on. LOW's second question ("a seat's own change
+locked by <txid> for six minutes after SEEN") was a misreading: the gate's
+"locked by" names an input a live unproven action of ours consumed, spent for
+good, listed until the spender is proven; renamed "spent by <txid>
+(unproven)". LOW's harness counted it in its pool (LOW's #853). No tag: a
+0.17.1 waits on the owner's word (its gate spends the funder on an e2e run).
+
 Open after this wave: toolbox #44 (is_utxo returns the bound spender);
 0.11.1's open point 3 and the locked-input release path through is_utxo
 (the stack's); whether BananaBlocks lists mempool or non-P2PKH outputs under
