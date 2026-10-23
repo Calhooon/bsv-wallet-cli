@@ -10,5 +10,7 @@ A lane is one issue of the programme, worked in its own worktree on a branch fro
 6. **Wording.** No em dash. Never "first", never "conformant" without a run. No hostname of a deployment, no token shape, no account id.
 7. **The report.** First line `REPORT: STATUS done|blocked`, then the base commit, your tip commit, the files, the commands and their tails, what is `[D]`, what you did not run and why, and what the captain must do at landing. Stop and say so when a step needs a word that is not yours.
 8. **Bounds.** The brief's hours are the limit; past them, `STATUS blocked` with what remains.
+9. **Foreground only.** Every build, test and measurement runs in the foreground of your own turn; never hand work to a background job or a watcher and never end your turn while work is pending. A lane that ends without its commit and its REPORT has failed, and the captain relaunches it (2026-10-23: three lanes ended "waiting for load" or "waiting on background jobs" with their edits uncommitted). If a machine is loaded, measure anyway and say so; a quiet re-measure is its own commit later.
+10. **The SDK on this Mac.** If linking fails under the macOS 27 SDK ("tapi error"), set `SDKROOT` to the MacOSX26.5 SDK for your commands and say so in the report; it is a host fault, not the repo's.
 
 Wave 1 (2026-10-23): `oracle-fixtures` (#69), `oracle-benches` (#71), `oracle-ratchets` (#72), `oracle-lints` (#73), `oracle-nightly` (#75, #76). Each owns a disjoint file surface; only `oracle-benches` edits `Cargo.toml`. Wave 2 follows their merge: #70, #74, #100, #77.
