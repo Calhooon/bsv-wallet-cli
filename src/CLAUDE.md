@@ -83,6 +83,7 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 - `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default) — `1`/`true`/`yes` lets the toolbox ask WhatsOnChain, then Bitails, for headers when the header service gives no answer, each call logged at warn
 - `WOC_API_KEY`, `BITAILS_API_KEY` (optional) — explorer keys passed to `ServicesOptions` (`WOC_API_KEY` also to the CLI's own WhatsOnChain rung in `explorers.rs`)
 - `BANANABLOCKS_BASE` — BananaBlocks API base: unset = the chain's default, empty = off (`services_env::bananablocks_base_for`, the toolbox's `ServicesOptions::bananablocks_base`)
+- `WOC_BASE`, `BITAILS_BASE`, `ARC_GORILLAPOOL_URL` — the bases of the CLI's own WhatsOnChain and Bitails rungs and of the GorillaPool ARC (`services_env::ExplorerBases`; #74, the hermetic e2e run points them at its stub): unset = the chain's default; `ARC_GORILLAPOOL_URL` empty leaves GorillaPool out. The toolbox's own WhatsOnChain and Bitails providers take no base yet
 
 ### `lib.rs` (test support)
 
