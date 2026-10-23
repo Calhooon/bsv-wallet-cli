@@ -175,10 +175,15 @@ jobs:
           exit "$status"
 
   # The ratchet (#72): seven numbers of the tree that may only fall, measured
-  # by tools/ratchet and compared with docs/ratchets.json; a PR that raises one
-  # fails here, naming the number and by how much (docs/RATCHETS.md). The
-  # toolchain is pinned to the baseline's: a new clippy brings new pedantic
-  # lints, and the numbers would move with no change to the tree.
+  # by tools/ratchet (docs/RATCHETS.md). The tree is checked against the
+  # record of the base, read from the base ref and never from the PR's own
+  # docs/ratchets.json (a PR that edited the record would pass itself): on a
+  # PR the base branch's tip, on a push the commit before it. The PR's record
+  # may lower the base's numbers, never raise one. A base with no record yet
+  # checks the tree against this tree's record alone. The toolchain is pinned
+  # to the record's: a new clippy brings new pedantic lints, and the numbers
+  # would move with no change to the tree. The measured JSON is kept as the
+  # run's artifact `ratchets`.
   ratchet:
     name: ratchet
     runs-on: ubuntu-latest
@@ -192,5 +197,36 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: No number above the baseline
-        run: python3 tools/ratchet --check
+      - name: No number above the base's record
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          rev=""
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            rev="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ]; then
+            if git fetch --no-tags --depth=1 origin "$BEFORE"; then
+              rev="$BEFORE"
+            else
+              echo "::warning::the commit before the push ($BEFORE) is not fetchable"
+            fi
+          fi
+          base=()
+          if [ -n "$rev" ] && git show "$rev:docs/ratchets.json" > "$RUNNER_TEMP/base-ratchets.json" 2>/dev/null; then
+            echo "ratchet: the base record is $rev:docs/ratchets.json"
+            base=(--base "$RUNNER_TEMP/base-ratchets.json")
+          else
+            echo "::notice::no base record (${rev:-no base ref}): the tree is checked against its own docs/ratchets.json alone"
+          fi
+          mkdir -p "$RUNNER_TEMP/ratchet"
+          python3 tools/ratchet --check "${base[@]}" --out "$RUNNER_TEMP/ratchet/ratchets.json"
+
+      - name: Keep the measured JSON
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ratchets
+          path: ${{ runner.temp }}/ratchet/
+          if-no-files-found: warn

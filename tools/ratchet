@@ -3,7 +3,9 @@
 
     tools/ratchet            measure the tree, print one JSON object
     tools/ratchet --check    measure, compare with docs/ratchets.json, fail on a rise
-    tools/ratchet --record   measure, rewrite docs/ratchets.json (a PR that says so)
+    tools/ratchet --check --base B   also fail when the tree or docs/ratchets.json
+                             is above the record B (CI: the PR's base branch's)
+    tools/ratchet --record   measure a clean tree, rewrite docs/ratchets.json
 
 docs/RATCHETS.md says what each number is and how a lane moves one. A Python
 script with the standard library only: no crate enters the workspace or its
@@ -34,7 +36,7 @@ RATCHETS = [
     "files_over_800_lines",
     "functions_over_60_lines",
     "cognitive_complexity_over_25",
-    "duplicated_blocks",
+    "duplicated_tokens",
     "missing_docs",
 ]
 
@@ -229,14 +231,11 @@ def module_file(parent, name, path, files):
 
 def test_files(lexed):
     """Files that are test code whole: under a top-level tests/ or benches/,
-    named tests.rs, or reached through a `#[cfg(test)] mod x;`, and every
-    file under such a module's directory."""
+    or reached through a `#[cfg(test)] mod x;`, and every file under such a
+    module's directory. A file's name decides nothing: a `tests.rs` that a
+    plain `mod tests;` declares is production code."""
     files = set(lexed)
-    test = {
-        f
-        for f in files
-        if f.split("/")[0] in ("tests", "benches") or os.path.basename(f) == "tests.rs"
-    }
+    test = {f for f in files if f.split("/")[0] in ("tests", "benches")}
     for f in sorted(files):
         for name, path in lexed[f][1]:
             m = module_file(f, name, path, files)
@@ -303,10 +302,12 @@ def duplicates(lexed):
 
 # ------------------------------------------------------------------ clippy
 
+# --force-warn, not -W: an in-source #[allow(..)] or #[expect(..)] cannot
+# take a warning out of the count.
 CLIPPY_LINTS = [
-    "-W", "clippy::pedantic",
-    "-W", "clippy::too_many_lines",
-    "-W", "clippy::cognitive_complexity",
+    "--force-warn", "clippy::pedantic",
+    "--force-warn", "clippy::too_many_lines",
+    "--force-warn", "clippy::cognitive_complexity",
 ]
 
 
@@ -354,9 +355,15 @@ def missing_docs():
     by_lint = warnings(
         ["cargo", "doc", "--workspace", "--no-deps", "--locked",
          "--message-format=json", "--quiet"],
-        {"RUSTDOCFLAGS": "-W missing_docs"},
+        {"RUSTDOCFLAGS": "--force-warn missing_docs"},
     )
     return by_lint.get("missing_docs", 0)
+
+
+def dirty():
+    """The working tree's changes against HEAD (`git status --porcelain`,
+    untracked files included): what a measurement saw that HEAD does not hold."""
+    return [line for line in run(["git", "status", "--porcelain"]).splitlines() if line]
 
 
 def toolchain():
@@ -397,10 +404,11 @@ def measure():
         roots[root][0] += 1
         roots[root][1] += lines[f]
     clippy_v, rustc_v = toolchain()
+    commit = run(["git", "rev-parse", "HEAD"]).strip() + ("-dirty" if dirty() else "")
 
     return {
         "schema": SCHEMA,
-        "commit": run(["git", "rev-parse", "HEAD"]).strip(),
+        "commit": commit,
         "toolchain": {"rustc": rustc_v, "clippy": clippy_v},
         "ratchets": {
             "clippy_pedantic": sum(pedantic.values()),
@@ -408,7 +416,7 @@ def measure():
             "files_over_800_lines": len(big),
             "functions_over_60_lines": by_lint.get("clippy::too_many_lines", 0),
             "cognitive_complexity_over_25": by_lint.get("clippy::cognitive_complexity", 0),
-            "duplicated_blocks": blocks,
+            "duplicated_tokens": dup_tokens,
             "missing_docs": missing_docs(),
         },
         "detail": {
@@ -416,7 +424,7 @@ def measure():
             "test_files": len(tests),
             "files_over_800_lines": [{"path": f, "lines": n} for f, n in big],
             "unwrap_expect_by_file": dict(sorted(unwraps.items(), key=lambda x: (-x[1], x[0]))),
-            "duplicated_tokens": dup_tokens,
+            "duplicated_blocks": blocks,
             "clippy_pedantic_by_lint": dict(sorted(pedantic.items(), key=lambda x: (-x[1], x[0]))),
         },
     }
@@ -426,33 +434,59 @@ def dump(obj):
     return json.dumps(obj, indent=2, sort_keys=False) + "\n"
 
 
-def check(now, path):
-    base = json.loads(path.read_text())
-    if base.get("schema") != SCHEMA:
-        sys.exit(f"ratchet: {path} is schema {base.get('schema')}, the tool is {SCHEMA}")
-    if base["toolchain"] != now["toolchain"]:
+def load(path, now):
+    rec = json.loads(path.read_text())
+    if rec.get("schema") != SCHEMA:
+        sys.exit(f"ratchet: {path} is schema {rec.get('schema')}, the tool is {SCHEMA}")
+    if rec["toolchain"] != now["toolchain"]:
         sys.exit(
-            "ratchet: the toolchain differs from the baseline's, the clippy numbers do not compare\n"
-            f"  baseline: {base['toolchain']['clippy']}\n  this run: {now['toolchain']['clippy']}"
+            f"ratchet: the toolchain differs from {path}'s, the clippy numbers do not compare\n"
+            f"  record:   {rec['toolchain']['clippy']}\n  this run: {now['toolchain']['clippy']}"
         )
-    worse, better = [], []
+    return rec
+
+
+def above(new, old):
+    """The numbers of `new` above `old`'s, as report lines."""
+    return [
+        f"  {k}: {old[k]} -> {new[k]} (+{new[k] - old[k]})" for k in RATCHETS if new[k] > old[k]
+    ]
+
+
+def check(now, path, base_path):
+    rec = load(path, now)
+    base = load(base_path, now) if base_path else None
+    tree = now["ratchets"]
+    print(f"ratchet: record {path} at {rec['commit'][:12]}, tree at {now['commit'][:12]}")
+    if base:
+        print(f"ratchet: base record {base_path} at {base['commit'][:12]}")
     for k in RATCHETS:
-        b, n = base["ratchets"][k], now["ratchets"][k]
-        if n > b:
-            worse.append(f"  {k}: {b} -> {n} (+{n - b})")
-        elif n < b:
-            better.append(f"  {k}: {b} -> {n} (-{b - n})")
-    print(f"ratchet: baseline at {base['commit'][:12]}, tree at {now['commit'][:12]}")
-    for k in RATCHETS:
-        print(f"  {k:32} {now['ratchets'][k]:>6} (baseline {base['ratchets'][k]})")
+        of_base = f", base {base['ratchets'][k]}" if base else ""
+        print(f"  {k:32} {tree[k]:>6} (record {rec['ratchets'][k]}{of_base})")
+    ref = base or rec
+    better = [
+        f"  {k}: {ref['ratchets'][k]} -> {tree[k]} (-{ref['ratchets'][k] - tree[k]})"
+        for k in RATCHETS
+        if tree[k] < ref["ratchets"][k]
+    ]
     if better:
-        print("lower than the baseline (re-record in its own commit: tools/ratchet --record):")
+        print("lower than the record (re-record in its own commit: tools/ratchet --record):")
         print("\n".join(better))
-    if worse:
-        print("RAISED above the baseline:")
-        print("\n".join(worse))
+    failed = False
+    for what, new, old in [
+        (f"the tree is above the record {path}", tree, rec["ratchets"]),
+        *([(f"the tree is above the base record {base_path}", tree, base["ratchets"]),
+           (f"the record {path} is above the base record {base_path}"
+            " (a PR may lower the record, never raise it)", rec["ratchets"], base["ratchets"])]
+          if base else []),
+    ]:
+        if worse := above(new, old):
+            print(f"RAISED: {what}:")
+            print("\n".join(worse))
+            failed = True
+    if failed:
         return 1
-    print("ratchet: no number above the baseline")
+    print("ratchet: no number above the record" + (" or the base record" if base else ""))
     return 0
 
 
@@ -460,16 +494,27 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--check", action="store_true", help="fail when a number is above docs/ratchets.json")
-    g.add_argument("--record", action="store_true", help="rewrite docs/ratchets.json from this tree")
+    g.add_argument("--record", action="store_true", help="rewrite docs/ratchets.json from this tree (a clean one)")
     ap.add_argument("--baseline", type=Path, default=BASELINE, help="the baseline file (default docs/ratchets.json)")
+    ap.add_argument("--base", type=Path, help="with --check: a second record (the base branch's) neither the tree nor the baseline may be above")
+    ap.add_argument("--out", type=Path, help="also write the measured JSON here")
     a = ap.parse_args()
+    if a.base and not a.check:
+        ap.error("--base needs --check")
+    if a.record and (changes := dirty()):
+        sys.exit(
+            "ratchet: --record refuses a dirty tree: the record names HEAD, and HEAD is not what"
+            " would be measured; commit or remove these:\n  " + "\n  ".join(changes)
+        )
     now = measure()
+    if a.out:
+        a.out.write_text(dump(now))
     if a.record:
         a.baseline.write_text(dump(now))
         print(f"ratchet: recorded {a.baseline} at {now['commit'][:12]}")
         return 0
     if a.check:
-        return check(now, a.baseline)
+        return check(now, a.baseline, a.base)
     sys.stdout.write(dump(now))
     return 0
 
