@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+"""The ratchet: seven numbers of the tree that may only fall (#72).
+
+    tools/ratchet            measure the tree, print one JSON object
+    tools/ratchet --check    measure, compare with docs/ratchets.json, fail on a rise
+    tools/ratchet --record   measure, rewrite docs/ratchets.json (a PR that says so)
+
+docs/RATCHETS.md says what each number is and how a lane moves one. A Python
+script with the standard library only: no crate enters the workspace or its
+lock, the CI runner already has python3, and the house's tools are Python.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BASELINE = ROOT / "docs" / "ratchets.json"
+CLIPPY_CONF_DIR = ROOT / "tools" / "ratchet.d"
+SCHEMA = 1
+
+FILE_LINES = 800  # a file over this many lines is counted
+DUP_WINDOW = 40  # tokens in the duplicate window
+
+RATCHETS = [
+    "clippy_pedantic",
+    "unwrap_expect_outside_tests",
+    "files_over_800_lines",
+    "functions_over_60_lines",
+    "cognitive_complexity_over_25",
+    "duplicated_blocks",
+    "missing_docs",
+]
+
+
+def run(cmd, env=None):
+    return subprocess.run(
+        cmd, cwd=ROOT, env=env, check=True, capture_output=True, text=True
+    ).stdout
+
+
+# ---------------------------------------------------------------- the lexer
+
+PUNCT = sorted(
+    "::= <<= >>= ... ..= :: -> => == != <= >= && || += -= *= /= %= ^= &= |= <<"
+    " >> ..".split(),
+    key=len,
+    reverse=True,
+)
+IDENT = re.compile(r"r#[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*")
+NUMBER = re.compile(r"[0-9][0-9A-Za-z_]*(\.[0-9][0-9A-Za-z_]*)?")
+RAW_STR = re.compile(r'(b|c)?r(#*)"')
+LIFETIME = re.compile(r"'[A-Za-z_][A-Za-z0-9_]*(?!')")
+
+
+def lex(src):
+    """Rust tokens as (text, line); comments and whitespace dropped.
+
+    A lexer for counting, not for compiling: literals are one token each,
+    the common multi-character operators are one token, everything else is
+    one character."""
+    toks = []
+    i, n, line = 0, len(src), 1
+    while i < n:
+        c = src[i]
+        if c == "\n":
+            line += 1
+            i += 1
+        elif c.isspace():
+            i += 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+        elif src.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if src.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif src.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            line += src.count("\n", i, j)
+            i = j
+        elif (m := RAW_STR.match(src, i)) and (c in "bcr"):
+            end = '"' + m.group(2)
+            j = src.find(end, m.end())
+            j = n if j < 0 else j + len(end)
+            toks.append((src[i:j], line))
+            line += src.count("\n", i, j)
+            i = j
+        elif c == '"' or (c in "bc" and src.startswith('"', i + 1)):
+            j = i + (1 if c == '"' else 2)
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == "\\" else 1
+            j += 1
+            toks.append((src[i:j], line))
+            line += src.count("\n", i, j)
+            i = j
+        elif c == "'" or (c == "b" and src.startswith("'", i + 1)):
+            m = LIFETIME.match(src, i)
+            if c == "'" and m:
+                toks.append((m.group(0), line))
+                i = m.end()
+            else:
+                j = i + (1 if c == "'" else 2)
+                while j < n and src[j] != "'":
+                    j += 2 if src[j] == "\\" else 1
+                j += 1
+                toks.append((src[i:j], line))
+                i = j
+        elif m := IDENT.match(src, i):
+            toks.append((m.group(0), line))
+            i = m.end()
+        elif m := NUMBER.match(src, i):
+            toks.append((m.group(0), line))
+            i = m.end()
+        else:
+            for p in PUNCT:
+                if src.startswith(p, i):
+                    toks.append((p, line))
+                    i += len(p)
+                    break
+            else:
+                toks.append((c, line))
+                i += 1
+    return toks
+
+
+# ------------------------------------------------------------- the sources
+
+
+def sources():
+    """Every tracked .rs file of the repository, sorted."""
+    out = run(["git", "ls-files", "-z", "--", "*.rs"])
+    return sorted(p for p in out.split("\0") if p)
+
+
+def attr_end(toks, i):
+    """Index past the attribute `# [ ... ]` starting at i, or None."""
+    if not (toks[i][0] == "#" and i + 1 < len(toks) and toks[i + 1][0] == "["):
+        return None
+    depth, j = 0, i + 1
+    while j < len(toks):
+        t = toks[j][0]
+        if t == "[":
+            depth += 1
+        elif t == "]":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return j
+
+
+def item_end(toks, i):
+    """Index past the item starting at i: to its `;` or its closing `}`."""
+    depth, j = 0, i
+    while j < len(toks):
+        t = toks[j][0]
+        if t in "([":
+            depth += 1
+        elif t in ")]":
+            depth -= 1
+        elif t == ";" and depth == 0:
+            return j + 1
+        elif t == "{" and depth == 0:
+            braces = 0
+            while j < len(toks):
+                if toks[j][0] == "{":
+                    braces += 1
+                elif toks[j][0] == "}":
+                    braces -= 1
+                    if braces == 0:
+                        return j + 1
+                j += 1
+            return j
+        j += 1
+    return j
+
+
+IS_CFG_TEST = ["#", "[", "cfg", "(", "test", ")", "]"]
+
+
+def cfg_test_items(toks):
+    """Token ranges of the items under `#[cfg(test)]`, and the out-of-line
+    modules they declare as (name, #[path] or None)."""
+    ranges, mods = [], []
+    i = 0
+    while i < len(toks):
+        if [t for t, _ in toks[i : i + 7]] == IS_CFG_TEST:
+            j, path = i + 7, None
+            while (k := attr_end(toks, j)) is not None:
+                a = [t for t, _ in toks[j:k]]
+                if a[2:4] == ["path", "="]:
+                    path = a[4].strip('"')
+                j = k
+            while j < len(toks) and toks[j][0] in ("pub", "(", "crate", "super", ")"):
+                j += 1
+            end = item_end(toks, j)
+            body = [t for t, _ in toks[j:end]]
+            if len(body) == 3 and body[0] == "mod" and body[2] == ";":
+                mods.append((body[1], path))
+            ranges.append((i, end))
+            i = end
+        else:
+            i += 1
+    return ranges, mods
+
+
+def module_file(parent, name, path, files):
+    """The file an out-of-line `mod name;` in `parent` names."""
+    d = os.path.dirname(parent)
+    if path is not None:
+        cands = [os.path.normpath(os.path.join(d, path))]
+    elif os.path.basename(parent) in ("lib.rs", "main.rs", "mod.rs"):
+        cands = [os.path.join(d, name + ".rs"), os.path.join(d, name, "mod.rs")]
+    else:
+        stem = parent[: -len(".rs")]
+        cands = [os.path.join(stem, name + ".rs"), os.path.join(stem, name, "mod.rs")]
+    return next((c for c in cands if c in files), None)
+
+
+def test_files(lexed):
+    """Files that are test code whole: under a top-level tests/ or benches/,
+    named tests.rs, or reached through a `#[cfg(test)] mod x;`, and every
+    file under such a module's directory."""
+    files = set(lexed)
+    test = {
+        f
+        for f in files
+        if f.split("/")[0] in ("tests", "benches") or os.path.basename(f) == "tests.rs"
+    }
+    for f in sorted(files):
+        for name, path in lexed[f][1]:
+            m = module_file(f, name, path, files)
+            if m:
+                test.add(m)
+    grew = True
+    while grew:
+        grew = False
+        for f in sorted(files - test):
+            for t in sorted(test):
+                stem = t[: -len("mod.rs")] if t.endswith("/mod.rs") else t[: -len(".rs")] + "/"
+                if f.startswith(stem):
+                    test.add(f)
+                    grew = True
+                    break
+    return test
+
+
+def unwrap_expect(toks, ranges):
+    skip = set()
+    for a, b in ranges:
+        skip.update(range(a, b))
+    n = 0
+    for i in range(1, len(toks) - 1):
+        if (
+            toks[i][0] in ("unwrap", "expect")
+            and toks[i - 1][0] == "."
+            and toks[i + 1][0] == "("
+            and i not in skip
+        ):
+            n += 1
+    return n
+
+
+def duplicates(lexed):
+    """Exact clones: every window of DUP_WINDOW consecutive tokens is hashed
+    (blake2b of the tokens' text); a window is duplicated when its hash is at
+    two places that do not overlap (two files, or DUP_WINDOW tokens apart in
+    one). A block is a maximal run of tokens covered by duplicated windows."""
+    where = defaultdict(list)
+    for f in sorted(lexed):
+        toks = lexed[f][0]
+        for i in range(len(toks) - DUP_WINDOW + 1):
+            h = hashlib.blake2b(
+                "\0".join(t for t, _ in toks[i : i + DUP_WINDOW]).encode(), digest_size=16
+            ).digest()
+            where[h].append((f, i))
+    covered = defaultdict(set)
+    for places in where.values():
+        if len(places) < 2:
+            continue
+        files = {f for f, _ in places}
+        if len(files) == 1 and places[-1][1] - places[0][1] < DUP_WINDOW:
+            continue
+        for f, i in places:
+            covered[f].update(range(i, i + DUP_WINDOW))
+    blocks = tokens = 0
+    for f in sorted(covered):
+        idx = sorted(covered[f])
+        tokens += len(idx)
+        blocks += 1 + sum(1 for a, b in zip(idx, idx[1:]) if b != a + 1)
+    return blocks, tokens
+
+
+# ------------------------------------------------------------------ clippy
+
+CLIPPY_LINTS = [
+    "-W", "clippy::pedantic",
+    "-W", "clippy::too_many_lines",
+    "-W", "clippy::cognitive_complexity",
+]
+
+
+def warnings(cmd, env):
+    """The warnings of a cargo run, by lint, deduplicated by (lint, file,
+    line, column): a lib's lint is reported once for the lib and once for its
+    test harness. Cargo replays a fresh crate's cached warnings, so a second
+    run on the same tree reads the same set."""
+    env = dict(os.environ, CARGO_TERM_COLOR="never", **env)
+    proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(f"ratchet: {' '.join(cmd[:2])} failed")
+    seen = set()
+    for line in proc.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        msg = json.loads(line)
+        if msg.get("reason") != "compiler-message":
+            continue
+        m = msg["message"]
+        code = (m.get("code") or {}).get("code")
+        if m.get("level") != "warning" or not code:
+            continue
+        spans = [s for s in m["spans"] if s["is_primary"]] or m["spans"]
+        if not spans:
+            continue
+        s = spans[0]
+        seen.add((code, s["file_name"], s["line_start"], s["column_start"]))
+    return Counter(code for code, _f, _l, _c in seen)
+
+
+def clippy():
+    """One clippy pass over the workspace's every target, the gate's scope."""
+    return warnings(
+        ["cargo", "clippy", "--workspace", "--all-targets", "--locked",
+         "--message-format=json", "--quiet", "--", *CLIPPY_LINTS],
+        {"CLIPPY_CONF_DIR": str(CLIPPY_CONF_DIR)},
+    )
+
+
+def missing_docs():
+    """rustdoc over the workspace's lib and bins (what `cargo doc` documents)
+    with the missing_docs lint on: the public items a reader finds undocumented."""
+    by_lint = warnings(
+        ["cargo", "doc", "--workspace", "--no-deps", "--locked",
+         "--message-format=json", "--quiet"],
+        {"RUSTDOCFLAGS": "-W missing_docs"},
+    )
+    return by_lint.get("missing_docs", 0)
+
+
+def toolchain():
+    return run(["cargo", "clippy", "--version"]).strip(), run(["rustc", "--version"]).strip()
+
+
+# ----------------------------------------------------------------- measure
+
+
+def measure():
+    files = sources()
+    lexed, lines = {}, {}
+    for f in files:
+        src = (ROOT / f).read_text(encoding="utf-8")
+        lines[f] = src.count("\n") + (0 if src.endswith("\n") or not src else 1)
+        toks = lex(src)
+        ranges, mods = cfg_test_items(toks)
+        lexed[f] = (toks, mods, ranges)
+    tests = test_files(lexed)
+
+    unwraps = {}
+    for f in files:
+        if f in tests:
+            continue
+        n = unwrap_expect(lexed[f][0], lexed[f][2])
+        if n:
+            unwraps[f] = n
+    big = sorted(((f, n) for f, n in lines.items() if n > FILE_LINES), key=lambda x: (-x[1], x[0]))
+    blocks, dup_tokens = duplicates({f: lexed[f] for f in files})
+    by_lint = clippy()
+    pedantic = {
+        k: v for k, v in by_lint.items()
+        if k.startswith("clippy::") and k not in ("clippy::too_many_lines", "clippy::cognitive_complexity")
+    }
+    roots = defaultdict(lambda: [0, 0])
+    for f in files:
+        root = "mcp/src" if f.startswith("mcp/src/") else f.split("/")[0] if "/" in f else "."
+        roots[root][0] += 1
+        roots[root][1] += lines[f]
+    clippy_v, rustc_v = toolchain()
+
+    return {
+        "schema": SCHEMA,
+        "commit": run(["git", "rev-parse", "HEAD"]).strip(),
+        "toolchain": {"rustc": rustc_v, "clippy": clippy_v},
+        "ratchets": {
+            "clippy_pedantic": sum(pedantic.values()),
+            "unwrap_expect_outside_tests": sum(unwraps.values()),
+            "files_over_800_lines": len(big),
+            "functions_over_60_lines": by_lint.get("clippy::too_many_lines", 0),
+            "cognitive_complexity_over_25": by_lint.get("clippy::cognitive_complexity", 0),
+            "duplicated_blocks": blocks,
+            "missing_docs": missing_docs(),
+        },
+        "detail": {
+            "sources": {r: {"files": v[0], "lines": v[1]} for r, v in sorted(roots.items())},
+            "test_files": len(tests),
+            "files_over_800_lines": [{"path": f, "lines": n} for f, n in big],
+            "unwrap_expect_by_file": dict(sorted(unwraps.items(), key=lambda x: (-x[1], x[0]))),
+            "duplicated_tokens": dup_tokens,
+            "clippy_pedantic_by_lint": dict(sorted(pedantic.items(), key=lambda x: (-x[1], x[0]))),
+        },
+    }
+
+
+def dump(obj):
+    return json.dumps(obj, indent=2, sort_keys=False) + "\n"
+
+
+def check(now, path):
+    base = json.loads(path.read_text())
+    if base.get("schema") != SCHEMA:
+        sys.exit(f"ratchet: {path} is schema {base.get('schema')}, the tool is {SCHEMA}")
+    if base["toolchain"] != now["toolchain"]:
+        sys.exit(
+            "ratchet: the toolchain differs from the baseline's, the clippy numbers do not compare\n"
+            f"  baseline: {base['toolchain']['clippy']}\n  this run: {now['toolchain']['clippy']}"
+        )
+    worse, better = [], []
+    for k in RATCHETS:
+        b, n = base["ratchets"][k], now["ratchets"][k]
+        if n > b:
+            worse.append(f"  {k}: {b} -> {n} (+{n - b})")
+        elif n < b:
+            better.append(f"  {k}: {b} -> {n} (-{b - n})")
+    print(f"ratchet: baseline at {base['commit'][:12]}, tree at {now['commit'][:12]}")
+    for k in RATCHETS:
+        print(f"  {k:32} {now['ratchets'][k]:>6} (baseline {base['ratchets'][k]})")
+    if better:
+        print("lower than the baseline (re-record in its own commit: tools/ratchet --record):")
+        print("\n".join(better))
+    if worse:
+        print("RAISED above the baseline:")
+        print("\n".join(worse))
+        return 1
+    print("ratchet: no number above the baseline")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--check", action="store_true", help="fail when a number is above docs/ratchets.json")
+    g.add_argument("--record", action="store_true", help="rewrite docs/ratchets.json from this tree")
+    ap.add_argument("--baseline", type=Path, default=BASELINE, help="the baseline file (default docs/ratchets.json)")
+    a = ap.parse_args()
+    now = measure()
+    if a.record:
+        a.baseline.write_text(dump(now))
+        print(f"ratchet: recorded {a.baseline} at {now['commit'][:12]}")
+        return 0
+    if a.check:
+        return check(now, a.baseline)
+    sys.stdout.write(dump(now))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
