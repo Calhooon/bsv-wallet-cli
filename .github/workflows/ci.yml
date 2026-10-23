@@ -8,9 +8,9 @@ name: CI
 # pinned by commit sha.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, beta]
   push:
-    branches: [main]
+    branches: [main, beta]
   # release.yml runs the same jobs on a tag before it publishes.
   workflow_call:
 
