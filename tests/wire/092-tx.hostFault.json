@@ -1,0 +1,20 @@
+{
+  "world": "broken-host",
+  "request": {
+    "method": "GET",
+    "path": "/tx/1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "response": {
+    "status": 500,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_TX_WORD",
+      "message": "error returned from database: (code: 1) no such column: word"
+    }
+  }
+}

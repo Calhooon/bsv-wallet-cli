@@ -38,7 +38,7 @@
       "code": "INPUT_NOT_OFFERED",
       "held": [
         {
-          "ageMinutes": "<minutes>",
+          "ageMinutes": "<uint:2>",
           "origin": "received",
           "outpoint": "4444444444444444444444444444444444444444444444444444444444444444.0",
           "reason": "frozen: never offered",

@@ -1,0 +1,22 @@
+{
+  "world": "auth",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/createAction",
+    "headers": {
+      "access-control-request-headers": "content-type, authorization",
+      "access-control-request-method": "POST",
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "UNAUTHORIZED",
+      "message": "Invalid or missing bearer token"
+    }
+  }
+}

@@ -1,6 +1,10 @@
 # The wire fixtures (#69)
 
-`tests/wire/` holds one JSON file per served call and per refusal body: the request as sent and the response as served (status, the headers that are part of the contract, the body). `cargo test --test wire` replays every file against the router and fails on any byte of difference after normalization, printing a line diff. The corpus is the contract of the served shape that MetaNet Client compatibility rests on: a refactor shows zero diff; a behavior change changes a fixture, and a reviewer sees the change in the fixture.
+`tests/wire/` holds one JSON file per served call and per refusal body: the request as sent and the response as served (status, the headers that are part of the contract, the body), and `MANIFEST.json`, the list of every fixture the recorder wrote. `cargo test --test wire` replays every file the manifest names against the router and fails on any byte of difference after normalization, printing a line diff. The corpus is the contract of the served shape that MetaNet Client compatibility rests on: a refactor shows zero diff; a behavior change changes a fixture, and a reviewer sees the change in the fixture.
+
+## References, at pins
+
+The field names each shape must keep are BRC-100's (`wallet/0100.md` of bsv-blockchain/BRCs) at the line's pin, `ed1b015` (2026-10-05), the commit the stack's `docs/PROVENANCE.md` names; read it with `git -C ~/bsv/brcs show ed1b015:wallet/0100.md`. Upstream master `5119a9b` (2026-10-19) differs from the pin in `listOutputs` only: `totalOutputs` may be a decimal string and `spendable` may be `false`, for the BRC-112 P-basket balance query and a BRC-207 module inventory view. That is upstream, not on the line: the fixtures record `totalOutputs` as a number and `spendable: true`, as the pin has them. Where this document names a BRC-100 shape, it is the pin's.
 
 ## Reading a fixture
 
@@ -16,12 +20,12 @@
   "response": {
     "status": 200,
     "headers": { "content-type": "application/json", "access-control-allow-origin": "http://wire.test", ... },
-    "json": { "ciphertext": "<ciphertext>" }
+    "json": { "ciphertext": "<bytes:52>" }
   }
 }
 ```
 
-- **`world`**: the wallet and the server config the request is served from. Each world is built once per run from its name alone (`World::build` in `tests/wire.rs`):
+- **`world`**: the wallet and the server config the request is served from. Each world is built once per run from its name alone (`World::build` in `tests/wire.rs`); a fixture naming any other world fails the run before a world is built, naming the file and the world.
 
   | world | what it is |
   |---|---|
@@ -32,55 +36,87 @@
   | `received` | one received coin, its creator mined at 900000 by a stored one-leaf proof, its raw transaction not stored |
   | `headers-down` | `received`, the header service answering 500 |
   | `broken` | `fresh` with the `outputs` table dropped (a store fault) |
+  | `broken-host` | `fresh` with the tracker's rows unreadable: a feed status that is not JSON, a states table without its columns |
   | `busy` | a file store whose write lock another connection holds |
+  | `funded` | four mined coins the wallet can sign for (50,000, 40,000, 30,000, 20,000 sats, each a one-leaf block of its own that the header stub answers), and a stranger's mined payment the header stub answers too |
 
-- **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
-- **`request.json`** is sent as its compact bytes with `content-type: application/json`; **`request.raw`** is sent byte for byte (a malformed body).
-- **`response.json`** is a JSON body after normalization; **`response.text`** is a body that is not JSON (the framework's own rejections, an unknown route's empty 404).
-- **`response.headers`** keeps `content-type`, `retry-after` and the CORS headers. The rest is the transport's.
+- **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
+- **`request.json`** is sent as its compact bytes with `content-type: application/json`; **`request.raw`** is sent byte for byte (a malformed body); **`request.fill`** is a body of that many spaces (an oversized one; the file carries the count, not the megabyte).
+- **`request.bind`**: a value of `request.json` that comes from an earlier fixture's served body in the same run. The toolbox draws a signable transaction's `reference` at random, so the fixture that signs or aborts it cannot carry the reference: its `json` carries `<bound>` there, and `bind` maps the JSON pointer in the request (`/reference`) to the file and the pointer it is read from (`096-createAction.templateToAbort.json`, `/signableTransaction/reference`). The recorder and the replay resolve it the same way, from the body that file was served; a bind to a file not served yet, or to a pointer its body lacks, is a failure naming both.
+- **`response.json`** is a JSON body after normalization; **`response.text`** is a body that is not JSON (the framework's own rejections, an unknown route's empty 404, a preflight's empty 200).
+- **`response.headers`** keeps `content-type`, `retry-after` and every CORS header: `access-control-allow-origin`, `-allow-credentials`, `-expose-headers`, `vary`, and the preflight's `-allow-methods`, `-allow-headers` and `-max-age` (the server sets no max-age; the fixture shows its absence). The rest is the transport's.
 - The recorded JSON keeps the body's own key order: a field moved is a byte changed. Each served JSON body is also checked to be compact JSON in that order, so the comparison is of the body's bytes after normalization.
 
 ## What the run judges
+
+The manifest first: every file `MANIFEST.json` lists must be on disk, every file on disk must be listed, and nothing but `.json` fixtures may sit beside the manifest. A fixture deleted, a fixture added by hand, or a stray file is a failure naming it, not a silent pass.
 
 Beyond the byte comparison, the replay fails when the corpus stops covering:
 
 - each of the 28 BRC-100 calls the router serves,
 - the five host routes (`/permission-audit`, `/permission-audit/reset`, `/chain-feed`, `/tx/{txid}`, `/arc-callback`),
-- each refusal: 400 `VALIDATION_ERROR`, 401 `UNAUTHORIZED`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 404 `NOT_FOUND`, 409 `UNSPENDABLE_COIN` (with `coin`), 500 `INTERNAL_ERROR`, 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`).
+- every world named above (a world no fixture is served from is a gap),
+- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/handlers.rs`): 400 `VALIDATION_ERROR`, 400 `INVALID_BEEF`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 404 `NOT_FOUND`, 409 `UNSPENDABLE_COIN` (with `coin`), 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
 
-The corpus also records the 400 `ERROR` and `INVALID_BEEF` codes, the 404 `CALLBACK_DISABLED`, the callback route's 400 `BAD_JSON`, and the framework's 400 and 422 text bodies.
+Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire.rs`; a fixture that answers one moves it to the judged list):
+
+| code | why no world produces it |
+|---|---|
+| 401 `AUTHENTICATION_REQUIRED` | classified from a toolbox message beginning `Authentication required` or `Invalid identity key:`; the router serves one wallet with its key loaded, and no door the toolbox exposes asks it to authenticate another identity |
+| 403 `ACCESS_DENIED` | classified from `Access denied:`, the toolbox's permission refusal; this server grants every originator (the permission audit records, it does not refuse) |
+| 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
+
+The corpus also records the framework's 400 and 422 text bodies, and, as served, a preflight under the bearer: the bearer is checked before CORS answers, so an `OPTIONS` request, which carries no credentials, is refused with 401 in the `auth` world.
 
 ## Changing a fixture on purpose
 
 A PR that changes what the server answers changes its fixture in the same PR, in a commit of its own:
 
 1. Make the change in `src/` (one commit).
-2. `WIRE_RECORD=1 cargo test --locked --test wire` re-records every fixture from the cases in `tests/wire.rs`. Nothing else re-records: without `WIRE_RECORD=1` the run only replays, and CI's `wire` job also refuses a run that left a fixture changed.
-3. `git diff tests/wire` shows exactly the bytes the change moved. Commit them alone, with a subject that says which answer changed and why (`wire: /listActions carries underRule`).
+2. `WIRE_RECORD=1 cargo test --locked --test wire` re-records every fixture and the manifest from the cases in `tests/wire.rs`. A recording never passes: the run ends with the word that a recording is not a replay and must be replayed by a second run. Nothing else re-records: without `WIRE_RECORD=1` the run only replays.
+3. `cargo test --locked --test wire` replays what was recorded.
+4. `git diff tests/wire` shows exactly the bytes the change moved. Commit them alone, with a subject that says which answer changed and why (`wire: /listActions carries underRule`).
+
+CI's `wire` job replays only: it fails before cargo runs if `WIRE_RECORD` is set to anything, and it refuses a run that left a fixture changed.
 
 A new served call or refusal gets a case in `record_all` (`tests/wire.rs`) and, if it is a route or a code the judge must keep, an entry in `ENDPOINTS`, `HOST_ROUTES` or `CODES`. Re-recording writes the files with fresh sequence numbers, so a case added in the middle renames the files after it; the diff shows them as moved, their bodies unchanged.
 
-Two recordings in a row are byte-identical: a re-record with no change in `src/` leaves `git status` clean.
+Two recordings in a row are byte-identical: a re-record with no change in `src/` leaves `git status` clean. A bound request value is written as `<bound>`, never as the value sent, for that reason.
 
 ## What the normalizer hides, and why
 
-One function, `normalize` in `tests/wire.rs`, and only values that differ from run to run with no change to the code:
+One function, `normalize` in `tests/wire.rs`, and only values that differ from run to run with no change to the code. A placeholder replaces a value, never a key, and it keeps the value's shape: its JSON type, a byte array's length, a string's kind and length, a number's sign and digit count. A field that changes from a byte array to a hex string, or grows by a byte, fails the replay.
 
-| what | where | placeholder | why it differs |
-|---|---|---|---|
-| `ciphertext` | `/encrypt` | `<ciphertext>` | AES-GCM under a fresh random IV each call |
-| `encryptedLinkage`, `encryptedLinkageProof` | the two key-linkage calls | `<ciphertext>` | encrypted for the verifier the same way |
-| `revelationTime` | `/revealCounterpartyKeyLinkage` | `<timestamp>` | the clock |
-| `ageMinutes` | a refusal's `held` coins | `<minutes>` | the clock, from the row's fixed time |
-| `<n> min old` | inside a refusal's message | `<minutes> min old` | the same age, in words |
-| `127.0.0.1:<n>` | inside any string | `127.0.0.1:<port>` | the local stub's port |
+| placeholder | for |
+|---|---|
+| `<bytes:N>` | an array of N integers 0 to 255 |
+| `<hex:N>` | a hex string of N characters |
+| `<rfc3339>` | a string that parses as an RFC 3339 time |
+| `<string:N>` | any other string, N characters |
+| `<uint:D>`, `<int:D>` | an integer of D decimal digits, unsigned or negative |
+| `<float>`, `<bool>`, `<array:N>`, `<object:N>` | the other types, should a volatile key ever carry one |
 
-A placeholder replaces a value, never a key: the field's presence and place stay judged. A `null` is kept as `null`.
+The keys replaced, anywhere in a body (`VOLATILE_KEYS`); a `null` is kept as `null`:
 
-What is not hidden, because it does not differ: the identity key, every derived key and every signature. The worlds use one fixed root key, so the identity key, the BRC-42 derivations and the RFC 6979 signatures are the same on every run, and a change to derivation or signing fails the replay. The txids are the seeded rows' fixed values. The `/decrypt` request carries a fixed ciphertext of `wire` under that key (`DECRYPT_CIPHERTEXT`), so a recording does not move it.
+| key | where | why it differs |
+|---|---|---|
+| `ciphertext` | `/encrypt` | AES-GCM under a fresh random IV each call |
+| `encryptedLinkage`, `encryptedLinkageProof` | the two key-linkage calls | encrypted for the verifier the same way |
+| `revelationTime` | `/revealCounterpartyKeyLinkage` | the clock |
+| `ageMinutes` | a refusal's `held` coins | the clock, from the row's time; every seeded row is dated half an hour before its world is built, so the age has two digits on any day and `<uint:2>` is stable |
+| `reference` | `signableTransaction` of `/createAction` | the toolbox draws it at random |
+| `when` | the `broadcast` hint of `/internalizeAction` | the clock, on the toolbox's note of an immediate post that drew no accepting word |
+
+Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ).
+
+What is not hidden, because it does not differ: the identity key, every derived key, every signature, every txid, every built transaction. The worlds use one fixed root key, so the identity key, the BRC-42 derivations and the RFC 6979 signatures are the same on every run, and a change to derivation or signing fails the replay. The seeded txids are fixed values or the ids of fixed transactions. The `funded` world's actions each ask for exactly their coin less the toolbox's fee for one input and one output (20 sats at its rate), and the basket wants no more coins than it has, so the toolbox builds no change output (a change output's derivation is drawn at random); the template, the signed transaction, their txids and the AtomicBEEFs are the same bytes on every run. The `/decrypt` request carries a fixed ciphertext of `wire` under that key (`DECRYPT_CIPHERTEXT`), so a recording does not move it.
 
 ## Nothing leaves the machine
 
-The router is driven in-process (`tower::ServiceExt::oneshot`). The header service is a local stub on `127.0.0.1`; the broadcaster is a closed local port; `HTTPS_PROXY` and `HTTP_PROXY` point at a closed local port with `NO_PROXY=127.0.0.1`, so an explorer request fails at once instead of reaching the network. The operator's settings (`SPEND_DEPTH`, `ARC_*`, `CHAINTRACKS_URL`, the explorer keys and the rest) are removed from the run's environment before any world is built.
+The router is driven in-process (`tower::ServiceExt::oneshot`). The header service is a local stub on `127.0.0.1`; the broadcaster is a closed local port; `HTTPS_PROXY` and `HTTP_PROXY` point at a closed local port with `NO_PROXY=127.0.0.1`, so an explorer request fails at once instead of reaching the network. The operator's settings (`SPEND_DEPTH`, `ARC_*`, `CHAINTRACKS_URL`, the explorer keys and the rest) are removed from the run's environment before any world is built. The `funded` world's `internalizeAction` makes the toolbox post the stranger's payment: every broadcaster fails at the closed port or the proxy, the toolbox notes the hint, and the fixture records the server's `broadcast` word for it.
 
 The worlds use the toolbox's real `Services`, pointed at the stubs, not its `MockWalletServices`: the router's state is `Arc<Wallet<StorageSqlx, Services>>`, a concrete type, and the brief allows no change under `src/` for it.
+
+## The judge, judged
+
+`tests/wire.rs` carries planted cases beside the replay: a recording run into a temporary directory ends with the word to replay and never passes; a manifest with a listed file missing, a file on disk unlisted, and a stray non-JSON file names all three; a fixture of an unknown world fails the replay naming the file and the world; the normalizer keeps each placeholder's shape and leaves a non-volatile key whole. The runs share one lock, since the permission audit is the process's.

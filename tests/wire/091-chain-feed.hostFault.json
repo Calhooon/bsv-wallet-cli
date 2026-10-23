@@ -1,0 +1,20 @@
+{
+  "world": "broken-host",
+  "request": {
+    "method": "GET",
+    "path": "/chain-feed"
+  },
+  "response": {
+    "status": 500,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_CHAIN_FEED",
+      "message": "expected ident at line 1 column 2"
+    }
+  }
+}
