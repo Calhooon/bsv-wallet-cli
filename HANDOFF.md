@@ -612,8 +612,46 @@ counts only rows that were on. LOW's second question ("a seat's own change
 locked by <txid> for six minutes after SEEN") was a misreading: the gate's
 "locked by" names an input a live unproven action of ours consumed, spent for
 good, listed until the spender is proven; renamed "spent by <txid>
-(unproven)". LOW's harness counted it in its pool (LOW's #853). No tag: a
-0.17.1 waits on the owner's word (its gate spends the funder on an e2e run).
+(unproven)". LOW's harness counted it in its pool (LOW's #853).
+
+**2026-10-23, 0.17.1 released (15:1xZ to 16:2xZ; the owner's word: "Go for
+the 0.17.1 tag and publish when the gate's funder is topped; LOW re-pins on
+the published version").** Tag v0.17.1 at 63566d2 on main; crates.io
+0.17.1; the GitHub release with the three binaries (run 39981582764, every
+job green). Three PRs: 56 (the bump: Cargo.toml, Cargo.lock, the README's
+release of record, the CHANGELOG heading; then tokio 1.51.0 to 1.54.1 in the
+lock for RUSTSEC-2026-0386, an unsound advisory on tokio's AsyncFd published
+after 0.17.0, which turned the required `deny` check red under `unsound =
+"all"` with no code change; `cargo deny --locked check advisories` passes
+locally, cargo-deny 0.19.0), 57 (the harness: a failure before the scenarios
+is FATAL and exits 1), and this. Pins unchanged (toolbox =0.12.0, bsv-rs
+=0.8.1, bsv-tracker =0.8.0); the toolbox and bsv-rs track no lock, so their
+deny checks resolve fresh. The gate ran to completion once: 22/22, net 1,771
+sats, funder 147,040 to 145,269 (run 20261023T154459Z under
+`/Volumes/Lanes/out/bsv-wallet-cli/cli44-e2e/`), the harness on the release
+build in `~/bsv/targets/bsv-wallet-cli-0171` (symlinks `target/release/{bsv-wallet,bsv-wallet-mcp}`).
+A first attempt (run 20261023T153739Z, nothing spent) ended at the funding:
+the funder daemon (still the 0.16.1 binary started 2026-10-22 11:10, PID
+25052, CHAINTRACKS_URL set) held all six coins "headers unavailable:
+Headers(HeaderError("Service error: get_header_for_height: no header service
+configured"))" at 15:37:41Z, two seconds after its new_header tick missed the
+same way; the worker answered 200 in 0.2 s before and after. Five such misses
+in forty hours of minute ticks (00:35, 07:07, 14:48, 15:06 on 10-22; 15:37
+on 10-23); only the last met a run. The hold is the gate's rule ("could not
+look" is never "offerable"); the reason is a toolbox defect: the header
+ladder's two header calls log each rung at debug and return "no header
+service configured" when every rung fails (get_height beside them keeps
+last_error). Filed as toolbox #47; the stack keeper verified it at 1d0fec2
+and runs a fix lane for 0.12.1, sha and version to follow; the CLI's pin to
+0.12.1 is a 0.17.2 whose gate spends the funder, so it waits on the owner's
+word. The harness had exited 0 on that failed run ("Passed: 0/0", the
+funder's 402 unprinted): the funding threw inside the try and the finally
+block's process.exit ran with zero results; PR 57 names it FATAL, exits 1,
+and compares the results against what the run was asked for (a dry run or
+a single scenario no longer keeps the wallet directories as a failed run).
+LOW told (re-pin on 0.17.1; its own tracked locks under deny's unsound rule
+to check); the stack keeper told (#47, the RUSTSEC note). Scratch worktree
+under $TMPDIR removed; the merged branches deleted.
 
 Open after this wave: toolbox #44 (is_utxo returns the bound spender);
 0.11.1's open point 3 and the locked-input release path through is_utxo
