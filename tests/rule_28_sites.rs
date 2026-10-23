@@ -18,14 +18,17 @@ use std::path::{Path, PathBuf};
 
 /// `(file, the request line, the tag its reason starts with)`.
 const SITES: &[(&str, &str, &str)] = &[
+    // #74: the two chain indexes read their bases from `ExplorerBases`
+    // (`WOC_BASE`, `BITAILS_BASE`), so a hermetic run can point them at
+    // its stub; the reason at the site is unchanged.
     (
         "src/broadcast_verify.rs",
-        r#"format!("{}/tx/hash/{{txid}}", woc_base(chain))"#,
+        r#"format!("{}/tx/hash/{{txid}}", bases.woc)"#,
         "Break-glass (Rule 28, C1)",
     ),
     (
         "src/broadcast_verify.rs",
-        r#"format!("{}/tx/{{txid}}", bitails_base(chain))"#,
+        r#"format!("{}/tx/{{txid}}", bases.bitails)"#,
         "Break-glass (Rule 28, C1)",
     ),
     (
