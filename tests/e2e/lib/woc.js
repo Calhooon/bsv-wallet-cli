@@ -1,44 +1,60 @@
 /**
- * WhatsOnChain verification helpers.
- * WoC is the auditor, not the courier.
+ * The auditor's helpers: the explorer ladder for "is it on the network"
+ * (WhatsOnChain, Bitails, BananaBlocks), WoC for BEEF. Never a courier.
  */
 
 const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/main';
 
+const BITAILS_BASE = 'https://api.bitails.io';
+const BANANABLOCKS_BASE = 'https://bananablocks.com/api/v1';
+
 /**
- * Verify a transaction exists on-chain via WoC.
- * Polls with exponential backoff.
- * Returns { confirmed, txid, vout: [...] } or throws.
+ * The auditor's rungs, the explorer ladder rule (CLAUDE.md, #50): one
+ * explorer's 404 is "not yet indexed there", never "not on the network".
+ * Each returns the explorer's status for GET /tx/{txid}; a network error
+ * is a fault, reported as its message.
+ */
+const RUNGS = [
+  { name: 'whatsonchain', url: txid => `${WOC_BASE}/tx/${txid}` },
+  { name: 'bitails', url: txid => `${BITAILS_BASE}/tx/${txid}` },
+  { name: 'bananablocks', url: txid => `${BANANABLOCKS_BASE}/tx/${txid}` },
+];
+
+/**
+ * Verify a transaction is on the network: the explorer ladder, WhatsOnChain
+ * then Bitails then BananaBlocks on every poll, the first 200 the answer
+ * (the explorer that listed it is named in `listedBy`). A 404 from one
+ * explorer moves to the next rung; any other status or a network error is a
+ * fault and moves on too. Polls with exponential backoff; after the last
+ * poll with no 200 it throws, naming every rung's last answer.
+ *
+ * Seen 2026-10-23 (the 0.17.2 gate, scenario 14): WoC answered 404 for a
+ * broadcast return payment for over 88 s while Bitails had it at 6 s (the
+ * wallet's own ladder recorded it as seen through Bitails); a WoC-only
+ * auditor failed the scenario.
  */
 async function verifyOnChain(txid, opts = {}) {
   const maxRetries = opts.maxRetries || 15;
   const baseDelay = opts.baseDelay || 2000;
+  const last = {};
 
   for (let i = 0; i < maxRetries; i++) {
-    try {
-      const resp = await fetch(`${WOC_BASE}/tx/${txid}`);
-      if (resp.ok) {
-        const tx = await resp.json();
-        return {
-          confirmed: true,
-          txid: tx.txid,
-          vout: tx.vout.map(v => ({
-            sats: Math.round(v.value * 1e8),
-            script: v.scriptPubKey.hex,
-          })),
-        };
+    for (const rung of RUNGS) {
+      try {
+        const resp = await fetch(rung.url(txid));
+        last[rung.name] = String(resp.status);
+        if (resp.ok) {
+          return { confirmed: true, txid, listedBy: rung.name };
+        }
+        // 404: not yet indexed there; anything else: a fault. Both move on.
+      } catch (e) {
+        last[rung.name] = `fault: ${e.message}`;
       }
-      if (resp.status === 404) {
-        // Not yet indexed, retry
-      } else {
-        throw new Error(`WoC /tx/${txid} returned ${resp.status}`);
-      }
-    } catch (e) {
-      if (i === maxRetries - 1) throw e;
     }
-    await sleep(baseDelay * Math.pow(1.5, i));
+    if (i < maxRetries - 1) await sleep(baseDelay * Math.pow(1.5, i));
   }
-  throw new Error(`Transaction ${txid} not found on WoC after ${maxRetries} retries`);
+  const answers = RUNGS.map(r => `${r.name}: ${last[r.name] || 'not asked'}`).join('; ');
+  throw new Error(`Transaction ${txid} not listed by any explorer after ${maxRetries} polls (${answers})`);
 }
 
 /**
@@ -69,4 +85,4 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-module.exports = { verifyOnChain, fetchBeef, buildAtomicBEEF, sleep, WOC_BASE };
+module.exports = { verifyOnChain, fetchBeef, buildAtomicBEEF, sleep, WOC_BASE, BITAILS_BASE, BANANABLOCKS_BASE };
