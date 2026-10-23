@@ -1,0 +1,14 @@
+# Lanes of the north-star programme (epic #106)
+
+A lane is one issue of the programme, worked in its own worktree on a branch from `origin/beta`, landed by the captain through a PR into `beta`. The briefs here are the records of what each lane was asked; the lane's report is its reply. The shared rules, which every brief assumes:
+
+1. **Where you work.** The worktree cca gives you, on a branch from `origin/beta` (never `main`; `main` is the stable line). `CARGO_TARGET_DIR` under `~/bsv/targets/` or `/Volumes/Lanes/targets/`, never inside the checkout and never `/tmp`. Never the repository's own checkout, never `e2e-funder/`, never a secrets file, never `~/vault/`.
+2. **The proof rule.** Every claim with its command and the last lines of its output in the report. A test you did not run is not a test. `[X]` run, `[D]` told.
+3. **No network except reads.** No sats move, ever; the mainnet e2e gate is the captain's and runs once per release. The funder daemon on :3320 and every port of `~/bsv/prod-test-wallets/REGISTRY.md` are not yours.
+4. **The references, at pins.** BRC-100 and the wallet BRCs at `~/bsv/brcs` (`git show upstream/master:wallet/0100.md`, the commit named in #100); the stack's wallet charter and Lean definition at `~/bsv/bsv-stack-lean/docs/charters/wallet.md` and `lean/Wallet.lean`; the stack's lane rules `docs/lanes/l2-README.md` (the six tests T1 to T6, which your report names for each design choice); the node's harness as the pattern for ours, `~/bsv/bsv-script-lean/harness/README.md` (the evaluator is the oracle, the corpus is the judge). Read with `git show <pin>:<path>`, never a working tree.
+5. **One concern per PR.** A refactor never carries a behavior change; a behavior change changes its fixture in its own commit. The gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --locked`, `cargo test --locked`, `cargo deny --locked check advisories`, green before the report.
+6. **Wording.** No em dash. Never "first", never "conformant" without a run. No hostname of a deployment, no token shape, no account id.
+7. **The report.** First line `REPORT: STATUS done|blocked`, then the base commit, your tip commit, the files, the commands and their tails, what is `[D]`, what you did not run and why, and what the captain must do at landing. Stop and say so when a step needs a word that is not yours.
+8. **Bounds.** The brief's hours are the limit; past them, `STATUS blocked` with what remains.
+
+Wave 1 (2026-10-23): `oracle-fixtures` (#69), `oracle-benches` (#71), `oracle-ratchets` (#72), `oracle-lints` (#73), `oracle-nightly` (#75, #76). Each owns a disjoint file surface; only `oracle-benches` edits `Cargo.toml`. Wave 2 follows their merge: #70, #74, #100, #77.
