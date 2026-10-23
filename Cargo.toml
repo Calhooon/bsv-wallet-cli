@@ -55,5 +55,24 @@ tls = ["axum-server"]
 
 [dev-dependencies]
 async-trait = "0.1"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+# The hot path's benches (#71): p50 and p99 per bench, compared to
+# benches/baseline.json by tools/bench-compare.
+[[bench]]
+name = "gate_assess"
+harness = false
+
+[[bench]]
+name = "create_action_signed"
+harness = false
+
+[[bench]]
+name = "internalize_action"
+harness = false
+
+[[bench]]
+name = "list_outputs"
+harness = false

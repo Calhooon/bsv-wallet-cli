@@ -4,7 +4,8 @@ name: CI
 # `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling), the two
 # `Build (...)` checks that were already required, and `deny` (the paved road's
 # cargo-deny gate over the stack's template, adopted at 0.13.x). `wire` (#69)
-# is to be required on `beta` by the captain. Renaming a job removes its
+# is to be required on `beta` by the captain, and `bench` (#71) with it once
+# its entries carry five runs. Renaming a job removes its
 # context and blocks every PR until the protection is updated. Every action is
 # pinned by commit sha.
 on:
@@ -160,6 +161,34 @@ jobs:
 
       - name: No fixture was written by the run
         run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
+
+  # The hot path's benches (#71): tools/bench-compare runs them and fails a
+  # p99 more than the baseline's margin above this runner's entry in
+  # benches/baseline.json. With no entry for the runner the run records one
+  # instead and passes; the baseline it wrote is the artifact, to commit in
+  # a PR that says so (the next run checks against it).
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run the benches against the baseline
+        run: tools/bench-compare --record-missing
+
+      - name: Keep the baseline the run read or wrote
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-baseline
+          path: benches/baseline.json
+          if-no-files-found: ignore
 
   # The paved road's deny job, from bsv-stack-lean template/ci.yml: deny.toml is
   # the template byte for byte (its sha256 stamped in template/stack.toml), then
