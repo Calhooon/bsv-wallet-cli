@@ -3,6 +3,9 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [0.17.2] - 2026-10-23
+0.17.2: `bsv-wallet-toolbox-rs` `=0.12.0` to `=0.12.1` (bsv-wallet-toolbox-rs #47, PR 48: the header ladders answer "<call>: no header service answered (chaintracks: <error>; bhs: <error>)" when every rung fails, "no header service configured" only when neither client is configured, rung failures logged at warn; the ladders' order and request count per call unchanged). The spend gate's "headers unavailable" hold and the monitor's `new_header` warning now carry the header service's own error (the 0.17.1 gate's first attempt, CHANGELOG 0.17.1). `bsv-rs` `=0.8.1` and `bsv-tracker` `=0.8.0` unchanged; no CLI code change. CLI #59 (the gate's answer on a header-service transport fault: a retry and a 503, never 402 INSUFFICIENT_FUNDS) stays open for a later minor.
+
 ## [0.17.1] - 2026-10-23
 0.17.1: the repair passes measure the balance and the spend gate names a consumed input as spent (#53). Pins unchanged: `bsv-wallet-toolbox-rs` `=0.12.0`, `bsv-rs` `=0.8.1`, `bsv-tracker` `=0.8.0`. A patch: no new command, flag or environment; two report lines and one listing reason reworded, their figures measured.
 
