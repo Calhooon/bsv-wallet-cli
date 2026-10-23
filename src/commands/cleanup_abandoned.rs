@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bsv_wallet_toolbox::services::UtxoVerdict;
+use bsv_wallet_toolbox::services::{BoundSpender, UtxoVerdict};
 use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletServices};
 use sqlx::Row;
 use std::future::Future;
@@ -12,7 +12,6 @@ use crate::commands::balance::{
     balance_line, default_basket_sats, tally, tally_lines, BasketTally, BASKET_NAME_SQL,
 };
 use crate::context::WalletContext;
-use crate::explorers::Explorers;
 
 /// What the chain says about ONE input outpoint of a candidate transaction
 /// (THE RELEASE RULE's per-input primitive, 2026-08-29).
@@ -192,7 +191,6 @@ pub async fn reconcile<V: WalletServices>(
     execute: bool,
 ) -> Result<ReconcileReport> {
     let verifier = BroadcastVerifier::single_pass(chain);
-    let explorers = Explorers::from_env(chain);
     let pool = storage.pool();
     reconcile_with(
         storage,
@@ -203,12 +201,9 @@ pub async fn reconcile<V: WalletServices>(
             let v = verifier.clone();
             async move { v.verify_report(&txid).await }
         },
-        |src: String, vout: u32| {
-            let explorers = explorers.clone();
-            async move {
-                let script = stored_locking_script(pool, &src, vout).await;
-                probe_input_spend(&explorers, services, &src, vout, script.as_deref()).await
-            }
+        |src: String, vout: u32| async move {
+            let script = stored_locking_script(pool, &src, vout).await;
+            probe_input_spend(services, &src, vout, script.as_deref()).await
         },
     )
     .await
@@ -253,152 +248,83 @@ pub(crate) async fn stored_locking_script(
 /// Break-glass (Rule 28): headers and proofs prove that a transaction is in
 /// a block, never that an output is unspent, and our own outputs table
 /// knows only our own spends; so an output's spend by someone else is asked
-/// of explorers, in two steps.
+/// of explorers, through the toolbox's one ladder pass,
+/// `is_utxo_with_spender` (toolbox 0.13.0, bsv-wallet-toolbox-rs #44; the
+/// owner's word of 2026-10-22, bsv-wallet-cli #50: each scanner has its own
+/// rate limits, so when one fails we go to the next):
 ///
-/// 1. **Who spent it?** A ladder (bsv-wallet-cli #50, the owner's word of
-///    2026-10-22: each scanner has its own rate limits, so when one fails
-///    we go to the next): WhatsOnChain's `/tx/{txid}/{vout}/spent` and
-///    BananaBlocks' `/txo/{txid}/{vout}`, the start rotating between
-///    them ([`Explorers::spender_rungs`]). A fault (a 429, a rung closed by
-///    its Retry-After, a timeout, a 5xx, a malformed body, BananaBlocks'
-///    output under another script than `locking_script`) moves to the next
-///    rung at once. A name from either is a positive and is then checked
-///    twice, in this order (E1): the named transaction's own bytes must
-///    hash to the name and hold the outpoint among their inputs, and
-///    `confirmed` is true only with a merkle proof of that bound spender
-///    whose root the header service checked (C8). A name whose bytes do not
-///    spend the outpoint is dropped and the next rung asked. A name whose
-///    bytes could not be read is `Unknown` unless another rung's name
-///    binds. One explorer's "no spend known" (also what an index behind, or
-///    a parent that does not exist, says) is not an answer: it falls
-///    through to step 2, as a fault does.
-/// 2. **Is it unspent?** The toolbox's `is_utxo` (its Rule 28 item 5):
-///    WhatsOnChain, BananaBlocks and Bitails (toolbox 0.12.0) with a
+/// 1. **Is it unspent?** WhatsOnChain, BananaBlocks and Bitails with a
 ///    rotating start, asked until two agree. "Unspent" is a negative too
 ///    ("no spender") and acting on it releases a coin, so it needs two
 ///    explorers' clean answers, as "not listed" does (the toolbox's
 ///    `UTXO_POSITIVE_PROVIDERS` and `UTXO_NEGATIVE_PROVIDERS`, two of the
 ///    three); one explorer's answer with the others faulting, or one
-///    unspent against one not listed, is "could not look". `Unspent` is
-///    the outpoint in two unspent sets, so its parent exists. Explorers
-///    agreeing it is not unspent while no spender is named (a phantom
-///    parent, or an index behind) is `Unknown`: no spender can be proven.
-///    Anything else is `Unknown`.
+///    unspent against one not listed, is "could not look".
+/// 2. **Who spent it?** WhatsOnChain's `/tx/{txid}/{vout}/spent` and
+///    BananaBlocks' `/txo/{txid}/{vout}` (an answer the ladder read on the
+///    way is not asked again), each the other's fallback: a fault, no name,
+///    or a name its bytes do not bear out moves to the next. A name is
+///    bound before it is believed (E1, the rulings of 2026-10-09): the
+///    named transaction's own bytes must hash to the name and hold the
+///    outpoint among their inputs, and `confirmed` is true only with a
+///    merkle proof of that bound spender whose root the header service
+///    checked (C8). A bound spender stands on one provider, even against
+///    two unspent answers (an index can miss a mempool spend). Without a
+///    header service no spender route is asked: nothing is fetched that
+///    could not be checked.
 ///
-/// Without `locking_script` the unspent set cannot be asked (it is keyed
-/// by script hash) and the answer is `Unknown`.
+/// The answer reads the spender before the verdict: a bound spender is `SpentBy`,
+/// `confirmed` as its proof. With none, `UnspentHint` under our own stored
+/// script (the outpoint in two unspent sets, so its parent exists) is
+/// `Unspent`; `SpentHint` with no spender (explorers agreeing it is not
+/// unspent while no bound spender is named: a phantom parent, an index
+/// behind, or a name whose bytes could not be read or did not spend the
+/// outpoint) is `Unknown`, as `Unknown` is: no spender can be proven, and
+/// nothing is released on it.
+///
+/// Until 0.18.0 the probe asked the two spender routes itself, read the
+/// name's bytes and its proof, then called `is_utxo`, whose ladder asked
+/// the same routes again: four to six explorer requests an outpoint. Now
+/// it costs one ladder pass. Two answers moved with the step, both the
+/// ladder's rules since toolbox 0.12.0: a name whose bytes no explorer
+/// served is dropped by the ladder, so the unspent set's verdict stands
+/// where the probe used to hold `Unknown` on it; and with no header
+/// service no spender is named, where the probe used to name one
+/// unconfirmed. CHANGELOG 0.18.1 records both.
+///
+/// Without `locking_script` (neither the output's row nor its parent's
+/// bytes are held) the ladder is asked under the empty script's hash,
+/// which no explorer lists: a bound spender still answers, and no unspent
+/// set was asked for this output, so the answer is never `Unspent`.
 pub(crate) async fn probe_input_spend<V: WalletServices>(
-    explorers: &Explorers,
     services: &V,
     src: &str,
     vout: u32,
     locking_script: Option<&[u8]>,
 ) -> InputSpend {
     tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-    // Break-glass (Rule 28, C7): who spent an outpoint. No header or proof
-    // says an output is spent by someone else, and our outputs table knows
-    // only our own spends; these are the explorer routes that name a
-    // spender. The name is a claim, checked by the spender's bytes and a
-    // proof below; "no spend known" or a fault here is not an answer, and
-    // the next rung is asked.
-    let mut asked: Vec<String> = Vec::new();
-    let mut unreadable = false;
-    for rung in explorers.spender_rungs() {
-        let spender = match explorers.spender(rung, src, vout, locking_script).await {
-            Ok(Some(spender)) => spender,
-            Ok(None) => continue,
-            Err(fault) => {
-                tracing::debug!(
-                    outpoint = %format!("{src}:{vout}"),
-                    provider = rung.name(),
-                    %fault,
-                    "spender lookup: could not look; the next rung is asked"
-                );
-                continue;
-            }
-        };
-        // A second rung naming the same spender adds no evidence and costs
-        // no second fetch.
-        if asked.contains(&spender) {
-            continue;
-        }
-        asked.push(spender.clone());
-        // Bind, then prove (E1, the rulings of 2026-10-09). The name is a
-        // provider's word; the named transaction's own bytes, hashing to
-        // that name and holding the outpoint among their inputs, are the
-        // fact. Only a bound spender is named in the answer, and only a
-        // bound spender is asked for its proof.
-        match spender_binds(services, &spender, src, vout).await {
-            Some(true) => {
-                let confirmed = proven_mined(services, &spender).await;
-                return InputSpend::SpentBy {
-                    txid: spender,
-                    confirmed,
-                };
-            }
-            // Its bytes could not be read: the name is neither confirmed
-            // nor refuted, and the outpoint is never released on it.
-            None => unreadable = true,
-            // Its bytes spend something else: this provider named no
-            // spender.
-            Some(false) => {
-                tracing::warn!(
-                    marker = "spender_not_bound",
-                    outpoint = %format!("{src}:{vout}"),
-                    provider = rung.name(),
-                    named = %spender,
-                    "a provider named a spender whose bytes do not spend the outpoint"
-                );
-            }
-        }
+    // Break-glass (Rule 28, C5 and C7): the unspent set and the spender,
+    // one pass of the toolbox's ladder. No header or proof says an output
+    // is unspent or spent by someone else, and our outputs table knows
+    // only our own spends; the ladder names a spender only by its own
+    // bytes, and `confirmed` only by its proof against the header service.
+    let script = locking_script.unwrap_or(&[]);
+    match services.is_utxo_with_spender(src, vout, script).await {
+        (_, Some(BoundSpender { txid, confirmed })) => InputSpend::SpentBy { txid, confirmed },
+        // The outpoint in two unspent sets under our own stored script: no
+        // stranger's spend is known, and its parent exists.
+        (UtxoVerdict::UnspentHint, None) if locking_script.is_some() => InputSpend::Unspent,
+        // No spender bound: a `Spent` or `SpentHint` names nobody to
+        // relinquish on; `Unknown` could not look; an unspent hint for a
+        // script we do not hold was asked for no output of ours.
+        (
+            UtxoVerdict::UnspentHint
+            | UtxoVerdict::Spent
+            | UtxoVerdict::SpentHint
+            | UtxoVerdict::Unknown,
+            None,
+        ) => InputSpend::Unknown,
     }
-    if unreadable {
-        return InputSpend::Unknown;
-    }
-    let Some(script) = locking_script else {
-        return InputSpend::Unknown;
-    };
-    match services.is_utxo(src, vout, script).await {
-        // A hint from an unspent set: no stranger's spend is known. The
-        // proven spend was asked for above, by the spender's own bytes and
-        // its proof; a `Spent` or a `SpentHint` here names no spender, so
-        // it is not an answer this probe can act on.
-        UtxoVerdict::UnspentHint => InputSpend::Unspent,
-        UtxoVerdict::Spent | UtxoVerdict::SpentHint | UtxoVerdict::Unknown => InputSpend::Unknown,
-    }
-}
-
-/// Does the transaction named `spender` spend `src:vout`, by its own bytes?
-/// `Some(true)`: bytes that hash to `spender` hold the outpoint among their
-/// inputs. `Some(false)`: bytes that hash to `spender` do not. `None`: its
-/// bytes could not be read (a fault, or bytes of some other transaction).
-async fn spender_binds<V: WalletServices>(
-    services: &V,
-    spender: &str,
-    src: &str,
-    vout: u32,
-) -> Option<bool> {
-    let raw = services.get_raw_tx(spender, false).await.ok()?.raw_tx?;
-    let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).ok()?;
-    if !tx.id().eq_ignore_ascii_case(spender) {
-        return None;
-    }
-    Some(tx.inputs.iter().any(|input| {
-        input.source_output_index == vout
-            && input
-                .get_source_txid()
-                .is_ok_and(|txid| txid.eq_ignore_ascii_case(src))
-    }))
-}
-
-/// Is `txid` mined, as a fact we can check: `get_merkle_path` returns a
-/// path only after its root matched the header service's header for that
-/// height, and returns none when no header service is configured.
-async fn proven_mined<V: WalletServices>(services: &V, txid: &str) -> bool {
-    matches!(
-        services.get_merkle_path(txid, false).await,
-        Ok(found) if found.merkle_path.is_some()
-    )
 }
 
 /// A candidate to abandon: `(transaction_id, txid, per-input chain answers)`.
@@ -1135,11 +1061,6 @@ async fn retire_stale_reqs(storage: &StorageSqlx, reqs: &[(i64, String)]) -> Res
 
 #[cfg(test)]
 mod tests {
-    /// The spender ladder with WhatsOnChain its one rung, at a fixture.
-    fn woc_only(base: &str) -> crate::explorers::Explorers {
-        crate::explorers::Explorers::at(Some(base), None, None)
-    }
-
     use super::*;
     use crate::broadcast_verify::NetworkEvidence;
     use bsv_wallet_toolbox::{BROADCAST_PROVIDER_CHAIN, PROVIDER_ARCADE_V2};
@@ -2285,55 +2206,64 @@ mod tests {
         assert!(!Verdict::AbsentPastThreshold.is_dead());
         assert!(!Verdict::AbsentOnClock.is_dead());
     }
-    /// C8 (Rule 28): whether the spender is mined is a proof, never an
-    /// explorer's `confirmations` count. The explorer names the spender and
-    /// says it has five confirmations; no proof of it can be had. Red at the
-    /// base: `confirmed: true`, on the explorer's word.
+    /// #44 (toolbox 0.13.0): the probe is one ladder pass. The toolbox's
+    /// `is_utxo_with_spender` names the spender its ladder bound beside the
+    /// verdict, and the probe reads `confirmed` from it (C8: a proof the
+    /// header service checked, never an explorer's count) with no spender
+    /// route, bytes read or proof read of its own. Red at the base: the
+    /// probe asked WhatsOnChain's `/spent` and BananaBlocks' `/txo`, then
+    /// the spender's bytes and proof, before `is_utxo` asked the same
+    /// routes again.
     #[tokio::test]
-    async fn the_spenders_confirmation_is_a_proof_never_an_explorers_count() {
-        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
-        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::{GetMerklePathResult, GetRawTxResult};
+    async fn the_probe_is_one_ladder_pass_with_the_spender_beside_the_verdict() {
+        use crate::test_support::p2pkh;
+        use crate::test_support::spender_services::SpenderServices;
         let src = "aa".repeat(32);
-        // The spender's own bytes name the outpoint (E1), so what is left
-        // to settle is whether it is mined.
-        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
-        let spender = txid_of(&spender_bytes);
-        let bytes = || {
-            MockResponse::Success(GetRawTxResult {
-                name: "MockProvider".to_string(),
-                txid: String::new(),
-                raw_tx: Some(spender_bytes.clone()),
-                error: None,
-                could_not_look: false,
-            })
-        };
-        let spent_route = format!("/tx/{src}/0/spent");
-        let spender_route = format!("/tx/hash/{spender}");
-        let explorer = Fixture::start(
-            &[
-                (
-                    &spent_route,
-                    200,
-                    &format!(r#"{{"txid":"{spender}","vin":0}}"#),
-                ),
-                (&spender_route, 200, r#"{"confirmations":5}"#),
-            ],
-            500,
-        )
-        .await;
+        let spender = "bb".repeat(32);
+        let script = p2pkh([0xdb; 20]);
 
-        let no_proof = MockWalletServices::builder()
-            .get_raw_tx_response(bytes())
-            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-                name: Some("Services".to_string()),
-                merkle_path: None,
-                header: None,
-                error: Some("not mined".to_string()),
-                notes: vec![],
-            }))
-            .build();
-        let answer = probe_input_spend(&woc_only(&explorer.base), &no_proof, &src, 0, None).await;
+        let proven = SpenderServices::answering(
+            UtxoVerdict::Spent,
+            Some(BoundSpender {
+                txid: spender.clone(),
+                confirmed: true,
+            }),
+        );
+        let answer = probe_input_spend(&proven, &src, 0, Some(&script)).await;
+        assert_eq!(
+            answer,
+            InputSpend::SpentBy {
+                txid: spender.clone(),
+                confirmed: true
+            }
+        );
+        assert_eq!(
+            proven.asked(),
+            vec![(src.clone(), 0, script.clone())],
+            "one pass, the outpoint under our own script"
+        );
+        assert_eq!(
+            proven.inner().call_count("get_raw_tx"),
+            0,
+            "the binding is the ladder's"
+        );
+        assert_eq!(
+            proven.inner().call_count("get_merkle_path"),
+            0,
+            "the proof is the ladder's"
+        );
+        assert_eq!(proven.inner().call_count("is_utxo"), 0, "no second pass");
+
+        // No proof held: the ladder's `SpentHint` with its bound spender is
+        // `SpentBy`, not confirmed, and the probe asks for no proof itself.
+        let unproven = SpenderServices::answering(
+            UtxoVerdict::SpentHint,
+            Some(BoundSpender {
+                txid: spender.clone(),
+                confirmed: false,
+            }),
+        );
+        let answer = probe_input_spend(&unproven, &src, 0, Some(&script)).await;
         assert_eq!(
             answer,
             InputSpend::SpentBy {
@@ -2342,442 +2272,82 @@ mod tests {
             },
             "no proof of the spender: not confirmed"
         );
-        assert_eq!(no_proof.call_count("get_merkle_path"), 1);
+        assert_eq!(unproven.inner().call_count("get_merkle_path"), 0);
 
-        // A proof the header service checked is the confirmation.
-        let proven = MockWalletServices::builder()
-            .get_raw_tx_response(bytes())
-            .build();
-        let answer = probe_input_spend(&woc_only(&explorer.base), &proven, &src, 0, None).await;
+        // No stored script of ours: the ladder is asked under the empty
+        // script, and a bound spender still answers.
+        let answer = probe_input_spend(&proven, &src, 0, None).await;
         assert_eq!(
             answer,
             InputSpend::SpentBy {
-                txid: spender.clone(),
+                txid: spender,
                 confirmed: true
             }
         );
-
-        // A courier fault is no proof either.
-        let fault = MockWalletServices::builder()
-            .get_raw_tx_response(bytes())
-            .get_merkle_path_response(MockResponse::Error(
-                MockErrorKind::NetworkError,
-                "down".to_string(),
-            ))
-            .build();
-        let answer = probe_input_spend(&woc_only(&explorer.base), &fault, &src, 0, None).await;
-        assert!(matches!(
-            answer,
-            InputSpend::SpentBy {
-                confirmed: false,
-                ..
-            }
-        ));
-
-        assert_eq!(explorer.count(&spender_route), 0, "{:?}", explorer.hits());
-    }
-    /// E1 (the rulings of 2026-10-09): a provider's "spent by X" is a word;
-    /// X's own bytes naming the outpoint are the fact, read before the
-    /// proof and before `confirmed`. The explorer names a mined transaction
-    /// that spends some other outpoint. Red at the base: `SpentBy` with
-    /// `confirmed: true`, and the output would be relinquished on it.
-    #[tokio::test]
-    async fn a_named_spender_is_bound_to_the_outpoint_by_its_own_bytes() {
-        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
-        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetRawTxResult;
-        let src = "aa".repeat(32);
-        let other = "cc".repeat(32);
-        let bytes_of = |raw: Option<Vec<u8>>, could_not_look: bool| {
-            MockWalletServices::builder()
-                .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                    name: "MockProvider".to_string(),
-                    txid: String::new(),
-                    raw_tx: raw,
-                    error: None,
-                    could_not_look,
-                }))
-                .build()
-        };
-        let named = |spender: &str| {
-            let route = format!("/tx/{src}/0/spent");
-            let body = format!(r#"{{"txid":"{spender}","vin":0}}"#);
-            async move { Fixture::start(&[(&route, 200, &body)], 500).await }
-        };
-
-        // A mined transaction that spends another outpoint is not the
-        // spender: no `SpentBy`, and no proof is asked for it.
-        let stranger = raw_tx(&[(&other, 0)], &[(1, p2pkh([7; 20]))]);
-        let explorer = named(&txid_of(&stranger)).await;
-        let services = bytes_of(Some(stranger.clone()), false);
-        let answer = probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, None).await;
         assert_eq!(
-            answer,
+            proven.asked().last().map(|(_, _, script)| script.len()),
+            Some(0),
+            "asked under the empty script"
+        );
+    }
+
+    /// C5 and C7 (Rule 28): with no spender bound, only the ladder's
+    /// two-explorer unspent (`UnspentHint`) under our own stored script is
+    /// `Unspent`. Explorers agreeing it is not unspent with no bound spender
+    /// (`SpentHint`: a phantom parent, an index behind, or a name whose
+    /// bytes could not be read or did not spend the outpoint) is `Unknown`:
+    /// no spender can be proven, nothing is released. `Unknown` is
+    /// `Unknown`. Without a stored script no unspent set was asked for this
+    /// output, so no verdict releases it. Red at the base: `Unspent` on one
+    /// explorer's negative.
+    #[tokio::test]
+    async fn without_a_bound_spender_only_the_ladders_unspent_under_our_script_releases() {
+        use crate::test_support::p2pkh;
+        use crate::test_support::spender_services::SpenderServices;
+        let src = "aa".repeat(32);
+        let script = p2pkh([0xdb; 20]);
+
+        let unspent = SpenderServices::answering(UtxoVerdict::UnspentHint, None);
+        assert_eq!(
+            probe_input_spend(&unspent, &src, 0, Some(&script)).await,
+            InputSpend::Unspent
+        );
+        assert_eq!(
+            probe_input_spend(&unspent, &src, 0, None).await,
             InputSpend::Unknown,
-            "the named spender does not spend the outpoint"
-        );
-        assert_eq!(services.call_count("get_raw_tx"), 1);
-        assert_eq!(
-            services.call_count("get_merkle_path"),
-            0,
-            "bind, then prove"
+            "no script of ours to ask the unspent set with: cannot say"
         );
 
-        // The same outpoint's other index is not the outpoint.
-        let sibling = raw_tx(&[(&src, 1)], &[(1, p2pkh([7; 20]))]);
-        let explorer = named(&txid_of(&sibling)).await;
-        let services = bytes_of(Some(sibling), false);
-        let answer = probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, None).await;
-        assert_eq!(answer, InputSpend::Unknown);
-
-        // Bytes that do not hash to the named txid are not its bytes.
-        let spender = raw_tx(&[(&other, 3), (&src, 0)], &[(1, p2pkh([7; 20]))]);
-        let explorer = named(&"bb".repeat(32)).await;
-        let services = bytes_of(Some(spender.clone()), false);
-        let answer = probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, None).await;
-        assert_eq!(answer, InputSpend::Unknown);
-        assert_eq!(services.call_count("get_merkle_path"), 0);
-
-        // Bytes that could not be had bind nothing.
-        let explorer = named(&txid_of(&spender)).await;
-        let services = bytes_of(None, true);
-        let answer = probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, None).await;
-        assert_eq!(answer, InputSpend::Unknown);
-        assert_eq!(services.call_count("get_merkle_path"), 0);
-
-        // An unbound name falls through to the unspent question: the
-        // outpoint in an unspent set is unspent, whatever the explorer named.
-        let explorer = named(&txid_of(&stranger)).await;
-        let services = bytes_of(Some(stranger), false);
-        let script = p2pkh([9; 20]);
-        let answer =
-            probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unspent);
-
-        // The spender whose bytes name the outpoint, with its proof.
-        let explorer = named(&txid_of(&spender)).await;
-        let services = bytes_of(Some(spender.clone()), false);
-        let answer = probe_input_spend(&woc_only(&explorer.base), &services, &src, 0, None).await;
-        assert_eq!(
-            answer,
-            InputSpend::SpentBy {
-                txid: txid_of(&spender),
-                confirmed: true
-            }
-        );
-        assert_eq!(services.call_count("get_merkle_path"), 1);
-    }
-
-    /// C5 and C7 (Rule 28): "unspent" is a positive from an explorer's
-    /// unspent set, asked of two explorers through the toolbox; one
-    /// explorer's "no spend known" is not it. WhatsOnChain says no spend and
-    /// that the parent exists; the unspent set could not be read. Red at the
-    /// base: `Unspent`, on the one explorer's negative.
-    #[tokio::test]
-    async fn one_explorers_no_spend_known_is_not_unspent() {
-        use crate::test_support::Fixture;
-        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
-        let src = "aa".repeat(32);
-        let spent_route = format!("/tx/{src}/0/spent");
-        let parent_route = format!("/tx/hash/{src}");
-        let explorer = Fixture::start(
-            &[
-                (&spent_route, 404, ""),
-                (&parent_route, 200, r#"{"confirmations":9}"#),
-            ],
-            500,
-        )
-        .await;
-
-        let could_not_look = MockWalletServices::builder()
-            .is_utxo_response(MockResponse::Error(
-                MockErrorKind::ServiceError,
-                "one explorer's negative, the other down".to_string(),
-            ))
-            .build();
-        let script = crate::test_support::p2pkh([0xdb; 20]);
-        let answer = probe_input_spend(
-            &woc_only(&explorer.base),
-            &could_not_look,
-            &src,
-            0,
-            Some(&script),
-        )
-        .await;
-        assert_eq!(answer, InputSpend::Unknown);
-        assert_eq!(could_not_look.call_count("is_utxo"), 1);
-
-        // Two explorers agreeing it is not unspent, and no spender named: a
-        // phantom parent reads this way. Never unspent, never relinquished.
-        let not_unspent = MockWalletServices::builder()
-            .is_utxo_response(MockResponse::Success(false))
-            .build();
-        let answer = probe_input_spend(
-            &woc_only(&explorer.base),
-            &not_unspent,
-            &src,
-            0,
-            Some(&script),
-        )
-        .await;
-        assert_eq!(answer, InputSpend::Unknown);
-
-        // In an unspent set: unspent.
-        let unspent = MockWalletServices::new();
-        let answer =
-            probe_input_spend(&woc_only(&explorer.base), &unspent, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unspent);
-
-        // No script of ours to ask the unspent set with: cannot say.
-        let answer = probe_input_spend(&woc_only(&explorer.base), &unspent, &src, 0, None).await;
-        assert_eq!(answer, InputSpend::Unknown);
-
-        // The parent's existence is no longer a separate explorer question.
-        assert_eq!(explorer.count(&parent_route), 0, "{:?}", explorer.hits());
-    }
-
-    /// C5 and C7: a WhatsOnChain fault is "could not look" at the one
-    /// explorer that names a spender, and the unspent question still has
-    /// its two explorers. Red at the base: `Unknown` on the first fault.
-    #[tokio::test]
-    async fn a_fault_at_the_spender_lookup_falls_through_to_the_unspent_set() {
-        use crate::test_support::Fixture;
-        use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
-        let src = "aa".repeat(32);
-        let explorer = Fixture::start(&[], 500).await;
-
-        let script = crate::test_support::p2pkh([0xdb; 20]);
-        let unspent = MockWalletServices::new();
-        let answer =
-            probe_input_spend(&woc_only(&explorer.base), &unspent, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unspent);
-
-        // And with the unspent set unreadable too, it is "could not look".
-        let down = MockWalletServices::builder()
-            .is_utxo_response(MockResponse::Error(
-                MockErrorKind::NetworkError,
-                "down".to_string(),
-            ))
-            .build();
-        let answer =
-            probe_input_spend(&woc_only(&explorer.base), &down, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unknown);
-    }
-
-    /// #50, the rule's rows at the spender ladder: WhatsOnChain answers
-    /// 429 (Retry-After 30) and BananaBlocks names a spender whose bytes
-    /// spend the outpoint: `SpentBy`, in the same call with no sleep, and
-    /// the closed rung is not asked again by the next probe. Red at the
-    /// base: one explorer, and its 429 fell through to the unspent set.
-    #[tokio::test]
-    async fn a_woc_429_and_a_bananablocks_spender_bound_by_bytes_is_spent_by() {
-        use crate::explorers::Explorers;
-        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
-        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetRawTxResult;
-        let src = "aa".repeat(32);
-        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
-        let spender = txid_of(&spender_bytes);
-        let spent_route = format!("/tx/{src}/0/spent");
-        let woc =
-            Fixture::start_with_headers(&[(&spent_route, 429, "", &[("retry-after", "30")])], 500)
-                .await;
-        let script = p2pkh([0xdb; 20]);
-        let held = hex::encode(&script);
-        let spend_route = format!("/txo/{src}/0");
-        let bb = Fixture::start(
-            &[(
-                &spend_route,
-                200,
-                &format!(r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}"}}"#),
-            )],
-            404,
-        )
-        .await;
-        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
-        let services = MockWalletServices::builder()
-            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                name: "MockProvider".to_string(),
-                txid: String::new(),
-                raw_tx: Some(spender_bytes),
-                error: None,
-                could_not_look: false,
-            }))
-            .build();
-
-        // Both starts: WhatsOnChain first (its 429 moves on), then
-        // BananaBlocks first.
-        for round in 0..2 {
-            let started = std::time::Instant::now();
-            let answer = probe_input_spend(&explorers, &services, &src, 0, Some(&script)).await;
+        for verdict in [
+            UtxoVerdict::SpentHint,
+            UtxoVerdict::Spent,
+            UtxoVerdict::Unknown,
+        ] {
+            let services = SpenderServices::answering(verdict, None);
             assert_eq!(
-                answer,
-                InputSpend::SpentBy {
-                    txid: spender.clone(),
-                    confirmed: true
-                },
-                "round {round}"
+                probe_input_spend(&services, &src, 0, Some(&script)).await,
+                InputSpend::Unknown,
+                "{verdict:?} with no spender named"
             );
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(2),
-                "a 429 was slept on"
+            assert_eq!(
+                probe_input_spend(&services, &src, 0, None).await,
+                InputSpend::Unknown
             );
         }
-        assert_eq!(
-            woc.count(&spent_route),
-            1,
-            "the closed rung was asked again"
-        );
-        assert_eq!(bb.count(&spend_route), 2);
-        assert_eq!(
-            services.call_count("is_utxo"),
-            0,
-            "a bound name is the answer"
-        );
     }
 
-    /// #50: a name from either rung is a positive; WhatsOnChain's "no spend
-    /// known" does not stop BananaBlocks' name, and BananaBlocks' clean
-    /// unspent does not stop WhatsOnChain's. The start rotates.
-    #[tokio::test]
-    async fn a_positive_from_either_rung_whichever_is_asked_first() {
-        use crate::explorers::Explorers;
-        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
-        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetRawTxResult;
-        let src = "aa".repeat(32);
-        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
-        let spender = txid_of(&spender_bytes);
-        let script = p2pkh([0xdb; 20]);
-        let held = hex::encode(&script);
-        let services = || {
-            MockWalletServices::builder()
-                .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                    name: "MockProvider".to_string(),
-                    txid: String::new(),
-                    raw_tx: Some(spender_bytes.clone()),
-                    error: None,
-                    could_not_look: false,
-                }))
-                .build()
-        };
-        let woc_none = Fixture::start(&[], 404).await;
-        let bb_named = Fixture::start(
-            &[(
-                &format!("/txo/{src}/0"),
-                200,
-                &format!(r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}"}}"#),
-            )],
-            404,
-        )
-        .await;
-        let woc_named = Fixture::start(
-            &[(
-                &format!("/tx/{src}/0/spent"),
-                200,
-                &format!(r#"{{"txid":"{spender}","vin":0}}"#),
-            )],
-            404,
-        )
-        .await;
-        let bb_unspent = Fixture::start(
-            &[(
-                &format!("/txo/{src}/0"),
-                200,
-                &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
-            )],
-            404,
-        )
-        .await;
-        for (woc, bb) in [(&woc_none, &bb_named), (&woc_named, &bb_unspent)] {
-            let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
-            for round in 0..2 {
-                let answer =
-                    probe_input_spend(&explorers, &services(), &src, 0, Some(&script)).await;
-                assert_eq!(
-                    answer,
-                    InputSpend::SpentBy {
-                        txid: spender.clone(),
-                        confirmed: true
-                    },
-                    "round {round}"
-                );
-            }
-        }
-        // Each start was taken once: the rung that names nobody was asked
-        // only when it stood first.
-        assert_eq!(woc_none.total(), 1, "{:?}", woc_none.hits());
-        assert_eq!(bb_unspent.total(), 1, "{:?}", bb_unspent.hits());
-    }
-
-    /// #50, the toolbox's `/txo/{txid}/{vout}` fold: BananaBlocks answers
-    /// for an output under another script than the asked one, naming a
-    /// spender whose bytes would bind. The answer is about some other
-    /// output: a fault, so the rung moves on (WhatsOnChain knows no spend)
-    /// to the unspent set, and the name is never fetched.
-    #[tokio::test]
-    async fn a_bananablocks_txo_under_another_script_is_a_fault_that_moves_on() {
-        use crate::explorers::Explorers;
-        use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
-        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetRawTxResult;
-        let src = "aa".repeat(32);
-        let spender_bytes = raw_tx(&[(&src, 0)], &[(1, p2pkh([7; 20]))]);
-        let spender = txid_of(&spender_bytes);
-        let script = p2pkh([0xdb; 20]);
-        let other = hex::encode(p2pkh([0xdc; 20]));
-        let woc_none = Fixture::start(&[], 404).await;
-        let txo_route = format!("/txo/{src}/0");
-        let bb_other = Fixture::start(
-            &[(
-                &txo_route,
-                200,
-                &format!(r#"{{"script_pubkey":"{other}","spent":true,"spent_txid":"{spender}"}}"#),
-            )],
-            404,
-        )
-        .await;
-        let explorers = Explorers::at(Some(&woc_none.base), Some(&bb_other.base), None);
-        let services = MockWalletServices::builder()
-            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                name: "MockProvider".to_string(),
-                txid: String::new(),
-                raw_tx: Some(spender_bytes),
-                error: None,
-                could_not_look: false,
-            }))
-            .build();
-        // Both starts: the mismatch is passed over whichever rung is first.
-        for round in 0..2 {
-            let answer = probe_input_spend(&explorers, &services, &src, 0, Some(&script)).await;
-            assert_eq!(answer, InputSpend::Unspent, "round {round}");
-        }
-        assert_eq!(bb_other.count(&txo_route), 2, "{:?}", bb_other.hits());
-        assert_eq!(woc_none.total(), 2, "{:?}", woc_none.hits());
-        assert_eq!(
-            services.call_count("get_raw_tx"),
-            0,
-            "a name from another output was fetched"
-        );
-        assert_eq!(services.call_count("is_utxo"), 2);
-    }
-
-    /// #50, the rule's rows at the probe: one rung's negative ("no spend
-    /// known") with the other faulting is not an answer, and the unspent
-    /// question needs two explorers' clean answers either way (the
-    /// toolbox's `is_utxo`, two of the three for "unspent" and for "not
-    /// listed"): one answer and faults is "could not decide"; two "not
-    /// listed" with no spender named is `Unknown`; only the ladder's
-    /// two-explorer unspent (`is_utxo` true) is `Unspent`.
+    /// #50, the rule's rows at the probe, through the toolbox's mock (whose
+    /// `is_utxo_with_spender` is the trait's default: `is_utxo`'s verdict,
+    /// no spender): the unspent question needs two explorers' clean answers
+    /// (the toolbox's `UTXO_POSITIVE_PROVIDERS` and
+    /// `UTXO_NEGATIVE_PROVIDERS`, two of the three). One answer with the
+    /// others faulting is "could not decide"; two "not listed" with no
+    /// spender named is `Unknown`; only the ladder's two-explorer unspent
+    /// is `Unspent`; and the probe asks once.
     #[tokio::test]
     async fn one_negative_and_faults_is_could_not_decide() {
-        use crate::explorers::Explorers;
-        use crate::test_support::Fixture;
         use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
         let src = "aa".repeat(32);
-        let woc = Fixture::start(&[], 404).await;
-        let bb = Fixture::start(&[], 503).await;
-        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
         let script = crate::test_support::p2pkh([0xdb; 20]);
 
         let one_negative = MockWalletServices::builder()
@@ -2786,61 +2356,64 @@ mod tests {
                 "one explorer's negative, the others could not look".to_string(),
             ))
             .build();
-        let answer = probe_input_spend(&explorers, &one_negative, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unknown);
-        assert_eq!(woc.total(), 1);
-        assert_eq!(bb.total(), 1, "a fault moved the question on, not ended it");
+        assert_eq!(
+            probe_input_spend(&one_negative, &src, 0, Some(&script)).await,
+            InputSpend::Unknown
+        );
+        assert_eq!(one_negative.call_count("is_utxo"), 1);
 
         let two_negatives = MockWalletServices::builder()
             .is_utxo_response(MockResponse::Success(false))
             .build();
-        let answer = probe_input_spend(&explorers, &two_negatives, &src, 0, Some(&script)).await;
         assert_eq!(
-            answer,
+            probe_input_spend(&two_negatives, &src, 0, Some(&script)).await,
             InputSpend::Unknown,
             "no spender named, nothing to prove"
         );
 
         let positive = MockWalletServices::new();
-        let answer = probe_input_spend(&explorers, &positive, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unspent);
+        assert_eq!(
+            probe_input_spend(&positive, &src, 0, Some(&script)).await,
+            InputSpend::Unspent
+        );
+        assert_eq!(positive.call_count("is_utxo"), 1);
+        assert_eq!(positive.call_count("get_raw_tx"), 0);
     }
 
-    /// #50: a name one rung gives whose bytes could not be read does not
-    /// end the ladder: the next rung's bound name answers; with none, the
-    /// unreadable name keeps the outpoint `Unknown` (never released on it).
-    #[tokio::test]
-    async fn an_unreadable_name_is_unknown_unless_another_rung_binds() {
-        use crate::explorers::Explorers;
-        use crate::test_support::Fixture;
-        use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-        use bsv_wallet_toolbox::services::GetRawTxResult;
-        let src = "aa".repeat(32);
-        let named = "bb".repeat(32);
-        let woc = Fixture::start(
-            &[(
-                &format!("/tx/{src}/0/spent"),
-                200,
-                &format!(r#"{{"txid":"{named}","vin":0}}"#),
-            )],
-            404,
-        )
-        .await;
-        let bb = Fixture::start(&[], 429).await;
-        let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
-        let unreadable = MockWalletServices::builder()
-            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                name: "MockProvider".to_string(),
-                txid: String::new(),
-                raw_tx: None,
-                error: None,
-                could_not_look: true,
-            }))
-            .build();
-        let script = crate::test_support::p2pkh([0xdb; 20]);
-        let answer = probe_input_spend(&explorers, &unreadable, &src, 0, Some(&script)).await;
-        assert_eq!(answer, InputSpend::Unknown);
-        assert_eq!(unreadable.call_count("is_utxo"), 0);
+    /// C7 (Rule 28), 0.18.1: the probe holds no spender rung of its own;
+    /// its one question is the toolbox's `is_utxo_with_spender`, and no
+    /// second pass follows it. Red at the base: WhatsOnChain's `/spent` and
+    /// BananaBlocks' `/txo` were asked here, through the CLI's own rungs,
+    /// before the ladder asked them again.
+    #[test]
+    fn the_probe_holds_no_spender_rung_of_its_own() {
+        let source = include_str!("cleanup_abandoned.rs");
+        let code: Vec<&str> = source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect();
+        let code = code.join("\n");
+        assert!(!code.contains("/spent\""), "a spent request in the probe");
+        assert!(
+            !code.contains("/txo/"),
+            "a BananaBlocks txo request in the probe"
+        );
+        assert!(
+            !code.contains("Explorers"),
+            "the probe asks the CLI's own rungs"
+        );
+        assert!(
+            !code.contains(".is_utxo("),
+            "a second pass after the spender"
+        );
+        assert_eq!(
+            code.matches(".is_utxo_with_spender(").count(),
+            1,
+            "the one question"
+        );
     }
 
     /// The script the unspent set is asked with comes from our own rows:
