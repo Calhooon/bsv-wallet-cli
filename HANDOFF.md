@@ -653,7 +653,47 @@ LOW told (re-pin on 0.17.1; its own tracked locks under deny's unsound rule
 to check); the stack keeper told (#47, the RUSTSEC note). Scratch worktree
 under $TMPDIR removed; the merged branches deleted.
 
-Open after this wave: toolbox #44 (is_utxo returns the bound spender);
+**2026-10-23, 0.17.2 released (16:5xZ to 17:3xZ; the owner's two yeses:
+the funder restarted onto 0.17.1, and 0.17.2 pinning toolbox 0.12.1).**
+Toolbox 0.12.1 (tag v0.12.1 at 7b874ee, PR 48, the #47 fix: the header
+ladders answer "<call>: no header service answered (chaintracks: <error>;
+bhs: <error>)", "not configured" only when neither client is configured,
+rung failures at warn) reached crates.io at 16:49Z. CLI PR 60: the pin
+=0.12.0 to =0.12.1, version 0.17.2 (Cargo.toml, Cargo.lock, README,
+CLAUDE.md's pin mention, CHANGELOG); no CLI code change. The gate (run
+20261023T165643Z, net 1,771 sats): 21/22, scenario 14 failed in its audit
+step, not in the wallet: wallet B's return payment was accepted by ARC at
+16:58:40Z, at 16:58:46Z WoC answered 404 while Bitails answered 200 and the
+wallet's own ladder recorded it seen; the harness's `verifyOnChain` polled
+WoC alone eight times over 88 s and gave up; both transactions on chain.
+PR 61: the auditor is the explorer ladder (WoC, Bitails, BananaBlocks on
+every poll, the first 200 the answer with `listedBy`, a 404 "not yet there",
+a fault moved past, the throw names every rung's last answer; no caller read
+the output list it used to return). The owner chose a rerun of scenario 14
+alone under the fixed auditor (`--scenario 14`, run
+20261023T170801Z-scenario14, PASS in 38 s, net 746 sats) over a full rerun
+or a tag on the evidence. Tag v0.17.2 at a8a2759 (PR 60 cf2623b plus PR
+61); crates.io 0.17.2; release run 39992762692 green with the three
+binaries. The funder daemon: restarted onto the 0.17.1 binary at 16:17Z
+(PID 44352, same directory, log and two environment variables; recipe in
+memory `e2e-funder-setup`); balance 142,752 sats after the two runs. The
+harness runs the release build in `~/bsv/targets/bsv-wallet-cli-0172`.
+LOW told (0.17.2; its pin move after its loop 46 may go straight to it);
+the stack keeper told (tag and sha; it moves the witness spend's binary).
+Also this hour: the stack keeper reported the owner's ruling on #44's four
+asks (storage charter S9, the busy hosting row, R8 (a)/(i), an events row)
+and a finding that bsv-rs keys busy on any 503; checked and corrected: bsv-rs
+0.8.0 and 0.8.1 already read WalletBusy from the body code only (3e96c52),
+the keeper's premise was its lane branch; the residual (a bare 503 as a
+typed transport fault a caller may retry without the busy promise, not a
+plain WalletError) is bsv-rs #73, no date. CLI #59 (the gate's answer on a
+header-service transport fault: one retry, then 503 HEADERS_UNAVAILABLE
+with Retry-After, never 402 INSUFFICIENT_FUNDS) stays open for a later
+minor, from LOW's ask.
+
+Open after this wave: CLI #59 (the gate's answer on a header-service
+transport fault); bsv-rs #73 (a bare 503 as a typed transport fault);
+toolbox #44 (is_utxo returns the bound spender);
 0.11.1's open point 3 and the locked-input release path through is_utxo
 (the stack's); whether BananaBlocks lists mempool or non-P2PKH outputs under
 an address (unverified); no live run of get_utxo_leads against the real
