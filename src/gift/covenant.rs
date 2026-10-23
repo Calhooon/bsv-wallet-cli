@@ -18,7 +18,7 @@ fn script_num_unsigned(mut n: u64) -> Vec<u8> {
         out.push((n & 0xff) as u8);
         n >>= 8;
     }
-    if out.last().unwrap() & 0x80 != 0 {
+    if out.last().expect("the loop pushed a byte for n > 0") & 0x80 != 0 {
         out.push(0x00);
     }
     out

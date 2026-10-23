@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     let bind_addr: IpAddr = std::env::var("BIND_ADDR")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| "0.0.0.0".parse().unwrap());
+        .unwrap_or_else(|| "0.0.0.0".parse().expect("a literal IPv4 address"));
     let admin_token = std::env::var("RELAY_ADMIN_TOKEN")
         .ok()
         .filter(|s| !s.is_empty())

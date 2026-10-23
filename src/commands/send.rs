@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bsv_sdk::primitives::to_hex;
 use bsv_sdk::script::templates::P2PKH;
 use bsv_sdk::transaction::Beef;
@@ -62,7 +62,9 @@ pub async fn run(
         ctx.json_output,
     )?;
 
-    let txid = result.txid.expect("Expected txid in result");
+    let txid = result
+        .txid
+        .context("create_action returned no txid for a signed, sent spend")?;
     let txid_hex = to_hex(&txid);
 
     // Fail loudly if the broadcast was silently dropped. `create_action` returns

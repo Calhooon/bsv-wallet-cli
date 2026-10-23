@@ -32,7 +32,10 @@ pub fn find_leaf_txid(beef: &Beef) -> Result<String> {
         .collect();
     let leaves: Vec<String> = beef_txids.difference(&referenced).cloned().collect();
     match leaves.len() {
-        1 => Ok(leaves.into_iter().next().unwrap()),
+        1 => Ok(leaves
+            .into_iter()
+            .next()
+            .expect("the arm matched a list of length one")),
         0 => Err(anyhow!(
             "BEEF has no leaf transaction (every tx is referenced as an input — looks like a cycle)"
         )),
