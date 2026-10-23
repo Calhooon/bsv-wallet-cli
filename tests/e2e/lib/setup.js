@@ -9,9 +9,14 @@ const path = require('path');
 const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./wallet-client');
 const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
 
-const BSV = path.resolve(__dirname, '../../../target/release/bsv-wallet');
+// The release binary: the repository's target by default; BSV_WALLET_BIN names
+// another (a shared CARGO_TARGET_DIR).
+const BSV = process.env.BSV_WALLET_BIN || path.resolve(__dirname, '../../../target/release/bsv-wallet');
 const FUNDER_PORT = parseInt(process.env.FUNDER_PORT || '3320');
 const FUNDER_DIR = process.env.FUNDER_DIR || path.resolve(__dirname, '..', '..', '..', 'e2e-funder');
+// Where a test wallet's directory is made (`/tmp` as before; E2E_WALLET_TMP
+// moves it, which the hermetic run does and CI reads for its artifacts).
+const WALLET_TMP = process.env.E2E_WALLET_TMP || '/tmp';
 
 /**
  * Initialize and start a wallet on a given port.
@@ -28,7 +33,7 @@ async function startWallet(port, name) {
   if (stranger !== null) {
     throw new Error(`${name}: port ${port} is already answering (${JSON.stringify(stranger)}); not this harness's wallet. Stop it or move the harness (WALLET_A_PORT, WALLET_B_PORT, WALLET_C_PORT).`);
   }
-  const dir = fs.mkdtempSync(`/tmp/bsv-wallet-${name}-`);
+  const dir = fs.mkdtempSync(path.join(WALLET_TMP, `bsv-wallet-${name}-`));
 
   // Init wallet (generates ROOT_KEY + wallet.db)
   execSync(`cd "${dir}" && "${BSV}" init`, { stdio: 'pipe' });
