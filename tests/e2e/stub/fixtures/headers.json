@@ -1,0 +1,127 @@
+{
+ "recorded": "2026-10-23",
+ "source": "the header service (CHAINTRACKS_URL), findHeaderHexForHeight",
+ "chain": "main",
+ "headers": [
+  {
+   "height": 972370,
+   "hash": "000000000000000000ecf1bbc9f7418b1a1e339b4512808b2de12e0431097c6f",
+   "version": 591577088,
+   "previousHash": "000000000000000005d2350794cbd713aabb879badcf2d8f4209db803db42ec3",
+   "merkleRoot": "99dc6e187d2b9e9713d98d4d50fd6f4333e98d4791268aa70af9274bb15327da",
+   "time": 1792785005,
+   "bits": 404701301,
+   "nonce": 3985800293
+  },
+  {
+   "height": 972371,
+   "hash": "00000000000000000b89aaa2000e9b1fda48e61bf23e30f6d65fbb413a7dc1fd",
+   "version": 738197504,
+   "previousHash": "000000000000000000ecf1bbc9f7418b1a1e339b4512808b2de12e0431097c6f",
+   "merkleRoot": "34e62655249ff7bc5cb0d464d37155f7ba0926cae85dfec3b1e5921dd12e5428",
+   "time": 1792785866,
+   "bits": 404670000,
+   "nonce": 719364689
+  },
+  {
+   "height": 972372,
+   "hash": "00000000000000000c7248d43aaf1f7da1bec62daaaef85c525baf336840bf57",
+   "version": 609607680,
+   "previousHash": "00000000000000000b89aaa2000e9b1fda48e61bf23e30f6d65fbb413a7dc1fd",
+   "merkleRoot": "13d24d9a41470c45b08b239fbeedb90a4c3336d89cab7c37761b019174401546",
+   "time": 1792786111,
+   "bits": 404631927,
+   "nonce": 1800949298
+  },
+  {
+   "height": 972373,
+   "hash": "0000000000000000082bde990a1e2fd6ff5da5037e22890c281261fa50ee9e67",
+   "version": 745635840,
+   "previousHash": "00000000000000000c7248d43aaf1f7da1bec62daaaef85c525baf336840bf57",
+   "merkleRoot": "c828ed9d7f8e2c7fe5c1f5f883172b4e5261a089c315eca61a6c2f11ffd5267f",
+   "time": 1792786225,
+   "bits": 404651273,
+   "nonce": 2013698098
+  },
+  {
+   "height": 972374,
+   "hash": "0000000000000000028be5a0c58568cb027bfdc82378df71d442634b41d6f055",
+   "version": 536870912,
+   "previousHash": "0000000000000000082bde990a1e2fd6ff5da5037e22890c281261fa50ee9e67",
+   "merkleRoot": "ddb92d42ad58df27b637a4c14506effcb87b0ad8a956948cf517e5cc00f8d773",
+   "time": 1792786297,
+   "bits": 404639968,
+   "nonce": 1304045413
+  },
+  {
+   "height": 972375,
+   "hash": "00000000000000000a7179f6ab1bba6072cf1c81048f3d030ff72d6594977b5d",
+   "version": 642711552,
+   "previousHash": "0000000000000000028be5a0c58568cb027bfdc82378df71d442634b41d6f055",
+   "merkleRoot": "165dd9abf5f894963c28ac91e103a4643ae89a0f989f8b8878c3768b6f7d547e",
+   "time": 1792786722,
+   "bits": 404612296,
+   "nonce": 3537666684
+  },
+  {
+   "height": 972376,
+   "hash": "0000000000000000109be20bcb2c6a0fe6bde774b84617ac670ac8abf83daeaf",
+   "version": 555548672,
+   "previousHash": "00000000000000000a7179f6ab1bba6072cf1c81048f3d030ff72d6594977b5d",
+   "merkleRoot": "277d51001a6a62894cf9c478ec326855378a4fd1a4d31ed6aa4a332e42634af1",
+   "time": 1792788180,
+   "bits": 404609311,
+   "nonce": 2621161591
+  },
+  {
+   "height": 972377,
+   "hash": "000000000000000018194a08c914cd38e9749ab0497320a0ca5438fc4b499d2a",
+   "version": 537362432,
+   "previousHash": "0000000000000000109be20bcb2c6a0fe6bde774b84617ac670ac8abf83daeaf",
+   "merkleRoot": "dea7a2eb246eaf91ec5004c8c459fc140d6bec8cd424d2c927c1ddd89c369c7d",
+   "time": 1792788348,
+   "bits": 404595487,
+   "nonce": 2617264675
+  },
+  {
+   "height": 972378,
+   "hash": "00000000000000000afe5392c05824539d735593f92fe6dea07024348e4b9e7c",
+   "version": 819249152,
+   "previousHash": "000000000000000018194a08c914cd38e9749ab0497320a0ca5438fc4b499d2a",
+   "merkleRoot": "49711d1c0c7f235ba3260dd834ab2936e124903a64c17c5d83027b438153b606",
+   "time": 1792788447,
+   "bits": 404627621,
+   "nonce": 2060422734
+  },
+  {
+   "height": 972379,
+   "hash": "000000000000000010dcf9ad29cc18f753f9455bed669c853577fa628b7ea034",
+   "version": 577077248,
+   "previousHash": "00000000000000000afe5392c05824539d735593f92fe6dea07024348e4b9e7c",
+   "merkleRoot": "e1ec816d6741233923818fc7570407d643d52d9002e92c3f5d162894562c3a40",
+   "time": 1792789417,
+   "bits": 404617395,
+   "nonce": 2701081910
+  },
+  {
+   "height": 972380,
+   "hash": "00000000000000000f8e1e2a727ac5679fd10ddbcc48aaa424971fd71bc64a88",
+   "version": 671088640,
+   "previousHash": "000000000000000010dcf9ad29cc18f753f9455bed669c853577fa628b7ea034",
+   "merkleRoot": "4d69514f0a934a6e750e392a75d7d9c3154cf07df1638e4ba2b0134277fcf907",
+   "time": 1792791563,
+   "bits": 404613888,
+   "nonce": 2798684026
+  },
+  {
+   "height": 972381,
+   "hash": "0000000000000000040f6382f6ca815cc4a89498922bf43f31a126893fd3de53",
+   "version": 1006632960,
+   "previousHash": "00000000000000000f8e1e2a727ac5679fd10ddbcc48aaa424971fd71bc64a88",
+   "merkleRoot": "a31fb7f9cc4b3e76914584ca6a34bd518a8e76e7b0bfce1ff4a5e85fa3f4a8be",
+   "time": 1792793238,
+   "bits": 404632202,
+   "nonce": 3449927670
+  }
+ ]
+}
