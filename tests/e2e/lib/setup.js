@@ -18,6 +18,16 @@ const FUNDER_DIR = process.env.FUNDER_DIR || path.resolve(__dirname, '..', '..',
  * Returns { dir, proc, client, identityKey, address }.
  */
 async function startWallet(port, name) {
+  // The port must be free. A process already answering there (another
+  // wallet's daemon, a leftover) would take this wallet's requests: the
+  // 2026-10-23 run funded someone's daemon on :3323 and swept its coins
+  // because its spawned `serve` died "Address already in use" while the
+  // health check below answered from the stranger. Refuse before anything
+  // is spawned or funded.
+  const stranger = await new WalletClient(port, name).isAuthenticated().catch(() => null);
+  if (stranger !== null) {
+    throw new Error(`${name}: port ${port} is already answering (${JSON.stringify(stranger)}); not this harness's wallet. Stop it or move the harness (WALLET_A_PORT, WALLET_B_PORT, WALLET_C_PORT).`);
+  }
   const dir = fs.mkdtempSync(`/tmp/bsv-wallet-${name}-`);
 
   // Init wallet (generates ROOT_KEY + wallet.db)
@@ -58,6 +68,15 @@ async function startWallet(port, name) {
   }
 
   const identityKey = await client.identityKey();
+  // The server answering is this directory's wallet: its identity is the
+  // CLI's from the same `.env`. A stranger on the port is refused here even
+  // if it appeared between the check above and the spawn.
+  const cliIdentity = execSync(`cd "${dir}" && "${BSV}" identity`, { encoding: 'utf-8' })
+    .split('\n').find(l => l.startsWith('Identity key:'))?.replace('Identity key:', '').trim();
+  if (cliIdentity !== identityKey) {
+    teardownWallet({ dir, proc }, { keep: false });
+    throw new Error(`${name}: the server on :${port} is not this wallet (HTTP identity ${identityKey.slice(0, 12)}..., the directory's ${String(cliIdentity).slice(0, 12)}...); another process holds the port`);
+  }
   // `address` prints the BRC-29 deposit address on its first line and the
   // gift pubkey on a second; the address is the first line alone.
   const addrResult = execSync(`cd "${dir}" && "${BSV}" address`, { encoding: 'utf-8' })

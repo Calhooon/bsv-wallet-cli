@@ -23,7 +23,7 @@
 const { startWallet, teardownWallet } = require('../lib/setup');
 const { ANYONE_KEY, buildP2PKH } = require('../lib/wallet-client');
 
-const C_PORT = 3325;
+const C_PORT = parseInt(process.env.WALLET_C_PORT || '3372');
 
 module.exports = {
   name: 'scoped-allow-pending',

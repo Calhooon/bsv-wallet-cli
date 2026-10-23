@@ -73,6 +73,7 @@ A dedicated funder wallet on port 3320 provides initial funds and receives sweep
 - **Default funding**: 100,000 sats per run (configurable via `FUND_AMOUNT` env var; scenario 22 needs 50,000 in wallet A at its start and the scenarios before it move about 40,000 out of A). The run refuses at start when the funder holds less than the funding plus 1,000.
 - **The spend gate's word**: a test wallet's coins are received payments not yet mined, which the gate holds from a plain spend (R1 (d), 0.15.0). The harness names `allowPending: received` on every spend a test wallet makes (the HTTP client's default; `--allow-pending received` on the CLI scenarios' `send` and `split`), and on the funder's funding transfer (its coins after a run are the sweeps, received and unmined). The funder's client never passes it otherwise. The scoped form (0.18.0, #63), `allowPending: {"received": ["txid:vout"]}` / `--allow-pending received --coin txid:vout`, offers only the named received coins; scenario 23 drives it on a third wallet.
 - **Wallet logs**: each test wallet's `serve` log goes to `serve.log` in its temp directory; a failed run keeps both directories (keys and logs) and names them.
+- **Ports**: the test wallets serve on 3370 (A), 3371 (B) and 3372 (scenario 23's C); `WALLET_A_PORT`, `WALLET_B_PORT`, `WALLET_C_PORT` move them. Never a port `~/bsv/prod-test-wallets/REGISTRY.md` reserves (3323, 3330 to 3344): on 2026-10-23 the harness's old default 3323 was the registry's `recipient` seat, whose daemon took the run's requests and had its balance swept to the funder. `startWallet` refuses a port that already answers and checks the server's identity against the directory's key before anything is funded.
 - **SwiftBar**: Blue "E2E" icon in menu bar (`~/bsv-wallet-cli-runner/e2e-funder.30s.sh`)
 
 **Setup (first time only):**
@@ -100,7 +101,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 20 | UI (Playwright) | Database inspector UI renders, API + browser | 0 sats |
 | 21 | MCP server parity | The 34 MCP tools vs HTTP API: 29 wallet tools and the five host-route tools (which `mcp/src/tests.rs` drives against a stub) | 0 sats |
 | 22 | Rapid internalize + spend | 10 cycles A→B, B internalizes and returns; no phantom UTXOs (needs 50,000 in A at its start) | fees only |
-| 23 | Scoped allowPending | A third wallet C with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
+| 23 | Scoped allowPending | A third wallet C (:3372) with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
 
 ### Dependencies
 

@@ -2,7 +2,7 @@
 /**
  * bsv-wallet-cli E2E Test Runner
  *
- * Spawns two fresh wallets on :3323 and :3324, funds them from the e2e funder on :3320,
+ * Spawns two fresh wallets on :3370 and :3371 (WALLET_A_PORT, WALLET_B_PORT), funds them from the e2e funder on :3320,
  * runs scenarios, verifies on WoC, then sweeps everything back to the funder.
  *
  * Usage:
@@ -64,10 +64,18 @@ async function main() {
 
     // Start test wallets
     console.log('  Starting test wallets...');
-    walletA = await startWallet(3323, 'wallet-A');
-    walletB = await startWallet(3324, 'wallet-B');
-    console.log(`  Wallet A: :3323 (${walletA.identityKey.slice(0, 12)}...)  ${walletA.address}`);
-    console.log(`  Wallet B: :3324 (${walletB.identityKey.slice(0, 12)}...)  ${walletB.address}`);
+    // The test wallets' ports (defaults 3370, 3371; scenario 23's third
+    // wallet 3372): off every port ~/bsv/prod-test-wallets/REGISTRY.md
+    // reserves (3323, 3330 to 3344: the harness's old 3323 was the
+    // registry's recipient seat, and the 2026-10-23 run went through that
+    // seat's daemon). WALLET_A_PORT, WALLET_B_PORT, WALLET_C_PORT move
+    // them. A port already answering is refused by startWallet.
+    const portA = parseInt(process.env.WALLET_A_PORT || '3370');
+    const portB = parseInt(process.env.WALLET_B_PORT || '3371');
+    walletA = await startWallet(portA, 'wallet-A');
+    walletB = await startWallet(portB, 'wallet-B');
+    console.log(`  Wallet A: :${portA} (${walletA.identityKey.slice(0, 12)}...)  ${walletA.address}`);
+    console.log(`  Wallet B: :${portB} (${walletB.identityKey.slice(0, 12)}...)  ${walletB.address}`);
 
     // Fund wallet A. Scenario 22 needs 50,000 in A at its start and the
     // scenarios before it move about 40,000 out of A (to B, and fees), so a
