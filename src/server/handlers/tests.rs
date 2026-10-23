@@ -242,6 +242,93 @@ fn internalize_strips_the_gate_rule_label() {
     assert_eq!(internalize_args(req).labels, None);
 }
 
+/// The served `createAction` body to the toolbox's arguments
+/// (`create_action_args`, the one mapping the handler and the fuzz target
+/// `served_json` both call): the outputs' scripts decoded from hex, the
+/// named inputs mapped (an absent list stays `Some(vec![])`, the wallet
+/// funding the action), the options and `trustSelf: "known"` carried, the
+/// door's `allowPending` word read; a bad word or a bad hex is the error.
+#[test]
+fn create_action_args_maps_the_served_body() {
+    let txid = "ab".repeat(32);
+    let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
+        "description": "a send",
+        "outputs": [{
+            "lockingScript": "76a914", "satoshis": 1500, "outputDescription": "to them",
+            "basket": "b", "tags": ["t"]
+        }],
+        "inputs": [{ "outpoint": format!("{txid}.3"), "unlockingScript": "00", "sequenceNumber": 7 }],
+        "inputBEEF": [1, 2],
+        "lockTime": 500,
+        "labels": ["invoice"],
+        "options": { "noSend": true, "trustSelf": "known", "signAndProcess": false },
+        "allowPending": { "received": [format!("{txid}:3")] }
+    }))
+    .unwrap();
+    let (args, allow_pending) = create_action_args(req).unwrap();
+    assert_eq!(args.description, "a send");
+    assert_eq!(args.input_beef, Some(vec![1, 2]));
+    assert_eq!(args.lock_time, Some(500));
+    assert_eq!(args.version, None);
+    assert_eq!(args.labels, Some(vec!["invoice".to_string()]));
+    let outputs = args.outputs.unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].locking_script, vec![0x76, 0xa9, 0x14]);
+    assert_eq!(outputs[0].satoshis, 1500);
+    assert_eq!(outputs[0].output_description, "to them");
+    assert_eq!(outputs[0].basket.as_deref(), Some("b"));
+    assert_eq!(outputs[0].custom_instructions, None);
+    assert_eq!(outputs[0].tags, Some(vec!["t".to_string()]));
+    let inputs = args.inputs.unwrap();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].outpoint.to_string(), format!("{txid}.3"));
+    assert_eq!(inputs[0].input_description, "input");
+    assert_eq!(inputs[0].unlocking_script, Some(vec![0]));
+    assert_eq!(inputs[0].unlocking_script_length, None);
+    assert_eq!(inputs[0].sequence_number, Some(7));
+    let options = args.options.unwrap();
+    assert_eq!(options.no_send, Some(true));
+    assert_eq!(options.sign_and_process, Some(false));
+    assert_eq!(options.accept_delayed_broadcast, None);
+    assert_eq!(options.randomize_outputs, None);
+    assert!(matches!(options.trust_self, Some(TrustSelf::Known)));
+    assert!(matches!(
+        allow_pending,
+        crate::spend_gate::AllowPending::ReceivedOnly(_)
+    ));
+
+    // The bare body: no inputs is the wallet's own funding, no options,
+    // no word.
+    let req: McCreateActionReq =
+        serde_json::from_value(serde_json::json!({ "description": "bare" })).unwrap();
+    let (args, allow_pending) = create_action_args(req).unwrap();
+    assert_eq!(args.inputs.as_ref().map(Vec::len), Some(0));
+    assert!(args.outputs.is_none());
+    assert!(args.options.is_none());
+    assert_eq!(allow_pending, crate::spend_gate::AllowPending::Off);
+
+    // The door's refusals, in the handler's words (a scope naming an
+    // outpoint that does not parse; a string that is not the word is Off).
+    let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
+        "description": "bad scope", "allowPending": { "received": ["nope"] }
+    }))
+    .unwrap();
+    let err = create_action_args(req).unwrap_err().to_string();
+    assert!(err.starts_with("Invalid argument: "), "{err}");
+    let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
+        "description": "bad hex",
+        "outputs": [{ "lockingScript": "zz", "satoshis": 1, "outputDescription": "x" }]
+    }))
+    .unwrap();
+    assert!(create_action_args(req).is_err());
+    let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
+        "description": "bad outpoint", "inputs": [{ "outpoint": "nope" }]
+    }))
+    .unwrap();
+    let err = create_action_args(req).unwrap_err().to_string();
+    assert!(err.starts_with("invalid input outpoint 'nope'"), "{err}");
+}
+
 /// "Could not verify now" (#59): the gate's refusal on the header service's
 /// fault is 503 `HEADERS_UNAVAILABLE` with `Retry-After`, its body the
 /// refusal's (`offeredSatoshis`, `held`), never 402.

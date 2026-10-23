@@ -4,6 +4,11 @@ name: Nightly
 # of fuzz/ for an hour each on the corpus checked in, and cargo-mutants over
 # the hot paths with a floor per file. Its own file: ci.yml is the PR gate and
 # this is not. Every action is pinned by commit sha.
+#
+# GitHub fires `schedule` only from the default branch (main). On beta the
+# cron below is inert and the night runs only by workflow_dispatch (`gh
+# workflow run nightly.yml --ref beta`); the cron becomes live when beta
+# merges into main.
 on:
   schedule:
     - cron: "0 3 * * *"
@@ -51,8 +56,11 @@ jobs:
         run: cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
 
       # One hour on the checked-in corpus. New entries land in new/, crashes
-      # in crashes/; the step records libFuzzer's exit and never fails, so
-      # the corpus and the crash are uploaded before the job's verdict.
+      # in crashes/; the step records the exit and whether libFuzzer wrote
+      # an input (a crash, a timeout, out of memory) and never fails, so the
+      # corpus and the crash are uploaded before the job's verdict. A
+      # non-zero exit with no input (the target did not build, cargo-fuzz
+      # failed) is not a crash: the job fails and no issue is opened.
       - name: Fuzz for an hour
         id: fuzz
         env:
@@ -63,7 +71,17 @@ jobs:
           cargo fuzz run "$TARGET" "new/$TARGET" "fuzz/corpus/$TARGET" -- \
             -max_total_time=3600 -timeout=60 -print_final_stats=1 \
             -artifact_prefix="crashes/$TARGET/" 2>&1 | tee fuzz.log
-          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          status=${PIPESTATUS[0]}
+          echo "exit=$status" >> "$GITHUB_OUTPUT"
+          # libFuzzer's stopping inputs; a slow-unit-* it may also write is
+          # not one, and the run went on past it.
+          inputs=$(find "crashes/$TARGET" -type f \( -name 'crash-*' -o -name 'timeout-*' \
+            -o -name 'oom-*' -o -name 'leak-*' \) -print -quit)
+          if [ "$status" != "0" ] && [ -n "$inputs" ]; then
+            echo "crashed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "crashed=false" >> "$GITHUB_OUTPUT"
+          fi
           exit 0
 
       # The entries that add coverage beyond the checked-in corpus, by
@@ -94,7 +112,7 @@ jobs:
           retention-days: 30
 
       - name: Upload the crash inputs
-        if: always() && steps.fuzz.outputs.exit != '0'
+        if: always() && steps.fuzz.outputs.crashed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crash-${{ matrix.target }}
@@ -107,7 +125,7 @@ jobs:
       # the body (an issue takes no file), the panic's tail, the run. One
       # open issue per target; a later crash comments on it.
       - name: Open or update the crash issue
-        if: always() && steps.fuzz.outputs.exit != '0'
+        if: always() && steps.fuzz.outputs.crashed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
@@ -121,7 +139,12 @@ jobs:
             for f in crashes/"$TARGET"/*; do
               [ -f "$f" ] || continue
               echo
-              echo "**$(basename "$f")** ($(wc -c < "$f") bytes, base64):"
+              size=$(wc -c < "$f" | tr -d ' ')
+              if [ "$size" -gt 16384 ]; then
+                echo "**$(basename "$f")** ($size bytes; the first 16 KB, base64; the whole input is in the artifact):"
+              else
+                echo "**$(basename "$f")** ($size bytes, base64):"
+              fi
               echo '```'
               head -c 16384 "$f" | base64 -w 76
               echo '```'
@@ -141,16 +164,23 @@ jobs:
 
       - name: The verdict
         if: always()
+        env:
+          EXIT: ${{ steps.fuzz.outputs.exit }}
+          CRASHED: ${{ steps.fuzz.outputs.crashed }}
+          TARGET: ${{ matrix.target }}
         run: |
-          if [ "${{ steps.fuzz.outputs.exit }}" != "0" ]; then
-            echo "::error::${{ matrix.target }} crashed (exit ${{ steps.fuzz.outputs.exit }})"
+          if [ "$CRASHED" = "true" ]; then
+            echo "::error::$TARGET crashed (exit $EXIT)"
+            exit 1
+          elif [ "$EXIT" != "0" ]; then
+            echo "::error::$TARGET did not run (exit $EXIT, no crash input: the build or cargo-fuzz failed; see the fuzz step's log)"
             exit 1
           fi
 
   # cargo-mutants over the hot paths, in twenty shards (about 1,160 mutants;
   # one mutant is a build and the package's tests, about two minutes on a
   # runner). Copy mode (never --in-place); a mutant's tests stop at five
-  # minutes and count as caught.
+  # minutes, a timeout, scored as not caught.
   mutants:
     name: Mutants (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -218,7 +248,10 @@ jobs:
       # (floor 69 until #75's raise lands it at 80: fault_status, log_call,
       # is_txid, woc_base and Rung::name survive). tracker_host.rs,
       # handlers.rs and broadcast_verify.rs were not run by the lane: their
-      # floors are 80 until the nightly's run says otherwise.
+      # floors are 80 until the nightly's run says otherwise. A timeout is
+      # not caught (mutants_score.py); the lane's run had none (281 tested:
+      # 214 caught, 46 missed, 21 unviable), so these scores and floors
+      # stand as they were.
       - name: Score per file against the floors
         env:
           MUTANTS_FLOORS: >-
