@@ -3,10 +3,14 @@
  * (WhatsOnChain, Bitails, BananaBlocks), WoC for BEEF. Never a courier.
  */
 
-const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/main';
+// Under E2E_HERMETIC=1 the auditor asks the stub's explorers (lib/hermetic.js);
+// otherwise the real ones.
+const hermetic = require('./hermetic');
 
-const BITAILS_BASE = 'https://api.bitails.io';
-const BANANABLOCKS_BASE = 'https://bananablocks.com/api/v1';
+const WOC_BASE = hermetic.enabled ? hermetic.bases.woc : 'https://api.whatsonchain.com/v1/bsv/main';
+
+const BITAILS_BASE = hermetic.enabled ? hermetic.bases.bitails : 'https://api.bitails.io';
+const BANANABLOCKS_BASE = hermetic.enabled ? hermetic.bases.bananablocks : 'https://bananablocks.com/api/v1';
 
 /**
  * The auditor's rungs, the explorer ladder rule (CLAUDE.md, #50): one

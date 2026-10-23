@@ -102,8 +102,20 @@ module.exports = {
     }
 
     // --- Step 5: Cross-wallet discovery ---
-    const discovered = await walletA.client.discoverByIdentityKey(bKey);
-    assert(discovered !== undefined, 'discoverByIdentityKey must work');
+    // The one step of this scenario that is not hermetic: discovery asks the
+    // overlay network's SLAP trackers, whose hosts are bsv-rs defaults the
+    // toolbox builds inline (`HttpLookupResolver::mainnet()`), with no knob
+    // in the binary. Under E2E_HERMETIC=1 the wall would count them, so the
+    // step is skipped and named (docs/E2E-HERMETIC.md); the rest of the
+    // lifecycle runs.
+    let discovery = 'asked';
+    if (process.env.E2E_HERMETIC === '1') {
+      discovery = 'skipped under E2E_HERMETIC=1';
+      console.log('       discovery: skipped under E2E_HERMETIC=1 (the overlay lookup hosts are bsv-rs defaults with no knob in the binary)');
+    } else {
+      const discovered = await walletA.client.discoverByIdentityKey(bKey);
+      assert(discovered !== undefined, 'discoverByIdentityKey must work');
+    }
 
     // --- Step 6: Relinquish ---
     const relinquished = await walletB.client.relinquishCertificate(
@@ -119,6 +131,7 @@ module.exports = {
     return {
       txid: null, sats: 0, wocConfirmed: 'n/a',
       tests: 'encrypt-fields, acquire-with-keyring, list, prove-selective, discover, relinquish, verify-gone',
+      discovery,
     };
   },
 };

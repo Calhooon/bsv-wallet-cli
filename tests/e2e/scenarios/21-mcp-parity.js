@@ -9,7 +9,9 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { sleep } = require('../lib/woc');
 
-const MCP_BIN = path.resolve(__dirname, '../../../target/release/bsv-wallet-mcp');
+// The MCP binary: the repository's target by default; BSV_WALLET_MCP_BIN names
+// another (a shared CARGO_TARGET_DIR), as BSV_WALLET_BIN does for the wallet.
+const MCP_BIN = process.env.BSV_WALLET_MCP_BIN || path.resolve(__dirname, '../../../target/release/bsv-wallet-mcp');
 
 module.exports = {
   name: 'mcp-parity',
