@@ -30,10 +30,21 @@ const scenarioFiles = fs.readdirSync(path.join(__dirname, 'scenarios'))
 
 const scenarios = scenarioFiles.map(f => require(`./scenarios/${f}`));
 
+// The scenarios this run was asked for: one under --scenario N, none under
+// --dry-run, else all. A run that ends with fewer results than these failed.
+const toRun = scenarioFilter !== null
+  ? scenarios.filter((_, i) => i + 1 === scenarioFilter)
+  : scenarios;
+const expected = dryRun ? 0 : toRun.length;
+
 async function main() {
   let walletA, walletB;
   const results = [];
   let funderBalanceBefore;
+  // A failure before or between the scenarios (the funder's refusal of the
+  // funding, a wallet that would not start): the run is a failure, named
+  // here, never a "0/0 passed" exit 0.
+  let fatal = null;
 
   try {
     // Check funder is running
@@ -83,10 +94,6 @@ async function main() {
     }
 
     // Run scenarios
-    const toRun = scenarioFilter !== null
-      ? scenarios.filter((_, i) => i + 1 === scenarioFilter)
-      : scenarios;
-
     for (let i = 0; i < toRun.length; i++) {
       const scenario = toRun[i];
       const num = scenarioFilter || (i + 1);
@@ -132,6 +139,9 @@ async function main() {
       }
     }
 
+  } catch (e) {
+    fatal = e;
+    console.log(`  FATAL: ${e.message}`);
   } finally {
     // Sweep and teardown
     console.log('================================================================');
@@ -150,7 +160,7 @@ async function main() {
     }
 
     // Teardown: a failed run keeps both wallet directories (keys and logs)
-    const keep = results.some(r => r.status === 'FAIL') || results.length < scenarios.length;
+    const keep = fatal !== null || results.some(r => r.status === 'FAIL') || results.length < expected;
     if (walletB) teardownWallet(walletB, { keep });
     if (walletA) teardownWallet(walletA, { keep });
 
@@ -201,6 +211,14 @@ async function main() {
       process.exit(1);
     }
 
+    if (fatal !== null) {
+      console.log(`  FAILED before the scenarios ran: ${fatal.message}`);
+      process.exit(1);
+    }
+    if (total < expected) {
+      console.log(`  FAILED: ${total} of ${expected} scenarios ran`);
+      process.exit(1);
+    }
     process.exit(passed === total ? 0 : 1);
   }
 }
