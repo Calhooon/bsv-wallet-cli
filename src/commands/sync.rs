@@ -213,8 +213,7 @@ async fn sync_leads<V: WalletServices>(
             };
             tally.reconcile_checked += 1;
             let script = stored_locking_script(pool, txid, vout).await;
-            let answer =
-                probe_input_spend(explorers, services, txid, vout, script.as_deref()).await;
+            let answer = probe_input_spend(services, txid, vout, script.as_deref()).await;
             match reconcile_step(&answer) {
                 ReconcileStep::Keep => {}
                 ReconcileStep::LeaveUnproven => {
@@ -829,9 +828,10 @@ mod tests {
 
     /// #50: an outpoint of ours missing from the leads one explorer gave
     /// (the others could not look) is a question for the probe, never
-    /// "spent"; the probe's rungs (WhatsOnChain rate limited, BananaBlocks
-    /// "no spend") and an unspent set that could not be read leave it
-    /// "could not decide", spendable and untouched.
+    /// "spent"; the probe's one question (the toolbox's
+    /// `is_utxo_with_spender`, 0.18.1) answering "one explorer's negative,
+    /// the others could not look" leaves it "could not decide", spendable
+    /// and untouched, and the CLI's own rungs are asked nothing.
     #[tokio::test]
     async fn missing_from_one_explorers_set_is_could_not_decide_never_spent() {
         use bsv_sdk::transaction::{MerklePath, MockChainTracker};
@@ -858,23 +858,8 @@ mod tests {
         let known = known_outpoints(&ctx).await.unwrap();
         assert_eq!(known.len(), 2, "{known:?}");
 
-        let missing_route = format!("/tx/{txid}/1/spent");
-        let woc = Fixture::start_with_headers(
-            &[(&missing_route, 429, "", &[("retry-after", "30")])],
-            500,
-        )
-        .await;
-        let spend_route = format!("/txo/{txid}/1");
-        let held = hex::encode(brc29::deposit_script(&ctx.root_key).unwrap());
-        let bb = Fixture::start(
-            &[(
-                &spend_route,
-                200,
-                &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
-            )],
-            404,
-        )
-        .await;
+        let woc = Fixture::start(&[], 500).await;
+        let bb = Fixture::start(&[], 404).await;
         let explorers = Explorers::at(Some(&woc.base), Some(&bb.base), None);
         let services = MockWalletServices::builder()
             .is_utxo_response(MockResponse::Error(
@@ -892,12 +877,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            woc.hits(),
-            vec![missing_route],
-            "only the missing outpoint is probed"
+            woc.total(),
+            0,
+            "the probe asks no spender route of the CLI's own: {:?}",
+            woc.hits()
         );
-        assert_eq!(bb.hits(), vec![spend_route]);
-        assert_eq!(services.call_count("is_utxo"), 1);
+        assert_eq!(bb.total(), 0, "{:?}", bb.hits());
+        assert_eq!(
+            services.call_count("is_utxo"),
+            1,
+            "the one question is the toolbox's, for the missing outpoint alone"
+        );
         let known = known_outpoints(&ctx).await.unwrap();
         assert!(
             known.contains(&format!("{txid}.1")),

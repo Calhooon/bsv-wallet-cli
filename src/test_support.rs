@@ -255,3 +255,179 @@ mod tests {
         assert!(again.is_err(), "{addr} was free for another fixture");
     }
 }
+
+/// A `WalletServices` whose `is_utxo_with_spender` (toolbox 0.13.0,
+/// bsv-wallet-toolbox-rs #44) answers as given. The toolbox's mock has no
+/// hook for the bound spender, so the spend probe's tests hand the ladder's
+/// answer here and read back what was asked; every other method is the
+/// inner mock's, whose `call_count` reads through [`SpenderServices::inner`]
+/// for the calls the probe must not make itself.
+pub(crate) mod spender_services {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use bsv_sdk::transaction::ChainTracker;
+    use bsv_wallet_toolbox::services::broadcast_memory::BroadcastMemory;
+    use bsv_wallet_toolbox::services::mock::MockWalletServices;
+    use bsv_wallet_toolbox::services::{
+        BlockHeader, BoundSpender, BroadcastStatus, FiatCurrency, GetBeefResult,
+        GetMerklePathResult, GetRawTxResult, GetStatusForTxidsResult, GetUtxoStatusOutputFormat,
+        GetUtxoStatusResult, NLockTimeInput, PostBeefResult, ServicesCallHistory, UtxoLeads,
+        UtxoVerdict, WalletServices,
+    };
+    use bsv_wallet_toolbox::Result;
+
+    pub struct SpenderServices {
+        inner: MockWalletServices,
+        answer: (UtxoVerdict, Option<BoundSpender>),
+        /// Each `is_utxo_with_spender` call: the outpoint and the script it
+        /// was asked under.
+        asked: Mutex<Vec<(String, u32, Vec<u8>)>>,
+    }
+
+    impl SpenderServices {
+        /// The ladder's answer for every outpoint asked.
+        pub fn answering(verdict: UtxoVerdict, spender: Option<BoundSpender>) -> Self {
+            Self {
+                inner: MockWalletServices::new(),
+                answer: (verdict, spender),
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// The outpoints asked, each with the script it was asked under.
+        pub fn asked(&self) -> Vec<(String, u32, Vec<u8>)> {
+            self.asked.lock().expect("the asked list").clone()
+        }
+
+        /// The inner mock, for the calls the probe must not make itself.
+        pub fn inner(&self) -> &MockWalletServices {
+            &self.inner
+        }
+    }
+
+    #[async_trait]
+    impl WalletServices for SpenderServices {
+        async fn get_chain_tracker(&self) -> Result<&dyn ChainTracker> {
+            self.inner.get_chain_tracker().await
+        }
+
+        async fn get_height(&self) -> Result<u32> {
+            self.inner.get_height().await
+        }
+
+        async fn get_header_for_height(&self, height: u32) -> Result<Vec<u8>> {
+            self.inner.get_header_for_height(height).await
+        }
+
+        async fn get_chain_tip_header(&self) -> Result<BlockHeader> {
+            self.inner.get_chain_tip_header().await
+        }
+
+        async fn hash_to_header(&self, hash: &str) -> Result<BlockHeader> {
+            self.inner.hash_to_header(hash).await
+        }
+
+        async fn get_raw_tx(&self, txid: &str, use_next: bool) -> Result<GetRawTxResult> {
+            self.inner.get_raw_tx(txid, use_next).await
+        }
+
+        async fn get_merkle_path(&self, txid: &str, use_next: bool) -> Result<GetMerklePathResult> {
+            self.inner.get_merkle_path(txid, use_next).await
+        }
+
+        async fn post_beef(&self, beef: &[u8], txids: &[String]) -> Result<Vec<PostBeefResult>> {
+            self.inner.post_beef(beef, txids).await
+        }
+
+        fn set_broadcast_memory(&self, memory: Arc<dyn BroadcastMemory>) {
+            self.inner.set_broadcast_memory(memory)
+        }
+
+        fn broadcast_memory(&self) -> Option<Arc<dyn BroadcastMemory>> {
+            self.inner.broadcast_memory()
+        }
+
+        async fn get_utxo_status(
+            &self,
+            output: &str,
+            output_format: Option<GetUtxoStatusOutputFormat>,
+            outpoint: Option<&str>,
+            use_next: bool,
+        ) -> Result<GetUtxoStatusResult> {
+            self.inner
+                .get_utxo_status(output, output_format, outpoint, use_next)
+                .await
+        }
+
+        async fn get_status_for_txids(
+            &self,
+            txids: &[String],
+            use_next: bool,
+        ) -> Result<GetStatusForTxidsResult> {
+            self.inner.get_status_for_txids(txids, use_next).await
+        }
+
+        async fn get_bsv_exchange_rate(&self) -> Result<f64> {
+            self.inner.get_bsv_exchange_rate().await
+        }
+
+        async fn get_fiat_exchange_rate(
+            &self,
+            currency: FiatCurrency,
+            base: Option<FiatCurrency>,
+        ) -> Result<f64> {
+            self.inner.get_fiat_exchange_rate(currency, base).await
+        }
+
+        fn hash_output_script(&self, script: &[u8]) -> String {
+            self.inner.hash_output_script(script)
+        }
+
+        async fn is_utxo(&self, txid: &str, vout: u32, locking_script: &[u8]) -> UtxoVerdict {
+            self.inner.is_utxo(txid, vout, locking_script).await
+        }
+
+        async fn is_utxo_with_spender(
+            &self,
+            txid: &str,
+            vout: u32,
+            locking_script: &[u8],
+        ) -> (UtxoVerdict, Option<BoundSpender>) {
+            self.asked.lock().expect("the asked list").push((
+                txid.to_string(),
+                vout,
+                locking_script.to_vec(),
+            ));
+            self.answer.clone()
+        }
+
+        async fn get_utxo_leads(
+            &self,
+            script_hash: &str,
+            output_format: Option<GetUtxoStatusOutputFormat>,
+        ) -> Result<UtxoLeads> {
+            self.inner.get_utxo_leads(script_hash, output_format).await
+        }
+
+        async fn n_lock_time_is_final(&self, n_lock_time: u32) -> Result<bool> {
+            self.inner.n_lock_time_is_final(n_lock_time).await
+        }
+
+        async fn n_lock_time_is_final_for_tx(&self, input: NLockTimeInput) -> Result<bool> {
+            self.inner.n_lock_time_is_final_for_tx(input).await
+        }
+
+        async fn get_beef(&self, txid: &str, known_txids: &[String]) -> Result<GetBeefResult> {
+            self.inner.get_beef(txid, known_txids).await
+        }
+
+        fn get_services_call_history(&self, reset: bool) -> ServicesCallHistory {
+            self.inner.get_services_call_history(reset)
+        }
+
+        async fn get_broadcaster_statuses(&self, txid: &str) -> Vec<(String, BroadcastStatus)> {
+            self.inner.get_broadcaster_statuses(txid).await
+        }
+    }
+}

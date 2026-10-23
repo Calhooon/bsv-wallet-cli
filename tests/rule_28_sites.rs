@@ -13,6 +13,11 @@
 //! `sync`'s address scan left the CLI for the toolbox's ladder
 //! (`get_utxo_status`), so `sync.rs`, `receive.rs`, `cleanup_abandoned.rs`
 //! and `reconcile_outputs.rs` hold no request and no client.
+//!
+//! 0.18.1 (toolbox #44): the spend probe's spender route (C7, WhatsOnChain's
+//! `/tx/{txid}/{vout}/spent`) left the CLI for the toolbox's
+//! `is_utxo_with_spender`, one ladder pass; `src/explorers.rs` holds the
+//! courier's request line alone (C2).
 
 use std::path::{Path, PathBuf};
 
@@ -39,17 +44,12 @@ const SITES: &[(&str, &str, &str)] = &[
     (
         "src/explorers.rs",
         r#"self.client.get(format!("{}{}", woc.base, path))"#,
-        "Break-glass (Rule 28, C2 and C7)",
+        "Break-glass (Rule 28, C2)",
     ),
     (
         "src/explorers.rs",
         r#"format!("/tx/{txid}/beef")"#,
         "Break-glass (Rule 28, C2)",
-    ),
-    (
-        "src/explorers.rs",
-        r#"format!("/tx/{txid}/{vout}/spent")"#,
-        "Break-glass (Rule 28, C7)",
     ),
 ];
 
@@ -64,7 +64,7 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
     ),
     (
         "src/explorers.rs",
-        "C2 and C7: the WhatsOnChain rung of the courier and spender ladders (#50)",
+        "C2: the WhatsOnChain rung of the courier ladder (#50; the spender rung left for the toolbox's ladder in 0.18.1)",
     ),
     (
         "src/chain_feed.rs",
