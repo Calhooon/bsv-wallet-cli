@@ -1,0 +1,1 @@
+{"outputs":[{"lockingScript":"76a914010101010101010101010101010101010101010188ac","satoshis":1000,"outputDescription":"E2E payment","basket":"default","tags":["e2e"]}],"description":"E2E.1: A pays B","options":{"signAndProcess":true,"acceptDelayedBroadcast":false,"randomizeOutputs":false,"noSend":false},"labels":["e2e"]}
