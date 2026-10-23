@@ -127,6 +127,14 @@ impl WalletMcp {
     }
 }
 
+/// A tool's parameters as the wallet's JSON body.
+fn args(p: &impl Serialize) -> Value {
+    serde_json::to_value(p).expect(
+        "the parameter structs hold only strings, numbers, bools, lists and JSON values: \
+         they always serialize",
+    )
+}
+
 // ── Typed parameter structs ────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -612,8 +620,7 @@ impl WalletMcp {
         &self,
         p: Parameters<GetPublicKeyParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("getPublicKey", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("getPublicKey", args(&p.0)).await
     }
 
     #[tool(description = "Create an ECDSA signature using a BRC-42 derived key.")]
@@ -621,8 +628,7 @@ impl WalletMcp {
         &self,
         p: Parameters<CreateSignatureParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("createSignature", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("createSignature", args(&p.0)).await
     }
 
     #[tool(description = "Verify an ECDSA signature using a BRC-42 derived key.")]
@@ -630,20 +636,17 @@ impl WalletMcp {
         &self,
         p: Parameters<VerifySignatureParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("verifySignature", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("verifySignature", args(&p.0)).await
     }
 
     #[tool(description = "Encrypt data using a BRC-42 derived key. Returns {ciphertext: [bytes]}.")]
     async fn encrypt(&self, p: Parameters<EncryptParams>) -> Result<CallToolResult, ErrorData> {
-        self.post("encrypt", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("encrypt", args(&p.0)).await
     }
 
     #[tool(description = "Decrypt data using a BRC-42 derived key. Returns {plaintext: [bytes]}.")]
     async fn decrypt(&self, p: Parameters<DecryptParams>) -> Result<CallToolResult, ErrorData> {
-        self.post("decrypt", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("decrypt", args(&p.0)).await
     }
 
     #[tool(description = "Create HMAC using a BRC-42 derived key. Returns {hmac: [32 bytes]}.")]
@@ -651,8 +654,7 @@ impl WalletMcp {
         &self,
         p: Parameters<CreateHmacParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("createHmac", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("createHmac", args(&p.0)).await
     }
 
     #[tool(description = "Verify HMAC using a BRC-42 derived key. Returns {valid: bool}.")]
@@ -660,8 +662,7 @@ impl WalletMcp {
         &self,
         p: Parameters<VerifyHmacParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("verifyHmac", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("verifyHmac", args(&p.0)).await
     }
 
     // ── Chain ──────────────────────────────────────────────────
@@ -671,8 +672,7 @@ impl WalletMcp {
         &self,
         p: Parameters<GetHeaderForHeightParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("getHeaderForHeight", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("getHeaderForHeight", args(&p.0)).await
     }
 
     // ── Transactions ───────────────────────────────────────────
@@ -684,8 +684,7 @@ impl WalletMcp {
         &self,
         p: Parameters<CreateActionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("createAction", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("createAction", args(&p.0)).await
     }
 
     #[tool(
@@ -695,8 +694,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ReferenceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("signAction", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("signAction", args(&p.0)).await
     }
 
     #[tool(
@@ -706,8 +704,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ReferenceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("abortAction", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("abortAction", args(&p.0)).await
     }
 
     #[tool(
@@ -717,8 +714,7 @@ impl WalletMcp {
         &self,
         p: Parameters<InternalizeActionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("internalizeAction", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("internalizeAction", args(&p.0)).await
     }
 
     #[tool(
@@ -728,8 +724,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ListActionsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("listActions", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("listActions", args(&p.0)).await
     }
 
     // ── Outputs (UTXOs) ────────────────────────────────────────
@@ -741,8 +736,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ListOutputsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("listOutputs", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("listOutputs", args(&p.0)).await
     }
 
     #[tool(description = "Release an output from a basket.")]
@@ -750,8 +744,7 @@ impl WalletMcp {
         &self,
         p: Parameters<RelinquishOutputParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("relinquishOutput", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("relinquishOutput", args(&p.0)).await
     }
 
     // ── Certificates ───────────────────────────────────────────
@@ -761,8 +754,7 @@ impl WalletMcp {
         &self,
         p: Parameters<AcquireCertificateParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("acquireCertificate", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("acquireCertificate", args(&p.0)).await
     }
 
     #[tool(
@@ -772,8 +764,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ListCertificatesParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("listCertificates", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("listCertificates", args(&p.0)).await
     }
 
     #[tool(description = "Prove certificate ownership by selectively revealing fields.")]
@@ -781,8 +772,7 @@ impl WalletMcp {
         &self,
         p: Parameters<ProveCertificateParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("proveCertificate", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("proveCertificate", args(&p.0)).await
     }
 
     #[tool(description = "Delete a certificate from the wallet.")]
@@ -790,8 +780,7 @@ impl WalletMcp {
         &self,
         p: Parameters<RelinquishCertificateParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("relinquishCertificate", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("relinquishCertificate", args(&p.0)).await
     }
 
     // ── Discovery ──────────────────────────────────────────────
@@ -801,8 +790,7 @@ impl WalletMcp {
         &self,
         p: Parameters<DiscoverByIdentityKeyParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("discoverByIdentityKey", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("discoverByIdentityKey", args(&p.0)).await
     }
 
     #[tool(description = "Find certificates by attributes (BRC-56 peer discovery).")]
@@ -810,8 +798,7 @@ impl WalletMcp {
         &self,
         p: Parameters<DiscoverByAttributesParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post("discoverByAttributes", serde_json::to_value(&p.0).unwrap())
-            .await
+        self.post("discoverByAttributes", args(&p.0)).await
     }
 
     // ── Key Linkage ────────────────────────────────────────────
@@ -821,11 +808,7 @@ impl WalletMcp {
         &self,
         p: Parameters<RevealCounterpartyKeyLinkageParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post(
-            "revealCounterpartyKeyLinkage",
-            serde_json::to_value(&p.0).unwrap(),
-        )
-        .await
+        self.post("revealCounterpartyKeyLinkage", args(&p.0)).await
     }
 
     #[tool(description = "Reveal specific key linkage for a protocol+key to a verifier (BRC-70).")]
@@ -833,11 +816,7 @@ impl WalletMcp {
         &self,
         p: Parameters<RevealSpecificKeyLinkageParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.post(
-            "revealSpecificKeyLinkage",
-            serde_json::to_value(&p.0).unwrap(),
-        )
-        .await
+        self.post("revealSpecificKeyLinkage", args(&p.0)).await
     }
 
     // ── The host's own routes (not BRC-100) ───────────────────
@@ -927,7 +906,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("bsv_wallet_mcp=info".parse().unwrap()),
+                .add_directive("bsv_wallet_mcp=info".parse().expect("a literal directive")),
         )
         .with_writer(std::io::stderr)
         .with_ansi(false)

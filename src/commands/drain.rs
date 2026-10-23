@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bsv_sdk::primitives::to_hex;
 use bsv_sdk::script::templates::P2PKH;
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput, WalletInterface};
@@ -80,7 +80,11 @@ pub async fn run(
         .await,
         ctx.json_output,
     )?;
-    let txid_hex = to_hex(&result.txid.expect("expected txid in result"));
+    let txid_hex = to_hex(
+        &result
+            .txid
+            .context("create_action returned no txid for a signed, sent drain")?,
+    );
 
     // Same loud-failure bar as `send` (2026-08-27): `create_action` returns Ok
     // with a txid even when the broadcast never reached the network (ARC 465

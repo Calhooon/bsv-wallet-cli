@@ -556,9 +556,15 @@ pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result
     eprintln!("HTTP server listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let (signal_fault, mut signal_fault_rx) = tokio::sync::oneshot::channel();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(signal_fault))
         .await?;
+    // A listener that could not be installed shuts the server down and is
+    // the caller's error, never a panic.
+    if let Ok(e) = signal_fault_rx.try_recv() {
+        return Err(anyhow::Error::new(e).context("failed to listen for ctrl-c"));
+    }
 
     Ok(())
 }
@@ -579,10 +585,11 @@ pub fn make_wallet_state_from_arc(wallet: Arc<Wallet<StorageSqlx, Services>>) ->
     wallet
 }
 
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for ctrl-c");
+async fn shutdown_signal(fault: tokio::sync::oneshot::Sender<std::io::Error>) {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        let _ = fault.send(e);
+        return;
+    }
     eprintln!("\nShutting down...");
 }
 

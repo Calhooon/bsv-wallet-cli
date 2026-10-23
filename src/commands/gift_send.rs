@@ -25,7 +25,11 @@ fn parse_unlock(s: &str) -> Result<u64> {
         return Ok(ts);
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() as u64);
+        return Ok(d
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time")
+            .and_utc()
+            .timestamp() as u64);
     }
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Ok(dt.timestamp() as u64);

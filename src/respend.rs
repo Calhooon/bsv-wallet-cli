@@ -361,7 +361,7 @@ pub async fn build_and_post(
     );
     let queued = history
         .as_object_mut()
-        .unwrap()
+        .expect("history is an object, ensured above")
         .entry("competitorsQueued")
         .or_insert_with(|| serde_json::json!([]));
     queued
