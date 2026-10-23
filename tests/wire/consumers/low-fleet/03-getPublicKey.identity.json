@@ -1,0 +1,29 @@
+{
+  "consumer": "low-fleet",
+  "call": "getPublicKey.identity",
+  "source": "app/src/components/ConnectGate.tsx",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "identityKey": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377"
+    }
+  }
+}

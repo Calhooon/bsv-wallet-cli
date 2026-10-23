@@ -1,0 +1,30 @@
+{
+  "consumer": "app-payers",
+  "call": "agents.abortAction",
+  "source": "agents tools/fleet/proof.py (abortAction {reference: txid})",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/abortAction",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "reference": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "NOT_FOUND",
+      "message": "wallet error: Entity not found: transaction with id reference or txid '3333333333333333333333333333333333333333333333333333333333333333'"
+    }
+  }
+}

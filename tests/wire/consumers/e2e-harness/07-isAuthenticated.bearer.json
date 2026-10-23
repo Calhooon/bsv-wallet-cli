@@ -1,0 +1,27 @@
+{
+  "consumer": "e2e-harness",
+  "call": "isAuthenticated.bearer",
+  "source": "tests/e2e/lib/wallet-client.js get (a wallet behind AUTH_TOKEN)",
+  "world": "auth",
+  "request": {
+    "method": "GET",
+    "path": "/isAuthenticated",
+    "headers": {
+      "authorization": "Bearer wire-bearer",
+      "origin": "http://e2e-test"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://e2e-test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "authenticated": true
+    }
+  }
+}

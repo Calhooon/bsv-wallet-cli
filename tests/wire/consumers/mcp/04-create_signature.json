@@ -1,0 +1,111 @@
+{
+  "consumer": "mcp",
+  "call": "create_signature",
+  "source": "mcp/src/main.rs CreateSignatureParams",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "data": [
+        109,
+        99,
+        112
+      ],
+      "protocolID": [
+        2,
+        "mcp test"
+      ],
+      "keyID": "1",
+      "counterparty": "self"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "signature": [
+        48,
+        69,
+        2,
+        33,
+        0,
+        142,
+        78,
+        44,
+        138,
+        68,
+        176,
+        16,
+        234,
+        177,
+        159,
+        136,
+        176,
+        14,
+        187,
+        70,
+        81,
+        120,
+        253,
+        176,
+        111,
+        42,
+        10,
+        154,
+        254,
+        158,
+        141,
+        97,
+        218,
+        85,
+        229,
+        21,
+        100,
+        2,
+        32,
+        23,
+        135,
+        32,
+        158,
+        214,
+        156,
+        158,
+        118,
+        226,
+        136,
+        215,
+        83,
+        66,
+        68,
+        105,
+        184,
+        249,
+        41,
+        51,
+        164,
+        152,
+        138,
+        136,
+        24,
+        30,
+        184,
+        88,
+        217,
+        182,
+        105,
+        16,
+        57
+      ]
+    }
+  }
+}

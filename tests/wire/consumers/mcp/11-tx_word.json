@@ -1,0 +1,27 @@
+{
+  "consumer": "mcp",
+  "call": "tx_word",
+  "source": "mcp/src/main.rs tx_word (GET /tx/{txid})",
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/tx/3333333333333333333333333333333333333333333333333333333333333333",
+    "headers": {
+      "origin": "http://localhost"
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "NOT_FOUND",
+      "message": "no word stored for 3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  }
+}

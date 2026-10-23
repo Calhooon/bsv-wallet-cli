@@ -1,0 +1,43 @@
+{
+  "consumer": "e2e-harness",
+  "call": "listOutputs.balance",
+  "source": "tests/e2e/lib/wallet-client.js balance",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://e2e-test"
+    },
+    "json": {
+      "basket": "default",
+      "limit": 10000,
+      "includeEnvelope": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://e2e-test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalOutputs": 2,
+      "outputs": [
+        {
+          "satoshis": 30000,
+          "spendable": true,
+          "outpoint": "7777777777777777777777777777777777777777777777777777777777777777.0"
+        },
+        {
+          "satoshis": 20000,
+          "spendable": true,
+          "outpoint": "8888888888888888888888888888888888888888888888888888888888888888.0"
+        }
+      ]
+    }
+  }
+}

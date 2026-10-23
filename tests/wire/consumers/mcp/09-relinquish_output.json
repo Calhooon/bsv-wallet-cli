@@ -1,0 +1,33 @@
+{
+  "consumer": "mcp",
+  "call": "relinquish_output",
+  "source": "mcp/src/main.rs RelinquishOutputParams",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/relinquishOutput",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "basket": "default",
+      "output": {
+        "txid": "3333333333333333333333333333333333333333333333333333333333333333",
+        "vout": 0
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "relinquished": true
+    }
+  }
+}

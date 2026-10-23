@@ -1,0 +1,28 @@
+{
+  "consumer": "mcp",
+  "call": "chain_feed_status",
+  "source": "mcp/src/main.rs chain_feed_status (GET /chain-feed)",
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/chain-feed",
+    "headers": {
+      "origin": "http://localhost"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "cursor": "0",
+      "frozenCount": 0,
+      "status": null
+    }
+  }
+}

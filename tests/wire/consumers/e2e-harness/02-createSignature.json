@@ -1,0 +1,111 @@
+{
+  "consumer": "e2e-harness",
+  "call": "createSignature",
+  "source": "tests/e2e/lib/wallet-client.js createSignature",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "origin": "http://e2e-test"
+    },
+    "json": {
+      "data": [
+        101,
+        50,
+        101
+      ],
+      "protocolId": [
+        2,
+        "e2e test"
+      ],
+      "keyId": "1",
+      "counterparty": "self"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://e2e-test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "signature": [
+        48,
+        69,
+        2,
+        33,
+        0,
+        137,
+        203,
+        178,
+        24,
+        47,
+        222,
+        116,
+        187,
+        255,
+        106,
+        205,
+        239,
+        44,
+        242,
+        173,
+        171,
+        209,
+        80,
+        45,
+        59,
+        197,
+        50,
+        197,
+        197,
+        164,
+        144,
+        69,
+        202,
+        6,
+        221,
+        222,
+        92,
+        2,
+        32,
+        48,
+        247,
+        34,
+        74,
+        23,
+        16,
+        150,
+        164,
+        174,
+        92,
+        123,
+        49,
+        137,
+        75,
+        176,
+        197,
+        231,
+        68,
+        145,
+        33,
+        72,
+        231,
+        147,
+        64,
+        251,
+        62,
+        209,
+        31,
+        114,
+        94,
+        157,
+        181
+      ]
+    }
+  }
+}

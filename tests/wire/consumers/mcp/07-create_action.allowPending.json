@@ -1,0 +1,40 @@
+{
+  "consumer": "mcp",
+  "call": "create_action.allowPending",
+  "source": "mcp/src/main.rs CreateActionParams",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "description": "mcp payment",
+      "outputs": [
+        {
+          "lockingScript": "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac",
+          "satoshis": 60000,
+          "outputDescription": "mcp output"
+        }
+      ],
+      "allowPending": "received"
+    }
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INSUFFICIENT_FUNDS",
+      "held": [],
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 60035, have 50000; 50000 sats offered, 0 coin(s) held back)",
+      "offeredSatoshis": 50000
+    }
+  }
+}

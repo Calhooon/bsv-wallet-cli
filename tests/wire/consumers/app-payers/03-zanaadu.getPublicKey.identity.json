@@ -1,0 +1,34 @@
+{
+  "consumer": "app-payers",
+  "call": "zanaadu.getPublicKey.identity",
+  "source": "zanaadu frontend/src/lib/zanaaduSigningProtocols.ts ([2,'zanaadu identity'] '1')",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "protocolID": [
+        2,
+        "zanaadu identity"
+      ],
+      "keyID": "1",
+      "counterparty": "self"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "0264eb4a1ca25d25936e2b080dcdbcdcace87319608e92373d3c5883d2ecef2157"
+    }
+  }
+}

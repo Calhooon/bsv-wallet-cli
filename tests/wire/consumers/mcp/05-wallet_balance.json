@@ -1,0 +1,46 @@
+{
+  "consumer": "mcp",
+  "call": "wallet_balance",
+  "source": "mcp/src/main.rs wallet_balance (listOutputs pages)",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "basket": "default",
+      "include": "locking scripts",
+      "limit": 100,
+      "offset": 0
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalOutputs": 2,
+      "outputs": [
+        {
+          "satoshis": 30000,
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "spendable": true,
+          "outpoint": "7777777777777777777777777777777777777777777777777777777777777777.0"
+        },
+        {
+          "satoshis": 20000,
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "spendable": true,
+          "outpoint": "8888888888888888888888888888888888888888888888888888888888888888.0"
+        }
+      ]
+    }
+  }
+}

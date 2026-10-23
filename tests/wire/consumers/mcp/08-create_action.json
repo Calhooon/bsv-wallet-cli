@@ -1,0 +1,62 @@
+{
+  "consumer": "mcp",
+  "call": "create_action",
+  "source": "mcp/src/main.rs CreateActionParams",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "description": "mcp payment",
+      "outputs": [
+        {
+          "lockingScript": "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac",
+          "satoshis": 1000,
+          "outputDescription": "mcp output"
+        }
+      ],
+      "labels": [
+        "mcp"
+      ],
+      "options": {
+        "randomizeOutputs": false
+      }
+    }
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INSUFFICIENT_FUNDS",
+      "held": [
+        {
+          "ageMinutes": "<minutes>",
+          "origin": "received",
+          "outpoint": "7777777777777777777777777777777777777777777777777777777777777777.0",
+          "reason": "depth 1: 0 blocks; received, no proof; offered under allowPending: received",
+          "satoshis": 30000,
+          "word": "unknown"
+        },
+        {
+          "ageMinutes": "<minutes>",
+          "origin": "received",
+          "outpoint": "8888888888888888888888888888888888888888888888888888888888888888.0",
+          "reason": "depth 1: 0 blocks; received, no proof; offered under allowPending: received",
+          "satoshis": 20000,
+          "word": "unknown"
+        }
+      ],
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 0 sats offered, 2 coin(s) held back)\n  7777777777777777777777777777777777777777777777777777777777777777.0 30000 sats: unknown, received, <minutes> min old: depth 1: 0 blocks; received, no proof; offered under allowPending: received\n  8888888888888888888888888888888888888888888888888888888888888888.0 20000 sats: unknown, received, <minutes> min old: depth 1: 0 blocks; received, no proof; offered under allowPending: received",
+      "offeredSatoshis": 0
+    }
+  }
+}
