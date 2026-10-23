@@ -1,0 +1,6 @@
+# The ratchet's clippy configuration (tools/ratchet sets CLIPPY_CONF_DIR here
+# for its own pass only; the gate's clippy reads the repository's clippy.toml).
+# A function over 60 lines of code is counted (clippy::too_many_lines), and a
+# function whose cognitive complexity is over 25 (clippy::cognitive_complexity).
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 25

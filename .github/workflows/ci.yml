@@ -173,3 +173,24 @@ jobs:
           done < <(git ls-files -z -- 'Cargo.lock' '*/Cargo.lock')
           [ "$found" -gt 0 ] || echo "no committed Cargo.lock"
           exit "$status"
+
+  # The ratchet (#72): seven numbers of the tree that may only fall, measured
+  # by tools/ratchet and compared with docs/ratchets.json; a PR that raises one
+  # fails here, naming the number and by how much (docs/RATCHETS.md). The
+  # toolchain is pinned to the baseline's: a new clippy brings new pedantic
+  # lints, and the numbers would move with no change to the tree.
+  ratchet:
+    name: ratchet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: No number above the baseline
+        run: python3 tools/ratchet --check
