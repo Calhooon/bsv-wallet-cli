@@ -1,0 +1,54 @@
+{
+  "consumer": "low-fleet",
+  "call": "listActions.hopLedger",
+  "source": "app/src/lib/stake.ts fetchWalletHopLedger",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "labels": [],
+      "includeLabels": true,
+      "limit": 10000,
+      "offset": 0
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [
+        {
+          "description": "a received payment",
+          "isOutgoing": false,
+          "labels": [],
+          "lockTime": 0,
+          "satoshis": 30000,
+          "status": "unproven",
+          "txid": "7777777777777777777777777777777777777777777777777777777777777777",
+          "version": 1
+        },
+        {
+          "description": "a received payment",
+          "isOutgoing": false,
+          "labels": [],
+          "lockTime": 0,
+          "satoshis": 20000,
+          "status": "unproven",
+          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+          "version": 1
+        }
+      ],
+      "totalActions": 2
+    }
+  }
+}

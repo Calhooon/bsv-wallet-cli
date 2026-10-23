@@ -1,0 +1,35 @@
+{
+  "consumer": "app-payers",
+  "call": "teragunv2.getPublicKey.payment",
+  "source": "teragunv2 frontend/src/lib/wallet.ts (PAYMENT_PROTOCOL [2,'wallet payment'])",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "protocolID": [
+        2,
+        "wallet payment"
+      ],
+      "keyID": "SfKxPIJNgdI= NaGLC6fMH50=",
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "forSelf": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "0356db00ab7bea9dccf440f942dcb093d7517ca766e1c9093f50052e46425951c4"
+    }
+  }
+}

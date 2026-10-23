@@ -1,0 +1,26 @@
+{
+  "consumer": "dolphinmilk",
+  "call": "getVersion",
+  "source": "dolphinmilk src/wallet/http.rs call_get",
+  "world": "pending",
+  "request": {
+    "method": "GET",
+    "path": "/getVersion",
+    "headers": {
+      "origin": "http://localhost"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "version": "bsv-wallet-toolbox-0.1.0"
+    }
+  }
+}

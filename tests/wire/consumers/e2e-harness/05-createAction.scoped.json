@@ -1,0 +1,62 @@
+{
+  "consumer": "e2e-harness",
+  "call": "createAction.scoped",
+  "source": "tests/e2e/lib/wallet-client.js createAction (opts.allowPending, scenario 23)",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://e2e-test"
+    },
+    "json": {
+      "outputs": [
+        {
+          "lockingScript": "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac",
+          "satoshis": 40000,
+          "outputDescription": "e2e transfer",
+          "tags": [
+            "e2e-test"
+          ]
+        }
+      ],
+      "description": "e2e transfer",
+      "allowPending": {
+        "received": [
+          "7777777777777777777777777777777777777777777777777777777777777777:0"
+        ]
+      },
+      "options": {
+        "signAndProcess": true,
+        "acceptDelayedBroadcast": false,
+        "randomizeOutputs": false,
+        "noSend": false
+      }
+    }
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://e2e-test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INSUFFICIENT_FUNDS",
+      "held": [
+        {
+          "ageMinutes": "<minutes>",
+          "origin": "received",
+          "outpoint": "8888888888888888888888888888888888888888888888888888888888888888.0",
+          "reason": "depth 1: 0 blocks; received, no proof; not named under allowPending: received",
+          "satoshis": 20000,
+          "word": "unknown"
+        }
+      ],
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 40020, have 30000; 30000 sats offered, 1 coin(s) held back)\n  8888888888888888888888888888888888888888888888888888888888888888.0 20000 sats: unknown, received, <minutes> min old: depth 1: 0 blocks; received, no proof; not named under allowPending: received",
+      "offeredSatoshis": 30000
+    }
+  }
+}

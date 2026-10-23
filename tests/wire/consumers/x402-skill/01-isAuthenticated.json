@@ -1,0 +1,26 @@
+{
+  "consumer": "x402-skill",
+  "call": "isAuthenticated",
+  "source": "skills/x402/SKILL.md (curl -H \"Origin: http://localhost\" .../isAuthenticated)",
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/isAuthenticated",
+    "headers": {
+      "origin": "http://localhost"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "authenticated": true
+    }
+  }
+}

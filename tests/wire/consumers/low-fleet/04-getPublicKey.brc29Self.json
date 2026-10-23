@@ -1,0 +1,35 @@
+{
+  "consumer": "low-fleet",
+  "call": "getPublicKey.brc29Self",
+  "source": "app/src/lib/stake.ts (the payout key, forSelf)",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "protocolID": [
+        2,
+        "3241645161d8"
+      ],
+      "counterparty": "self",
+      "keyID": "SfKxPIJNgdI= NaGLC6fMH50=",
+      "forSelf": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "03f0ad2ee604aae7ef86c3691a32393a8396bdf3161533030c4703adf88559aa80"
+    }
+  }
+}

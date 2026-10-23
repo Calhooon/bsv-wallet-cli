@@ -1,0 +1,35 @@
+{
+  "consumer": "e2e-harness",
+  "call": "getPublicKey.brc29",
+  "source": "tests/e2e/lib/wallet-client.js getPublicKey (transferTo)",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://e2e-test"
+    },
+    "json": {
+      "protocolId": [
+        2,
+        "3241645161d8"
+      ],
+      "keyId": "SfKxPIJNgdI= NaGLC6fMH50=",
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "forSelf": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://e2e-test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "0340b03565a4c812bd53cbafd6f0b5849c6a304c06e25e2df7c46c9934a2f9e758"
+    }
+  }
+}

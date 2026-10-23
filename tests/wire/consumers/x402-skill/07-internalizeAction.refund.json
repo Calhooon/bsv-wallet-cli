@@ -1,0 +1,51 @@
+{
+  "consumer": "x402-skill",
+  "call": "internalizeAction.refund",
+  "source": "skills/x402/lib/refund.py -> lib/metanet.py internalize_action",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/internalizeAction",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "tx": [
+        1,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "outputs": [
+        {
+          "outputIndex": 0,
+          "protocol": "wallet payment",
+          "paymentRemittance": {
+            "derivationPrefix": "SfKxPIJNgdI=",
+            "derivationSuffix": "NaGLC6fMH50=",
+            "senderIdentityKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          }
+        }
+      ],
+      "description": "Refund: 1000 sats (txid: 0000000000000000...)"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INVALID_BEEF",
+      "message": "wallet error: Invalid BEEF at byte 4: Truncated"
+    }
+  }
+}

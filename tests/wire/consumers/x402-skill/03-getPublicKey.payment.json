@@ -1,0 +1,35 @@
+{
+  "consumer": "x402-skill",
+  "call": "getPublicKey.payment",
+  "source": "skills/x402/lib/payment.py (get_public_key, PAYMENT_PROTOCOL)",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/getPublicKey",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "protocolID": [
+        2,
+        "3241645161d8"
+      ],
+      "keyID": "SfKxPIJNgdI= NaGLC6fMH50=",
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "forSelf": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "publicKey": "0340bf772a763f88c95587273203ed1177cc070117c7d382dffe5066dc8bd2e5ac"
+    }
+  }
+}

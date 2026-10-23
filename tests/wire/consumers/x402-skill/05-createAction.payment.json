@@ -1,0 +1,43 @@
+{
+  "consumer": "x402-skill",
+  "call": "createAction.payment",
+  "source": "skills/x402/lib/payment.py -> lib/metanet.py create_action",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "description": "BRC-29 payment: 1000 sats",
+      "outputs": [
+        {
+          "lockingScript": "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac",
+          "satoshis": 1000,
+          "outputDescription": "BRC-29 payment output"
+        }
+      ],
+      "options": {
+        "acceptDelayedBroadcast": false,
+        "randomizeOutputs": false
+      }
+    }
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "INSUFFICIENT_FUNDS",
+      "held": [],
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 0 sats offered, 0 coin(s) held back)",
+      "offeredSatoshis": 0
+    }
+  }
+}

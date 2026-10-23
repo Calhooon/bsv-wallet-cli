@@ -1,0 +1,36 @@
+{
+  "consumer": "mcp",
+  "call": "list_actions",
+  "source": "mcp/src/main.rs ListActionsParams (its defaults)",
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://localhost"
+    },
+    "json": {
+      "labels": [],
+      "labelQueryMode": "any",
+      "includeLabels": false,
+      "includeInputs": false,
+      "includeOutputs": false,
+      "limit": 10,
+      "offset": 0
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [],
+      "totalActions": 0
+    }
+  }
+}

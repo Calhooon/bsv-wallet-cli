@@ -1,0 +1,46 @@
+{
+  "consumer": "low-fleet",
+  "call": "createAction.scoped",
+  "source": "bsv-wallet-cli #63 (LOW's fleet, loop 46, pair 32): allowPending {received: [txid:vout]}",
+  "world": "pending",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://localhost:5173"
+    },
+    "json": {
+      "description": "LOW stake escrow funding",
+      "outputs": [
+        {
+          "lockingScript": "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac",
+          "satoshis": 2300,
+          "outputDescription": "LOW stake hop"
+        }
+      ],
+      "options": {
+        "randomizeOutputs": false,
+        "acceptDelayedBroadcast": false
+      },
+      "allowPending": {
+        "received": [
+          "8888888888888888888888888888888888888888888888888888888888888888:0"
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERROR",
+      "message": "wallet error: Signing failed: Signing error: Derived pubkey hash160 7cc1e4648c07677ae0104b643691b6e0b813f2e1 does not match locking script hash160 dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa. Transaction aborted and UTXOs released."
+    }
+  }
+}
