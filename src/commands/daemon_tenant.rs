@@ -81,11 +81,7 @@ pub async fn start(
             callback_token: rt.callback_token.clone(),
         });
     }
-    if let Some(secs) = std::env::var("MONITOR_CHECK_PROOFS_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|s| *s > 0)
-    {
+    if let Some(secs) = config.daemon.check_proofs_interval_secs {
         monitor_opts.tasks.check_for_proofs.interval = std::time::Duration::from_secs(secs);
         monitor_opts.tasks.check_for_proofs.start_immediately = true;
     }
@@ -158,20 +154,12 @@ pub async fn start(
 
     // Periodic UTXO count check + auto-reconcile abandoned txs (#18, THE
     // RELEASE RULE 2026-08-29) — per tenant, same knobs as daemon.
-    let min_utxos: usize = std::env::var("MIN_UTXOS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3);
+    let min_utxos = config.daemon.min_utxos;
     let check_wallet = wallet_state.clone();
     let reconcile_chain = chain;
     let reconcile_config = config.clone();
-    let reconcile_enabled = std::env::var("RECONCILE_ABANDONED")
-        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-        .unwrap_or(true);
-    let reconcile_min_age_secs: i64 = std::env::var("RECONCILE_ABANDONED_MIN_AGE_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3600);
+    let reconcile_enabled = config.daemon.reconcile_abandoned;
+    let reconcile_min_age_secs = config.daemon.reconcile_abandoned_min_age_secs;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
         loop {
@@ -296,38 +284,33 @@ pub async fn start(
     });
 
     // Proof-delivery ladder rung (c): drain a bsv-wallet-relay queue.
-    if let Ok(relay_url) = std::env::var("RELAY_URL") {
-        if !relay_url.is_empty() {
-            if let Some(relay_token) = server_config.callback_token.clone() {
-                let relay_wallet = wallet_state.clone();
-                let poll_secs: u64 = std::env::var("RELAY_POLL_SECS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(10);
-                let relay_base = relay_url.trim_end_matches('/').to_string();
-                eprintln!("[{port}] Relay polling enabled: {relay_base} (every {poll_secs}s)");
-                tokio::spawn(async move {
-                    let client = reqwest::Client::new();
-                    let mut last_id: i64 = 0;
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(poll_secs));
-                    loop {
-                        interval.tick().await;
-                        let url = format!(
-                            "{}/pull?token={}&after={}&ack={}",
-                            relay_base, relay_token, last_id, last_id
-                        );
-                        match client.get(&url).send().await {
-                            Ok(resp) if resp.status().is_success() => {
-                                match resp.json::<Vec<serde_json::Value>>().await {
-                                    Ok(items) => {
-                                        for item in items {
-                                            let id = item
-                                                .get("id")
-                                                .and_then(|v| v.as_i64())
-                                                .unwrap_or(last_id);
-                                            if let Some(payload) = item.get("payload") {
-                                                match crate::arc_ingest::ingest_arc_payload(
+    if let Some(relay_url) = &config.daemon.relay_url {
+        if let Some(relay_token) = server_config.callback_token.clone() {
+            let relay_wallet = wallet_state.clone();
+            let poll_secs = config.daemon.relay_poll_secs;
+            let relay_base = relay_url.trim_end_matches('/').to_string();
+            eprintln!("[{port}] Relay polling enabled: {relay_base} (every {poll_secs}s)");
+            tokio::spawn(async move {
+                let client = reqwest::Client::new();
+                let mut last_id: i64 = 0;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
+                loop {
+                    interval.tick().await;
+                    let url = format!(
+                        "{}/pull?token={}&after={}&ack={}",
+                        relay_base, relay_token, last_id, last_id
+                    );
+                    match client.get(&url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            match resp.json::<Vec<serde_json::Value>>().await {
+                                Ok(items) => {
+                                    for item in items {
+                                        let id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_i64())
+                                            .unwrap_or(last_id);
+                                        if let Some(payload) = item.get("payload") {
+                                            match crate::arc_ingest::ingest_arc_payload(
                                                     relay_wallet.storage(),
                                                     payload,
                                                 )
@@ -352,27 +335,26 @@ pub async fn start(
                                                         "relay: payload ingest failed"
                                                     ),
                                                 }
-                                            }
-                                            last_id = last_id.max(id);
                                         }
-                                    }
-                                    Err(e) => {
-                                        tracing::debug!(error = %e, "relay: pull parse failed")
+                                        last_id = last_id.max(id);
                                     }
                                 }
+                                Err(e) => {
+                                    tracing::debug!(error = %e, "relay: pull parse failed")
+                                }
                             }
-                            Ok(resp) => {
-                                tracing::debug!(status = %resp.status(), "relay: pull failed")
-                            }
-                            Err(e) => tracing::debug!(error = %e, "relay: pull failed"),
                         }
+                        Ok(resp) => {
+                            tracing::debug!(status = %resp.status(), "relay: pull failed")
+                        }
+                        Err(e) => tracing::debug!(error = %e, "relay: pull failed"),
                     }
-                });
-            } else {
-                tracing::warn!(
-                    "RELAY_URL set but no callback token available — relay polling disabled"
-                );
-            }
+                }
+            });
+        } else {
+            tracing::warn!(
+                "RELAY_URL set but no callback token available — relay polling disabled"
+            );
         }
     }
 

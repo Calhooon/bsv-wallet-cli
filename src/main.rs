@@ -52,12 +52,16 @@ async fn main() -> Result<()> {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let config = Arc::new(config::Config::load(&flags(&cli, &matches))?);
 
-    // Init tracing
+    // Init tracing: `RUST_LOG` as the configuration read it.
     let filter = if cli.verbose {
         EnvFilter::new("debug")
     } else {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("bsv_wallet=info,tower_http=info"))
+        config
+            .wallet
+            .rust_log
+            .as_deref()
+            .and_then(|directives| EnvFilter::try_new(directives).ok())
+            .unwrap_or_else(|| EnvFilter::new(config::DEFAULT_LOG_FILTER))
     };
     // Logs go to stderr so stdout stays clean machine-parseable output
     // (notably `--json`): tooling/agents can read stdout without log pollution.

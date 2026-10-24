@@ -2,7 +2,8 @@
 //! wallet daemons. Stores callback payloads per token; wallets drain their
 //! queue OUTBOUND via `GET /pull` (connect/disconnect at will).
 //!
-//! Configuration (env):
+//! Configuration (env, read once at start by
+//! `bsv_wallet_cli::config::RelaySettings`):
 //! - `RELAY_DB` — sqlite queue path (default `relay.db`)
 //! - `RELAY_PORT` — listen port (default `3390`)
 //! - `BIND_ADDR` — bind address (default `0.0.0.0` — this IS the public
@@ -13,37 +14,35 @@
 //! See `bsv_wallet_cli::relay` for the endpoint contract.
 
 use anyhow::Result;
+use bsv_wallet_cli::config::RelaySettings;
 use bsv_wallet_cli::relay::{make_relay_router, open_relay_db, RelayState};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+    // Read once, before anything binds (`bsv_wallet_cli::config`): a
+    // malformed value is refused here, naming the variable.
+    let settings = RelaySettings::load()?;
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            settings
+                .rust_log
+                .as_deref()
+                .and_then(|directives| EnvFilter::try_new(directives).ok())
+                .unwrap_or_else(|| EnvFilter::new("info")),
         )
         .with_writer(std::io::stderr)
         .init();
-
-    let db_path = std::env::var("RELAY_DB").unwrap_or_else(|_| "relay.db".to_string());
-    let port: u16 = std::env::var("RELAY_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3390);
-    let bind_addr: IpAddr = std::env::var("BIND_ADDR")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| "0.0.0.0".parse().expect("a literal IPv4 address"));
-    let admin_token = std::env::var("RELAY_ADMIN_TOKEN")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(Arc::new);
-    let require_register = std::env::var("RELAY_REQUIRE_REGISTER")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let db_path = settings.db;
+    let port = settings.port;
+    let bind_addr = settings.bind_addr;
+    let admin_token = settings
+        .admin_token
+        .map(|t| Arc::new(t.expose().to_string()));
+    let require_register = settings.require_register;
 
     let pool = open_relay_db(&db_path).await?;
     let state = RelayState {
