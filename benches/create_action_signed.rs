@@ -15,33 +15,34 @@ use std::time::Duration;
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput};
 use bsv_wallet_cli::server::SpendingLock;
 use bsv_wallet_cli::spend_gate::{create_action, GateOptions};
-use common::{coin_count, configure, report, runtime, timed, wallet_of, Calls, LOCK, SIZES};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use common::{coin_count, configure, measure_calls, runtime, timed, wallet_of, LOCK, SIZES};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 const ORIGINATOR: &str = "bench.local";
 
 /// A payment of 1,000 sats, signed and not broadcast.
 fn pay() -> CreateActionArgs {
+    let locking_script = hex::decode(LOCK).unwrap();
     CreateActionArgs {
         description: "bench payment".to_string(),
-        input_beef: None,
-        inputs: Some(vec![]),
         outputs: Some(vec![CreateActionOutput {
-            locking_script: hex::decode(LOCK).unwrap(),
+            locking_script,
             satoshis: 1_000,
             output_description: "payment".to_string(),
             basket: None,
             custom_instructions: None,
             tags: None,
         }]),
-        lock_time: None,
-        version: None,
-        labels: None,
         options: Some(CreateActionOptions {
-            sign_and_process: Some(true),
             no_send: Some(true),
+            sign_and_process: Some(true),
             ..Default::default()
         }),
+        inputs: Some(vec![]),
+        input_beef: None,
+        labels: None,
+        lock_time: None,
+        version: None,
     }
 }
 
@@ -61,33 +62,27 @@ fn create_action_signed(c: &mut Criterion) {
             _ => Duration::from_secs(30),
         };
         configure(&mut group, Duration::from_secs(2), measure);
-        let calls = Calls::new();
-        group.bench_function(BenchmarkId::new("signed", coins), |b| {
-            b.iter_custom(|iters| {
-                calls.routine();
-                rt.block_on(async {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let fresh = fixture.fresh().await;
-                        let wallet = &fresh.wallet;
-                        assert_eq!(coin_count(wallet).await, coins);
-                        let (result, d) = timed(&calls, async {
-                            let _guard = lock.lock().await;
-                            bsv_wallet_cli::spend_guard::run(wallet.storage())
-                                .await
-                                .unwrap();
-                            create_action(wallet, pay(), ORIGINATOR, &opts).await
-                        })
-                        .await;
-                        assert!(result.unwrap().txid.is_some(), "a signed txid");
-                        total += d;
-                    }
-                    assert_eq!(coin_count(&fixture.fresh().await.wallet).await, coins);
-                    total
+        measure_calls(
+            &mut group,
+            &rt,
+            ("create_action_signed", "signed", coins),
+            async |calls| {
+                let fresh = fixture.fresh().await;
+                let wallet = &fresh.wallet;
+                assert_eq!(coin_count(wallet).await, coins);
+                let (result, d) = timed(calls, async {
+                    let _guard = lock.lock().await;
+                    bsv_wallet_cli::spend_guard::run(wallet.storage())
+                        .await
+                        .unwrap();
+                    create_action(wallet, pay(), ORIGINATOR, &opts).await
                 })
-            })
-        });
-        report(&format!("create_action_signed/signed/{coins}"), &calls);
+                .await;
+                assert!(result.unwrap().txid.is_some(), "a signed txid");
+                d
+            },
+            async || fixture.assert_as_built().await,
+        );
     }
     group.finish();
 }

@@ -13,7 +13,8 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::ops::AsyncFnMut;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bsv_sdk::primitives::{to_base64, PrivateKey};
@@ -22,8 +23,11 @@ use bsv_sdk::transaction::{MerklePath, Transaction, TransactionInput, Transactio
 use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::{BlockHeader, StorageSqlx, Wallet, WalletStorageWriter};
-use chrono::Utc;
-use criterion::{BenchmarkGroup, SamplingMode};
+use chrono::{DateTime, Utc};
+use criterion::measurement::WallTime;
+use criterion::{BenchmarkGroup, BenchmarkId, SamplingMode};
+use sqlx::SqliteConnection;
+use tokio::runtime::Runtime;
 
 pub type BenchWallet = Wallet<StorageSqlx, MockWalletServices>;
 
@@ -37,7 +41,10 @@ pub const SIZES: [usize; 2] = [1_000, 10_000];
 /// says so). `tools/bench-compare` fails a result of fewer (`MIN_CALLS`).
 pub const SAMPLES: usize = 100;
 
-/// The derivation prefix of every fixture coin.
+/// BRC-29's protocol id.
+pub const BRC29: &str = "3241645161d8";
+
+/// The derivation prefix of every fixture coin and payment.
 pub const PREFIX: &str = "SfKxPIJNgdI=";
 
 /// A payment's P2PKH (the gate tests' `LOCK`).
@@ -86,7 +93,30 @@ pub async fn coin_count(wallet: &BenchWallet) -> usize {
         .fetch_one(wallet.storage().pool())
         .await
         .unwrap();
-    n as usize
+    usize::try_from(n).unwrap()
+}
+
+/// The storage on the database at `path`, made available; a new database
+/// is migrated for `identity` first.
+async fn storage_at(path: &Path, identity: Option<&str>) -> StorageSqlx {
+    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    if let Some(identity) = identity {
+        storage.migrate("bench", identity).await.unwrap();
+    }
+    storage.make_available().await.unwrap();
+    storage
+}
+
+/// The wallet of `root` on `storage`, the mock header service knowing
+/// `blocks`.
+async fn wallet_on(
+    root: &PrivateKey,
+    storage: StorageSqlx,
+    blocks: &[(u32, String)],
+) -> BenchWallet {
+    Wallet::new(Some(root.clone()), storage, services_for(blocks))
+        .await
+        .unwrap()
 }
 
 impl Fixture {
@@ -97,12 +127,15 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wallet.db");
         std::fs::copy(&self.template, &path).unwrap();
-        let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-        storage.make_available().await.unwrap();
-        let wallet = Wallet::new(Some(self.root.clone()), storage, services_for(&self.blocks))
-            .await
-            .unwrap();
+        let storage = storage_at(&path, None).await;
+        let wallet = wallet_on(&self.root, storage, &self.blocks).await;
         Fresh { wallet, _dir: dir }
+    }
+
+    /// The built database still holds its `coins` coins: no call wrote to
+    /// it.
+    pub async fn assert_as_built(&self) {
+        assert_eq!(coin_count(&self.fresh().await.wallet).await, self.coins);
     }
 }
 
@@ -133,14 +166,13 @@ fn satoshis(i: usize) -> u64 {
 /// host tests' `header`).
 pub fn header(height: u32, root: &str) -> BlockHeader {
     BlockHeader {
-        version: 1,
-        previous_hash: "00".repeat(32),
+        height,
         merkle_root: root.to_string(),
+        previous_hash: "00".repeat(32),
+        version: 1,
         time: 1_700_000_000,
         bits: 0x1d00_ffff,
-        nonce: 0,
-        hash: String::new(),
-        height,
+        ..BlockHeader::default()
     }
 }
 
@@ -154,31 +186,30 @@ pub fn header_with_hash(height: u32, root: &str) -> BlockHeader {
     h
 }
 
-/// Coin `i`'s BRC-29 derivation (our own, counterparty self, as the
-/// toolbox's change): its suffix and its P2PKH, so the toolbox can sign it.
-fn derived(deriver: &KeyDeriver, i: usize) -> (String, Vec<u8>) {
-    let suffix = to_base64(&(i as u64).to_le_bytes());
+/// The P2PKH of the BRC-29 key `PREFIX suffix` of `deriver`'s root toward
+/// `counterparty`, so the toolbox can sign for it.
+pub fn brc29_lock(deriver: &KeyDeriver, suffix: &str, counterparty: &Counterparty) -> Vec<u8> {
     let key = deriver
         .derive_public_key(
-            &Protocol::new(SecurityLevel::Counterparty, "3241645161d8"),
+            &Protocol::new(SecurityLevel::Counterparty, BRC29),
             &format!("{PREFIX} {suffix}"),
-            &Counterparty::Self_,
+            counterparty,
             true,
         )
         .unwrap();
     let mut script = vec![0x76, 0xa9, 0x14];
     script.extend_from_slice(&key.hash160());
     script.extend_from_slice(&[0x88, 0xac]);
-    (suffix, script)
+    script
 }
 
-/// A one-output transaction to `lock` spending a made-up outpoint
-/// numbered `n`.
-fn parent(n: u64, satoshis: u64, lock: &[u8]) -> Transaction {
+/// A one-output transaction of `satoshis` to `lock` spending a made-up
+/// outpoint: `n` and `tag` (the outpoint's last byte) make it unique.
+pub fn parent(n: u64, tag: u8, satoshis: u64, lock: &[u8]) -> Transaction {
     let lock = LockingScript::from_binary(lock).unwrap();
     let mut seed = [0u8; 32];
     seed[..8].copy_from_slice(&n.to_le_bytes());
-    seed[31] = 0xbe;
+    seed[31] = tag;
     let mut tx = Transaction::new();
     tx.add_input(TransactionInput::new(hex::encode(seed), 0))
         .unwrap();
@@ -187,91 +218,131 @@ fn parent(n: u64, satoshis: u64, lock: &[u8]) -> Transaction {
     tx
 }
 
+/// Whose coins a fixture's rows are: the user, the default basket, and the
+/// rows' timestamp.
+struct Owner {
+    user_id: i64,
+    basket_id: i64,
+    when: DateTime<Utc>,
+}
+
+/// The stored proof of the mined `txid` at `height`.
+async fn insert_proof(
+    db: &mut SqliteConnection,
+    txid: &str,
+    height: u32,
+    raw: &[u8],
+    when: DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(txid)
+    .bind(i64::from(height))
+    .bind("bb".repeat(32))
+    .bind(txid)
+    .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
+    .bind(raw)
+    .bind(when)
+    .bind(when)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+/// Coin `i` (see [`Kind`]): its transaction, its proof when mined, and its
+/// output, our own change derived from `deriver`'s root. Returns a mined
+/// coin's block.
+async fn insert_coin(
+    db: &mut SqliteConnection,
+    owner: &Owner,
+    deriver: &KeyDeriver,
+    i: usize,
+) -> Option<(u32, String)> {
+    let kind = kind(i);
+    let sats = satoshis(i);
+    let suffix = to_base64(&(i as u64).to_le_bytes());
+    let lock = brc29_lock(deriver, &suffix, &Counterparty::Self_);
+    let tx = parent(i as u64, 0xbe, sats, &lock);
+    let txid = tx.id();
+    let raw = tx.to_binary();
+    let status = if kind == Kind::Mined {
+        "completed"
+    } else {
+        "unproven"
+    };
+    let tx_row = sqlx::query(
+        "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, 0, 1, 0, 'bench', ?, ?, ?, ?)",
+    )
+    .bind(owner.user_id)
+    .bind(status)
+    .bind(format!("bench-{i}"))
+    .bind(i64::from(kind == Kind::OwnPending))
+    .bind(&txid)
+    .bind(&raw)
+    .bind(owner.when)
+    .bind(owner.when)
+    .execute(&mut *db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    let block = if kind == Kind::Mined {
+        let height = FIRST_HEIGHT + u32::try_from(i).unwrap();
+        insert_proof(db, &txid, height, &raw, owner.when).await;
+        Some((height, txid.clone()))
+    } else {
+        None
+    };
+    sqlx::query(
+        "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, created_at, updated_at) \
+         VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?, ?, ?)",
+    )
+    .bind(owner.user_id)
+    .bind(tx_row)
+    .bind(owner.basket_id)
+    .bind(i64::try_from(sats).unwrap())
+    .bind(&lock)
+    .bind(&txid)
+    .bind(PREFIX)
+    .bind(&suffix)
+    .bind(owner.when)
+    .bind(owner.when)
+    .execute(db)
+    .await
+    .unwrap();
+    block
+}
+
 /// A file-backed wallet of `coins` coins (see [`Kind`]); the mock header
 /// service knows each mined coin's block and the tip.
 pub async fn wallet_of(coins: usize) -> Fixture {
     let root = PrivateKey::random();
     let identity = root.public_key().to_hex();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("wallet.db");
-    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-    storage.migrate("bench", &identity).await.unwrap();
-    storage.make_available().await.unwrap();
-    let (user, _) = storage.find_or_insert_user(&identity).await.unwrap();
-    let basket = storage
-        .find_or_create_default_basket(user.user_id)
+    let storage = storage_at(&dir.path().join("wallet.db"), Some(&identity)).await;
+    let user_id = storage
+        .find_or_insert_user(&identity)
         .await
         .unwrap()
-        .basket_id;
+        .0
+        .user_id;
+    let owner = Owner {
+        user_id,
+        basket_id: storage
+            .find_or_create_default_basket(user_id)
+            .await
+            .unwrap()
+            .basket_id,
+        when: Utc::now() - chrono::Duration::minutes(9),
+    };
 
-    let when = Utc::now() - chrono::Duration::minutes(9);
     let mut db = storage.write_tx().await.unwrap();
     let mut blocks = Vec::new();
     let deriver = KeyDeriver::new(Some(root.clone()));
     for i in 0..coins {
-        let kind = kind(i);
-        let sats = satoshis(i);
-        let (suffix, lock) = derived(&deriver, i);
-        let tx = parent(i as u64, sats, &lock);
-        let txid = tx.id();
-        let raw = tx.to_binary();
-        let status = if kind == Kind::Mined {
-            "completed"
-        } else {
-            "unproven"
-        };
-        let tx_row = sqlx::query(
-            "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 0, 1, 0, 'bench', ?, ?, ?, ?)",
-        )
-        .bind(user.user_id)
-        .bind(status)
-        .bind(format!("bench-{i}"))
-        .bind((kind == Kind::OwnPending) as i64)
-        .bind(&txid)
-        .bind(&raw)
-        .bind(when)
-        .bind(when)
-        .execute(&mut *db)
-        .await
-        .unwrap()
-        .last_insert_rowid();
-        if kind == Kind::Mined {
-            let height = FIRST_HEIGHT + i as u32;
-            sqlx::query(
-                "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
-                 VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&txid)
-            .bind(height as i64)
-            .bind("bb".repeat(32))
-            .bind(&txid)
-            .bind(MerklePath::from_coinbase_txid(&txid, height).to_binary())
-            .bind(&raw)
-            .bind(when)
-            .bind(when)
-            .execute(&mut *db)
-            .await
-            .unwrap();
-            blocks.push((height, txid.clone()));
-        }
-        sqlx::query(
-            "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, created_at, updated_at) \
-             VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?, ?, ?)",
-        )
-        .bind(user.user_id)
-        .bind(tx_row)
-        .bind(basket)
-        .bind(sats as i64)
-        .bind(&lock)
-        .bind(&txid)
-        .bind(PREFIX)
-        .bind(&suffix)
-        .bind(when)
-        .bind(when)
-        .execute(&mut *db)
-        .await
-        .unwrap();
+        blocks.extend(insert_coin(&mut db, &owner, &deriver, i).await);
     }
     db.commit().await.unwrap();
 
@@ -283,9 +354,7 @@ pub async fn wallet_of(coins: usize) -> Fixture {
         .await
         .unwrap();
 
-    let wallet = Wallet::new(Some(root.clone()), storage, services_for(&blocks))
-        .await
-        .unwrap();
+    let wallet = wallet_on(&root, storage, &blocks).await;
     Fixture {
         wallet,
         root,
@@ -298,7 +367,7 @@ pub async fn wallet_of(coins: usize) -> Fixture {
 }
 
 /// A current-thread runtime, the shape of one request's task.
-pub fn runtime() -> tokio::runtime::Runtime {
+pub fn runtime() -> Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -352,17 +421,18 @@ pub async fn timed<T, F: std::future::Future<Output = T>>(calls: &Calls, op: F) 
 }
 
 /// The nearest-rank percentile `p` (0 to 100) of sorted timings.
-fn percentile(sorted: &[Duration], p: f64) -> Duration {
-    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
+fn percentile(sorted: &[Duration], p: usize) -> Duration {
+    let rank = (p * sorted.len()).div_ceil(100);
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
 /// Where the per-bench JSON goes: `BENCH_OUT`, else the target's bench
 /// scratch directory.
 fn out_dir() -> PathBuf {
-    std::env::var_os("BENCH_OUT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("bench-percentiles"))
+    std::env::var_os("BENCH_OUT").map_or_else(
+        || PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("bench-percentiles"),
+        PathBuf::from,
+    )
 }
 
 /// Report `id`'s p50 and p99 over the measurement's calls: printed, and
@@ -374,7 +444,7 @@ pub fn report(id: &str, calls: &Calls) {
         return;
     }
     let us = |d: Duration| d.as_secs_f64() * 1e6;
-    let (p50, p99) = (percentile(&measured, 50.0), percentile(&measured, 99.0));
+    let (p50, p99) = (percentile(&measured, 50), percentile(&measured, 99));
     println!(
         "percentiles {id}: p50 {:.1} us, p99 {:.1} us over {} calls",
         us(p50),
@@ -409,4 +479,32 @@ pub fn configure<M: criterion::measurement::Measurement>(
         .sample_size(SAMPLES)
         .warm_up_time(warm_up)
         .measurement_time(measure);
+}
+
+/// Bench `bench/name/coins` of `group`: criterion's every routine runs
+/// `call` its count of times, each call returning its own timed duration
+/// (its setup untimed), then `routine_end` once; then p50 and p99 are
+/// reported (see [`report`]).
+pub fn measure_calls(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    rt: &Runtime,
+    (bench, name, coins): (&str, &str, usize),
+    mut call: impl AsyncFnMut(&Calls) -> Duration,
+    mut routine_end: impl AsyncFnMut(),
+) {
+    let calls = Calls::new();
+    group.bench_function(BenchmarkId::new(name, coins), |b| {
+        b.iter_custom(|iters| {
+            calls.routine();
+            rt.block_on(async {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    total += call(&calls).await;
+                }
+                routine_end().await;
+                total
+            })
+        });
+    });
+    report(&format!("{bench}/{name}/{coins}"), &calls);
 }

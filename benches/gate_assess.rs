@@ -8,8 +8,8 @@ mod common;
 use std::time::Duration;
 
 use bsv_wallet_cli::spend_gate::{assess, GateOptions};
-use common::{configure, report, runtime, timed, wallet_of, Calls, SIZES};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use common::{configure, measure_calls, runtime, timed, wallet_of, SIZES};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 /// A payment of 10,000 sats.
 const NEED: u64 = 10_000;
@@ -34,28 +34,22 @@ fn gate_assess(c: &mut Criterion) {
                 (None, _) => Duration::from_secs(90),
             };
             configure(&mut group, Duration::from_secs(2), measure);
-            let calls = Calls::new();
-            group.bench_with_input(BenchmarkId::new(name, coins), &need, |b, need| {
-                b.iter_custom(|iters| {
-                    calls.routine();
-                    rt.block_on(async {
-                        let mut total = Duration::ZERO;
-                        for _ in 0..iters {
-                            let (a, d) = timed(
-                                &calls,
-                                assess(wallet.storage(), wallet.services(), &opts, *need),
-                            )
-                            .await;
-                            let a = a.unwrap();
-                            assert!(a.offered_satoshis() >= NEED);
-                            total += d;
-                            wallet.services().reset_history();
-                        }
-                        total
-                    })
-                })
-            });
-            report(&format!("gate_assess/{name}/{coins}"), &calls);
+            measure_calls(
+                &mut group,
+                &rt,
+                ("gate_assess", name, coins),
+                async |calls| {
+                    let (a, d) = timed(
+                        calls,
+                        assess(wallet.storage(), wallet.services(), &opts, need),
+                    )
+                    .await;
+                    assert!(a.unwrap().offered_satoshis() >= NEED);
+                    wallet.services().reset_history();
+                    d
+                },
+                async || {},
+            );
         }
     }
     group.finish();
