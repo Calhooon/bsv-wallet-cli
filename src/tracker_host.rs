@@ -2045,12 +2045,8 @@ pub struct CreatorReading {
     /// by [`crate::spend_gate::hold_reason`] from the origin and the
     /// options. The stack's `Wallet.doorSpendable` reads no mark
     /// (`offerableUnder` checks `!a.tracker.suspect` apart from the door);
-    /// the gate's answer is `offered`.
+    /// the gate's answer is [`CreatorReading::offered`].
     pub door: bool,
-    /// `mined`, checked against the headers of the moment, not suspect, at
-    /// the spend depth (floor 1): the guard offers it with no rule. It is
-    /// `door && !suspect`.
-    pub offered: bool,
     /// Could not look (no tip, no header at the height, a stored path that
     /// does not parse): the fault. Nothing is offered on it. For the
     /// header service's own fault (`CheckError::Headers`) this is the
@@ -2062,6 +2058,18 @@ pub struct CreatorReading {
     /// simply holds no header at the height (`Unavailable`), a path that
     /// does not parse, or a root that does not match (bsv-wallet-cli #59).
     pub headers_fault: bool,
+}
+
+impl CreatorReading {
+    /// The gate's answer: the door with the mark read. `mined`, checked
+    /// against the headers of the moment, not suspect (no fork or open
+    /// split at or below its height, no open recheck), at the spend depth
+    /// (floor 1): the guard offers it with no rule. A reading with a fault
+    /// has its door closed, so it is never offered.
+    #[must_use]
+    pub fn offered(&self) -> bool {
+        self.door && !self.suspect
+    }
 }
 
 /// A check fault as a reading carries it: the header service's own error for
@@ -2153,7 +2161,6 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
                 depth,
                 suspect: state.suspect() || split,
                 door,
-                offered: door && !state.suspect() && !split,
                 fault: fault.as_ref().map(fault_text),
                 headers_fault,
             },
@@ -3315,7 +3322,7 @@ pub(crate) mod tests {
         let held = reading(&storage, &services, &txid).await;
         println!("read_creators under the fork: {held:?}");
         assert_eq!(
-            (held.word, held.suspect, held.offered, held.fault),
+            (held.word, held.suspect, held.offered(), held.fault),
             ("mined", true, false, None)
         );
         let again = guard_of(&storage, &services, &clock, &txid).await;
@@ -3333,7 +3340,7 @@ pub(crate) mod tests {
         );
         let offered = reading(&storage, &services, &txid).await;
         println!("read_creators after the tip: {offered:?}");
-        assert_eq!((offered.suspect, offered.offered), (false, true));
+        assert_eq!((offered.suspect, offered.offered()), (false, true));
         let guard = guard_of(&storage, &services, &clock, &txid).await;
         assert_eq!(guard, Ok(true));
     }
@@ -3350,7 +3357,7 @@ pub(crate) mod tests {
         let deep = reading(&storage, &services, &txid).await;
         println!("read_creators under the fork, spend depth 1: {deep:?}");
         assert_eq!(
-            (deep.depth, deep.suspect, deep.door, deep.offered),
+            (deep.depth, deep.suspect, deep.door, deep.offered()),
             (6, true, true, false)
         );
         let shallow_opts = TickOptions {
@@ -3364,7 +3371,7 @@ pub(crate) mod tests {
             .unwrap();
         println!("read_creators under the fork, spend depth 7: {shallow:?}");
         assert_eq!(
-            (shallow.suspect, shallow.door, shallow.offered),
+            (shallow.suspect, shallow.door, shallow.offered()),
             (true, false, false)
         );
     }
@@ -3379,7 +3386,7 @@ pub(crate) mod tests {
         let offered = reading(&storage, &services, &txid).await;
         println!("read_creators under a fork at 901: {offered:?}");
         assert_eq!(
-            (offered.word, offered.suspect, offered.offered),
+            (offered.word, offered.suspect, offered.offered()),
             ("mined", false, true)
         );
         let guard = guard_of(&storage, &services, &clock, &txid).await;
@@ -3416,7 +3423,66 @@ pub(crate) mod tests {
         assert_eq!(guard, Ok(false));
         assert_eq!(stored, open);
         let held = reading(&storage, &services, &txid).await;
-        assert_eq!((held.suspect, held.offered), (true, false));
+        assert_eq!((held.suspect, held.offered()), (true, false));
+    }
+
+    /// `CreatorReading::offered` is the answer `read_creators` stored as a
+    /// field before (`door && !state.suspect() && !split`) on every kind of
+    /// reading it produces: a plain deep creator is offered; a shallow one,
+    /// a suspect one, one under an open split with no mark on its row, and
+    /// one whose tip could not be read are not. The fault's reading has its
+    /// door closed (its replay faults, the word stays `built`, unmarked): a
+    /// closed door is the guard's answer when it cannot look.
+    #[tokio::test]
+    async fn the_offered_method_is_the_stored_answer_on_every_kind_of_reading() {
+        let txid = "ec".repeat(32);
+        let (storage, services, _clock) = mined_at_900(&txid).await;
+        let plain = reading(&storage, &services, &txid).await;
+        let deep_opts = TickOptions {
+            spend_depth: 7,
+            ..opts()
+        };
+        let shallow = read_creators(&storage, &services, &deep_opts, &[(txid.clone(), None)])
+            .await
+            .unwrap()
+            .remove(&txid)
+            .unwrap();
+
+        let marked = "ed".repeat(32);
+        let (m_storage, m_services, m_clock) = mined_at_900(&marked).await;
+        deliver(&m_storage, &m_services, &m_clock, 1, fork_at(900, &marked)).await;
+        let suspect = reading(&m_storage, &m_services, &marked).await;
+
+        sqlx::query("INSERT INTO tracker_meta (key, value) VALUES ('open_splits', ?)")
+            .bind(serde_json::json!({ format!("split:{}", "5a".repeat(32)): 900 }).to_string())
+            .execute(&mut *crate::store::writer(&storage).await.unwrap())
+            .await
+            .unwrap();
+        let split = reading(&storage, &services, &txid).await;
+        assert_eq!(
+            word(&storage, &txid).await,
+            ("mined".to_string(), Some(900), None),
+            "the split marks no row: the reading's suspect is the split's"
+        );
+
+        services.set_tip_unavailable();
+        let fault = reading(&storage, &services, &txid).await;
+
+        for (kind, r, door, suspect, offered) in [
+            ("plain", &plain, true, false, true),
+            ("shallow", &shallow, false, false, false),
+            ("suspect", &suspect, true, true, false),
+            ("open split", &split, true, true, false),
+            ("fault", &fault, false, false, false),
+        ] {
+            println!("{kind}: {r:?}, offered() {}", r.offered());
+            assert_eq!(
+                (r.door, r.suspect, r.offered()),
+                (door, suspect, offered),
+                "{kind}"
+            );
+        }
+        assert!(plain.fault.is_none() && fault.fault.is_some(), "{fault:?}");
     }
 
     /// F1 of the stack's coin read (bsv-stack-lean #164): the daemon's

@@ -921,7 +921,7 @@ pub fn hold_reason(
     if let Some(fault) = &reading.fault {
         return Some(format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}"));
     }
-    if reading.offered {
+    if reading.offered() {
         return None;
     }
     let depth = format!(
