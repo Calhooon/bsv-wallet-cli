@@ -707,7 +707,10 @@ impl World {
             let lock = hold_write_lock(&storage_path(&keep)).await;
             keep.push(Box::new(lock));
         }
-        let mut config = ServerConfig::default();
+        let mut config = ServerConfig {
+            settings: wire_support::quiet_config(),
+            ..ServerConfig::default()
+        };
         match name {
             "auth" => config.auth_token = Some(WIRE_BEARER.to_string()),
             "callback" => config.callback_token = Some(WIRE_CALLBACK.to_string()),

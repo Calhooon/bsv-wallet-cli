@@ -1,19 +1,15 @@
 use anyhow::Result;
 use bsv_wallet_toolbox::{Chain, Services, WalletServices};
 
-use crate::cli::Cli;
+use crate::config::Config;
 use crate::services_env;
 
-pub async fn run(cli: &Cli) -> Result<()> {
-    let chain = if cli.testnet {
-        Chain::Test
-    } else {
-        Chain::Main
-    };
+pub async fn run(config: &Config, json: bool) -> Result<()> {
+    let chain = config.chain();
 
-    // Shared env-driven services config — see services_env.rs.
+    // Shared services config — see services_env.rs.
     let services = {
-        let opts = services_env::services_options_from_env(chain, &cli.db)?;
+        let opts = services_env::services_options(&config.services, chain, &config.wallet.db)?;
         Services::with_options(chain, opts)?
     };
 
@@ -24,7 +20,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
 
     match services.get_height().await {
         Ok(height) => {
-            if cli.json {
+            if json {
                 println!(
                     "{}",
                     serde_json::json!({
@@ -38,7 +34,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             }
         }
         Err(e) => {
-            if cli.json {
+            if json {
                 println!(
                     "{}",
                     serde_json::json!({

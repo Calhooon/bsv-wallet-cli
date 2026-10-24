@@ -188,11 +188,12 @@ pub async fn reconcile<V: WalletServices>(
     storage: &StorageSqlx,
     services: &V,
     chain: Chain,
+    config: &crate::config::Config,
     min_age_secs: i64,
     execute: bool,
 ) -> Result<ReconcileReport> {
-    let verifier = BroadcastVerifier::single_pass(chain);
-    let explorers = Explorers::from_env(chain);
+    let verifier = BroadcastVerifier::single_pass(chain, config);
+    let explorers = Explorers::for_settings(chain, &config.services);
     let pool = storage.pool();
     reconcile_with(
         storage,
@@ -837,6 +838,7 @@ pub async fn run(ctx: &WalletContext, execute: bool) -> Result<()> {
         ctx.wallet.storage(),
         ctx.wallet.services(),
         ctx.chain,
+        &ctx.config,
         0,
         execute,
     )

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::config::Config;
 use handlers::WalletState;
 
 /// Lock that serializes spending operations (createAction).
@@ -56,6 +57,9 @@ pub struct ServerConfig {
     /// is enabled, authenticated by THIS token (`Authorization: Bearer` or
     /// `X-CallbackToken`) and EXEMPT from the wallet bearer auth above.
     pub callback_token: Option<String>,
+    /// The configuration read at start: the spend gate's settings and the
+    /// post-broadcast verifier are built from it once, in [`make_router`].
+    pub settings: Arc<Config>,
 }
 
 impl Default for ServerConfig {
@@ -66,6 +70,7 @@ impl Default for ServerConfig {
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
             callback_token: None,
+            settings: Arc::new(Config::default()),
         }
     }
 }
@@ -208,7 +213,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
     // silently dropped an immediate broadcast (e.g. 465 fee-too-low on a deep
     // unconfirmed BEEF) instead of returning a phantom txid.
-    let verifier = crate::broadcast_verify::BroadcastVerifier::from_env(config.chain);
+    let verifier = crate::broadcast_verify::BroadcastVerifier::new(config.chain, &config.settings);
 
     Router::new()
         // Existing 5 endpoints

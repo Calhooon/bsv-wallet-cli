@@ -92,7 +92,7 @@ pub async fn run(
     // same way). `drain` skipping this check is exactly how 24 phantom
     // recovery drains printed clean TxIDs while the network never saw one —
     // a drain that did not propagate must exit nonzero, never print success.
-    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+    ctx.verifier()
         .verify(&txid_hex)
         .await
         .into_send_result(&txid_hex)?;

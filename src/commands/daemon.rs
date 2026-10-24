@@ -1,22 +1,24 @@
-use anyhow::{Context, Result};
-use bsv_wallet_toolbox::Chain;
+use std::sync::Arc;
 
-use crate::cli::Cli;
+use anyhow::Result;
+
+use crate::config::Config;
 
 /// Monitor + HTTP server for ONE wallet — the composition itself lives in
 /// `daemon_tenant::start` so `serve-fleet --daemon` can run it N times in one
-/// process (bsv-low plan row D2). Behavior here is unchanged: env-loaded
+/// process (bsv-low plan row D2). Behavior here is unchanged: the configured
 /// ROOT_KEY, ctrl-c stops the monitor then the server.
-pub async fn run(cli: &Cli) -> Result<()> {
-    let root_key_hex =
-        std::env::var("ROOT_KEY").context("ROOT_KEY not set. Run `bsv-wallet init` first.")?;
-    let chain = if cli.testnet {
-        Chain::Test
-    } else {
-        Chain::Main
-    };
+pub async fn run(config: &Arc<Config>) -> Result<()> {
+    let root_key_hex = config.wallet.root_key()?;
 
-    let tenant = super::daemon_tenant::start(&cli.db, &root_key_hex, chain, cli.port).await?;
+    let tenant = super::daemon_tenant::start(
+        &config.wallet.db,
+        root_key_hex,
+        config.chain(),
+        config.wallet.port,
+        config,
+    )
+    .await?;
 
     tokio::signal::ctrl_c().await?;
     eprintln!("\nStopping monitor...");

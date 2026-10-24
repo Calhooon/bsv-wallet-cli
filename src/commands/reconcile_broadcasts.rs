@@ -10,11 +10,11 @@ use crate::broadcast_verify::BroadcastVerifier;
 use crate::context::WalletContext;
 
 pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Result<()> {
-    let verifier = BroadcastVerifier::single_pass(ctx.chain);
+    let verifier = BroadcastVerifier::single_pass(ctx.chain, &ctx.config);
     let opts = ReconcileOptions::for_command(
         execute,
         max_probes,
-        broadcast_reconcile::arcade_sse_for(&ctx.db_path),
+        broadcast_reconcile::arcade_sse_for(&ctx.config.services, &ctx.db_path),
     );
     println!(
         "Reconciling broadcasts{} (absence threshold {} min, up to {} probe(s){})...",

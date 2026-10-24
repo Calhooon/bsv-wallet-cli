@@ -481,7 +481,8 @@ pub fn services(chaintracks: String, arc: String) -> Services {
 // ---------------------------------------------------------------------------
 
 /// The process's environment, set once before any world: no request leaves
-/// the machine, and no operator setting changes a served answer.
+/// the machine, and no operator setting changes a served answer (the
+/// wallet's own settings are [`quiet_config`]'s, never the environment's).
 pub fn quiet_environment() {
     for var in [
         "ROOT_KEY",
@@ -507,7 +508,15 @@ pub fn quiet_environment() {
     }
     std::env::set_var("NO_PROXY", "127.0.0.1");
     std::env::set_var("no_proxy", "127.0.0.1");
-    std::env::set_var("BSV_WALLET_SKIP_BROADCAST_VERIFY", "1");
+}
+
+/// The configuration a world's server is built with: the settings of the
+/// [`quiet_environment`], read from it, never from the process's.
+pub fn quiet_config() -> std::sync::Arc<bsv_wallet_cli::config::Config> {
+    std::sync::Arc::new(
+        bsv_wallet_cli::config::Config::from_pairs(&[("BSV_WALLET_SKIP_BROADCAST_VERIFY", "1")])
+            .expect("the quiet configuration"),
+    )
 }
 
 /// The worlds are built on the process's own runtime, serially: the

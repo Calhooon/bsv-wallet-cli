@@ -1,4 +1,6 @@
-//! Single source of truth for building `ServicesOptions` from the environment.
+//! Single source of truth for building `ServicesOptions` from the
+//! configuration's [`ServicesSettings`] (read once at start by
+//! `crate::config`, the one reader of the environment).
 //!
 //! Previously `context.rs`, `commands/daemon.rs`, `commands/tick.rs`, and
 //! `commands/services.rs` each rolled their own (subtly divergent) services
@@ -36,7 +38,7 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{ConfigError, Raw, Secret};
+use crate::config::{ConfigError, Raw, Secret, ServicesSettings};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -62,10 +64,6 @@ pub fn chaintracks_url_for(configured: Option<&str>) -> Result<Option<String>> {
         _ => anyhow::bail!(CHAINTRACKS_URL_REQUIRED),
     }
 }
-
-/// The environment variable that turns the break-glass explorer header
-/// fallback on (the toolbox's `ServicesOptions::break_glass_explorer_headers`).
-pub const BREAK_GLASS_EXPLORER_HEADERS_ENV: &str = "BREAK_GLASS_EXPLORER_HEADERS";
 
 /// Is the break-glass explorer header fallback asked for? `1`, `true` or
 /// `yes` (any case); anything else, or unset, is off.
@@ -98,15 +96,6 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
     Ok(())
 }
 
-/// The environment variable holding the WhatsOnChain API key.
-pub const WOC_API_KEY_ENV: &str = "WOC_API_KEY";
-
-/// The environment variable holding the Bitails API key.
-pub const BITAILS_API_KEY_ENV: &str = "BITAILS_API_KEY";
-
-/// The environment variable that moves (or, empty, turns off) BananaBlocks.
-pub const BANANABLOCKS_BASE_ENV: &str = "BANANABLOCKS_BASE";
-
 /// A key from its configured value: empty or blank is no key.
 pub fn api_key_for(configured: Option<&str>) -> Option<String> {
     configured
@@ -114,35 +103,6 @@ pub fn api_key_for(configured: Option<&str>) -> Option<String> {
         .filter(|k| !k.is_empty())
         .map(str::to_string)
 }
-
-/// The BananaBlocks base from its configured value, in the toolbox's
-/// terms (`ServicesOptions::bananablocks_base`): unset is `None` (the
-/// chain's default); set is the value as given, so an empty one is off.
-pub fn bananablocks_base_for(configured: Option<&str>) -> Option<String> {
-    configured.map(|v| v.trim().to_string())
-}
-
-/// `WOC_API_KEY`, when set and not blank.
-pub fn woc_api_key_from_env() -> Option<String> {
-    api_key_for(std::env::var(WOC_API_KEY_ENV).ok().as_deref())
-}
-
-/// `BANANABLOCKS_BASE` in the toolbox's terms ([`bananablocks_base_for`]).
-pub fn bananablocks_base_from_env() -> Option<String> {
-    bananablocks_base_for(std::env::var(BANANABLOCKS_BASE_ENV).ok().as_deref())
-}
-
-/// The environment variable that moves `WhatsOnChain`'s API base for the
-/// CLI's own rungs (bsv-wallet-cli #74).
-pub const WOC_BASE_ENV: &str = "WOC_BASE";
-
-/// The environment variable that moves Bitails' API base for the CLI's own
-/// rungs (#74).
-pub const BITAILS_BASE_ENV: &str = "BITAILS_BASE";
-
-/// The environment variable that moves (or, empty, leaves out) the
-/// `GorillaPool` ARC (#74).
-pub const ARC_GORILLAPOOL_URL_ENV: &str = "ARC_GORILLAPOOL_URL";
 
 /// A base URL from its configured value: unset or blank is `None` (the
 /// default stands), else the value without surrounding whitespace or a
@@ -164,7 +124,7 @@ pub fn base_for(configured: Option<&str>) -> Option<String> {
 /// The toolbox's own `WhatsOnChain` and Bitails providers do not take a base
 /// (`ServicesOptions` has `bananablocks_base` alone); `GorillaPool`'s URL is
 /// its `arc_gorillapool_url`, set from here by
-/// [`services_options_from_env`].
+/// [`services_options`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerBases {
     /// `WhatsOnChain`'s API base, no trailing slash.
@@ -210,20 +170,6 @@ impl ExplorerBases {
                 Some(v) => base_for(Some(v)),
             },
         }
-    }
-
-    /// The bases from `WOC_BASE`, `BITAILS_BASE` and `ARC_GORILLAPOOL_URL`.
-    #[must_use]
-    pub fn from_env(chain: Chain) -> Self {
-        let woc = std::env::var(WOC_BASE_ENV).ok();
-        let bitails = std::env::var(BITAILS_BASE_ENV).ok();
-        let gorillapool = std::env::var(ARC_GORILLAPOOL_URL_ENV).ok();
-        Self::configured(
-            chain,
-            woc.as_deref(),
-            bitails.as_deref(),
-            gorillapool.as_deref(),
-        )
     }
 }
 
@@ -304,52 +250,42 @@ pub struct ArcadeRuntime {
     pub public_callback_url: Option<String>,
 }
 
-/// Whether Arcade V2 mode is selected via env (`ARC_MODE=arcade` or `ARCADE=1`).
-pub fn arcade_mode_enabled() -> bool {
-    if let Ok(mode) = std::env::var("ARC_MODE") {
-        if mode.eq_ignore_ascii_case("arcade") {
-            return true;
-        }
-    }
-    if let Ok(v) = std::env::var("ARCADE") {
-        let v = v.trim();
-        return v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes");
-    }
-    false
-}
-
-/// Resolve the Arcade runtime settings, or `None` when not in Arcade mode.
+/// Resolve the Arcade runtime settings, or `None` when not in Arcade mode
+/// (`ARC_MODE=arcade` or `ARCADE=1`, [`ServicesSettings::arcade`]).
 ///
 /// `db_path` locates the persisted per-wallet callback token
 /// (`<db>.callback-token`), giving each wallet db/port its own independent
 /// SSE stream and webhook identity.
-pub fn arcade_runtime(db_path: &str) -> Result<Option<ArcadeRuntime>> {
-    if !arcade_mode_enabled() {
+pub fn arcade_runtime(settings: &ServicesSettings, db_path: &str) -> Result<Option<ArcadeRuntime>> {
+    if !settings.arcade() {
         return Ok(None);
     }
-    let url = std::env::var("ARC_URL").unwrap_or_else(|_| ARCADE_V2_MAINNET.to_string());
-    let callback_token = resolve_callback_token(db_path)?;
-    let public_callback_url = std::env::var("PUBLIC_CALLBACK_URL")
-        .ok()
-        .filter(|s| !s.is_empty());
+    let url = settings
+        .arc_url
+        .clone()
+        .unwrap_or_else(|| ARCADE_V2_MAINNET.to_string());
+    let callback_token = resolve_callback_token(
+        settings
+            .callback_token
+            .as_ref()
+            .map(crate::config::Secret::expose),
+        db_path,
+    )?;
     Ok(Some(ArcadeRuntime {
         url,
         callback_token,
-        public_callback_url,
+        public_callback_url: settings.public_callback_url.clone(),
     }))
 }
 
 /// Resolve the per-wallet callback token.
 ///
-/// Priority: `CALLBACK_TOKEN` env → persisted `<db>.callback-token` file →
-/// auto-generate a random 32-hex token and persist it (0600 on unix).
-/// The token is NEVER logged.
-pub fn resolve_callback_token(db_path: &str) -> Result<String> {
-    if let Ok(tok) = std::env::var("CALLBACK_TOKEN") {
-        let tok = tok.trim().to_string();
-        if !tok.is_empty() {
-            return Ok(tok);
-        }
+/// Priority: `CALLBACK_TOKEN` (`configured`) → persisted
+/// `<db>.callback-token` file → auto-generate a random 32-hex token and
+/// persist it (0600 on unix). The token is NEVER logged.
+pub fn resolve_callback_token(configured: Option<&str>, db_path: &str) -> Result<String> {
+    if let Some(tok) = configured.map(str::trim).filter(|t| !t.is_empty()) {
+        return Ok(tok.to_string());
     }
 
     let token_path = callback_token_path(db_path);
@@ -392,23 +328,25 @@ pub fn callback_token_path(db_path: &str) -> PathBuf {
     PathBuf::from(format!("{}.callback-token", db_path))
 }
 
-/// Build `ServicesOptions` from the environment (the ONE shared helper).
+/// Build `ServicesOptions` from the configuration (the ONE shared helper).
 ///
 /// `db_path` is used only in Arcade mode, to resolve the persisted callback
 /// token.
-pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<ServicesOptions> {
+pub fn services_options(
+    settings: &ServicesSettings,
+    chain: Chain,
+    db_path: &str,
+) -> Result<ServicesOptions> {
     let mut opts = match chain {
         Chain::Main => ServicesOptions::mainnet(),
         Chain::Test => ServicesOptions::testnet(),
     };
 
-    let configured = std::env::var("CHAINTRACKS_URL").ok();
-    match chaintracks_url_for(configured.as_deref())? {
+    match settings.header_service()? {
         Some(url) => opts = opts.with_chaintracks_url(url),
         None => tracing::warn!("{}", CHAINTRACKS_OFF_WARNING),
     }
-    let break_glass = std::env::var(BREAK_GLASS_EXPLORER_HEADERS_ENV).ok();
-    if break_glass_explorer_headers(break_glass.as_deref()) {
+    if settings.break_glass_explorer_headers {
         tracing::warn!(
             marker = "break_glass_explorer_header",
             "{}",
@@ -419,19 +357,17 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
 
     // The explorers (bsv-wallet-cli #50): WhatsOnChain, BananaBlocks and
     // Bitails, each the others' fallback in the toolbox's ladders.
-    if let Some(key) = woc_api_key_from_env() {
-        opts = opts.with_woc_api_key(key);
+    let explorers = &settings.explorers;
+    if let Some(key) = &explorers.woc_api_key {
+        opts = opts.with_woc_api_key(key.expose().to_string());
     }
-    if let Some(key) = api_key_for(std::env::var(BITAILS_API_KEY_ENV).ok().as_deref()) {
-        opts = opts.with_bitails_api_key(key);
+    if let Some(key) = &explorers.bitails_api_key {
+        opts = opts.with_bitails_api_key(key.expose().to_string());
     }
-    opts.bananablocks_base = bananablocks_base_from_env();
+    opts.bananablocks_base = explorers.bananablocks_base.clone();
     // GorillaPool, the toolbox's second broadcaster: the toolbox's default
     // unless `ARC_GORILLAPOOL_URL` moves it or, empty, leaves it out (#74).
-    apply_gorillapool(
-        &mut opts,
-        std::env::var(ARC_GORILLAPOOL_URL_ENV).ok().as_deref(),
-    );
+    apply_gorillapool(&mut opts, settings.arc_gorillapool_url.as_deref());
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
     // that provider is the failover behind Arcade).
@@ -439,23 +375,19 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
     // - MAIN_TAAL_API_KEY  → raw `Authorization: <key>` (TAAL accepts the key
     //   WITHOUT the Bearer prefix; kept for backward compatibility with
     //   existing daemon deployments).
-    let mut arc_config: Option<ArcConfig> = None;
-    if let Ok(key) = std::env::var("TAAL_API_KEY") {
-        if !key.is_empty() {
-            arc_config = Some(ArcConfig::with_api_key(key));
-        }
-    }
-    if let Ok(key) = std::env::var("MAIN_TAAL_API_KEY") {
-        if !key.is_empty() {
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("Authorization".to_string(), key);
-            let mut cfg = arc_config.unwrap_or_default();
-            cfg.headers = Some(headers);
-            arc_config = Some(cfg);
-        }
+    let mut arc_config: Option<ArcConfig> = settings
+        .taal_api_key
+        .as_ref()
+        .map(|key| ArcConfig::with_api_key(key.expose().to_string()));
+    if let Some(key) = &settings.main_taal_api_key {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("Authorization".to_string(), key.expose().to_string());
+        let mut cfg = arc_config.unwrap_or_default();
+        cfg.headers = Some(headers);
+        arc_config = Some(cfg);
     }
 
-    if let Some(runtime) = arcade_runtime(db_path)? {
+    if let Some(runtime) = arcade_runtime(settings, db_path)? {
         // Arcade V2 mode: explicit flag on ServicesOptions (never inferred
         // from the URL). Classic ARC config still applies to the TAAL
         // failover provider.
@@ -468,9 +400,9 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
         opts = opts.with_arcade(runtime.url, Some(arcade_config));
     } else {
         // Classic ARC: honor ARC_URL override, else keep the chain default.
-        let arc_url = std::env::var("ARC_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
+        let arc_url = settings
+            .arc_url
+            .clone()
             .unwrap_or_else(|| opts.arc_url.clone());
         opts = opts.with_arc(arc_url, arc_config);
     }
@@ -545,27 +477,32 @@ mod tests {
     /// moves it; the toolbox reads the value so.
     #[test]
     fn bananablocks_base_unset_is_the_default_and_empty_is_off() {
-        let opts = |configured: Option<&str>| ServicesOptions {
-            bananablocks_base: bananablocks_base_for(configured),
+        let opts = |pairs: &[(&str, &str)]| ServicesOptions {
+            bananablocks_base: crate::config::Config::from_pairs(pairs)
+                .unwrap()
+                .services
+                .explorers
+                .bananablocks_base,
             ..ServicesOptions::mainnet()
         };
         assert_eq!(
-            opts(None).bananablocks_base_for(Chain::Main).as_deref(),
+            opts(&[]).bananablocks_base_for(Chain::Main).as_deref(),
             Some("https://bananablocks.com/api/v1")
         );
         assert_eq!(
-            opts(None).bananablocks_base_for(Chain::Test).as_deref(),
+            opts(&[]).bananablocks_base_for(Chain::Test).as_deref(),
             Some("https://test.bananablocks.com/api/v1")
         );
-        for off in [Some(""), Some("  ")] {
+        for off in ["", "  "] {
+            let base = [("BANANABLOCKS_BASE", off)];
             assert_eq!(
-                opts(off).bananablocks_base_for(Chain::Main),
+                opts(&base).bananablocks_base_for(Chain::Main),
                 None,
                 "{off:?}"
             );
         }
         assert_eq!(
-            opts(Some(" https://mirror.example/api/v1 "))
+            opts(&[("BANANABLOCKS_BASE", " https://mirror.example/api/v1 ")])
                 .bananablocks_base_for(Chain::Main)
                 .as_deref(),
             Some("https://mirror.example/api/v1")
@@ -671,14 +608,17 @@ mod tests {
         let db = dir.path().join("w.db");
         let db = db.to_str().unwrap();
 
-        // No env override in effect for this name; read/created from file.
-        std::env::remove_var("CALLBACK_TOKEN");
-        let tok = resolve_callback_token(db).unwrap();
+        // No CALLBACK_TOKEN configured; read/created from file.
+        let tok = resolve_callback_token(None, db).unwrap();
         assert_eq!(tok.len(), 32);
         assert!(tok.chars().all(|c| c.is_ascii_hexdigit()));
 
-        // Stable on re-read.
-        let tok2 = resolve_callback_token(db).unwrap();
+        // Stable on re-read; a configured token wins, trimmed.
+        let tok2 = resolve_callback_token(Some("  "), db).unwrap();
+        assert_eq!(
+            resolve_callback_token(Some(" t "), db).unwrap(),
+            "t".to_string()
+        );
         assert_eq!(tok, tok2);
 
         // Persisted next to the db.

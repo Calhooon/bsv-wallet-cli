@@ -404,7 +404,7 @@ impl AbsenceVotes {
 
 /// The broadcast plane the wallet is configured to submit through.
 ///
-/// This mirrors `services_env::services_options_from_env` — the ONE place that
+/// This mirrors `services_env::services_options` — the ONE place that
 /// decides which broadcaster the wallet uses — so the verifier asks the same
 /// endpoint the transaction was actually handed to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -427,8 +427,8 @@ enum BroadcastPlane {
 impl BroadcastPlane {
     /// Resolve the plane from explicit inputs (pure — unit-testable).
     ///
-    /// `arcade_mode` and `arc_url` are read from the same env vars that
-    /// `services_env` reads, so the verifier cannot drift from the broadcaster.
+    /// `arcade_mode` and `arc_url` are the same settings `services_env`
+    /// builds the broadcaster from, so the verifier cannot drift from it.
     fn resolve(chain: Chain, arcade_mode: bool, arc_url: Option<String>) -> Self {
         let arc_url = arc_url
             .map(|s| s.trim().to_string())
@@ -444,12 +444,8 @@ impl BroadcastPlane {
         }
     }
 
-    fn from_env(chain: Chain) -> Self {
-        Self::resolve(
-            chain,
-            crate::services_env::arcade_mode_enabled(),
-            std::env::var("ARC_URL").ok(),
-        )
+    fn for_settings(chain: Chain, settings: &crate::config::ServicesSettings) -> Self {
+        Self::resolve(chain, settings.arcade(), settings.arc_url.clone())
     }
 
     fn base(&self) -> &str {
@@ -630,38 +626,24 @@ pub struct BroadcastVerifier {
 }
 
 impl BroadcastVerifier {
-    /// Build a verifier for `chain`, reading the broadcast plane and optional
-    /// overrides from the env:
+    /// Build a verifier for `chain` from the configuration:
     /// - `ARC_MODE=arcade` / `ARCADE=1` + `ARC_URL` select the plane probed first.
     /// - `BSV_WALLET_SKIP_BROADCAST_VERIFY=1` disables verification entirely.
     /// - `BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS` overrides the probe-round count.
     /// - `BSV_WALLET_BROADCAST_VERIFY_DELAY_MS` overrides the inter-round delay.
     /// - `TAAL_API_KEY` / `MAIN_TAAL_API_KEY` authenticate the TAAL ARC probe.
-    pub fn from_env(chain: Chain) -> Self {
-        let enabled = !env_truthy("BSV_WALLET_SKIP_BROADCAST_VERIFY");
-        let attempts = std::env::var("BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(DEFAULT_ATTEMPTS);
-        let delay_ms = std::env::var("BSV_WALLET_BROADCAST_VERIFY_DELAY_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_DELAY_MS);
-
+    pub fn new(chain: Chain, config: &crate::config::Config) -> Self {
+        let (services, verify) = (&config.services, &config.verify);
         // TAAL ARC uses a raw `Authorization: <key>` header (no "Bearer " prefix).
-        let taal_key = std::env::var("TAAL_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty())
-            .or_else(|| {
-                std::env::var("MAIN_TAAL_API_KEY")
-                    .ok()
-                    .filter(|k| !k.is_empty())
-            });
+        let taal_key = services
+            .taal_api_key
+            .as_ref()
+            .or(services.main_taal_api_key.as_ref())
+            .map(|k| k.expose().to_string());
 
-        let plane = BroadcastPlane::from_env(chain);
+        let plane = BroadcastPlane::for_settings(chain, services);
         tracing::debug!(plane = ?plane, "broadcast verifier plane");
-        let bananablocks = crate::explorers::Explorers::from_env(chain)
+        let bananablocks = crate::explorers::Explorers::for_settings(chain, services)
             .bananablocks()
             .cloned();
         let bananablocks_base = bananablocks.as_ref().map(|bb| bb.base_url().to_string());
@@ -671,13 +653,13 @@ impl BroadcastVerifier {
             sources: build_sources(
                 chain,
                 &plane,
-                &ExplorerBases::from_env(chain),
+                &services.explorers.bases,
                 taal_key,
                 bananablocks_base.as_deref(),
             ),
-            attempts,
-            delay: Duration::from_millis(delay_ms),
-            enabled,
+            attempts: verify.attempts,
+            delay: Duration::from_millis(verify.delay_ms),
+            enabled: !verify.skip,
             rotation: Arc::default(),
             bananablocks,
         }
@@ -693,11 +675,11 @@ impl BroadcastVerifier {
     /// 404, with no other source holding it). A lone index miss is
     /// `Inconclusive` and must keep the tx: a fresh Arcade/GorillaPool-only
     /// tx is a WoC 404 for minutes while a peer's orphan pool still holds it.
-    /// Honours `BSV_WALLET_SKIP_BROADCAST_VERIFY` like `from_env` — under it
+    /// Honours `BSV_WALLET_SKIP_BROADCAST_VERIFY` like `new` — under it
     /// every verdict is `Inconclusive`, so nothing is ever abandoned (the
     /// fail-safe direction).
-    pub fn single_pass(chain: Chain) -> Self {
-        let mut v = Self::from_env(chain);
+    pub fn single_pass(chain: Chain, config: &crate::config::Config) -> Self {
+        let mut v = Self::new(chain, config);
         v.attempts = 1;
         v.delay = Duration::ZERO;
         v
@@ -1218,15 +1200,6 @@ fn taal_arc_url(chain: Chain) -> &'static str {
     }
 }
 
-fn env_truthy(key: &str) -> bool {
-    std::env::var(key)
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            v == "1" || v == "true" || v == "yes" || v == "on"
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1261,7 +1234,7 @@ mod tests {
     /// cannot look can never abandon anything.
     #[tokio::test]
     async fn single_pass_is_one_attempt_and_disabled_means_inconclusive() {
-        let v = BroadcastVerifier::single_pass(Chain::Main);
+        let v = BroadcastVerifier::single_pass(Chain::Main, &crate::config::Config::default());
         assert_eq!(v.attempts, 1);
         assert_eq!(v.delay, Duration::ZERO);
         let off = BroadcastVerifier {
@@ -2069,7 +2042,7 @@ mod tests {
         );
 
         // single_pass has no gaps at all.
-        let one = BroadcastVerifier::single_pass(Chain::Main);
+        let one = BroadcastVerifier::single_pass(Chain::Main, &crate::config::Config::default());
         assert_eq!(one.absence_window(), PROBE_TIMEOUT);
     }
 

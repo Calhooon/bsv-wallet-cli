@@ -267,7 +267,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_chain_checks: usize) ->
     // process queues on. Every statement below is a single autocommit and
     // no connection is held across a probe's network await.
     let pool = ctx.wallet.storage().writer().clone();
-    let explorers = Explorers::from_env(ctx.chain);
+    let explorers = Explorers::for_settings(ctx.chain, &ctx.config.services);
     let report = reconcile_outputs_with(&pool, execute, max_chain_checks, |src, vout| {
         let explorers = explorers.clone();
         let pool = &pool;

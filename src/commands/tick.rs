@@ -1,30 +1,25 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_toolbox::{
-    Chain, Monitor, Services, StorageSqlx, WalletStorageProvider, WalletStorageWriter,
+    Monitor, Services, StorageSqlx, WalletStorageProvider, WalletStorageWriter,
 };
 use std::sync::Arc;
 
-use crate::cli::Cli;
+use crate::config::Config;
 use crate::services_env;
 
-pub async fn run(cli: &Cli) -> Result<()> {
-    let root_key_hex =
-        std::env::var("ROOT_KEY").context("ROOT_KEY not set. Run `bsv-wallet init` first.")?;
-    let _root_key = PrivateKey::from_hex(&root_key_hex)?;
+pub async fn run(config: &Config, json: bool) -> Result<()> {
+    let _root_key = PrivateKey::from_hex(config.wallet.root_key()?)?;
 
-    let chain = if cli.testnet {
-        Chain::Test
-    } else {
-        Chain::Main
-    };
+    let chain = config.chain();
+    let db = &config.wallet.db;
 
-    let storage = StorageSqlx::open(&cli.db).await?;
+    let storage = StorageSqlx::open(db).await?;
     storage.make_available().await?;
 
-    // Shared env-driven services config — see services_env.rs.
+    // Shared services config — see services_env.rs.
     let services = {
-        let opts = services_env::services_options_from_env(chain, &cli.db)?;
+        let opts = services_env::services_options(&config.services, chain, db)?;
         Services::with_options(chain, opts)?
     };
     // P0-1b: with no tracker every proof is refused; a proving pass that
@@ -47,7 +42,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let mut entries: Vec<_> = results.into_iter().collect();
     entries.sort_by_key(|(t, _)| format!("{}", t));
 
-    if cli.json {
+    if json {
         let json: serde_json::Map<String, serde_json::Value> = entries
             .iter()
             .map(|(t, r)| {

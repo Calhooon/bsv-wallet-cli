@@ -12,7 +12,7 @@ use crate::context::WalletContext;
 use crate::explorers::{log_call, Explorers};
 
 pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
-    let explorers = Explorers::from_env(ctx.chain);
+    let explorers = Explorers::for_settings(ctx.chain, &ctx.config.services);
     run_from(ctx, reconcile_spent, &explorers, ctx.wallet.services()).await
 }
 

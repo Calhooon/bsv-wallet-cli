@@ -297,7 +297,10 @@ impl World {
             CLOSED.to_string(),
         );
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
-        let mut config = ServerConfig::default();
+        let mut config = ServerConfig {
+            settings: wire_support::quiet_config(),
+            ..ServerConfig::default()
+        };
         if name == "auth" {
             config.auth_token = Some(BEARER.to_string());
         }

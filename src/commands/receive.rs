@@ -35,7 +35,7 @@ pub(crate) async fn receive_txid(
     txid: &str,
     vout: Option<u32>,
 ) -> Result<(u32, bool)> {
-    let explorers = Explorers::from_env(ctx.chain);
+    let explorers = Explorers::for_settings(ctx.chain, &ctx.config.services);
     receive_txid_from(ctx, &explorers, ctx.wallet.services(), txid, vout).await
 }
 
@@ -278,6 +278,7 @@ pub(crate) mod tests {
             chain: Chain::Main,
             json_output: true,
             db_path: ":memory:".into(),
+            config: std::sync::Arc::default(),
         }
     }
 
