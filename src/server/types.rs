@@ -354,8 +354,10 @@ pub struct McRevealCounterpartyKeyLinkageReq {
     pub counterparty: String,
     pub verifier: String,
     /// BRC-100's `privileged`, refused when `true` (#145).
+    #[serde(default)]
     pub privileged: Option<bool>,
     /// The justification that accompanies a privileged request (#145).
+    #[serde(default)]
     pub privileged_reason: Option<String>,
 }
 
@@ -370,7 +372,9 @@ pub struct McRevealSpecificKeyLinkageReq {
     #[serde(alias = "keyID")]
     pub key_id: String,
     /// BRC-100's `privileged`, refused when `true` (#145).
+    #[serde(default)]
     pub privileged: Option<bool>,
     /// The justification that accompanies a privileged request (#145).
+    #[serde(default)]
     pub privileged_reason: Option<String>,
 }

@@ -230,3 +230,35 @@ async fn a_non_boolean_privileged_is_a_422_that_names_its_path() {
         assert!(!text.contains("expected struct"), "{path} array: {text}");
     }
 }
+
+/// The key-linkage calls read a JSON array body by position as they did
+/// before #145: `privileged` and `privilegedReason` close their structs
+/// and default when the array stops short of them, so the required
+/// fields alone are 200, as is the array with `false` and a reason, and
+/// a `true` in `privileged`'s place is 501.
+#[tokio::test]
+async fn the_key_linkage_calls_read_an_array_body_by_position_as_before() {
+    let (base, client, _tmp) = setup().await;
+    let proto = json!([2, "privileged test"]);
+    let calls = [
+        ("revealCounterpartyKeyLinkage", vec![json!(G), json!(G)]),
+        (
+            "revealSpecificKeyLinkage",
+            vec![json!(G), json!(G), proto, json!("1")],
+        ),
+    ];
+    for (path, required) in calls {
+        let url = format!("{base}/{path}");
+        let full = [required.clone(), vec![json!(false), json!("r")]].concat();
+        for body in [required.clone(), full] {
+            let resp = post_json(&client, &url, json!(body)).await;
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap();
+            assert_eq!(status, 200, "{path} {body:?}: {text}");
+        }
+        let refused = [required, vec![json!(true)]].concat();
+        let (status, served) = call(&client, &url, json!(refused)).await;
+        assert_eq!(status, 501, "{path} {refused:?}: {served}");
+        assert_eq!(served["code"], "PRIVILEGED_NOT_SUPPORTED", "{path}");
+    }
+}
