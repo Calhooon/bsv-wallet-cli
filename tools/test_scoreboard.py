@@ -70,6 +70,10 @@ class Tree:
         for i in range(3):
             self.write(f"tests/e2e/scenarios/{i:02}-s.js", "module.exports = {};\n")
         self.write("tests/e2e/run.js", "const hermetic = require('./lib/hermetic');\n")
+        self.write("tests/e2e/lib/hermetic.js", "const enabled = process.env.E2E_HERMETIC === '1';\n")
+        for c, n in (("mcp", 2), ("x402-skill", 1)):
+            for i in range(n):
+                self.write(f"tests/wire_consumers/{c}/{i:02}.json", "{}")
 
     def write(self, name, text):
         p = os.path.join(self.root, name)
@@ -285,6 +289,11 @@ class NoNumberFallsFromTheBase(Case):
         self.tree.write("tests/wire/MANIFEST.json", json.dumps({"fixtures": ["001.json"]}))
         self.refused_against(base, "fixtures:wire: 2 at the base, 1 in the tree")
 
+    def test_a_removed_consumer_fixture_is_refused(self):
+        base = self.tree.values()
+        self.tree.remove("tests/wire_consumers/mcp/01.json")
+        self.refused_against(base, "fixtures:consumers: 3 at the base, 2 in the tree")
+
     def test_a_removed_scenario_is_refused(self):
         base = self.tree.values()
         self.tree.remove("tests/e2e/scenarios/02-s.js")
@@ -307,6 +316,11 @@ class NoNumberFallsFromTheBase(Case):
                         ARCH.replace('    ("src/a.rs", 2,', '    ("src/z.rs", 1, "new"),\n    ("src/a.rs", 1,'))
         self.refused_against(base, "allowlist:A4:files: 2 at the base, 3 in the tree")
 
+    def test_a_lost_hermetic_flag_is_refused(self):
+        base = self.tree.values()
+        self.tree.write("tests/e2e/lib/hermetic.js", "const enabled = false;\n")
+        self.refused_against(base, "e2e:hermetic: 1 at the base, 0 in the tree")
+
     def test_a_malformed_base_is_refused(self):
         path = os.path.join(self.tree.root, "base.json")
         with open(path, "w") as f:
@@ -321,6 +335,47 @@ class NoNumberFallsFromTheBase(Case):
         code, out = self.tree.run("--base", "x.json")
         self.assertEqual(code, 2, out)
 
+
+class TheHermeticFlagIsTheKnobsRead(Case):
+    """(G) The flag is a line of code reading process.env.E2E_HERMETIC, never a mention."""
+
+    def flag(self):
+        return [l for l in self.table().splitlines() if l.startswith("| hermetic flag")][0]
+
+    def test_the_read_is_present(self):
+        self.assertIn("| present |  | `tests/e2e/lib/hermetic.js` |", self.flag())
+
+    def test_a_comment_is_not_the_knob(self):
+        self.tree.write("tests/e2e/lib/hermetic.js",
+                        "// const enabled = process.env.E2E_HERMETIC === '1';\n"
+                        "/* process.env.E2E_HERMETIC\n   is read nowhere */\nconst enabled = false;\n")
+        self.tree.write("tests/e2e/run.js", "// E2E_HERMETIC=1 node run.js\nconsole.log('E2E_HERMETIC');\n")
+        self.assertIn("| absent |", self.flag())
+
+    def test_the_bracket_read_is_the_knob(self):
+        self.tree.remove("tests/e2e/lib/hermetic.js")
+        self.tree.write("tests/e2e/run.js", "const on = process.env['E2E_HERMETIC'] === '1';\n")
+        self.assertIn("| present |  | `tests/e2e/run.js` |", self.flag())
+
+
+class TheConsumersCorpusIsReadWhereItLives(Case):
+    """(H) tests/wire_consumers/<consumer>/<name>.json, and nothing else there."""
+
+    def test_the_corpus_is_counted(self):
+        self.assertIn("| consumers' fixtures | 3 over 2 consumers |  | `tests/wire_consumers/` |", self.table())
+
+    def test_a_stray_file_is_refused(self):
+        self.tree.write("tests/wire_consumers/README.md", "x")
+        self.refused("tests/wire_consumers: README.md: every file is <consumer>/<name>.json")
+
+    def test_a_nested_fixture_is_refused(self):
+        self.tree.write("tests/wire_consumers/mcp/deep/01.json", "{}")
+        self.refused("tests/wire_consumers: mcp/deep/01.json: every file is <consumer>/<name>.json")
+
+    def test_the_old_home_is_not_read(self):
+        self.tree.remove("tests/wire_consumers")
+        self.tree.write("tests/wire/consumers/mcp/01.json", "{}")
+        self.assertIn("| consumers' fixtures | not in the tree yet |", self.table())
 
 
 if __name__ == "__main__":

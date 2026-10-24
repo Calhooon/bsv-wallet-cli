@@ -24,9 +24,8 @@ malformed record as an absent one.
 
   docs/ratchets.json             {"commit": <40-hex sha>, "ratchets": {name: int}}
   tests/wire/MANIFEST.json       {"fixtures": [names]}: the wire fixtures
-  tests/wire/consumers/          the consumers' fixtures: its MANIFEST.json when present
-                                 ({"fixtures": [paths]}), else every *.json under it, by
-                                 its first directory (one directory per consumer)
+  tests/wire_consumers/          the consumers' fixtures: every file is
+                                 <consumer>/<name>.json, one directory per consumer
   tests/arch_*.rs                the architecture rules (#73): each file holds one
                                  `const ALLOWED: &[(&str, usize, &str)] = &[..];` of
                                  ("src/file.rs", count, "reason") tuples and one
@@ -39,7 +38,8 @@ malformed record as an absent one.
                                  {"profiles": {name: {"runs": [{"benches": {id:
                                  {"p50_us": n, "p99_us": n, ..}}}]}}}
   tests/e2e/scenarios/*.js       the e2e scenarios (run.js loads every .js there)
-  tests/e2e/run.js               the hermetic flag: present when it reads E2E_HERMETIC
+  tests/e2e/run.js, lib/*.js     the hermetic flag: present when a line of code (not a
+                                 comment) reads the knob, `process.env.E2E_HERMETIC`
 
 docs/scoreboard/mutants.json, the measured column of the floors' rows:
 
@@ -81,13 +81,13 @@ END = "<!-- scoreboard:end -->"
 DOC = "docs/NORTH-STAR.md"
 RATCHETS = "docs/ratchets.json"
 WIRE = "tests/wire/MANIFEST.json"
-CONSUMERS = "tests/wire/consumers"
+CONSUMERS = "tests/wire_consumers"
 ARCH_GLOB = "tests/arch_*.rs"
 NIGHTLY = ".github/workflows/nightly.yml"
 MUTANTS = "docs/scoreboard/mutants.json"
 BENCH = "benches/baseline.json"
 SCENARIOS = "tests/e2e/scenarios"
-RUN_JS = "tests/e2e/run.js"
+HERMETIC_FILES = ["tests/e2e/run.js", "tests/e2e/lib/*.js"]
 
 ABSENT = "not in the tree yet"
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -167,18 +167,22 @@ def wire_rows():
 
 def consumer_rows():
     source = f"`{CONSUMERS}/`"
-    manifest = f"{CONSUMERS}/MANIFEST.json"
-    if path(manifest).exists():
-        fixtures = require_object(manifest, "(the file)", load_json(manifest)).get("fixtures")
-        if not isinstance(fixtures, list) or not all(isinstance(f, str) and f for f in fixtures):
-            fail(manifest, "fixtures", "must be a list of fixture paths")
-        source = f"`{manifest}`"
-    elif path(CONSUMERS).is_dir():
-        fixtures = sorted(p.relative_to(path(CONSUMERS)).as_posix() for p in path(CONSUMERS).rglob("*.json"))
-    else:
+    base = path(CONSUMERS)
+    if not base.is_dir():
         return [Row("consumers' fixtures", ABSENT, "", source)]
-    consumers = {f.split("/")[0] for f in fixtures if "/" in f}
-    value = f"{len(fixtures)} over {len(consumers)} consumers" if consumers else str(len(fixtures))
+    fixtures = []
+    for p in sorted(base.rglob("*")):
+        if p.is_dir():
+            continue
+        parts = p.relative_to(base).parts
+        if len(parts) != 2 or not parts[1].endswith(".json"):
+            fail(CONSUMERS, p.relative_to(base).as_posix(),
+                 "every file is <consumer>/<name>.json; this one is not")
+        fixtures.append(parts)
+    consumers = {c for c, _ in fixtures}
+    if not fixtures:
+        fail(CONSUMERS, "(the directory)", "present and holds no fixture")
+    value = f"{len(fixtures)} over {len(consumers)} consumers"
     return [Row("consumers' fixtures", value, "", source,
                 {"fixtures:consumers": len(fixtures), "consumers": len(consumers)})]
 
@@ -347,16 +351,34 @@ def bench_rows():
     return rows
 
 
+def code_lines(text):
+    """A JavaScript file's lines with its comments blanked (strings kept, as the knob's
+    read is code, and a `//` inside a string literal is rare enough to read as code)."""
+    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
+    return [re.sub(r"(^|[^:\\])//.*$", r"\1", line) for line in text.splitlines()]
+
+
+KNOB = re.compile(r"process\.env(?:\.E2E_HERMETIC\b|\[\s*['\"]E2E_HERMETIC['\"]\s*\])")
+
+
+def hermetic_read():
+    """The file whose code reads process.env.E2E_HERMETIC (by HERMETIC_FILES' order), or None."""
+    for pattern in HERMETIC_FILES:
+        for p in sorted(ROOT.glob(pattern)):
+            if any(KNOB.search(line) for line in code_lines(p.read_text())):
+                return p.relative_to(ROOT).as_posix()
+    return None
+
+
 def e2e_rows():
     if not path(SCENARIOS).is_dir():
         return [Row("e2e scenarios", ABSENT, "", f"`{SCENARIOS}/`")]
     count = len([p for p in path(SCENARIOS).iterdir() if p.name.endswith(".js")])
-    present = path(RUN_JS).exists() and "E2E_HERMETIC" in path(RUN_JS).read_text()
-    return [
-        Row("e2e scenarios", str(count), "", f"`{SCENARIOS}/`", {"e2e:scenarios": count}),
-        Row("hermetic flag `E2E_HERMETIC`", "present" if present else "absent", "", f"`{RUN_JS}`",
-            {"e2e:hermetic": 1 if present else 0}),
-    ]
+    where = hermetic_read()
+    flag = Row("hermetic flag `E2E_HERMETIC`", "present" if where else "absent", "",
+               f"`{where}`" if where else "`tests/e2e/run.js`, `tests/e2e/lib/`",
+               {"e2e:hermetic": 1 if where else 0})
+    return [Row("e2e scenarios", str(count), "", f"`{SCENARIOS}/`", {"e2e:scenarios": count}), flag]
 
 
 def rows():
