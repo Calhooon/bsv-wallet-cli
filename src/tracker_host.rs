@@ -42,7 +42,10 @@
 //! read again only when a chain event names it or a spend names it
 //! ([`spend_guard`]): the recheck of a mined word against the headers is
 //! the crate's own step, once (bsv-tracker 0.7.0, ruling (5) of 2026-10-20
-//! 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`). Under `serve`,
+//! 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`). The spend guard
+//! rechecks only a word not marked suspect; a suspect word (a fork or a
+//! split at or below its height, a reorg's open recheck) is refused as it
+//! stands, and only the tracker's own steps clear the mark (#164). Under `serve`,
 //! which holds no feed, the pass keeps the last twelve tips and reads the
 //! mined rows at or above a header that moved.
 //!
@@ -1939,15 +1942,49 @@ pub async fn record_accepted<W: WalletInterface>(wallet: &W, report: &mut TickRe
 // The spend guard
 // ---------------------------------------------------------------------------
 
-/// The wallet spend guard, as the tracker's README gives it (bsv-tracker
-/// `README.md`, "Wallet: spend guard"), unchanged: the scheduled recheck
-/// runs before the coin is used, and an unavailable header is an error that
-/// prevents the spend.
-fn readme_spend_guard<H: Headers>(
+/// The wallet spend guard on one replayed state. A word marked suspect is
+/// refused as it stands and nothing is fed: the guard reads the mark and
+/// never clears it (bsv-wallet-cli #164; the keeper's reading there of
+/// 2026-10-24; bsv-stack-lean `docs/charters/wallet.md` lines 75 and 102,
+/// `docs/charters/tracker.md` lines 86-87, 115, 121 and 132;
+/// `lean/Wallet.lean` `offerableUnder`, which reads `!a.tracker.suspect`
+/// and writes nothing). A fork or a split at or below the word's height
+/// marks it with `Reask::Fork` (bsv-tracker 0.8.0 `src/state.rs`, as
+/// in 0.7.0, `on_chain`), and while the fork is in progress our header at the height
+/// still carries the root on both branches, so the crate's `recheck`
+/// (`src/state.rs` 424-450), which clears the mark whenever the root holds,
+/// proves nothing at the door; and `SpendAttempt` would write `Reask::Spend`
+/// over the fork's re-ask (`on_host`, 348). The mark clears only by the
+/// tracker's own steps: a tip's or a resolved split's recheck through
+/// [`deliver_chain_event`], a reorg's recheck, or a new proof.
+///
+/// No `Recheck` is fed to a suspect word under any re-ask. A row is
+/// replayed from its inputs, never restored from compact bytes, so the
+/// crate's restore rule (`State::from_compact`, a restored `mined` suspect
+/// with `Reask::Recheck` until rechecked) never reaches the guard: the
+/// stored proof is checked again against this snapshot, and every mark the
+/// replayed state carries was set by a stored chain event replayed against
+/// this snapshot's new branch. The one suspect word under `Reask::Recheck`
+/// a replay gives is a reorg's open recheck (the header service still
+/// answers, at the word's height, the header the reorg deactivated, which
+/// the new branch reads as no answer); a recheck here, against the plain
+/// snapshot, would read that deactivated header, find the root, and clear
+/// a mark the reorg's own recheck had just held.
+///
+/// A word not suspect runs the crate's guard as before: `SpendAttempt`,
+/// then the scheduled `Recheck` (the stack's `Tracker.spend_guard`), and an
+/// unavailable header is an error that prevents the spend. Its proof was
+/// checked against the same headers in the replay, so the recheck moves no
+/// word; it executes the `Reask::Spend` just scheduled, and the row stored
+/// back is byte for byte what it was.
+fn guard_state<H: Headers>(
     state: &mut State,
     params: &Params,
     headers: &H,
 ) -> std::result::Result<bool, CheckError> {
+    if state.suspect() {
+        return Ok(false);
+    }
     state.step(params, headers, Input::Host(HostAction::SpendAttempt))?;
     state.step(params, headers, Input::Evidence(Evidence::Recheck))?;
     Ok(matches!(state.word(), Word::Mined(_)) && !state.suspect())
@@ -1955,8 +1992,10 @@ fn readme_spend_guard<H: Headers>(
 
 /// Run the spend guard for a coin of the tracked transaction `txid`, as
 /// the host: the row is loaded (its stored path checked against a fresh
-/// header), the README's guard runs on it, and the row is stored again.
-/// `Ok(true)` only for a checked, non-suspect `mined`; `Err` when the
+/// header), the guard runs on it ([`guard_state`]), and the row is stored
+/// again. A suspect row is stored with its mark's re-ask (`fork@h` for a
+/// fork or a split) and its `chain` column as loaded, which replays the
+/// mark on the next load. `Ok(true)` only for a checked, non-suspect `mined`; `Err` when the
 /// header service could not answer. A transaction the host does not track
 /// is not mined.
 pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
@@ -1981,7 +2020,7 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
         _ => {}
     }
     let split = under_split(state.word(), open_split_floor(storage).await?);
-    let verdict = readme_spend_guard(&mut state, &params, &snapshot).and_then(|offered| {
+    let verdict = guard_state(&mut state, &params, &snapshot).and_then(|offered| {
         Ok(offered && !split && deep_enough(&state, &snapshot, opts.spend_depth)?)
     });
     store_row(storage, &row, &state, clock.now()).await?;
@@ -1992,7 +2031,7 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
 /// ([`crate::spend_gate`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatorReading {
-    /// The tracker's word after the guard's recheck, as its label.
+    /// The tracker's word after the guard, as its label.
     pub word: &'static str,
     /// How deep the creator's block is under the tip (the tip is 1); 0 for
     /// a word with no block.
@@ -2072,7 +2111,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
         };
         let verdict = match fault {
             Some(_) => Ok(false),
-            None => readme_spend_guard(&mut state, &params, &snapshot).and_then(|offered| {
+            None => guard_state(&mut state, &params, &snapshot).and_then(|offered| {
                 Ok(offered && deep_enough(&state, &snapshot, opts.spend_depth)?)
             }),
         };
@@ -3060,12 +3099,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// The README's wallet spend guard, run by the host over a stored row
-    /// (bsv-tracker `README.md`, "Wallet: spend guard"). Three runs: the
+    /// The wallet spend guard ([`guard_state`]), run by the host over a
+    /// stored row. Three runs: the
     /// header is the one the proof was checked against; the header service
     /// cannot answer; the header moved.
     #[tokio::test]
-    async fn the_readme_spend_guard_runs_as_the_host() {
+    async fn the_spend_guard_runs_as_the_host() {
         let (storage, user) = wallet_storage().await;
         let txid = "e5".repeat(32);
         insert_tx(&storage, user, &txid, "unproven").await;
@@ -3134,9 +3173,194 @@ pub(crate) mod tests {
         let (mut state, fault) = row.replay(&params, &held);
         assert_eq!(fault, None);
         let lost = HeaderSnapshot::take(&services, []).await;
-        let guard = readme_spend_guard(&mut state, &params, &lost);
+        let guard = guard_state(&mut state, &params, &lost);
         println!("spend guard, height unanswered: {guard:?}");
         assert_eq!(guard, Err(CheckError::Unavailable(900)));
+    }
+
+    /// A creator mined at 900, the tip at 905, the header service's header
+    /// at 900 the one its proof checks against.
+    async fn mined_at_900(txid: &str) -> (StorageSqlx, MockWalletServices, FixedClock) {
+        let (storage, user) = wallet_storage().await;
+        insert_tx(&storage, user, txid, "unproven").await;
+        storage
+            .record_broadcast_status(txid, "arcade", BROADCAST_STATUS_MINED)
+            .await
+            .unwrap();
+        let services = MockWalletServices::builder()
+            .get_merkle_path_response(proof_answer(Some(path_of(txid, 900))))
+            .build();
+        services.set_header_for_height(header(900, txid, 0));
+        services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+        let clock = FixedClock(Utc::now().timestamp() as u64);
+        tick(&storage, &services, &clock, &opts()).await.unwrap();
+        assert_eq!(
+            stored_word(&storage, txid).await.unwrap().unwrap().0,
+            "mined"
+        );
+        (storage, services, clock)
+    }
+
+    /// An event header, as the feed carries one.
+    fn event_header(height: u32, hash: &str, root: &str) -> serde_json::Value {
+        serde_json::json!({
+            "version": 1, "previousHash": "00".repeat(32), "merkleRoot": root,
+            "time": 1_700_000_000u32, "bits": 0x1d00_ffffu32, "nonce": 0, "height": height,
+            "hash": hash, "chainWork": format!("{}10", "00".repeat(31)),
+        })
+    }
+
+    async fn deliver(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        clock: &FixedClock,
+        cursor: u64,
+        envelope: serde_json::Value,
+    ) {
+        let event = decode_envelope(envelope.to_string().as_bytes()).unwrap();
+        deliver_chain_event(storage, services, clock, &opts(), cursor, event)
+            .await
+            .unwrap();
+    }
+
+    fn fork_at(height: u32, txid: &str) -> serde_json::Value {
+        serde_json::json!({
+            "v": 1, "kind": "fork", "height": height, "depth": 1,
+            "competingTips": [
+                event_header(height, &"d1".repeat(32), txid),
+                event_header(height, &"d2".repeat(32), &"ee".repeat(32)),
+            ],
+        })
+    }
+
+    async fn reading(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        txid: &str,
+    ) -> CreatorReading {
+        read_creators(storage, services, &opts(), &[(txid.to_string(), None)])
+            .await
+            .unwrap()
+            .remove(txid)
+            .unwrap()
+    }
+
+    /// #164: a fork in progress at the creator's height holds its coin
+    /// until the chain moves. The guard refuses the coin and clears
+    /// nothing: the stored row keeps `fork@900` and its `chain`, the mark
+    /// survives a reload, and `read_creators` reads it suspect, not
+    /// offered, while our header at 900 still carries the root. The next
+    /// tip rechecks the word through the feed, the tracker's own step, and
+    /// the coin is offered again.
+    #[tokio::test]
+    async fn a_fork_at_the_creators_height_holds_its_coin_until_a_tip_rechecks_it() {
+        let txid = "e8".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        deliver(&storage, &services, &clock, 1, fork_at(900, &txid)).await;
+        let fork = ("mined".to_string(), Some(900), Some("fork@900".to_string()));
+        assert_eq!(stored_word(&storage, &txid).await.unwrap().unwrap(), fork);
+
+        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
+            .await
+            .unwrap();
+        let stored = stored_word(&storage, &txid).await.unwrap().unwrap();
+        println!("spend guard under a fork at 900: {guard:?}, stored {stored:?}");
+        assert_eq!(guard, Ok(false));
+        assert_eq!(
+            stored, fork,
+            "the refused spend clears no mark, writes no re-ask"
+        );
+
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(row.chain.len(), 1, "the fork stays on the row");
+        let snapshot = HeaderSnapshot::take(&services, row.proof_height()).await;
+        let (state, fault) = row.replay(&opts().params(), &snapshot);
+        assert_eq!(fault, None);
+        assert!(state.suspect(), "the mark survives a reload");
+        assert_eq!(state.reask(), Some(&Reask::Fork { height: 900 }));
+
+        let held = reading(&storage, &services, &txid).await;
+        println!("read_creators under the fork: {held:?}");
+        assert_eq!(
+            (held.word, held.suspect, held.offered, held.fault),
+            ("mined", true, false, None)
+        );
+        let again = spend_guard(&storage, &services, &clock, &opts(), &txid)
+            .await
+            .unwrap();
+        assert_eq!(again, Ok(false), "a second attempt is refused the same");
+
+        let tip = serde_json::json!({
+            "v": 1, "kind": "tip", "height": 906, "hash": "d3".repeat(32),
+            "time": 1_700_000_000u32,
+            "header": event_header(906, &"d3".repeat(32), &"ef".repeat(32)),
+        });
+        deliver(&storage, &services, &clock, 2, tip).await;
+        assert_eq!(
+            stored_word(&storage, &txid).await.unwrap().unwrap(),
+            ("mined".to_string(), Some(900), None)
+        );
+        let offered = reading(&storage, &services, &txid).await;
+        println!("read_creators after the tip: {offered:?}");
+        assert_eq!((offered.suspect, offered.offered), (false, true));
+        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
+            .await
+            .unwrap();
+        assert_eq!(guard, Ok(true));
+    }
+
+    /// A fork above the creator's block marks nothing: the coin is offered
+    /// and the guard answers as before.
+    #[tokio::test]
+    async fn a_fork_above_the_creators_height_leaves_its_coin_offered() {
+        let txid = "e9".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        deliver(&storage, &services, &clock, 1, fork_at(901, &txid)).await;
+        let offered = reading(&storage, &services, &txid).await;
+        println!("read_creators under a fork at 901: {offered:?}");
+        assert_eq!(
+            (offered.word, offered.suspect, offered.offered),
+            ("mined", false, true)
+        );
+        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
+            .await
+            .unwrap();
+        assert_eq!(guard, Ok(true));
+        assert_eq!(
+            stored_word(&storage, &txid).await.unwrap().unwrap(),
+            ("mined".to_string(), Some(900), None)
+        );
+    }
+
+    /// A reorg's open recheck: the reorg at 900 deactivated the header the
+    /// proof was checked against, and the header service still answers it,
+    /// so the new branch has no answer at 900 and the word stands suspect
+    /// with `Reask::Recheck`. The guard reads the plain snapshot, where that
+    /// deactivated header still carries the root; it refuses the coin and
+    /// leaves the mark for the next tip.
+    #[tokio::test]
+    async fn a_reorgs_open_recheck_is_not_cleared_by_the_guard() {
+        let txid = "ea".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        let gone = header_of(&header(900, &txid, 0).to_binary()).unwrap().hash;
+        let reorg = serde_json::json!({
+            "v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
+            "deactivatedHeaders": [event_header(900, &gone, &txid)],
+            "newTip": event_header(901, &"b3".repeat(32), &"ee".repeat(32)),
+        });
+        deliver(&storage, &services, &clock, 1, reorg).await;
+        let open = ("mined".to_string(), Some(900), Some("recheck".to_string()));
+        assert_eq!(stored_word(&storage, &txid).await.unwrap().unwrap(), open);
+
+        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
+            .await
+            .unwrap();
+        let stored = stored_word(&storage, &txid).await.unwrap().unwrap();
+        println!("spend guard on the reorg's open recheck: {guard:?}, stored {stored:?}");
+        assert_eq!(guard, Ok(false));
+        assert_eq!(stored, open);
+        let held = reading(&storage, &services, &txid).await;
+        assert_eq!((held.suspect, held.offered), (true, false));
     }
 
     /// F1 of the stack's coin read (bsv-stack-lean #164): the daemon's

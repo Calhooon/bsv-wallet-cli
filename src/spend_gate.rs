@@ -15,10 +15,12 @@
 //! order:
 //!
 //! 1. its creator's tracker word is `mined(h)`, our header at `h` carries
-//!    the checked root now, the creator is not marked suspect, and the block
-//!    is `SPEND_DEPTH` deep (the tip is 1). **R3 (b)**: the depth is the
-//!    host's parameter, 1 the floor ([`crate::tracker_host::read_creators`],
-//!    the 0.9.0 `spend_guard` run over many creators at once); or
+//!    the checked root now, the creator is not marked suspect (a fork or a
+//!    split at or below `h`, read as the tracker left it: the guard never
+//!    clears the mark, #164), and the block is `SPEND_DEPTH` deep (the tip
+//!    is 1). **R3 (b)**: the depth is the host's parameter, 1 the floor
+//!    ([`crate::tracker_host::read_creators`], the 0.9.0 `spend_guard` run
+//!    over many creators at once); or
 //! 2. its creator's word claims nothing about the chain (`pending`:
 //!    `unknown`, `built`, `announced`, `seen`), the creator is an action of
 //!    ours (`made`: change of a transaction this wallet created and signed),
