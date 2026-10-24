@@ -251,6 +251,9 @@ pub enum Commands {
     },
     /// Show blockchain service status
     Services,
+    /// Print every setting with its effective value and its source (env,
+    /// flag, default); keys and tokens print as <set>
+    Config,
     /// Open database inspector UI in browser
     Ui {
         /// UI server port (default: 9321)
