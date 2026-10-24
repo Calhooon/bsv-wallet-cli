@@ -424,7 +424,9 @@ pub struct RevealCounterpartyKeyLinkageParams {
     pub counterparty: String,
     /// Verifier identity key (66-char hex) — who will receive the linkage
     pub verifier: String,
-    /// If true, use privileged key derivation
+    /// BRC-100's privileged keyring, read, never ignored: true is refused
+    /// with 501 `PRIVILEGED_NOT_SUPPORTED` until this wallet holds a privileged
+    /// key; false (the default) is the everyday key
     #[serde(default)]
     pub privileged: bool,
 }
@@ -441,7 +443,9 @@ pub struct RevealSpecificKeyLinkageParams {
     /// Key ID for the specific key
     #[serde(rename = "keyID")]
     pub key_id: String,
-    /// If true, use privileged key derivation
+    /// BRC-100's privileged keyring, read, never ignored: true is refused
+    /// with 501 `PRIVILEGED_NOT_SUPPORTED` until this wallet holds a privileged
+    /// key; false (the default) is the everyday key
     #[serde(default)]
     pub privileged: bool,
 }
