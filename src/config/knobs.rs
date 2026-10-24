@@ -2,12 +2,12 @@
 //! its source, for `bsv-wallet config` and the start line of `daemon` and
 //! `serve`. A secret's value is `<set>`, or `empty` when its variable is set
 //! to nothing in effect; a setting with no value is `-`; a
-//! URL's userinfo and query are `<set>` ([`super::shown_url`]).
+//! URL's userinfo and query are `<set>` ([`shown_url`]).
 
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
 use serde::Serialize;
 
-use super::{shown_secret, shown_url, Config, Secret, Source};
+use super::{Config, Secret, Source};
 
 /// One setting: its name (a variable, or a flag), its effective value and
 /// where it came from.
@@ -24,6 +24,51 @@ pub struct Knob {
     /// value is then as set, and the setting reads as its default).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<&'static str>,
+}
+
+/// A URL as it may be shown: its userinfo and its query (or fragment) are
+/// `<set>`, its scheme, host, port and path as set. Read as text, so a
+/// value that does not parse is shown the same way (a credential in a URL
+/// is never printed, #80).
+#[must_use]
+pub fn shown_url(value: &str) -> String {
+    let (scheme, rest) = value
+        .split_once("://")
+        .map_or(("", value), |(scheme, rest)| (scheme, rest));
+    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let mut shown = String::new();
+    if !scheme.is_empty() {
+        shown.push_str(scheme);
+        shown.push_str("://");
+    }
+    match authority.rfind('@') {
+        Some(at) => {
+            shown.push_str("<set>@");
+            shown.push_str(&authority[at + 1..]);
+        }
+        None => shown.push_str(authority),
+    }
+    match tail.find(['?', '#']) {
+        Some(q) => {
+            shown.push_str(&tail[..q]);
+            shown.push_str(&tail[q..=q]);
+            shown.push_str("<set>");
+        }
+        None => shown.push_str(tail),
+    }
+    shown
+}
+
+/// A secret as the knob list shows it, from its variable as set and the
+/// secret read from it: `<set>` when it holds a value, `empty` when the
+/// variable is set but holds none in effect (`AUTH_TOKEN=` is no token at
+/// the bind guard), `-` when it is unset.
+pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> String {
+    match (set, secret) {
+        (_, Some(s)) if !s.expose().is_empty() => s.to_string(),
+        (Some(_), _) => "empty".to_string(),
+        (None, _) => "-".to_string(),
+    }
 }
 
 const NONE: &str = "-";
