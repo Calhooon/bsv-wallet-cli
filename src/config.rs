@@ -312,7 +312,9 @@ pub struct ServicesSettings {
     pub arc_mode_arcade: bool,
     /// `ARCADE`: `1`, `true` or `yes`.
     pub arcade_flag: bool,
-    /// `CALLBACK_TOKEN`, when not empty.
+    /// `CALLBACK_TOKEN`, trimmed, when not blank (the token the webhook
+    /// checks and Arcade is given; blank is none, so the persisted or a
+    /// generated token stands in Arcade mode).
     pub callback_token: Option<Secret>,
     /// `PUBLIC_CALLBACK_URL`: the webhook Arcade posts to.
     pub public_callback_url: Option<String>,
@@ -334,14 +336,14 @@ impl ServicesSettings {
             _ => raw.url("CHAINTRACKS_URL").map(HeaderService::Url),
         };
         // Unset is the chain's default, set and blank leaves it out.
-        let gorillapool = raw.present_url("ARC_GORILLAPOOL_URL");
+        let gorillapool = raw.present_base("ARC_GORILLAPOOL_URL");
         Self {
             chaintracks_url,
             break_glass_explorer_headers: raw.switch("BREAK_GLASS_EXPLORER_HEADERS", false, yes),
             arc_url: raw.url("ARC_URL"),
             arc_mode_arcade: raw.switch("ARC_MODE", false, |v| v.eq_ignore_ascii_case("arcade")),
             arcade_flag: raw.switch("ARCADE", false, yes),
-            callback_token: raw.secret("CALLBACK_TOKEN"),
+            callback_token: raw.key("CALLBACK_TOKEN"),
             public_callback_url: raw.url("PUBLIC_CALLBACK_URL"),
             taal_api_key: raw.secret("TAAL_API_KEY"),
             main_taal_api_key: raw.secret("MAIN_TAAL_API_KEY"),

@@ -135,6 +135,24 @@ impl<'a> Reader<'a> {
             other => Ok(other.map(str::to_string)),
         })
     }
+
+    /// An API base: as [`Reader::url`], the value without its trailing
+    /// slashes.
+    pub(crate) fn base(&self, name: &'static str) -> Option<String> {
+        self.url(name).as_deref().map(without_trailing_slashes)
+    }
+
+    /// An API base whose empty value means something (left out): as
+    /// [`Reader::present_url`], the value without its trailing slashes.
+    pub(crate) fn present_base(&self, name: &'static str) -> Option<String> {
+        self.present_url(name)
+            .as_deref()
+            .map(without_trailing_slashes)
+    }
+}
+
+fn without_trailing_slashes(value: &str) -> String {
+    value.trim_end_matches('/').to_string()
 }
 
 fn refused(variable: &'static str, value: &str, expected: &'static str) -> ConfigError {

@@ -4,7 +4,8 @@
 //! to nothing in effect; a setting with no value is `-` (`unset`, `off` or
 //! `empty` where that is its word), `null` in the JSON; a switch is `on` or
 //! `off`, a boolean in the JSON; a URL's userinfo and query are `<set>`
-//! ([`shown_url`]).
+//! ([`shown_url`]). `CHAINTRACKS_URL=off` is a value, the header service set
+//! off, the string `off` in the JSON; unset or blank it is `null`.
 
 use std::fmt;
 
@@ -208,8 +209,14 @@ impl Config {
             ),
             ("ARC_URL", arc_url.into()),
             // ARC_MODE's own value as set: the mode in effect is this or
-            // ARCADE's, each on its own row.
-            ("ARC_MODE", or_none(self.raw.get("ARC_MODE"))),
+            // ARCADE's, each on its own row. Blank is no value.
+            (
+                "ARC_MODE",
+                match self.raw.get("ARC_MODE") {
+                    Some(v) if v.trim().is_empty() => Value::None("empty"),
+                    set => or_none(set),
+                },
+            ),
             ("ARCADE", Value::Switch(s.arcade_flag)),
             (
                 "CALLBACK_TOKEN",
