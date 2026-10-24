@@ -213,6 +213,7 @@ pub(crate) async fn record_funded_relinquish_and_caller_input(r: &mut Recorder) 
     .await;
     // A template over the caller's own input (the puzzle, carried in
     // `inputBEEF`), its unlocking script supplied in `signAction`'s spends.
+    // The keeper's reading (#166, 2026-10-24): a caller-carried input whose whole transaction `inputBEEF` carries, signed by the caller, is the toolbox's BEEF verification and not the gate's question, so this case stays a 200.
     let (puzzle, input_beef) = puzzle_parent();
     let puzzle_template = r
         .case(
