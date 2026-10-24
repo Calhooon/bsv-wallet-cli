@@ -331,6 +331,34 @@ class LogRulesOnlyOnStderr(unittest.TestCase):
         self.assertIn(".response.revelationTime", lines[1])
 
 
+def with_polls(events, seat, n):
+    """The recording in setup.js's order for `seat` (init, `n` refused readiness polls, its wallet event)."""
+    out = list(events)
+    wallet = out.pop(next(i for i, e in enumerate(out) if e["kind"] == "wallet" and e["seat"] == seat))
+    init = next(i for i, e in enumerate(out) if e["kind"] == "cli" and e["seat"] == seat and e["argv"][0] == "init")
+    poll = {"kind": "http", "phase": "setup", "seat": seat, "method": "GET", "path": "/isAuthenticated",
+            "request": None, "status": None, "response": None, "error": "fetch failed"}
+    out[init + 1 : init + 1] = [dict(poll) for _ in range(n)] + [wallet]
+    return [{**e, "seq": i} for i, e in enumerate(out)]
+
+
+class ReadinessPollsOnly(unittest.TestCase):
+    """Finding 8: only the polls before a wallet's start go; an unanswered call elsewhere stays."""
+
+    def test_floor_poll_counts_differ(self):
+        lines, count = compare(with_polls(recording(), "A", 1), with_polls(recording(), "A", 4))
+        self.assertEqual(count, 0, lines)
+
+    def test_planted_a_wallet_that_stops_answering_mid_run_is_caught(self):
+        a, b = recording(), recording()
+        dead = {"kind": "http", "seq": len(b), "phase": SCENARIOS[3], "seat": "A", "method": "GET",
+                "path": "/isAuthenticated", "request": None, "status": None, "response": None, "error": "fetch failed"}
+        b.append(dead)
+        code, out = run_compare(a, b)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("GET /isAuthenticated (seat A): only the head made this call", out)
+
+
 def plant_sighash(events, old=0x41, new=0xC1):
     """The events with every input signature's sighash byte `old` rewritten `new`, as a
     build signing with the wrong byte would: each transaction's txid recomputed and

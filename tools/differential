@@ -66,12 +66,14 @@ PORTS = {
 # (`--same`) is the evidence: with these removed it is zero.
 EXCLUSIONS = [
     (
-        "GET /isAuthenticated answered by no response (status null)",
-        "startWallet's readiness poll: how many refused connections precede "
-        "the listen of a freshly spawned serve is the scheduler's (a 500 ms "
-        "poll). Every poll that got a response, the one that answers among "
-        "them, stays compared; the port check before the spawn is refused in "
-        "both runs and goes with the others",
+        "startWallet's readiness polls: a seat's GET /isAuthenticated with no "
+        "response (status null) after its `init` command and before its wallet "
+        "event, and no other",
+        "how many refused connections precede the listen of a freshly spawned "
+        "serve is the scheduler's (a 500 ms poll). The poll that answers, the "
+        "port check before `init` (refused in both runs), and every "
+        "/isAuthenticated without a response anywhere else (a wallet that "
+        "stopped answering mid-run) stay compared",
     ),
     (
         "wallet.dir, and the directory inside any string",
@@ -763,8 +765,18 @@ def normalize(a, b):
         return sorted(out, key=lambda d: len(d[0]), reverse=True)
 
     def polls(events):
-        return [e for e in events
-                if not (e.get("kind") == "http" and e.get("path") == "/isAuthenticated" and e.get("status") is None)]
+        # A seat's unanswered /isAuthenticated between its init and its wallet event.
+        drop, since_init = set(), {}
+        for i, e in enumerate(events):
+            seat = e.get("seat")
+            if e.get("kind") == "cli" and (e.get("argv") or [None])[0] == "init":
+                since_init[seat] = []
+            elif (e.get("kind") == "http" and e.get("path") == "/isAuthenticated"
+                  and e.get("status") is None and seat in since_init):
+                since_init[seat].append(i)
+            elif e.get("kind") == "wallet" and seat in since_init:
+                drop.update(since_init.pop(seat))
+        return [e for i, e in enumerate(events) if i not in drop]
 
     def logs(events):
         return [{**e, "stderr": log_text(e["stderr"])} if e.get("kind") == "cli" and isinstance(e.get("stderr"), str)
