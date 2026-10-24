@@ -4,6 +4,7 @@ pub mod backup;
 pub mod balance;
 pub mod cleanup_abandoned;
 pub mod compact;
+pub mod config;
 pub mod daemon;
 pub mod daemon_tenant;
 pub mod drain;

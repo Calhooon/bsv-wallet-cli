@@ -195,6 +195,9 @@ async fn main() -> Result<()> {
         Commands::Services => {
             commands::services::run(&config, cli.json).await?;
         }
+        Commands::Config => {
+            commands::config::run(&config, cli.json)?;
+        }
         Commands::Ui { ui_port } => {
             commands::ui::run(&cli.db, *ui_port).await?;
         }
