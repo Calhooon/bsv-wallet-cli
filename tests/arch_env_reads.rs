@@ -11,7 +11,7 @@
 
 mod arch_support;
 
-use arch_support::{calls, hits, judge, words};
+use arch_support::{calls_any, imports, Rule};
 
 /// The files that may read the environment freely.
 const HOMES: &[&str] = &["src/services_env.rs"];
@@ -35,19 +35,14 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/tracker_host.rs", 1, "the tracker host's tuning reads"),
 ];
 
+const RULE: Rule = Rule {
+    name: "A1: env reads outside the config module",
+    homes: HOMES,
+    allowed: ALLOWED,
+    sites: |l| calls_any(l, READS) + imports(l, READS),
+};
+
 #[test]
 fn the_environment_is_read_only_in_the_config_module() {
-    let found = hits(|l| {
-        if HOMES.contains(&l.source.file.as_str()) {
-            return 0;
-        }
-        let reads: usize = READS.iter().map(|r| calls(l.bare, &format!("{r}("))).sum();
-        let imports: usize = if l.is_use() {
-            READS.iter().map(|r| words(l.bare, r)).sum()
-        } else {
-            0
-        };
-        reads + imports
-    });
-    judge("A1: env reads outside the config module", &found, ALLOWED);
+    RULE.check();
 }

@@ -10,7 +10,7 @@
 
 mod arch_support;
 
-use arch_support::{calls, hits, judge, words};
+use arch_support::{calls_any, imports, Rule};
 
 /// The doors that start a task or a thread, by name.
 const DOORS: &[&str] = &["spawn", "spawn_blocking", "spawn_local"];
@@ -40,16 +40,14 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
 ];
 
+const RULE: Rule = Rule {
+    name: "A6: a task spawned outside the task table",
+    homes: &[],
+    allowed: ALLOWED,
+    sites: |l| calls_any(l, DOORS) + imports(l, DOORS),
+};
+
 #[test]
 fn tasks_start_only_from_the_task_table() {
-    let found = hits(|l| {
-        let doors: usize = DOORS.iter().map(|d| calls(l.bare, &format!("{d}("))).sum();
-        let imports: usize = if l.is_use() {
-            DOORS.iter().map(|d| words(l.bare, d)).sum()
-        } else {
-            0
-        };
-        doors + imports
-    });
-    judge("A6: a task spawned outside the task table", &found, ALLOWED);
+    RULE.check();
 }

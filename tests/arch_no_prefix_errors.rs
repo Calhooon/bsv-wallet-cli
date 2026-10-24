@@ -9,10 +9,10 @@
 
 mod arch_support;
 
-use arch_support::{calls, hits, judge};
+use arch_support::{calls_any, Rule};
 
 /// The prefix tests.
-const TESTS: &[&str] = &["starts_with(", "strip_prefix("];
+const TESTS: &[&str] = &["starts_with", "strip_prefix"];
 
 /// `(file, today's count, why)`. Only shrinks.
 const ALLOWED: &[(&str, usize, &str)] = &[
@@ -53,8 +53,14 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
 ];
 
+const RULE: Rule = Rule {
+    name: "A5: a string prefix test",
+    homes: &[],
+    allowed: ALLOWED,
+    sites: |l| calls_any(l, TESTS),
+};
+
 #[test]
 fn no_error_is_classified_by_its_prefix() {
-    let found = hits(|l| TESTS.iter().map(|t| calls(l.bare, t)).sum());
-    judge("A5: a string prefix test", &found, ALLOWED);
+    RULE.check();
 }
