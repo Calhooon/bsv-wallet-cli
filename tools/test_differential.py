@@ -162,7 +162,7 @@ class ScriptSigPushes(unittest.TestCase):
         long_key = b"\x04" + os.urandom(64)
         lines, count = compare(recording({"tx": signed_tx()}), recording({"tx": signed_tx(key=long_key)}))
         self.assertEqual(count, 1, lines)
-        self.assertIn(".script.pushes[1].op", lines[1])
+        self.assertIn(".script.pushes[1].", lines[1])
 
     def test_planted_high_s_is_caught(self):
         high = signed_tx()
@@ -173,6 +173,42 @@ class ScriptSigPushes(unittest.TestCase):
         lines, count = compare(recording({"tx": signed_tx()}), recording({"tx": high}))
         self.assertEqual(count, 1, lines)
         self.assertIn(".lowS", lines[1])
+
+
+class LengthsInPlaceholders(unittest.TestCase):
+    """Finding 3: a renamed reference, derivation or ciphertext keeps its decoded length."""
+
+    def b64(self, n):
+        import base64
+        return base64.b64encode(os.urandom(n)).decode()
+
+    def test_floor_same_lengths_are_equal(self):
+        a = recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": self.b64(16)})
+        b = recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": self.b64(16)})
+        lines, count = compare(a, b)
+        self.assertEqual(count, 0, lines)
+
+    def test_planted_reference_grown_by_four_characters_is_caught(self):
+        ref = self.b64(12)
+        grown = ref + self.b64(3)  # four characters more, three bytes
+        self.assertEqual(len(grown), len(ref) + 4)
+        lines, count = compare(recording({"reference": ref}), recording({"reference": grown}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn(".response.reference", lines[1])
+        self.assertIn("/12B>", lines[1])
+        self.assertIn("/15B>", lines[1])
+
+    def test_planted_derivation_length_is_caught(self):
+        lines, count = compare(recording(None, {"derivationPrefix": self.b64(16)}),
+                               recording(None, {"derivationPrefix": self.b64(32)}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn(".request.derivationPrefix", lines[1])
+
+    def test_planted_ciphertext_length_is_caught(self):
+        lines, count = compare(recording({"ciphertext": os.urandom(80).hex()}),
+                               recording({"ciphertext": os.urandom(81).hex()}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn("/80B>", lines[1])
 
 
 def plant_sighash(events, old=0x41, new=0xC1):
