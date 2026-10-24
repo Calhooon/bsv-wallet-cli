@@ -5,6 +5,10 @@ name: Nightly
 # the hot paths with a floor per file. Its own file: ci.yml is the PR gate and
 # this is not. Every action is pinned by commit sha.
 #
+# A mutation floor is a measured floor that only rises: a file's floor is the
+# score a night measured, rounded down, and it is raised in the same commit as
+# the tests that earn the raise, never by an edit alone (docs/NIGHTLY.md).
+#
 # GitHub fires `schedule` only from the default branch (main) and registers
 # workflow_dispatch there too, so a copy of this file lives on main and every
 # checkout below takes beta on the schedule (the programme's line); a dispatch
@@ -252,23 +256,24 @@ jobs:
           pattern: mutants-*
           path: outcomes
 
-      # The floor is 80 percent a file. A file below 80 on the lane's own
-      # run is floored at that score rounded down, with the issue that
-      # raises it; a floor only goes up. The lane's run (2026-10-23,
-      # cargo-mutants 27.1.0): src/spend_gate.rs 86.6, src/explorers.rs 69.7
-      # (floor 69 until #75's raise lands it at 80: fault_status, log_call,
-      # is_txid, woc_base and Rung::name survive). tracker_host.rs,
-      # handlers.rs and broadcast_verify.rs were not run by the lane: their
-      # floors are 80 until the nightly's run says otherwise. A timeout is
-      # not caught (mutants_score.py); the lane's run had none (281 tested:
-      # 214 caught, 46 missed, 21 unviable), so these scores and floors
-      # stand as they were.
+      # The target is 80 percent a file; a floor is the measured score rounded
+      # down and only rises, with the tests that earn it (the rule in the
+      # header). The measured night: run 40074725488, dispatched on beta at
+      # 93f160f (2026-10-24, cargo-mutants 27.1.0, no timeout;
+      # docs/scoreboard/mutants.json). One line a file:
+      # - spend_gate.rs: 87.1 measured; the floor stays 80, since one night is
+      #   not a trend; it may rise to 85 when a second night holds 87.1.
+      # - tracker_host.rs: 72.6 measured, floor 72; #175 raises it to 80.
+      # - server/handlers.rs: 74.2 measured, floor 74; #174 raises it to 80.
+      # - broadcast_verify.rs: 75.5 measured, floor 75; #173 raises it to 80.
+      # - explorers.rs: 74.2 measured (69.7 on #75's lane run, 2026-10-23);
+      #   the floor stays 69 until #124's tests raise it.
       - name: Score per file against the floors
         env:
           MUTANTS_FLOORS: >-
             {"src/spend_gate.rs": 80,
-             "src/tracker_host.rs": 80,
-             "src/server/handlers.rs": 80,
-             "src/broadcast_verify.rs": 80,
+             "src/tracker_host.rs": 72,
+             "src/server/handlers.rs": 74,
+             "src/broadcast_verify.rs": 75,
              "src/explorers.rs": 69}
         run: python3 .github/nightly/mutants_score.py outcomes
