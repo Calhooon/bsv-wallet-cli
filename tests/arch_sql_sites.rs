@@ -7,7 +7,7 @@
 
 mod arch_support;
 
-use arch_support::{calls, count, hits, judge, words};
+use arch_support::{calls, count, imports, Line, Rule};
 
 /// The storage boundary.
 const BOUNDARY: &[&str] = &["src/store.rs"];
@@ -99,24 +99,26 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
 ];
 
+/// The statements in the line's string literals, its `sqlx` calls (not a
+/// method of the same name), and the `use` that brings one in.
+fn sql_sites(l: &Line) -> usize {
+    let strings = l.strings();
+    let statements: usize = STATEMENTS.iter().map(|w| count(&strings, w)).sum();
+    let calls: usize = CALLS
+        .iter()
+        .map(|c| calls(l.bare, c).saturating_sub(count(l.bare, &format!(".{c}"))))
+        .sum();
+    statements + calls + imports(l, NAMES)
+}
+
+const RULE: Rule = Rule {
+    name: "A2: SQL outside the storage boundary",
+    homes: BOUNDARY,
+    allowed: ALLOWED,
+    sites: sql_sites,
+};
+
 #[test]
 fn sql_lives_behind_the_storage_boundary() {
-    let found = hits(|l| {
-        if BOUNDARY.contains(&l.source.file.as_str()) {
-            return 0;
-        }
-        let strings = l.strings();
-        let statements: usize = STATEMENTS.iter().map(|w| count(&strings, w)).sum();
-        let calls: usize = CALLS
-            .iter()
-            .map(|c| calls(l.bare, c).saturating_sub(count(l.bare, &format!(".{c}"))))
-            .sum();
-        let imports: usize = if l.is_use() {
-            NAMES.iter().map(|n| words(l.bare, n)).sum()
-        } else {
-            0
-        };
-        statements + calls + imports
-    });
-    judge("A2: SQL outside the storage boundary", &found, ALLOWED);
+    RULE.check();
 }

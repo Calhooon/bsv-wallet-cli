@@ -1,6 +1,6 @@
 //! Rule A3 (#73), rule 28 (`tests/rule_28_sites.rs`) extended to the
-//! providers by name: the chain explorers (WhatsOnChain, Bitails,
-//! BananaBlocks), their types and their hosts, are named in the shipped
+//! providers by name: the chain explorers (`WhatsOnChain`, Bitails,
+//! `BananaBlocks`), their types and their hosts, are named in the shipped
 //! code only in `src/explorers.rs` (the CLI's rungs, #50) and
 //! `src/broadcast_verify.rs` (the chain indexes of C1). Every other file
 //! that names one today is listed with its count and why. Comments are not
@@ -9,7 +9,7 @@
 
 mod arch_support;
 
-use arch_support::{hits, judge};
+use arch_support::Rule;
 
 /// The files that may name an explorer.
 const HOMES: &[&str] = &["src/explorers.rs", "src/broadcast_verify.rs"];
@@ -52,14 +52,17 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
 ];
 
-#[test]
-fn explorers_are_named_only_at_their_rungs() {
-    let found = hits(|l| {
-        if HOMES.contains(&l.source.file.as_str()) {
-            return 0;
-        }
+const RULE: Rule = Rule {
+    name: "A3: an explorer named outside its rungs",
+    homes: HOMES,
+    allowed: ALLOWED,
+    sites: |l| {
         let line = l.code.to_lowercase();
         NAMES.iter().map(|n| line.matches(n).count()).sum()
-    });
-    judge("A3: an explorer named outside its rungs", &found, ALLOWED);
+    },
+};
+
+#[test]
+fn explorers_are_named_only_at_their_rungs() {
+    RULE.check();
 }

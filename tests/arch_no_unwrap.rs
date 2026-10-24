@@ -7,7 +7,7 @@
 
 mod arch_support;
 
-use arch_support::{calls, count, hits, judge};
+use arch_support::{calls, calls_any, count, Rule};
 
 /// `(file, today's count, why)`. Only shrinks.
 const ALLOWED: &[(&str, usize, &str)] = &[
@@ -26,13 +26,20 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
 ];
 
+const RULE: Rule = Rule {
+    name: "A4: unwrap/expect outside test code",
+    homes: &[],
+    allowed: ALLOWED,
+    sites: |l| calls_any(l, &["unwrap", "expect"]),
+};
+
 #[test]
 fn the_shipped_code_does_not_unwrap() {
-    let found = hits(|l| calls(l.bare, "unwrap(") + calls(l.bare, "expect("));
-    judge("A4: unwrap/expect outside test code", &found, ALLOWED);
+    RULE.check();
 }
 
-/// The scanner the six rules share blanks what it should and nothing more.
+/// The scanner the six rules share blanks comments, string contents and
+/// test items, and nothing more.
 #[test]
 fn the_scan_reads_only_the_shipped_code() {
     let text = r##"fn a() { x.unwrap(); } // y.unwrap()
@@ -49,11 +56,14 @@ fn b() { k.expect("a {brace"); }
     assert_eq!(code.lines().count(), text.lines().count());
     assert!(code.contains("\"w.unwrap()\"") && !code.contains("y.unwrap"));
     assert!(bare.contains("fn b()"), "{bare}");
+}
 
+#[test]
+fn a_test_member_ends_at_its_own_end() {
     // An attribute on a field, a variant or a match arm ends with that
     // member, never past the brace that closes its holder: the arm after a
     // test arm is still read, and an item's own commas are passed.
-    let text = r##"struct S { #[cfg(test)] a: u8, b: u8 }
+    let text = r"struct S { #[cfg(test)] a: u8, b: u8 }
 enum E { A, #[cfg(test)] B(u8, u8), C }
 enum F { A, #[cfg(test)] B }
 fn m(x: E) -> u8 { match x {
@@ -67,7 +77,7 @@ fn t<A, B>(a: A, b: B) { w.unwrap() }
 #[cfg(test)]
 let f = |v| { v.unwrap() };
 fn o() { u.unwrap() }
-"##;
+";
     let (code, bare) = arch_support::views(text);
     assert_eq!(calls(&bare, "unwrap("), 2, "{bare}");
     for kept in [
@@ -80,13 +90,19 @@ fn o() { u.unwrap() }
         assert!(bare.contains(kept), "{kept} lost: {bare}");
     }
     assert_eq!(code.lines().count(), text.lines().count());
+}
 
+#[test]
+fn a_call_is_its_name_at_a_boundary() {
     // A call is its name at an identifier boundary, not a definition.
     let line = "x.unwrap(); Option::unwrap(y); unwrap(z); my_unwrap(w); fn unwrap(a: A) {}";
     assert_eq!(calls(line, "unwrap("), 3, "{line}");
     let line = "use tokio::task::{spawn as go, spawn_blocking}; use std::thread::spawn;";
     assert_eq!(arch_support::words(line, "spawn"), 2, "{line}");
+}
 
+#[test]
+fn test_files_are_declared_in_code() {
     // A test module declared in a comment or a string is not a test file;
     // one declared in code is, at its `#[path]` when it has one.
     let text = "/*\n#[cfg(test)]\nmod spend_gate;\n*/\nlet s = \"#[cfg(test)] mod spend_gate;\";\n\

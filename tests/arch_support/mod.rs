@@ -29,8 +29,7 @@ use std::path::{Path, PathBuf};
 /// else the one it was built from.
 pub fn root() -> PathBuf {
     std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from)
 }
 
 /// One source file of `src/`, in its two views.
@@ -43,9 +42,7 @@ pub struct Source {
 
 /// Every `.rs` file under `src/` that is not test code, sorted.
 pub fn sources() -> Vec<Source> {
-    let mut paths = Vec::new();
-    rust_files(&root().join("src"), &mut paths);
-    paths.sort();
+    let paths = rust_files(&root().join("src"));
     let tests = test_files(&paths);
     paths
         .into_iter()
@@ -53,8 +50,9 @@ pub fn sources() -> Vec<Source> {
         .map(|p| {
             let text = std::fs::read_to_string(&p).expect("a source file");
             let (code, bare) = views(&text);
+            let file = p.strip_prefix(root()).expect("under the crate");
             Source {
-                file: relative(&p),
+                file: file.to_string_lossy().replace('\\', "/"),
                 code,
                 bare,
             }
@@ -95,79 +93,101 @@ pub fn declared_test_files(file: &Path, code: &[char], bare: &[char]) -> Vec<Pat
     } else {
         dir.join(&stem)
     };
-    let n = bare.len();
-    let skip_space = |mut j: usize| {
-        while j < n && bare[j].is_whitespace() {
-            j += 1;
-        }
-        j
-    };
     let mut out = Vec::new();
     for at in occurrences(bare, CFG_TEST) {
-        let mut j = at + CFG_TEST.len();
-        // Further attributes; `#[path = ".."]` names the file.
-        let mut path = None;
-        loop {
-            j = skip_space(j);
-            if !starts(bare, j, "#[") {
-                break;
-            }
-            let close = (j..n).find(|&k| bare[k] == ']').unwrap_or(n);
-            if starts(bare, j, "#[path = \"") {
-                let open = j + "#[path = \"".len();
-                let end = (open..close)
-                    .rev()
-                    .find(|&k| code[k] == '"')
-                    .unwrap_or(open);
-                path = Some(dir.join(code[open..end].iter().collect::<String>()));
-            }
-            j = (close + 1).min(n);
+        let (j, path) = further_attributes(dir, code, bare, at + CFG_TEST.len());
+        if let Some(name) = declared_mod(bare, j) {
+            out.push(path.unwrap_or_else(|| module_file(&home, &name)));
         }
-        // `pub`, `pub(crate)`, `pub(super)`, `pub(in ..)`.
-        if starts(bare, j, "pub") {
-            j += 3;
-            if j < n && bare[j] == '(' {
-                j = (j..n).find(|&k| bare[k] == ')').map_or(n, |k| k + 1);
-            }
-            j = skip_space(j);
-        }
-        if !starts(bare, j, "mod") || !bare.get(j + 3).is_some_and(|c| c.is_whitespace()) {
-            continue;
-        }
-        j = skip_space(j + 3);
-        let name: String = bare[j..].iter().take_while(|c| is_ident(**c)).collect();
-        j = skip_space(j + name.chars().count());
-        if name.is_empty() || bare.get(j) != Some(&';') {
-            continue;
-        }
-        out.push(path.unwrap_or_else(|| {
-            let flat = home.join(format!("{name}.rs"));
-            if flat.exists() {
-                flat
-            } else {
-                home.join(name).join("mod.rs")
-            }
-        }));
     }
     out
 }
 
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).expect("a directory") {
-        let path = entry.expect("an entry").path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
+/// Walks the further attributes from `from`: where the item they carry
+/// starts, and the file a `#[path = ".."]` among them names.
+fn further_attributes(
+    dir: &Path,
+    code: &[char],
+    bare: &[char],
+    from: usize,
+) -> (usize, Option<PathBuf>) {
+    let n = bare.len();
+    let mut j = from;
+    let mut path = None;
+    loop {
+        j = skip_space(bare, j);
+        if !starts(bare, j, "#[") {
+            return (j, path);
         }
+        let close = (j..n).find(|&k| bare[k] == ']').unwrap_or(n);
+        if starts(bare, j, "#[path = \"") {
+            let open = j + "#[path = \"".len();
+            let end = (open..close)
+                .rev()
+                .find(|&k| code[k] == '"')
+                .unwrap_or(open);
+            path = Some(dir.join(code[open..end].iter().collect::<String>()));
+        }
+        j = (close + 1).min(n);
     }
 }
 
-fn relative(path: &Path) -> String {
-    path.strip_prefix(root())
-        .expect("under the crate")
-        .to_string_lossy()
-        .replace('\\', "/")
+/// The name a `mod name;` at `j` declares, past its `pub`, `pub(crate)`,
+/// `pub(super)` or `pub(in ..)`; `None` for anything else, a
+/// `mod name { .. }` block among them.
+fn declared_mod(bare: &[char], mut j: usize) -> Option<String> {
+    let n = bare.len();
+    if starts(bare, j, "pub") {
+        j += 3;
+        if j < n && bare[j] == '(' {
+            j = (j..n).find(|&k| bare[k] == ')').map_or(n, |k| k + 1);
+        }
+        j = skip_space(bare, j);
+    }
+    if !starts(bare, j, "mod") || !bare.get(j + 3).is_some_and(|c| c.is_whitespace()) {
+        return None;
+    }
+    j = skip_space(bare, j + 3);
+    let name: String = bare[j..].iter().take_while(|c| is_ident(**c)).collect();
+    j = skip_space(bare, j + name.chars().count());
+    (!name.is_empty() && bare.get(j) == Some(&';')).then_some(name)
+}
+
+/// The file of module `name` declared from `home`: `name.rs`, else
+/// `name/mod.rs`.
+fn module_file(home: &Path, name: &str) -> PathBuf {
+    let flat = home.join(format!("{name}.rs"));
+    if flat.exists() {
+        flat
+    } else {
+        home.join(name).join("mod.rs")
+    }
+}
+
+/// Every `.rs` file under `dir`, sorted.
+fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(next) = dirs.pop() {
+        for entry in std::fs::read_dir(&next).expect("a directory") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The first index from `j` of `chars` that is not whitespace.
+fn skip_space(chars: &[char], mut j: usize) -> usize {
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    j
 }
 
 fn is_ident(c: char) -> bool {
@@ -216,52 +236,19 @@ pub fn lexed(text: &str) -> (Vec<char>, Vec<char>) {
     while i < n {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
-        if c == '/' && next == Some('/') {
-            let end = (i..n).find(|&j| chars[j] == '\n').unwrap_or(n);
+        if c == '/' && matches!(next, Some('/' | '*')) {
+            let end = comment_end(&chars, i);
             blank(&mut code, i, end);
             blank(&mut bare, i, end);
             i = end;
-        } else if c == '/' && next == Some('*') {
-            let (mut depth, mut j) = (1, i + 2);
-            while j < n && depth > 0 {
-                if chars[j] == '/' && chars.get(j + 1) == Some(&'*') {
-                    depth += 1;
-                    j += 2;
-                } else if chars[j] == '*' && chars.get(j + 1) == Some(&'/') {
-                    depth -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
+        } else if c == 'r' && raw_may_open(&chars, i) && matches!(next, Some('"' | '#')) {
+            match raw_string(&chars, i) {
+                Some((open, end, after)) => {
+                    blank(&mut bare, open, end);
+                    i = after;
                 }
+                None => i += 1,
             }
-            blank(&mut code, i, j);
-            blank(&mut bare, i, j);
-            i = j;
-        } else if c == 'r'
-            && (i == 0
-                || !is_ident(chars[i - 1])
-                || (chars[i - 1] == 'b' && (i < 2 || !is_ident(chars[i - 2]))))
-            && matches!(next, Some('"') | Some('#'))
-        {
-            // A raw string `r"..."`, `r#"..."#`, or a raw identifier `r#name`.
-            let hashes = (i + 1..n).take_while(|&j| chars[j] == '#').count();
-            let open = i + 1 + hashes;
-            if chars.get(open) != Some(&'"') {
-                i += 1;
-                continue;
-            }
-            let mut j = open + 1;
-            let end = loop {
-                if j >= n {
-                    break n;
-                }
-                if chars[j] == '"' && (1..=hashes).all(|k| chars.get(j + k) == Some(&'#')) {
-                    break j;
-                }
-                j += 1;
-            };
-            blank(&mut bare, open + 1, end);
-            i = (end + 1 + hashes).min(n);
         } else if c == '"' {
             let mut j = i + 1;
             while j < n && chars[j] != '"' {
@@ -287,6 +274,50 @@ pub fn lexed(text: &str) -> (Vec<char>, Vec<char>) {
         }
     }
     (code, bare)
+}
+
+/// Where the comment opening at `i` (`//` or `/*`) ends (exclusive): at its
+/// newline, or past the `*/` that closes it (block comments nest).
+fn comment_end(chars: &[char], i: usize) -> usize {
+    let n = chars.len();
+    if chars.get(i + 1) == Some(&'/') {
+        return (i..n).find(|&j| chars[j] == '\n').unwrap_or(n);
+    }
+    let (mut depth, mut j) = (1, i + 2);
+    while j < n && depth > 0 {
+        if chars[j] == '/' && chars.get(j + 1) == Some(&'*') {
+            depth += 1;
+            j += 2;
+        } else if chars[j] == '*' && chars.get(j + 1) == Some(&'/') {
+            depth -= 1;
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    j
+}
+
+/// Whether the `r` at `i` may open a raw string: it starts a token, or
+/// follows a `b` that does (`br"..."`).
+fn raw_may_open(chars: &[char], i: usize) -> bool {
+    i == 0 || !is_ident(chars[i - 1]) || (chars[i - 1] == 'b' && (i < 2 || !is_ident(chars[i - 2])))
+}
+
+/// The raw string `r"..."` or `r#"..."#` whose `r` is at `i`: where its
+/// contents start and end (exclusive), and the index past its closing
+/// hashes. `None` for a raw identifier `r#name`.
+fn raw_string(chars: &[char], i: usize) -> Option<(usize, usize, usize)> {
+    let n = chars.len();
+    let hashes = (i + 1..n).take_while(|&j| chars[j] == '#').count();
+    let open = i + 1 + hashes;
+    if chars.get(open) != Some(&'"') {
+        return None;
+    }
+    let end = (open + 1..n)
+        .find(|&j| chars[j] == '"' && (1..=hashes).all(|k| chars.get(j + k) == Some(&'#')))
+        .unwrap_or(n);
+    Some((open + 1, end, (end + 1 + hashes).min(n)))
 }
 
 /// Blanks each `#[cfg(test)]` through the end of the item it carries, in
@@ -340,17 +371,11 @@ const ITEM_WORDS: &[&str] = &[
 /// with an item word.
 fn item_end(bare: &[char], from: usize) -> usize {
     let n = bare.len();
-    let skip_space = |mut j: usize| {
-        while j < n && bare[j].is_whitespace() {
-            j += 1;
-        }
-        j
-    };
     // The word the item opens with, past any further attributes.
-    let mut j = skip_space(from);
+    let mut j = skip_space(bare, from);
     while starts(bare, j, "#[") {
         j = (j..n).find(|&k| bare[k] == ']').map_or(n, |k| k + 1);
-        j = skip_space(j);
+        j = skip_space(bare, j);
     }
     let word: String = bare[j.min(n)..]
         .iter()
@@ -403,7 +428,7 @@ impl Line<'_> {
         self.code
             .chars()
             .zip(self.bare.chars())
-            .map(|(c, b)| if c != b { c } else { ' ' })
+            .map(|(c, b)| if c == b { ' ' } else { c })
             .collect()
     }
 
@@ -520,4 +545,48 @@ pub fn calls(line: &str, name: &str) -> usize {
             boundary && !definition
         })
         .count()
+}
+
+/// How many times the line calls any of `names` (each with its `(`, by
+/// `calls`).
+pub fn calls_any(line: &Line, names: &[&str]) -> usize {
+    names
+        .iter()
+        .map(|n| calls(line.bare, &format!("{n}(")))
+        .sum()
+}
+
+/// How many of `names` a `use` line brings in (by `words`); 0 on any other
+/// line.
+pub fn imports(line: &Line, names: &[&str]) -> usize {
+    if line.is_use() {
+        names.iter().map(|n| words(line.bare, n)).sum()
+    } else {
+        0
+    }
+}
+
+/// One rule of docs/ARCH-RULES.md as data: its message, the files it never
+/// reads (its homes), its allowlist `(file, today's count, why)`, and the
+/// sites it counts on a line.
+pub struct Rule {
+    pub name: &'static str,
+    pub homes: &'static [&'static str],
+    pub allowed: &'static [(&'static str, usize, &'static str)],
+    pub sites: fn(&Line) -> usize,
+}
+
+impl Rule {
+    /// Counts the rule's sites outside its homes and judges them against
+    /// its allowlist.
+    pub fn check(&self) {
+        let found = hits(|l| {
+            if self.homes.contains(&l.source.file.as_str()) {
+                0
+            } else {
+                (self.sites)(l)
+            }
+        });
+        judge(self.name, &found, self.allowed);
+    }
 }
