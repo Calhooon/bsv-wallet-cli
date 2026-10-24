@@ -508,7 +508,7 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/config.rs` | 770 | The configuration (#80): every variable and the global flags read once at start, typed and checked (a malformed value refused naming the variable and its shape), secrets redacted; the crate's one reader of the environment (A7); the relay's own settings | plumbing |
 | `src/config/knobs.rs` | 184 | Every setting with its effective value and its source, for `bsv-wallet config` and the start line of `daemon` and `serve` | plumbing |
 | `src/config/tests.rs` | 261 | The configuration's tests: the defaults, each switch's words, the refusals, the redaction, the sources | plumbing |
-| `src/services_env.rs` | 430 | The one settings-to-`ServicesOptions` resolver: `CHAINTRACKS_URL` required, break-glass headers, explorer keys, Arcade runtime, the callback token | wallet host (plumbing) |
+| `src/services_env.rs` | 430 | The one settings-to-`ServicesOptions` resolver, over typed settings (#172: it parses none): `CHAINTRACKS_URL` required, break-glass headers, explorer keys and bases (`GorillaPool`'s one base, the knob's and the toolbox's), Arcade runtime, the callback token | wallet host (plumbing) |
 | `src/store.rs` | 320 | The store's two doors (reader pool, one writer), `open_shared` (one store per file per process), the busy told by its type | wallet host |
 | `src/spend_gate.rs` | 1593 | The spend gate: the offer, the word and its scope, the refusal, the header-fault retry, the holds' heal | wallet host |
 | `src/spend_gate/tests.rs` | 2439 | The gate's tests (36: 30 tokio, 6 plain), with the write counter at the door | wallet host |

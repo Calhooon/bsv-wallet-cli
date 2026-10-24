@@ -27,7 +27,6 @@
 
 use anyhow::{Context, Result};
 use bsv_wallet_toolbox::services::providers::{
-    arc::ARC_GORILLAPOOL,
     bitails::{BITAILS_MAINNET_URL, BITAILS_TESTNET_URL},
     whatsonchain::{WOC_MAINNET_URL, WOC_TESTNET_URL},
 };
@@ -38,9 +37,7 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{
-    shown_secret, shown_url, url_or, Raw, Reader, Secret, ServicesSettings, Value,
-};
+use crate::config::{shown_url, url_or, HeaderService, Reader, Secret, ServicesSettings, Value};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -51,29 +48,21 @@ pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it t
      deployment), or to `off` to run with none (every merkle proof is then refused). There is \
      no default header service.";
 
-/// Resolve the header service from the `CHAINTRACKS_URL` value.
+/// Resolve the header service from `CHAINTRACKS_URL` as the configuration
+/// read it.
 ///
-/// A URL is the header service. `off` (any case) returns `None`: the
+/// A URL is the header service. `off` returns `None`: the
 /// wallet has no chain tracker, and the toolbox refuses every proof that
 /// reaches it (webhook, SSE, monitor, relay) rather than take it on the
 /// broadcaster's word, so nothing is marked proven; only ever right for an
 /// offline or air-gapped run. Unset or empty is an error
 /// ([`CHAINTRACKS_URL_REQUIRED`]): there is no default.
-pub fn chaintracks_url_for(configured: Option<&str>) -> Result<Option<String>> {
-    match configured.map(str::trim) {
-        Some(v) if v.eq_ignore_ascii_case("off") => Ok(None),
-        Some(v) if !v.is_empty() => Ok(Some(v.to_string())),
-        _ => anyhow::bail!(CHAINTRACKS_URL_REQUIRED),
+pub fn chaintracks_url_for(configured: Option<&HeaderService>) -> Result<Option<String>> {
+    match configured {
+        Some(HeaderService::Url(url)) => Ok(Some(url.clone())),
+        Some(HeaderService::Off) => Ok(None),
+        None => anyhow::bail!(CHAINTRACKS_URL_REQUIRED),
     }
-}
-
-/// Is the break-glass explorer header fallback asked for? `1`, `true` or
-/// `yes` (any case); anything else, or unset, is off.
-pub fn break_glass_explorer_headers(configured: Option<&str>) -> bool {
-    matches!(
-        configured.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes")
-    )
 }
 
 /// What a wallet with the break-glass setting on is told at startup.
@@ -98,14 +87,6 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
     Ok(())
 }
 
-/// A key from its configured value: empty or blank is no key.
-pub fn api_key_for(configured: Option<&str>) -> Option<String> {
-    configured
-        .map(str::trim)
-        .filter(|k| !k.is_empty())
-        .map(str::to_string)
-}
-
 /// A base URL from its configured value: unset or blank is `None` (the
 /// default stands), else the value without surrounding whitespace or a
 /// trailing slash.
@@ -124,8 +105,8 @@ pub fn base_for(configured: Option<&str>) -> Option<String> {
 /// hermetic run points all three at a local stub (#74).
 ///
 /// The toolbox's own `WhatsOnChain` and Bitails providers do not take a base
-/// (`ServicesOptions` has `bananablocks_base` alone); `GorillaPool`'s URL is
-/// its `arc_gorillapool_url`, set from here by
+/// (`ServicesOptions` has `bananablocks_base` alone); `GorillaPool`'s base
+/// here is the toolbox's `arc_gorillapool_url`, set from it by
 /// [`services_options`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerBases {
@@ -138,18 +119,26 @@ pub struct ExplorerBases {
 }
 
 impl ExplorerBases {
-    /// The chain's defaults, the toolbox's constants.
+    /// The chain's defaults, the toolbox's: its constants, and for
+    /// `GorillaPool` its options' own default (`ServicesOptions::mainnet`,
+    /// `ServicesOptions::testnet`, which leaves it out).
     pub fn defaults(chain: Chain) -> Self {
-        let (woc, bitails, gorillapool) = match chain {
-            Chain::Main => (WOC_MAINNET_URL, BITAILS_MAINNET_URL, Some(ARC_GORILLAPOOL)),
-            // GorillaPool's testnet ARC is not commonly used; the toolbox
-            // leaves it out too (`ServicesOptions::testnet`).
-            Chain::Test => (WOC_TESTNET_URL, BITAILS_TESTNET_URL, None),
+        let (woc, bitails, options) = match chain {
+            Chain::Main => (
+                WOC_MAINNET_URL,
+                BITAILS_MAINNET_URL,
+                ServicesOptions::mainnet(),
+            ),
+            Chain::Test => (
+                WOC_TESTNET_URL,
+                BITAILS_TESTNET_URL,
+                ServicesOptions::testnet(),
+            ),
         };
         Self {
             woc: woc.trim_end_matches('/').to_string(),
             bitails: bitails.trim_end_matches('/').to_string(),
-            gorillapool: gorillapool.map(str::to_string),
+            gorillapool: options.arc_gorillapool_url,
         }
     }
 
@@ -176,9 +165,11 @@ impl ExplorerBases {
 }
 
 /// The explorers' settings (#50, #74): their keys and the bases of the
-/// CLI's own rungs, parsed here from the environment `crate::config` read
-/// once at start (`WOC_API_KEY`, `BITAILS_API_KEY`, `BANANABLOCKS_BASE`,
-/// `WOC_BASE`, `BITAILS_BASE`, `ARC_GORILLAPOOL_URL`).
+/// CLI's own rungs and of `GorillaPool`, as `crate::config` read them once at
+/// start (`WOC_API_KEY`, `BITAILS_API_KEY`, `BANANABLOCKS_BASE`, `WOC_BASE`,
+/// `BITAILS_BASE`, `ARC_GORILLAPOOL_URL`). The explorers' variables are named
+/// here, to the configuration's reader, since the architecture rule A3 keeps
+/// an explorer's name out of `src/config.rs`; every value is parsed there.
 #[derive(Debug, Clone)]
 pub struct ExplorerSettings {
     /// `WOC_API_KEY`, trimmed, when not blank.
@@ -194,29 +185,34 @@ pub struct ExplorerSettings {
 }
 
 impl ExplorerSettings {
-    /// The settings from the environment as read at start, on `chain`: a
-    /// base that is set and not blank must be a URL.
-    pub(crate) fn read(raw: &Reader, chain: Chain) -> Self {
-        let key = |name| api_key_for(raw.get(name)).map(Secret::new);
+    /// The settings from the environment as read at start, on `chain`, with
+    /// `GorillaPool`'s base as `crate::config` read it (`ARC_GORILLAPOOL_URL`:
+    /// unset `None`, set the value checked and trimmed): a key is trimmed,
+    /// and a base that is set and not blank must be a URL.
+    pub(crate) fn read(raw: &Reader, chain: Chain, gorillapool: Option<&str>) -> Self {
         Self {
-            woc_api_key: key("WOC_API_KEY"),
-            bitails_api_key: key("BITAILS_API_KEY"),
+            woc_api_key: raw.key("WOC_API_KEY"),
+            bitails_api_key: raw.key("BITAILS_API_KEY"),
             bananablocks_base: raw.present_url("BANANABLOCKS_BASE"),
             bases: ExplorerBases::configured(
                 chain,
                 raw.url("WOC_BASE").as_deref(),
                 raw.url("BITAILS_BASE").as_deref(),
-                raw.get("ARC_GORILLAPOOL_URL"),
+                gorillapool,
             ),
         }
     }
 
     /// The settings' rows for `crate::config::Config::knobs`, in their order,
-    /// on `chain`. A key's row reads `raw`, the environment as read at start,
-    /// to tell an empty key from an unset one; `BananaBlocks`' row is the base
-    /// in effect, as `WOC_BASE`'s is.
-    pub(crate) fn values(&self, raw: &Raw, chain: Chain) -> Vec<(&'static str, Value)> {
-        let key = |name, s: &Option<Secret>| (name, shown_secret(raw.get(name), s.as_ref()));
+    /// on `chain`. A key's row is `secret`'s (the knob list's, which tells an
+    /// empty key from an unset one); `BananaBlocks`' row is the base in
+    /// effect, as `WOC_BASE`'s is.
+    pub(crate) fn values(
+        &self,
+        chain: Chain,
+        secret: impl Fn(&'static str, Option<&Secret>) -> Value,
+    ) -> Vec<(&'static str, Value)> {
+        let key = |name, s: &Option<Secret>| (name, secret(name, s.as_ref()));
         let base = |v: &str| Value::Text(shown_url(v));
         vec![
             key("WOC_API_KEY", &self.woc_api_key),
@@ -231,15 +227,6 @@ impl ExplorerSettings {
             ("WOC_BASE", base(&self.bases.woc)),
             ("BITAILS_BASE", base(&self.bases.bitails)),
         ]
-    }
-}
-
-/// `GorillaPool` on `ServicesOptions` from `ARC_GORILLAPOOL_URL`'s configured
-/// value: unset leaves the options' own default untouched (the toolbox's,
-/// never a copy of it); empty or blank leaves it out; a URL moves it.
-pub fn apply_gorillapool(opts: &mut ServicesOptions, configured: Option<&str>) {
-    if let Some(v) = configured {
-        opts.arc_gorillapool_url = base_for(Some(v));
     }
 }
 
@@ -370,8 +357,10 @@ pub fn services_options(
     }
     opts.bananablocks_base = explorers.bananablocks_base.clone();
     // GorillaPool, the toolbox's second broadcaster: the toolbox's default
-    // unless `ARC_GORILLAPOOL_URL` moves it or, empty, leaves it out (#74).
-    apply_gorillapool(&mut opts, settings.arc_gorillapool_url.as_deref());
+    // unless `ARC_GORILLAPOOL_URL` moves it or, empty, leaves it out (#74);
+    // the base the knob shows and the verifier asks.
+    opts.arc_gorillapool_url
+        .clone_from(&explorers.bases.gorillapool);
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
     // that provider is the failover behind Arcade).
@@ -420,47 +409,29 @@ mod tests {
 
     #[test]
     fn chaintracks_has_no_default() {
-        for unset in [None, Some(""), Some("   ")] {
-            let err = chaintracks_url_for(unset).unwrap_err();
-            assert!(
-                err.to_string().contains("CHAINTRACKS_URL is not set"),
-                "{err}"
-            );
-        }
+        let err = chaintracks_url_for(None).unwrap_err();
+        assert!(
+            err.to_string().contains("CHAINTRACKS_URL is not set"),
+            "{err}"
+        );
         assert!(!CHAINTRACKS_URL_REQUIRED.contains("babbage"));
     }
 
     #[test]
     fn chaintracks_honours_an_explicit_url() {
+        let url = HeaderService::Url("https://ct.example/v1".to_string());
         assert_eq!(
-            chaintracks_url_for(Some("https://ct.example/v1"))
-                .unwrap()
-                .as_deref(),
+            chaintracks_url_for(Some(&url)).unwrap().as_deref(),
             Some("https://ct.example/v1")
         );
     }
 
     #[test]
     fn chaintracks_off_disables_validation_on_purpose() {
-        assert_eq!(chaintracks_url_for(Some("off")).unwrap(), None);
-        assert_eq!(chaintracks_url_for(Some("OFF")).unwrap(), None);
-    }
-
-    #[test]
-    fn break_glass_is_off_unless_asked_for() {
-        for off in [
-            None,
-            Some(""),
-            Some("0"),
-            Some("false"),
-            Some("no"),
-            Some("on"),
-        ] {
-            assert!(!break_glass_explorer_headers(off), "{off:?}");
-        }
-        for on in [Some("1"), Some("true"), Some("YES"), Some(" yes ")] {
-            assert!(break_glass_explorer_headers(on), "{on:?}");
-        }
+        assert_eq!(
+            chaintracks_url_for(Some(&HeaderService::Off)).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -513,37 +484,50 @@ mod tests {
         );
     }
 
-    /// `ARC_GORILLAPOOL_URL` unset leaves `ServicesOptions`' own default
-    /// for either chain; empty or blank leaves `GorillaPool` out; a URL moves it.
+    /// `ARC_GORILLAPOOL_URL` (#74, #172): the one base, the knob's and the
+    /// toolbox's. Unset is `ServicesOptions`' own default for either chain;
+    /// empty or blank leaves `GorillaPool` out; a URL moves it.
     #[test]
-    fn gorillapool_unset_leaves_the_toolbox_default() {
-        for base in [ServicesOptions::mainnet(), ServicesOptions::testnet()] {
-            let mut opts = base.clone();
-            apply_gorillapool(&mut opts, None);
-            assert_eq!(opts.arc_gorillapool_url, base.arc_gorillapool_url);
-            for blank in ["", "  "] {
-                let mut opts = base.clone();
-                apply_gorillapool(&mut opts, Some(blank));
-                assert_eq!(opts.arc_gorillapool_url, None, "{blank:?}");
-            }
-            let mut opts = base.clone();
-            apply_gorillapool(&mut opts, Some(" http://127.0.0.1:3380/arc/ "));
-            assert_eq!(
-                opts.arc_gorillapool_url.as_deref(),
-                Some("http://127.0.0.1:3380/arc")
-            );
+    fn the_toolbox_takes_the_gorillapool_base_the_knob_shows() {
+        let options = |pairs: &[(&str, &str)], chain| {
+            let mut pairs = pairs.to_vec();
+            pairs.push(("CHAINTRACKS_URL", "off"));
+            let flags = crate::config::Flags {
+                testnet: chain == Chain::Test,
+                ..crate::config::Flags::default()
+            };
+            let vars = pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()));
+            let config = crate::config::Config::from_vars(&flags, vars).unwrap();
+            let opts = services_options(&config.services, chain, "unused.db").unwrap();
+            (
+                opts.arc_gorillapool_url,
+                config.services.explorers.bases.gorillapool,
+            )
+        };
+        for (chain, base) in [
+            (Chain::Main, ServicesOptions::mainnet()),
+            (Chain::Test, ServicesOptions::testnet()),
+        ] {
+            let (toolbox, shown) = options(&[], chain);
+            assert_eq!(toolbox, base.arc_gorillapool_url, "{chain:?}");
+            assert_eq!(shown, toolbox, "{chain:?}");
         }
+        for blank in ["", "  "] {
+            let (toolbox, shown) = options(&[("ARC_GORILLAPOOL_URL", blank)], Chain::Main);
+            assert_eq!((toolbox, shown), (None, None), "{blank:?}");
+        }
+        let (toolbox, shown) = options(
+            &[("ARC_GORILLAPOOL_URL", " http://127.0.0.1:3380/arc/ ")],
+            Chain::Main,
+        );
+        assert_eq!(toolbox.as_deref(), Some("http://127.0.0.1:3380/arc"));
+        assert_eq!(shown, toolbox);
         assert_eq!(
             ServicesOptions::mainnet().arc_gorillapool_url.as_deref(),
             Some("https://arc.gorillapool.io")
         );
-    }
-
-    #[test]
-    fn a_blank_api_key_is_no_key() {
-        assert_eq!(api_key_for(None), None);
-        assert_eq!(api_key_for(Some("  ")), None);
-        assert_eq!(api_key_for(Some(" k ")).as_deref(), Some("k"));
     }
 
     /// `WOC_BASE` and `BITAILS_BASE` (#74): unset or blank is the chain's
