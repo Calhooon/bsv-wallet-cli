@@ -117,7 +117,7 @@ async fn served() -> (String, Client, TempDir) {
         &storage,
         &services,
         &SystemClock,
-        &TickOptions::from_env(),
+        &TickOptions::default(),
         1,
         bsv_tracker::ChainEvent::Frozen {
             outpoint: bsv_tracker::Outpoint {

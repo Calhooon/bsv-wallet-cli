@@ -72,7 +72,7 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
         ctx.wallet.storage(),
         ctx.wallet.services(),
         &SystemClock,
-        &TickOptions::from_env(),
+        &TickOptions::from_config(&ctx.config),
         &deposit_raw,
         &claim_raw,
         &crate::brc29::deposit_script(&ctx.root_key)?,

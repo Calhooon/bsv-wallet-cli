@@ -221,6 +221,7 @@ pub async fn create_action(
     State(wallet): State<WalletState>,
     axum::Extension(spending_lock): axum::Extension<super::SpendingLock>,
     axum::Extension(verifier): axum::Extension<crate::broadcast_verify::BroadcastVerifier>,
+    axum::Extension(gate): axum::Extension<crate::spend_gate::GateOptions>,
     headers: HeaderMap,
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
@@ -276,7 +277,7 @@ pub async fn create_action(
         &wallet,
         args,
         &originator,
-        &crate::spend_gate::GateOptions::from_env().with_allow_pending(allow_pending),
+        &gate.with_allow_pending(allow_pending),
     )
     .await
     .map_err(AppError::from_gate_error)?;

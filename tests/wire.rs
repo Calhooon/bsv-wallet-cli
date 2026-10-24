@@ -689,7 +689,7 @@ impl World {
                 &storage,
                 &services,
                 &bsv_wallet_cli::tracker_host::SystemClock,
-                &bsv_wallet_cli::tracker_host::TickOptions::from_env(),
+                &bsv_wallet_cli::tracker_host::TickOptions::default(),
                 1,
                 bsv_tracker::ChainEvent::Frozen {
                     outpoint: bsv_tracker::Outpoint {

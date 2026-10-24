@@ -27,8 +27,6 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/commands/serve.rs", 4, "TLS and the tokens of serve"),
     ("src/commands/serve_fleet.rs", 5, "each tenant's keys, TLS and the tokens of serve-fleet"),
     ("src/server/mod.rs", 2, "BIND_ADDR and AUTH_TOKEN"),
-    ("src/spend_gate.rs", 1, "SPEND_OWN_CHANGE"),
-    ("src/tracker_host.rs", 1, "the tracker host's tuning reads"),
 ];
 
 const RULE: Rule = Rule {
