@@ -654,3 +654,60 @@ async fn a_scope_naming_a_wrong_coin_is_the_callers_400() {
         json!({"code": "VALIDATION_ERROR", "message": message})
     );
 }
+
+/// `privileged: true` (#145) is 501 `PRIVILEGED_NOT_SUPPORTED` by its
+/// kind, `{code, message}` and no `Retry-After`; absent or `false` passes.
+#[tokio::test]
+async fn privileged_true_is_refused_by_its_kind_and_false_passes() {
+    let asked = |privileged, reason: Option<&str>| Privileged {
+        privileged,
+        privileged_reason: reason.map(str::to_string),
+    };
+    let reason = Some("a reason for it");
+    assert!(refuse_privileged("encrypt", &asked(None, None)).is_ok());
+    assert!(refuse_privileged("encrypt", &asked(Some(false), None)).is_ok());
+    assert!(refuse_privileged("encrypt", &asked(Some(false), reason)).is_ok());
+    for reason in [None, reason] {
+        let e = refuse_privileged("encrypt", &asked(Some(true), reason)).unwrap_err();
+        let (status, retry, body) = answer(e).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert!(retry.is_none());
+        assert_eq!(body["code"], "PRIVILEGED_NOT_SUPPORTED");
+        assert_eq!(body.as_object().unwrap().len(), 2, "{body}");
+        assert!(body["message"].as_str().unwrap().starts_with("encrypt: "));
+    }
+}
+
+/// The nine request structs read `privileged` and `privilegedReason`
+/// (#145) beside their own fields; absent and `null` are `None`.
+#[test]
+fn the_nine_request_structs_read_privileged_and_its_reason() {
+    fn read<T: serde::de::DeserializeOwned>(base: &serde_json::Value, get: fn(T) -> Privileged) {
+        let parse = |extra: &serde_json::Value| {
+            let mut body = base.clone();
+            body.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().cloned().unwrap());
+            let p = get(serde_json::from_value(body).unwrap());
+            (p.privileged, p.privileged_reason)
+        };
+        assert_eq!(parse(&json!({})), (None, None));
+        assert_eq!(parse(&json!({"privileged": null})), (None, None));
+        assert_eq!(parse(&json!({"privileged": false})), (Some(false), None));
+        let reason = Some("a reason for it".to_string());
+        let both = json!({"privileged": true, "privilegedReason": "a reason for it"});
+        assert_eq!(parse(&both), (Some(true), reason));
+    }
+    let body = json!({"protocolID": [2, "t"], "keyID": "1", "counterparty": "self",
+        "verifier": "self", "data": [1], "signature": [1], "plaintext": [1],
+        "ciphertext": [1], "hmac": [1]});
+    read::<McGetPublicKeyReq>(&body, |r| r.privileged);
+    read::<McCreateSignatureReq>(&body, |r| r.privileged);
+    read::<McVerifySignatureReq>(&body, |r| r.privileged);
+    read::<McEncryptReq>(&body, |r| r.privileged);
+    read::<McDecryptReq>(&body, |r| r.privileged);
+    read::<McCreateHmacReq>(&body, |r| r.privileged);
+    read::<McVerifyHmacReq>(&body, |r| r.privileged);
+    read::<McRevealCounterpartyKeyLinkageReq>(&body, |r| r.privileged);
+    read::<McRevealSpecificKeyLinkageReq>(&body, |r| r.privileged);
+}

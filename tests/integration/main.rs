@@ -13,6 +13,7 @@ mod discovery;
 mod e2e;
 mod e2e_broadcast;
 mod key_linkage;
+mod privileged;
 mod status;
 mod support;
 mod transactions;
