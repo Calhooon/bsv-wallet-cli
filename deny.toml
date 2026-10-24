@@ -11,8 +11,14 @@ yanked = "deny"
 unmaintained = "all"
 # unsound: fail across the graph, including dependencies below bsv-rs.
 unsound = "all"
-# ignore: no fleet-wide security exemptions or severity cutoff.
-ignore = []
+# ignore: RUSTSEC-2026-0387 (crypto-bigint 0.5.5, timing variability in operations
+# meant to be constant-time; the fix is crypto-bigint >= 0.7.6, reached only by
+# k256's 0.14 line, a major move of bsv-rs's dependency line tracked by bsv-rs's
+# issue; the stack's ruling of 2026-10-24 03:5xZ, docs/RULINGS-2026-10-12.md).
+# The entry leaves the day bsv-rs ships the move.
+ignore = [
+    { id = "RUSTSEC-2026-0387", reason = "k256 0.13 pins crypto-bigint 0.5; the fix is k256 0.14 in bsv-rs, tracked there; the entry leaves when it ships" },
+]
 
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
@@ -21,13 +27,14 @@ multiple-versions = "warn"
 # wildcards: require an explicit version requirement.
 wildcards = "deny"
 # deny/name/wrappers: bsv-rs and immediate parents inside its dependency graph.
-# No repository outside bsv-rs is ever a wrapper. Wrappers are immediate parents,
+# No repository outside bsv-rs is ever a wrapper, save by the owner's ruling recorded by pointer
+# (the pool's prover, its tracker #106 (a), relayed 2026-10-19). Wrappers are immediate parents,
 # not an exemption for bsv-rs's whole subtree. Re-read and re-stamp this list
 # when the line's bsv-rs pin moves.
 # reason: diagnostic text makes the migration obligation visible.
 deny = [
     # bsv-rs 0.5.0 (8c44ad9): bsv-rs, k256 0.13.4 and p256 0.13.2.
-    { name = "sha2", wrappers = ["bsv-rs", "k256", "p256", "sqlx-core", "sqlx-macros-core", "sqlx-mysql"], reason = "Use bsv-rs hashing; the sqlx family hashes migration files (sqlx-core, sqlx-macros-core under the forced migrate feature) and the MySQL auth handshake (sqlx-mysql), no chain primitive (the owner's word of 2026-10-15: sqlx-core as a sha2 wrapper; its sqlx siblings are the same hashing read from cargo tree -i sha2 --depth 1 in the toolbox)" },
+    { name = "sha2", wrappers = ["bsv-rs", "k256", "p256", "sqlx-core", "sqlx-macros-core", "sqlx-mysql", "wv-prover", "p3-sha256"], reason = "Use bsv-rs hashing; wv-prover and p3-sha256 are the pool's prover and its hash gadget, a compression function bsv-rs lacks (the owner's ruling at the pool's tracker #106 (a), relayed 2026-10-19); the sqlx family hashes migration files (sqlx-core, sqlx-macros-core under the forced migrate feature) and the MySQL auth handshake (sqlx-mysql), no chain primitive (the owner's word of 2026-10-15: sqlx-core as a sha2 wrapper; its sqlx siblings are the same hashing read from cargo tree -i sha2 --depth 1 in the toolbox)" },
     # bsv-rs 0.5.0 (8c44ad9): bsv-rs alone.
     { name = "ripemd", wrappers = ["bsv-rs"], reason = "Use bsv-rs hashing" },
     # bsv-rs 0.5.0 (8c44ad9): secp256k1 absent; retain bsv-rs alone.
