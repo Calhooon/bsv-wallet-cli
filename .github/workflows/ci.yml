@@ -282,8 +282,9 @@ jobs:
     name: e2e-hermetic
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # The runner context is not available in a job's env; the wallets' tmp
+    # directory is set on the step that runs the harness.
     env:
-      E2E_WALLET_TMP: ${{ runner.temp }}/e2e
       NODE_USE_ENV_PROXY: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -322,6 +323,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run the 23 scenarios against the stub
+        env:
+          E2E_WALLET_TMP: ${{ runner.temp }}/e2e
         run: |
           set -o pipefail
           mkdir -p "$E2E_WALLET_TMP"

@@ -89,7 +89,11 @@ if (enabled) { applyEnv(); guardFetch(); }
  * take (toolbox #98). Their rungs in the toolbox's ladders reach the wall and
  * the ladder moves on to the stub's BananaBlocks (docs/E2E-HERMETIC.md names
  * the ladders). A walled attempt at any other target, or any harness fetch
- * that left the loopback, is a new leak and fails the run.
+ * that left the loopback, is a new leak and fails the run. The tolerance is
+ * by host, not by caller, and temporary until toolbox #98: the CLI's own
+ * sites reach these hosts only through `ExplorerBases`, which the stub
+ * moves, and tests/rule_28_sites.rs bans the toolbox's base constants and
+ * providers anywhere else in the CLI.
  */
 const KNOWN_WALLED = {
   'CONNECT api.whatsonchain.com:443': "the toolbox's WhatsOnChain provider (no base knob, toolbox #98)",
@@ -217,6 +221,11 @@ async function seedForgedRefused(stub, funder, satoshis) {
     refusal = e.message;
   }
   if (refusal === null) throw new Error(`the funder took a forged coinbase (root ${forged.root} is not the header's ${forged.headerRoot} at ${forged.height}): the seed's root check did not run`);
+  // The refusal must be the root check's own (the toolbox's
+  // verify_beef_merkle_proofs: "Invalid merkle root <root> at height <h>"),
+  // so a regression of that check cannot pass behind another refusal.
+  const rootRefusal = `Invalid merkle root ${forged.root} at height ${forged.height}`;
+  if (!refusal.includes(rootRefusal)) throw new Error(`the funder refused the forged coinbase, but not by its root check (wanted "${rootRefusal}"): ${refusal}`);
   const after = await funder.client.balance();
   if (after !== before) throw new Error(`the funder refused the forged coinbase but its balance moved ${before} -> ${after}`);
   return { ...forged, refusal };

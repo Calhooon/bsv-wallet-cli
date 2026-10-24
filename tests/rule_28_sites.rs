@@ -174,3 +174,56 @@ fn no_explorer_is_named_outside_the_listed_sites() {
         }
     }
 }
+
+/// The toolbox's explorer base constants (toolbox 0.13.0,
+/// `services::providers::{whatsonchain, bitails, bananablocks}`) and its
+/// WhatsOnChain and Bitails providers, by the names a CLI file would use.
+const EXPLORER_BASES: &[&str] = &[
+    "WOC_MAINNET_URL",
+    "WOC_TESTNET_URL",
+    "BITAILS_MAINNET_URL",
+    "BITAILS_TESTNET_URL",
+    "BANANABLOCKS_MAINNET_URL",
+    "BANANABLOCKS_TESTNET_URL",
+    "WhatsOnChain::new",
+    "WhatsOnChainConfig",
+    "Bitails::new",
+    "BitailsConfig",
+];
+
+/// The files that may name them, each with why.
+const EXPLORER_BASE_HOLDERS: &[(&str, &str)] = &[
+    (
+        "src/services_env.rs",
+        "`ExplorerBases::defaults`, the one place a CLI base falls back to the toolbox's",
+    ),
+    (
+        "src/explorers.rs",
+        "the WhatsOnChain rung's rate gate, the toolbox provider's own (`WhatsOnChain::new`)",
+    ),
+];
+
+/// #74: the hermetic e2e run tolerates walled attempts at WhatsOnChain and
+/// Bitails because the toolbox's own providers for them take no base
+/// (toolbox #98). The tolerance is by host, so it would also hide a new CLI
+/// site that reached those hosts by the toolbox's constants or providers
+/// rather than through `ExplorerBases`; this bans that. Temporary, as the
+/// tolerance is: when toolbox #98 lands, the tolerance goes and this stays.
+#[test]
+fn no_cli_site_reaches_an_explorer_past_explorer_bases() {
+    let mut files = Vec::new();
+    rust_files(&root().join("src"), &mut files);
+    for path in files {
+        let file = relative(&path);
+        if EXPLORER_BASE_HOLDERS.iter().any(|(f, _)| *f == file) {
+            continue;
+        }
+        let code = code_of(&path);
+        for name in EXPLORER_BASES {
+            assert!(
+                !code.contains(name),
+                "{file} names the toolbox's `{name}`; an explorer base comes from `ExplorerBases` (src/services_env.rs)"
+            );
+        }
+    }
+}
