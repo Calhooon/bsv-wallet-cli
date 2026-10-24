@@ -234,7 +234,11 @@ class TheArchRowsAreTheAllowlistsOwnData(Case):
 
     def test_a_raw_string_is_refused(self):
         self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('("src/a.rs", 2, "a reason")', '("src/a.rs", 2, r"a reason")'))
-        self.refused("tests/arch_no_unwrap.rs: ALLOWED entry 1: not a")
+        self.refused('tests/arch_no_unwrap.rs: ALLOWED entry 1: a raw string r"..", r#".."# is not read')
+
+    def test_a_raw_file_string_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/b/c.rs"', 'r#"src/b/c.rs"#'))
+        self.refused('tests/arch_no_unwrap.rs: ALLOWED entry 2: a raw string r"..", r#".."# is not read')
 
     def test_an_entry_at_zero_is_refused(self):
         self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs", 2,', '"src/a.rs", 0,'))
@@ -255,6 +259,89 @@ class TheArchRowsAreTheAllowlistsOwnData(Case):
     def test_two_files_of_one_rule_are_refused(self):
         self.tree.write("tests/arch_other.rs", ARCH)
         self.refused("RULE: A4 is also tests/arch_no_unwrap.rs's rule")
+
+
+# The entry of beta's tests/arch_explorer_sites.rs (PR 111) whose line continuation,
+# a backslash before a newline, a JSON reader refused with a traceback; copied verbatim.
+CRASHED = r'''    (
+        "src/services_env.rs",
+        33,
+        "the explorers' env names (BITAILS_API_KEY, BANANABLOCKS_BASE) and the break-glass warning (14); \
+         the bases' configuration (#74, PR 131), 19: the toolbox's bitails and whatsonchain default-URL \
+         imports (4), BITAILS_BASE_ENV and its \"BITAILS_BASE\" (2), ExplorerBases' bitails field, its \
+         chain defaults and its overrides (13); no request is made here",
+    ),
+'''
+CRASHED_REASON = CRASHED[CRASHED.index('"the explorers'):CRASHED.rindex('",') + 1]
+
+
+def scoreboard():
+    """tools/scoreboard as a module, for its decoder's values."""
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("scoreboard", TOOL)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("scoreboard", loader))
+    loader.exec_module(mod)
+    return mod
+
+
+class TheStringsAreRustLiterals(Case):
+    """(C) A file and a reason are read as rustc reads a string literal, never as JSON,
+    and a literal it cannot read is a named fault, never a traceback."""
+
+    def with_reason(self, reason):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"a reason"', reason, 1))
+
+    def decoded(self, lit):
+        return scoreboard().rust_str(lit, "f", "e")
+
+    def test_a_reason_with_an_escaped_apostrophe_is_read(self):
+        self.with_reason(r'"the rung\'s name"')
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |", self.table())
+        self.assertEqual(self.decoded(r'"the rung\'s name"'), "the rung's name")
+
+    def test_a_reason_with_an_escaped_quote_is_read(self):
+        self.with_reason(r'"its \"BITAILS_BASE\" (2)"')
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |", self.table())
+        self.assertEqual(self.decoded(r'"its \"BITAILS_BASE\" (2)"'), 'its "BITAILS_BASE" (2)')
+
+    def test_a_reason_with_a_unicode_escape_is_read(self):
+        self.with_reason(r'"a \u{2014} b"')
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |", self.table())
+        self.assertEqual(self.decoded(r'"a \u{2014} b \u{1_F600}"'), f"a {chr(0x2014)} b {chr(0x1F600)}")
+
+    def test_the_other_escapes_are_read(self):
+        self.assertEqual(self.decoded(r'"\n\r\t\\\0\x41\x7f"'), "\n\r\t\\\0A\x7f")
+
+    def test_the_literal_that_crashed_is_read(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace("\n];", "\n" + CRASHED + "];", 1))
+        self.assertIn("| arch rule A4 allowlist | 3 files, 38 sites |", self.table())
+        self.assertEqual(self.decoded(CRASHED_REASON),
+                         "the explorers' env names (BITAILS_API_KEY, BANANABLOCKS_BASE) and the break-glass"
+                         " warning (14); the bases' configuration (#74, PR 131), 19: the toolbox's bitails and"
+                         " whatsonchain default-URL imports (4), BITAILS_BASE_ENV and its \"BITAILS_BASE\" (2),"
+                         " ExplorerBases' bitails field, its chain defaults and its overrides (13); no request"
+                         " is made here")
+
+    def test_a_file_string_with_an_escape_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs"', r'"src/\x61.rs"'))
+        self.refused(r'tests/arch_no_unwrap.rs: ALLOWED entry 1: the file "src/\x61.rs" carries an escape;'
+                     ' a src/ path never does')
+
+    def test_a_malformed_escape_is_a_named_fault(self):
+        for lit, why in ((r'"a \q b"', r"\q is not a Rust escape"),
+                         (r'"a \x80"', r"\x80 is not a Rust escape"),
+                         (r'"a \u{D800}"', r"\u{D800} is not a Rust escape"),
+                         (r'"a \u{1234567}"', r"\u{1234567} is not a Rust escape"),
+                         (r'"a \u00e9"', r"\u without braces is not a Rust escape")):
+            with self.subTest(lit=lit):
+                self.with_reason(lit)
+                code, out = self.tree.run()
+                self.assertEqual(code, 1, out)
+                self.assertTrue(out.startswith(
+                    "scoreboard: tests/arch_no_unwrap.rs: ALLOWED entry 1 (src/a.rs's reason): " + why), out)
+                self.assertNotIn("Traceback", out)
+                print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
 
 
 class NoNumberFallsFromTheBase(Case):
