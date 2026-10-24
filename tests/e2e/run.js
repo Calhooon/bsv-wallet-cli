@@ -17,6 +17,9 @@
 // (the stub's bases, the wall, the funder's seat) that ./lib/setup and every
 // child read.
 const hermetic = require('./lib/hermetic');
+// Under DIFF_RECORD the run is recorded (lib/record.js, tools/differential);
+// ./lib/setup wraps the binary's commands before the scenarios load.
+const record = require('./lib/record');
 const { startWallet, fundWallet, sweepToFunder, teardownWallet, FUNDER_PORT } = require('./lib/setup');
 const { WalletClient } = require('./lib/wallet-client');
 const path = require('path');
@@ -151,6 +154,7 @@ async function main() {
         continue;
       }
 
+      record.setPhase(scenario.name);
       // Balance checkpoint before scenario
       const aBalBefore = await walletA.client.balance();
       const bBalBefore = await walletB.client.balance();
@@ -186,6 +190,7 @@ async function main() {
     console.log(`  FATAL: ${e.message}`);
   } finally {
     // Sweep and teardown
+    record.setPhase('sweep');
     console.log('================================================================');
     console.log('  Sweeping remaining funds back to funder...');
 
