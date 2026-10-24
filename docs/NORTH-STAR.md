@@ -19,7 +19,7 @@ The wallet is one of the stack's nine machines; its definition is the stack's wa
 
 The epic's own words for the two classes (#106, "The loop"): "Cold-path PRs merge on green CI; hot-path PRs need the full proof." The epic classes no other phase; a PR of Phases 3 to 6 is classed at landing by the captain.
 
-**The captain's addition** (2026-10-24, not the epic's): a PR of any phase that touches the spend path is hot. The reason: #78 (Phase 1, cold by its phase) rewrites the spend path, and its exit test already demands the differential proof, so the class follows what a PR touches and not only the phase it sits in.
+**The captain's addition** (2026-10-23, not the epic's): a PR of any phase that touches the spend path is hot. The reason: #78 (Phase 1, cold by its phase) rewrites the spend path, and its exit test already demands the differential proof, so the class follows what a PR touches and not only the phase it sits in.
 
 **Never without the owner's word** (#106, "Never without the owner's word"): the wire contract, spend semantics, crypto, the pins, environment variable names, the database schema, any release, any spend from a wallet. An optimization that would change a BRC-100 shape is a named deviation with its measurement, landed only on the owner's word and recorded in the extensions document (#106, "BRC-100"; #100).
 
