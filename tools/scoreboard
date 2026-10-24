@@ -91,7 +91,10 @@ docs/scoreboard/mutants.json names the file. The floors' rule: a floor may fall
 only when the base carries no measurement for its file (no
 docs/scoreboard/mutants.json at the base, or no entry for the file in it) and
 the tree's record carries one, so a provisional floor is replaced by its first
-measured value once and with a notice; a floor with a measurement at the base
+measured value once and with a notice, and that value is the tree's measured
+score rounded down, never any lower floor; a floor that rises while the tree's
+record measures its file rises at most to that score rounded down (a floor is
+never above what a night measured); a floor with a measurement at the base
 may never fall, a provisional floor may not be lowered without a night's
 measurement, and a measurement at the base may not vanish from the tree. A base
 rendered by a tool older than the key carries no `:measured` key at all, and
@@ -103,6 +106,7 @@ carries the key for some floors and not for another is a fault.
 import argparse
 import difflib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -605,11 +609,13 @@ def is_floor(key):
     return key.startswith("floor:") and not MEASURED_KEYS.match(key) and not LIST_KEYS.match(key)
 
 
-def falls(base, tree):
+def falls(base, tree, scores):
     """Every value of the tree that moved the wrong way from the base's: a number
     that fell (or rose, for an allowlist), a list that lost an element, a key
-    that vanished; and the notices, one per provisional floor its first
-    measurement lowered (the floors' rule, in the header)."""
+    that vanished, a floor that fell or rose to anything but its measured score
+    rounded down (scores: the tree's docs/scoreboard/mutants.json, by file); and
+    the notices, one per provisional floor its first measurement lowered (the
+    floors' rule, in the header)."""
     out, notices = [], []
     for key in sorted(base):
         b, t = base[key], tree.get(key)
@@ -619,14 +625,23 @@ def falls(base, tree):
             if b and not t:
                 out.append(f"{key}: measured at the base, unmeasured in the tree; a measurement may not vanish")
         elif is_floor(key) and t < b:
+            score = scores.get(key[len("floor:"):])
             if base.get(f"{key}:measured", False):
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; a measured floor may not fall")
-            elif tree.get(f"{key}:measured"):
-                notices.append(f"{key}: {b:g} at the base (provisional, unmeasured), {t:g} in the tree "
-                               "(measured); the first measurement replaces a provisional floor once")
-            else:
+            elif score is None:
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall "
                            "(a provisional floor may not be lowered without a night's measurement)")
+            elif t != math.floor(score):
+                out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
+                           f"a provisional floor takes the measured score rounded down: {math.floor(score)}, not {t:g}")
+            else:
+                notices.append(f"{key}: {b:g} at the base (provisional, unmeasured), {t:g} in the tree "
+                               "(measured); the first measurement replaces a provisional floor once")
+        elif is_floor(key) and t > b and key[len("floor:"):] in scores:
+            score = scores[key[len("floor:"):]]
+            if t > math.floor(score):
+                out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
+                           f"a floor is never above the measured score rounded down: {math.floor(score)}, not {t:g}")
         elif LIST_KEYS.match(key):
             for lost in sorted(set(b) - set(t)):
                 out.append(f"{key}: {lost} at the base, gone from the tree; a list may not lose an element")
@@ -690,7 +705,7 @@ def main():
         status = 1
     if args.base:
         base = load_base(args.base)
-        fell, notices = falls(base, values(all_rows))
+        fell, notices = falls(base, values(all_rows), measured_scores()[0])
         for line in notices:
             print(f"scoreboard: notice: {line}")
         for line in fell:

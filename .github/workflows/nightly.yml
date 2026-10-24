@@ -10,7 +10,8 @@ name: Nightly
 # the tests that earn the raise, never by an edit alone (docs/NIGHTLY.md).
 # tools/scoreboard --check --base lets a floor fall only when the base
 # carries no measurement for its file (no docs/scoreboard/mutants.json at the
-# base, or no entry for the file in it) and the tree's record carries one; a
+# base, or no entry for the file in it) and the tree's record carries one, and
+# then only to that score rounded down; a floor never rises above it, and a
 # floor with a measurement at the base may never fall.
 #
 # GitHub fires `schedule` only from the default branch (main) and registers
