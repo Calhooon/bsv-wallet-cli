@@ -378,8 +378,8 @@ class NoNumberFallsFromTheBase(Case):
     # The floors' rule (#76): a floor may fall only from a base that carries no
     # measurement for its file to a tree whose record carries one.
 
-    def lower_spend_gate(self, score):
-        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 75,"))
+    def lower_spend_gate(self, score, floor=75):
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", f": {floor},"))
         if score is not None:
             mutants = json.loads(json.dumps(MUTANTS))
             mutants["files"]["src/spend_gate.rs"]["score"] = score
@@ -442,6 +442,67 @@ class NoNumberFallsFromTheBase(Case):
         with open(base, "w") as f:
             json.dump(vals, f)
         self.refused_against(base, "values.floor:src/spend_gate.rs:measured: missing")
+
+    # The first measurement sets the floor at the measured score rounded down,
+    # never any lower; a floor never rises above it.
+
+    def test_a_first_measurement_with_the_floor_at_10_is_refused(self):
+        base = self.tree.values()
+        self.lower_spend_gate(75.5, floor=10)
+        self.refused_against(base, "floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 10 in the tree; "
+                                   "a provisional floor takes the measured score rounded down: 75, not 10")
+
+    def test_a_first_measurement_with_the_floor_at_75_passes(self):
+        base = self.tree.values()
+        self.lower_spend_gate(75.5, floor=75)
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("notice: floor:src/spend_gate.rs: 80 at the base (provisional, unmeasured), 75 in the tree", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_first_measurement_with_the_floor_at_76_is_refused(self):
+        base = self.tree.values()
+        self.lower_spend_gate(75.5, floor=76)
+        self.refused_against(base, "floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 76 in the tree; "
+                                   "a provisional floor takes the measured score rounded down: 75, not 76")
+
+    def test_a_measured_floor_raised_to_its_score_rounded_down_passes(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
+        base = self.tree.values()
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 86,"))
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_measured_floor_raised_above_its_score_is_refused(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
+        base = self.tree.values()
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 87,"))
+        self.refused_against(base, "floor:src/spend_gate.rs: measured 86.6 in the tree's record, floor 87 in the tree; "
+                                   "a floor is never above the measured score rounded down: 86, not 87")
+
+    def test_the_real_floors_against_the_nights_record_pass(self):
+        # This PR's three provisional floors (80 at the base, before any night)
+        # against the first full night's record and the workflow's floors.
+        with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
+            nightly = f.read()
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            mutants = f.read()
+        real = {"src/broadcast_verify.rs": 75, "src/server/handlers.rs": 74, "src/tracker_host.rs": 72}
+        provisional = nightly
+        for file, floor in real.items():
+            self.assertIn(f'"{file}": {floor}', nightly)
+            provisional = provisional.replace(f'"{file}": {floor}', f'"{file}": 80')
+        self.tree.write(".github/workflows/nightly.yml", provisional)
+        base = self.tree.values()
+        self.tree.write(".github/workflows/nightly.yml", nightly)
+        self.tree.write("docs/scoreboard/mutants.json", mutants)
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        for file, floor in real.items():
+            self.assertIn(f"notice: floor:{file}: 80 at the base (provisional, unmeasured), {floor} in the tree", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
 
     def test_a_removed_floor_is_refused(self):
         base = self.tree.values()
