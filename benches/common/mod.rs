@@ -30,6 +30,13 @@ pub type BenchWallet = Wallet<StorageSqlx, MockWalletServices>;
 /// The wallet sizes of the scoreboard (#106).
 pub const SIZES: [usize; 2] = [1_000, 10_000];
 
+/// Criterion's samples per bench id. Flat sampling gives every sample the
+/// same call count, at least one, so the measurement is at least this many
+/// calls and a p99 rests on at least 100 whatever the machine's speed (a
+/// measure time too short for 100 calls is stretched by criterion, which
+/// says so). `tools/bench-compare` fails a result of fewer (`MIN_CALLS`).
+pub const SAMPLES: usize = 100;
+
 /// The derivation prefix of every fixture coin.
 pub const PREFIX: &str = "SfKxPIJNgdI=";
 
@@ -41,12 +48,62 @@ pub const FIRST_HEIGHT: u32 = 800_000;
 /// The tip: above every coin's block, so each is offered at depth 1.
 pub const TIP_HEIGHT: u32 = 900_000;
 
-/// A built wallet and the directory its database lives in.
+/// A built wallet and the directory its database lives in, with a closed
+/// copy of the database (`template.db`) that [`Fixture::fresh`] copies for a
+/// bench whose call changes the wallet.
 pub struct Fixture {
     pub wallet: BenchWallet,
     pub root: PrivateKey,
+    pub coins: usize,
     pub mined: usize,
+    /// Each mined coin's block: its height and merkle root.
+    blocks: Vec<(u32, String)>,
+    template: PathBuf,
     _dir: tempfile::TempDir,
+}
+
+/// A wallet on its own copy of a fixture's database, as built: `coins`
+/// coins at every call however the call before it changed its copy.
+pub struct Fresh {
+    pub wallet: BenchWallet,
+    _dir: tempfile::TempDir,
+}
+
+/// The mock header service of a fixture: the tip, and each mined coin's
+/// block.
+fn services_for(blocks: &[(u32, String)]) -> MockWalletServices {
+    let services = MockWalletServices::builder().height(TIP_HEIGHT).build();
+    services.set_tip_header(header_with_hash(TIP_HEIGHT, &"0c".repeat(32)));
+    for (height, root) in blocks {
+        services.set_header_for_height(header(*height, root));
+    }
+    services
+}
+
+/// The wallet's spendable coins, counted in its database.
+pub async fn coin_count(wallet: &BenchWallet) -> usize {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM outputs WHERE spendable = 1")
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    n as usize
+}
+
+impl Fixture {
+    /// A wallet on a new copy of the built database and a new mock header
+    /// service: the setup of one call of a bench that writes, done before
+    /// its clock starts.
+    pub async fn fresh(&self) -> Fresh {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wallet.db");
+        std::fs::copy(&self.template, &path).unwrap();
+        let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+        storage.make_available().await.unwrap();
+        let wallet = Wallet::new(Some(self.root.clone()), storage, services_for(&self.blocks))
+            .await
+            .unwrap();
+        Fresh { wallet, _dir: dir }
+    }
 }
 
 /// The kind of coin `i` of a wallet: seven in ten mined (received, with a
@@ -147,11 +204,9 @@ pub async fn wallet_of(coins: usize) -> Fixture {
         .unwrap()
         .basket_id;
 
-    let services = MockWalletServices::builder().height(TIP_HEIGHT).build();
-    services.set_tip_header(header_with_hash(TIP_HEIGHT, &"0c".repeat(32)));
     let when = Utc::now() - chrono::Duration::minutes(9);
     let mut db = storage.write_tx().await.unwrap();
-    let mut mined = 0;
+    let mut blocks = Vec::new();
     let deriver = KeyDeriver::new(Some(root.clone()));
     for i in 0..coins {
         let kind = kind(i);
@@ -198,8 +253,7 @@ pub async fn wallet_of(coins: usize) -> Fixture {
             .execute(&mut *db)
             .await
             .unwrap();
-            services.set_header_for_height(header(height, &txid));
-            mined += 1;
+            blocks.push((height, txid.clone()));
         }
         sqlx::query(
             "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, created_at, updated_at) \
@@ -221,13 +275,24 @@ pub async fn wallet_of(coins: usize) -> Fixture {
     }
     db.commit().await.unwrap();
 
-    let wallet = Wallet::new(Some(root.clone()), storage, services)
+    // A whole copy of the database in one file, for `Fixture::fresh`.
+    let template = dir.path().join("template.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(template.to_str().unwrap())
+        .execute(storage.writer())
+        .await
+        .unwrap();
+
+    let wallet = Wallet::new(Some(root.clone()), storage, services_for(&blocks))
         .await
         .unwrap();
     Fixture {
         wallet,
         root,
-        mined,
+        coins,
+        mined: blocks.len(),
+        blocks,
+        template,
         _dir: dir,
     }
 }
@@ -302,8 +367,8 @@ fn out_dir() -> PathBuf {
 
 /// Report `id`'s p50 and p99 over the measurement's calls: printed, and
 /// written to `<out>/<id with / as __>.json`.
-pub fn report(id: &str, calls: &Calls, samples: usize) {
-    let measured = calls.measured(samples);
+pub fn report(id: &str, calls: &Calls) {
+    let measured = calls.measured(SAMPLES);
     if measured.is_empty() {
         // `cargo bench -- <filter>` skipped this id.
         return;
@@ -332,17 +397,16 @@ pub fn report(id: &str, calls: &Calls, samples: usize) {
 }
 
 /// A group's settings: flat sampling (every sample the same call count, so
-/// the last `samples` routines are the measurement), `samples` samples over
-/// `measure`.
+/// the last [`SAMPLES`] routines are the measurement), [`SAMPLES`] samples
+/// over `measure`.
 pub fn configure<M: criterion::measurement::Measurement>(
     group: &mut BenchmarkGroup<'_, M>,
-    samples: usize,
     warm_up: Duration,
     measure: Duration,
 ) {
     group
         .sampling_mode(SamplingMode::Flat)
-        .sample_size(samples)
+        .sample_size(SAMPLES)
         .warm_up_time(warm_up)
         .measurement_time(measure);
 }

@@ -1,197 +1,418 @@
-#!/usr/bin/env bash
-# Run the hot path's benches (#71) and compare each p99 to the profile's
-# entry in benches/baseline.json: a p99 more than the margin (5 percent
-# unless the entry names its own) above the baseline fails (docs/BENCHES.md).
-#
-#   tools/bench-compare                    compare; no entry for the profile fails
-#   tools/bench-compare --record           write the profile's entry (a clean tree only)
-#   tools/bench-compare --record-missing   compare, or record when the profile has no entry
-#   tools/bench-compare --base FILE        compare against FILE's entry (the base ref's
-#                                          baseline), and fail a tree entry above it
-#   tools/bench-compare --out FILE         write the recorded baseline to FILE, not the tree's;
-#                                          a compare writes its candidate there too
-#   tools/bench-compare --compare-only DIR compare the JSON already in DIR, run nothing
-#
-# The profile is BENCH_PROFILE (the CI job sets ubuntu-latest: the gate's
-# entry, recorded on a runner only). Unset, it is dev- and the CPU model and
-# core count: a developer's reading, informational, never a gate and never
-# compared by CI. BENCH_OUT keeps the per-bench JSON.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Run the hot path's benches (#71) and compare each p99 with benches/baseline.json.
 
-cd "$(dirname "$0")/.."
-BENCHES=(gate_assess create_action_signed internalize_action list_outputs)
-mode=compare
-dir=""
-base=""
-out=benches/baseline.json
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --record) mode=record ;;
-    --record-missing) mode=record-missing ;;
-    --compare-only) dir="$2"; shift ;;
-    --base) base="$2"; shift ;;
-    --out) out="$2"; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
-    *) echo "bench-compare: unknown argument $1" >&2; exit 2 ;;
-  esac
-  shift
-done
+  tools/bench-compare                     a developer's reading: compare with this
+                                          machine's entry, print, exit 0
+  tools/bench-compare --record            write this machine's developer entry (a clean tree only)
+  tools/bench-compare --compare-only DIR  a reading of the JSON already in DIR, run nothing
+  tools/bench-compare --out FILE          write the recorded baseline to FILE, not the tree's
+  tools/bench-compare --ci [--base FILE] --out FILE
+                                          the CI job bench: run the benches, check the tree's
+                                          baseline against the base's, compare, write the
+                                          candidate baseline to FILE
 
-cores() { getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu; }
-model() {
-  if [ "$(uname -s)" = Darwin ]; then
-    sysctl -n machdep.cpu.brand_string
-  else
-    sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo | head -n1
-  fi
-}
-slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9.' '-' | sed 's/^-//; s/-$//'; }
-machine_line="$(model), $(cores) cores"
-if [ -n "${BENCH_PROFILE:-}" ]; then
-  key="$(slug "$BENCH_PROFILE")"
-  case "$key" in
-    dev-*) echo "bench-compare: BENCH_PROFILE $key: dev- is the developer readings' prefix" >&2; exit 2 ;;
-  esac
-  gate=true
-else
-  key="dev-$(slug "$machine_line")"
-  gate=false
-fi
-toolchain="$(rustc -V)"
-commit="$(git rev-parse HEAD)"
-# The tree as the benches see it; the benches write nothing inside it.
-dirty="$(git status --porcelain --untracked-files=normal)"
+The gate's profile, margin, sample floor and history floor are this file's
+constants, never a workflow's env. An entry is keyed by its profile and the
+CPU (model and cores): ubuntu-latest-<cpu> is the gate's, measured by the job
+only; dev-<cpu> is a developer's reading. BENCH_PROFILE set to anything but
+the gate's profile is a developer reading; BENCH_OUT keeps the per-bench JSON.
+docs/BENCHES.md says why each rule is there.
+"""
 
-# A baseline is the measure of a commit: --record refuses a dirty tree before
-# it spends the benches' minutes, and a gate profile is a runner's only.
-if [ "$mode" = record ]; then
-  if [ -n "$dirty" ]; then
-    echo "bench-compare: --record refuses a dirty tree (commit or drop these first):" >&2
-    printf '%s\n' "$dirty" >&2
-    exit 1
-  fi
-  if [ "$gate" = true ] && [ "${GITHUB_ACTIONS:-}" != true ]; then
-    echo "bench-compare: the profile $key is the gate's, recorded on its CI runner only (the job's artifact bench-baseline); unset BENCH_PROFILE for a reading of this machine" >&2
-    exit 1
-  fi
-fi
+import datetime
+import glob
+import json
+import os
+import platform
+import re
+import subprocess
+import sys
+import tempfile
 
-if [ -z "$dir" ]; then
-  dir="${BENCH_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/bench-compare.XXXXXX")}"
-  mkdir -p "$dir"
-  rm -f "$dir"/*.json
-  for bench in "${BENCHES[@]}"; do
-    BENCH_OUT="$dir" cargo bench --locked --bench "$bench"
-  done
-fi
+# The gate's runner profile. The CI job does not name it: --ci is this
+# profile, and a BENCH_PROFILE that is not it is refused there (a renamed
+# profile would be a developer reading, which never fails).
+GATE_PROFILE = "ubuntu-latest"
+# The default margin, and the margin of a baseline file with none: a p99
+# more than this above the reference fails. A PR may not change a file's.
+MARGIN = 0.05
+# The fewest measured calls a p99 rests on (the benches' 100 samples).
+MIN_CALLS = 100
+# The runner runs an entry carries before the job gates on it; with fewer it
+# warns and passes (docs/BENCHES.md: a hosted runner's noise is unproven).
+MIN_RUNS = 5
+BENCHES = ["gate_assess", "create_action_signed", "internalize_action", "list_outputs"]
+ENTRY_KEYS = {"profile", "gate", "machine", "toolchain", "runs"}
 
-python3 - "$mode" "$key" "$gate" "$machine_line" "$toolchain" "$commit" "$dirty" "$dir" \
-  benches/baseline.json "$base" "$out" <<'PY'
-import datetime, glob, json, os, sys
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TREE = os.path.join(ROOT, "benches", "baseline.json")
 
-mode, key, gate, machine_line, toolchain, commit, dirty, results, path, base_path, out = sys.argv[1:]
-gate = gate == "true"
-notice = "::notice::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
-warning = "::warning::" if notice else "warning: "
 
-measured = {}
-for f in sorted(glob.glob(os.path.join(results, "*.json"))):
-    r = json.load(open(f))
-    measured[r["id"]] = {"p50_us": r["p50_us"], "p99_us": r["p99_us"], "calls": r["calls"]}
-if not measured:
-    sys.exit(f"bench-compare: no results in {results}")
+def sh(*cmd):
+    return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
 
-def load(p):
-    if p and os.path.exists(p):
-        return json.load(open(p))
-    return {"margin": 0.05, "profiles": {}}
 
-tree = load(path)
-tree_entry = tree["profiles"].get(key)
-if base_path:
-    # The base ref's baseline is the reference: the PR's own file may lower
-    # an entry, never raise one (a PR that raised it would pass itself).
-    base = load(base_path)
-    entry = base["profiles"].get(key)
-    source = f"the base's {key}"
-    if entry is None and tree_entry is not None:
-        print(f"bench-compare: the base has no {key} entry; the tree's own is the reference")
-        base, entry, source = tree, tree_entry, f"the tree's {key}"
-else:
-    base, entry, source = tree, tree_entry, key
+def machine():
+    """The CPU model and core count."""
+    cores = os.cpu_count()
+    if platform.system() == "Darwin":
+        model = sh("sysctl", "-n", "machdep.cpu.brand_string")
+    else:
+        model = "?"
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    model = line.split(":", 1)[1].strip()
+                    break
+    return f"{model}, {cores} cores"
 
-def record(candidate=False):
-    if dirty:
-        if candidate:
-            print(f"bench-compare: a dirty tree; no candidate baseline written to {out}")
-            return
-        sys.exit("bench-compare: refusing to record from a dirty tree:\n" + dirty)
-    tree["profiles"][key] = {
-        "profile": key,
-        "gate": gate,
-        "machine": machine_line,
-        "toolchain": toolchain,
-        "commit": commit,
-        "recorded": datetime.date.today().isoformat(),
-        **({"margin": tree_entry["margin"]} if tree_entry and "margin" in tree_entry else {}),
-        "benches": measured,
-    }
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w") as f:
-        json.dump(tree, f, indent=2, sort_keys=True)
-        f.write("\n")
-    if candidate:
-        print(f"bench-compare: this run's measure as a candidate baseline in {out} (nothing in the tree changed)")
-        return
+
+def slug(s):
+    return re.sub(r"[^a-z0-9.]+", "-", s.lower()).strip("-")
+
+
+def gate_key(machine_line):
+    return f"{GATE_PROFILE}-{slug(machine_line)}"
+
+
+def dev_key(machine_line):
+    return f"dev-{slug(machine_line)}"
+
+
+def empty():
+    return {"margin": MARGIN, "profiles": {}}
+
+
+def load(path):
+    """A baseline file; a missing or empty file is a baseline with no entry."""
+    if path and os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path) as f:
+            return json.load(f)
+    return empty()
+
+
+def read_results(results):
+    measured = {}
+    for f in sorted(glob.glob(os.path.join(results, "*.json"))):
+        with open(f) as fh:
+            r = json.load(fh)
+        measured[r["id"]] = {"p50_us": r["p50_us"], "p99_us": r["p99_us"], "calls": r["calls"]}
+    return measured
+
+
+def run_benches():
+    """The benches, into a directory this run made (BENCH_OUT, else a new one)."""
+    out = os.environ.get("BENCH_OUT") or tempfile.mkdtemp(prefix="bench-compare.", dir=os.environ.get("TMPDIR"))
+    os.makedirs(out, exist_ok=True)
+    for f in glob.glob(os.path.join(out, "*.json")):
+        os.remove(f)
+    for bench in BENCHES:
+        subprocess.run(["cargo", "bench", "--locked", "--bench", bench], cwd=ROOT, check=True,
+                       env={**os.environ, "BENCH_OUT": out})
+    return out
+
+
+def reference(entry):
+    """Each bench's reference p99: the highest of the entry's runs (the
+    runner's worst recorded), and the run count it rests on."""
+    ref = {}
+    for run in entry["runs"]:
+        for id, m in run["benches"].items():
+            ref[id] = max(ref.get(id, 0), m["p99_us"])
+    return ref
+
+
+def ids(entry):
+    return set(entry["runs"][0]["benches"]) if entry.get("runs") else set()
+
+
+def gap(run, measured, margin):
+    """How a committed run differs from this run's measure: each bench id
+    and number not within the margin of what was just measured."""
+    gaps = []
+    if set(run["benches"]) != set(measured):
+        missing = sorted(set(measured) - set(run["benches"]))
+        extra = sorted(set(run["benches"]) - set(measured))
+        gaps.append(f"its bench ids are not this run's (not in it: {missing or 'none'}; not measured: {extra or 'none'})")
+        return gaps
+    for id in sorted(measured):
+        for n in ("p50_us", "p99_us"):
+            c, m = run["benches"][id][n], measured[id][n]
+            change = c / m - 1 if m else float("inf")
+            if abs(change) > margin:
+                gaps.append(f"{id} {n[:3]}: committed {c} us is {change:+.1%} from this run's {m} us")
+    return gaps
+
+
+def check_entry_shape(key, entry, errors):
+    extra = sorted(set(entry) - ENTRY_KEYS)
+    if extra:
+        errors.append(f"{key}: the entry carries {extra}; an entry is {sorted(ENTRY_KEYS)} "
+                      f"(the margin is the file's, one for every entry)")
+    if entry.get("profile") != key or entry.get("gate") is not True:
+        errors.append(f"{key}: the entry's profile must be its key and gate true")
+    runs = entry.get("runs")
+    if not isinstance(runs, list) or not runs:
+        errors.append(f"{key}: the entry has no runs")
+        return False
+    ids0 = set(runs[0].get("benches", {}))
+    for i, run in enumerate(runs):
+        if set(run.get("benches", {})) != ids0:
+            errors.append(f"{key}: run {i + 1} measures other bench ids than run 1")
+    return True
+
+
+def judge(tree, base, measured, ctx):
+    """The CI job's verdict on this run.
+
+    tree: the PR's benches/baseline.json; base: the base ref's, or None when
+    the base is not readable; measured: this run's results; ctx: key,
+    machine, toolchain, commit, run_id, recorded. Returns (lines, errors,
+    regressions, gating, candidate): errors always fail (the tree turned
+    the gate off, or this run cannot be trusted), regressions fail only
+    when gating.
+    """
+    lines, errors, regressions = [], [], []
+    key = ctx["key"]
+    this_run = {"commit": ctx["commit"], "recorded": ctx["recorded"], "benches": measured}
+    if ctx.get("run_id"):
+        this_run["run_id"] = ctx["run_id"]
+
+    if not measured:
+        errors.append("no results measured")
     for id, m in sorted(measured.items()):
-        print(f"recorded {id}: p50 {m['p50_us']} us, p99 {m['p99_us']} us ({m['calls']} calls)")
-    print(f"bench-compare: recorded {len(measured)} benches for {key} ({machine_line}, {toolchain}, {commit[:12]}) in {out}")
+        if m["calls"] < MIN_CALLS:
+            errors.append(f"{id}: the p99 rests on {m['calls']} calls, fewer than {MIN_CALLS}")
 
-if mode == "record" or (mode == "record-missing" and entry is None):
-    record()
-    if mode == "record-missing":
-        print(f"{notice}bench-compare: no baseline for the profile {key}; this run's measure is recorded "
-              f"in {out} (the artifact bench-baseline on CI) and nothing is compared. The captain "
-              f"commits it as benches/baseline.json in a PR that says so; the next run compares against it.")
-    sys.exit(0)
-if entry is None:
-    sys.exit(f"bench-compare: no baseline for {key} ({machine_line}); --record writes one")
+    margin = tree.get("margin", MARGIN)
+    tree_ok = True
+    if base is None:
+        lines.append("warning: no base baseline to check the tree's against: the tree's own is the reference")
+        base_profiles = None
+    else:
+        base_profiles = base.get("profiles", {})
+        if margin != base.get("margin", MARGIN):
+            errors.append(f"the margin is {margin} in the tree and {base.get('margin', MARGIN)} in the base "
+                          f"(a PR may not change the margin)")
+            tree_ok = False
+    tree_profiles = tree.get("profiles", {})
 
-margin = entry.get("margin", base.get("margin", 0.05))
-failed = []
-print(f"bench-compare: {source} ({entry.get('machine', '?')}), recorded {entry['recorded']} "
-      f"at {entry.get('commit', '?')[:12]} with {entry.get('toolchain', '?')}, margin {margin:.0%}")
-if entry.get("toolchain") not in (None, toolchain):
-    print(f"{warning}the baseline's toolchain is {entry['toolchain']}, this run's {toolchain}: "
-          f"the numbers are of two compilers; re-record the profile on the new pin")
-print(f"{'bench':42} {'p50 us':>10} {'p99 us':>10} {'base p99':>10} {'change':>8}")
-for id, ref in sorted(entry["benches"].items()):
-    m = measured.get(id)
-    if m is None:
-        failed.append(f"{id}: not measured")
-        continue
-    change = m["p99_us"] / ref["p99_us"] - 1
-    verdict = "FAIL" if change > margin else "ok"
-    if verdict == "FAIL":
-        failed.append(f"{id}: p99 {m['p99_us']} us is {change:+.1%} over {ref['p99_us']} us")
-    print(f"{id:42} {m['p50_us']:>10} {m['p99_us']:>10} {ref['p99_us']:>10} {change:>+8.1%} {verdict}")
-for id in sorted(set(measured) - set(entry["benches"])):
-    print(f"{id}: not in the baseline (--record adds it)")
-if tree_entry is not None and entry is not tree_entry:
-    for id, ref in sorted(entry["benches"].items()):
-        t = tree_entry["benches"].get(id)
-        if t is not None and t["p99_us"] > ref["p99_us"]:
-            failed.append(f"{id}: the tree's baseline p99 {t['p99_us']} us raises the base's "
-                          f"{ref['p99_us']} us (a PR may lower the baseline, never raise it)")
-# Off the tree's file (the CI job's artifact), every run leaves a baseline
-# the captain can commit: after a pin bump, or a PR that lowers the numbers.
-if os.path.abspath(out) != os.path.abspath(path):
-    record(candidate=True)
-if failed:
-    print("bench-compare: FAILED", *failed, sep="\n  ")
-    if not gate:
-        print(f"bench-compare: {key} is a developer's reading, not a gate; exit 0")
-        sys.exit(0)
-    sys.exit(1)
-print(f"bench-compare: every p99 within {margin:.0%} of the baseline")
-PY
+    for k in sorted(set(tree_profiles) | set(base_profiles or {})):
+        if k.startswith("dev-"):
+            continue  # a developer's reading, never read by CI
+        if not k.startswith(GATE_PROFILE + "-"):
+            errors.append(f"{k}: a profile is {GATE_PROFILE}-<cpu> or dev-<cpu>")
+            tree_ok = False
+            continue
+        t = tree_profiles.get(k)
+        b = (base_profiles or {}).get(k)
+        if t is not None and not check_entry_shape(k, t, errors):
+            tree_ok = False
+            continue
+        if base_profiles is None:
+            continue
+        if b is not None and t is None:
+            errors.append(f"{k}: the base's entry is dropped from the tree (a PR may not drop a gate entry)")
+            tree_ok = False
+            continue
+        if t is None or t == b:
+            continue
+        # The tree's entry is new or changed: only what this run can check.
+        if k != key:
+            errors.append(f"{k}: the tree's entry differs from the base's, and this runner ({ctx['machine']}) "
+                          f"cannot check another CPU's run; re-run the job until it lands on that CPU")
+            tree_ok = False
+            continue
+        rerecord = b is not None and t["toolchain"] != b["toolchain"] and t["toolchain"] == ctx["toolchain"]
+        if b is None or rerecord:
+            what = "opening entry" if b is None else f"re-record on {ctx['toolchain']}"
+            bad = []
+            if len(t["runs"]) != 1:
+                bad.append(f"it carries {len(t['runs'])} runs, a {what} carries one")
+            if t["machine"] != ctx["machine"] or t["toolchain"] != ctx["toolchain"]:
+                bad.append(f"it names {t['machine']} / {t['toolchain']}, this run is "
+                           f"{ctx['machine']} / {ctx['toolchain']}")
+            if not bad:
+                bad = gap(t["runs"][0], measured, margin)
+            if bad:
+                errors.append(f"{k}: the tree's {what} does not match this run's measure: " + "; ".join(bad))
+                tree_ok = False
+            continue
+        bad = []
+        if t["machine"] != b["machine"] or t["toolchain"] != b["toolchain"]:
+            bad.append("its machine or toolchain differs from the base's")
+        if ids(t) != ids(b):
+            bad.append(f"its bench ids differ from the base's (added {sorted(ids(t) - ids(b)) or 'none'}, "
+                       f"dropped {sorted(ids(b) - ids(t)) or 'none'})")
+        if t["runs"][:len(b["runs"])] != b["runs"]:
+            bad.append("the base's runs are not kept as they are (a PR appends a run, never rewrites one)")
+        elif len(t["runs"]) - len(b["runs"]) > 1:
+            bad.append(f"it appends {len(t['runs']) - len(b['runs'])} runs; one, this job can check")
+        elif len(t["runs"]) == len(b["runs"]):
+            bad.append("its runs are the base's but the entry differs")
+        else:
+            g = gap(t["runs"][-1], measured, margin)
+            if g:
+                bad.append("the appended run does not match this run's measure: " + "; ".join(g))
+        if bad:
+            errors.append(f"{k}: " + "; ".join(bad))
+            tree_ok = False
+
+    trusted = tree if tree_ok else (base if base is not None else empty())
+    margin = trusted.get("margin", MARGIN)
+    entry = trusted.get("profiles", {}).get(key)
+    gating = False
+    fresh = {"profile": key, "gate": True, "machine": ctx["machine"], "toolchain": ctx["toolchain"], "runs": [this_run]}
+    if entry is None:
+        lines.append(f"no baseline for {key}: this run is the candidate opening entry; nothing is compared")
+        new_entry = fresh
+    elif entry["toolchain"] != ctx["toolchain"]:
+        lines.append(f"warning: {key} was recorded with {entry['toolchain']}, this run is {ctx['toolchain']}: "
+                     f"not gated; the candidate is a re-record on the new pin")
+        new_entry = fresh
+    else:
+        new_entry = {**entry, "runs": entry["runs"] + [this_run]}
+    if entry is not None:
+        ref = reference(entry)
+        n = len(entry["runs"])
+        gating = n >= MIN_RUNS and entry["toolchain"] == ctx["toolchain"]
+        lines.append(f"{key} ({entry['machine']}, {entry['toolchain']}): the reference p99 is the highest of "
+                     f"{n} runs, margin {margin:.0%}" + ("" if gating else
+                     f"; warn-only until the entry carries {MIN_RUNS} runs"))
+        lines.append(f"{'bench':42} {'p50 us':>10} {'p99 us':>10} {'ref p99':>10} {'change':>8}")
+        for id, r in sorted(ref.items()):
+            m = measured.get(id)
+            if m is None:
+                errors.append(f"{id}: in the baseline, not measured")
+                continue
+            change = m["p99_us"] / r - 1
+            verdict = "ok"
+            if change > margin:
+                verdict = "FAIL" if gating else "over"
+                regressions.append(f"{id}: p99 {m['p99_us']} us is {change:+.1%} over {r} us")
+            lines.append(f"{id:42} {m['p50_us']:>10} {m['p99_us']:>10} {r:>10} {change:>+8.1%} {verdict}")
+        for id in sorted(set(measured) - set(ref)):
+            lines.append(f"{id}: measured, not in the baseline (not gated until the entry is re-recorded)")
+    candidate = json.loads(json.dumps(trusted))
+    candidate.setdefault("margin", MARGIN)
+    candidate.setdefault("profiles", {})[key] = new_entry
+    return lines, errors, regressions, gating, candidate
+
+
+def write(path, data):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def ci(args):
+    gh = "::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+    profile = os.environ.get("BENCH_PROFILE")
+    if profile not in (None, "", GATE_PROFILE):
+        sys.exit(f"bench-compare: --ci is the profile {GATE_PROFILE}; BENCH_PROFILE={profile} is refused "
+                 f"(a renamed profile would never fail)")
+    if args["compare_only"]:
+        sys.exit("bench-compare: --ci measures its own results; --compare-only is a developer's reading")
+    if not args["out"]:
+        sys.exit("bench-compare: --ci needs --out FILE for the candidate baseline")
+    head = sh("git", "rev-parse", "HEAD")
+    commit = os.environ.get("BENCH_COMMIT", "")
+    if commit != head:
+        sys.exit(f"bench-compare: BENCH_COMMIT ({commit or 'unset'}) is not the checked-out commit {head}: "
+                 f"the job checks out the PR's head and stamps it")
+    m = machine()
+    ctx = {"key": gate_key(m), "machine": m, "toolchain": sh("rustc", "-V"), "commit": head,
+           "run_id": os.environ.get("GITHUB_RUN_ID"), "recorded": datetime.date.today().isoformat()}
+    measured = read_results(run_benches())
+    base = load(args["base"]) if args["base"] else None
+    lines, errors, regressions, gating, candidate = judge(load(TREE), base, measured, ctx)
+    print("\n".join(lines))
+    write(args["out"], candidate)
+    print(f"bench-compare: this run's candidate baseline is in {args['out']} (the artifact bench-baseline), "
+          f"stamped {head[:12]}")
+    for r in regressions:
+        print(f"{gh}{'error' if gating else 'warning'}{'::' if gh else ': '}{r}")
+    if errors:
+        print("bench-compare: FAILED", *errors, sep="\n  ")
+        sys.exit(1)
+    if regressions and gating:
+        print("bench-compare: FAILED: a p99 over the margin")
+        sys.exit(1)
+    if regressions:
+        print(f"bench-compare: warn-only (fewer than {MIN_RUNS} runs in the entry): exit 0")
+    else:
+        print("bench-compare: no p99 over the margin")
+
+
+def reading(args):
+    m = machine()
+    profile = os.environ.get("BENCH_PROFILE")
+    gate = profile == GATE_PROFILE
+    key = gate_key(m) if gate else dev_key(m)
+    if profile not in (None, "", GATE_PROFILE):
+        print(f"bench-compare: BENCH_PROFILE={profile} is not the gate's profile; a developer reading as {key}")
+    tree = load(TREE)
+    if args["record"]:
+        if gate:
+            sys.exit(f"bench-compare: a gate entry is the CI job's measure: commit its artifact bench-baseline; "
+                     f"unset BENCH_PROFILE for this machine's reading")
+        dirty = sh("git", "status", "--porcelain", "--untracked-files=normal")
+        if dirty:
+            sys.exit("bench-compare: --record refuses a dirty tree (commit or drop these):\n" + dirty)
+    measured = read_results(args["compare_only"] or run_benches())
+    if not measured:
+        sys.exit("bench-compare: no results")
+    if args["record"]:
+        tree.setdefault("profiles", {})[key] = {
+            "profile": key, "gate": False, "machine": m, "toolchain": sh("rustc", "-V"),
+            "runs": [{"commit": sh("git", "rev-parse", "HEAD"),
+                      "recorded": datetime.date.today().isoformat(), "benches": measured}]}
+        out = args["out"] or TREE
+        write(out, tree)
+        print(f"bench-compare: recorded {len(measured)} benches for {key} in {out}")
+        return
+    entry = tree.get("profiles", {}).get(key)
+    if entry is None:
+        print(f"bench-compare: no entry for {key}; --record writes one")
+        return
+    margin = tree.get("margin", MARGIN)
+    print(f"bench-compare: a reading against {key}, margin {margin:.0%}; never a gate, exit 0")
+    for id, r in sorted(reference(entry).items()):
+        mm = measured.get(id)
+        if mm is None:
+            print(f"{id}: not measured")
+            continue
+        change = mm["p99_us"] / r - 1
+        print(f"{id:42} {mm['p50_us']:>10} {mm['p99_us']:>10} {r:>10} {change:>+8.1%} "
+              f"{'over' if change > margin else 'ok'}")
+
+
+def main(argv):
+    args = {"ci": False, "record": False, "compare_only": None, "base": None, "out": None}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--ci", "--record"):
+            args[a[2:]] = True
+        elif a in ("--compare-only", "--base", "--out") and i + 1 < len(argv):
+            args[a[2:].replace("-", "_")] = argv[i + 1]
+            i += 1
+        elif a in ("-h", "--help"):
+            print(__doc__)
+            return
+        else:
+            sys.exit(f"bench-compare: unknown argument {a}")
+        i += 1
+    if args["ci"]:
+        if args["record"]:
+            sys.exit("bench-compare: --ci records its candidate in --out; --record is a developer's")
+        ci(args)
+    else:
+        if args["base"]:
+            sys.exit("bench-compare: --base is the CI job's (--ci)")
+        reading(args)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

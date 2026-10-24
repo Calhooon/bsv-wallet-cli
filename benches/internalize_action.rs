@@ -1,8 +1,10 @@
 //! `internalize_action` (#71): the `/internalizeAction` handler's path
 //! without the JSON: one BRC-29 payment (the `wallet payment` protocol, a
 //! fresh derivation each call) whose AtomicBEEF carries its proof, the
-//! toolbox's `internalizeAction`, then the route's post word. The payment
-//! is built before the clock starts; the wallet grows by one coin a call.
+//! toolbox's `internalizeAction`, then the route's post word. Each call is
+//! on its own copy of the built wallet ([`common::Fixture::fresh`]), so the
+//! wallet holds exactly 1,000 (or 10,000) coins when every call starts; the
+//! copy and the payment are made before the clock starts.
 
 mod common;
 
@@ -16,7 +18,7 @@ use bsv_sdk::wallet::{
     WalletInterface, WalletPayment,
 };
 use bsv_wallet_cli::server::post_word::{atomic_subject, post_word};
-use common::{configure, report, runtime, timed, wallet_of, Calls, SIZES};
+use common::{coin_count, configure, report, runtime, timed, wallet_of, Calls, SIZES};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 /// BRC-29's protocol id.
@@ -79,14 +81,10 @@ fn internalize_action(c: &mut Criterion) {
     let mut group = c.benchmark_group("internalize_action");
     for coins in SIZES {
         let fixture = rt.block_on(wallet_of(coins));
-        let wallet = &fixture.wallet;
-        let samples = 50;
-        configure(
-            &mut group,
-            samples,
-            Duration::from_secs(2),
-            Duration::from_secs(15),
-        );
+        // ~1.5 ms and ~2.5 ms a call on the lane's machine: 3 s of timed
+        // calls is about 1,000 to 2,000 calls, each after its own copy of
+        // the database (untimed, and the bench's wall clock).
+        configure(&mut group, Duration::from_secs(2), Duration::from_secs(3));
         let calls = Calls::new();
         group.bench_function(BenchmarkId::new("brc29", coins), |b| {
             b.iter_custom(|iters| {
@@ -96,6 +94,9 @@ fn internalize_action(c: &mut Criterion) {
                     for _ in 0..iters {
                         next += 1;
                         let args = payment(&fixture.root, &sender, next);
+                        let fresh = fixture.fresh().await;
+                        let wallet = &fresh.wallet;
+                        assert_eq!(coin_count(wallet).await, coins);
                         let (accepted, d) = timed(&calls, async {
                             let subject = atomic_subject(&args.tx);
                             let result = wallet.internalize_action(args, "bench.local").await;
@@ -107,17 +108,15 @@ fn internalize_action(c: &mut Criterion) {
                         .await;
                         assert!(accepted.unwrap().accepted);
                         total += d;
-                        wallet.services().reset_history();
+                        // The payment landed in this call's copy only.
+                        assert_eq!(coin_count(wallet).await, coins + 1);
                     }
+                    assert_eq!(coin_count(&fixture.fresh().await.wallet).await, coins);
                     total
                 })
             })
         });
-        report(
-            &format!("internalize_action/brc29/{coins}"),
-            &calls,
-            samples,
-        );
+        report(&format!("internalize_action/brc29/{coins}"), &calls);
     }
     group.finish();
 }

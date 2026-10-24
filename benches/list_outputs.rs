@@ -30,13 +30,9 @@ fn list_outputs(c: &mut Criterion) {
     for coins in SIZES {
         let fixture = rt.block_on(wallet_of(coins));
         let wallet = &fixture.wallet;
-        let samples = 50;
-        configure(
-            &mut group,
-            samples,
-            Duration::from_secs(2),
-            Duration::from_secs(10),
-        );
+        // ~0.7 ms and ~3 ms a call on the lane's machine: thousands of
+        // calls in 10 s.
+        configure(&mut group, Duration::from_secs(2), Duration::from_secs(10));
         let calls = Calls::new();
         group.bench_function(BenchmarkId::new("limit100", coins), |b| {
             b.iter_custom(|iters| {
@@ -53,7 +49,7 @@ fn list_outputs(c: &mut Criterion) {
                 })
             })
         });
-        report(&format!("list_outputs/limit100/{coins}"), &calls, samples);
+        report(&format!("list_outputs/limit100/{coins}"), &calls);
     }
     group.finish();
 }
