@@ -1,17 +1,18 @@
 {
   "schema": 1,
-  "commit": "96edab5621cd88f65f972e9292e99ee46ab6bd64",
+  "commit": "5c66d82c575321b98b957002c9e9790d87911265",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "ratchets": {
-    "clippy_pedantic": 843,
+    "clippy_pedantic": 842,
     "unwrap_expect_outside_tests": 7,
     "files_over_800_lines": 10,
-    "functions_over_60_lines": 90,
+    "tests_files_over_800_lines": 3,
+    "functions_over_60_lines": 89,
     "cognitive_complexity_over_25": 20,
-    "duplicated_tokens": 33336,
+    "duplicated_tokens": 32908,
     "missing_docs": 154
   },
   "detail": {
@@ -33,11 +34,11 @@
         "lines": 34219
       },
       "tests": {
-        "files": 24,
-        "lines": 11874
+        "files": 48,
+        "lines": 12037
       }
     },
-    "test_files": 43,
+    "test_files": 67,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
@@ -82,20 +83,8 @@
     ],
     "tests_files_over_800_lines": [
       {
-        "path": "tests/integration.rs",
-        "lines": 2587
-      },
-      {
-        "path": "tests/wire.rs",
-        "lines": 2534
-      },
-      {
         "path": "src/spend_gate/tests.rs",
         "lines": 2439
-      },
-      {
-        "path": "tests/wire_consumers.rs",
-        "lines": 1092
       },
       {
         "path": "src/tracker_words_witnesses.rs",
@@ -104,10 +93,6 @@
       {
         "path": "src/chain_feed_tests.rs",
         "lines": 941
-      },
-      {
-        "path": "tests/respend_witness.rs",
-        "lines": 820
       }
     ],
     "unwrap_expect_by_file": {
@@ -118,10 +103,10 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 507,
+    "duplicated_blocks": 503,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 242,
-      "clippy::uninlined_format_args": 169,
+      "clippy::uninlined_format_args": 168,
       "clippy::missing_errors_doc": 83,
       "clippy::must_use_candidate": 74,
       "clippy::cast_possible_truncation": 42,
