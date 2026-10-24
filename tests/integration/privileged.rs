@@ -127,3 +127,81 @@ async fn privileged_true_is_refused_and_false_is_the_call_as_before() {
         }
     }
 }
+
+/// This test's own originator: the permission audit is process-global and
+/// the other tests' servers record into it too, so its entries are read
+/// by this host alone.
+const AUDITED: &str = "privileged-audit.test";
+
+/// The audit's entries recorded for [`AUDITED`].
+async fn audited(client: &Client, base: &str) -> Vec<Value> {
+    let audit: Value = client
+        .get(format!("{base}/permission-audit"))
+        .send()
+        .await
+        .expect("request failed")
+        .json()
+        .await
+        .unwrap();
+    let entries = audit["entries"].as_array().unwrap();
+    entries
+        .iter()
+        .filter(|e| e["originator"] == AUDITED)
+        .cloned()
+        .collect()
+}
+
+/// One call from [`AUDITED`]: its status.
+async fn call_audited(client: &Client, url: &str, body: Value) -> u16 {
+    let resp = client
+        .post(url)
+        .header("Origin", format!("http://{AUDITED}"))
+        .json(&body)
+        .send()
+        .await
+        .expect("request failed");
+    resp.status().as_u16()
+}
+
+/// `privileged: true` is refused before the call is audited: the nine
+/// refusals add no entry to the permission audit, while the plain call
+/// adds one on each of the five audited routes (a wallet with a human
+/// behind it would prompt for those, and never for a refused call).
+#[tokio::test]
+async fn privileged_true_is_refused_before_the_call_is_audited() {
+    let (base, client, _tmp) = setup().await;
+    let bodies = bodies(&base, &client).await;
+    let reset = client
+        .post(format!("{base}/permission-audit/reset"))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(reset.status(), 200);
+    assert_eq!(audited(&client, &base).await, Vec::<Value>::new());
+    for (path, body, _) in &bodies {
+        let url = format!("{base}/{path}");
+        let refused = with(body, &json!({"privileged": true, "privilegedReason": "r"}));
+        assert_eq!(call_audited(&client, &url, refused).await, 501, "{path}");
+    }
+    let after = audited(&client, &base).await;
+    assert_eq!(after, Vec::<Value>::new(), "the refusals were audited");
+    let five = [
+        "getPublicKey",
+        "createSignature",
+        "encrypt",
+        "decrypt",
+        "createHmac",
+    ];
+    for (path, body, _) in bodies.iter().filter(|(p, _, _)| five.contains(p)) {
+        let before = audited(&client, &base).await.len();
+        let url = format!("{base}/{path}");
+        assert_eq!(
+            call_audited(&client, &url, body.clone()).await,
+            200,
+            "{path}"
+        );
+        let entries = audited(&client, &base).await;
+        assert_eq!(entries.len(), before + 1, "{path}: {entries:?}");
+        assert_eq!(entries[before]["method"], *path, "{path}");
+    }
+}
