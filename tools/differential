@@ -23,7 +23,11 @@ EXCLUSIONS, and only those; each names what it rewrites and why two runs of the
 same code legitimately differ there. The report: per scenario, per call, the
 earliest differing field with both values, and the line
 `DIFFERENTIAL: 0 differences over N calls and M commands` (or the count).
-Exit 0 on zero differences, 1 on differences, 2 when a build or a run failed.
+Exit 0 on zero differences, 1 on differences, 2 when a build or a run failed,
+3 when a recording is not a whole run (INCOMPLETE: no events, no wallets, a
+missing setup, scenario or sweep phase, no HTTP calls or no commands, a line
+that is not JSON, or a phase whose call count differs between the two): an
+incomplete recording is never read as zero differences, nor as a difference.
 
 docs/DIFFERENTIAL.md says how a lane runs it and what the label rule is. A Python
 script with the standard library only, like tools/ratchet.
@@ -498,10 +502,94 @@ def decoded_length(atom, is_hex):
 # ------------------------------------------------------------------ normalize
 
 
-def load(path):
-    events = [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+def read(path):
+    """A recording's events in seq order, and the numbers of its lines that are not a JSON event."""
+    events, bad = [], []
+    for n, line in enumerate(Path(path).read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            bad.append(n)
+            continue
+        if not isinstance(e, dict) or not isinstance(e.get("seq"), int) or "phase" not in e:
+            bad.append(n)
+            continue
+        events.append(e)
     events.sort(key=lambda e: e["seq"])
-    return [_hexify(e) for e in events]
+    return [_hexify(e) for e in events], bad
+
+
+def load(path):
+    return read(path)[0]
+
+
+SCENARIO_NAMES_JS = (
+    "const fs = require('fs'), path = require('path');"
+    "const d = path.resolve('tests/e2e/scenarios');"
+    "console.log(JSON.stringify(fs.readdirSync(d).filter(f => f.endsWith('.js')).sort()"
+    ".map(f => require(path.join(d, f)).name)))"
+)
+
+
+def scenario_names():
+    """The suite's scenarios in run order, by the names run.js records their phases under."""
+    r = subprocess.run(["node", "-e", SCENARIO_NAMES_JS], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Failure(f"the scenarios' names could not be read: {r.stderr.strip()[:200]}")
+    return json.loads(r.stdout)
+
+
+# The seats every run starts in its setup (scenario 23 starts C in its own).
+SETUP_SEATS = ("funder", "A", "B")
+
+
+def phases_of(events):
+    out = []
+    for e in events:
+        if e["phase"] not in out:
+            out.append(e["phase"])
+    return out
+
+
+def gaps_of(events, bad, scenarios):
+    """Why one recording is not a whole run of the suite; [] when it is."""
+    out = [f"line {n} is not a JSON event (a truncated or damaged recording)" for n in bad[:3]]
+    if len(bad) > 3:
+        out.append(f"and {len(bad) - 3} more lines")
+    if not events:
+        return out + ["no events"]
+    seats = {e.get("seat") for e in events if e.get("kind") == "wallet"}
+    if not seats:
+        out.append("no wallet events")
+    else:
+        out += [f"no wallet event for seat {s}" for s in SETUP_SEATS if s not in seats]
+    for kind, what in (("http", "HTTP calls"), ("cli", "commands")):
+        if not any(e.get("kind") == kind for e in events):
+            out.append(f"no {what}")
+    phases = phases_of(events)
+    expected = ["setup"] + list(scenarios) + ["sweep"]
+    if phases != expected:
+        held = [p for p in phases if p in scenarios]
+        if len(held) != len(scenarios):
+            out.append(f"{len(held)} scenario phases, the suite has {len(scenarios)}")
+        out += [f"no {p} phase" for p in expected if p not in phases]
+        out += [f"a phase the suite does not have: {p}" for p in phases if p not in expected]
+        if not any("phase" in g for g in out):
+            out.append(f"the phases out of the suite's order: {', '.join(phases)}")
+    return out
+
+
+def call_gaps(na, nb, names):
+    """Each phase whose two normalized recordings hold a different number of calls and commands."""
+    out = []
+    for p in phases_of(na + nb):
+        x = sum(1 for e in na if e["phase"] == p and e.get("kind") in ("http", "cli"))
+        y = sum(1 for e in nb if e["phase"] == p and e.get("kind") in ("http", "cli"))
+        if x != y:
+            out.append(f"phase {p}: {names[0]} {x} calls and commands, {names[1]} {y}")
+    return out
 
 
 class Renamer:
@@ -768,18 +856,26 @@ def diff(a, b):
     return lines, count
 
 
-def compare_events(a, b):
-    """Two loaded recordings: (report lines, differences, calls, commands, renamed a, renamed b)."""
+def compare_events(a, b, scenarios=None, bad=((), ()), names=("base", "head")):
+    """Two loaded recordings: (report lines, differences, calls, commands, renamed a, renamed b, gaps).
+
+    `gaps` names why either is not a whole run (exit 3), checked against the
+    suite's scenarios (`scenarios`, read from the tree when None)."""
+    scenarios = scenario_names() if scenarios is None else scenarios
+    gaps = [f"{names[0]}: {g}" for g in gaps_of(a, bad[0], scenarios)]
+    gaps += [f"{names[1]}: {g}" for g in gaps_of(b, bad[1], scenarios)]
     na, nb, ka, kb = normalize(a, b)
+    gaps += call_gaps(na, nb, names)
     lines, count = diff(na, nb)
     calls = sum(1 for e in na if e.get("kind") == "http")
     commands = sum(1 for e in na if e.get("kind") == "cli")
-    return lines, count, calls, commands, ka, kb
+    return lines, count, calls, commands, ka, kb, gaps
 
 
 def compare(rec_a, rec_b, names=("base", "head")):
-    a, b = load(rec_a), load(rec_b)
-    lines, count, calls, commands, ka, kb = compare_events(a, b)
+    """The report of two recordings, its difference count and its gaps (an incomplete recording)."""
+    (a, bad_a), (b, bad_b) = read(rec_a), read(rec_b)
+    lines, count, calls, commands, ka, kb, gaps = compare_events(a, b, bad=(bad_a, bad_b), names=names)
     out = [
         f"differential: {names[0]} {rec_a}",
         f"differential: {names[1]} {rec_b}",
@@ -790,10 +886,19 @@ def compare(rec_a, rec_b, names=("base", "head")):
     out += lines
     if lines:
         out.append("")
-    out.append(
-        f"DIFFERENTIAL: {count} difference{'s' if count != 1 else ''} over {calls} calls and {commands} commands"
-    )
-    return "\n".join(out), count
+    out += [f"INCOMPLETE: {g}" for g in gaps]
+    verdict = f"{count} difference{'s' if count != 1 else ''} over {calls} calls and {commands} commands"
+    if gaps:
+        verdict = f"INCOMPLETE recording ({len(gaps)} gap{'s' if len(gaps) != 1 else ''}; no verdict): {verdict}"
+    out.append(f"DIFFERENTIAL: {verdict}")
+    return "\n".join(out), count, gaps
+
+
+def verdict(count, gaps):
+    """The exit code of a comparison: 3 incomplete, 1 differences, 0 none."""
+    if gaps:
+        return 3
+    return 0 if count == 0 else 1
 
 
 # ---------------------------------------------------------------------- build
@@ -915,9 +1020,9 @@ def main():
         return 0
 
     if args.compare:
-        text, count = compare(*args.compare)
+        text, count, gaps = compare(*args.compare)
         print(text)
-        return 0 if count == 0 else 1
+        return verdict(count, gaps)
 
     out = Path(args.out) if args.out else default_out()
     out.mkdir(parents=True, exist_ok=True)
@@ -940,7 +1045,7 @@ def main():
     keys = [secrets.token_hex(32) for _ in range(4)]
     rec_a, code_a, passed_a = record(base, keys, out, names[0])
     rec_b, code_b, passed_b = record(head, keys, out, names[1])
-    text, count = compare(rec_a, rec_b, names)
+    text, count, gaps = compare(rec_a, rec_b, names)
     header = [
         f"differential: {names[0]} build {base_label}: suite exit {code_a}, {passed_a}",
         f"differential: {names[1]} build {head_label}: suite exit {code_b}, {passed_b}",
@@ -953,7 +1058,9 @@ def main():
     if code_a != 0 or code_b != 0:
         print("differential: a suite run failed; the differences above are not a verdict", file=sys.stderr)
         return 2
-    return 0 if count == 0 else 1
+    if gaps:
+        print("differential: a recording is incomplete (INCOMPLETE above); no verdict", file=sys.stderr)
+    return verdict(count, gaps)
 
 
 if __name__ == "__main__":

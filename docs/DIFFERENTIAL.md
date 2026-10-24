@@ -24,7 +24,7 @@ tools/differential --base-target DIR             # the base build's CARGO_TARGET
 
 Scratch (the base's worktree, its target dir unless `--base-target` names one, the default `--out`) goes under `$TMPDIR/bsv-wallet-differential/`, or `~/bsv/targets/bsv-wallet-differential/` when `$TMPDIR` is unset or `/tmp`. A lane keeps its runs under `/Volumes/Lanes/out/bsv-wallet-cli/` with `--out`. Two runs take about 15 seconds after the builds. The ports are the hermetic run's own (3370 to 3373, the stub on 3380), never a port of the registry's.
 
-Exit 0 on zero differences, 1 on differences, 2 when a build, a path or a suite run failed (a failed suite's differences are no verdict).
+Exit 0 on zero differences, 1 on differences, 2 when a build, a path or a suite run failed (a failed suite's differences are no verdict), 3 when a recording is not a whole run. The tool fails closed: a recording is incomplete when it has no events, no wallet event (or none for a seat the setup starts: the funder, A, B), no HTTP calls or no commands, a line that is not a JSON event (a truncated file), a missing `setup` or `sweep` phase, a scenario phase count other than the suite's 23 (read from `tests/e2e/scenarios`) or a phase the suite lacks; and a pair is incomplete when a phase holds a different number of calls and commands in the two. The report names each gap on an `INCOMPLETE:` line and its last line reads `DIFFERENTIAL: INCOMPLETE recording (...)`; two empty recordings are never zero differences.
 
 ## What is recorded
 
@@ -61,7 +61,7 @@ The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull reques
 
 - A PR carrying the label `refactor` fails the job on any difference.
 - Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
-- A failed build or suite run fails the job either way.
+- A failed build or suite run, or an incomplete recording (exit 3), fails the job either way.
 
 Labels are read when the run starts; a label added later takes a re-run of the job. The job is not a required check yet; the captain decides after it has run a week.
 

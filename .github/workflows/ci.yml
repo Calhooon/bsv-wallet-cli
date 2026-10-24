@@ -418,7 +418,8 @@ jobs:
   # normalizations tools/differential lists (`--exclusions`). It fails on
   # differences only when the PR carries the label `refactor`: a feature PR
   # changes outputs by design, and its differences are its review's reading.
-  # A failed build or suite run fails it either way. Labels are read when the
+  # A failed build or suite run, or an incomplete recording (exit 3), fails
+  # it either way. Labels are read when the
   # run starts; a label added later takes a re-run of this job. Not a required
   # check yet: the captain decides after it has run a week. The report is the
   # run's artifact `differential`, and its DIFFERENTIAL line is in the summary.
@@ -505,7 +506,11 @@ jobs:
             echo
             echo "label refactor: $REFACTOR; the report is the artifact \`differential\`"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$code" -eq 2 ] || { [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; }; then
+          if [ "$code" -eq 3 ]; then
+            echo "::error::$line: a recording is not a whole run (its INCOMPLETE lines in the report)"
+            exit 1
+          fi
+          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
             echo "::error::a build's suite run failed (exit $code); see the report and the run logs"
             exit 1
           fi
