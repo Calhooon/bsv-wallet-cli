@@ -47,9 +47,14 @@ malformed record as an absent one.
   benches/baseline.json          the bench baseline, tools/bench-compare's shape:
                                  {"profiles": {name: {"runs": [{"benches": {id:
                                  {"p50_us": n, "p99_us": n, ..}}}]}}}
-  tests/e2e/scenarios/*.js       the e2e scenarios (run.js loads every .js there)
-  tests/e2e/run.js, lib/*.js     the hermetic flag: present when a line of code (not a
-                                 comment) reads the knob, `process.env.E2E_HERMETIC`
+  tests/e2e/scenarios/*.js       the e2e scenarios: run.js requires every .js there and
+                                 calls each module's run(walletA, walletB, assert), so
+                                 a scenario is a file whose code exports a run
+                                 (`module.exports = { .. run .. }` or
+                                 `module.exports.run =`); another .js is not counted
+  tests/e2e/run.js, lib/*.js     the hermetic flag: present when the code (comments
+                                 and string literals blanked) reads the knob,
+                                 `process.env.E2E_HERMETIC` or `process.env['E2E_HERMETIC']`
 
 docs/scoreboard/mutants.json, the measured column of the floors' rows:
 
@@ -372,29 +377,97 @@ def bench_rows():
     return rows
 
 
-def code_lines(text):
-    """A JavaScript file's lines with its comments blanked (strings kept, as the knob's
-    read is code, and a `//` inside a string literal is rare enough to read as code)."""
-    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
-    return [re.sub(r"(^|[^:\\])//.*$", r"\1", line) for line in text.splitlines()]
+IDENT = re.compile(r"^[A-Za-z_$][\w$]*$")
+# A `/` after one of these (or at the start) opens a regular expression literal.
+REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
 
 
-KNOB = re.compile(r"process\.env(?:\.E2E_HERMETIC\b|\[\s*['\"]E2E_HERMETIC['\"]\s*\])")
+def opens_regex(before):
+    last = before.rstrip()[-1:]
+    return not last or last in REGEX_AFTER
+
+
+def code_text(text):
+    """A JavaScript file's code: comments blanked (their newlines kept) and every
+    string, template or regular expression literal blanked to '' unless its body is
+    a bare identifier (kept, so `process.env['E2E_HERMETIC']` and a quoted key
+    `'run':` still read as code). A mention of the knob in a comment or a string
+    ("process.env.E2E_HERMETIC") is never a read."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("\n" * text.count("\n", i, j))
+            i = j
+        elif c in "'\"`" or (c == "/" and opens_regex("".join(out))):
+            j, klass = i + 1, False
+            while j < n and (text[j] != c or klass) and not (c in "'\"" and text[j] == "\n"):
+                if text[j] == "\\":
+                    j += 1
+                elif c == "/" and text[j] in "[]":
+                    klass = text[j] == "["
+                j += 1
+            body = text[i + 1:j]
+            out.append(c + (body if c != "/" and IDENT.match(body) else "") + c)
+            out.append("\n" * body.count("\n"))
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+KNOB = re.compile(r"process\.env(?:\s*\.\s*E2E_HERMETIC\b|\s*\[\s*(['\"`])E2E_HERMETIC\1\s*\])")
 
 
 def hermetic_read():
     """The file whose code reads process.env.E2E_HERMETIC (by HERMETIC_FILES' order), or None."""
     for pattern in HERMETIC_FILES:
         for p in sorted(ROOT.glob(pattern)):
-            if any(KNOB.search(line) for line in code_lines(p.read_text())):
+            if KNOB.search(code_text(p.read_text())):
                 return p.relative_to(ROOT).as_posix()
     return None
+
+
+EXPORTS_RUN = re.compile(r"\bmodule\s*\.\s*exports\s*\.\s*run\s*=[^=]")
+EXPORTS_OBJ = re.compile(r"\bmodule\s*\.\s*exports\s*=\s*\{")
+RUN_KEY = re.compile(r"(?:^|[{,])\s*(?:async\s+)?\*?\s*(?:run|(['\"])run\1)\s*[(:,}]|(?:^|[{,])\s*run\s*$")
+
+
+def exports_run(text):
+    """Whether a scenario's code exports a run, as run.js calls it: a key `run` at the
+    top level of the object assigned to module.exports, or module.exports.run = .."""
+    code = code_text(text)
+    if EXPORTS_RUN.search(code):
+        return True
+    for m in EXPORTS_OBJ.finditer(code):
+        depth, top, j = 1, [], m.end()
+        while j < len(code) and depth:
+            ch = code[j]
+            if ch in "{[(":
+                depth += 1
+            elif ch in "}])":
+                depth -= 1
+            if depth == 1 or (depth == 2 and ch in "{[("):
+                top.append(ch)
+            elif depth == 0:
+                top.append("}")
+            j += 1
+        if RUN_KEY.search("{" + "".join(top)):
+            return True
+    return False
 
 
 def e2e_rows():
     if not path(SCENARIOS).is_dir():
         return [Row("e2e scenarios", ABSENT, "", f"`{SCENARIOS}/`")]
-    count = len([p for p in path(SCENARIOS).iterdir() if p.name.endswith(".js")])
+    count = len([p for p in path(SCENARIOS).iterdir()
+                 if p.name.endswith(".js") and p.is_file() and exports_run(p.read_text())])
     where = hermetic_read()
     flag = Row("hermetic flag `E2E_HERMETIC`", "present" if where else "absent", "",
                f"`{where}`" if where else "`tests/e2e/run.js`, `tests/e2e/lib/`",
