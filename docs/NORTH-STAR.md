@@ -14,7 +14,7 @@ The wallet is one of the stack's nine machines; its definition is the stack's wa
 
 | class | where the epic names it | what lands it |
 |---|---|---|
-| cold path | Phase 1, "structure (cold paths)" | green CI ("cold-path PRs merge on green CI") |
+| cold path | Phase 1, "structure (cold paths)" | green CI ("Cold-path PRs merge on green CI") |
 | hot path | Phase 2, "the spend path (hot; differential proof, mutation floor, adversarial review, the mainnet gate)" | the full proof: the differential proof (#70), the mutation floor (#75), an adversarial review, and the mainnet gate |
 
 The epic's own words for the two classes (#106, "The loop"): "Cold-path PRs merge on green CI; hot-path PRs need the full proof." The epic classes no other phase; a PR of Phases 3 to 6 is classed at landing by the captain.
