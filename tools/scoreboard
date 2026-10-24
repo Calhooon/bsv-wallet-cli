@@ -211,10 +211,60 @@ def consumer_rows():
 
 
 # One tuple of an allowlist: ("src/file.rs", 12, "the reason"), a trailing comma allowed.
+# A string is a Rust string literal, read by rust_str(), never as JSON: the two
+# escape sets differ (\' and \u{..} and a line continuation are Rust's alone).
 STR = r'"(?:[^"\\]|\\.)*"'
+# A raw string, r"..", r#".."#, opening either string of a tuple: refused by name.
+RAW = re.compile(r'\(\s*(?:"(?:[^"\\]|\\.)*"\s*,\s*\d+\s*,\s*)?r#*"', re.S)
+SIMPLE_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", "0": "\0", "'": "'", '"': '"'}
+HEX = set("0123456789abcdefABCDEF")
 TUPLE = re.compile(r'\(\s*(' + STR + r')\s*,\s*(\d+)\s*,\s*(' + STR + r')\s*,?\s*\)\s*(?:,|$)\s*', re.S)
 ALLOWED_OPEN = "const ALLOWED: &[(&str, usize, &str)] = &["
 RULE_NAME = re.compile(r'const RULE: Rule = Rule \{\s*name:\s*"(A\d+): [^"]+",')
+
+
+def rust_str(lit, name, field):
+    """The value of a Rust string literal `"..."` (STR's match), as rustc reads it:
+    \\n \\r \\t \\\\ \\0 \\' \\", \\x00 to \\x7f, \\u{1 to 6 hex digits} (a scalar value),
+    and a backslash before a newline, which drops the newline and the whitespace
+    after it. Any other escape is a fault, never a traceback."""
+    body, out, i = lit[1:-1], [], 0
+    while i < len(body):
+        c = body[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        e = body[i + 1] if i + 1 < len(body) else ""
+        if e in SIMPLE_ESCAPES:
+            out.append(SIMPLE_ESCAPES[e])
+            i += 2
+        elif e in ("\n", "\r"):
+            if e == "\r" and body[i + 2:i + 3] != "\n":
+                fail(name, field, "a bare carriage return after a backslash is not a Rust escape")
+            i += 2
+            while i < len(body) and body[i] in " \t\n\r":
+                i += 1
+        elif e == "x":
+            digits = body[i + 2:i + 4]
+            if len(digits) != 2 or not set(digits) <= HEX or int(digits, 16) > 0x7F:
+                fail(name, field, f"\\x{digits} is not a Rust escape (two hex digits, at most 7f)")
+            out.append(chr(int(digits, 16)))
+            i += 4
+        elif e == "u":
+            close = body.find("}", i + 3)
+            if body[i + 2:i + 3] != "{" or close < 0:
+                fail(name, field, "\\u without braces is not a Rust escape (\\u{1 to 6 hex digits})")
+            digits = body[i + 3:close]
+            v = digits.replace("_", "")
+            if (digits.startswith("_") or not 1 <= len(v) <= 6 or not set(v) <= HEX
+                    or int(v, 16) > 0x10FFFF or 0xD800 <= int(v, 16) <= 0xDFFF):
+                fail(name, field, f"{body[i:close + 1]} is not a Rust escape (\\u{{1 to 6 hex digits}}, a scalar value)")
+            out.append(chr(int(v, 16)))
+            i = close + 1
+        else:
+            fail(name, field, f"\\{e} is not a Rust escape")
+    return "".join(out)
 
 
 def allowlist(name, text):
@@ -228,18 +278,22 @@ def allowlist(name, text):
     body, pos, entries = body[:end], 0, []
     body = body.strip()
     while pos < len(body):
+        entry = f"ALLOWED entry {len(entries) + 1}"
+        if RAW.match(body, pos):
+            fail(name, entry, 'a raw string r"..", r#".."# is not read; write it as a plain "..." literal')
         m = TUPLE.match(body, pos)
         if not m:
             snippet = body[pos:pos + 60].split("\n")[0]
-            fail(name, f"ALLOWED entry {len(entries) + 1}",
-                 f"not a (\"file\", count, \"reason\") tuple: {snippet!r}")
-        file, count = json.loads(m.group(1)), int(m.group(2))
+            fail(name, entry, f"not a (\"file\", count, \"reason\") tuple: {snippet!r}")
+        if "\\" in m.group(1):
+            fail(name, entry, f"the file {m.group(1)} carries an escape; a src/ path never does")
+        file, count = m.group(1)[1:-1], int(m.group(2))
         if not file.startswith("src/") or not file.endswith(".rs"):
-            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file!r} is not a src/ .rs file")
+            fail(name, entry, f"{file!r} is not a src/ .rs file")
         if count == 0:
-            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file} counts 0; an entry at zero is removed")
-        if not json.loads(m.group(3)).strip():
-            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file} carries no reason")
+            fail(name, entry, f"{file} counts 0; an entry at zero is removed")
+        if not rust_str(m.group(3), name, f"{entry} ({file}'s reason)").strip():
+            fail(name, entry, f"{file} carries no reason")
         entries.append((file, count))
         pos = m.end()
     files = [f for f, _ in entries]
@@ -254,7 +308,11 @@ def arch_rows():
         return [Row("architecture rules", ABSENT, "", f"`{ARCH_GLOB}`")]
     rules = {}
     for p in tests:
-        name, text = p.relative_to(ROOT).as_posix(), p.read_text()
+        name = p.relative_to(ROOT).as_posix()
+        try:
+            text = p.read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            fail(name, "(the file)", f"not readable as UTF-8 ({e})")
         names = RULE_NAME.findall(text)
         if len(names) != 1:
             fail(name, "RULE", 'must hold one `const RULE: Rule = Rule { name: "A<n>: ..",`')
