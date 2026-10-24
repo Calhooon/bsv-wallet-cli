@@ -737,6 +737,12 @@ def record(binary, keys, out, name):
     print(f"differential: run {name}: {binary}", file=sys.stderr, flush=True)
     with open(log, "w") as f:
         r = subprocess.run(["node", str(HARNESS)], cwd=ROOT, env=env, stdout=f, stderr=subprocess.STDOUT)
+    # The recording and the log are kept (CI uploads them); neither may hold
+    # a root key (record.js writes each as <root-key:SEAT>). The wallets'
+    # directories hold them in .env and are never uploaded.
+    for f in (rec, log):
+        if f.exists() and any(k in f.read_text() for k in keys):
+            raise Failure(f"{f} holds a root key of DIFF_ROOT_KEYS; record.js must write <root-key:SEAT>")
     tail = log.read_text().splitlines()
     passed = next((l.strip() for l in reversed(tail) if l.strip().startswith("Passed:")), "Passed: ?")
     print(f"differential: run {name}: exit {r.returncode}, {passed} (log {log})", file=sys.stderr, flush=True)

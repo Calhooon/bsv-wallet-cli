@@ -14,6 +14,9 @@
  * `DIFF_ROOT_KEYS=<A>,<B>,<C>[,<funder>]` (hex) gives the fresh wallets the
  * same keys in two runs; setup.js passes a seat's key to `init --key`. It is
  * refused outside `E2E_HERMETIC=1`: a known key must never hold mainnet sats.
+ * The recording never holds a key: every line written, the argv included
+ * (`--key <root-key:A>`), has each key replaced by its seat's name, and so
+ * has the error a failed command throws.
  *
  * Require this module before ./setup and the scenarios: `install()` replaces
  * `child_process.execSync`, which they take by destructuring at load.
@@ -52,6 +55,16 @@ function rootKeyFor(name) {
 // Refused at load, before any wallet starts, as well as at each seat's init.
 if (process.env.DIFF_ROOT_KEYS) rootKeyFor('wallet-A');
 
+// Each key of DIFF_ROOT_KEYS and its seat's name, `<root-key:A>`.
+const KEY_NAMES = (process.env.DIFF_ROOT_KEYS || '').split(',').map(k => k.trim())
+  .map((k, i) => [k, `<root-key:${SEATS[i]}>`]).filter(([k]) => k !== '');
+
+/** The text with every root key replaced by its seat's name. */
+function redact(text) {
+  for (const [key, name] of KEY_NAMES) text = text.split(key).join(name);
+  return text;
+}
+
 let phase = 'setup';
 let seq = 0;
 const dirs = new Map(); // wallet directory -> seat
@@ -60,7 +73,7 @@ function setPhase(name) { phase = name; }
 
 function write(event) {
   if (!enabled) return;
-  fs.appendFileSync(FILE, JSON.stringify(event) + '\n');
+  fs.appendFileSync(FILE, redact(JSON.stringify(event)) + '\n');
 }
 
 /** A wallet directory setup.js made, so its commands are named by seat. */
@@ -126,7 +139,7 @@ function install(bin) {
   const real = childProcess.execSync;
   childProcess.execSync = function recordedExecSync(cmd, opts = {}) {
     if (typeof cmd !== 'string' || !cmd.includes(bin)) return real.call(this, cmd, opts);
-    const event = { kind: 'cli', seq: seq++, phase, seat: seatOfCommand(cmd, opts.cwd), argv: argvOf(cmd, bin) };
+    const event = { kind: 'cli', seq: seq++, phase, seat: seatOfCommand(cmd, opts.cwd), argv: argvOf(redact(cmd), bin) };
     const stdio = normStdio(opts.stdio);
     const r = childProcess.spawnSync(cmd, {
       cwd: opts.cwd, env: opts.env, input: opts.input, timeout: opts.timeout,
@@ -142,11 +155,12 @@ function install(bin) {
     const enc = opts.encoding && opts.encoding !== 'buffer' ? opts.encoding : null;
     const as = (b) => (enc ? b.toString(enc) : b);
     if (r.error) {
+      r.error.message = redact(r.error.message);
       r.error.stdout = as(out); r.error.stderr = as(err);
       throw r.error;
     }
     if (r.status !== 0) {
-      const e = new Error(`Command failed: ${cmd}\n${err.toString('utf-8')}`);
+      const e = new Error(redact(`Command failed: ${cmd}\n${err.toString('utf-8')}`));
       Object.assign(e, { status: r.status, signal: r.signal, pid: r.pid, stdout: as(out), stderr: as(err), output: [null, as(out), as(err)] });
       throw e;
     }
@@ -164,7 +178,8 @@ function normStdio(stdio) {
 /**
  * The wallet binary's arguments from a `cd "<dir>" && "<bin>" args...`
  * command: the words after the binary, split as the shell splits them for
- * the double-quoted and plain words the scenarios write.
+ * the double-quoted and plain words the scenarios write. The caller passes
+ * the command redacted, so `init --key` is written `--key <root-key:SEAT>`.
  */
 function argvOf(cmd, bin) {
   const at = cmd.indexOf(bin);
@@ -179,4 +194,4 @@ function argvOf(cmd, bin) {
   return words;
 }
 
-module.exports = { enabled, install, setPhase, walletDir, wallet, serial, httpStart, rootKeyFor, seatOf };
+module.exports = { enabled, install, setPhase, walletDir, wallet, serial, httpStart, rootKeyFor, seatOf, redact };

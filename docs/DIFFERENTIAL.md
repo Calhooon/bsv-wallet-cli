@@ -41,6 +41,8 @@ Under `DIFF_RECORD` the harness's HTTP calls run one at a time in the order the 
 
 **The same wallets.** `DIFF_ROOT_KEYS=<A>,<B>,<C>[,<funder>]` (64-digit hex each) makes `setup.js` pass the seat's key to `bsv-wallet init --key` instead of drawing one. The tool draws four keys once per comparison and gives both runs the same ones. The variable is refused outside `E2E_HERMETIC=1`, so a known key never holds mainnet sats.
 
+**No recording holds a key.** `record.js` writes every key of `DIFF_ROOT_KEYS` as its seat's name, `<root-key:A>` (so `init`'s argv is `--key <root-key:A>`), in every line and in the error a failed command throws; the tool refuses a run whose recording or log holds one (exit 2), and `tools/test_differential.py` greps a recording for each key. A failed run keeps the wallets' directories under `--out` (`base-wallets/`, `head-wallets/`: each `.env` holds `ROOT_KEY`); the CI job's upload leaves them out and carries the report, the recordings and the run logs only.
+
 The harness, the scenarios, the stub and its fixtures are the head's tree for both runs: only the binary differs.
 
 ## The exclusions
