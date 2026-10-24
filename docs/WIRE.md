@@ -76,8 +76,8 @@ A fixture records what the server answers, defect included; the fix changes the 
 
 | fixture | what is served | why it is a defect | issue |
 |---|---|---|---|
-| `082-options.auth.createAction.json` | a preflight in the `auth` world answers 401 `UNAUTHORIZED` with no CORS headers | the bearer is checked before CORS answers, so a browser's `OPTIONS` request, which carries no credentials, is refused and the browser never sends the real call; the CORS layer must answer a preflight before the bearer is asked | the bearer-before-CORS issue (number to come from the captain) |
-| `103-internalizeAction.badUnlock.json` | `accepted: true` for a payment whose only input's unlocking script is `OP_0` against a P2PKH lock (its spend fails, `OP_EQUALVERIFY`) | neither the server nor the toolbox (=0.12.1) runs the payment's scripts: `internalizeAction` checks the BEEF's proofs, not that the transaction spends what it names. Here the broadcaster takes every post; a real one would refuse it, and the toolbox reads a refusal on its post as a hint, not a refusal of the payment | to be filed (the unverified-spend issue) |
+| `082-options.auth.createAction.json` | a preflight in the `auth` world answers 401 `UNAUTHORIZED` with no CORS headers | the bearer is checked before CORS answers, so a browser's `OPTIONS` request, which carries no credentials, is refused and the browser never sends the real call; the CORS layer must answer a preflight before the bearer is asked | the bearer-before-CORS issue (#138) (number to come from the captain) |
+| `103-internalizeAction.badUnlock.json` | `accepted: true` for a payment whose only input's unlocking script is `OP_0` against a P2PKH lock (its spend fails, `OP_EQUALVERIFY`) | neither the server nor the toolbox (=0.12.1) runs the payment's scripts: `internalizeAction` checks the BEEF's proofs, not that the transaction spends what it names. Here the broadcaster takes every post; a real one would refuse it, and the toolbox reads a refusal on its post as a hint, not a refusal of the payment | to be filed (the unverified-spend issue (#140)) |
 
 ## Changing a fixture on purpose
 
