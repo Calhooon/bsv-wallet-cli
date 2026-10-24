@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "commit": "f5d5dba15fa1ba9686c6f500c8826c8dc11b5dbf",
+  "commit": "150a8d519fa6ca39b0a4282e9fcbc56bdca68dcb",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -12,8 +12,8 @@
     "tests_files_over_800_lines": 3,
     "functions_over_60_lines": 89,
     "cognitive_complexity_over_25": 20,
-    "duplicated_tokens": 32786,
-    "missing_docs": 154
+    "duplicated_tokens": 32717,
+    "missing_docs": 150
   },
   "detail": {
     "sources": {
@@ -27,18 +27,18 @@
       },
       "mcp/src": {
         "files": 2,
-        "lines": 1102
+        "lines": 1106
       },
       "src": {
         "files": 77,
-        "lines": 36837
+        "lines": 38264
       },
       "tests": {
-        "files": 51,
-        "lines": 13011
+        "files": 52,
+        "lines": 13392
       }
     },
-    "test_files": 71,
+    "test_files": 72,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
@@ -58,11 +58,11 @@
       },
       {
         "path": "src/spend_gate.rs",
-        "lines": 1592
+        "lines": 1695
       },
       {
         "path": "src/server/handlers.rs",
-        "lines": 1121
+        "lines": 1200
       },
       {
         "path": "src/commands/sync.rs",
@@ -70,7 +70,7 @@
       },
       {
         "path": "mcp/src/main.rs",
-        "lines": 933
+        "lines": 937
       },
       {
         "path": "src/server/broadcast_follow_up.rs",
@@ -84,7 +84,7 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 2446
+        "lines": 2844
       },
       {
         "path": "src/tracker_words_witnesses.rs",
@@ -102,7 +102,7 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 506,
+    "duplicated_blocks": 504,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 239,
       "clippy::uninlined_format_args": 168,
