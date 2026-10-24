@@ -13,10 +13,7 @@ use arch_support::{calls, count, hits, judge};
 const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/atomic_beef.rs", 1, "the one leaf of a length-one list"),
     ("src/bin/bsv-wallet-relay.rs", 1, "a literal address parse"),
-    ("src/commands/drain.rs", 1, "the txid of a broadcast result"),
     ("src/commands/gift_send.rs", 1, "midnight of a parsed date"),
-    ("src/commands/send.rs", 1, "the txid of a broadcast result"),
-    ("src/commands/split.rs", 1, "the txid of a broadcast result"),
     (
         "src/gift/covenant.rs",
         1,
@@ -27,7 +24,6 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         1,
         "the history object checked one line above",
     ),
-    ("src/server/mod.rs", 1, "the ctrl-c listener"),
 ];
 
 #[test]
