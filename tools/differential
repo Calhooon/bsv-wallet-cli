@@ -75,8 +75,9 @@ EXCLUSIONS = [
         "rewritten to <dir:SEAT>",
     ),
     (
-        "rand atoms: txids, scriptSigs, P2PKH hash160s, merkle path hashes and "
-        "Atomic BEEF subjects held by one run's recording and not the other's",
+        "rand atoms: txids, an input script's signature DER bodies and pushes of "
+        "20 bytes or more (its public keys), P2PKH hash160s, merkle path hashes "
+        "and Atomic BEEF subjects held by one run's recording and not the other's",
         "the toolbox draws each action's change derivation (derivationPrefix, "
         "derivationSuffix) from thread_rng (storage/sqlx/create_action.rs "
         "random_derivation; no seed knob), so every change script, and every "
@@ -84,10 +85,12 @@ EXCLUSIONS = [
         "transaction in the recording (raw, BEEF V1/V2, Atomic BEEF; a byte "
         "array or a hex string, alone or inside text) is parsed and an atom "
         "present in one run only is rewritten <rand:N>, numbered in order of "
-        "appearance; an atom both runs hold stays literal. Equal normalized "
-        "recordings are a consistent bijection of the random atoms: the same "
-        "structure, amounts, counts and order, every deterministic value byte "
-        "for byte",
+        "appearance; an atom both runs hold stays literal. An input script is "
+        "split into its pushes: the push count, each push's opcode, each "
+        "signature's sighash byte and strict DER form (BIP 66, low-S) stay "
+        "compared. Equal normalized recordings are a consistent bijection of "
+        "the random atoms: the same structure, amounts, counts and order, every "
+        "deterministic value byte for byte",
     ),
     (
         "rand strings: *.reference, *.derivationPrefix, *.derivationSuffix "
@@ -104,6 +107,15 @@ EXCLUSIONS = [
         "the certificate fields of scenario 6 are the harness's base64 of "
         "/encrypt's answer, and proveCertificate re-encrypts the keyring for the "
         "verifier",
+    ),
+    (
+        "the length byte of a push whose signature's DER body is a rand atom",
+        "written der+1 when it is the body's length and one sighash byte: the "
+        "DER encoding of a random r and s is 70 to 72 bytes (a leading zero "
+        "when the high bit is set), so one binary's signature over a rand "
+        "transaction is 71, 72 or 73 bytes by the draw. A signature over the "
+        "same preimage in both runs is the same bytes (RFC 6979) and keeps its "
+        "literal length byte",
     ),
     (
         "the order of a transaction's inputs",
@@ -165,6 +177,7 @@ def _parse_tx(b, i):
         raise ValueError("inputs")
     inputs = []
     for _ in range(n_in):
+        prev_at = i
         prev = b[i : i + 32]
         if len(prev) != 32:
             raise ValueError("short")
@@ -174,8 +187,9 @@ def _parse_tx(b, i):
         script = b[i : i + n]
         if len(script) != n:
             raise ValueError("short")
+        at = i
         i += n
-        inputs.append({"prev": prev[::-1], "vout": vout, "script": script,
+        inputs.append({"prev": prev[::-1], "vout": vout, "script": script, "at": at, "prev_at": prev_at,
                        "seq": int.from_bytes(b[i : i + 4], "little")})
         i += 4
     n_out, i = _varint(b, i)
@@ -196,7 +210,8 @@ def _parse_tx(b, i):
     if i > len(b):
         raise ValueError("short")
     txid = _sha256d(b[start:i])[::-1]
-    return {"txid": txid, "version": version, "inputs": inputs, "outputs": outputs, "locktime": locktime}, i
+    return {"txid": txid, "version": version, "inputs": inputs, "outputs": outputs, "locktime": locktime,
+            "span": (start, i)}, i
 
 
 def _parse_bump(b, i):
@@ -279,13 +294,79 @@ def _p2pkh(script):
     return len(script) == 25 and script[:3] == b"\x76\xa9\x14" and script[23:] == b"\x88\xac"
 
 
+def _pushes(script):
+    """A script as its pushes, [(opcode bytes, data)]; None if it holds anything but pushes."""
+    out = []
+    i = 0
+    while i < len(script):
+        op = script[i]
+        if op == 0:
+            out.append((script[i : i + 1], b""))
+            i += 1
+            continue
+        if op <= 0x4B:
+            h, n = 1, op
+        elif op in (0x4C, 0x4D, 0x4E):
+            h = {0x4C: 2, 0x4D: 3, 0x4E: 5}[op]
+            if i + h > len(script):
+                return None
+            n = int.from_bytes(script[i + 1 : i + h], "little")
+        else:
+            return None
+        data = script[i + h : i + h + n]
+        if len(data) != n:
+            return None
+        out.append((script[i : i + h], data))
+        i += h + n
+    return out
+
+
+SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+
+def _sig(push):
+    """A push that is a strict DER signature (BIP 66) and its sighash byte: (der, sighash, low_s), or None."""
+    n = len(push)
+    if n < 9 or n > 73 or push[0] != 0x30 or push[1] != n - 3:
+        return None
+    lr = push[3]
+    if push[2] != 0x02 or lr == 0 or 5 + lr >= n:
+        return None
+    ls = push[5 + lr]
+    if lr + ls + 7 != n or push[4 + lr] != 0x02 or ls == 0:
+        return None
+    r, sv = push[4 : 4 + lr], push[6 + lr : 6 + lr + ls]
+    for v in (r, sv):
+        if v[0] & 0x80 or (len(v) > 1 and v[0] == 0 and not v[1] & 0x80):
+            return None
+    return push[:-1], push[-1], int.from_bytes(sv, "big") <= SECP256K1_N // 2
+
+
+def _script_sig_atoms(script):
+    """The random atoms of an input's script: each signature's DER body and each push of 20 bytes or more.
+
+    The sighash byte, the opcodes and every short push are not atoms: they
+    are compared byte for byte. A script that is not pushes alone is one atom.
+    """
+    pushes = _pushes(script)
+    if pushes is None:
+        if len(script) >= 20:
+            yield script
+        return
+    for _, data in pushes:
+        sig = _sig(data)
+        if sig is not None:
+            yield sig[0]
+        elif len(data) >= 20:
+            yield data
+
+
 def _tx_atoms(tx):
     yield tx["txid"]
     for x in tx["inputs"]:
         if x["prev"] != bytes(32):
             yield x["prev"]
-        if len(x["script"]) >= 20:
-            yield x["script"]
+        yield from _script_sig_atoms(x["script"])
     for o in tx["outputs"]:
         if _p2pkh(o["script"]):
             yield o["script"][3:23]
@@ -449,8 +530,39 @@ class Renamer:
             return "76a914" + self.name(script[3:23].hex()) + "88ac"
         return self.text(script.hex())
 
+    def _script_sig(self, script):
+        """An input's script as its pushes: each push's opcode (its length byte),
+        a signature's DER body renamed with its sighash byte and its low-S kept,
+        any other push of 20 bytes or more renamed; the count is the list's."""
+        pushes = _pushes(script)
+        if pushes is None:
+            return self.name(script.hex()) if len(script) >= 20 else script.hex()
+        out = []
+        for op, data in pushes:
+            sig = _sig(data)
+            if sig is not None:
+                der, sighash, low_s = sig
+                out.append({"op": self._sig_op(op, der), "der": self.name(der.hex()),
+                            "sighash": f"{sighash:02x}", "lowS": low_s})
+            else:
+                out.append({"op": op.hex(), "data": self.name(data.hex()) if len(data) >= 20 else data.hex()})
+        return {"pushes": out}
+
+    def _sig_op(self, op, der):
+        """A signature push's opcode: literal when its DER body is, else the
+        relation it must hold (the push is the DER body and one sighash byte).
+        The DER length follows the random r and s (70 to 72 bytes, a leading
+        zero when the high bit is set), so a renamed body's length is the
+        draw's; its strict form and low-S are compared instead (EXCLUSIONS)."""
+        if der.hex() not in self.unique:
+            return op.hex()
+        return "der+1" if len(op) == 1 and op[0] == len(der) + 1 else op.hex()
+
     def tx(self, tx):
-        out = {"txid": self.name(tx["txid"].hex()), "version": tx["version"]}
+        # The wire's order, the txid (derived from the rest) last: the
+        # earliest difference reported is then the cause (an input's outpoint,
+        # its script) before what follows from it.
+        out = {"version": tx["version"]}
 
         def key(item):
             i, x = item
@@ -463,13 +575,12 @@ class Renamer:
 
         inputs = []
         for _, x in sorted(enumerate(tx["inputs"]), key=key):
-            script = x["script"].hex()
             inputs.append({"prev": self.name(x["prev"].hex()), "vout": x["vout"],
-                           "script": self.name(script) if len(x["script"]) >= 20 else script,
-                           "seq": x["seq"]})
+                           "script": self._script_sig(x["script"]), "seq": x["seq"]})
         out["inputs"] = inputs
         out["outputs"] = [{"satoshis": o["satoshis"], "script": self._script(o["script"])} for o in tx["outputs"]]
         out["locktime"] = tx["locktime"]
+        out["txid"] = self.name(tx["txid"].hex())
         return out
 
     def container(self, c):
@@ -542,7 +653,8 @@ def first_difference(x, y, path=""):
     if type(x) is not type(y):
         return path or ".", x, y
     if isinstance(x, dict):
-        for k in sorted(set(x) | set(y)):
+        # In x's order (a parsed transaction's wire order; JSON's keys are sorted by Renamer.value).
+        for k in list(x) + [k for k in y if k not in x]:
             if k not in x or k not in y:
                 return f"{path}.{k}", x.get(k, "<absent>"), y.get(k, "<absent>")
             d = first_difference(x[k], y[k], f"{path}.{k}")
@@ -632,12 +744,18 @@ def diff(a, b):
     return lines, count
 
 
-def compare(rec_a, rec_b, names=("base", "head")):
-    a, b = load(rec_a), load(rec_b)
+def compare_events(a, b):
+    """Two loaded recordings: (report lines, differences, calls, commands, renamed a, renamed b)."""
     na, nb, ka, kb = normalize(a, b)
     lines, count = diff(na, nb)
     calls = sum(1 for e in na if e.get("kind") == "http")
     commands = sum(1 for e in na if e.get("kind") == "cli")
+    return lines, count, calls, commands, ka, kb
+
+
+def compare(rec_a, rec_b, names=("base", "head")):
+    a, b = load(rec_a), load(rec_b)
+    lines, count, calls, commands, ka, kb = compare_events(a, b)
     out = [
         f"differential: {names[0]} {rec_a}",
         f"differential: {names[1]} {rec_b}",
