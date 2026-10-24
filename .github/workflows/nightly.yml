@@ -5,10 +5,12 @@ name: Nightly
 # the hot paths with a floor per file. Its own file: ci.yml is the PR gate and
 # this is not. Every action is pinned by commit sha.
 #
-# GitHub fires `schedule` only from the default branch (main). On beta the
-# cron below is inert and the night runs only by workflow_dispatch (`gh
-# workflow run nightly.yml --ref beta`); the cron becomes live when beta
-# merges into main.
+# GitHub fires `schedule` only from the default branch (main) and registers
+# workflow_dispatch there too, so a copy of this file lives on main and every
+# checkout below takes beta on the schedule (the programme's line); a dispatch
+# (`gh workflow run nightly.yml --ref beta`) runs the ref it names. One file
+# serves both lines: on beta the cron is inert, and when beta merges into main
+# at the next minor the schedule still measures beta.
 on:
   schedule:
     - cron: "0 3 * * *"
@@ -41,6 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line. A dispatch runs the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
@@ -192,6 +197,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line. A dispatch runs the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
@@ -234,6 +242,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line. A dispatch runs the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
           persist-credentials: false
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
