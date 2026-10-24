@@ -1,0 +1,68 @@
+# The differential harness (#70)
+
+The oracle of a refactor. `tools/differential` builds two versions of the binary, the base and the head, runs the hermetic e2e suite (`docs/E2E-HERMETIC.md`) once against each with the same wallets, ports and stub, records every call the scenarios make, and compares the two recordings byte for byte after a listed normalization. A refactor changes no output, so its differential is zero. The node's harness is the pattern (`bsv-script-lean/harness`): the base build is the oracle, the recorded suite is the corpus, the head is what is judged.
+
+## Running it
+
+From the checkout, with the cargo toolchain, Node 24 (22.21 works too) and `tests/e2e`'s `npm ci` done (scenario 20 needs Playwright's Chromium):
+
+```bash
+CARGO_TARGET_DIR=<your target dir> python3 tools/differential
+```
+
+That one command builds the base (the merge-base of `HEAD` and `origin/beta`) in a scratch worktree with its own target dir and the head from the tree, runs both, and prints the report. The variants:
+
+```bash
+tools/differential --base REV                    # the base at REV
+tools/differential --base-bin B --head-bin H     # built binaries (CI); bsv-wallet-mcp is read beside each
+tools/differential --same [--head-bin H]         # the floor: one binary run twice
+tools/differential --compare R1 R2               # diff two recordings already made
+tools/differential --exclusions                  # the normalization list with its reasons
+tools/differential --out DIR                     # where the recordings, logs and report go
+tools/differential --base-target DIR             # the base build's CARGO_TARGET_DIR
+```
+
+Scratch (the base's worktree, its target dir unless `--base-target` names one, the default `--out`) goes under `$TMPDIR/bsv-wallet-differential/`, or `~/bsv/targets/bsv-wallet-differential/` when `$TMPDIR` is unset or `/tmp`. A lane keeps its runs under `/Volumes/Lanes/out/bsv-wallet-cli/` with `--out`. Two runs take about 15 seconds after the builds. The ports are the hermetic run's own (3370 to 3373, the stub on 3380), never a port of the registry's.
+
+Exit 0 on zero differences, 1 on differences, 2 when a build, a path or a suite run failed (a failed suite's differences are no verdict).
+
+## What is recorded
+
+Under `DIFF_RECORD=<file>` the harness writes one JSON line per event (`tests/e2e/lib/record.js`):
+
+- every HTTP call a `WalletClient` makes (`tests/e2e/lib/wallet-client.js`): the seat (A, B, C, funder), the method, the path, the request body, the status and the response body;
+- every command of the wallet binary a scenario or `setup.js` runs through `execSync`: the seat, the argv, the exit code, stdout and stderr;
+- each wallet's directory, port and identity key once, as a `wallet` event;
+- each with its phase (`setup`, the scenario's name, `sweep`) and a sequence number taken when the call starts.
+
+Not recorded: scenario 20's fetches of the inspector UI and its browser, scenario 21's JSON-RPC to the MCP server (the MCP server's own HTTP calls to the wallet included), the `serve` logs, and the stub's side. Those scenarios still run and must pass in both runs.
+
+Under `DIFF_RECORD` the harness's HTTP calls run one at a time in the order the scenarios issue them. Scenario 10 fires five sends together; they would otherwise reach the wallet's spending lock in the scheduler's order, and every coin graph after them would follow that order. The race itself is the plain hermetic run's to test, which records nothing.
+
+**The same wallets.** `DIFF_ROOT_KEYS=<A>,<B>,<C>[,<funder>]` (64-digit hex each) makes `setup.js` pass the seat's key to `bsv-wallet init --key` instead of drawing one. The tool draws four keys once per comparison and gives both runs the same ones. The variable is refused outside `E2E_HERMETIC=1`, so a known key never holds mainnet sats.
+
+The harness, the scenarios, the stub and its fixtures are the head's tree for both runs: only the binary differs.
+
+## The exclusions
+
+`tools/differential --exclusions` prints the list: each field path the tool normalizes, and why two runs of the same code legitimately differ there. The report repeats it at its top. This page does not copy the list, so it cannot drift from the code.
+
+The rule for the list: a field goes on it only with evidence from the floor (`--same`: one binary twice, same keys, same stub), and the reason names the source of the difference in the code. A txid or a signature is never excluded as such. The binary's randomness is the toolbox's `thread_rng` (change derivations, references) and BRC-2's per-call IV. The tool parses every transaction in the recording and renames the atoms one run holds alone to `<rand:N>`, numbered in order of appearance, so two equal normalized recordings are a consistent bijection of their random atoms. Every amount, count, order, script template and deterministic value is still compared byte for byte.
+
+## The floor today (2026-10-24)
+
+On the binary of beta at 6227a9c the floor is zero in five pairs of nine. In the other four, the earliest difference is in scenario 22 (rapid-internalize-spend): wallet B pays from one of several coins of equal value, and the two runs pick different ones. The toolbox's change pick (`storage/sqlx/create_action.rs`) ranks candidates by satoshis, then status, then `LENGTH(t.input_beef)`. That length follows the 70 to 72 byte DER signatures of the random transactions, so equal coins are ranked by chance. The same key makes the sweep's input order vary; the tool compares a transaction's inputs by outpoint for that, but it cannot make two different coin choices equal. Until the toolbox breaks that tie deterministically, a differential can show this difference on a refactor that changed nothing. The report shows where: an earliest difference in scenario 22 or later, a `.inputs[0].prev` or an outpoint, every scenario before it zero. Read it against a `--same` run before calling it the refactor's.
+
+## The label rule and CI
+
+The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull request. It builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`.
+
+- A PR carrying the label `refactor` fails the job on any difference.
+- Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
+- A failed build or suite run fails the job either way.
+
+Labels are read when the run starts; a label added later takes a re-run of the job. The job is not a required check yet; the captain decides after it has run a week.
+
+## The exit test
+
+A refactor PR carries the report with zero differences: `DIFFERENTIAL: 0 differences over N calls and M commands`. A lane cannot mark a refactor done without it.
