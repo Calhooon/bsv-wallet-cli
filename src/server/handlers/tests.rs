@@ -659,16 +659,12 @@ async fn a_scope_naming_a_wrong_coin_is_the_callers_400() {
 /// kind, `{code, message}` and no `Retry-After`; absent or `false` passes.
 #[tokio::test]
 async fn privileged_true_is_refused_by_its_kind_and_false_passes() {
-    let asked = |privileged, reason: Option<&str>| Privileged {
-        privileged,
-        privileged_reason: reason.map(str::to_string),
-    };
     let reason = Some("a reason for it");
-    assert!(refuse_privileged("encrypt", &asked(None, None)).is_ok());
-    assert!(refuse_privileged("encrypt", &asked(Some(false), None)).is_ok());
-    assert!(refuse_privileged("encrypt", &asked(Some(false), reason)).is_ok());
+    assert!(refuse_privileged("encrypt", None, None).is_ok());
+    assert!(refuse_privileged("encrypt", Some(false), None).is_ok());
+    assert!(refuse_privileged("encrypt", Some(false), reason).is_ok());
     for reason in [None, reason] {
-        let e = refuse_privileged("encrypt", &asked(Some(true), reason)).unwrap_err();
+        let e = refuse_privileged("encrypt", Some(true), reason).unwrap_err();
         let (status, retry, body) = answer(e).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
         assert!(retry.is_none());
@@ -682,14 +678,14 @@ async fn privileged_true_is_refused_by_its_kind_and_false_passes() {
 /// (#145) beside their own fields; absent and `null` are `None`.
 #[test]
 fn the_nine_request_structs_read_privileged_and_its_reason() {
-    fn read<T: serde::de::DeserializeOwned>(base: &serde_json::Value, get: fn(T) -> Privileged) {
+    type Asked = (Option<bool>, Option<String>);
+    fn read<T: serde::de::DeserializeOwned>(base: &serde_json::Value, get: fn(T) -> Asked) {
         let parse = |extra: &serde_json::Value| {
             let mut body = base.clone();
             body.as_object_mut()
                 .unwrap()
                 .extend(extra.as_object().cloned().unwrap());
-            let p = get(serde_json::from_value(body).unwrap());
-            (p.privileged, p.privileged_reason)
+            get(serde_json::from_value(body).unwrap())
         };
         assert_eq!(parse(&json!({})), (None, None));
         assert_eq!(parse(&json!({"privileged": null})), (None, None));
@@ -701,13 +697,13 @@ fn the_nine_request_structs_read_privileged_and_its_reason() {
     let body = json!({"protocolID": [2, "t"], "keyID": "1", "counterparty": "self",
         "verifier": "self", "data": [1], "signature": [1], "plaintext": [1],
         "ciphertext": [1], "hmac": [1]});
-    read::<McGetPublicKeyReq>(&body, |r| r.privileged);
-    read::<McCreateSignatureReq>(&body, |r| r.privileged);
-    read::<McVerifySignatureReq>(&body, |r| r.privileged);
-    read::<McEncryptReq>(&body, |r| r.privileged);
-    read::<McDecryptReq>(&body, |r| r.privileged);
-    read::<McCreateHmacReq>(&body, |r| r.privileged);
-    read::<McVerifyHmacReq>(&body, |r| r.privileged);
-    read::<McRevealCounterpartyKeyLinkageReq>(&body, |r| r.privileged);
-    read::<McRevealSpecificKeyLinkageReq>(&body, |r| r.privileged);
+    read::<McGetPublicKeyReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McCreateSignatureReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McVerifySignatureReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McEncryptReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McDecryptReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McCreateHmacReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McVerifyHmacReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McRevealCounterpartyKeyLinkageReq>(&body, |r| (r.privileged, r.privileged_reason));
+    read::<McRevealSpecificKeyLinkageReq>(&body, |r| (r.privileged, r.privileged_reason));
 }
