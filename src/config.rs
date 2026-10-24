@@ -89,6 +89,18 @@ impl fmt::Display for Secret {
     }
 }
 
+/// A secret as the knob list shows it, from its variable as set and the
+/// secret read from it: `<set>` when it holds a value, `empty` when the
+/// variable is set but holds none in effect (`AUTH_TOKEN=` is no token at
+/// the bind guard), `-` when it is unset.
+pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> String {
+    match (set, secret) {
+        (_, Some(s)) if !s.expose().is_empty() => s.to_string(),
+        (Some(_), _) => "empty".to_string(),
+        (None, _) => "-".to_string(),
+    }
+}
+
 /// Where a setting's effective value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

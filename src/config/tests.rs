@@ -219,6 +219,32 @@ fn a_url_is_shown_without_its_userinfo_or_query() {
     }
 }
 
+#[test]
+fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
+    let c = config(&[
+        ("ROOT_KEY", ""),
+        ("AUTH_TOKEN", ""),
+        ("CALLBACK_TOKEN", ""),
+        ("WOC_API_KEY", "  "),
+        ("TAAL_API_KEY", "key-taal"),
+    ]);
+    let of = |name: &str| {
+        let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
+        (k.value, k.source)
+    };
+    for name in ["ROOT_KEY", "AUTH_TOKEN", "CALLBACK_TOKEN", "WOC_API_KEY"] {
+        assert_eq!(of(name), ("empty".to_string(), Source::Env), "{name}");
+    }
+    assert_eq!(of("TAAL_API_KEY"), ("<set>".to_string(), Source::Env));
+    assert_eq!(of("MAIN_TAAL_API_KEY"), ("-".to_string(), Source::Default));
+    assert!(c.log_line().contains("AUTH_TOKEN=empty"));
+    // The meaning where each is used is unchanged: the bind guard reads an
+    // empty token as none, and an empty root key is read as set.
+    assert_eq!(c.server.auth_token.as_ref().map(Secret::expose), Some(""));
+    assert_eq!(c.wallet.root_key().unwrap(), "");
+    assert!(c.services.callback_token.is_none());
+}
+
 /// Every environment variable `bsv-wallet` reads, in the knob list's order.
 const VARIABLES: &[&str] = &[
     "ROOT_KEY",
