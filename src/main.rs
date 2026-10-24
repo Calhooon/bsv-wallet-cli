@@ -8,13 +8,14 @@ mod commands;
 mod context;
 mod explorers;
 mod server;
-mod services_env;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod tracker_words_witnesses;
 
 use anyhow::Result;
+// The services' options too: built from the configuration's settings.
+use bsv_wallet_cli::services_env;
 // The chain-event feed is the library's: the daemon holds it, the server
 // reads its status.
 use bsv_wallet_cli::chain_feed;

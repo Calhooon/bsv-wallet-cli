@@ -47,8 +47,10 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/services_env.rs",
-        33,
-        "the explorers' env names (BITAILS_API_KEY, BANANABLOCKS_BASE) and the break-glass warning (14); \
+        46,
+        "#80's ExplorerSettings beside the readers it replaces (13; the next commit removes the \
+         readers and the count is 33 again); the explorers' env names (BITAILS_API_KEY, \
+         BANANABLOCKS_BASE) and the break-glass warning (14); \
          the bases' configuration (#74, PR 131), 19: the toolbox's bitails and whatsonchain default-URL \
          imports (4), BITAILS_BASE_ENV and its \"BITAILS_BASE\" (2), ExplorerBases' bitails field, its \
          chain defaults and its overrides (13); no request is made here",
