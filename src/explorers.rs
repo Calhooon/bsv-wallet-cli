@@ -137,8 +137,8 @@ impl Explorers {
         .clone()
     }
 
-    /// The rungs for `chain`: WhatsOnChain at the chain's default base,
-    /// BananaBlocks at `bananablocks_base` (`None` the chain's default,
+    /// The rungs for `chain`: `WhatsOnChain` at the chain's default base,
+    /// `BananaBlocks` at `bananablocks_base` (`None` the chain's default,
     /// empty off: the toolbox's `ServicesOptions::bananablocks_base_for`).
     #[allow(dead_code)] // the binary builds through `from_env` (the configured bases); the tests call this
     pub fn configured(
@@ -154,9 +154,10 @@ impl Explorers {
         )
     }
 
-    /// [`Explorers::configured`] with the WhatsOnChain rung at `woc` (the
+    /// [`Explorers::configured`] with the `WhatsOnChain` rung at `woc` (the
     /// chain's default, or where `WOC_BASE` points: a stub, a mirror; #74),
     /// behind the process's gate for the chain and key.
+    #[must_use]
     pub fn configured_at(
         chain: Chain,
         woc: &str,

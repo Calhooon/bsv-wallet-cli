@@ -1239,6 +1239,17 @@ mod tests {
     const SYNTHETIC_ARC: &str = "https://arc.invalid";
     const SYNTHETIC_KEY: &str = "test-key-not-a-real-credential";
 
+    /// The mainnet sources at the default explorer bases, `BananaBlocks` off.
+    fn main_sources(plane: &BroadcastPlane, taal_key: Option<String>) -> Vec<StatusSource> {
+        build_sources(
+            Chain::Main,
+            plane,
+            &ExplorerBases::defaults(Chain::Main),
+            taal_key,
+            None,
+        )
+    }
+
     // =====================================================================
     // Source selection: which plane do we ask, and with what path shape?
     // =====================================================================
@@ -1341,13 +1352,7 @@ mod tests {
             BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())),
             BroadcastPlane::resolve(Chain::Main, false, Some(SYNTHETIC_ARC.to_string())),
         ] {
-            let sources = build_sources(
-                Chain::Main,
-                &plane,
-                &ExplorerBases::defaults(Chain::Main),
-                None,
-                None,
-            );
+            let sources = main_sources(&plane, None);
             assert_eq!(sources[0].absence, AbsenceAuthority::Broadcaster);
             assert_eq!(sources[0].kind, plane.kind());
             assert!(
@@ -1362,26 +1367,14 @@ mod tests {
     #[test]
     fn arcade_broadcaster_probe_is_keyless_even_when_a_taal_key_exists() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            Some(SYNTHETIC_KEY.to_string()),
-            None,
-        );
+        let sources = main_sources(&plane, Some(SYNTHETIC_KEY.to_string()));
         assert!(sources[0].auth.is_none());
     }
 
     #[test]
     fn classic_broadcaster_probe_carries_the_taal_key_when_present() {
         let plane = BroadcastPlane::resolve(Chain::Main, false, None);
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            Some(SYNTHETIC_KEY.to_string()),
-            None,
-        );
+        let sources = main_sources(&plane, Some(SYNTHETIC_KEY.to_string()));
         assert_eq!(sources[0].auth.as_deref(), Some(SYNTHETIC_KEY));
     }
 
@@ -1389,13 +1382,7 @@ mod tests {
     fn keyless_taal_is_not_probed_at_all() {
         // Without a key TAAL answers 401 → Unknown: pure latency, zero signal.
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let sources = main_sources(&plane, None);
         assert!(!sources.iter().any(|s| s.name == "arc-taal"));
     }
 
@@ -1408,13 +1395,7 @@ mod tests {
             false,
             Some("https://arc.gorillapool.io".to_string()),
         );
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let sources = main_sources(&plane, None);
         let gp_rows: Vec<_> = sources
             .iter()
             .filter(|s| s.url_template.contains("arc.gorillapool.io"))
@@ -1434,13 +1415,7 @@ mod tests {
         // broadcast through Arcade, its 404 is the EXPECTED answer and carries
         // no information. Marking it authoritative caused false "funds not sent".
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            Some(SYNTHETIC_KEY.to_string()),
-            None,
-        );
+        let sources = main_sources(&plane, Some(SYNTHETIC_KEY.to_string()));
         for s in sources.iter().filter(|s| s.name.starts_with("arc-")) {
             assert_eq!(
                 s.absence,
@@ -1454,13 +1429,7 @@ mod tests {
     #[test]
     fn whatsonchain_is_the_chain_index_authority() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let sources = main_sources(&plane, None);
         let woc = sources.iter().find(|s| s.name == "whatsonchain").unwrap();
         assert_eq!(woc.absence, AbsenceAuthority::ChainIndex);
         assert_eq!(woc.kind, SourceKind::ChainIndex);
@@ -2230,13 +2199,7 @@ mod tests {
     #[test]
     fn bitails_is_a_second_chain_index() {
         let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
-        let sources = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let sources = main_sources(&plane, None);
         let indexes: Vec<_> = sources
             .iter()
             .filter(|s| s.absence == AbsenceAuthority::ChainIndex)
@@ -2335,18 +2298,12 @@ mod tests {
                 .map(|s| s.url_template.as_str()),
             Some("https://bb.example/api/v1/tx/{txid}")
         );
-        let off = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let off = main_sources(&plane, None);
         assert!(!off.iter().any(|s| s.kind == SourceKind::BananaBlocksIndex));
     }
 
-    /// #74: the chain indexes and the GorillaPool store are asked at the
-    /// configured bases (a hermetic run's stub), and an empty GorillaPool
+    /// #74: the chain indexes and the `GorillaPool` store are asked at the
+    /// configured bases (a hermetic run's stub), and an empty `GorillaPool`
     /// base leaves that store out. Red at the base: the three were literals.
     #[test]
     fn the_chain_indexes_follow_the_configured_bases() {
@@ -2388,13 +2345,7 @@ mod tests {
             "every source is at the stub: {:?}",
             sources.iter().map(|s| &s.url_template).collect::<Vec<_>>()
         );
-        let defaults = build_sources(
-            Chain::Main,
-            &plane,
-            &ExplorerBases::defaults(Chain::Main),
-            None,
-            None,
-        );
+        let defaults = main_sources(&plane, None);
         assert!(defaults.iter().any(|s| s.name == "arc-gorillapool"));
     }
 
