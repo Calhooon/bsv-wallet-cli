@@ -85,7 +85,8 @@ set to nothing), a URL's userinfo and query as `<set>`, and `BANANABLOCKS_BASE`
 as the base in effect (the chain's default when unset); `--json` gives the same
 as an array of `{name, value, source}`, `value` `null` for no value (`-`,
 `unset`, `off`, `empty` in the table), `true` or `false` for a switch, a string
-otherwise; `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
+otherwise (`CHAINTRACKS_URL=off` is a value, the header service set off: the
+string `off`; unset or blank it is `null`); `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
 The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
 

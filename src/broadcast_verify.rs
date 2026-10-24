@@ -2290,7 +2290,7 @@ mod tests {
         let moved = ExplorerBases::configured(
             Chain::Main,
             Some("http://127.0.0.1:3380/woc"),
-            Some("http://127.0.0.1:3380/bitails/"),
+            Some("http://127.0.0.1:3380/bitails"),
             Some(""),
         );
         let sources = build_sources(Chain::Main, &plane, &moved, None, None);

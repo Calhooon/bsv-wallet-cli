@@ -87,16 +87,6 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
     Ok(())
 }
 
-/// A base URL from its configured value: unset or blank is `None` (the
-/// default stands), else the value without surrounding whitespace or a
-/// trailing slash.
-pub fn base_for(configured: Option<&str>) -> Option<String> {
-    configured
-        .map(|v| v.trim().trim_end_matches('/'))
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-}
-
 /// The bases of the explorers and the third-party broadcaster the CLI's
 /// own rungs ask (`explorers.rs`, `broadcast_verify.rs`): `WhatsOnChain` and
 /// Bitails always on, at the chain's default or where `WOC_BASE` /
@@ -142,9 +132,10 @@ impl ExplorerBases {
         }
     }
 
-    /// The bases from their configured values: unset or blank is the
-    /// default; for `GorillaPool`, unset is the default and an empty or blank
-    /// value leaves it out.
+    /// The bases from their values as `crate::config` read them (trimmed,
+    /// checked, without a trailing slash): `None` is the default; for
+    /// `GorillaPool`, `None` is the default and an empty value leaves it
+    /// out.
     #[must_use]
     pub fn configured(
         chain: Chain,
@@ -154,11 +145,11 @@ impl ExplorerBases {
     ) -> Self {
         let defaults = Self::defaults(chain);
         Self {
-            woc: base_for(woc).unwrap_or(defaults.woc),
-            bitails: base_for(bitails).unwrap_or(defaults.bitails),
+            woc: woc.map_or(defaults.woc, str::to_string),
+            bitails: bitails.map_or(defaults.bitails, str::to_string),
             gorillapool: match gorillapool {
                 None => defaults.gorillapool,
-                Some(v) => base_for(Some(v)),
+                Some(v) => Some(v.to_string()).filter(|v| !v.is_empty()),
             },
         }
     }
@@ -187,8 +178,9 @@ pub struct ExplorerSettings {
 impl ExplorerSettings {
     /// The settings from the environment as read at start, on `chain`, with
     /// `GorillaPool`'s base as `crate::config` read it (`ARC_GORILLAPOOL_URL`:
-    /// unset `None`, set the value checked and trimmed): a key is trimmed,
-    /// and a base that is set and not blank must be a URL.
+    /// unset `None`, set the value checked, trimmed and without a trailing
+    /// slash): a key is trimmed, and a base that is set and not blank must
+    /// be a URL, kept without a trailing slash.
     pub(crate) fn read(raw: &Reader, chain: Chain, gorillapool: Option<&str>) -> Self {
         Self {
             woc_api_key: raw.key("WOC_API_KEY"),
@@ -196,8 +188,8 @@ impl ExplorerSettings {
             bananablocks_base: raw.present_url("BANANABLOCKS_BASE"),
             bases: ExplorerBases::configured(
                 chain,
-                raw.url("WOC_BASE").as_deref(),
-                raw.url("BITAILS_BASE").as_deref(),
+                raw.base("WOC_BASE").as_deref(),
+                raw.base("BITAILS_BASE").as_deref(),
                 gorillapool,
             ),
         }
@@ -271,11 +263,12 @@ pub fn arcade_runtime(settings: &ServicesSettings, db_path: &str) -> Result<Opti
 
 /// Resolve the per-wallet callback token.
 ///
-/// Priority: `CALLBACK_TOKEN` (`configured`) → persisted
-/// `<db>.callback-token` file → auto-generate a random 32-hex token and
-/// persist it (0600 on unix). The token is NEVER logged.
+/// Priority: `CALLBACK_TOKEN` (`configured`, as `crate::config` read it:
+/// trimmed, blank none) → persisted `<db>.callback-token` file →
+/// auto-generate a random 32-hex token and persist it (0600 on unix). The
+/// token is NEVER logged.
 pub fn resolve_callback_token(configured: Option<&str>, db_path: &str) -> Result<String> {
-    if let Some(tok) = configured.map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(tok) = configured {
         return Ok(tok.to_string());
     }
 
@@ -486,7 +479,9 @@ mod tests {
 
     /// `ARC_GORILLAPOOL_URL` (#74, #172): the one base, the knob's and the
     /// toolbox's. Unset is `ServicesOptions`' own default for either chain;
-    /// empty or blank leaves `GorillaPool` out; a URL moves it.
+    /// empty or blank leaves `GorillaPool` out; a URL moves it; a refused
+    /// value is the default in both (before #172 item 2, the toolbox took
+    /// its default while the knob and the verifier took the value refused).
     #[test]
     fn the_toolbox_takes_the_gorillapool_base_the_knob_shows() {
         let options = |pairs: &[(&str, &str)], chain| {
@@ -499,7 +494,10 @@ mod tests {
             let vars = pairs
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()));
-            let config = crate::config::Config::from_vars(&flags, vars).unwrap();
+            // A refused setting's configuration, each refused one at its
+            // default: what `config` prints.
+            let config = crate::config::Config::from_vars(&flags, vars)
+                .unwrap_or_else(|refused| *refused.config);
             let opts = services_options(&config.services, chain, "unused.db").unwrap();
             (
                 opts.arc_gorillapool_url,
@@ -524,6 +522,9 @@ mod tests {
         );
         assert_eq!(toolbox.as_deref(), Some("http://127.0.0.1:3380/arc"));
         assert_eq!(shown, toolbox);
+        let (toolbox, shown) = options(&[("ARC_GORILLAPOOL_URL", "nope")], Chain::Main);
+        assert_eq!(toolbox, ServicesOptions::mainnet().arc_gorillapool_url);
+        assert_eq!(shown, toolbox, "the refused value is the default in both");
         assert_eq!(
             ServicesOptions::mainnet().arc_gorillapool_url.as_deref(),
             Some("https://arc.gorillapool.io")
@@ -546,16 +547,13 @@ mod tests {
         assert_eq!(test.bitails, "https://test-api.bitails.io");
         assert_eq!(test.gorillapool, None);
 
-        for blank in [None, Some(""), Some("  ")] {
-            assert_eq!(
-                ExplorerBases::configured(Chain::Main, blank, blank, None),
-                main,
-                "{blank:?}"
-            );
-        }
+        assert_eq!(
+            ExplorerBases::configured(Chain::Main, None, None, None),
+            main
+        );
         let moved = ExplorerBases::configured(
             Chain::Main,
-            Some(" http://127.0.0.1:3380/woc/ "),
+            Some("http://127.0.0.1:3380/woc"),
             Some("http://127.0.0.1:3380/bitails"),
             Some("http://127.0.0.1:3380/arc"),
         );
@@ -567,21 +565,52 @@ mod tests {
         );
     }
 
-    /// `ARC_GORILLAPOOL_URL` (#74): unset is the chain's default, empty or
-    /// blank leaves `GorillaPool` out, a URL moves it.
+    /// `ARC_GORILLAPOOL_URL` (#74): unset is the chain's default, empty
+    /// leaves `GorillaPool` out, a URL moves it (`crate::config` has trimmed
+    /// it, blank to empty, and dropped its trailing slash).
     #[test]
     fn gorillapool_unset_is_the_default_and_empty_is_out() {
         let at =
             |v: Option<&str>| ExplorerBases::configured(Chain::Main, None, None, v).gorillapool;
         assert_eq!(at(None).as_deref(), Some("https://arc.gorillapool.io"));
         assert_eq!(at(Some("")), None);
-        assert_eq!(at(Some("  ")), None);
         assert_eq!(
-            at(Some("https://gp.example/")).as_deref(),
+            at(Some("https://gp.example")).as_deref(),
             Some("https://gp.example")
         );
-        assert_eq!(base_for(None), None);
-        assert_eq!(base_for(Some(" / ")), None);
+    }
+
+    /// `CALLBACK_TOKEN` (#172): the token in effect is the one the
+    /// configuration read, trimmed; a blank one is none (its knob shows
+    /// `empty`), so the persisted token stands, never the blank.
+    #[test]
+    fn the_callback_token_in_effect_is_the_configurations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("w.db");
+        let db = db.to_str().unwrap();
+        let persisted = resolve_callback_token(None, db).unwrap();
+        let in_effect = |token: &str| {
+            let config =
+                crate::config::Config::from_pairs(&[("ARCADE", "1"), ("CALLBACK_TOKEN", token)])
+                    .unwrap();
+            let runtime = arcade_runtime(&config.services, db).unwrap().unwrap();
+            let shown = config
+                .knobs()
+                .into_iter()
+                .find(|k| k.name == "CALLBACK_TOKEN")
+                .unwrap()
+                .value
+                .to_string();
+            (runtime.callback_token, shown)
+        };
+        assert_eq!(in_effect(" t "), ("t".to_string(), "<set>".to_string()));
+        for blank in ["", "   "] {
+            assert_eq!(
+                in_effect(blank),
+                (persisted.clone(), "empty".to_string()),
+                "{blank:?}"
+            );
+        }
     }
 
     #[test]
@@ -601,10 +630,10 @@ mod tests {
         assert_eq!(tok.len(), 32);
         assert!(tok.chars().all(|c| c.is_ascii_hexdigit()));
 
-        // Stable on re-read; a configured token wins, trimmed.
-        let tok2 = resolve_callback_token(Some("  "), db).unwrap();
+        // Stable on re-read; a configured token wins, as configured.
+        let tok2 = resolve_callback_token(None, db).unwrap();
         assert_eq!(
-            resolve_callback_token(Some(" t "), db).unwrap(),
+            resolve_callback_token(Some("t"), db).unwrap(),
             "t".to_string()
         );
         assert_eq!(tok, tok2);

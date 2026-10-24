@@ -348,6 +348,19 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
     assert_eq!(c.server.auth_token.as_ref().map(Secret::expose), Some(""));
     assert_eq!(c.wallet.root_key().unwrap(), "");
     assert!(c.services.callback_token.is_none());
+    // CALLBACK_TOKEN is read as a key: blank is none and shows `empty`,
+    // and a token is trimmed.
+    let c = config(&[("CALLBACK_TOKEN", "   ")]);
+    assert_eq!(
+        row(&c, "CALLBACK_TOKEN"),
+        ("empty".to_string(), Source::Env)
+    );
+    assert!(c.services.callback_token.is_none());
+    let c = config(&[("CALLBACK_TOKEN", " t ")]);
+    assert_eq!(
+        c.services.callback_token.as_ref().map(Secret::expose),
+        Some("t")
+    );
 }
 
 #[test]
@@ -580,6 +593,25 @@ fn the_json_of_set_empty_and_refused_values() {
     }
     assert_eq!(json_row(&rows, "TAAL_API_KEY")["value"], "<set>");
     assert_eq!(json_row(&rows, "ARCADE")["value"], true);
+    // A blank ARC_MODE is no value; CHAINTRACKS_URL=off is a value (the
+    // header service set off), apart from blank, which is none.
+    for blank in ["", "  "] {
+        let c = config(&[("ARC_MODE", blank), ("CHAINTRACKS_URL", blank)]);
+        let rows = json_rows(&c);
+        for name in ["ARC_MODE", "CHAINTRACKS_URL"] {
+            let row = json_row(&rows, name);
+            assert_eq!(row["value"], serde_json::Value::Null, "{name}={blank:?}");
+            assert_eq!(row["source"], "env", "{name}={blank:?}");
+        }
+        assert_eq!(row(&c, "ARC_MODE").0, "empty", "{blank:?}");
+    }
+    let rows = json_rows(&config(&[
+        ("ARC_MODE", "arcade"),
+        ("CHAINTRACKS_URL", "off"),
+    ]));
+    assert_eq!(json_row(&rows, "ARC_MODE")["value"], "arcade");
+    assert_eq!(json_row(&rows, "CHAINTRACKS_URL")["value"], "off");
+    assert_eq!(json_row(&rows, "CHAINTRACKS_URL")["source"], "env");
     let refused = Config::from_pairs(&[("MIN_UTXOS", "x")]).unwrap_err();
     let row = json_row(&json_rows(&refused.config), "MIN_UTXOS");
     assert_eq!(row["value"], "x");
