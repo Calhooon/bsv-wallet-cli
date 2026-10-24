@@ -21,6 +21,7 @@
 //! through a proxy on a closed local port.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use axum::body::Body;
@@ -387,11 +388,11 @@ async fn header_stub() -> String {
         serde_json::json!({
             "status": "success",
             "value": {
-                "version": 536870912u32,
+                "version": 536_870_912_u32,
                 "previousHash": "0".repeat(64),
                 "merkleRoot": "5".repeat(64),
-                "time": 1700000000u32,
-                "bits": 402917821u32,
+                "time": 1_700_000_000_u32,
+                "bits": 402_917_821_u32,
                 "nonce": 7u32,
                 "height": height,
                 "hash": format!("{:064x}", height),
@@ -413,23 +414,24 @@ async fn header_stub() -> String {
                 axum::Json(header(q.get("height").copied().unwrap_or(0)))
             }),
         );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.ok();
-    });
-    format!("http://{addr}")
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the header stub's port");
+    let url = format!("http://{}", listener.local_addr().expect("its address"));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
 }
 
 /// Two received coins not yet mined (no proof stored), as an
 /// `internalizeAction` of a payment leaves them: 30,000 and 20,000 sats.
 async fn seed_pending(storage: &StorageSqlx, identity: &str) {
-    let (user, _) = storage.find_or_insert_user(identity).await.unwrap();
-    let basket = storage
-        .find_or_create_default_basket(user.user_id)
+    let user = storage
+        .find_or_insert_user(identity)
         .await
         .unwrap()
-        .basket_id;
+        .0
+        .user_id;
+    let basket = storage.find_or_create_default_basket(user).await.unwrap();
     let pool = storage.writer().clone();
     let when = chrono::DateTime::parse_from_rfc3339("2026-10-23T00:00:00Z")
         .unwrap()
@@ -439,7 +441,7 @@ async fn seed_pending(storage: &StorageSqlx, identity: &str) {
             "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
              VALUES (?, 'unproven', ?, 0, ?, 1, 0, 'a received payment', ?, X'01000000', ?, ?)",
         )
-        .bind(user.user_id)
+        .bind(user)
         .bind(format!("ref-{}", &txid[..8]))
         .bind(satoshis)
         .bind(txid)
@@ -453,9 +455,9 @@ async fn seed_pending(storage: &StorageSqlx, identity: &str) {
             "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, sender_identity_key, created_at, updated_at) \
              VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', 'SfKxPIJNgdI=', 'NaGLC6fMH50=', ?, ?, ?)",
         )
-        .bind(user.user_id)
+        .bind(user)
         .bind(tx_row)
-        .bind(basket)
+        .bind(basket.basket_id)
         .bind(satoshis)
         .bind(hex::decode(P2PKH).unwrap())
         .bind(txid)
@@ -606,92 +608,100 @@ fn quiet_environment() {
 const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 /// A pay-to-public-key-hash output script (a payee's).
 const PAYEE: &str = "76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac";
+/// The x402 server's response signature (fixture 04's answer: made for the
+/// server, not by it).
+const SERVER_SIGNATURE: &str = "30440220016d22b66a0ffb4489cfe9334921368f1b0b19cc51861a9da7091a81c6b2ddac02206743cbd5919e91afec26e8f2d95487d7da34c797ff86796d2fe329a5d93485bb";
+/// A `tx` that is not an atomic BEEF (the shape is the call's, the refusal
+/// the parser's).
+const NOT_BEEF: &[u8] = &[1, 1, 1, 1, 0, 0, 0, 0];
 
-struct Recorder {
-    dir: PathBuf,
-    /// Per consumer, its worlds.
-    worlds: HashMap<(String, String), World>,
-    /// Per consumer, its sequence.
-    seq: HashMap<String, usize>,
-    written: usize,
+/// One call a consumer sends: a row of its table below.
+#[derive(Clone, Copy)]
+struct Case {
+    /// The consumer's own name for the call (the fixture's file name).
+    call: &'static str,
+    /// The file in the consumer that sends this shape.
+    source: &'static str,
+    world: &'static str,
+    /// The `Origin` header; empty sends none.
+    origin: &'static str,
+    path: &'static str,
+    /// A POST's JSON body, its keys in the order the consumer writes them;
+    /// none is a GET. [`fill`] replaces the placeholders in it and in the
+    /// path.
+    body: Option<&'static str>,
+    /// The case's own placeholders: the bytes each stands for, sent as the
+    /// JSON number array the `MetaNet` Client's shape carries.
+    bytes: &'static [(&'static str, &'static [u8])],
+    /// Sends `authorization: Bearer` [`BEARER`].
+    bearer: bool,
 }
 
-struct Call<'a> {
-    consumer: &'a str,
-    call: &'a str,
-    source: &'a str,
-    world: &'a str,
-    request: Req,
-}
+impl Case {
+    /// What every case starts from: a GET with no header, `fresh` world.
+    const BASE: Case = Case {
+        call: "",
+        source: "",
+        world: "fresh",
+        origin: "",
+        path: "",
+        body: None,
+        bytes: &[],
+        bearer: false,
+    };
 
-impl Recorder {
-    async fn case(&mut self, c: Call<'_>) {
-        let key = (c.consumer.to_string(), c.world.to_string());
-        if !self.worlds.contains_key(&key) {
-            self.worlds.insert(key.clone(), World::build(c.world).await);
+    fn request(&self) -> Req {
+        let mut headers = BTreeMap::new();
+        if !self.origin.is_empty() {
+            headers.insert("origin".to_string(), self.origin.to_string());
         }
-        let response = self.worlds[&key].serve(&c.request).await;
-        let seq = self.seq.entry(c.consumer.to_string()).or_default();
-        *seq += 1;
-        let dir = self.dir.join(c.consumer);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join(format!("{:02}-{}.json", seq, c.call));
-        let fixture = Fixture {
-            consumer: c.consumer.to_string(),
-            call: c.call.to_string(),
-            source: c.source.to_string(),
-            world: c.world.to_string(),
-            request: c.request,
-            response,
-        };
-        let mut text = serde_json::to_string_pretty(&fixture).unwrap();
-        text.push('\n');
-        std::fs::write(file, text).unwrap();
-        self.written += 1;
+        if self.bearer {
+            headers.insert("authorization".to_string(), format!("Bearer {BEARER}"));
+        }
+        Req {
+            method: if self.body.is_some() { "POST" } else { "GET" }.into(),
+            path: fill(self.path, self.bytes),
+            headers,
+            json: self.body.map(|text| body(&fill(text, self.bytes))),
+        }
     }
 }
 
-fn get(path: &str, origin: &str) -> Req {
-    Req {
-        method: "GET".into(),
-        path: path.into(),
-        headers: BTreeMap::from([("origin".to_string(), origin.to_string())]),
-        json: None,
+/// A case's text with its placeholders replaced: the constants by name
+/// (`{G}`, `{PAYEE}`, `{PENDING_A}`, `{PENDING_B}`, `{UNKNOWN}`,
+/// `{SERVER_SIGNATURE}` as bytes), then the case's own bytes.
+fn fill(text: &str, bytes: &[(&str, &[u8])]) -> String {
+    let signature = hex::decode(SERVER_SIGNATURE).unwrap();
+    let mut out = text.to_string();
+    for (name, value) in [
+        ("{G}", G),
+        ("{PAYEE}", PAYEE),
+        ("{PENDING_A}", PENDING_A),
+        ("{PENDING_B}", PENDING_B),
+        ("{UNKNOWN}", UNKNOWN),
+    ] {
+        out = out.replace(name, value);
     }
-}
-
-fn post(path: &str, origin: &str, json: &str) -> Req {
-    Req {
-        method: "POST".into(),
-        path: path.into(),
-        headers: BTreeMap::from([("origin".to_string(), origin.to_string())]),
-        json: Some(body(json)),
+    for (name, value) in bytes
+        .iter()
+        .copied()
+        .chain([("{SERVER_SIGNATURE}", &signature[..])])
+    {
+        out = out.replace(name, &serde_json::to_string(value).unwrap());
     }
+    out
 }
 
-impl Req {
-    fn bearer(mut self, token: &str) -> Req {
-        self.headers
-            .insert("authorization".into(), format!("Bearer {token}"));
-        self
-    }
-}
-
-/// The bytes a client signs or sends, as the JSON number array the
-/// MetaNet Client's shape carries.
-fn bytes_array(bytes: &[u8]) -> String {
-    serde_json::to_string(bytes).unwrap()
-}
-
-async fn record_all(r: &mut Recorder) {
-    record_low_fleet(r).await;
-    record_stack_witness(r).await;
-    record_x402_skill(r).await;
-    record_mcp(r).await;
-    record_app_payers(r).await;
-    record_dolphinmilk(r).await;
-    record_e2e_harness(r).await;
-}
+/// Every consumer's cases, each consumer's in the order it is recorded.
+const CASES: [(&str, &[Case]); 7] = [
+    ("low-fleet", LOW_FLEET),
+    ("stack-witness", STACK_WITNESS),
+    ("x402-skill", X402_SKILL),
+    ("mcp", MCP),
+    ("app-payers", APP_PAYERS),
+    ("dolphinmilk", DOLPHINMILK),
+    ("e2e-harness", E2E_HARNESS),
+];
 
 /// LOW's fleet: its app's `WalletClient` over @bsv/sdk 2.1.4's
 /// `HTTPWalletJSON` (POST for every call, the args as JSON), served to a
@@ -700,102 +710,79 @@ async fn record_all(r: &mut Recorder) {
 /// harness's own fetch carries the bearer. The scoped word is #63's text
 /// (no LOW code sends it yet). LOW's funder drives the CLI (`--json`),
 /// which `docs/DEPENDENTS.md` lists and this test does not reach.
-async fn record_low_fleet(r: &mut Recorder) {
-    const C: &str = "low-fleet";
-    const O: &str = "http://localhost:5173";
-    r.case(Call {
-        consumer: C,
+const LOW_FLEET_SEAT: Case = Case {
+    world: "pending",
+    origin: "http://localhost:5173",
+    ..Case::BASE
+};
+const LOW_FLEET: &[Case] = &[
+    Case {
         call: "isAuthenticated",
         source: "app/src/components/ConnectGate.tsx (WalletClient over HTTPWalletJSON)",
-        world: "pending",
-        request: post("/isAuthenticated", O, "{}"),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/isAuthenticated",
+        body: Some("{}"),
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "getVersion",
         source: "app/src/components/ConnectGate.tsx (WalletClient over HTTPWalletJSON)",
-        world: "pending",
-        request: post("/getVersion", O, "{}"),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/getVersion",
+        body: Some("{}"),
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "getPublicKey.identity",
         source: "app/src/components/ConnectGate.tsx",
-        world: "pending",
-        request: post("/getPublicKey", O, r#"{"identityKey":true}"#),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/getPublicKey",
+        body: Some(r#"{"identityKey":true}"#),
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "getPublicKey.brc29Self",
         source: "app/src/lib/stake.ts (the payout key, forSelf)",
-        world: "pending",
-        request: post(
-            "/getPublicKey",
-            O,
+        path: "/getPublicKey",
+        body: Some(
             r#"{"protocolID":[2,"3241645161d8"],"counterparty":"self","keyID":"SfKxPIJNgdI= NaGLC6fMH50=","forSelf":true}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "createSignature.hashToDirectlySign",
         source: "app/src/lib/stake.ts signStakeDigest (STAKE_PROTOCOL)",
-        world: "pending",
-        request: post(
-            "/createSignature",
-            O,
-            &format!(
-                r#"{{"protocolID":[2,"low escrow settle"],"keyID":"game-1","counterparty":"{G}","hashToDirectlySign":{}}}"#,
-                bytes_array(&[7u8; 32])
-            ),
+        path: "/createSignature",
+        body: Some(
+            r#"{"protocolID":[2,"low escrow settle"],"keyID":"game-1","counterparty":"{G}","hashToDirectlySign":{hash}}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        bytes: &[("{hash}", &[7u8; 32])],
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "createHmac.handSecret",
         source: "app/src/lib/handSecrets.ts deriveHandSecrets",
-        world: "pending",
-        request: post(
-            "/createHmac",
-            O,
-            &format!(
-                r#"{{"protocolID":[2,"low hand secret"],"keyID":"game-1:{G}:v1","data":{},"counterparty":"self"}}"#,
-                bytes_array(b"low-hand-secret:v1:game-1")
-            ),
+        path: "/createHmac",
+        body: Some(
+            r#"{"protocolID":[2,"low hand secret"],"keyID":"game-1:{G}:v1","data":{data},"counterparty":"self"}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        bytes: &[("{data}", b"low-hand-secret:v1:game-1")],
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "listActions.hopLedger",
         source: "app/src/lib/stake.ts fetchWalletHopLedger",
-        world: "pending",
-        request: post(
-            "/listActions",
-            O,
-            r#"{"labels":[],"includeLabels":true,"limit":10000,"offset":0}"#,
-        ),
-    })
-    .await;
+        path: "/listActions",
+        body: Some(r#"{"labels":[],"includeLabels":true,"limit":10000,"offset":0}"#),
+        ..LOW_FLEET_SEAT
+    },
     // The app's own spend: no word, so every received unproven coin is held.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createAction.stake",
         source: "app/src/lib/stake.ts (the escrow funding)",
-        world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"LOW stake escrow funding","outputs":[{{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}}],"options":{{"randomizeOutputs":false,"acceptDelayedBroadcast":false}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"LOW stake escrow funding","outputs":[{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}],"options":{"randomizeOutputs":false,"acceptDelayedBroadcast":false}}"#,
         ),
-    })
-    .await;
+        ..LOW_FLEET_SEAT
+    },
     // The same body with the e2e route's word: a received coin is offered
     // and chosen, and the build stops at signing (see [`P2PKH`]): the
     // answer is past the gate, where without the word it is 402.
@@ -805,564 +792,447 @@ async fn record_low_fleet(r: &mut Recorder) {
     // derived hash160, "Transaction aborted"). Typed errors (#81) and the
     // fixtures oracle (#69) fix it; this fixture and the scoped one below
     // change with that fix, in its own commit.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createAction.allowPending",
         source: "app/e2e/lib/allowPendingRoute.ts withAllowPending",
-        world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"LOW stake escrow funding","outputs":[{{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}}],"options":{{"randomizeOutputs":false,"acceptDelayedBroadcast":false}},"allowPending":"received"}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"LOW stake escrow funding","outputs":[{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}],"options":{"randomizeOutputs":false,"acceptDelayedBroadcast":false},"allowPending":"received"}"#,
         ),
-    })
-    .await;
+        ..LOW_FLEET_SEAT
+    },
     // #63's scoped word: only the funder's top-up (PENDING_B) is offered.
     // The answer is the same known wrong shape as the word's above (#81).
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createAction.scoped",
         source: "bsv-wallet-cli #63 (LOW's fleet, loop 46, pair 32): allowPending {received: [txid:vout]}",
-        world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"LOW stake escrow funding","outputs":[{{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}}],"options":{{"randomizeOutputs":false,"acceptDelayedBroadcast":false}},"allowPending":{{"received":["{PENDING_B}:0"]}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"LOW stake escrow funding","outputs":[{"lockingScript":"{PAYEE}","satoshis":2300,"outputDescription":"LOW stake hop"}],"options":{"randomizeOutputs":false,"acceptDelayedBroadcast":false},"allowPending":{"received":["{PENDING_B}:0"]}}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "internalizeAction.potPayout",
         source: "app/src/lib/stake.ts (the pot payout)",
-        world: "pending",
-        request: post(
-            "/internalizeAction",
-            O,
-            &format!(
-                r#"{{"tx":{},"outputs":[{{"outputIndex":0,"protocol":"wallet payment","paymentRemittance":{{"derivationPrefix":"SfKxPIJNgdI=","derivationSuffix":"NaGLC6fMH50=","senderIdentityKey":"{G}"}}}}],"description":"LOW pot payout"}}"#,
-                bytes_array(&[1, 1, 1, 1, 0, 0, 0, 0])
-            ),
+        path: "/internalizeAction",
+        body: Some(
+            r#"{"tx":{tx},"outputs":[{"outputIndex":0,"protocol":"wallet payment","paymentRemittance":{"derivationPrefix":"SfKxPIJNgdI=","derivationSuffix":"NaGLC6fMH50=","senderIdentityKey":"{G}"}}],"description":"LOW pot payout"}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        bytes: &[("{tx}", NOT_BEEF)],
+        ..LOW_FLEET_SEAT
+    },
+    Case {
         call: "getPublicKey.harnessBearer",
         source: "app/e2e/lib/cli.ts (fetch with authorization when AUTH_TOKEN is set)",
         world: "auth",
-        request: post(
-            "/getPublicKey",
-            "http://localhost",
-            &format!(
-                r#"{{"protocolID":[2,"3241645161d8"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":true}}"#
-            ),
-        )
-        .bearer(BEARER),
-    })
-    .await;
-}
+        origin: "http://localhost",
+        path: "/getPublicKey",
+        body: Some(
+            r#"{"protocolID":[2,"3241645161d8"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":true}"#,
+        ),
+        bearer: true,
+        ..LOW_FLEET_SEAT
+    },
+];
 
 /// The stack's witness spend wallet: its daily job drives the CLI
 /// (`address`, `--json split --count 2`, `balance`); its one read over
 /// HTTP is the tracker's word for the spend, a plain GET on loopback.
-async fn record_stack_witness(r: &mut Recorder) {
-    r.case(Call {
-        consumer: "stack-witness",
-        call: "txWord",
-        source: "bsv-stack-lean docs/p0/witness-spend.md (GET /tx/{txid} on loopback)",
-        world: "fresh",
-        request: Req {
-            method: "GET".into(),
-            path: format!("/tx/{UNKNOWN}"),
-            headers: BTreeMap::new(),
-            json: None,
-        },
-    })
-    .await;
-}
-
-/// The apps' payers: ~/bsv/agents' `tools/fleet/proof.py` (the x402
-/// helper's client, and a `noSend` spend it aborts), Zanaadu's and
-/// teragunv2's `WalletClient` over `HTTPWalletJSON` (a browser origin).
-async fn record_app_payers(r: &mut Recorder) {
-    const C: &str = "app-payers";
-    r.case(Call {
-        consumer: C,
-        call: "agents.createAction.noSend",
-        source: "agents tools/fleet/proof.py (/createAction, noSend)",
-        world: "fresh",
-        request: post(
-            "/createAction",
-            "http://localhost",
-            &format!(
-                r#"{{"description":"fleet proof","outputs":[{{"lockingScript":"{PAYEE}","satoshis":1,"outputDescription":"fleet proof"}}],"options":{{"noSend":true,"randomizeOutputs":false,"acceptDelayedBroadcast":false}}}}"#
-            ),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "agents.abortAction",
-        source: "agents tools/fleet/proof.py (abortAction {reference: txid})",
-        world: "fresh",
-        request: post(
-            "/abortAction",
-            "http://localhost",
-            &format!(r#"{{"reference":"{UNKNOWN}"}}"#),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "zanaadu.getPublicKey.identity",
-        source: "zanaadu frontend/src/lib/zanaaduSigningProtocols.ts ([2,'zanaadu identity'] '1')",
-        world: "fresh",
-        request: post(
-            "/getPublicKey",
-            "http://localhost:5173",
-            r#"{"protocolID":[2,"zanaadu identity"],"keyID":"1","counterparty":"self"}"#,
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "zanaadu.createAction.fund",
-        source: "zanaadu frontend/src/lib/features-fund/fund.ts",
-        world: "fresh",
-        request: post(
-            "/createAction",
-            "http://localhost:5173",
-            &format!(
-                r#"{{"description":"Zanaadu fund","outputs":[{{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"Zanaadu fund output"}}],"options":{{"randomizeOutputs":false,"acceptDelayedBroadcast":false}}}}"#
-            ),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "teragunv2.getPublicKey.payment",
-        source: "teragunv2 frontend/src/lib/wallet.ts (PAYMENT_PROTOCOL [2,'wallet payment'])",
-        world: "fresh",
-        request: post(
-            "/getPublicKey",
-            "http://localhost:5173",
-            &format!(
-                r#"{{"protocolID":[2,"wallet payment"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":false}}"#
-            ),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "teragunv2.createAction.pack",
-        source: "teragunv2 frontend/src/lib/wallet.ts (options: acceptDelayedBroadcast only)",
-        world: "fresh",
-        request: post(
-            "/createAction",
-            "http://localhost:5173",
-            &format!(
-                r#"{{"outputs":[{{"satoshis":1000,"lockingScript":"{PAYEE}","outputDescription":"API payment"}}],"description":"Teragun 10 TX Pack (1,000 sats)","options":{{"acceptDelayedBroadcast":false}}}}"#
-            ),
-        ),
-    })
-    .await;
-}
-
-/// dolphinmilk (`src/wallet/http.rs`): the 0.1.23 crate's server
-/// in-process, its own reqwest client (`Origin` from its config, the
-/// status calls on GET).
-async fn record_dolphinmilk(r: &mut Recorder) {
-    const C: &str = "dolphinmilk";
-    const O: &str = "http://localhost";
-    r.case(Call {
-        consumer: C,
-        call: "getVersion",
-        source: "dolphinmilk src/wallet/http.rs call_get",
-        world: "pending",
-        request: get("/getVersion", O),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "listOutputs.balance",
-        source: "dolphinmilk src/wallet/http.rs (the balance pages)",
-        world: "pending",
-        request: post(
-            "/listOutputs",
-            O,
-            r#"{"basket":"default","include":"locking scripts","limit":100,"offset":0}"#,
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
-        call: "createAction.x402",
-        source: "dolphinmilk bsv-x402-server/src/payment.rs -> src/wallet/http.rs create_action",
-        world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"x402 payment","outputs":[{{"lockingScript":"{PAYEE}","satoshis":100,"outputDescription":"x402 payment"}}],"options":{{"acceptDelayedBroadcast":false,"randomizeOutputs":false}}}}"#
-            ),
-        ),
-    })
-    .await;
-}
+const STACK_WITNESS: &[Case] = &[Case {
+    call: "txWord",
+    source: "bsv-stack-lean docs/p0/witness-spend.md (GET /tx/{txid} on loopback)",
+    path: "/tx/{UNKNOWN}",
+    ..Case::BASE
+}];
 
 /// The x402 skill (calgooon-x402 1.1.4 at `dc00cde`): every call goes
 /// through `lib/metanet.py`'s `_call` (POST, `Origin: http://localhost`, JSON),
 /// and `SKILL.md`'s health check is a plain GET.
-async fn record_x402_skill(r: &mut Recorder) {
-    const C: &str = "x402-skill";
-    const O: &str = "http://localhost";
-    r.case(Call {
-        consumer: C,
+const X402_CLIENT: Case = Case {
+    origin: "http://localhost",
+    ..Case::BASE
+};
+const X402_SKILL: &[Case] = &[
+    Case {
         call: "isAuthenticated",
-        source: "skills/x402/SKILL.md (curl -H \"Origin: http://localhost\" .../isAuthenticated)",
-        world: "fresh",
-        request: get("/isAuthenticated", O),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        source: r#"skills/x402/SKILL.md (curl -H "Origin: http://localhost" .../isAuthenticated)"#,
+        path: "/isAuthenticated",
+        ..X402_CLIENT
+    },
+    Case {
         call: "getPublicKey.identity",
         source: "skills/x402/lib/metanet.py get_identity_key",
-        world: "fresh",
-        request: post("/getPublicKey", O, r#"{"identityKey":true}"#),
-    })
-    .await;
+        path: "/getPublicKey",
+        body: Some(r#"{"identityKey":true}"#),
+        ..X402_CLIENT
+    },
     // BRC-29: the payment key for the server, keyID "<prefix> <suffix>".
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "getPublicKey.payment",
         source: "skills/x402/lib/payment.py (get_public_key, PAYMENT_PROTOCOL)",
-        world: "fresh",
-        request: post(
-            "/getPublicKey",
-            O,
-            &format!(
-                r#"{{"protocolID":[2,"3241645161d8"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":false}}"#
-            ),
+        path: "/getPublicKey",
+        body: Some(
+            r#"{"protocolID":[2,"3241645161d8"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":false}"#,
         ),
-    })
-    .await;
+        ..X402_CLIENT
+    },
     // BRC-31: the auth message signature, keyID "<nonce> <server nonce>".
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createSignature.auth",
         source: "skills/x402/lib/auth_request.py (create_signature, AUTH_PROTOCOL)",
-        world: "fresh",
-        request: post(
-            "/createSignature",
-            O,
-            &format!(
-                r#"{{"data":{},"protocolID":[2,"auth message signature"],"keyID":"bm9uY2Ux bm9uY2Uy","counterparty":"{G}"}}"#,
-                bytes_array(b"x402 auth message")
-            ),
+        path: "/createSignature",
+        body: Some(
+            r#"{"data":{data},"protocolID":[2,"auth message signature"],"keyID":"bm9uY2Ux bm9uY2Uy","counterparty":"{G}"}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        bytes: &[("{data}", b"x402 auth message")],
+        ..X402_CLIENT
+    },
+    Case {
         call: "createAction.payment",
         source: "skills/x402/lib/payment.py -> lib/metanet.py create_action",
-        world: "fresh",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"BRC-29 payment: 1000 sats","outputs":[{{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"BRC-29 payment output"}}],"options":{{"acceptDelayedBroadcast":false,"randomizeOutputs":false}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"BRC-29 payment: 1000 sats","outputs":[{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"BRC-29 payment output"}],"options":{"acceptDelayedBroadcast":false,"randomizeOutputs":false}}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..X402_CLIENT
+    },
+    Case {
         call: "createAction.executeAction",
         source: "skills/x402/scripts/brc31_helpers.py execute-action",
-        world: "fresh",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"Agent action","outputs":[{{"lockingScript":"{PAYEE}","satoshis":1,"outputDescription":"agent output"}}],"options":{{}},"labels":["app:x402"]}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"Agent action","outputs":[{"lockingScript":"{PAYEE}","satoshis":1,"outputDescription":"agent output"}],"options":{},"labels":["app:x402"]}"#,
         ),
-    })
-    .await;
+        ..X402_CLIENT
+    },
     // A refund: the server's AtomicBEEF as a number array; these bytes
-    // are not one (the shape is the call's, the refusal the parser's).
-    r.case(Call {
-        consumer: C,
+    // are not one (see [`NOT_BEEF`]).
+    Case {
         call: "internalizeAction.refund",
         source: "skills/x402/lib/refund.py -> lib/metanet.py internalize_action",
-        world: "fresh",
-        request: post(
-            "/internalizeAction",
-            O,
-            &format!(
-                r#"{{"tx":{},"outputs":[{{"outputIndex":0,"protocol":"wallet payment","paymentRemittance":{{"derivationPrefix":"SfKxPIJNgdI=","derivationSuffix":"NaGLC6fMH50=","senderIdentityKey":"{G}"}}}}],"description":"Refund: 1000 sats (txid: 0000000000000000...)"}}"#,
-                bytes_array(&[1, 1, 1, 1, 0, 0, 0, 0])
-            ),
+        path: "/internalizeAction",
+        body: Some(
+            r#"{"tx":{tx},"outputs":[{"outputIndex":0,"protocol":"wallet payment","paymentRemittance":{"derivationPrefix":"SfKxPIJNgdI=","derivationSuffix":"NaGLC6fMH50=","senderIdentityKey":"{G}"}}],"description":"Refund: 1000 sats (txid: 0000000000000000...)"}"#,
         ),
-    })
-    .await;
+        bytes: &[("{tx}", NOT_BEEF)],
+        ..X402_CLIENT
+    },
     // 1.1.4: the server's signed response, checked by the wallet under the
     // same protocol, keyID "<server nonce> <client nonce>". The signature
     // is the one fixture 04 answers (made for the server, not by it), so
     // the answer is the wallet's word on a signature that does not verify:
     // a 400 `ERROR`, not `{"valid": false}` (the skill reads either as
     // "BAD SIGNATURE"; the shape is #81's).
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "verifySignature.response",
         source: "skills/x402/lib/auth_request.py verify_response",
-        world: "fresh",
-        request: post(
-            "/verifySignature",
-            O,
-            &format!(
-                r#"{{"data":{},"signature":{},"protocolID":[2,"auth message signature"],"keyID":"bm9uY2Uy bm9uY2Ux","counterparty":"{G}"}}"#,
-                bytes_array(b"x402 response payload"),
-                bytes_array(&hex::decode("30440220016d22b66a0ffb4489cfe9334921368f1b0b19cc51861a9da7091a81c6b2ddac02206743cbd5919e91afec26e8f2d95487d7da34c797ff86796d2fe329a5d93485bb").unwrap())
-            ),
+        path: "/verifySignature",
+        body: Some(
+            r#"{"data":{data},"signature":{SERVER_SIGNATURE},"protocolID":[2,"auth message signature"],"keyID":"bm9uY2Uy bm9uY2Ux","counterparty":"{G}"}"#,
         ),
-    })
-    .await;
-}
+        bytes: &[("{data}", b"x402 response payload")],
+        ..X402_CLIENT
+    },
+];
 
 /// The MCP companion (`mcp/src/main.rs`, bsv-wallet-mcp 0.3.0): each tool
 /// posts its typed parameters, serialized in struct order, with `Origin:
 /// http://localhost` (`WALLET_ORIGIN`'s default); the status tools GET.
-async fn record_mcp(r: &mut Recorder) {
-    const C: &str = "mcp";
-    const O: &str = "http://localhost";
-    r.case(Call {
-        consumer: C,
+const MCP_TOOL: Case = Case {
+    origin: "http://localhost",
+    ..Case::BASE
+};
+const MCP: &[Case] = &[
+    Case {
         call: "is_authenticated",
         source: "mcp/src/main.rs is_authenticated (GET)",
-        world: "fresh",
-        request: get("/isAuthenticated", O),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/isAuthenticated",
+        ..MCP_TOOL
+    },
+    Case {
         call: "get_height",
         source: "mcp/src/main.rs get_height (GET)",
-        world: "fresh",
-        request: get("/getHeight", O),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/getHeight",
+        ..MCP_TOOL
+    },
+    Case {
         call: "get_public_key.identity",
         source: "mcp/src/main.rs GetPublicKeyParams",
-        world: "fresh",
-        request: post("/getPublicKey", O, r#"{"identityKey":true}"#),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/getPublicKey",
+        body: Some(r#"{"identityKey":true}"#),
+        ..MCP_TOOL
+    },
+    Case {
         call: "create_signature",
         source: "mcp/src/main.rs CreateSignatureParams",
-        world: "fresh",
-        request: post(
-            "/createSignature",
-            O,
-            &format!(
-                r#"{{"data":{},"protocolID":[2,"mcp test"],"keyID":"1","counterparty":"self"}}"#,
-                bytes_array(b"mcp")
-            ),
+        path: "/createSignature",
+        body: Some(
+            r#"{"data":{data},"protocolID":[2,"mcp test"],"keyID":"1","counterparty":"self"}"#,
         ),
-    })
-    .await;
+        bytes: &[("{data}", b"mcp")],
+        ..MCP_TOOL
+    },
     // `wallet_balance`: the default basket a page at a time.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "wallet_balance",
         source: "mcp/src/main.rs wallet_balance (listOutputs pages)",
         world: "pending",
-        request: post(
-            "/listOutputs",
-            O,
-            r#"{"basket":"default","include":"locking scripts","limit":100,"offset":0}"#,
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/listOutputs",
+        body: Some(r#"{"basket":"default","include":"locking scripts","limit":100,"offset":0}"#),
+        ..MCP_TOOL
+    },
+    Case {
         call: "list_actions",
         source: "mcp/src/main.rs ListActionsParams (its defaults)",
-        world: "fresh",
-        request: post(
-            "/listActions",
-            O,
+        path: "/listActions",
+        body: Some(
             r#"{"labels":[],"labelQueryMode":"any","includeLabels":false,"includeInputs":false,"includeOutputs":false,"limit":10,"offset":0}"#,
         ),
-    })
-    .await;
+        ..MCP_TOOL
+    },
     // `allowPending` is a string in the MCP's parameters: the plain word.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "create_action.allowPending",
         source: "mcp/src/main.rs CreateActionParams",
         world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"mcp payment","outputs":[{{"lockingScript":"{PAYEE}","satoshis":60000,"outputDescription":"mcp output"}}],"allowPending":"received"}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"mcp payment","outputs":[{"lockingScript":"{PAYEE}","satoshis":60000,"outputDescription":"mcp output"}],"allowPending":"received"}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..MCP_TOOL
+    },
+    Case {
         call: "create_action",
         source: "mcp/src/main.rs CreateActionParams",
         world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"description":"mcp payment","outputs":[{{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"mcp output"}}],"labels":["mcp"],"options":{{"randomizeOutputs":false}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"mcp payment","outputs":[{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"mcp output"}],"labels":["mcp"],"options":{"randomizeOutputs":false}}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..MCP_TOOL
+    },
+    Case {
         call: "relinquish_output",
         source: "mcp/src/main.rs RelinquishOutputParams",
-        world: "fresh",
-        request: post(
-            "/relinquishOutput",
-            O,
-            &format!(r#"{{"basket":"default","output":{{"txid":"{UNKNOWN}","vout":0}}}}"#),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/relinquishOutput",
+        body: Some(r#"{"basket":"default","output":{"txid":"{UNKNOWN}","vout":0}}"#),
+        ..MCP_TOOL
+    },
+    Case {
         call: "chain_feed_status",
         source: "mcp/src/main.rs chain_feed_status (GET /chain-feed)",
-        world: "fresh",
-        request: get("/chain-feed", O),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/chain-feed",
+        ..MCP_TOOL
+    },
+    Case {
         call: "tx_word",
         source: "mcp/src/main.rs tx_word (GET /tx/{txid})",
-        world: "fresh",
-        request: get(&format!("/tx/{UNKNOWN}"), O),
-    })
-    .await;
-}
+        path: "/tx/{UNKNOWN}",
+        ..MCP_TOOL
+    },
+];
+
+/// The apps' payers: ~/bsv/agents' `tools/fleet/proof.py` (the x402
+/// helper's client, and a `noSend` spend it aborts), Zanaadu's and
+/// teragunv2's `WalletClient` over `HTTPWalletJSON` (a browser origin).
+const AGENTS_HELPER: Case = Case {
+    origin: "http://localhost",
+    ..Case::BASE
+};
+const APP_PAGE: Case = Case {
+    origin: "http://localhost:5173",
+    ..Case::BASE
+};
+const APP_PAYERS: &[Case] = &[
+    Case {
+        call: "agents.createAction.noSend",
+        source: "agents tools/fleet/proof.py (/createAction, noSend)",
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"fleet proof","outputs":[{"lockingScript":"{PAYEE}","satoshis":1,"outputDescription":"fleet proof"}],"options":{"noSend":true,"randomizeOutputs":false,"acceptDelayedBroadcast":false}}"#,
+        ),
+        ..AGENTS_HELPER
+    },
+    Case {
+        call: "agents.abortAction",
+        source: "agents tools/fleet/proof.py (abortAction {reference: txid})",
+        path: "/abortAction",
+        body: Some(r#"{"reference":"{UNKNOWN}"}"#),
+        ..AGENTS_HELPER
+    },
+    Case {
+        call: "zanaadu.getPublicKey.identity",
+        source: "zanaadu frontend/src/lib/zanaaduSigningProtocols.ts ([2,'zanaadu identity'] '1')",
+        path: "/getPublicKey",
+        body: Some(r#"{"protocolID":[2,"zanaadu identity"],"keyID":"1","counterparty":"self"}"#),
+        ..APP_PAGE
+    },
+    Case {
+        call: "zanaadu.createAction.fund",
+        source: "zanaadu frontend/src/lib/features-fund/fund.ts",
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"Zanaadu fund","outputs":[{"lockingScript":"{PAYEE}","satoshis":1000,"outputDescription":"Zanaadu fund output"}],"options":{"randomizeOutputs":false,"acceptDelayedBroadcast":false}}"#,
+        ),
+        ..APP_PAGE
+    },
+    Case {
+        call: "teragunv2.getPublicKey.payment",
+        source: "teragunv2 frontend/src/lib/wallet.ts (PAYMENT_PROTOCOL [2,'wallet payment'])",
+        path: "/getPublicKey",
+        body: Some(
+            r#"{"protocolID":[2,"wallet payment"],"keyID":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":false}"#,
+        ),
+        ..APP_PAGE
+    },
+    Case {
+        call: "teragunv2.createAction.pack",
+        source: "teragunv2 frontend/src/lib/wallet.ts (options: acceptDelayedBroadcast only)",
+        path: "/createAction",
+        body: Some(
+            r#"{"outputs":[{"satoshis":1000,"lockingScript":"{PAYEE}","outputDescription":"API payment"}],"description":"Teragun 10 TX Pack (1,000 sats)","options":{"acceptDelayedBroadcast":false}}"#,
+        ),
+        ..APP_PAGE
+    },
+];
+
+/// dolphinmilk (`src/wallet/http.rs`): the 0.1.23 crate's server
+/// in-process, its own reqwest client (`Origin` from its config, the
+/// status calls on GET).
+const DOLPHINMILK_CLIENT: Case = Case {
+    world: "pending",
+    origin: "http://localhost",
+    ..Case::BASE
+};
+const DOLPHINMILK: &[Case] = &[
+    Case {
+        call: "getVersion",
+        source: "dolphinmilk src/wallet/http.rs call_get",
+        path: "/getVersion",
+        ..DOLPHINMILK_CLIENT
+    },
+    Case {
+        call: "listOutputs.balance",
+        source: "dolphinmilk src/wallet/http.rs (the balance pages)",
+        path: "/listOutputs",
+        body: Some(r#"{"basket":"default","include":"locking scripts","limit":100,"offset":0}"#),
+        ..DOLPHINMILK_CLIENT
+    },
+    Case {
+        call: "createAction.x402",
+        source: "dolphinmilk bsv-x402-server/src/payment.rs -> src/wallet/http.rs create_action",
+        path: "/createAction",
+        body: Some(
+            r#"{"description":"x402 payment","outputs":[{"lockingScript":"{PAYEE}","satoshis":100,"outputDescription":"x402 payment"}],"options":{"acceptDelayedBroadcast":false,"randomizeOutputs":false}}"#,
+        ),
+        ..DOLPHINMILK_CLIENT
+    },
+];
 
 /// The e2e harness's client (`tests/e2e/lib/wallet-client.js`), `Origin:
 /// http://e2e-test`: its own spellings (`protocolId`, `keyId`,
 /// `certificateType`) are part of what the server accepts.
-async fn record_e2e_harness(r: &mut Recorder) {
-    const C: &str = "e2e-harness";
-    const O: &str = "http://e2e-test";
-    r.case(Call {
-        consumer: C,
+const E2E_CLIENT: Case = Case {
+    origin: "http://e2e-test",
+    ..Case::BASE
+};
+const E2E_HARNESS: &[Case] = &[
+    Case {
         call: "getPublicKey.brc29",
         source: "tests/e2e/lib/wallet-client.js getPublicKey (transferTo)",
-        world: "fresh",
-        request: post(
-            "/getPublicKey",
-            O,
-            &format!(
-                r#"{{"protocolId":[2,"3241645161d8"],"keyId":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":true}}"#
-            ),
+        path: "/getPublicKey",
+        body: Some(
+            r#"{"protocolId":[2,"3241645161d8"],"keyId":"SfKxPIJNgdI= NaGLC6fMH50=","counterparty":"{G}","forSelf":true}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..E2E_CLIENT
+    },
+    Case {
         call: "createSignature",
         source: "tests/e2e/lib/wallet-client.js createSignature",
-        world: "fresh",
-        request: post(
-            "/createSignature",
-            O,
-            &format!(
-                r#"{{"data":{},"protocolId":[2,"e2e test"],"keyId":"1","counterparty":"self"}}"#,
-                bytes_array(b"e2e")
-            ),
+        path: "/createSignature",
+        body: Some(
+            r#"{"data":{data},"protocolId":[2,"e2e test"],"keyId":"1","counterparty":"self"}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        bytes: &[("{data}", b"e2e")],
+        ..E2E_CLIENT
+    },
+    Case {
         call: "listOutputs.balance",
         source: "tests/e2e/lib/wallet-client.js balance",
         world: "pending",
-        request: post(
-            "/listOutputs",
-            O,
-            r#"{"basket":"default","limit":10000,"includeEnvelope":false}"#,
-        ),
-    })
-    .await;
+        path: "/listOutputs",
+        body: Some(r#"{"basket":"default","limit":10000,"includeEnvelope":false}"#),
+        ..E2E_CLIENT
+    },
     // `transferTo` under the word every test wallet's spend names.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createAction.transferTo",
         source: "tests/e2e/lib/wallet-client.js createAction (transferTo)",
         world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"outputs":[{{"lockingScript":"{PAYEE}","satoshis":60000,"outputDescription":"e2e transfer","tags":["e2e-test"]}}],"description":"e2e transfer","allowPending":"received","options":{{"signAndProcess":true,"acceptDelayedBroadcast":false,"randomizeOutputs":false,"noSend":false}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"outputs":[{"lockingScript":"{PAYEE}","satoshis":60000,"outputDescription":"e2e transfer","tags":["e2e-test"]}],"description":"e2e transfer","allowPending":"received","options":{"signAndProcess":true,"acceptDelayedBroadcast":false,"randomizeOutputs":false,"noSend":false}}"#,
         ),
-    })
-    .await;
+        ..E2E_CLIENT
+    },
     // Scenario 23's scoped word: only PENDING_A is offered.
-    r.case(Call {
-        consumer: C,
+    Case {
         call: "createAction.scoped",
         source: "tests/e2e/lib/wallet-client.js createAction (opts.allowPending, scenario 23)",
         world: "pending",
-        request: post(
-            "/createAction",
-            O,
-            &format!(
-                r#"{{"outputs":[{{"lockingScript":"{PAYEE}","satoshis":40000,"outputDescription":"e2e transfer","tags":["e2e-test"]}}],"description":"e2e transfer","allowPending":{{"received":["{PENDING_A}:0"]}},"options":{{"signAndProcess":true,"acceptDelayedBroadcast":false,"randomizeOutputs":false,"noSend":false}}}}"#
-            ),
+        path: "/createAction",
+        body: Some(
+            r#"{"outputs":[{"lockingScript":"{PAYEE}","satoshis":40000,"outputDescription":"e2e transfer","tags":["e2e-test"]}],"description":"e2e transfer","allowPending":{"received":["{PENDING_A}:0"]},"options":{"signAndProcess":true,"acceptDelayedBroadcast":false,"randomizeOutputs":false,"noSend":false}}"#,
         ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        ..E2E_CLIENT
+    },
+    Case {
         call: "relinquishOutput",
         source: "tests/e2e/lib/wallet-client.js relinquishOutput",
-        world: "fresh",
-        request: post(
-            "/relinquishOutput",
-            O,
-            &format!(r#"{{"txid":"{UNKNOWN}","vout":0,"basket":"default"}}"#),
-        ),
-    })
-    .await;
-    r.case(Call {
-        consumer: C,
+        path: "/relinquishOutput",
+        body: Some(r#"{"txid":"{UNKNOWN}","vout":0,"basket":"default"}"#),
+        ..E2E_CLIENT
+    },
+    Case {
         call: "isAuthenticated.bearer",
         source: "tests/e2e/lib/wallet-client.js get (a wallet behind AUTH_TOKEN)",
         world: "auth",
-        request: get("/isAuthenticated", O).bearer(BEARER),
-    })
-    .await;
+        path: "/isAuthenticated",
+        bearer: true,
+        ..E2E_CLIENT
+    },
+];
+
+/// Writes every case's fixture, each consumer's served from its own
+/// worlds in table order.
+async fn record(dir: &Path) -> usize {
+    let mut written = 0;
+    for (consumer, cases) in CASES {
+        let mut worlds: HashMap<&str, World> = HashMap::new();
+        let dir = dir.join(consumer);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (seq, case) in cases.iter().enumerate() {
+            if !worlds.contains_key(case.world) {
+                worlds.insert(case.world, World::build(case.world).await);
+            }
+            let request = case.request();
+            let response = worlds[case.world].serve(&request).await;
+            let fixture = Fixture {
+                consumer: consumer.to_string(),
+                call: case.call.to_string(),
+                source: case.source.to_string(),
+                world: case.world.to_string(),
+                request,
+                response,
+            };
+            let mut text = serde_json::to_string_pretty(&fixture).unwrap();
+            text.push('\n');
+            std::fs::write(dir.join(format!("{:02}-{}.json", seq + 1, case.call)), text).unwrap();
+            written += 1;
+        }
+    }
+    written
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,14 +1290,14 @@ fn diff(want: &str, got: &str) -> String {
     let (mut i, mut k, mut out) = (0, 0, String::new());
     while i < w.len() || k < g.len() {
         if i < w.len() && k < g.len() && w[i] == g[k] {
-            out.push_str(&format!("  {}\n", w[i]));
+            writeln!(out, "  {}", w[i]).unwrap();
             i += 1;
             k += 1;
         } else if k < g.len() && (i == w.len() || lcs[i][k + 1] >= lcs[i + 1][k]) {
-            out.push_str(&format!("+ {}\n", g[k]));
+            writeln!(out, "+ {}", g[k]).unwrap();
             k += 1;
         } else {
-            out.push_str(&format!("- {}\n", w[i]));
+            writeln!(out, "- {}", w[i]).unwrap();
             i += 1;
         }
     }
@@ -1468,8 +1338,8 @@ fn judge(dir: &Path, fixtures: &[(String, Fixture)]) -> Vec<String> {
 /// stacks.
 #[test]
 fn wire_consumers() {
-    quiet_environment();
     const STACK: usize = 64 * 1024 * 1024;
+    quiet_environment();
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(|| {
@@ -1479,7 +1349,7 @@ fn wire_consumers() {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(record_or_replay())
+                .block_on(record_or_replay());
         })
         .unwrap()
         .join()
@@ -1493,23 +1363,46 @@ async fn record_or_replay() {
             std::fs::remove_dir_all(&dir).unwrap();
         }
         std::fs::create_dir_all(&dir).unwrap();
-        let mut recorder = Recorder {
-            dir: dir.clone(),
-            worlds: HashMap::new(),
-            seq: HashMap::new(),
-            written: 0,
-        };
-        record_all(&mut recorder).await;
-        println!("recorded {} consumer fixtures", recorder.written);
+        println!("recorded {} consumer fixtures", record(&dir).await);
     }
-
     let fixtures = read_fixtures(&dir);
     assert!(!fixtures.is_empty(), "no fixture under {}", dir.display());
+    let failures = replay(&fixtures).await;
+    let gaps = judge(&dir, &fixtures);
+    println!(
+        "{} consumer fixtures replayed ({}), {} differ, {} gaps",
+        fixtures.len(),
+        count_by_consumer(&fixtures),
+        failures.len(),
+        gaps.len()
+    );
+    assert!(
+        failures.is_empty() && gaps.is_empty(),
+        "\n{}\n{}\n(a change on purpose: WIRE_RECORD=1 cargo test --test wire_consumers, in its own commit, and tell the consumer's captain; see docs/DEPENDENTS.md)",
+        failures.join("\n"),
+        gaps.join("\n")
+    );
+}
+
+/// "consumer n" for each consumer, in name order.
+fn count_by_consumer(fixtures: &[(String, Fixture)]) -> String {
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, f) in fixtures {
+        *count.entry(f.consumer.as_str()).or_default() += 1;
+    }
+    count
+        .iter()
+        .map(|(c, n)| format!("{c} {n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Serves every fixture's request from its consumer's worlds; one message
+/// per answer that differs from the fixture's.
+async fn replay(fixtures: &[(String, Fixture)]) -> Vec<String> {
     let mut worlds: HashMap<(String, String), World> = HashMap::new();
     let mut failures = Vec::new();
-    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
-    for (file, f) in &fixtures {
-        *count.entry(f.consumer.as_str()).or_default() += 1;
+    for (file, f) in fixtures {
         let key = (f.consumer.clone(), f.world.clone());
         if !worlds.contains_key(&key) {
             worlds.insert(key.clone(), World::build(&f.world).await);
@@ -1529,22 +1422,5 @@ async fn record_or_replay() {
             ));
         }
     }
-    let gaps = judge(&dir, &fixtures);
-    println!(
-        "{} consumer fixtures replayed ({}), {} differ, {} gaps",
-        fixtures.len(),
-        count
-            .iter()
-            .map(|(c, n)| format!("{c} {n}"))
-            .collect::<Vec<_>>()
-            .join(", "),
-        failures.len(),
-        gaps.len()
-    );
-    assert!(
-        failures.is_empty() && gaps.is_empty(),
-        "\n{}\n{}\n(a change on purpose: WIRE_RECORD=1 cargo test --test wire_consumers, in its own commit, and tell the consumer's captain; see docs/DEPENDENTS.md)",
-        failures.join("\n"),
-        gaps.join("\n")
-    );
+    failures
 }
