@@ -330,6 +330,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ratchet"
           python3 tools/ratchet --check "${base[@]}" --out "$RUNNER_TEMP/ratchet/ratchets.json"
 
+      # docs/NORTH-STAR.md's table is rendered from the records in the tree
+      # (#77); a PR that moves a record runs tools/scoreboard --render.
+      - name: scoreboard
+        run: python3 tools/scoreboard --check
+
+      - name: links
+        run: python3 tools/check-links
+
       - name: Keep the measured JSON
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
