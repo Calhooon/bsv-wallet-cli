@@ -201,8 +201,9 @@ async function main() {
       }
     }
 
-    // Teardown: a failed run keeps both wallet directories (keys and logs)
-    const keep = fatal !== null || results.some(r => r.status === 'FAIL') || results.length < expected;
+    // Teardown: a failed run keeps both wallet directories (keys and logs);
+    // a scenario skipped under E2E_HERMETIC=1 counts as accounted for
+    const keep = fatal !== null || results.some(r => r.status === 'FAIL') || results.length + hermeticSkips.length < expected;
     if (walletB) teardownWallet(walletB, { keep });
     if (walletA) teardownWallet(walletA, { keep });
 
@@ -323,8 +324,8 @@ async function main() {
       console.log(`  FAILED before the scenarios ran: ${fatal.message}`);
       process.exit(1);
     }
-    if (total < expected) {
-      console.log(`  FAILED: ${total} of ${expected} scenarios ran`);
+    if (total + hermeticSkips.length < expected) {
+      console.log(`  FAILED: ${total + hermeticSkips.length} of ${expected} scenarios ran`);
       process.exit(1);
     }
     process.exit(passed === total ? 0 : 1);
