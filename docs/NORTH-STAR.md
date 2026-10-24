@@ -55,7 +55,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | ratchet `missing_docs` | 154 |  | `docs/ratchets.json` at 791feff |
 | wire fixtures | 106 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | not in the tree yet |  | `tests/wire/consumers/` |
-| architecture rules | not in the tree yet |  | `docs/ARCH-RULES.md` |
+| architecture rules | not in the tree yet |  | `tests/arch_*.rs` |
 | mutation floor `src/broadcast_verify.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |
 | mutation floor `src/explorers.rs` | 69 | unmeasured | `.github/workflows/nightly.yml` |
 | mutation floor `src/server/handlers.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |

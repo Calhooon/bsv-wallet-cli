@@ -31,10 +31,25 @@ NIGHTLY = """jobs:
              "src/explorers.rs": 69}
         run: true
 """
-ARCH_DOC = """| Rule | Test | Allowlist today |
-|---|---|---|
-| A4 no unwrap | `tests/arch_no_unwrap.rs` | 5 files, 5 sites |
-"""
+ARCH = '''use arch_support::Rule;
+
+/// `(file, today's count, why)`. Only shrinks.
+const ALLOWED: &[(&str, usize, &str)] = &[
+    ("src/a.rs", 2, "a reason"),
+    (
+        "src/b/c.rs",
+        3,
+        "a reason with \\"quotes\\" and a (paren)",
+    ),
+];
+
+const RULE: Rule = Rule {
+    name: "A4: unwrap/expect outside test code",
+    homes: &[],
+    allowed: ALLOWED,
+    sites: |l| 0,
+};
+'''
 MUTANTS = {"schema": 1, "commit": SHA, "run": "https://example.invalid/run/1", "date": "2026-10-23",
            "files": {"src/spend_gate.rs": {"score": 86.6, "caught": 194, "missed": 30,
                                            "timeout": 0, "unviable": 12}}}
@@ -51,7 +66,7 @@ class Tree:
         self.write("docs/ratchets.json", json.dumps({"commit": SHA, "ratchets": {"missing_docs": 154}}))
         self.write("tests/wire/MANIFEST.json", json.dumps({"fixtures": ["001.json", "002.json"]}))
         self.write(".github/workflows/nightly.yml", NIGHTLY)
-        self.write("docs/ARCH-RULES.md", ARCH_DOC)
+        self.write("tests/arch_no_unwrap.rs", ARCH)
         for i in range(3):
             self.write(f"tests/e2e/scenarios/{i:02}-s.js", "module.exports = {};\n")
         self.write("tests/e2e/run.js", "const hermetic = require('./lib/hermetic');\n")
@@ -183,22 +198,49 @@ class PresentRecordsMatchTheirShape(Case):
         self.refused("MUTANTS_FLOORS.src/explorers.rs: must be a score from 0 to 100")
 
 
-class TheArchDocIsReadStrictly(Case):
-    """(A) docs/ARCH-RULES.md, while the rows come from its prose."""
+class TheArchRowsAreTheAllowlistsOwnData(Case):
+    """(C) Each tests/arch_*.rs ALLOWED literal, parsed strictly."""
 
-    def test_the_rules_are_read(self):
-        self.assertIn("| arch rule A4 allowlist | 5 files, 5 sites |", self.table())
+    def test_the_allowlist_is_counted(self):
+        out = self.table()
+        self.assertIn("| architecture rules | 1 |", out)
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |  | `tests/arch_no_unwrap.rs` ALLOWED |", out)
 
-    def test_a_header_and_no_rules_is_refused(self):
+    def test_a_doc_says_nothing(self):
         self.tree.write("docs/ARCH-RULES.md", "| Rule | Allowlist today |\n|---|---|\n")
-        self.refused("docs/ARCH-RULES.md: the rules table: a header and no rule row")
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |", self.table())
 
-    def test_a_removed_rule_is_refused(self):
-        self.tree.write("docs/ARCH-RULES.md", ARCH_DOC + "| A5 x | t | 1 files, 1 sites |\n")
-        base = self.tree.values()
-        self.tree.write("docs/ARCH-RULES.md", ARCH_DOC)
-        self.tree.run("--render")
-        self.refused("arch:rules: 2 at the base, 1 in the tree", "--check", "--base", base)
+    def test_a_comment_in_the_literal_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('    ("src/a.rs"', '    // gone\n    ("src/a.rs"'))
+        self.refused("tests/arch_no_unwrap.rs: ALLOWED entry 1: not a (\"file\", count, \"reason\") tuple")
+
+    def test_a_count_by_name_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs", 2,', '"src/a.rs", TWO,'))
+        self.refused("tests/arch_no_unwrap.rs: ALLOWED entry 1: not a")
+
+    def test_a_raw_string_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('("src/a.rs", 2, "a reason")', '("src/a.rs", 2, r"a reason")'))
+        self.refused("tests/arch_no_unwrap.rs: ALLOWED entry 1: not a")
+
+    def test_an_entry_at_zero_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs", 2,', '"src/a.rs", 0,'))
+        self.refused("ALLOWED entry 1: src/a.rs counts 0")
+
+    def test_a_file_named_twice_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/b/c.rs"', '"src/a.rs"'))
+        self.refused("tests/arch_no_unwrap.rs: ALLOWED: names a file twice")
+
+    def test_another_shape_of_literal_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace("&[(&str, usize, &str)]", "&[Entry]"))
+        self.refused("tests/arch_no_unwrap.rs: ALLOWED: must hold")
+
+    def test_a_rule_file_without_its_rule_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('name: "A4: ', 'name: "'))
+        self.refused("tests/arch_no_unwrap.rs: RULE: must hold one")
+
+    def test_two_files_of_one_rule_are_refused(self):
+        self.tree.write("tests/arch_other.rs", ARCH)
+        self.refused("RULE: A4 is also tests/arch_no_unwrap.rs's rule")
 
 
 class NoNumberFallsFromTheBase(Case):
@@ -223,6 +265,7 @@ class NoNumberFallsFromTheBase(Case):
     def test_a_raised_floor_and_a_shrunk_allowlist_pass(self):
         base = self.tree.values()
         self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 69}", ": 80}"))
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs", 2,', '"src/a.rs", 1,'))
         code, out = self.checked(base)
         self.assertEqual(code, 0, out)
 
@@ -246,6 +289,23 @@ class NoNumberFallsFromTheBase(Case):
         base = self.tree.values()
         self.tree.remove("tests/e2e/scenarios/02-s.js")
         self.refused_against(base, "e2e:scenarios: 3 at the base, 2 in the tree")
+
+    def test_a_removed_rule_is_refused(self):
+        self.tree.write("tests/arch_other.rs", ARCH.replace("A4:", "A5:"))
+        base = self.tree.values()
+        self.tree.remove("tests/arch_other.rs")
+        self.refused_against(base, "arch:rules: 2 at the base, 1 in the tree")
+
+    def test_a_grown_allowlist_is_refused(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('"src/a.rs", 2,', '"src/a.rs", 4,'))
+        self.refused_against(base, "allowlist:A4:sites: 5 at the base, 7 in the tree; an allowlist may not grow")
+
+    def test_an_allowlist_with_a_new_file_is_refused(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs",
+                        ARCH.replace('    ("src/a.rs", 2,', '    ("src/z.rs", 1, "new"),\n    ("src/a.rs", 1,'))
+        self.refused_against(base, "allowlist:A4:files: 2 at the base, 3 in the tree")
 
     def test_a_malformed_base_is_refused(self):
         path = os.path.join(self.tree.root, "base.json")
