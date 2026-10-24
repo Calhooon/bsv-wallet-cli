@@ -409,9 +409,10 @@ pub struct HeldCoin {
     /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
     /// no proof; offered under allowPending: received`, `own change,
     /// SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never
-    /// offered`, `lost: the store marks it not spendable`. `spent by` is never a hold: the coin is an input a live
-    /// action of ours consumed, spent for good; it leaves the listing when
-    /// that spender is completed (its proof lands) or failed (#53).
+    /// offered`, `lost: the store marks it not spendable`. `spent by` is
+    /// never a hold: the coin is an input a live action of ours consumed,
+    /// spent for good; it leaves the listing when that spender is completed
+    /// (its proof lands) or failed (#53).
     pub reason: String,
     /// The hold is the header service's fault (the reason `headers
     /// unavailable: <its error>`): its error, no verdict on the coin; a
@@ -1082,8 +1083,10 @@ async fn assess_inner<V: WalletServices + ?Sized>(
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
     let tick = opts.tick();
+    // Only a coin its own record does not hold needs its creator read: a
+    // creator whose coins are all frozen or lost is never fetched.
     let mut by_creator: Vec<(String, Option<Vec<u8>>)> = Vec::new();
-    for c in &all {
+    for c in all.iter().filter(|c| c.record_hold().is_none()) {
         if !by_creator.iter().any(|(t, _)| t == &c.txid) {
             by_creator.push((c.txid.clone(), c.proof.clone()));
         }
@@ -1210,10 +1213,10 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
 /// inputs), judged coin by coin as the toolbox's own allocation is: frozen,
 /// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
-/// replaces), lost (`spendable = 0` with no spender), or a creator the gate would not offer. Returns every named
-/// coin it holds. An outpoint that is not one of this wallet's outputs is
-/// not a coin of ours and is left to the toolbox (a covenant or a foreign
-/// input carried in `inputBEEF`).
+/// replaces), lost (`spendable = 0` with no spender), or a creator the gate
+/// would not offer. Returns every named coin it holds. An outpoint that is
+/// not one of this wallet's outputs is not a coin of ours and is left to the
+/// toolbox (a covenant or a foreign input carried in `inputBEEF`).
 pub async fn assess_named<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
