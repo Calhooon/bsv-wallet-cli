@@ -37,7 +37,7 @@ use bsv_wallet_toolbox::{
 };
 use chrono::Utc;
 
-use crate::broadcast_reconcile::{run_pass, run_sweep, ReconcileOptions};
+use crate::broadcast_reconcile::{run_pass, run_sweep, ReconcileOptions, DEFAULT_ABSENCE_MINUTES};
 use crate::broadcast_verify::{
     BroadcastVerification, BroadcastVerifier, ChainIndexAnswer, NetworkEvidence, PresenceReport,
 };
@@ -304,7 +304,9 @@ async fn the_served_sweep_keeps_an_announced_transaction_a_broadcaster_refused_l
         .await
         .unwrap();
     let services = MockWalletServices::new();
-    let sweep = run_sweep(&storage, &services, true).await.unwrap();
+    let sweep = run_sweep(&storage, &services, true, DEFAULT_ABSENCE_MINUTES)
+        .await
+        .unwrap();
     assert!(
         sweep
             .poison
@@ -327,7 +329,9 @@ async fn the_served_sweep_retires_a_refused_transaction_no_broadcaster_took() {
         .await
         .unwrap();
     let services = MockWalletServices::new();
-    let sweep = run_sweep(&storage, &services, true).await.unwrap();
+    let sweep = run_sweep(&storage, &services, true, DEFAULT_ABSENCE_MINUTES)
+        .await
+        .unwrap();
     assert!(sweep
         .poison
         .iter()

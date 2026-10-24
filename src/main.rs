@@ -163,11 +163,11 @@ async fn main() -> Result<()> {
             commands::tracker_tick::run(&ctx).await?;
         }
         Commands::Daemon { allow_no_token } => {
-            server::refuse_open_bind_from_env(*allow_no_token)?;
+            server::refuse_open_bind_for(&config.server, *allow_no_token)?;
             commands::daemon::run(&config).await?;
         }
         Commands::Serve { allow_no_token } => {
-            server::refuse_open_bind_from_env(*allow_no_token)?;
+            server::refuse_open_bind_for(&config.server, *allow_no_token)?;
             let ctx = open().await?;
             commands::serve::run(ctx, cli.port).await?;
         }
@@ -176,7 +176,7 @@ async fn main() -> Result<()> {
             daemon,
             allow_no_token,
         } => {
-            server::refuse_open_bind_from_env(*allow_no_token)?;
+            server::refuse_open_bind_for(&config.server, *allow_no_token)?;
             commands::serve_fleet::run(wallet, *daemon, &config).await?;
         }
         Commands::Split {

@@ -24,7 +24,7 @@ use bsv_wallet_toolbox::{
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::server::{self, ServerConfig, TlsConfig};
+use crate::server::{self, ServerConfig};
 use crate::services_env;
 
 /// A running tenant: the monitor (stop it on shutdown) + the server task.
@@ -134,33 +134,8 @@ pub async fn start(
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     let wallet_state = server::make_wallet_state(wallet);
 
-    let tls = match (
-        std::env::var("TLS_CERT_PATH").ok(),
-        std::env::var("TLS_KEY_PATH").ok(),
-    ) {
-        (Some(cert_path), Some(key_path)) => Some(TlsConfig {
-            cert_path,
-            key_path,
-        }),
-        _ => None,
-    };
-    let callback_token = arcade_rt
-        .as_ref()
-        .map(|rt| rt.callback_token.clone())
-        .or_else(|| {
-            std::env::var("CALLBACK_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-    let bind_addr = server::bind_addr_from_env();
-    let server_config = ServerConfig {
-        auth_token: std::env::var("AUTH_TOKEN").ok(),
-        tls,
-        chain,
-        bind_addr,
-        callback_token,
-        settings: config.clone(),
-    };
+    let arcade_token = arcade_rt.as_ref().map(|rt| rt.callback_token.clone());
+    let server_config = ServerConfig::from_config(config, chain, arcade_token);
 
     // The served pass, as `serve` runs it (`broadcast_reconcile`): the
     // tracker's pass (the wallet's creators tracked, a proven creator
@@ -283,6 +258,7 @@ pub async fn start(
                     check_wallet.storage(),
                     check_wallet.services(),
                     true,
+                    reconcile_config.reconcile.absence_minutes,
                 )
                 .await
                 {

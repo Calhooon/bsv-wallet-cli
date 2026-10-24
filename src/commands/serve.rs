@@ -1,41 +1,17 @@
 use anyhow::Result;
 
 use crate::context::WalletContext;
-use crate::server::{self, ServerConfig, TlsConfig};
+use crate::server::{self, ServerConfig};
 
 pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
-    let tls = match (
-        std::env::var("TLS_CERT_PATH").ok(),
-        std::env::var("TLS_KEY_PATH").ok(),
-    ) {
-        (Some(cert_path), Some(key_path)) => Some(TlsConfig {
-            cert_path,
-            key_path,
-        }),
-        _ => None,
-    };
+    tracing::info!("config: {}", ctx.config.log_line());
 
     // /arc-callback is enabled when a callback token exists (Arcade mode, or
     // explicit CALLBACK_TOKEN). No monitor runs under `serve`, so push proofs
     // arrive via the webhook only.
-    let callback_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
-        .map(|rt| rt.callback_token)
-        .or_else(|| {
-            std::env::var("CALLBACK_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-
-    let bind_addr = server::bind_addr_from_env();
-
-    let config = ServerConfig {
-        auth_token: std::env::var("AUTH_TOKEN").ok(),
-        tls,
-        chain: ctx.chain,
-        bind_addr,
-        callback_token,
-        settings: ctx.config.clone(),
-    };
+    let arcade_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
+        .map(|rt| rt.callback_token);
+    let config = ServerConfig::from_config(&ctx.config, ctx.chain, arcade_token);
     let settings = ctx.config.clone();
     let db_path = ctx.db_path.clone();
     let wallet_state = server::make_wallet_state(ctx.wallet);
