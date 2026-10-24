@@ -38,6 +38,13 @@ def measure(scale=1.0, calls=400):
     }
 
 
+def at_p99(p99):
+    """This run's measure with gate_assess's p99 at the number given."""
+    m = measure()
+    m["gate_assess/need/1000"]["p99_us"] = p99
+    return m
+
+
 def run(scale=1.0, commit="b"):
     return {"commit": commit * 40, "recorded": "2026-10-22", "benches": measure(scale)}
 
@@ -218,6 +225,16 @@ class TheTreeCannotTurnTheGateOff(unittest.TestCase):
         errors, *_ = judge(tree, base, measure(scale=1.06))
         self.assertTrue(any("re-record" in e and "does not match this run's measure" in e for e in errors), errors)
 
+    def test_5251_over_5000_fails_as_measure_and_as_appended_run(self):
+        base = baseline(runs(bc.MIN_RUNS))
+        measured = at_p99(5251.0)
+        tree = baseline(runs(bc.MIN_RUNS) + [dict(run(), benches=measured)])
+        errors, regressions, gating, _ = judge(tree, base, measured)
+        self.assertTrue(gating)
+        self.assertEqual(len(regressions), 1, regressions)
+        self.assertTrue(any("appended run is over the base's reference" in e
+                            and "5251.0" in e for e in errors), errors)
+
     def test_no_base_gates_nothing(self):
         tree = baseline(runs(bc.MIN_RUNS))
         lines, warnings, errors, regressions, gating, _ = bc.judge(tree, None, measure(scale=3.0), CTX)
@@ -267,6 +284,17 @@ class WhatTheGateLetsThrough(unittest.TestCase):
             errors, regressions, _, _ = judge(baseline(runs(n) + [run(scale=1.049)]), baseline(runs(n)),
                                               measure(scale=1.03))
             self.assertEqual((errors, regressions), ([], []))
+
+    def test_5250_over_5000_is_at_the_margin_and_passes(self):
+        # 5250 / 5000 - 1 is 0.050000000000000044: at the margin, not over it.
+        base = baseline(runs(bc.MIN_RUNS))
+        measured = at_p99(5250.0)
+        tree = baseline(runs(bc.MIN_RUNS) + [dict(run(), benches=measured)])
+        errors, regressions, gating, _ = judge(tree, base, measured)
+        self.assertEqual((errors, regressions, gating), ([], [], True))
+        # And as a committed run within the margin of this run's measure.
+        errors, *_ = judge(tree, base, at_p99(5000.0))
+        self.assertFalse(any("does not match this run's measure" in e for e in errors), errors)
 
     def test_warn_only_below_five_runs(self):
         base = baseline(runs(4))
