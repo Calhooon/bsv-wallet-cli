@@ -1,6 +1,6 @@
 //! The consumers' recorded calls (#110): one exchange per call shape a
 //! consumer of this binary sends over the wire, under
-//! `tests/wire/consumers/<consumer>/`.
+//! `tests/wire_consumers/<consumer>/`.
 //!
 //! `cargo test --test wire_consumers` replays every fixture against the
 //! router, in-process (`tower::ServiceExt::oneshot`), and fails on any byte
@@ -953,7 +953,7 @@ async fn record(dir: &Path) -> usize {
 // ---------------------------------------------------------------------------
 
 fn consumers_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire/consumers")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire_consumers")
 }
 
 /// Every file under a consumer's directory, sorted.

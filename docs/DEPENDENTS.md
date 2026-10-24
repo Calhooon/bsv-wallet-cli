@@ -1,6 +1,6 @@
 # The dependents of bsv-wallet-cli (#110)
 
-Who consumes this binary, what each one calls, the version it runs, who answers for it, and the order in which a release reaches it. The dependents take the wire, not the crate (dolphinmilk is the one exception, and it reaches the wire through the crate too). A change one of them would feel fails `cargo test --test wire_consumers` and names the consumer: `tests/wire/consumers/<consumer>/` holds one recorded exchange per call shape each consumer sends, replayed against the router on every CI run (the `Test` job runs every test).
+Who consumes this binary, what each one calls, the version it runs, who answers for it, and the order in which a release reaches it. The dependents take the wire, not the crate (dolphinmilk is the one exception, and it reaches the wire through the crate too). A change one of them would feel fails `cargo test --test wire_consumers` and names the consumer: `tests/wire_consumers/<consumer>/` holds one recorded exchange per call shape each consumer sends, replayed against the router on every CI run (the `Test` job runs every test).
 
 `[X]` read by this lane at the path given (2026-10-23); `[D]` told, not checked. Versions move: the keeper's versions page (`bsv-stack-lean/docs/p0/versions-2026-10-10.md`) is the record, and this table is brought to it with each fixture change (`RELEASING.md` 1b).
 
