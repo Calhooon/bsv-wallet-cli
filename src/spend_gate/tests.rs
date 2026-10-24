@@ -805,8 +805,10 @@ async fn lost_coins() -> LostCoins {
 }
 
 /// #165, the offer: the lost coin is held `lost` before its creator is
-/// read, though its creator is mined at depth; the consumed coin is the
-/// lock's (no candidate of the offer); the spendable coin is offered.
+/// read, though its creator is mined at depth (its block, 900, is never
+/// asked of the header service; the spendable coin's, 902, is); the
+/// consumed coin is the lock's (no candidate of the offer); the spendable
+/// coin is offered.
 #[tokio::test]
 async fn the_offer_holds_a_lost_coin_by_its_record() {
     let w = lost_coins().await;
@@ -826,6 +828,18 @@ async fn the_offer_holds_a_lost_coin_by_its_record() {
         "a consumed coin is no candidate: {a:?}"
     );
     assert!(offered(w.spendable.1), "{a:?}");
+    let asked: Vec<String> = w
+        .services
+        .call_history()
+        .into_iter()
+        .filter(|c| c.method == "get_header_for_height")
+        .flat_map(|c| c.args)
+        .collect();
+    assert_eq!(
+        asked,
+        vec!["902".to_string()],
+        "only the spendable coin's block"
+    );
 }
 
 /// #165, a named input: the lost coin is held `lost`, the consumed coin
