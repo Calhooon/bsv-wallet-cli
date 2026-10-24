@@ -99,8 +99,9 @@ jobs:
 
   # The vector-backed tests as one named check: the Arcade status vector
   # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
-  # webhook intake, and the gift covenant's sCrypt parity vectors
-  # (src/gift/covenant_vectors.json).
+  # webhook intake, the gift covenant's sCrypt parity vectors
+  # (src/gift/covenant_vectors.json), and the stack's wallet-gate vectors
+  # (tests/vectors/wallet_gate_vectors.json at the pin beside it, #130).
   vectors:
     name: vectors
     runs-on: ubuntu-latest
@@ -117,6 +118,8 @@ jobs:
         run: |
           test -s tests/vectors/arcade_status_verdicts.json
           test -s src/gift/covenant_vectors.json
+          test -s tests/vectors/wallet_gate_vectors.json
+          test -s tests/vectors/wallet_gate_vectors.pin
 
       - name: Run the Arcade status vector through the webhook intake
         run: cargo test --locked --test arcade_webhook_vector_tests
@@ -127,6 +130,16 @@ jobs:
           set -o pipefail
           cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
           grep -q 'test result: ok. 5 passed' covenant.log
+
+      # Every row of the stack's wallet-gate vectors replayed against the gate
+      # (docs/GATE-VECTORS.md): the copy checked against its pin, the
+      # unexpressed rows and the recorded divergences exact.
+      - name: Replay the wallet-gate vectors against the gate
+        run: |
+          set -o pipefail
+          cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
+          grep -q '^gate vectors: 490 rows' gate_vectors.log
+          grep -q 'test result: ok. 2 passed' gate_vectors.log
 
   # The wire oracle (#69): every served call and refusal body under
   # tests/wire/, replayed against the router in-process. A PR that changes a
