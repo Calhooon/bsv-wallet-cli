@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "commit": "a5dc79a882faa6bd745faae88ddceab8f943e83f",
+  "commit": "d0421ff55de1eb8d1b211dff9d84ef890f7ce0af",
   "toolchain": {
-    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
-    "clippy": "clippy 0.1.95 (59807616e1 2026-04-14)"
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "ratchets": {
-    "clippy_pedantic": 871,
+    "clippy_pedantic": 847,
     "unwrap_expect_outside_tests": 7,
     "files_over_800_lines": 15,
     "functions_over_60_lines": 90,
@@ -102,7 +102,7 @@
     },
     "duplicated_blocks": 510,
     "clippy_pedantic_by_lint": {
-      "clippy::doc_markdown": 267,
+      "clippy::doc_markdown": 245,
       "clippy::uninlined_format_args": 169,
       "clippy::missing_errors_doc": 83,
       "clippy::must_use_candidate": 75,
@@ -121,7 +121,6 @@
       "clippy::return_self_not_must_use": 4,
       "clippy::single_match_else": 4,
       "clippy::unused_async": 4,
-      "clippy::duration_suboptimal_units": 3,
       "clippy::explicit_iter_loop": 3,
       "clippy::manual_let_else": 3,
       "clippy::needless_pass_by_value": 3,
@@ -135,6 +134,7 @@
       "clippy::if_not_else": 1,
       "clippy::missing_panics_doc": 1,
       "clippy::range_plus_one": 1,
+      "clippy::unused_async_trait_impl": 1,
       "clippy::used_underscore_binding": 1
     }
   }
