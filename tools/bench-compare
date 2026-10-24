@@ -151,8 +151,9 @@ def gap(run, measured, margin):
 
 def over(run, ref, margin):
     """Each bench of a committed run whose p99 is more than the margin over
-    the base's reference: a run the tree commits may never raise the
-    reference past the margin, warn-only period or not."""
+    the base's reference: an appended run may never raise the reference
+    past the margin, warn-only period or not (a re-record on a new pin
+    only warns)."""
     return [f"{id} p99: committed {run['benches'][id]['p99_us']} us is "
             f"{run['benches'][id]['p99_us'] / r - 1:+.1%} over the base's reference {r} us"
             for id, r in sorted(ref.items())
@@ -190,13 +191,16 @@ def judge(tree, base, measured, ctx):
     The reference is the base's entry, never the tree's: the tree's is
     checked against the base's and this run, but a run the PR appended is
     the PR's own measure, and a reference that took it in would let a PR
-    land a slow run as its own baseline. A run the tree commits, appended
-    or opening, is also checked against the base's reference when the base
-    has one: its p99 more than the margin over it fails, warn-only period
-    or not (this run's measure may be over and only warn; the committed run
-    may never be, or the reference would creep a margin per PR). The
-    candidate is the base's file with this run appended. With no base
-    nothing is gated.
+    land a slow run as its own baseline. A run the tree appends is also
+    checked against the base's reference: its p99 more than the margin
+    over it fails, warn-only period or not (this run's measure may be over
+    and only warn; the committed run may never be, or the reference would
+    creep a margin per PR). A re-record on a new pin over the base's
+    reference (recorded on the old one) is a warning naming both
+    toolchains and each bench's slowdown, never an error: a compiler more
+    than the margin slower could otherwise never be re-recorded and the
+    pin never move. The candidate is the base's file with this run
+    appended. With no base nothing is gated.
     """
     lines, warnings, errors, regressions = [], [], [], []
     key = ctx["key"]
@@ -257,10 +261,16 @@ def judge(tree, base, measured, ctx):
                            f"{ctx['machine']} / {ctx['toolchain']}")
             if not bad:
                 bad = gap(t["runs"][0], measured, margin)
-            if b is not None:
-                bad += over(t["runs"][0], reference(b), margin)
             if bad:
                 errors.append(f"{k}: the tree's {what} does not match this run's measure: " + "; ".join(bad))
+            if rerecord:
+                # A new compiler more than the margin slower is the pin's
+                # cost, not the PR's: held to the ceiling, the pin could
+                # never move. Loud instead, never an error.
+                slow = over(t["runs"][0], reference(b), margin)
+                if slow:
+                    warnings.append(f"{k}: the re-record on {t['toolchain']} is over the base's reference "
+                                    f"on {b['toolchain']}: " + "; ".join(slow))
             continue
         bad = []
         if t["machine"] != b["machine"] or t["toolchain"] != b["toolchain"]:

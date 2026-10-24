@@ -199,12 +199,24 @@ class TheTreeCannotTurnTheGateOff(unittest.TestCase):
                             for e in errors), errors)
         self.assertFalse(any("does not match this run's measure" in e for e in errors), errors)
 
-    def test_a_slow_re_record_fails_over_the_base_reference(self):
+    def test_a_6_percent_re_record_has_no_error_and_a_warning_naming_6_percent(self):
+        # The pin moved to a compiler 6 percent slower: the re-record is the
+        # pin's cost, named in a warning with both toolchains, never an error.
+        old = "rustc 1.97.0 (bbbbbbbbb 2026-08-01)"
+        base = baseline(runs(bc.MIN_RUNS))
+        base["profiles"][KEY]["toolchain"] = old
+        tree = baseline([run(scale=1.06)])
+        lines, warnings, errors, regressions, gating, _ = bc.judge(tree, base, measure(scale=1.06), CTX)
+        self.assertEqual((errors, gating), ([], False), "not gated on a new pin, and no error")
+        self.assertTrue(any("re-record" in w and "over the base's reference" in w and "+6.0%" in w
+                            and old in w and TOOLCHAIN in w for w in warnings), warnings)
+
+    def test_a_re_record_that_does_not_match_the_measure_still_fails(self):
         base = baseline(runs(bc.MIN_RUNS))
         base["profiles"][KEY]["toolchain"] = "rustc 1.97.0 (bbbbbbbbb 2026-08-01)"
         tree = baseline([run(scale=1.5)])
-        errors, *_ = judge(tree, base, measure(scale=1.5))
-        self.assertTrue(any("re-record" in e and "over the base's reference" in e for e in errors), errors)
+        errors, *_ = judge(tree, base, measure(scale=1.06))
+        self.assertTrue(any("re-record" in e and "does not match this run's measure" in e for e in errors), errors)
 
     def test_no_base_gates_nothing(self):
         tree = baseline(runs(bc.MIN_RUNS))
