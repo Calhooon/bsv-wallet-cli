@@ -234,6 +234,8 @@ pub struct Flags {
     pub testnet: bool,
     /// `--port`, the served port.
     pub port: u16,
+    /// `-v, --verbose`: the log filter is `debug`, whatever `RUST_LOG` says.
+    pub verbose: bool,
     /// The flags given on the command line (`--db`, `--testnet`, `--port`);
     /// any other was its default.
     pub given: Vec<&'static str>,
@@ -245,6 +247,7 @@ impl Default for Flags {
             db: "wallet.db".to_string(),
             testnet: false,
             port: 3322,
+            verbose: false,
             given: Vec::new(),
         }
     }
@@ -390,8 +393,11 @@ pub struct WalletSettings {
     pub root_key: Option<Secret>,
     /// `RUST_LOG`, as set: the log filter (`tracing`'s directives), else
     /// [`DEFAULT_LOG_FILTER`]; one that does not parse is the default too,
-    /// as `tracing_subscriber` always read it. `--verbose` overrides it.
+    /// as `tracing_subscriber` always read it. `--verbose` overrides it
+    /// ([`WalletSettings::log_filter`]).
     pub rust_log: Option<String>,
+    /// `-v, --verbose`.
+    pub verbose: bool,
 }
 
 impl WalletSettings {
@@ -406,6 +412,24 @@ impl WalletSettings {
             port: flags.port,
             root_key: raw.get("ROOT_KEY").map(Secret::new),
             rust_log: raw.get("RUST_LOG").map(str::to_string),
+            verbose: flags.verbose,
+        }
+    }
+
+    /// The log filter in effect and where it came from: `debug` under
+    /// `--verbose`, else `RUST_LOG` when it parses as `tracing`'s
+    /// directives, else [`DEFAULT_LOG_FILTER`]. `main` builds its filter
+    /// from this, and the knob list's `RUST_LOG` row shows it.
+    #[must_use]
+    pub fn log_filter(&self) -> (String, Source) {
+        if self.verbose {
+            return ("debug".to_string(), Source::Flag);
+        }
+        match self.rust_log.as_deref() {
+            Some(directives) if tracing_subscriber::EnvFilter::try_new(directives).is_ok() => {
+                (directives.to_string(), Source::Env)
+            }
+            _ => (DEFAULT_LOG_FILTER.to_string(), Source::Default),
         }
     }
 
@@ -779,7 +803,9 @@ impl Config {
     /// `--port`) came from.
     #[must_use]
     pub fn source(&self, name: &str) -> Source {
-        if self.given.contains(&name) {
+        if name == "RUST_LOG" {
+            self.wallet.log_filter().1
+        } else if self.given.contains(&name) {
             Source::Flag
         } else if FLAG_NAMES.contains(&name) || self.raw.get(name).is_none() {
             Source::Default

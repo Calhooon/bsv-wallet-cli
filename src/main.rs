@@ -63,17 +63,10 @@ async fn main() -> Result<()> {
     };
     let config = Arc::new(config);
 
-    // Init tracing: `RUST_LOG` as the configuration read it.
-    let filter = if cli.verbose {
-        EnvFilter::new("debug")
-    } else {
-        config
-            .wallet
-            .rust_log
-            .as_deref()
-            .and_then(|directives| EnvFilter::try_new(directives).ok())
-            .unwrap_or_else(|| EnvFilter::new(config::DEFAULT_LOG_FILTER))
-    };
+    // Init tracing: the filter in effect as the configuration reads it
+    // (`--verbose`, else `RUST_LOG` when it parses, else the default), the
+    // one `bsv-wallet config` shows.
+    let filter = EnvFilter::new(config.wallet.log_filter().0);
     // Logs go to stderr so stdout stays clean machine-parseable output
     // (notably `--json`): tooling/agents can read stdout without log pollution.
     // Beside the filtered log, one layer reads the toolbox's two lines
@@ -271,6 +264,7 @@ fn flags(cli: &Cli, matches: &clap::ArgMatches) -> config::Flags {
         db: cli.db.clone(),
         testnet: cli.testnet,
         port: cli.port,
+        verbose: cli.verbose,
         given,
     }
 }
