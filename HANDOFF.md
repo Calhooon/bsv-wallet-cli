@@ -782,3 +782,144 @@ against the real routes beyond the probes.
 #39 backstop fetches proofs from an explorer (rule 21); #38 self-send
 relinquishes sats; #23 reconcile asks an explorer; #7 Arcade consumer; #4
 install docs. Seven local branches are not in main and have not been triaged.
+
+2026-10-23 (the evening into the night of the 24th UTC): THE NORTH-STAR
+PROGRAMME OPENED, AND PHASE 0 (THE ORACLE) LANDED ON BETA. John's word:
+"I love it all go", "sky is the limit", "god tier north star on all
+fronts", "keep going and going", "beta branches for all these". The
+programme is epic #106: a measured scoreboard, seven milestones (Phase 0
+the oracle to Phase 6 the engine API and the desktop app), issues #69 to
+#156 by now, a `beta` line for the programme with `main` the stable line
+(#107, PR 108), the loop (a lane returns the change, the proof and the
+nothing-changed evidence; a cold review on another model; one PR per
+concern; cold paths on green, hot paths with full proof), the never-without-
+the-owner list, BRC-100 at the line's pin ed1b015 with upstream 5119a9b
+cited where it differs. The same programme on the two libraries (toolbox
+epic #80, bsv-rs epic #101) and on the Cloudflare layer (epics in the six
+workers and bsv-middleware-rs), the dependents mapped to the apps. John
+started captain-bsv-rs and captain-bsv-wallet-toolbox-rs; the keeper keeps
+the stack, the line, the pins, the matrix, the gate vectors (stack #184:
+conformance/wallet-gate-vectors.json, 490 rows) and the Cloudflare repos;
+the division is on the stack's rulings page. The localhost page
+http://127.0.0.1:8790/ (from /Volumes/Lanes/out/bsv-wallet-cli/north-star)
+draws the layers, the repos on the stack's machines, the dependents and the
+loop, with three nano-banana-2.1 images paid through the x402 skill (3 x
+239,446 sats from the MetaNet desktop wallet on 3321).
+
+0.18.1 (main 3858d21, PR 128): the two pin moves only, toolbox =0.13.0 and
+bsv-rs =0.8.2; the probe's move onto is_utxo_with_spender was built,
+reviewed and held back (the review found two ladder gaps the move would
+expose: toolbox #96, its fix toolbox PR 101; the probe moves in the patch
+that pins 0.13.1). The gate 23/23 (run 20261024T001317Z), net 2,200; the
+tag v0.18.1 is John's word. main into beta went the same night, late (PR
+150: the pins, fuzz/ following them, one nightly.yml for both lines): a
+lane noticed beta still pinned 0.12.1 and 0.8.1 a day after the patch; the
+rule is now in the captain's memory: the main-into-beta PR opens the night
+the patch lands.
+
+THE ORACLE WAVE on beta, each PR by cold review (eight reviews caught real
+defects; the counts are the reviews' findings closed before landing):
+- the lane rules and briefs (docs/lanes/README.md: foreground only, the
+  26.5 SDK, the references at pins, rule 11 the differential line);
+- the architecture rules as tests: six rules on one Rule runner, allowlists
+  of (file, count, reason) tuples that only shrink, test code read as the
+  ratchet reads it (#73, PR 111);
+- the ratchets: seven numbers that may only fall, the record under the
+  pinned toolchain 1.98.1, compared against the base ref; `ratchet` a
+  required check (#72, PRs 112, 134, 135, 137; follow-ups #126 #127 #132
+  #133);
+- the wire fixtures: 106 recorded calls and refusals with a manifest,
+  replayed by the required `wire` job; the known server defects table
+  (#69, PR 121);
+- the consumers' recorded calls: 48 over seven dependents, in
+  tests/wire_consumers/ with docs/DEPENDENTS.md; one tests/wire_support
+  for both replays (#110, PR 116);
+- the fuzz targets and the mutation nightly (#75, #76, PR 123; the
+  registration on main PR 139 then PR 151, since the first copy had two
+  `with:` per step and could not parse; the first dispatched night was
+  cancelled at 03:05Z because its 25 jobs took the whole runner pool and
+  every PR check sat queued: #144 caps it; five shards finished at about
+  45 minutes each);
+- the architecture document (#83, PR 114) and the unwraps judged (#85, PR
+  115; 33 to 7 in shipped code);
+- the hermetic e2e: the 23 scenarios on a local stub of the header
+  service, the explorers and the broadcaster, a wall that fails the run on
+  any attempt to leave the machine, 23/23 in ten seconds on the runner;
+  the knobs WOC_BASE, BITAILS_BASE, ARC_GORILLAPOOL_URL follow
+  BANANABLOCKS_BASE's and ARC_URL's pattern and are open to John's change
+  before the next minor (#74, PR 131; toolbox #98 asks the providers'
+  knobs; #136 the OS-level egress block);
+- the benches with the CI runner's baseline as the gate: the reference is
+  always the base's entry, an appended run above the margin over it is an
+  error, a pin-move re-record is a warning, the bench job pinned to the
+  toolchain, warn-only until an entry carries five runs (#71, PR 125, five
+  reviews; #142 the nightly bench run that fills the entries);
+- BRC-100 at the pin: docs/brc100/fields.json (313 fields at ed1b015,
+  each with its line), docs/BRC-100-EXTENSIONS.md (41 extensions with
+  reasons, 68 gaps, the host routes apart, the deviations section empty
+  with its rule), tests/brc100.rs fails naming a served key that is
+  neither the BRC's nor listed, and a dead or malformed row (#100, PR 143);
+  the gaps became #145 (privileged dropped on getPublicKey and the crypto
+  calls: a privileged request quietly got the everyday key), #146
+  (hashToDirectlyVerify ignored), #147 (createAction's sendWith,
+  noSendChange, knownTxids, returnTXIDOnly, version unread), #148
+  (createSignature requires counterparty), #149 (the refusal body's shape
+  against the BRC's), and #122 item 8 (the certificate shapes, bsv-rs's);
+- the differential harness: tools/differential runs the base build and
+  the head on the hermetic suite with the same keys and stub, records
+  every call, command and the stub's per-provider counts, and diffs byte
+  for byte with an explicit exclusion list; signatures compared push by
+  push; no recording holds a key; an incomplete recording its own exit;
+  the CI job reports on every PR and fails a `refactor` PR once toolbox
+  #105 is pinned (#70, PR 152, three reviews; follow-ups #156). Head
+  against beta: 0 differences over 335 calls and 35 commands. The floor
+  (the same binary twice) is nonzero from scenario 22 on: the toolbox's
+  change pick tied on LENGTH(input_beef), which signature length moves
+  (toolbox #105, in a lane the same night), and its RNG cannot be seeded
+  (toolbox #106, John's word on the constructor shape);
+- docs/NORTH-STAR.md with tools/scoreboard (the table rendered from the
+  records in the tree, --check against the base so no count falls and no
+  key vanishes, the arch rows counted from the tests' allowlist literals)
+  and tools/check-links, two steps in the ratchet job; the ranked research
+  queue every brief cites (#77, PR 141, three reviews; landed last with
+  one re-render).
+
+THE ADVISORY: at about 03:30Z RUSTSEC-2026-0387 (crypto-bigint 0.5.5,
+timing variability, through k256 0.13.4 through bsv-rs) turned the
+required `deny` job red on every line of every stack repo on k256 0.13;
+the fix is crypto-bigint 0.7.6, which means k256 0.14. The keeper ruled
+the ignore entry with its reason into the stack template within the hour;
+PRs 153 (main) and 154 (beta) adopted deny.toml and the stamp byte for
+byte; the bsv-rs captain has the k256 0.14 move as bsv-rs PR 127 (#125;
+no public type moves; the RFC 6979 high-digest seeding moved to the
+reference's) for a 0.8.3 John tags, after which the CLI's pin moves and
+the entry leaves.
+
+What the reviews caught before landing, this night: a fail-open scanner,
+a gameable bench baseline (four times, four ways), a record under the
+wrong toolchain, a missing-fixture pass, the hermetic wall failing open, a
+workflow file that did not parse, a stranger's payment fixture that
+verified nothing, a differential recording that held the root keys in
+plain text, a scriptSig renamed as one atom so a wrong sighash byte on
+every input passed as zero differences, a table a blank line ended
+silently, a CI step whose exit mapping never ran under bash -e. And the
+one that matters for money, from the fixtures: the internalize door
+accepts an unproven payment whose unlocking script does not verify (#140;
+toolbox #103 codes the verifier's verdict).
+
+The lessons (memory lane-landing-lessons): lanes in the foreground only;
+private target dirs; zsh modifiers in refspecs (twice more tonight); the
+ratchet's toolchain; serial landing with a lock, a waiter that cannot
+match its own command line; a required check must exist on the base; the
+nightly starves the PRs; main into beta the same night; a RustSec
+advisory reddens deny everywhere at once and only the template may answer.
+
+Open after the wave: John's words (v0.18.1 tag; toolbox #66 questions 5
+to 9; toolbox #106's constructor shape under toolbox #80; the 0.13.1 and
+bsv-rs 0.8.3 tags when their captains ask; pool logins on the box); the
+ratchet re-record on beta (two numbers fell under the record); the first
+full night on beta and the three mutation floors from it; Phase 1 next by
+the queue in docs/NORTH-STAR.md: #78 one spend function (the differential
+line holds its proof), #79 the evidence layer, #80 typed config, #81 typed
+errors, #84 observability; #130 the stack's gate vectors; #133 the harness
+files; #145 to #149 the BRC-100 gaps (hot path: #145 first).
