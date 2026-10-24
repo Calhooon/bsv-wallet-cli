@@ -472,6 +472,9 @@ jobs:
         working-directory: tests/e2e
         run: npm ci
 
+      - name: The tool's own tests (its planted cases)
+        run: python3 tools/test_differential.py -v
+
       - name: Cache Playwright's Chromium
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -514,10 +517,15 @@ jobs:
             echo "::notice::$line (no refactor label: reported, not failed)"
           fi
 
+      # The report, the recordings and the run logs; never the wallets'
+      # directories a failed run keeps under --out (their .env holds the
+      # root keys). The recordings name each key <root-key:SEAT>.
       - name: Keep the report and the recordings
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: differential
-          path: ${{ runner.temp }}/differential/
+          path: |
+            ${{ runner.temp }}/differential/
+            !${{ runner.temp }}/differential/*-wallets/
           if-no-files-found: warn
