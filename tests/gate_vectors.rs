@@ -88,7 +88,7 @@ const ABOVE_TIP: &str = "the creator is mined at a height above the headers' tip
 const COLUMNS_NOT_ANSWERED: &[(&str, &str)] = &[
     ("rule_for, rule_for_allows", "the gate names no rule per creator: the host's rule is SPEND_OWN_CHANGE (the made arm) and the action's word (allowPending), read inside hold_reason"),
     ("received_pending, door_word", "the gate's door reads the tracker's word itself; it computes no door word and no received-pending verdict apart from the hold"),
-    ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word (or locked, frozen), not the coin's word"),
+    ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word (or locked, frozen, lost), not the coin's word"),
     ("dead_lineage", "the gate reads the creator only, never its ancestors (the finding no-lineage)"),
     ("host_answer, host_answer_data", "a row names its door (createAction, internalizeAction, ...) but carries none of its arguments (no BEEF, no outputs), so the host's answer at that door cannot be replayed from the row"),
 ];
@@ -181,7 +181,7 @@ fn clause_of(reason: Option<&str>) -> String {
     };
     let clause = if reason.starts_with("frozen") {
         "frozen"
-    } else if reason.starts_with("spent by") {
+    } else if reason.starts_with("spent by") || reason.starts_with("lost:") {
         "held by a lock"
     } else if reason.starts_with("suspect:") {
         "creator suspect (fork in progress)"

@@ -54,7 +54,12 @@
 //! (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
 //! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or
-//! no rule (R6: never cleared here).
+//! no rule (R6: never cleared here). A coin the store marks not spendable
+//! with no action of ours spending it (`spendable = 0`, `spent_by` empty:
+//! the relinquished record `reconcile-outputs` writes, the charter's
+//! `lost(c)`) is held `lost` before its creator is read, as the frozen coin
+//! is (#165): the toolbox's allocation would refuse it, and the gate's word
+//! names why.
 //!
 //! Coins a caller names (`createAction`'s `inputs`, `respend`'s exact
 //! inputs) pass the same per-coin judgment ([`assess_named`]); a named coin
@@ -395,7 +400,8 @@ pub struct HeldCoin {
     pub outpoint: String,
     pub satoshis: u64,
     /// The creator's tracker word (`mined`, `unknown`, `built`, ...), or
-    /// `locked` for a coin a live action of ours consumed as an input.
+    /// `locked` for a coin a live action of ours consumed as an input,
+    /// `frozen` or `lost` for the coin's own record.
     pub word: String,
     pub origin: Origin,
     /// Minutes since the wallet learned of the coin.
@@ -403,7 +409,7 @@ pub struct HeldCoin {
     /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
     /// no proof; offered under allowPending: received`, `own change,
     /// SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never
-    /// offered`. `spent by` is never a hold: the coin is an input a live
+    /// offered`, `lost: the store marks it not spendable`. `spent by` is never a hold: the coin is an input a live
     /// action of ours consumed, spent for good; it leaves the listing when
     /// that spender is completed (its proof lands) or failed (#53).
     pub reason: String,
@@ -667,6 +673,22 @@ struct Candidate {
     age_minutes: i64,
     proof: Option<Vec<u8>>,
     frozen: bool,
+    /// The store's `spendable = 0` with no spender: the coin is lost.
+    lost: bool,
+}
+
+impl Candidate {
+    /// The hold the coin's own record makes, its creator unread: frozen
+    /// (the Lean's `coinWord` reads it first), then lost.
+    fn record_hold(&self) -> Option<(&'static str, &'static str)> {
+        if self.frozen {
+            Some(("frozen", FROZEN))
+        } else if self.lost {
+            Some(("lost", LOST))
+        } else {
+            None
+        }
+    }
 }
 
 /// The gate's verdict on the coins it read.
@@ -929,7 +951,7 @@ async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
     let rows = sqlx::query(
         "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
                 CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                p.merkle_path \
+                p.merkle_path, o.spendable \
          FROM outputs o \
          JOIN transactions t ON o.transaction_id = t.transaction_id \
          JOIN output_baskets b ON o.basket_id = b.basket_id AND b.name = 'default' \
@@ -958,6 +980,7 @@ async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
                 r.get::<String, _>("txid").to_ascii_lowercase(),
                 r.get::<i64, _>("vout"),
             )),
+            lost: r.get::<i64, _>("spendable") == 0,
         })
         .collect())
 }
@@ -976,6 +999,11 @@ pub(crate) fn spent_by_reason(spender: &str, spender_status: Option<&str>) -> St
 
 /// The frozen record's hold (R6: never cleared here).
 const FROZEN: &str = "frozen: never offered";
+/// The lost record's hold: the store marks the coin not spendable
+/// (`spendable = 0`) and no action of ours spends it (`spent_by` empty), as
+/// `reconcile-outputs` and a relinquish write it (#165; the charter's
+/// `lost(c)`, `Wallet.coinWord`).
+const LOST: &str = "lost: the store marks it not spendable";
 
 /// The coins a live action of ours consumed (`spent_by` an action not yet
 /// `completed` or `failed`): listed in a refusal as `spent by <txid>
@@ -1065,14 +1093,14 @@ async fn assess_inner<V: WalletServices + ?Sized>(
     let mut next = 0;
     for c in &all {
         let covered = need.is_some_and(|need| out.offered_satoshis() >= need);
-        if c.frozen {
+        if let Some((word, reason)) = c.record_hold() {
             out.held.push(HeldCoin {
                 outpoint: format!("{}.{}", c.txid, c.vout),
                 satoshis: c.satoshis,
-                word: "frozen".to_string(),
+                word: word.to_string(),
                 origin: c.origin,
                 age_minutes: c.age_minutes,
-                reason: FROZEN.to_string(),
+                reason: reason.to_string(),
                 headers_fault: None,
                 output_id: c.output_id,
             });
@@ -1182,7 +1210,7 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
 /// inputs), judged coin by coin as the toolbox's own allocation is: frozen,
 /// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
-/// replaces), or a creator the gate would not offer. Returns every named
+/// replaces), lost (`spendable = 0` with no spender), or a creator the gate would not offer. Returns every named
 /// coin it holds. An outpoint that is not one of this wallet's outputs is
 /// not a coin of ours and is left to the toolbox (a covenant or a foreign
 /// input carried in `inputBEEF`).
@@ -1199,7 +1227,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     for (txid, vout) in named {
         let txid = txid.to_ascii_lowercase();
         let row = sqlx::query(
-            "SELECT o.output_id, o.satoshis, o.spent_by, t.is_outgoing, \
+            "SELECT o.output_id, o.satoshis, o.spent_by, o.spendable, t.is_outgoing, \
                     CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
                     COALESCE(s.txid, s.reference) AS holder, s.status AS spender_status, \
                     p.merkle_path \
@@ -1221,10 +1249,13 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         let spent_by: Option<i64> = r.get("spent_by");
         spent_by.is_some() && spent_by != reserved_to
     };
-    // Only a coin neither frozen nor locked needs its creator read.
+    let is_lost = |r: &sqlx::sqlite::SqliteRow| {
+        r.get::<i64, _>("spendable") == 0 && r.get::<Option<i64>, _>("spent_by").is_none()
+    };
+    // Only a coin neither frozen, locked nor lost needs its creator read.
     let creators: Vec<(String, Option<Vec<u8>>)> = coins
         .iter()
-        .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r))
+        .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r) && !is_lost(r))
         .map(|(t, _, r)| (t.clone(), r.get("merkle_path")))
         .collect();
     let readings = if creators.is_empty() {
@@ -1251,6 +1282,8 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
                     r.get::<Option<String>, _>("spender_status").as_deref(),
                 )),
             )
+        } else if is_lost(&r) {
+            ("lost".to_string(), Some(LOST.to_string()))
         } else {
             match reading {
                 Some(reading) => {
