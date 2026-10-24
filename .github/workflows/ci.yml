@@ -343,11 +343,16 @@ jobs:
 
       # docs/NORTH-STAR.md's table is rendered from the records in the tree
       # (#77); a PR that moves a record runs tools/scoreboard --render. The
-      # base's values are the base ref's tree rendered by this tree's tool
-      # (--json on a git archive of the base, never the PR's own records):
-      # no floor, fixture, scenario or rule count may fall from them and no
-      # allowlist may grow. A base ref whose tree the tool cannot read fails
-      # the step (a malformed base record is never "no base").
+      # base's values are the base ref's tree (a git archive, never the PR's
+      # own records) rendered by the BASE'S OWN tools/scoreboard, so a PR that
+      # weakens the tool cannot also choose what the base says; only while the
+      # base holds no tools/scoreboard (beta before #77 lands) is this tree's
+      # tool used, and the log says which. The comparison itself is this
+      # tree's falls(), so a PR that weakens it is a diff of tools/scoreboard
+      # for its review to read. No floor, fixture, scenario or rule count may
+      # fall, no allowlist may grow, no list of names may lose one and no key
+      # may vanish. A base ref whose tree the tool cannot read fails the step
+      # (a malformed base record is never "no base").
       - name: scoreboard
         if: ${{ !cancelled() }}
         env:
@@ -358,8 +363,14 @@ jobs:
           if [ -n "$REV" ]; then
             mkdir -p "$RUNNER_TEMP/base-tree"
             git archive "$REV" | tar -x -C "$RUNNER_TEMP/base-tree"
-            python3 -B tools/scoreboard --root "$RUNNER_TEMP/base-tree" --json > "$RUNNER_TEMP/base-scoreboard.json"
-            echo "scoreboard: the base values are $REV's tree"
+            if git show "$REV:tools/scoreboard" > "$RUNNER_TEMP/base-scoreboard-tool" 2>/dev/null; then
+              tool="$RUNNER_TEMP/base-scoreboard-tool"
+              echo "scoreboard: the base values are $REV's tree, rendered by $REV's own tools/scoreboard"
+            else
+              tool=tools/scoreboard
+              echo "scoreboard: the base values are $REV's tree, rendered by this tree's tools/scoreboard ($REV has none)"
+            fi
+            python3 -B "$tool" --root "$RUNNER_TEMP/base-tree" --json > "$RUNNER_TEMP/base-scoreboard.json"
             base=(--base "$RUNNER_TEMP/base-scoreboard.json")
           else
             echo "::notice::no base ref: the table is checked against the tree alone"

@@ -12,10 +12,20 @@ The table lives between `<!-- scoreboard:begin -->` and `<!-- scoreboard:end -->
 and is never edited by hand: a PR that moves a record (re-records the ratchet,
 adds a fixture, moves a floor) runs --render and commits the table with it; the
 CI job `ratchet` runs --check against the values of the base ref's tree, which
-it renders with this tool's --json (--root on the base's tree, read with git
-archive, as the ratchet's own step reads the base record). A Python script with
-the standard library only, like tools/ratchet. It reads files and runs no cargo,
+it renders with --json (--root on the base's tree, read with git archive, as
+the ratchet's own step reads the base record). A Python script with the
+standard library only, like tools/ratchet. It reads files and runs no cargo,
 no git and no network.
+
+The base is rendered by the BASE'S OWN copy of this tool (git show
+<base>:tools/scoreboard, run with --root on the base's tree), never by the
+PR's: a PR controls its tree and its tool, so a base its tool rendered would be
+a base the PR chose. Only while the base holds no tools/scoreboard is this
+tree's copy used, and the step's log says which. The comparison, falls(), is
+the tree's, so a PR that weakens it is a diff of this file for its review to
+read. That a weakened tree tool cannot change what the base's tool renders is
+not testable in-process (the planted cases run one copy); this rule and the CI
+step hold it.
 
 A record that is MISSING renders as a row that says so ("not in the tree yet",
 "unmeasured", "no baseline yet"). A record that is PRESENT must match its shape
