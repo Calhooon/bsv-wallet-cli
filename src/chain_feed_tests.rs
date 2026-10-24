@@ -14,14 +14,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
-use bsv_wallet_toolbox::{StorageSqlx, BROADCAST_STATUS_MINED};
+use bsv_wallet_toolbox::StorageSqlx;
 use chrono::Utc;
 use serde_json::{json, Value};
 
 use super::*;
 use crate::tracker_host::tests::{
-    header, header_with_hash, insert_tx, opts, path_of, proof_answer, proven_coin, wallet_storage,
-    FixedClock,
+    header, header_with_hash, opts, path_of, proof_answer, proven_coin, wallet_storage, FixedClock,
 };
 use crate::tracker_host::{feed_cursor, stored_word, tick};
 
@@ -144,20 +143,8 @@ fn sse(events: &[(u64, Value)]) -> String {
 /// A wallet whose one transaction `T` is `mined` at 900 by a checked
 /// proof (one tracker pass), with the services that proved it.
 async fn mined_at_900() -> (StorageSqlx, MockWalletServices, String) {
-    let (storage, user) = wallet_storage().await;
     let txid = "c3".repeat(32);
-    insert_tx(&storage, user, &txid, "unproven").await;
-    storage
-        .record_broadcast_status(&txid, "arcade", BROADCAST_STATUS_MINED)
-        .await
-        .unwrap();
-    let services = MockWalletServices::builder()
-        .get_merkle_path_response(proof_answer(Some(path_of(&txid, 900))))
-        .build();
-    services.set_header_for_height(header(900, &txid, 0));
-    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
-    tick(&storage, &services, &clock(), &opts()).await.unwrap();
-    assert_eq!(word(&storage, &txid).await.0, "mined");
+    let (storage, services, _) = crate::tracker_host::tests::mined_at_900(&txid).await;
     (storage, services, txid)
 }
 
