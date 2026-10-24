@@ -289,7 +289,10 @@ pub async fn start(
             let relay_wallet = wallet_state.clone();
             let poll_secs = config.daemon.relay_poll_secs;
             let relay_base = relay_url.trim_end_matches('/').to_string();
-            eprintln!("[{port}] Relay polling enabled: {relay_base} (every {poll_secs}s)");
+            eprintln!(
+                "[{port}] Relay polling enabled: {} (every {poll_secs}s)",
+                crate::config::shown_url(&relay_base)
+            );
             tokio::spawn(async move {
                 let client = reqwest::Client::new();
                 let mut last_id: i64 = 0;

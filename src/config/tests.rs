@@ -201,6 +201,24 @@ fn a_secret_prints_as_set_everywhere() {
     assert_eq!(format!("{}", Secret::new("x")), "<set>");
 }
 
+#[test]
+fn a_url_is_shown_without_its_userinfo_or_query() {
+    for (value, shown) in [
+        ("https://h.example", "https://h.example"),
+        ("https://h.example:8443/a/b", "https://h.example:8443/a/b"),
+        ("ftp://u:secretpw@r", "ftp://<set>@r"),
+        (
+            "https://u@h.example/p?k=v&w=x",
+            "https://<set>@h.example/p?<set>",
+        ),
+        ("http://[::1]:3390/q?token=t", "http://[::1]:3390/q?<set>"),
+        ("u:pw@h.example/p#frag", "<set>@h.example/p#<set>"),
+        ("off", "off"),
+    ] {
+        assert_eq!(shown_url(value), shown, "{value}");
+    }
+}
+
 /// Every environment variable `bsv-wallet` reads, in the knob list's order.
 const VARIABLES: &[&str] = &[
     "ROOT_KEY",

@@ -1,11 +1,12 @@
 //! The configuration as a list: every setting with its effective value and
 //! its source, for `bsv-wallet config` and the start line of `daemon` and
-//! `serve`. A secret's value is `<set>`; a setting with no value is `-`.
+//! `serve`. A secret's value is `<set>`; a setting with no value is `-`; a
+//! URL's userinfo and query are `<set>` ([`super::shown_url`]).
 
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
 use serde::Serialize;
 
-use super::{Config, Secret, Source};
+use super::{shown_url, Config, Secret, Source};
 
 /// One setting: its name (a variable, or a flag), its effective value and
 /// where it came from.
@@ -27,6 +28,10 @@ fn on_off(on: bool) -> String {
 
 fn or_none(value: Option<&str>) -> String {
     value.unwrap_or(NONE).to_string()
+}
+
+fn url_or_none(value: Option<&str>) -> String {
+    value.map_or_else(|| NONE.to_string(), shown_url)
 }
 
 fn secret(value: Option<&Secret>) -> String {
@@ -86,14 +91,16 @@ impl Config {
             Chain::Test => ServicesOptions::testnet(),
         };
         let arc_url = match (&s.arc_url, s.arcade()) {
-            (Some(url), _) => url.clone(),
+            (Some(url), _) => shown_url(url),
             (None, true) => ARCADE_V2_MAINNET.to_string(),
             (None, false) => defaults.arc_url,
         };
         let mut values = vec![
             (
                 "CHAINTRACKS_URL",
-                s.chaintracks_url.clone().unwrap_or_else(|| "unset".into()),
+                s.chaintracks_url
+                    .as_deref()
+                    .map_or_else(|| "unset".into(), shown_url),
             ),
             (
                 "BREAK_GLASS_EXPLORER_HEADERS",
@@ -108,16 +115,16 @@ impl Config {
             ("CALLBACK_TOKEN", secret(s.callback_token.as_ref())),
             (
                 "PUBLIC_CALLBACK_URL",
-                or_none(s.public_callback_url.as_deref()),
+                url_or_none(s.public_callback_url.as_deref()),
             ),
             ("TAAL_API_KEY", secret(s.taal_api_key.as_ref())),
             ("MAIN_TAAL_API_KEY", secret(s.main_taal_api_key.as_ref())),
         ];
         values.extend(s.explorers.values());
-        let gorillapool = s.explorers.bases.gorillapool.clone();
+        let gorillapool = s.explorers.bases.gorillapool.as_deref();
         values.push((
             "ARC_GORILLAPOOL_URL",
-            gorillapool.unwrap_or_else(|| "off".into()),
+            gorillapool.map_or_else(|| "off".into(), shown_url),
         ));
         values
     }
@@ -165,7 +172,7 @@ impl Config {
                 "RECONCILE_ABANDONED_MIN_AGE_SECS",
                 d.reconcile_abandoned_min_age_secs.to_string(),
             ),
-            ("RELAY_URL", or_none(d.relay_url.as_deref())),
+            ("RELAY_URL", url_or_none(d.relay_url.as_deref())),
             ("RELAY_POLL_SECS", d.relay_poll_secs.to_string()),
         ]
     }
