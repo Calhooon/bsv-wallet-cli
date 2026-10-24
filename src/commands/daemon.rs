@@ -47,6 +47,9 @@ pub async fn run(config: &Arc<Config>) -> Result<()> {
 ///
 /// - ctrl-c: the monitor stops, then the server, which shuts down on its own
 ///   signal handler; its result is not the daemon's (the unchanged clean exit).
+/// - the ctrl-c listener fails to register (its future is ready at once with
+///   the error): handled as the server's fault below, with the context
+///   "failed to listen for ctrl-c".
 /// - the server ends cleanly: it saw ctrl-c first (the only way `server::run`
 ///   returns `Ok`); the monitor stops and the daemon exits as on ctrl-c.
 /// - the server ends with an error or panics: logged at error level with its
@@ -65,7 +68,15 @@ where
 {
     tokio::select! {
         signal = ctrl_c => {
-            signal?;
+            if let Err(e) = signal {
+                return Err(stop_on_fault(
+                    anyhow::Error::new(e),
+                    "failed to listen for ctrl-c",
+                    stop_monitor,
+                    grace,
+                )
+                .await);
+            }
             stop_cleanly(stop_monitor).await?;
             // The server task shuts down via its own signal handler.
             let _ = server.await;
@@ -73,9 +84,10 @@ where
         }
         ended = &mut server => match ended {
             Ok(Ok(())) => stop_cleanly(stop_monitor).await,
-            Ok(Err(e)) => Err(stop_on_fault(e, stop_monitor, grace).await),
+            Ok(Err(e)) => Err(stop_on_fault(e, SERVER_STOPPED, stop_monitor, grace).await),
             Err(join) => Err(stop_on_fault(
                 anyhow::anyhow!("server task panicked: {join}"),
+                SERVER_STOPPED,
                 stop_monitor,
                 grace,
             )
@@ -95,17 +107,26 @@ where
     Ok(())
 }
 
-/// The server's fault, logged with its words; the monitor stopped within
-/// `grace` (a monitor that fails or hangs is logged, never the daemon's
-/// answer); the server's error is what the daemon returns.
-async fn stop_on_fault<S, F>(e: anyhow::Error, stop_monitor: S, grace: Duration) -> anyhow::Error
+/// The context of a server that stopped on its own.
+const SERVER_STOPPED: &str = "the daemon's HTTP server stopped";
+
+/// A fault that ends the daemon (the server's, or the ctrl-c listener's),
+/// logged with its words under `context`; the monitor stopped within `grace`
+/// (a monitor that fails or hangs is logged, never the daemon's answer); the
+/// fault, with `context`, is what the daemon returns.
+async fn stop_on_fault<S, F>(
+    e: anyhow::Error,
+    context: &'static str,
+    stop_monitor: S,
+    grace: Duration,
+) -> anyhow::Error
 where
     S: FnOnce() -> F,
     F: Future<Output = Result<()>>,
 {
     tracing::error!(
         error = %format!("{e:#}"),
-        "daemon: the HTTP server stopped; stopping the monitor"
+        "daemon: {context}; stopping the monitor"
     );
     match tokio::time::timeout(grace, stop_monitor()).await {
         Ok(Ok(())) => {}
@@ -115,7 +136,7 @@ where
             "daemon: the monitor did not stop within the grace"
         ),
     }
-    e.context("the daemon's HTTP server stopped")
+    e.context(context)
 }
 
 #[cfg(test)]
@@ -161,16 +182,45 @@ mod tests {
     async fn a_server_that_panics_ends_the_daemon_with_an_error() {
         let stopped = Arc::new(AtomicBool::new(false));
         let server: JoinHandle<Result<()>> = tokio::spawn(async { panic!("boom") });
-        let e = join(
-            server,
-            std::future::pending(),
-            stopper(&stopped),
-            SHUTDOWN_GRACE,
+        let e = tokio::time::timeout(
+            SHUTDOWN_GRACE + Duration::from_secs(1),
+            join(
+                server,
+                std::future::pending(),
+                stopper(&stopped),
+                SHUTDOWN_GRACE,
+            ),
         )
         .await
+        .expect("the daemon ends within its grace")
         .expect_err("a panicked server is the daemon's error");
         assert!(format!("{e:#}").contains("server task panicked"));
         assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_ctrl_c_listener_fault_stops_the_monitor_and_is_the_daemons_error() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let server = tokio::spawn(async {
+            tokio::task::yield_now().await;
+            Err(anyhow::anyhow!("the server erred after the listener"))
+        });
+        let ended = tokio::time::timeout(
+            SHUTDOWN_GRACE + Duration::from_secs(1),
+            join(
+                server,
+                std::future::ready(Err(std::io::Error::other("signal registration refused"))),
+                stopper(&stopped),
+                SHUTDOWN_GRACE,
+            ),
+        )
+        .await
+        .expect("the daemon ends within its grace");
+        let e = ended.expect_err("a ctrl-c listener fault is the daemon's error");
+        let words = format!("{e:#}");
+        assert!(words.contains("failed to listen for ctrl-c"), "{words}");
+        assert!(words.contains("signal registration refused"), "{words}");
+        assert!(stopped.load(Ordering::SeqCst), "the monitor was stopped");
     }
 
     #[tokio::test]
@@ -217,13 +267,17 @@ mod tests {
     async fn a_server_that_saw_ctrl_c_first_is_the_clean_exit() {
         let stopped = Arc::new(AtomicBool::new(false));
         let server = tokio::spawn(async { Ok(()) });
-        let ended = join(
-            server,
-            std::future::pending(),
-            stopper(&stopped),
-            SHUTDOWN_GRACE,
+        let ended = tokio::time::timeout(
+            SHUTDOWN_GRACE + Duration::from_secs(1),
+            join(
+                server,
+                std::future::pending(),
+                stopper(&stopped),
+                SHUTDOWN_GRACE,
+            ),
         )
-        .await;
+        .await
+        .expect("the daemon ends when its server does");
         assert!(ended.is_ok(), "{ended:?}");
         assert!(stopped.load(Ordering::SeqCst));
     }
