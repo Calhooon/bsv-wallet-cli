@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "commit": "d0421ff55de1eb8d1b211dff9d84ef890f7ce0af",
+  "commit": "791feff4f74a28754d47ef0abc54338ad6c778f3",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -8,7 +8,7 @@
   "ratchets": {
     "clippy_pedantic": 847,
     "unwrap_expect_outside_tests": 7,
-    "files_over_800_lines": 15,
+    "files_over_800_lines": 10,
     "functions_over_60_lines": 90,
     "cognitive_complexity_over_25": 20,
     "duplicated_tokens": 33479,
@@ -40,16 +40,8 @@
         "lines": 2893
       },
       {
-        "path": "tests/integration.rs",
-        "lines": 2587
-      },
-      {
         "path": "src/broadcast_verify.rs",
         "lines": 2477
-      },
-      {
-        "path": "src/spend_gate/tests.rs",
-        "lines": 2439
       },
       {
         "path": "src/broadcast_reconcile.rs",
@@ -68,14 +60,6 @@
         "lines": 978
       },
       {
-        "path": "src/tracker_words_witnesses.rs",
-        "lines": 962
-      },
-      {
-        "path": "src/chain_feed_tests.rs",
-        "lines": 941
-      },
-      {
         "path": "mcp/src/main.rs",
         "lines": 933
       },
@@ -84,12 +68,30 @@
         "lines": 903
       },
       {
-        "path": "tests/respend_witness.rs",
-        "lines": 820
-      },
-      {
         "path": "src/commands/reproof.rs",
         "lines": 805
+      }
+    ],
+    "tests_files_over_800_lines": [
+      {
+        "path": "tests/integration.rs",
+        "lines": 2587
+      },
+      {
+        "path": "src/spend_gate/tests.rs",
+        "lines": 2439
+      },
+      {
+        "path": "src/tracker_words_witnesses.rs",
+        "lines": 962
+      },
+      {
+        "path": "src/chain_feed_tests.rs",
+        "lines": 941
+      },
+      {
+        "path": "tests/respend_witness.rs",
+        "lines": 820
       }
     ],
     "unwrap_expect_by_file": {
