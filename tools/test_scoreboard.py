@@ -282,7 +282,8 @@ class NoNumberFallsFromTheBase(Case):
         base = self.tree.values()
         self.tree.write(".github/workflows/nightly.yml",
                         NIGHTLY.replace('{"src/spend_gate.rs": 80,\n             ', "{"))
-        self.refused_against(base, "floor:src/spend_gate.rs: 80 at the base, gone from the tree")
+        self.refused_against(base, "a key may not vanish: floor:src/spend_gate.rs")
+        self.refused_against(base, "floor:files: src/spend_gate.rs at the base, gone from the tree")
 
     def test_a_removed_wire_fixture_is_refused(self):
         base = self.tree.values()
@@ -304,6 +305,36 @@ class NoNumberFallsFromTheBase(Case):
         base = self.tree.values()
         self.tree.remove("tests/arch_other.rs")
         self.refused_against(base, "arch:rules: 2 at the base, 1 in the tree")
+
+    def test_a_renamed_rule_is_refused(self):
+        self.tree.write("tests/arch_other.rs", ARCH.replace("A4:", "A3:").replace('"src/a.rs"', '"src/d.rs"'))
+        base = self.tree.values()
+        self.tree.write("tests/arch_other.rs", ARCH.replace("A4:", "A9:").replace('"src/a.rs"', '"src/d.rs"'))
+        self.refused_against(base, "a key may not vanish: allowlist:A3:files")
+        self.refused_against(base, "a key may not vanish: allowlist:A3:sites")
+        self.refused_against(base, "arch:rule-ids: A3 at the base, gone from the tree; a list may not lose an element")
+
+    def test_a_rule_swapped_for_an_empty_one_is_refused(self):
+        base = self.tree.values()
+        self.tree.remove("tests/arch_no_unwrap.rs")
+        self.tree.write("tests/arch_empty.rs", ARCH.replace("A4:", "A7:").split("const ALLOWED")[0]
+                        + "const ALLOWED: &[(&str, usize, &str)] = &[\n];\n\n" + "const RULE" + ARCH.split("const RULE")[1].replace("A4:", "A7:"))
+        self.assertIn("| arch rule A7 allowlist | 0 files, 0 sites |", self.table())
+        self.refused_against(base, "a key may not vanish: allowlist:A4:sites")
+        self.refused_against(base, "arch:rule-ids: A4 at the base, gone from the tree")
+
+    def test_a_consumer_swapped_for_another_is_refused(self):
+        base = self.tree.values()
+        self.tree.remove("tests/wire_consumers/x402-skill")
+        self.tree.write("tests/wire_consumers/other/00.json", "{}")
+        self.refused_against(base, "consumers:names: x402-skill at the base, gone from the tree")
+
+    def test_a_base_list_that_is_not_names_is_refused(self):
+        path = os.path.join(self.tree.root, "base.json")
+        with open(path, "w") as f:
+            f.write(json.dumps({"schema": 1, "values": {"arch:rule-ids": 1}}))
+        self.tree.run("--render")
+        self.refused("values.arch:rule-ids: must be a list of names", "--check", "--base", path)
 
     def test_a_grown_allowlist_is_refused(self):
         base = self.tree.values()
