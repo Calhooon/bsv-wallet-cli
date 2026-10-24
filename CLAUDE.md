@@ -58,7 +58,7 @@ node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
 ```
 
-Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_DEPTH` (default 1, the floor), `SPEND_OWN_CHANGE` (default 1; 0 holds our own unmined change), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `WOC_API_KEY` and `BITAILS_API_KEY` (optional explorer keys), `BANANABLOCKS_BASE` (unset = the chain's default, empty = off), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable.
+Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_DEPTH` (default 1, the floor), `SPEND_OWN_CHANGE` (default 1; 0 holds our own unmined change), `CHAINTRACKS_URL` (required: your header service, or `off`; no default), `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default), `WOC_API_KEY` and `BITAILS_API_KEY` (optional explorer keys), `BANANABLOCKS_BASE` (unset = the chain's default, empty = off), `AUTH_TOKEN` (optional, bearer auth), `RUST_LOG` for tracing. Note: port is set via `--port` CLI flag, not an environment variable. Every variable is read once at start by `src/config.rs` (#80; the arch rule A7 refuses a read anywhere else): a malformed number, address or URL is refused naming the variable, and `bsv-wallet config [--json]` prints every setting with its effective value and its source, secrets as `<set>`.
 
 ## E2E Testing
 
