@@ -1,7 +1,8 @@
-//! What the fuzz targets share: the transaction and BEEF builders of the
-//! tree's tests (`src/test_support.rs`), and the one step of a door that
-//! is written inline in the toolbox's async `Wallet::internalize_action`,
-//! so a target cannot call it without a wallet and a store.
+//! What the fuzz targets share: the transaction builders of the tree's
+//! tests (`src/test_support/tx.rs`, by `#[path]`), the BEEF builders over
+//! them, and the one step of a door that is written inline in the
+//! toolbox's async `Wallet::internalize_action`, so a target cannot call it
+//! without a wallet and a store.
 //!
 //! The mirror names the lines it copies. It drifts when its source changes;
 //! `docs/NIGHTLY.md` names it, and the cure is a function in the toolbox
@@ -17,42 +18,11 @@ pub fn synthetic_root() -> PrivateKey {
     PrivateKey::from_bytes(&[1u8; 32]).expect("a key")
 }
 
-/// A P2PKH locking script over `hash160` (`test_support::p2pkh`).
-pub fn p2pkh(hash160: [u8; 20]) -> Vec<u8> {
-    let mut s = vec![0x76, 0xa9, 0x14];
-    s.extend_from_slice(&hash160);
-    s.extend_from_slice(&[0x88, 0xac]);
-    s
-}
-
-/// A version 1 transaction spending `inputs` (`(txid as displayed, vout)`,
-/// empty unlocking scripts) into `outputs` (`test_support::raw_tx`; at most
-/// 252 of each, and scripts under 253 bytes).
-pub fn raw_tx(inputs: &[(&str, u32)], outputs: &[(u64, Vec<u8>)]) -> Vec<u8> {
-    let mut tx = vec![1, 0, 0, 0];
-    tx.push(inputs.len() as u8);
-    for (txid, vout) in inputs {
-        let mut prev = hex::decode(txid).expect("a txid");
-        prev.reverse();
-        tx.extend_from_slice(&prev);
-        tx.extend_from_slice(&vout.to_le_bytes());
-        tx.push(0);
-        tx.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
-    }
-    tx.push(outputs.len() as u8);
-    for (satoshis, script) in outputs {
-        tx.extend_from_slice(&satoshis.to_le_bytes());
-        tx.push(script.len() as u8);
-        tx.extend_from_slice(script);
-    }
-    tx.extend_from_slice(&[0, 0, 0, 0]);
-    tx
-}
-
-/// The txid (as displayed) of raw transaction bytes.
-pub fn txid_of(raw: &[u8]) -> String {
-    Transaction::from_binary(raw).expect("a transaction").id()
-}
+/// The tests' transaction builders (`p2pkh`, `raw_tx`, `txid_of`),
+/// compiled here unchanged from the tree's own file.
+#[path = "../../src/test_support/tx.rs"]
+mod tx;
+pub use tx::{p2pkh, raw_tx, txid_of};
 
 /// `raw` under a one-transaction block's path at `height`, as BEEF bytes.
 pub fn proven_beef(raw: Vec<u8>, height: u32) -> Vec<u8> {

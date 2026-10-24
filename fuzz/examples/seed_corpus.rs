@@ -21,7 +21,9 @@ fn write(target: &str, name: &str, bytes: &[u8]) {
 }
 
 fn main() {
-    let control = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, p2pkh([0xdb; 20]))]);
+    let lock = p2pkh([0xdb; 20]);
+    let funding = "11".repeat(32);
+    let control = raw_tx(&[(&funding, 0)], &[(1000, lock.clone())]);
     let control_id = txid_of(&control);
     let proven = proven_beef(control.clone(), 900_000);
     let child = raw_tx(
@@ -30,16 +32,10 @@ fn main() {
     );
     let child_id = txid_of(&child);
     let atomic = atomic_payment(control.clone(), child.clone());
-    let no_input = {
-        let lock = p2pkh([0xdb; 20]);
-        let mut tx = vec![1, 0, 0, 0, 0, 1];
-        tx.extend_from_slice(&1000u64.to_le_bytes());
-        tx.push(lock.len() as u8);
-        tx.extend_from_slice(&lock);
-        tx.extend_from_slice(&[0, 0, 0, 0]);
-        tx
-    };
-    let no_output = raw_tx(&[(&"11".repeat(32), 0)], &[]);
+    // No input, one output: the same bytes as `atomic_beef.rs`'s
+    // `no_input_tx`.
+    let no_input = raw_tx(&[], &[(1000, lock)]);
+    let no_output = raw_tx(&[(&funding, 0)], &[]);
 
     // beef_reader: the frames atomic_beef.rs's tests read.
     write("beef_reader", "proven-one-tx", &proven);
