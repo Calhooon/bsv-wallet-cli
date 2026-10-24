@@ -13,10 +13,6 @@
     "fork-recheck-clears-suspect": {
       "what": "A fork stored from the feed marks the creator suspect, but the spend guard's own recheck (SpendAttempt then Recheck, tracker_host readme_spend_guard) clears the mark while the header at the creator's height still carries its root, so the gate offers the coin; the Lean holds it while the fork is in progress ('creator suspect'). An open split (tracker_meta open_splits) is not cleared this way.",
       "answer_moves": true
-    },
-    "named-absent-coin": {
-      "what": "An outpoint that is not a coin of this wallet is left to the toolbox by assess_named (a covenant or a foreign input carried in inputBEEF, by design); the Lean answers 'no coin', not offerable. The allocation (assess) never offers it.",
-      "answer_moves": true
     }
   },
   "divergences": [
@@ -34,27 +30,6 @@
     {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
     {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
     {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "read_creators", "field": "creator_suspect", "lean": "true", "cli": "false", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.competitor_fan_out (FAIL 8) | step 6 | T2.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.competitor_fan_out (FAIL 8) | step 6 | T2.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.competitor_fan_out (FAIL 8) | step 6 | T2.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.lvDead (next action refused) | step 10 | N.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.lvDead (next action refused) | step 10 | N.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.lvDead (next action refused) | step 10 | N.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service (root mismatch) | step 1 | F.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service (root mismatch) | step 1 | F.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service (root mismatch) | step 1 | F.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service | step 1 | F.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service | step 1 | F.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.no_header_service | step 1 | F.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.received_under_rule (no word) | step 2 | U.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.received_under_rule (no word) | step 2 | U.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.received_under_rule (no word) | step 2 | U.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.stub | step 1 | B.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.stub | step 1 | B.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "Wallet.Check.stub | step 1 | B.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "WalletGate.contendedSteps | step 2 | T1.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "WalletGate.contendedSteps | step 2 | T1.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
-    {"row": "WalletGate.contendedSteps | step 2 | T1.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "named-absent-coin"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess", "field": "offerable", "lean": "false", "cli": "true", "finding": "no-lineage"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess", "field": "offerable_clause", "lean": "dead lineage", "cli": "offered", "finding": "no-lineage"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "no-lineage"},

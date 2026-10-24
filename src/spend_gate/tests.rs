@@ -852,7 +852,7 @@ async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
         let coins = [(coin.0.clone(), 0u32)];
         let (storage, services) = (&w.storage, &w.services);
         async move {
-            assess_named(storage, services, &opts(1, false), &coins, reserved_to)
+            assess_named(storage, services, &opts(1, false), &coins, &[], reserved_to)
                 .await
                 .unwrap()
                 .into_iter()
@@ -1009,6 +1009,17 @@ async fn the_scoped_word_does_not_offer_a_named_lost_coin() {
     );
 }
 
+/// A named input over `txid`'s output 0, as a caller names one.
+fn named_input(txid: &str) -> bsv_sdk::wallet::CreateActionInput {
+    bsv_sdk::wallet::CreateActionInput {
+        outpoint: bsv_sdk::wallet::Outpoint::from_string(&format!("{txid}.0")).unwrap(),
+        input_description: "named".to_string(),
+        unlocking_script: None,
+        unlocking_script_length: Some(107),
+        sequence_number: None,
+    }
+}
+
 /// Explicit inputs under the guard: a coin the caller names that the gate
 /// would hold refuses the action before the toolbox runs, with the same
 /// `held[]` listing; under the door's word the same received coin passes
@@ -1022,13 +1033,7 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
     let services = headers_with(&"0c".repeat(32), 900, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let mut args = pay(1_000);
-    args.inputs = Some(vec![bsv_sdk::wallet::CreateActionInput {
-        outpoint: bsv_sdk::wallet::Outpoint::from_string(&format!("{received}.0")).unwrap(),
-        input_description: "named".to_string(),
-        unlocking_script: None,
-        unlocking_script_length: Some(107),
-        sequence_number: None,
-    }]);
+    args.inputs = Some(vec![named_input(&received)]);
 
     let Err(GateError::Refused(refusal)) =
         create_action(&wallet, args.clone(), "gate.local", &opts(1, true)).await
@@ -1052,22 +1057,106 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
         wallet.services(),
         &opts(1, true).with_allow_received(true),
         &[(received.clone(), 0)],
+        &[],
         None,
     )
     .await
     .unwrap();
     assert!(held.is_empty(), "{held:?}");
-    // Not one of this wallet's coins: left to the toolbox.
-    let foreign = assess_named(
+}
+
+/// #166, createAction's inputs: an outpoint that is not a coin of this
+/// wallet is refused at the gate, the caller's 400 (`Scope`, the word the
+/// scoped `allowPending` uses), before a creator is read, the toolbox asked
+/// or anything stored; beside a coin the gate would offer too. The caller's
+/// own input, its transaction carried whole in `inputBEEF`, is not a coin of
+/// ours and is left to the toolbox.
+#[tokio::test]
+async fn a_named_input_the_wallet_does_not_hold_is_refused_at_the_gate() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (deep, _) = mined_coin(&storage, (user, basket), 0xd1, 50_000, 800).await;
+    let services = MockWalletServices::builder().build();
+    services.set_header_for_height(header(800, &deep, 0));
+    services.set_tip_header(header_with_hash(901, &"0d".repeat(32), 0));
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let absent = "d9".repeat(32);
+    let before = stored_rows(wallet.storage()).await;
+    for named in [
+        vec![named_input(&absent)],
+        vec![named_input(&deep), named_input(&absent)],
+    ] {
+        let mut args = pay(1_000);
+        args.inputs = Some(named);
+        assert_eq!(
+            refused_before_the_door(&wallet, args, &opts(1, true)).await,
+            format!(
+                "Invalid argument: inputs names {absent}.0, which is not a coin this wallet could spend: {NOT_HELD}"
+            )
+        );
+    }
+    assert_eq!(
+        stored_rows(wallet.storage()).await,
+        before,
+        "nothing stored"
+    );
+}
+
+/// #166: the caller's own input, its transaction carried whole in its
+/// `inputBEEF`, is not a coin of ours and is left to the toolbox; a txid-only
+/// entry, or a BEEF that does not parse, carries nothing, and the same
+/// outpoint is refused.
+#[tokio::test]
+async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
+    let root = PrivateKey::random();
+    let (storage, _, _) = storage_for(&root.public_key().to_hex()).await;
+    let wallet = Wallet::new(Some(root), storage, MockWalletServices::builder().build())
+        .await
+        .unwrap();
+    let mut puzzle = bsv_sdk::transaction::Transaction::new();
+    puzzle
+        .add_input(bsv_sdk::transaction::TransactionInput::new(
+            "e4".repeat(32),
+            0,
+        ))
+        .unwrap();
+    puzzle
+        .add_output(bsv_sdk::transaction::TransactionOutput::new(
+            5_000,
+            bsv_sdk::script::LockingScript::from_hex("5187").unwrap(),
+        ))
+        .unwrap();
+    let mut beef = bsv_sdk::transaction::Beef::new();
+    let carried_txid = beef.merge_transaction(puzzle).txid();
+    let carried = carried_txids(Some(&beef.to_binary()));
+    assert_eq!(carried, vec![carried_txid.clone()]);
+    let mut only_txid = bsv_sdk::transaction::Beef::new();
+    only_txid.merge_txid_only(carried_txid.clone());
+    assert!(carried_txids(Some(&only_txid.to_binary())).is_empty());
+    assert!(carried_txids(Some(&[0, 1, 2])).is_empty());
+    let held = assess_named(
         wallet.storage(),
         wallet.services(),
         &opts(1, true),
-        &[("d9".repeat(32), 0)],
+        &[(carried_txid.clone(), 0)],
+        &carried,
         None,
     )
     .await
     .unwrap();
-    assert!(foreign.is_empty());
+    assert!(held.is_empty(), "{held:?}");
+    assert!(matches!(
+        assess_named(
+            wallet.storage(),
+            wallet.services(),
+            &opts(1, true),
+            &[(carried_txid, 0)],
+            &[],
+            None,
+        )
+        .await,
+        Err(GateError::Scope(_))
+    ));
 }
 
 /// A mined coin the toolbox can carry in a BEEF: a parseable transaction
@@ -1747,6 +1836,46 @@ tokio::task_local! {
     pub(super) static AT_THE_DOOR: std::sync::Arc<dyn Fn() + Send + Sync>;
 }
 
+/// The gate's `createAction` under `opts`, expected to refuse `args` as the
+/// caller's error before the door: the toolbox not asked (the
+/// [`AT_THE_DOOR`] hook not called) and nothing read from the services.
+/// Returns the refusal's message.
+async fn refused_before_the_door(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    args: CreateActionArgs,
+    opts: &GateOptions,
+) -> String {
+    let door = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reached = door.clone();
+    let hook =
+        std::sync::Arc::new(move || reached.store(true, std::sync::atomic::Ordering::SeqCst));
+    let result = AT_THE_DOOR
+        .scope(hook, create_action(wallet, args, "gate.local", opts))
+        .await;
+    let Err(GateError::Scope(message)) = result else {
+        panic!("passed the gate: {result:?}");
+    };
+    assert!(
+        !door.load(std::sync::atomic::Ordering::SeqCst),
+        "the toolbox was asked: {message}"
+    );
+    assert_eq!(wallet.services().total_calls(), 0, "a read: {message}");
+    message
+}
+
+/// The transactions and the outputs the store holds: a refusal stores
+/// neither.
+async fn stored_rows(storage: &StorageSqlx) -> (i64, i64) {
+    let mut counts = [0; 2];
+    for (n, table) in counts.iter_mut().zip(["transactions", "outputs"]) {
+        *n = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+    }
+    (counts[0], counts[1])
+}
+
 /// No write after the door (#44): through the gate, a `createAction` under
 /// the door's word (its label the toolbox's to write) and a plain one, each
 /// funded, count the writer's row changes and commits as the toolbox's door
@@ -2400,7 +2529,8 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// coin and why: not ours, own change, consumed by another action, a
 /// nosend, and a coin its own record holds as a consumed one is (#165): a
 /// lost coin (the store's `spendable = 0`, no spender) and a frozen one.
-/// Nothing is read for the action and nothing allocated.
+/// Nothing is read for the action, the toolbox is not asked, nothing is
+/// stored and nothing allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
@@ -2427,9 +2557,10 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         .unwrap();
     let services = headers_with(&"0c".repeat(32), 900, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let before = stored_rows(wallet.storage()).await;
 
     let cases: Vec<(String, &str)> = vec![
-        ("c9".repeat(32), "not a coin of this wallet"),
+        ("c9".repeat(32), NOT_HELD),
         (
             made.clone(),
             "own change of an action of this wallet, not a received coin",
@@ -2444,19 +2575,19 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
             (received.clone(), 0),
             (txid.clone(), 0),
         ]));
-        let Err(GateError::Scope(message)) =
-            create_action(&wallet, pay(1_000), "gate.local", &gate).await
-        else {
-            panic!("{txid} passed the scope check");
-        };
+        let message = refused_before_the_door(&wallet, pay(1_000), &gate).await;
         assert!(
             message.starts_with(&format!(
                 "Invalid argument: allowPending: received names {txid}:0, which is not a received coin this wallet could spend under it: {why}"
             )),
             "{message}"
         );
-        assert_eq!(wallet.services().total_calls(), 0, "nothing read: {txid}");
     }
+    assert_eq!(
+        stored_rows(wallet.storage()).await,
+        before,
+        "nothing stored"
+    );
     let spent_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE spent_by IS NOT NULL")
             .fetch_one(wallet.storage().pool())
@@ -2685,16 +2816,9 @@ async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
         5,
     )
     .await;
-    let input = |txid: &str| bsv_sdk::wallet::CreateActionInput {
-        outpoint: bsv_sdk::wallet::Outpoint::from_string(&format!("{txid}.0")).unwrap(),
-        input_description: "named".to_string(),
-        unlocking_script: None,
-        unlocking_script_length: Some(107),
-        sequence_number: None,
-    };
 
     let mut args = pay(1_000);
-    args.inputs = Some(vec![input(&mined)]);
+    args.inputs = Some(vec![named_input(&mined)]);
     let Err(GateError::Refused(refusal)) =
         create_action(&wallet, args, "gate.local", &opts(1, true)).await
     else {
@@ -2709,7 +2833,7 @@ async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
     );
 
     let mut args = pay(1_000);
-    args.inputs = Some(vec![input(&mined), input(&received)]);
+    args.inputs = Some(vec![named_input(&mined), named_input(&received)]);
     let Err(GateError::Refused(refusal)) =
         create_action(&wallet, args, "gate.local", &opts(1, true)).await
     else {
