@@ -131,6 +131,13 @@ def ids(entry):
     return set(entry["runs"][0]["benches"]) if entry.get("runs") else set()
 
 
+def beyond(change, margin):
+    """A change is past the margin, with a rounding allowance: a p99 exactly
+    at the margin (5250 us over 5000 us at 5 percent) is within it, though
+    5250 / 5000 - 1 is 0.050000000000000044 in floating point."""
+    return round(change, 9) > margin
+
+
 def gap(run, measured, margin):
     """How a committed run differs from this run's measure: each bench id
     and number not within the margin of what was just measured."""
@@ -144,7 +151,7 @@ def gap(run, measured, margin):
         for n in ("p50_us", "p99_us"):
             c, m = run["benches"][id][n], measured[id][n]
             change = c / m - 1 if m else float("inf")
-            if abs(change) > margin:
+            if beyond(abs(change), margin):
                 gaps.append(f"{id} {n[:3]}: committed {c} us is {change:+.1%} from this run's {m} us")
     return gaps
 
@@ -157,7 +164,7 @@ def over(run, ref, margin):
     return [f"{id} p99: committed {run['benches'][id]['p99_us']} us is "
             f"{run['benches'][id]['p99_us'] / r - 1:+.1%} over the base's reference {r} us"
             for id, r in sorted(ref.items())
-            if id in run["benches"] and run["benches"][id]["p99_us"] / r - 1 > margin]
+            if id in run["benches"] and beyond(run["benches"][id]["p99_us"] / r - 1, margin)]
 
 
 def check_entry_shape(key, entry, errors):
@@ -325,7 +332,7 @@ def judge(tree, base, measured, ctx):
                 continue
             change = m["p99_us"] / r - 1
             verdict = "ok"
-            if change > margin:
+            if beyond(change, margin):
                 verdict = "FAIL" if gating else "over"
                 regressions.append(f"{id}: p99 {m['p99_us']} us is {change:+.1%} over {r} us")
             lines.append(f"{id:42} {m['p50_us']:>10} {m['p99_us']:>10} {r:>10} {change:>+8.1%} {verdict}")
