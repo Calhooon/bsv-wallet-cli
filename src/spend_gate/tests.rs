@@ -869,6 +869,132 @@ async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
     assert!(named(&w.spendable, None).await.is_empty());
 }
 
+/// Marks a coin lost: the store's `spendable = 0`, no spender.
+async fn lose(storage: &StorageSqlx, id: i64) {
+    sqlx::query("UPDATE outputs SET spendable = 0 WHERE output_id = ?")
+        .bind(id)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+}
+
+/// The coin's `spent_by`.
+async fn spent_by(storage: &StorageSqlx, id: i64) -> Option<i64> {
+    sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
+        .bind(id)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap()
+}
+
+/// A template under `acceptDelayedBroadcast`, where the toolbox's
+/// allocation does not read `spendable`: the gate's hold is the only guard
+/// against a lost coin (#165).
+fn delayed() -> CreateActionArgs {
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        accept_delayed_broadcast: Some(true),
+        ..Default::default()
+    });
+    args
+}
+
+/// A wallet whose mined coin of 50,000 sats (block 800) the store marks
+/// lost; `beside`, a spendable mined coin of that many sats (block 801).
+/// (wallet, the lost coin's (txid, id), the spendable coin's id.)
+async fn a_lost_coin_beside(
+    beside: Option<u64>,
+) -> (
+    Wallet<StorageSqlx, MockWalletServices>,
+    (String, i64),
+    Option<i64>,
+) {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (lost, lost_id) = mined_coin(&storage, (user, basket), 0xd5, 50_000, 800).await;
+    lose(&storage, lost_id).await;
+    let services = headers_with(&lost, 800, 900);
+    let mut kept = None;
+    if let Some(satoshis) = beside {
+        let (txid, id) = mined_coin(&storage, (user, basket), 0xd7, satoshis, 801).await;
+        services.set_header_for_height(header(801, &txid, 0));
+        kept = Some(id);
+    }
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    (wallet, (lost, lost_id), kept)
+}
+
+/// #165 under `acceptDelayedBroadcast`, only a lost coin could cover the
+/// payment: the refusal holds it `lost` and nothing is allocated.
+#[tokio::test]
+async fn under_delayed_broadcast_a_lost_coin_alone_is_refused_lost() {
+    let (wallet, (lost, lost_id), _) = a_lost_coin_beside(None).await;
+    let Err(GateError::Refused(refusal)) =
+        create_action(&wallet, delayed(), "gate.local", &opts(1, true)).await
+    else {
+        panic!("the lost coin was offered");
+    };
+    let held: Vec<_> = refusal
+        .held
+        .iter()
+        .map(|c| (c.outpoint.clone(), c.word.as_str(), c.reason.as_str()))
+        .collect();
+    assert_eq!(
+        held,
+        vec![(
+            format!("{lost}.0"),
+            "lost",
+            "lost: the store marks it not spendable"
+        )]
+    );
+    assert_eq!(
+        spent_by(wallet.storage(), lost_id).await,
+        None,
+        "nothing allocated"
+    );
+}
+
+/// #165 under `acceptDelayedBroadcast`, a lost coin beside a spendable one,
+/// the lost one the larger (read first, covering alone): the spendable coin
+/// funds the action, the lost one is untouched.
+#[tokio::test]
+async fn under_delayed_broadcast_the_spendable_coin_funds_beside_a_lost_one() {
+    let (wallet, (_, lost_id), kept_id) = a_lost_coin_beside(Some(40_000)).await;
+    let result = create_action(&wallet, delayed(), "gate.local", &opts(1, true))
+        .await
+        .unwrap();
+    assert!(result.signable_transaction.is_some());
+    assert_eq!(
+        spent_by(wallet.storage(), lost_id).await,
+        None,
+        "the lost coin untouched"
+    );
+    assert!(
+        spent_by(wallet.storage(), kept_id.unwrap()).await.is_some(),
+        "the spendable coin funds it"
+    );
+}
+
+/// The scoped word naming a lost received coin (#165, #63): `assess` holds
+/// it `lost`, never offered under the word that would reach it.
+#[tokio::test]
+async fn the_scoped_word_does_not_offer_a_named_lost_coin() {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"cd".repeat(32))).await;
+    let lost = "b5".repeat(32);
+    let id = coin(&storage, (user, basket), &lost, false, None, 4_000, 3).await;
+    lose(&storage, id).await;
+    let services = headers_with(&"0c".repeat(32), 900, 900);
+    let gate =
+        opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(lost.clone(), 0)]));
+    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    assert!(a.offered.is_empty(), "{a:?}");
+    assert_eq!(
+        reason_of(&a, &lost).as_deref(),
+        Some("lost: the store marks it not spendable")
+    );
+}
+
 /// Explicit inputs under the guard: a coin the caller names that the gate
 /// would hold refuses the action before the toolbox runs, with the same
 /// `held[]` listing; under the door's word the same received coin passes
@@ -2258,15 +2384,15 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// A scoped word naming a coin that is not a received coin this wallet
 /// could spend under it is the caller's error before the door, naming the
 /// coin and why: not ours, own change, consumed by another action, a
-/// nosend. Nothing is read for the action and nothing allocated.
+/// nosend, and a coin its own record holds as a consumed one is (#165): a
+/// lost coin (the store's `spendable = 0`, no spender) and a frozen one.
+/// Nothing is read for the action and nothing allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
-    let received = "c1".repeat(32);
-    let made = "c2".repeat(32);
-    let spent = "c3".repeat(32);
-    let nosend = "c4".repeat(32);
+    let [received, made, spent, nosend, lost, frozen] =
+        ["c1", "c2", "c3", "c4", "c5", "c6"].map(|b| b.repeat(32));
     coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
     coin(&storage, (user, basket), &made, true, None, 8_000, 5).await;
     coin(&storage, (user, basket), &spent, false, None, 8_000, 5).await;
@@ -2275,6 +2401,10 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         .execute(storage.writer())
         .await
         .unwrap();
+    let lost_id = coin(&storage, (user, basket), &lost, false, None, 8_000, 5).await;
+    lose(&storage, lost_id).await;
+    coin(&storage, (user, basket), &frozen, false, None, 8_000, 5).await;
+    freeze(&storage, &frozen, 9).await;
     coin(&storage, (user, basket), &nosend, false, None, 8_000, 5).await;
     sqlx::query("UPDATE transactions SET status = 'nosend' WHERE txid = ?")
         .bind(&nosend)
@@ -2292,6 +2422,8 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         ),
         (spent.clone(), "spent by "),
         (nosend.clone(), "its transaction is nosend"),
+        (lost.clone(), "lost: the store marks it not spendable"),
+        (frozen.clone(), "frozen: never offered"),
     ];
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
@@ -2309,11 +2441,7 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
             )),
             "{message}"
         );
-        assert_eq!(
-            wallet.services().total_calls(),
-            0,
-            "nothing read for {txid}"
-        );
+        assert_eq!(wallet.services().total_calls(), 0, "nothing read: {txid}");
     }
     let spent_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE spent_by IS NOT NULL")
