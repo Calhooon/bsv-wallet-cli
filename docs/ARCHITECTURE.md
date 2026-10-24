@@ -39,7 +39,8 @@ service's chain-event feed (`src/chain_feed.rs:167`), the served pass
 (`src/broadcast_reconcile.rs:693`) and the server; `serve`
 (`src/commands/serve.rs:6`) runs the server and the served pass only. The
 one headers machine is the header service at `CHAINTRACKS_URL`
-(`src/services_env.rs:48`, required, no default); explorers are asked only
+(read at start by `src/config.rs`, required where services are built,
+no default: `src/services_env.rs:47`); explorers are asked only
 at the break-glass sites `tests/rule_28_sites.rs` lists.
 
 ## 1. One spend
@@ -157,8 +158,8 @@ never as a hold on the coin.
 allocates within the offer and locks within it in its one write transaction
 (held by the test `the_offer_allocates_only_the_offered_coins_and_writes_no_hold`,
 `src/spend_gate/tests.rs:845`), signs, and posts to the broadcasters it is
-configured with (`src/services_env.rs:228`, the one env-to-services
-resolver) `[D]` the toolbox's internals beyond what the tests drive. When
+configured with (`src/services_env.rs:296`, the one settings-to-services
+resolver, over the `Config` read once at start) `[D]` the toolbox's internals beyond what the tests drive. When
 it answers `Insufficient funds` or `Unspendable coin:` on a lazy offer, every
 coin is read and the call made once more (`src/spend_gate.rs:1525-1554`; the
 unspendable case held by
@@ -503,8 +504,11 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/main.rs` | 236 | The binary: tracing, clap, one arm per command; the `--allow-pending` word parsed before the wallet opens | wallet host (plumbing) |
 | `src/lib.rs` | 20 | The library surface the binary, the tests and the MCP companion share | plumbing |
 | `src/cli.rs` | 352 | Clap definitions: the global flags and the 30 commands with their `--help` text | plumbing |
-| `src/context.rs` | 65 | `WalletContext`: `ROOT_KEY`, the store, the services, the chain tracker set on the store, one `Wallet` | wallet host |
-| `src/services_env.rs` | 430 | The one env-to-`ServicesOptions` resolver: `CHAINTRACKS_URL` required, break-glass headers, explorer keys, Arcade runtime, the callback token | wallet host (plumbing) |
+| `src/context.rs` | 88 | `WalletContext`: the `Config`, `ROOT_KEY`, the store, the services, the chain tracker set on the store, one `Wallet`; the gate's settings and the verifier from the `Config` | wallet host |
+| `src/config.rs` | 770 | The configuration (#80): every variable and the global flags read once at start, typed and checked (a malformed value refused naming the variable and its shape), secrets redacted; the crate's one reader of the environment (A7); the relay's own settings | plumbing |
+| `src/config/knobs.rs` | 184 | Every setting with its effective value and its source, for `bsv-wallet config` and the start line of `daemon` and `serve` | plumbing |
+| `src/config/tests.rs` | 261 | The configuration's tests: the defaults, each switch's words, the refusals, the redaction, the sources | plumbing |
+| `src/services_env.rs` | 430 | The one settings-to-`ServicesOptions` resolver: `CHAINTRACKS_URL` required, break-glass headers, explorer keys, Arcade runtime, the callback token | wallet host (plumbing) |
 | `src/store.rs` | 320 | The store's two doors (reader pool, one writer), `open_shared` (one store per file per process), the busy told by its type | wallet host |
 | `src/spend_gate.rs` | 1593 | The spend gate: the offer, the word and its scope, the refusal, the header-fault retry, the holds' heal | wallet host |
 | `src/spend_gate/tests.rs` | 2439 | The gate's tests (36: 30 tokio, 6 plain), with the write counter at the door | wallet host |
@@ -565,6 +569,7 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/commands/export_beefs.rs` | 360 | One BEEF file per transaction holding a coin of ours, from the store alone (C10) | wallet host |
 | `src/commands/backup.rs` | 58 | Copy `.env` and the store, with a digest | plumbing |
 | `src/commands/services.rs` | 57 | The services' health (chain, height) | plumbing |
+| `src/commands/config.rs` | 70 | `bsv-wallet config`: every setting, its effective value and its source (env, flag, default), as a table or `--json`; secrets `<set>` | plumbing |
 | `src/commands/ui.rs` | 479 | The read-only database inspector (its own Axum server, SELECT only) | plumbing |
 | `src/ui/index.html` | | The inspector's page, embedded by `ui.rs` | plumbing |
 | `src/gift/mod.rs` | 16 | The TimeLockedGift covenant module | wallet host |
@@ -592,11 +597,12 @@ above; this is the map of what is about to move.
   `BroadcastVerification`, `broadcast_verify.rs:142`) and the measured
   report lines (`src/commands/balance.rs`) become one module the passes of
   section 3 are policies over.
-- **#80, typed configuration.** The environment reads at their use sites
-  (`GateOptions::from_env`, `src/spend_gate.rs:335`, per spend;
-  `TickOptions::from_env`, `src/tracker_host.rs:1108`; the knobs of
-  `src/commands/daemon_tenant.rs:76-330`; `src/services_env.rs:228`)
-  become one `Config` loaded at start.
+- **#80, typed configuration.** Done: the environment reads at their use
+  sites (`GateOptions::from_env` per spend, `TickOptions::from_env`, the
+  knobs of `src/commands/daemon_tenant.rs`, `src/services_env.rs`) became
+  one `Config` (`src/config.rs`) loaded at start; the server builds the
+  gate's settings from it once (`GateOptions::from_config`), and A7 holds
+  every read in `src/config.rs` with an empty allowlist.
 - **#81, typed errors.** Done: `AppError::classify` and its prefix table
   are gone; `Kind` (`src/server/error.rs`) holds a status and a code per
   refusal, every typed error reaches it by its variant, and arch rule A8

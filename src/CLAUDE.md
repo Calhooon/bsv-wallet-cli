@@ -66,23 +66,28 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 | `root_key` | `PrivateKey` | Parsed from `ROOT_KEY` env var |
 | `chain` | `Chain` | `Chain::Test` if `--testnet`, else `Chain::Main` |
 | `json_output` | `bool` | From `--json` flag |
+| `config` | `Arc<Config>` | The configuration `main` read once at start (`config.rs`) |
 
-**`WalletContext::load(&cli)` sequence:**
+**`WalletContext::load(&config, json)` sequence:**
 
-1. Read `ROOT_KEY` from environment (fails with clear error if missing)
+1. Take `ROOT_KEY` from the configuration (fails with clear error if missing)
 2. Parse `PrivateKey` from hex, derive `identity_key` (public key hex)
 3. Determine `chain` from `--testnet` flag
-4. Open SQLite storage at `cli.db` path
+4. Open SQLite storage at the `--db` path (`open_store`)
 5. Run `make_available()` (SQLite migrations)
-6. Configure services: `mainnet()` or `testnet()`, optionally with `CHAINTRACKS_URL`
+6. Configure services from the configuration's `ServicesSettings` (`services_env::services_options`), with `CHAINTRACKS_URL`
 7. Construct `Wallet::new(root_key, storage, services)`
 
-**Environment variables consumed:**
+### `config.rs` (the configuration, #80)
+
+`Config::load(&Flags)` runs once in `main`, before any command: the environment is read once as a snapshot (the crate's one read of the environment; the arch rule A7 refuses any other), parsed into its group (`services`, `host`, `reconcile`, `verify`, `server`, `daemon`, `wallet`), and a malformed number, address or URL is a `ConfigError` naming the variable and its shape. Keys and tokens are `Secret`s (`<set>` in `Debug` and `Display`). `bsv-wallet config` prints `Config::knobs()` (value and source: env, flag, default); `daemon` and `serve` log `Config::log_line()` at start. The server builds `GateOptions` from it once (`make_router`); nothing on the request path reads the environment. `RelaySettings::load()` is `bsv-wallet-relay`'s.
+
+**Environment variables consumed (read by `config.rs`):**
 - `ROOT_KEY` (required) — hex-encoded private key
-- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
+- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`ServicesSettings::header_service`, `services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
 - `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default) — `1`/`true`/`yes` lets the toolbox ask WhatsOnChain, then Bitails, for headers when the header service gives no answer, each call logged at warn
 - `WOC_API_KEY`, `BITAILS_API_KEY` (optional) — explorer keys passed to `ServicesOptions` (`WOC_API_KEY` also to the CLI's own WhatsOnChain rung in `explorers.rs`)
-- `BANANABLOCKS_BASE` — BananaBlocks API base: unset = the chain's default, empty = off (`services_env::bananablocks_base_for`, the toolbox's `ServicesOptions::bananablocks_base`)
+- `BANANABLOCKS_BASE` — BananaBlocks API base: unset = the chain's default, empty = off (`services_env::ExplorerSettings`, the toolbox's `ServicesOptions::bananablocks_base`)
 - `WOC_BASE`, `BITAILS_BASE`, `ARC_GORILLAPOOL_URL` — the bases of the CLI's own WhatsOnChain and Bitails rungs and of the GorillaPool ARC (`services_env::ExplorerBases`; #74, the hermetic e2e run points them at its stub): unset = the chain's default; `ARC_GORILLAPOOL_URL` empty leaves GorillaPool out. The toolbox's own WhatsOnChain and Bitails providers take no base yet
 
 ### `lib.rs` (test support)

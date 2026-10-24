@@ -73,9 +73,14 @@ The server implements the wallet interface and serializes spending operations.
 `AUTH_TOKEN`, unless the operator explicitly supplies `--allow-no-token`.
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. Configuration and defaults
-are defined in [src](src); [GIFT.md](GIFT.md) documents gift flows and limits.
+are defined in [src/config.rs](src/config.rs): every variable is read once at
+start, and a malformed number, address or URL is refused there, naming the
+variable. `bsv-wallet config` prints every setting with its effective value
+and its source (env, flag, default), keys and tokens as `<set>` (`--json` for
+the same as an array); `daemon` and `serve` log the same list as one line at
+start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
-The explorers ([src/services_env.rs](src/services_env.rs), 0.17.0):
+The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
 
 | variable | effect |
 |---|---|
