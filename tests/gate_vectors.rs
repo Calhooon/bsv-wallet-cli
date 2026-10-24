@@ -241,7 +241,7 @@ async fn store() -> (StorageSqlx, i64, i64) {
     let basket = basket.await.unwrap().basket_id;
     // The tracker's tables, as every read of them makes them.
     let none = MockWalletServices::builder().build();
-    read_creators(&storage, &none, &TickOptions::from_env(), &[])
+    read_creators(&storage, &none, &TickOptions::default(), &[])
         .await
         .unwrap();
     (storage, user.user_id, basket)
@@ -363,7 +363,7 @@ fn proof_path(row: &Value, built: &Built) -> MerklePath {
 /// A broadcaster's hint, stored as `heard` stores it.
 async fn hint(built: &Built, status: HintStatus) {
     let hint = Hint::new("arcade", status, 1_700_000_000);
-    let opts = TickOptions::from_env();
+    let opts = TickOptions::default();
     heard(
         &built.storage,
         &SystemClock,
@@ -540,6 +540,7 @@ fn words(row: &Value, built: &Built) -> Vec<(&'static str, GateOptions)> {
         spend_depth: height(row, "spend_depth").unwrap(),
         own_change: s(row, "host_rule_made").is_some(),
         allow_pending: AllowPending::Off,
+        tracker: TickOptions::default(),
     };
     if b(row, "allow_received") != Some(true) {
         return vec![("", base)];
@@ -556,7 +557,7 @@ async fn creator_checks(checks: &mut Checks<'_>, built: &Built, origin: Origin) 
     let words = words(checks.row, built);
     let tick = TickOptions {
         spend_depth: words[0].1.spend_depth,
-        ..TickOptions::from_env()
+        ..TickOptions::default()
     }
     .floored();
     let creators = [(built.txid.clone(), built.proof.clone())];
