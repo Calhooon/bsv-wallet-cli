@@ -102,9 +102,11 @@ use crate::tracker_host::{SystemClock, TickOptions, TickReport};
 /// absence is named past the threshold, and below which no retire climbs
 /// through a parent (`BROADCAST_ABSENCE_MINUTES`). Since 0.7.3 an absence
 /// retires nothing by itself (rule 5).
+#[allow(dead_code)] // the binary's copy of this module: read by the library's `config`
 pub const DEFAULT_ABSENCE_MINUTES: i64 = 30;
 /// Default seconds between two passes of the served loop
 /// (`BROADCAST_RECONCILE_INTERVAL_SECS`).
+#[allow(dead_code)] // the binary's copy of this module: read by the library's `config`
 pub const DEFAULT_INTERVAL_SECS: u64 = 60;
 /// Default locked-input re-checks per pass
 /// (`BROADCAST_RECONCILE_MAX_LOCKED_CHECKS`).

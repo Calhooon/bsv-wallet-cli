@@ -123,9 +123,11 @@ use crate::services_env::ExplorerBases;
 /// the happy path returns on the very first probe of the broadcaster, and the
 /// caller's spending lock is already released before verification runs, so a
 /// longer window does not serialize anything.
-const DEFAULT_ATTEMPTS: u32 = 14;
+#[allow(dead_code)] // the binary's copy of this module: read by the library's `config`
+pub const DEFAULT_ATTEMPTS: u32 = 14;
 /// Default CAP on the delay between probe rounds (ms). See [`INITIAL_DELAY_MS`].
-const DEFAULT_DELAY_MS: u64 = 2500;
+#[allow(dead_code)] // the binary's copy of this module: read by the library's `config`
+pub const DEFAULT_DELAY_MS: u64 = 2500;
 /// First inter-round delay (ms). The schedule is: probe immediately, then wait
 /// 250 ms, 500 ms, 1 s, 2 s, then [`DEFAULT_DELAY_MS`] between every further
 /// round. A cleanly accepted transaction is usually visible at the broadcaster

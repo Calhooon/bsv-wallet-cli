@@ -36,6 +36,8 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
+use crate::config::{ConfigError, Raw, Secret};
+
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
 /// operator's own service, and ours (`chaintracks-cloudflare`) documents no
@@ -222,6 +224,63 @@ impl ExplorerBases {
             bitails.as_deref(),
             gorillapool.as_deref(),
         )
+    }
+}
+
+/// The explorers' settings (#50, #74): their keys and the bases of the
+/// CLI's own rungs, parsed here from the environment `crate::config` read
+/// once at start (`WOC_API_KEY`, `BITAILS_API_KEY`, `BANANABLOCKS_BASE`,
+/// `WOC_BASE`, `BITAILS_BASE`, `ARC_GORILLAPOOL_URL`).
+#[derive(Debug, Clone)]
+pub struct ExplorerSettings {
+    /// `WOC_API_KEY`, trimmed, when not blank.
+    pub woc_api_key: Option<Secret>,
+    /// The Bitails key, `BITAILS_API_KEY`, trimmed, when not blank.
+    pub bitails_api_key: Option<Secret>,
+    /// The `BananaBlocks` base, trimmed, in the toolbox's terms
+    /// (`ServicesOptions::bananablocks_base`): unset is `None` (the chain's
+    /// default); set is the value as given, so an empty one is off.
+    pub bananablocks_base: Option<String>,
+    /// The bases of the CLI's own rungs on the configured chain.
+    pub bases: ExplorerBases,
+}
+
+impl ExplorerSettings {
+    /// The settings from the environment as read at start, on `chain`: a
+    /// base that is set and not blank must be a URL.
+    pub(crate) fn read(raw: &Raw, chain: Chain) -> Result<Self, ConfigError> {
+        let key = |name| api_key_for(raw.get(name)).map(Secret::new);
+        Ok(Self {
+            woc_api_key: key("WOC_API_KEY"),
+            bitails_api_key: key("BITAILS_API_KEY"),
+            bananablocks_base: raw.present_url("BANANABLOCKS_BASE")?,
+            bases: ExplorerBases::configured(
+                chain,
+                raw.url("WOC_BASE")?.as_deref(),
+                raw.url("BITAILS_BASE")?.as_deref(),
+                raw.get("ARC_GORILLAPOOL_URL"),
+            ),
+        })
+    }
+
+    /// The settings' rows for `crate::config::Config::knobs`, in their order.
+    pub(crate) fn values(&self) -> Vec<(&'static str, String)> {
+        let secret = |s: &Option<Secret>| s.as_ref().map_or("-".into(), ToString::to_string);
+        vec![
+            ("WOC_API_KEY", secret(&self.woc_api_key)),
+            ("BITAILS_API_KEY", secret(&self.bitails_api_key)),
+            (
+                "BANANABLOCKS_BASE",
+                match self.bananablocks_base.as_deref() {
+                    None => "default",
+                    Some("") => "off",
+                    Some(v) => v,
+                }
+                .to_string(),
+            ),
+            ("WOC_BASE", self.bases.woc.clone()),
+            ("BITAILS_BASE", self.bases.bitails.clone()),
+        ]
     }
 }
 
