@@ -3180,7 +3180,7 @@ pub(crate) mod tests {
 
     /// A creator mined at 900, the tip at 905, the header service's header
     /// at 900 the one its proof checks against.
-    async fn mined_at_900(txid: &str) -> (StorageSqlx, MockWalletServices, FixedClock) {
+    pub(crate) async fn mined_at_900(txid: &str) -> (StorageSqlx, MockWalletServices, FixedClock) {
         let (storage, user) = wallet_storage().await;
         insert_tx(&storage, user, txid, "unproven").await;
         storage
@@ -3192,7 +3192,7 @@ pub(crate) mod tests {
             .build();
         services.set_header_for_height(header(900, txid, 0));
         services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
-        let clock = FixedClock(Utc::now().timestamp() as u64);
+        let clock = FixedClock(Utc::now().timestamp().cast_unsigned());
         tick(&storage, &services, &clock, &opts()).await.unwrap();
         assert_eq!(
             stored_word(&storage, txid).await.unwrap().unwrap().0,
@@ -3233,6 +3233,21 @@ pub(crate) mod tests {
         })
     }
 
+    async fn guard_of(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        clock: &FixedClock,
+        txid: &str,
+    ) -> std::result::Result<bool, CheckError> {
+        spend_guard(storage, services, clock, &opts(), txid)
+            .await
+            .unwrap()
+    }
+
+    async fn word(storage: &StorageSqlx, txid: &str) -> (String, Option<Height>, Option<String>) {
+        stored_word(storage, txid).await.unwrap().unwrap()
+    }
+
     async fn reading(
         storage: &StorageSqlx,
         services: &MockWalletServices,
@@ -3258,12 +3273,10 @@ pub(crate) mod tests {
         let (storage, services, clock) = mined_at_900(&txid).await;
         deliver(&storage, &services, &clock, 1, fork_at(900, &txid)).await;
         let fork = ("mined".to_string(), Some(900), Some("fork@900".to_string()));
-        assert_eq!(stored_word(&storage, &txid).await.unwrap().unwrap(), fork);
+        assert_eq!(word(&storage, &txid).await, fork);
 
-        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
-            .await
-            .unwrap();
-        let stored = stored_word(&storage, &txid).await.unwrap().unwrap();
+        let guard = guard_of(&storage, &services, &clock, &txid).await;
+        let stored = word(&storage, &txid).await;
         println!("spend guard under a fork at 900: {guard:?}, stored {stored:?}");
         assert_eq!(guard, Ok(false));
         assert_eq!(
@@ -3285,9 +3298,7 @@ pub(crate) mod tests {
             (held.word, held.suspect, held.offered, held.fault),
             ("mined", true, false, None)
         );
-        let again = spend_guard(&storage, &services, &clock, &opts(), &txid)
-            .await
-            .unwrap();
+        let again = guard_of(&storage, &services, &clock, &txid).await;
         assert_eq!(again, Ok(false), "a second attempt is refused the same");
 
         let tip = serde_json::json!({
@@ -3297,15 +3308,13 @@ pub(crate) mod tests {
         });
         deliver(&storage, &services, &clock, 2, tip).await;
         assert_eq!(
-            stored_word(&storage, &txid).await.unwrap().unwrap(),
+            word(&storage, &txid).await,
             ("mined".to_string(), Some(900), None)
         );
         let offered = reading(&storage, &services, &txid).await;
         println!("read_creators after the tip: {offered:?}");
         assert_eq!((offered.suspect, offered.offered), (false, true));
-        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
-            .await
-            .unwrap();
+        let guard = guard_of(&storage, &services, &clock, &txid).await;
         assert_eq!(guard, Ok(true));
     }
 
@@ -3322,12 +3331,10 @@ pub(crate) mod tests {
             (offered.word, offered.suspect, offered.offered),
             ("mined", false, true)
         );
-        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
-            .await
-            .unwrap();
+        let guard = guard_of(&storage, &services, &clock, &txid).await;
         assert_eq!(guard, Ok(true));
         assert_eq!(
-            stored_word(&storage, &txid).await.unwrap().unwrap(),
+            word(&storage, &txid).await,
             ("mined".to_string(), Some(900), None)
         );
     }
@@ -3350,12 +3357,10 @@ pub(crate) mod tests {
         });
         deliver(&storage, &services, &clock, 1, reorg).await;
         let open = ("mined".to_string(), Some(900), Some("recheck".to_string()));
-        assert_eq!(stored_word(&storage, &txid).await.unwrap().unwrap(), open);
+        assert_eq!(word(&storage, &txid).await, open);
 
-        let guard = spend_guard(&storage, &services, &clock, &opts(), &txid)
-            .await
-            .unwrap();
-        let stored = stored_word(&storage, &txid).await.unwrap().unwrap();
+        let guard = guard_of(&storage, &services, &clock, &txid).await;
+        let stored = word(&storage, &txid).await;
         println!("spend guard on the reorg's open recheck: {guard:?}, stored {stored:?}");
         assert_eq!(guard, Ok(false));
         assert_eq!(stored, open);
