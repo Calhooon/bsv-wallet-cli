@@ -737,6 +737,138 @@ async fn a_frozen_outpoint_is_held_under_every_rule() {
     }
 }
 
+/// #165's three coins, each mined at its own height under a deep tip: a lost
+/// one (the store's `spendable = 0` with no spender, the relinquished
+/// record), one a live action of ours consumed, and a spendable one.
+struct LostCoins {
+    storage: StorageSqlx,
+    services: MockWalletServices,
+    spender: String,
+    /// (txid, output id) of the lost, the consumed and the spendable coin.
+    lost: (String, i64),
+    consumed: (String, i64),
+    spendable: (String, i64),
+}
+
+async fn lost_coins() -> LostCoins {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let [lost, consumed, spendable, spender] = ["c9", "ca", "cb", "cc"].map(|b| b.repeat(32));
+    let lost_id = coin(&storage, (user, basket), &lost, true, Some(900), 5_000, 9).await;
+    let consumed_id = coin(
+        &storage,
+        (user, basket),
+        &consumed,
+        true,
+        Some(901),
+        5_000,
+        9,
+    )
+    .await;
+    let spendable_id = coin(
+        &storage,
+        (user, basket),
+        &spendable,
+        true,
+        Some(902),
+        5_000,
+        9,
+    )
+    .await;
+    let holder_row = coin(&storage, (user, basket), &spender, true, None, 1, 1).await;
+    sqlx::query("UPDATE outputs SET spendable = 0 WHERE output_id = ?")
+        .bind(lost_id)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE outputs SET spendable = 0, spent_by = \
+         (SELECT transaction_id FROM outputs WHERE output_id = ?) WHERE output_id = ?",
+    )
+    .bind(holder_row)
+    .bind(consumed_id)
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    // Each creator's root carried at its height: only the coin's record can
+    // hold the lost one.
+    let services = headers_with(&lost, 900, 905);
+    services.set_header_for_height(header(901, &consumed, 0));
+    services.set_header_for_height(header(902, &spendable, 0));
+    LostCoins {
+        storage,
+        services,
+        spender,
+        lost: (lost, lost_id),
+        consumed: (consumed, consumed_id),
+        spendable: (spendable, spendable_id),
+    }
+}
+
+/// #165, the offer: the lost coin is held `lost` before its creator is
+/// read, though its creator is mined at depth; the consumed coin is the
+/// lock's (no candidate of the offer); the spendable coin is offered.
+#[tokio::test]
+async fn the_offer_holds_a_lost_coin_by_its_record() {
+    let w = lost_coins().await;
+    let a = assess(&w.storage, &w.services, &opts(1, false), None)
+        .await
+        .unwrap();
+    let offered = |id: i64| a.offered.iter().any(|(o, _)| *o == id);
+    let held = a.held.iter().find(|c| c.output_id == w.lost.1).unwrap();
+    assert_eq!(
+        (held.word.as_str(), held.reason.as_str()),
+        ("lost", "lost: the store marks it not spendable")
+    );
+    assert!(held.headers_fault.is_none());
+    assert!(!offered(w.lost.1), "{a:?}");
+    assert!(
+        a.held.iter().all(|c| c.output_id != w.consumed.1) && !offered(w.consumed.1),
+        "a consumed coin is no candidate: {a:?}"
+    );
+    assert!(offered(w.spendable.1), "{a:?}");
+}
+
+/// #165, a named input: the lost coin is held `lost`, the consumed coin
+/// `spent by` its spender (and passes as the respend's own, `reserved_to`
+/// that spender), the spendable coin passes.
+#[tokio::test]
+async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
+    let w = lost_coins().await;
+    let named = |coin: &(String, i64), reserved_to: Option<i64>| {
+        let coins = [(coin.0.clone(), 0u32)];
+        let (storage, services) = (&w.storage, &w.services);
+        async move {
+            assess_named(storage, services, &opts(1, false), &coins, reserved_to)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.word, c.reason))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        named(&w.lost, None).await,
+        vec![(
+            "lost".to_string(),
+            "lost: the store marks it not spendable".to_string()
+        )]
+    );
+    assert_eq!(
+        named(&w.consumed, None).await,
+        vec![(
+            "locked".to_string(),
+            format!("spent by {} (unproven)", w.spender)
+        )]
+    );
+    let reserved: i64 = sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
+        .bind(w.consumed.1)
+        .fetch_one(w.storage.pool())
+        .await
+        .unwrap();
+    assert!(named(&w.consumed, Some(reserved)).await.is_empty());
+    assert!(named(&w.spendable, None).await.is_empty());
+}
+
 /// Explicit inputs under the guard: a coin the caller names that the gate
 /// would hold refuses the action before the toolbox runs, with the same
 /// `held[]` listing; under the door's word the same received coin passes
