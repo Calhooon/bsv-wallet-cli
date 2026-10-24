@@ -30,7 +30,7 @@ D = importlib.util.module_from_spec(_spec)
 _loader.exec_module(D)
 
 KEYS = ["11" * 32, "22" * 32, "33" * 32, "44" * 32]
-SCENARIOS = sorted(f[3:-3] for f in os.listdir(ROOT / "tests" / "e2e" / "scenarios") if f.endswith(".js"))
+SCENARIOS = D.scenario_names()
 
 
 def varint(n):
@@ -96,8 +96,22 @@ def recording(response=None, request=None):
 
 def compare(a, b):
     """The tool's comparison of two recordings in memory: (report lines, differences)."""
-    lines, count, *_ = D.compare_events([D._hexify(e) for e in a], [D._hexify(e) for e in b])
+    lines, count, *_, gaps = D.compare_events([D._hexify(e) for e in a], [D._hexify(e) for e in b], SCENARIOS)
+    assert not gaps, gaps
     return lines, count
+
+
+def run_compare(a, b):
+    """`tools/differential --compare` on two recordings written as files: (exit code, stdout)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        files = []
+        for name, events in (("a", a), ("b", b)):
+            f = Path(tmp) / f"{name}.jsonl"
+            f.write_text(events if isinstance(events, str) else "".join(json.dumps(e) + "\n" for e in events))
+            files.append(str(f))
+        r = subprocess.run([sys.executable, str(ROOT / "tools" / "differential"), "--compare", *files],
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout
 
 
 class RecordingHoldsNoKey(unittest.TestCase):
@@ -209,6 +223,76 @@ class LengthsInPlaceholders(unittest.TestCase):
                                recording({"ciphertext": os.urandom(81).hex()}))
         self.assertEqual(count, 1, lines)
         self.assertIn("/80B>", lines[1])
+
+
+def without(events, drop):
+    return [e for e in events if not drop(e)]
+
+
+class FailClosed(unittest.TestCase):
+    """Finding 4: a recording that is not a whole run is exit 3, never 0 and never 1."""
+
+    def assertIncomplete(self, a, b, why):
+        code, out = run_compare(a, b)
+        self.assertEqual(code, 3, out)
+        self.assertIn("DIFFERENTIAL: INCOMPLETE recording", out)
+        self.assertIn(why, out)
+
+    def test_whole_and_equal_is_0(self):
+        code, out = run_compare(recording({"ok": 1}), recording({"ok": 1}))
+        self.assertEqual(code, 0, out)
+
+    def test_whole_with_a_difference_is_1(self):
+        code, out = run_compare(recording({"ok": 1}), recording({"ok": 2}))
+        self.assertEqual(code, 1, out)
+
+    def test_planted_two_empty_recordings(self):
+        self.assertIncomplete("", "", "base: no events")
+
+    def test_planted_no_commands(self):
+        r = without(recording(), lambda e: e["kind"] == "cli")
+        self.assertIncomplete(r, r, "no commands")
+
+    def test_planted_no_http_calls(self):
+        r = without(recording(), lambda e: e["kind"] == "http")
+        self.assertIncomplete(r, r, "no HTTP calls")
+
+    def test_planted_no_wallet_events(self):
+        r = without(recording(), lambda e: e["kind"] == "wallet")
+        self.assertIncomplete(r, r, "no wallet events")
+
+    def test_planted_truncated_mid_line(self):
+        text = "".join(json.dumps(e) + "\n" for e in recording())
+        self.assertIncomplete(recording(), text[: len(text) - 40], "head: line")
+
+    def test_planted_truncated_at_a_line(self):
+        r = recording()
+        self.assertIncomplete(r, r[: len(r) // 2], "head: no sweep phase")
+
+    def test_planted_one_call_fewer(self):
+        r = recording()
+        fewer = [e for i, e in enumerate(r) if not (e["phase"] == SCENARIOS[5] and e["kind"] == "cli")]
+        self.assertIncomplete(r, fewer, f"phase {SCENARIOS[5]}: base 2 calls and commands, head 1")
+
+    def test_planted_no_setup_phase(self):
+        r = without(recording(), lambda e: e["phase"] == "setup")
+        self.assertIncomplete(r, r, "no setup phase")
+
+    def test_planted_no_sweep_phase(self):
+        r = without(recording(), lambda e: e["phase"] == "sweep")
+        self.assertIncomplete(r, r, "no sweep phase")
+
+    def test_planted_a_scenario_missing(self):
+        r = without(recording(), lambda e: e["phase"] == SCENARIOS[10])
+        self.assertIncomplete(r, r, f"22 scenario phases, the suite has {len(SCENARIOS)}")
+
+    def test_planted_a_phase_the_suite_lacks(self):
+        r = recording()
+        r.append({**r[-1], "seq": len(r), "phase": "a-24th-scenario"})
+        self.assertIncomplete(r, r, "a phase the suite does not have: a-24th-scenario")
+
+    def test_the_suite_has_23(self):
+        self.assertEqual(len(SCENARIOS), 23)
 
 
 def plant_sighash(events, old=0x41, new=0xC1):
