@@ -12,12 +12,15 @@
 //!
 //! Test code is every item a `#[cfg(test)]` attribute carries (a
 //! `mod tests { .. }` block, a function, a statement, a field, a variant, a
-//! match arm) and every file such an attribute declares (`#[cfg(test)]
-//! mod tests;`, with its `#[path = ".."]` when it has one):
-//! `src/test_support.rs`, `src/tracker_words_witnesses.rs`, the `tests.rs`
-//! files. Both are read from the comment-blanked text, so an attribute
-//! spelled in a comment or a string literal carries nothing and declares
-//! nothing.
+//! match arm) and every file that is test code whole, as `tools/ratchet`'s
+//! `test_files` reads it: a file under the crate's top-level `tests/`,
+//! `benches/` or `fuzz/`; a file a `#[cfg(test)] mod x;` declares (`x.rs` or
+//! `x/mod.rs`, or its `#[path = ".."]`); a file a plain `mod y;` declares
+//! inside a file that is already test code; and every file under such a
+//! module's directory; iterated until nothing grows. A file's name decides
+//! nothing. All of it is read from the comment-blanked text, so an
+//! attribute spelled in a comment or a string literal carries nothing and
+//! declares nothing.
 
 #![allow(dead_code)]
 
@@ -63,41 +66,125 @@ pub fn sources() -> Vec<Source> {
 /// The attribute that makes an item, or the file it declares, test code.
 const CFG_TEST: &str = "#[cfg(test)]";
 
-/// The files the `#[cfg(test)] mod name;` declarations of `paths` resolve
-/// to.
+/// The files that are test code whole, as `tools/ratchet`'s `test_files`
+/// reads them: a file under the crate's top-level `tests/`, `benches/` or
+/// `fuzz/`; a file a `#[cfg(test)] mod x;` declares (`x.rs` or `x/mod.rs`,
+/// or its `#[path]`); a file a plain `mod y;` declares inside a file that
+/// is already test code; and every file of `paths` under such a module's
+/// directory. Iterated until nothing grows. A file's name decides nothing.
 pub fn test_files(paths: &[PathBuf]) -> Vec<PathBuf> {
-    let mut out = Vec::new();
+    let root = root();
+    let mut lexed_files = BTreeMap::new();
     for p in paths {
         let text = std::fs::read_to_string(p).expect("a source file");
-        let (code, bare) = lexed(&text);
-        out.extend(declared_test_files(p, &code, &bare));
+        lexed_files.insert(p.clone(), lexed(&text));
     }
-    out
+    let mut test: Vec<PathBuf> = paths
+        .iter()
+        .filter(|p| {
+            p.strip_prefix(&root)
+                .ok()
+                .and_then(|r| r.iter().next())
+                .is_some_and(|top| ["tests", "benches", "fuzz"].iter().any(|t| top == *t))
+        })
+        .cloned()
+        .collect();
+    for (p, (code, bare)) in &lexed_files {
+        test.extend(declared_test_files(p, code, bare));
+    }
+    loop {
+        let mut grown = Vec::new();
+        for t in &test {
+            if let Some((code, bare)) = lexed_files.get(t) {
+                grown.extend(declared_files(t, code, bare));
+            }
+            let dir = if t.file_name().is_some_and(|n| n == "mod.rs") {
+                t.parent().expect("a directory").to_path_buf()
+            } else {
+                t.with_extension("")
+            };
+            grown.extend(paths.iter().filter(|p| p.starts_with(&dir)).cloned());
+        }
+        grown.retain(|g| !test.contains(g));
+        grown.sort();
+        grown.dedup();
+        if grown.is_empty() {
+            return test;
+        }
+        test.extend(grown);
+    }
 }
 
-/// The files one file's `#[cfg(test)] mod name;` declarations resolve to,
-/// as rustc resolves them: beside `lib.rs`, `main.rs` and `mod.rs`, in a
-/// directory of the declaring file's name otherwise, at its `#[path]` when
-/// one is given. Read from the file's comment-blanked views (`lexed`):
-/// `bare` says where an attribute and a declaration are, `code` holds the
-/// `#[path = ".."]` text. A `mod tests { .. }` block declares no file.
-pub fn declared_test_files(file: &Path, code: &[char], bare: &[char]) -> Vec<PathBuf> {
+/// The directory a file's `mod name;` declarations resolve in: beside
+/// `lib.rs`, `main.rs` and `mod.rs`, in a directory of the file's name
+/// otherwise.
+fn module_home(file: &Path) -> PathBuf {
     let dir = file.parent().expect("a directory");
     let stem = file
         .file_stem()
         .expect("a name")
         .to_string_lossy()
         .to_string();
-    let home = if ["lib", "main", "mod"].contains(&stem.as_str()) {
+    if ["lib", "main", "mod"].contains(&stem.as_str()) {
         dir.to_path_buf()
     } else {
         dir.join(&stem)
-    };
+    }
+}
+
+/// The files one file's `#[cfg(test)] mod name;` declarations resolve to,
+/// as rustc resolves them (`module_home`, then `name.rs` or
+/// `name/mod.rs`), at its `#[path]` when one is given. Read from the
+/// file's comment-blanked views (`lexed`): `bare` says where an attribute
+/// and a declaration are, `code` holds the `#[path = ".."]` text. A
+/// `mod tests { .. }` block declares no file.
+pub fn declared_test_files(file: &Path, code: &[char], bare: &[char]) -> Vec<PathBuf> {
+    let starts = occurrences(bare, CFG_TEST)
+        .into_iter()
+        .map(|at| at + CFG_TEST.len());
+    attributed_mods(file, code, bare, starts)
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
+}
+
+/// The files every `mod name;` of one file resolves to, whatever its
+/// attributes, at its `#[path]` when one is given: the modules a file that
+/// is test code declares are test code too.
+pub fn declared_files(file: &Path, code: &[char], bare: &[char]) -> Vec<PathBuf> {
+    let pathed = attributed_mods(file, code, bare, occurrences(bare, "#[path = \""));
+    let home = module_home(file);
+    let mut out: Vec<PathBuf> = Vec::new();
+    for at in occurrences(bare, "mod") {
+        let boundary = at == 0 || !is_ident(bare[at - 1]);
+        if !boundary || pathed.iter().any(|(k, _)| *k == at) {
+            continue;
+        }
+        if let Some(name) = declared_mod(bare, at) {
+            out.push(module_file(&home, &name));
+        }
+    }
+    out.extend(pathed.into_iter().map(|(_, path)| path));
+    out
+}
+
+/// The `mod name;` declarations whose attributes are read from each of
+/// `from`: where the `mod` keyword stands and the file it resolves to, at
+/// a `#[path]` among the attributes when one is given.
+fn attributed_mods(
+    file: &Path,
+    code: &[char],
+    bare: &[char],
+    from: impl IntoIterator<Item = usize>,
+) -> Vec<(usize, PathBuf)> {
+    let dir = file.parent().expect("a directory");
+    let home = module_home(file);
     let mut out = Vec::new();
-    for at in occurrences(bare, CFG_TEST) {
-        let (j, path) = further_attributes(dir, code, bare, at + CFG_TEST.len());
+    for at in from {
+        let (j, path) = further_attributes(dir, code, bare, at);
         if let Some(name) = declared_mod(bare, j) {
-            out.push(path.unwrap_or_else(|| module_file(&home, &name)));
+            let path = path.unwrap_or_else(|| module_file(&home, &name));
+            out.push((past_visibility(bare, j), path));
         }
     }
     out
@@ -135,7 +222,20 @@ fn further_attributes(
 /// The name a `mod name;` at `j` declares, past its `pub`, `pub(crate)`,
 /// `pub(super)` or `pub(in ..)`; `None` for anything else, a
 /// `mod name { .. }` block among them.
-fn declared_mod(bare: &[char], mut j: usize) -> Option<String> {
+fn declared_mod(bare: &[char], j: usize) -> Option<String> {
+    let mut j = past_visibility(bare, j);
+    if !starts(bare, j, "mod") || !bare.get(j + 3).is_some_and(|c| c.is_whitespace()) {
+        return None;
+    }
+    j = skip_space(bare, j + 3);
+    let name: String = bare[j..].iter().take_while(|c| is_ident(**c)).collect();
+    j = skip_space(bare, j + name.chars().count());
+    (!name.is_empty() && bare.get(j) == Some(&';')).then_some(name)
+}
+
+/// Where the item at `j` starts past its `pub`, `pub(crate)`,
+/// `pub(super)` or `pub(in ..)`.
+fn past_visibility(bare: &[char], mut j: usize) -> usize {
     let n = bare.len();
     if starts(bare, j, "pub") {
         j += 3;
@@ -144,13 +244,7 @@ fn declared_mod(bare: &[char], mut j: usize) -> Option<String> {
         }
         j = skip_space(bare, j);
     }
-    if !starts(bare, j, "mod") || !bare.get(j + 3).is_some_and(|c| c.is_whitespace()) {
-        return None;
-    }
-    j = skip_space(bare, j + 3);
-    let name: String = bare[j..].iter().take_while(|c| is_ident(**c)).collect();
-    j = skip_space(bare, j + name.chars().count());
-    (!name.is_empty() && bare.get(j) == Some(&';')).then_some(name)
+    j
 }
 
 /// The file of module `name` declared from `home`: `name.rs`, else

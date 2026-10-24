@@ -123,6 +123,7 @@ fn test_files_are_declared_in_code() {
         "src/main.rs",
         "src/chain_feed.rs",
         "src/spend_gate.rs",
+        "src/test_support.rs",
         "src/server/handlers.rs",
     ] {
         paths.push(root.join(f));
@@ -133,6 +134,7 @@ fn test_files_are_declared_in_code() {
         .collect();
     for f in [
         "src/test_support.rs",
+        "src/test_support/tx.rs",
         "src/tracker_words_witnesses.rs",
         "src/chain_feed_tests.rs",
         "src/spend_gate/tests.rs",
@@ -143,4 +145,45 @@ fn test_files_are_declared_in_code() {
             "{f} not seen as test code: {tests:?}"
         );
     }
+}
+
+#[test]
+fn a_test_modules_children_are_test_code() {
+    // A `#[cfg(test)] mod support;` with a `support/mod.rs`: the file a
+    // plain `mod tx;` there declares is test code, and so is a file under
+    // the module's directory that nothing declares. A `tests.rs` that a
+    // plain `mod tests;` declares is production code.
+    let dir = std::env::temp_dir().join(format!("arch-test-files-{}", std::process::id()));
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("support/deep")).unwrap();
+    for (f, text) in [
+        ("lib.rs", "#[cfg(test)]\nmod support;\nmod tests;\n"),
+        ("tests.rs", "fn f() {}\n"),
+        ("support/mod.rs", "mod tx;\n"),
+        ("support/tx.rs", "fn f() { None::<u8>.unwrap(); }\n"),
+        ("support/deep/stray.rs", "fn f() {}\n"),
+    ] {
+        std::fs::write(src.join(f), text).unwrap();
+    }
+    let paths: Vec<_> = [
+        "lib.rs",
+        "tests.rs",
+        "support/mod.rs",
+        "support/tx.rs",
+        "support/deep/stray.rs",
+    ]
+    .iter()
+    .map(|f| src.join(f))
+    .collect();
+    let mut tests: Vec<String> = arch_support::test_files(&paths)
+        .iter()
+        .map(|p| p.strip_prefix(&src).unwrap().display().to_string())
+        .collect();
+    tests.sort();
+    tests.dedup();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(
+        tests,
+        ["support/deep/stray.rs", "support/mod.rs", "support/tx.rs"]
+    );
 }
