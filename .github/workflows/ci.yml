@@ -179,6 +179,9 @@ jobs:
   bench:
     name: bench
     runs-on: ubuntu-latest
+    env:
+      # Over any rust-toolchain.toml a PR adds; the tool refuses another rustc -V.
+      RUSTUP_TOOLCHAIN: 1.98.1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

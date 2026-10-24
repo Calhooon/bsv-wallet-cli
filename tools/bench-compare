@@ -41,6 +41,11 @@ MIN_CALLS = 100
 # The runner runs an entry carries before the job gates on it; with fewer it
 # warns and passes (docs/BENCHES.md: a hosted runner's noise is unproven).
 MIN_RUNS = 5
+# The gate's compiler: the ratchet job's pin, and the bench job's
+# RUSTUP_TOOLCHAIN. --ci refuses any other rustc -V, so a PR adding a
+# rust-toolchain.toml cannot move the run off the entry's toolchain and
+# turn it into a warning.
+TOOLCHAIN_PIN = "1.98.1"
 BENCHES = ["gate_assess", "create_action_signed", "internalize_action", "list_outputs"]
 ENTRY_KEYS = {"profile", "gate", "machine", "toolchain", "runs"}
 
@@ -350,13 +355,17 @@ def ci(args):
         sys.exit("bench-compare: --ci measures its own results; --compare-only is a developer's reading")
     if not args["out"]:
         sys.exit("bench-compare: --ci needs --out FILE for the candidate baseline")
+    toolchain = sh("rustc", "-V")
+    if not toolchain.startswith(f"rustc {TOOLCHAIN_PIN} "):
+        sys.exit(f"bench-compare: --ci runs on rustc {TOOLCHAIN_PIN}, the job's pin; this checkout's rustc -V is "
+                 f"{toolchain} (a rust-toolchain.toml or another override is refused)")
     head = sh("git", "rev-parse", "HEAD")
     commit = os.environ.get("BENCH_COMMIT", "")
     if commit != head:
         sys.exit(f"bench-compare: BENCH_COMMIT ({commit or 'unset'}) is not the checked-out commit {head}: "
                  f"the job checks out the PR's head and stamps it")
     m = machine()
-    ctx = {"key": gate_key(m), "machine": m, "toolchain": sh("rustc", "-V"), "commit": head,
+    ctx = {"key": gate_key(m), "machine": m, "toolchain": toolchain, "commit": head,
            "run_id": os.environ.get("GITHUB_RUN_ID"), "recorded": datetime.date.today().isoformat()}
     measured = read_results(run_benches())
     base = load(args["base"]) if args["base"] else None
