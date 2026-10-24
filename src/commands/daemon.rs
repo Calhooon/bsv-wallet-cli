@@ -190,17 +190,6 @@ mod tests {
         }
     }
 
-    /// The one `daemon_fault` line a test logged, its message and error.
-    fn fault_line(markers: &crate::test_support::Markers) -> (String, String) {
-        let lines = markers.named("daemon_fault");
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        let line = lines[0].clone();
-        (
-            line.message.unwrap_or_default(),
-            line.error.unwrap_or_default(),
-        )
-    }
-
     #[tokio::test]
     async fn a_server_that_fails_ends_the_daemon_with_its_error_within_the_grace() {
         let (markers, _guard) = crate::test_support::Markers::capture();
@@ -226,7 +215,7 @@ mod tests {
         );
         assert!(words.contains("Address already in use"), "{words}");
         assert!(stopped.load(Ordering::SeqCst), "the monitor was stopped");
-        let (message, error) = fault_line(&markers);
+        let (message, error) = markers.fault_line();
         assert_eq!(
             message,
             "daemon: the HTTP server stopped; stopping the monitor"
@@ -253,7 +242,7 @@ mod tests {
         .expect_err("a panicked server is the daemon's error");
         assert!(format!("{e:#}").contains("server task panicked"));
         assert!(stopped.load(Ordering::SeqCst));
-        let (message, error) = fault_line(&markers);
+        let (message, error) = markers.fault_line();
         assert_eq!(
             message,
             "daemon: the HTTP server stopped; stopping the monitor"
@@ -285,7 +274,7 @@ mod tests {
         assert!(words.contains("failed to listen for ctrl-c"), "{words}");
         assert!(words.contains("signal registration refused"), "{words}");
         assert!(stopped.load(Ordering::SeqCst), "the monitor was stopped");
-        let (message, error) = fault_line(&markers);
+        let (message, error) = markers.fault_line();
         assert_eq!(
             message,
             "daemon: failed to listen for ctrl-c; stopping the monitor"

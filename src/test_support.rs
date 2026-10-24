@@ -203,6 +203,17 @@ impl Markers {
             .filter(|m| m.marker == marker)
             .collect()
     }
+
+    /// The one `daemon_fault` line a test logged, its message and error.
+    pub fn fault_line(&self) -> (String, String) {
+        let lines = self.named("daemon_fault");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = lines[0].clone();
+        (
+            line.message.unwrap_or_default(),
+            line.error.unwrap_or_default(),
+        )
+    }
 }
 
 impl tracing::field::Visit for Marked {
