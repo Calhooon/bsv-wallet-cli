@@ -38,7 +38,7 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{shown_secret, shown_url, ConfigError, Raw, Secret, ServicesSettings};
+use crate::config::{shown_secret, shown_url, Raw, Reader, Secret, ServicesSettings};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -194,19 +194,19 @@ pub struct ExplorerSettings {
 impl ExplorerSettings {
     /// The settings from the environment as read at start, on `chain`: a
     /// base that is set and not blank must be a URL.
-    pub(crate) fn read(raw: &Raw, chain: Chain) -> Result<Self, ConfigError> {
+    pub(crate) fn read(raw: &Reader, chain: Chain) -> Self {
         let key = |name| api_key_for(raw.get(name)).map(Secret::new);
-        Ok(Self {
+        Self {
             woc_api_key: key("WOC_API_KEY"),
             bitails_api_key: key("BITAILS_API_KEY"),
-            bananablocks_base: raw.present_url("BANANABLOCKS_BASE")?,
+            bananablocks_base: raw.present_url("BANANABLOCKS_BASE"),
             bases: ExplorerBases::configured(
                 chain,
-                raw.url("WOC_BASE")?.as_deref(),
-                raw.url("BITAILS_BASE")?.as_deref(),
+                raw.url("WOC_BASE").as_deref(),
+                raw.url("BITAILS_BASE").as_deref(),
                 raw.get("ARC_GORILLAPOOL_URL"),
             ),
-        })
+        }
     }
 
     /// The settings' rows for `crate::config::Config::knobs`, in their order.

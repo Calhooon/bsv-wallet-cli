@@ -17,16 +17,22 @@
 //! table, `src/CLAUDE.md`). A number, an address or a URL that does not
 //! parse is refused at start with a [`ConfigError`] naming the variable and
 //! the shape it must have, never read as its default; unset or blank is the
-//! default. A switch keeps the words it always had (each group's field
-//! says which), and `CHAINTRACKS_URL` stays required where a command builds
-//! its services ([`ServicesSettings::header_service`]), so a command that
-//! asks no chain (`init`, `config`) runs without it.
+//! default. Every refusal is found in one reading and returned together
+//! ([`Refused`]), with the configuration read with each refused setting at
+//! its default: `bsv-wallet config` prints it with the refused rows marked
+//! and exits 1, `init` (which asks no setting) runs, and every other
+//! command refuses at start naming every refused variable. A switch keeps
+//! the words it always had (each group's field says which), and
+//! `CHAINTRACKS_URL` stays required where a command builds its services
+//! ([`ServicesSettings::header_service`]), so a command that asks no chain
+//! (`init`, `config`) runs without it.
 //!
 //! A key or a token is a [`Secret`]: its `Debug` and `Display` print
 //! `<set>`. [`Config::knobs`] lists every setting with its effective value
 //! and its [`Source`]; `bsv-wallet config` prints that list, and `daemon`
 //! and `serve` log it as one line ([`Config::log_line`]) at start.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::IpAddr;
@@ -181,6 +187,44 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Every setting refused at start, together: one line each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigErrors(pub Vec<ConfigError>);
+
+impl fmt::Display for ConfigErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, e) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("\n")?;
+            }
+            write!(f, "{e}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ConfigErrors {}
+
+/// [`Config::load`]'s refusal: every setting refused, and the configuration
+/// read with each of them at its default, for the commands that run without
+/// them (`config` prints it with the refused rows marked; `init` asks no
+/// setting of it).
+#[derive(Debug, Clone)]
+pub struct Refused {
+    /// The settings refused, in the knob list's order of reading.
+    pub errors: ConfigErrors,
+    /// The configuration, each refused setting at its default.
+    pub config: Box<Config>,
+}
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.errors.fmt(f)
+    }
+}
+
+impl std::error::Error for Refused {}
+
 /// The command line's part: the global flags and which were given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flags {
@@ -227,14 +271,49 @@ impl Raw {
     pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0.get(name).map(String::as_str)
     }
+}
+
+/// The environment being parsed into its settings: the snapshot, and every
+/// setting refused so far. A refused setting reads as unset (its default),
+/// so the reading goes on and every refusal is found in one pass.
+pub(crate) struct Reader<'a> {
+    raw: &'a Raw,
+    refused: RefCell<Vec<ConfigError>>,
+}
+
+impl<'a> Reader<'a> {
+    fn new(raw: &'a Raw) -> Self {
+        Self {
+            raw,
+            refused: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The settings refused, in the order they were read.
+    fn into_refused(self) -> Vec<ConfigError> {
+        self.refused.into_inner()
+    }
+
+    /// `result`'s value, or `None` with its refusal kept.
+    fn kept<T>(&self, result: Result<Option<T>, ConfigError>) -> Option<T> {
+        result.unwrap_or_else(|e| {
+            self.refused.borrow_mut().push(e);
+            None
+        })
+    }
+
+    /// The value as set, when it is set.
+    pub(crate) fn get(&self, name: &str) -> Option<&'a str> {
+        self.raw.0.get(name).map(String::as_str)
+    }
 
     /// The value when it is set and not blank, trimmed.
-    fn given(&self, name: &str) -> Option<&str> {
+    fn given(&self, name: &str) -> Option<&'a str> {
         self.get(name).map(str::trim).filter(|v| !v.is_empty())
     }
 
     /// The value as set, when it is set and not empty (blank is kept).
-    fn non_empty(&self, name: &str) -> Option<&str> {
+    fn non_empty(&self, name: &str) -> Option<&'a str> {
         self.get(name).filter(|v| !v.is_empty())
     }
 
@@ -248,29 +327,27 @@ impl Raw {
     }
 
     /// A number: unset or blank is `None`, anything else must parse.
-    fn number<T: FromStr>(
-        &self,
-        name: &'static str,
-        expected: &'static str,
-    ) -> Result<Option<T>, ConfigError> {
-        self.given(name)
-            .map(|v| v.parse().map_err(|_| refused(name, v, expected)))
-            .transpose()
+    fn number<T: FromStr>(&self, name: &'static str, expected: &'static str) -> Option<T> {
+        self.kept(
+            self.given(name)
+                .map(|v| v.parse().map_err(|_| refused(name, v, expected)))
+                .transpose(),
+        )
     }
 
     /// A URL: unset or blank is `None`, anything else must be an http or
     /// https URL with a host. The value is kept as set, trimmed.
-    pub(crate) fn url(&self, name: &'static str) -> Result<Option<String>, ConfigError> {
-        self.given(name).map(|v| checked_url(name, v)).transpose()
+    pub(crate) fn url(&self, name: &'static str) -> Option<String> {
+        self.kept(self.given(name).map(|v| checked_url(name, v)).transpose())
     }
 
     /// A URL whose empty value means something (off): unset is `None`, set
     /// is the value trimmed, which must be a URL unless it is blank.
-    pub(crate) fn present_url(&self, name: &'static str) -> Result<Option<String>, ConfigError> {
-        match self.get(name).map(str::trim) {
+    pub(crate) fn present_url(&self, name: &'static str) -> Option<String> {
+        self.kept(match self.get(name).map(str::trim) {
             Some(v) if !v.is_empty() => checked_url(name, v).map(Some),
             other => Ok(other.map(str::to_string)),
-        }
+        })
     }
 }
 
@@ -318,7 +395,7 @@ pub struct WalletSettings {
 }
 
 impl WalletSettings {
-    fn read(flags: &Flags, raw: &Raw) -> Self {
+    fn read(flags: &Flags, raw: &Reader) -> Self {
         Self {
             db: flags.db.clone(),
             chain: if flags.testnet {
@@ -379,27 +456,26 @@ pub struct ServicesSettings {
 }
 
 impl ServicesSettings {
-    fn read(raw: &Raw, chain: Chain) -> Result<Self, ConfigError> {
+    fn read(raw: &Reader, chain: Chain) -> Self {
         let chaintracks_url = match raw.given("CHAINTRACKS_URL") {
             Some(v) if v.eq_ignore_ascii_case("off") => Some(v.to_string()),
-            Some(v) => Some(checked_url("CHAINTRACKS_URL", v)?),
-            None => None,
+            _ => raw.url("CHAINTRACKS_URL"),
         };
-        Ok(Self {
+        Self {
             chaintracks_url,
             break_glass_explorer_headers: raw.switch("BREAK_GLASS_EXPLORER_HEADERS", false, |v| {
                 crate::services_env::break_glass_explorer_headers(Some(v))
             }),
-            arc_url: raw.url("ARC_URL")?,
+            arc_url: raw.url("ARC_URL"),
             arc_mode_arcade: raw.switch("ARC_MODE", false, |v| v.eq_ignore_ascii_case("arcade")),
             arcade_flag: raw.switch("ARCADE", false, yes),
             callback_token: raw.secret("CALLBACK_TOKEN"),
-            public_callback_url: raw.url("PUBLIC_CALLBACK_URL")?,
+            public_callback_url: raw.url("PUBLIC_CALLBACK_URL"),
             taal_api_key: raw.secret("TAAL_API_KEY"),
             main_taal_api_key: raw.secret("MAIN_TAAL_API_KEY"),
-            explorers: crate::services_env::ExplorerSettings::read(raw, chain)?,
-            arc_gorillapool_url: raw.present_url("ARC_GORILLAPOOL_URL")?,
-        })
+            explorers: crate::services_env::ExplorerSettings::read(raw, chain),
+            arc_gorillapool_url: raw.present_url("ARC_GORILLAPOOL_URL"),
+        }
     }
 
     /// Arcade V2 mode (`ARC_MODE=arcade` or `ARCADE=1`).
@@ -434,7 +510,7 @@ pub struct HostSettings {
 }
 
 impl HostSettings {
-    fn read(raw: &Raw) -> Result<Self, ConfigError> {
+    fn read(raw: &Reader) -> Self {
         use crate::tracker_host::{DEFAULT_AGE_SECS, DEFAULT_MAX_ASKS, DEFAULT_SPEND_DEPTH};
         let off = |v: &str| {
             !matches!(
@@ -442,9 +518,9 @@ impl HostSettings {
                 "0" | "false" | "no" | "off"
             )
         };
-        Ok(Self {
+        Self {
             spend_depth: raw
-                .number("SPEND_DEPTH", "a block depth (a whole number)")?
+                .number("SPEND_DEPTH", "a block depth (a whole number)")
                 .unwrap_or(DEFAULT_SPEND_DEPTH)
                 .max(DEFAULT_SPEND_DEPTH),
             spend_own_change: raw.switch(
@@ -453,13 +529,13 @@ impl HostSettings {
                 off,
             ),
             tracker_age_secs: raw
-                .number("TRACKER_AGE_SECS", "a number of seconds")?
+                .number("TRACKER_AGE_SECS", "a number of seconds")
                 .unwrap_or(DEFAULT_AGE_SECS)
                 .max(1),
             tracker_max_asks: raw
-                .number("TRACKER_MAX_ASKS", "a whole number")?
+                .number("TRACKER_MAX_ASKS", "a whole number")
                 .unwrap_or(DEFAULT_MAX_ASKS),
-        })
+        }
     }
 }
 
@@ -476,18 +552,18 @@ pub struct ReconcileSettings {
 }
 
 impl ReconcileSettings {
-    fn read(raw: &Raw) -> Result<Self, ConfigError> {
+    fn read(raw: &Reader) -> Self {
         use crate::broadcast_reconcile::{DEFAULT_ABSENCE_MINUTES, DEFAULT_INTERVAL_SECS};
-        Ok(Self {
+        Self {
             enabled: raw.switch("BROADCAST_RECONCILE", true, not_zero_or_false),
             interval_secs: raw
-                .number("BROADCAST_RECONCILE_INTERVAL_SECS", "a number of seconds")?
+                .number("BROADCAST_RECONCILE_INTERVAL_SECS", "a number of seconds")
                 .unwrap_or(DEFAULT_INTERVAL_SECS)
                 .max(5),
             absence_minutes: raw
-                .number("BROADCAST_ABSENCE_MINUTES", "a number of minutes")?
+                .number("BROADCAST_ABSENCE_MINUTES", "a number of minutes")
                 .unwrap_or(DEFAULT_ABSENCE_MINUTES),
-        })
+        }
     }
 }
 
@@ -503,7 +579,7 @@ pub struct VerifySettings {
 }
 
 impl VerifySettings {
-    fn read(raw: &Raw) -> Result<Self, ConfigError> {
+    fn read(raw: &Reader) -> Self {
         use crate::broadcast_verify::{DEFAULT_ATTEMPTS, DEFAULT_DELAY_MS};
         let truthy = |v: &str| {
             matches!(
@@ -511,19 +587,19 @@ impl VerifySettings {
                 "1" | "true" | "yes" | "on"
             )
         };
-        Ok(Self {
+        Self {
             skip: raw.switch("BSV_WALLET_SKIP_BROADCAST_VERIFY", false, truthy),
             attempts: raw
-                .number("BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS", "a whole number")?
+                .number("BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS", "a whole number")
                 .filter(|n| *n > 0)
                 .unwrap_or(DEFAULT_ATTEMPTS),
             delay_ms: raw
                 .number(
                     "BSV_WALLET_BROADCAST_VERIFY_DELAY_MS",
                     "a number of milliseconds",
-                )?
+                )
                 .unwrap_or(DEFAULT_DELAY_MS),
-        })
+        }
     }
 }
 
@@ -542,15 +618,15 @@ pub struct ServerSettings {
 }
 
 impl ServerSettings {
-    fn read(raw: &Raw) -> Result<Self, ConfigError> {
-        Ok(Self {
+    fn read(raw: &Reader) -> Self {
+        Self {
             bind_addr: raw
-                .number("BIND_ADDR", "an IP address")?
+                .number("BIND_ADDR", "an IP address")
                 .unwrap_or(IpAddr::from([127, 0, 0, 1])),
             auth_token: raw.get("AUTH_TOKEN").map(Secret::new),
             tls_cert_path: raw.get("TLS_CERT_PATH").map(str::to_string),
             tls_key_path: raw.get("TLS_KEY_PATH").map(str::to_string),
-        })
+        }
     }
 }
 
@@ -574,20 +650,20 @@ pub struct DaemonSettings {
 }
 
 impl DaemonSettings {
-    fn read(raw: &Raw) -> Result<Self, ConfigError> {
+    fn read(raw: &Reader) -> Self {
         let seconds = "a number of seconds";
-        Ok(Self {
+        Self {
             check_proofs_interval_secs: raw
-                .number("MONITOR_CHECK_PROOFS_INTERVAL_SECS", seconds)?
+                .number("MONITOR_CHECK_PROOFS_INTERVAL_SECS", seconds)
                 .filter(|s| *s > 0),
-            min_utxos: raw.number("MIN_UTXOS", "a whole number")?.unwrap_or(3),
+            min_utxos: raw.number("MIN_UTXOS", "a whole number").unwrap_or(3),
             reconcile_abandoned: raw.switch("RECONCILE_ABANDONED", true, not_zero_or_false),
             reconcile_abandoned_min_age_secs: raw
-                .number("RECONCILE_ABANDONED_MIN_AGE_SECS", seconds)?
+                .number("RECONCILE_ABANDONED_MIN_AGE_SECS", seconds)
                 .unwrap_or(3600),
-            relay_url: raw.url("RELAY_URL")?,
-            relay_poll_secs: raw.number("RELAY_POLL_SECS", seconds)?.unwrap_or(10),
-        })
+            relay_url: raw.url("RELAY_URL"),
+            relay_poll_secs: raw.number("RELAY_POLL_SECS", seconds).unwrap_or(10),
+        }
     }
 }
 
@@ -610,6 +686,7 @@ pub struct Config {
     pub daemon: DaemonSettings,
     given: Vec<&'static str>,
     raw: Raw,
+    refused: Vec<ConfigError>,
 }
 
 impl Config {
@@ -617,8 +694,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// A variable whose value does not have its shape ([`ConfigError`]).
-    pub fn load(flags: &Flags) -> Result<Self, ConfigError> {
+    /// Every variable whose value does not have its shape, together
+    /// ([`Refused`]).
+    pub fn load(flags: &Flags) -> Result<Self, Refused> {
         Self::from_vars(flags, environment())
     }
 
@@ -631,20 +709,44 @@ impl Config {
     pub fn from_vars(
         flags: &Flags,
         vars: impl IntoIterator<Item = (String, String)>,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, Refused> {
         let raw = Raw::read(vars);
-        let wallet = WalletSettings::read(flags, &raw);
-        Ok(Self {
-            services: ServicesSettings::read(&raw, wallet.chain)?,
+        let r = Reader::new(&raw);
+        let wallet = WalletSettings::read(flags, &r);
+        let services = ServicesSettings::read(&r, wallet.chain);
+        let host = HostSettings::read(&r);
+        let reconcile = ReconcileSettings::read(&r);
+        let verify = VerifySettings::read(&r);
+        let server = ServerSettings::read(&r);
+        let daemon = DaemonSettings::read(&r);
+        let refused = r.into_refused();
+        let config = Self {
             wallet,
-            host: HostSettings::read(&raw)?,
-            reconcile: ReconcileSettings::read(&raw)?,
-            verify: VerifySettings::read(&raw)?,
-            server: ServerSettings::read(&raw)?,
-            daemon: DaemonSettings::read(&raw)?,
+            services,
+            host,
+            reconcile,
+            verify,
+            server,
+            daemon,
             given: flags.given.clone(),
             raw,
-        })
+            refused,
+        };
+        if config.refused.is_empty() {
+            Ok(config)
+        } else {
+            Err(Refused {
+                errors: ConfigErrors(config.refused.clone()),
+                config: Box::new(config),
+            })
+        }
+    }
+
+    /// The settings refused at start (empty for a configuration
+    /// [`Config::load`] answered).
+    #[must_use]
+    pub fn refused(&self) -> &[ConfigError] {
+        &self.refused
     }
 
     /// The configuration with the default flags and these variables set,
@@ -653,7 +755,7 @@ impl Config {
     /// # Errors
     ///
     /// As [`Config::load`].
-    pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self, ConfigError> {
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self, Refused> {
         let vars = pairs
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()));
@@ -720,8 +822,9 @@ impl RelaySettings {
     ///
     /// # Errors
     ///
-    /// A variable whose value does not have its shape ([`ConfigError`]).
-    pub fn load() -> Result<Self, ConfigError> {
+    /// Every variable whose value does not have its shape, together
+    /// ([`ConfigErrors`]).
+    pub fn load() -> Result<Self, ConfigErrors> {
         Self::from_vars(environment())
     }
 
@@ -732,21 +835,28 @@ impl RelaySettings {
     /// As [`RelaySettings::load`].
     pub fn from_vars(
         vars: impl IntoIterator<Item = (String, String)>,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, ConfigErrors> {
         let raw = Raw::read(vars);
-        Ok(Self {
+        let raw = Reader::new(&raw);
+        let settings = Self {
             db: raw
                 .get("RELAY_DB")
                 .map_or_else(|| "relay.db".to_string(), str::to_string),
-            port: raw.number("RELAY_PORT", "a port")?.unwrap_or(3390),
+            port: raw.number("RELAY_PORT", "a port").unwrap_or(3390),
             bind_addr: raw
-                .number("BIND_ADDR", "an IP address")?
+                .number("BIND_ADDR", "an IP address")
                 .unwrap_or(IpAddr::from([0, 0, 0, 0])),
             admin_token: raw.secret("RELAY_ADMIN_TOKEN"),
             require_register: raw.switch("RELAY_REQUIRE_REGISTER", false, |v| {
                 v == "1" || v.eq_ignore_ascii_case("true")
             }),
             rust_log: raw.get("RUST_LOG").map(str::to_string),
-        })
+        };
+        let refused = raw.into_refused();
+        if refused.is_empty() {
+            Ok(settings)
+        } else {
+            Err(ConfigErrors(refused))
+        }
     }
 }

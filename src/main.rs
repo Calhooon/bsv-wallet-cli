@@ -50,7 +50,18 @@ async fn main() -> Result<()> {
 
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
-    let config = Arc::new(config::Config::load(&flags(&cli, &matches))?);
+    let config = match config::Config::load(&flags(&cli, &matches)) {
+        Ok(config) => config,
+        // A setting refused at start: `config` prints the table with the
+        // refused rows marked and exits 1, `init` asks no setting and runs
+        // without them, and every other command refuses naming them all.
+        Err(refused) => match &cli.command {
+            Commands::Config => return commands::config::run(&refused.config, cli.json),
+            Commands::Init { .. } => *refused.config,
+            _ => return Err(refused.into()),
+        },
+    };
+    let config = Arc::new(config);
 
     // Init tracing: `RUST_LOG` as the configuration read it.
     let filter = if cli.verbose {

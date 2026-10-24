@@ -20,6 +20,10 @@ pub struct Knob {
     pub value: String,
     /// Where the value came from.
     pub source: Source,
+    /// The shape the value must have, when it was refused at start (the
+    /// value is then as set, and the setting reads as its default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refused: Option<&'static str>,
 }
 
 const NONE: &str = "-";
@@ -47,10 +51,14 @@ impl Config {
         values.extend(self.server_values());
         values
             .into_iter()
-            .map(|(name, value)| Knob {
-                name,
-                value,
-                source: self.source(name),
+            .map(|(name, value)| {
+                let refused = self.refused.iter().find(|e| e.variable == name);
+                Knob {
+                    name,
+                    value: refused.map_or(value, |e| e.value.clone()),
+                    source: self.source(name),
+                    refused: refused.map(|e| e.expected),
+                }
             })
             .collect()
     }
