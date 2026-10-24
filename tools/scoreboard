@@ -85,6 +85,19 @@ base's holds (a count can be kept by a swap, a list cannot: renaming rule A3 to
 A9, or deleting A4's file and adding an empty A7, keeps `arch:rules` and loses
 an element). A key the base holds may not vanish from the tree, of any kind.
 The ratchets' own numbers are tools/ratchet's to compare.
+
+A key `floor:<file>:measured` (true or false) says whether
+docs/scoreboard/mutants.json names the file. The floors' rule: a floor may fall
+only when the base carries no measurement for its file (no
+docs/scoreboard/mutants.json at the base, or no entry for the file in it) and
+the tree's record carries one, so a provisional floor is replaced by its first
+measured value once and with a notice; a floor with a measurement at the base
+may never fall, a provisional floor may not be lowered without a night's
+measurement, and a measurement at the base may not vanish from the tree. A base
+rendered by a tool older than the key carries no `:measured` key at all, and
+every floor of it reads as unmeasured: such a base also predates
+docs/scoreboard/mutants.json, which landed with the key (#76). A base that
+carries the key for some floors and not for another is a fault.
 """
 
 import argparse
@@ -116,6 +129,8 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # A key's direction: "floor" may not fall (nor leave the tree), "ceiling" may not rise.
 FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules)$")
 CEILING_KEYS = re.compile(r"^allowlist:A\d+:(files|sites)$")
+# A floor's flag: whether docs/scoreboard/mutants.json measured its file (a bool).
+MEASURED_KEYS = re.compile(r"^floor:.+:measured$")
 # A key whose value is a sorted list of names: it may not lose an element.
 LIST_KEYS = re.compile(r"^(arch:rule-ids|floor:files|consumers:names)$")
 
@@ -399,7 +414,8 @@ def mutation_rows():
     for file, floor in named:
         score = scores.get(file)
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
-        rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`", {f"floor:{file}": floor}))
+        rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`",
+                        {f"floor:{file}": floor, f"floor:{file}:measured": score is not None}))
     rows[0].values["floor:files"] = [file for file, _ in named]
     return rows
 
@@ -566,7 +582,10 @@ def load_base(file):
         fail(name, "schema", "must be 1")
     vals = require_object(name, "values", base.get("values"))
     for key, v in vals.items():
-        if LIST_KEYS.match(key):
+        if MEASURED_KEYS.match(key):
+            if not isinstance(v, bool):
+                fail(name, f"values.{key}", "must be true or false")
+        elif LIST_KEYS.match(key):
             if not isinstance(v, list) or not all(isinstance(e, str) and e for e in v):
                 fail(name, f"values.{key}", "must be a list of names")
         elif FLOOR_KEYS.match(key) or CEILING_KEYS.match(key):
@@ -574,18 +593,40 @@ def load_base(file):
                 fail(name, f"values.{key}", "must be a number")
         else:
             fail(name, f"values.{key}", "is not a key this tool compares")
+    if any(MEASURED_KEYS.match(k) for k in vals):
+        for key in vals:
+            if is_floor(key) and f"{key}:measured" not in vals:
+                fail(name, f"values.{key}:measured", "missing; the base says whether its other floors were measured")
     return vals
+
+
+def is_floor(key):
+    """A mutation floor's own key, floor:<file> (not its flag, not floor:files)."""
+    return key.startswith("floor:") and not MEASURED_KEYS.match(key) and not LIST_KEYS.match(key)
 
 
 def falls(base, tree):
     """Every value of the tree that moved the wrong way from the base's: a number
     that fell (or rose, for an allowlist), a list that lost an element, a key
-    that vanished."""
-    out = []
+    that vanished; and the notices, one per provisional floor its first
+    measurement lowered (the floors' rule, in the header)."""
+    out, notices = [], []
     for key in sorted(base):
         b, t = base[key], tree.get(key)
         if t is None:
             out.append(f"a key may not vanish: {key}")
+        elif MEASURED_KEYS.match(key):
+            if b and not t:
+                out.append(f"{key}: measured at the base, unmeasured in the tree; a measurement may not vanish")
+        elif is_floor(key) and t < b:
+            if base.get(f"{key}:measured", False):
+                out.append(f"{key}: {b:g} at the base, {t:g} in the tree; a measured floor may not fall")
+            elif tree.get(f"{key}:measured"):
+                notices.append(f"{key}: {b:g} at the base (provisional, unmeasured), {t:g} in the tree "
+                               "(measured); the first measurement replaces a provisional floor once")
+            else:
+                out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall "
+                           "(a provisional floor may not be lowered without a night's measurement)")
         elif LIST_KEYS.match(key):
             for lost in sorted(set(b) - set(t)):
                 out.append(f"{key}: {lost} at the base, gone from the tree; a list may not lose an element")
@@ -594,7 +635,7 @@ def falls(base, tree):
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall")
         elif t > b:
             out.append(f"{key}: {b:g} at the base, {t:g} in the tree; an allowlist may not grow")
-    return out
+    return out, notices
 
 
 def split_doc(text):
@@ -649,7 +690,9 @@ def main():
         status = 1
     if args.base:
         base = load_base(args.base)
-        fell = falls(base, values(all_rows))
+        fell, notices = falls(base, values(all_rows))
+        for line in notices:
+            print(f"scoreboard: notice: {line}")
         for line in fell:
             print(f"scoreboard: {line}")
         if fell:

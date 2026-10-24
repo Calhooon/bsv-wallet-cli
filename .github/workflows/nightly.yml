@@ -8,6 +8,10 @@ name: Nightly
 # A mutation floor is a measured floor that only rises: a file's floor is the
 # score a night measured, rounded down, and it is raised in the same commit as
 # the tests that earn the raise, never by an edit alone (docs/NIGHTLY.md).
+# tools/scoreboard --check --base lets a floor fall only when the base
+# carries no measurement for its file (no docs/scoreboard/mutants.json at the
+# base, or no entry for the file in it) and the tree's record carries one; a
+# floor with a measurement at the base may never fall.
 #
 # GitHub fires `schedule` only from the default branch (main) and registers
 # workflow_dispatch there too, so a copy of this file lives on main and every

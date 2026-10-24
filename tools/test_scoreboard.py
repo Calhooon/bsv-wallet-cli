@@ -375,6 +375,74 @@ class NoNumberFallsFromTheBase(Case):
         self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 70,"))
         self.refused_against(base, "floor:src/spend_gate.rs: 80 at the base, 70 in the tree; it may not fall")
 
+    # The floors' rule (#76): a floor may fall only from a base that carries no
+    # measurement for its file to a tree whose record carries one.
+
+    def lower_spend_gate(self, score):
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 75,"))
+        if score is not None:
+            mutants = json.loads(json.dumps(MUTANTS))
+            mutants["files"]["src/spend_gate.rs"]["score"] = score
+            self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+
+    def test_a_provisional_floor_its_first_measurement_lowers_passes(self):
+        base = self.tree.values()
+        self.lower_spend_gate(75.4)
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        notice = ("scoreboard: notice: floor:src/spend_gate.rs: 80 at the base (provisional, unmeasured), "
+                  "75 in the tree (measured)")
+        self.assertIn(notice, out)
+        print(f"\n    exit 0: {[l for l in out.splitlines() if 'notice' in l][0]}", end=" ", file=sys.stderr)
+
+    def test_a_measured_floor_that_falls_is_refused(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
+        base = self.tree.values()
+        self.lower_spend_gate(75.4)
+        self.refused_against(base, "floor:src/spend_gate.rs: 80 at the base, 75 in the tree; a measured floor may not fall")
+
+    def test_a_provisional_floor_lowered_without_a_measurement_is_refused(self):
+        base = self.tree.values()
+        self.lower_spend_gate(None)
+        self.refused_against(base, "floor:src/spend_gate.rs: 80 at the base, 75 in the tree; it may not fall "
+                                   "(a provisional floor may not be lowered without a night's measurement)")
+
+    def test_a_measured_floor_that_rises_passes(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
+        base = self.tree.values()
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", ": 85,"))
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_measurement_that_vanishes_is_refused(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
+        base = self.tree.values()
+        self.tree.remove("docs/scoreboard/mutants.json")
+        self.refused_against(base, "floor:src/spend_gate.rs:measured: measured at the base, unmeasured in the tree")
+
+    def test_a_base_older_than_the_flag_reads_as_unmeasured(self):
+        base = self.tree.values()
+        with open(base) as f:
+            vals = json.load(f)
+        vals["values"] = {k: v for k, v in vals["values"].items() if not k.endswith(":measured")}
+        with open(base, "w") as f:
+            json.dump(vals, f)
+        self.lower_spend_gate(75.4)
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("notice: floor:src/spend_gate.rs: 80 at the base (provisional, unmeasured)", out)
+
+    def test_a_base_missing_one_flag_is_refused(self):
+        base = self.tree.values()
+        with open(base) as f:
+            vals = json.load(f)
+        del vals["values"]["floor:src/spend_gate.rs:measured"]
+        with open(base, "w") as f:
+            json.dump(vals, f)
+        self.refused_against(base, "values.floor:src/spend_gate.rs:measured: missing")
+
     def test_a_removed_floor_is_refused(self):
         base = self.tree.values()
         self.tree.write(".github/workflows/nightly.yml",
