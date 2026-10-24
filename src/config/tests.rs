@@ -301,6 +301,24 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
     assert!(c.services.callback_token.is_none());
 }
 
+#[test]
+fn arc_mode_and_arcade_each_show_their_own_value() {
+    let row = |c: &Config, name: &str| {
+        let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
+        (k.value, k.source)
+    };
+    let c = config(&[("ARCADE", "1")]);
+    assert!(c.services.arcade());
+    assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
+    assert_eq!(row(&c, "ARCADE"), ("on".to_string(), Source::Env));
+    let c = config(&[("ARC_MODE", "Arcade")]);
+    assert!(c.services.arcade());
+    assert_eq!(row(&c, "ARC_MODE"), ("Arcade".to_string(), Source::Env));
+    assert_eq!(row(&c, "ARCADE"), ("off".to_string(), Source::Default));
+    let c = Config::default();
+    assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
+}
+
 /// Every environment variable `bsv-wallet` reads, in the knob list's order.
 const VARIABLES: &[&str] = &[
     "ROOT_KEY",

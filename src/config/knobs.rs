@@ -118,10 +118,9 @@ impl Config {
                 on_off(s.break_glass_explorer_headers),
             ),
             ("ARC_URL", arc_url),
-            (
-                "ARC_MODE",
-                if s.arcade() { "arcade" } else { "classic" }.to_string(),
-            ),
+            // ARC_MODE's own value as set: the mode in effect is this or
+            // ARCADE's, each on its own row.
+            ("ARC_MODE", or_none(self.raw.get("ARC_MODE"))),
             ("ARCADE", on_off(s.arcade_flag)),
             (
                 "CALLBACK_TOKEN",
