@@ -295,6 +295,42 @@ class FailClosed(unittest.TestCase):
         self.assertEqual(len(SCENARIOS), 23)
 
 
+class LogRulesOnlyOnStderr(unittest.TestCase):
+    """Finding 7: the clock and length rules of cli.stderr touch nothing else; revelationTime is its own."""
+
+    def test_floor_stderr_clock_and_lengths(self):
+        a, b = recording(), recording()
+        a[-1]["stderr"] = "2026-10-24T03:45:52.008Z  INFO explorer_call ms=12 bytes=4021\n"
+        b[-1]["stderr"] = "2026-10-24T03:46:01.311Z  INFO explorer_call ms=9 bytes=4022\n"
+        lines, count = compare(a, b)
+        self.assertEqual(count, 0, lines)
+
+    def test_planted_a_time_in_a_response_is_caught(self):
+        lines, count = compare(recording({"createdAt": "2026-10-24T03:45:52.008Z"}),
+                               recording({"createdAt": "2026-10-24T03:46:52.008Z"}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn(".response.createdAt", lines[1])
+
+    def test_planted_ms_in_stdout_is_caught(self):
+        a, b = recording(), recording()
+        a[-1]["stdout"], b[-1]["stdout"] = "took ms=12 bytes=40\n", "took ms=13 bytes=41\n"
+        lines, count = compare(a, b)
+        self.assertEqual(count, 1, lines)
+        self.assertIn(".stdout", lines[1])
+
+    def test_revelation_time_is_its_own_entry(self):
+        lines, count = compare(recording({"revelationTime": "2026-10-24T03:45:52.008Z"}),
+                               recording({"revelationTime": "2026-10-24T03:47:00.100Z"}))
+        self.assertEqual(count, 0, lines)
+        self.assertTrue(any("revelationTime" in field for field, _ in D.EXCLUSIONS))
+
+    def test_planted_revelation_time_form_is_caught(self):
+        lines, count = compare(recording({"revelationTime": "2026-10-24T03:45:52.008Z"}),
+                               recording({"revelationTime": "1761277552008"}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn(".response.revelationTime", lines[1])
+
+
 def plant_sighash(events, old=0x41, new=0xC1):
     """The events with every input signature's sighash byte `old` rewritten `new`, as a
     build signing with the wrong byte would: each transaction's txid recomputed and

@@ -134,12 +134,20 @@ EXCLUSIONS = [
         "floor's sweep of B, 2026-10-24). Which coins, and how many, stay compared",
     ),
     (
-        "cli.stderr: a tracing line's timestamp, and its fields *ms, beef_len, "
-        "beef_bytes, bytes and the dump file beef-<8 hex>.hex",
+        "cli.stderr only: a tracing line's timestamp, and its fields *ms, "
+        "beef_len, beef_bytes, bytes and the dump file beef-<8 hex>.hex",
         "the log's own clock and durations; the byte counts are lengths of BEEFs "
         "holding DER signatures of rand transactions; the dump file is named by "
         "a rand txid's prefix. The lines, their order and every other field "
-        "stay compared",
+        "stay compared, and no other string of any event is rewritten by these",
+    ),
+    (
+        "*.revelationTime, an RFC 3339 instant (revealCounterpartyKeyLinkage's "
+        "answer), written <time>",
+        "the wallet stamps a counterparty linkage revelation with the clock at "
+        "the call (BRC-69), so two runs answer different instants; the field's "
+        "presence and its form stay compared (a value that is not an RFC 3339 "
+        "instant with fractions and Z stays literal)",
     ),
 ]
 
@@ -420,6 +428,16 @@ LOG_RES = (
 )
 # A tracing line's own clock (the CLI's stderr, RFC 3339 with fractions).
 TIME_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z")
+# The fields that are the wallet's clock at the call, by name.
+TIME_KEYS = ("revelationTime",)
+
+
+def log_text(s):
+    """A CLI command's stderr with its tracing clock, durations and BEEF lengths rewritten."""
+    s = TIME_RE.sub("<time>", s)
+    for r, to in LOG_RES:
+        s = r.sub(to, s)
+    return s
 
 
 def _strings(v):
@@ -632,9 +650,6 @@ class Renamer:
     def text(self, s):
         for d, seat in self.dirs:
             s = s.replace(d, f"<dir:{seat}>")
-        s = TIME_RE.sub("<time>", s)
-        for r, to in LOG_RES:
-            s = r.sub(to, s)
         return self.re.sub(self._name, s) if self.re else s
 
     def _script(self, script):
@@ -731,7 +746,8 @@ class Renamer:
         if isinstance(v, str):
             return self.string(v)
         if isinstance(v, dict):
-            return {k: self.value(v[k]) for k in sorted(v)}
+            return {k: "<time>" if k in TIME_KEYS and isinstance(v[k], str) and TIME_RE.fullmatch(v[k])
+                    else self.value(v[k]) for k in sorted(v)}
         if isinstance(v, list):
             return [self.value(x) for x in v]
         return v
@@ -750,7 +766,11 @@ def normalize(a, b):
         return [e for e in events
                 if not (e.get("kind") == "http" and e.get("path") == "/isAuthenticated" and e.get("status") is None)]
 
-    a, b = polls(a), polls(b)
+    def logs(events):
+        return [{**e, "stderr": log_text(e["stderr"])} if e.get("kind") == "cli" and isinstance(e.get("stderr"), str)
+                else e for e in events]
+
+    a, b = logs(polls(a)), logs(polls(b))
     ra = Renamer(ha - hb, da - db, sa - sb, dirs(a))
     rb = Renamer(hb - ha, db - da, sb - sa, dirs(b))
     na = [ra.value({k: v for k, v in e.items() if k != "seq"}) for e in a]
