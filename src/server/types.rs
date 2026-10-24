@@ -1,28 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// BRC-100's `privileged` and `privilegedReason`, on the nine calls that
-/// name them and this server reads (#145): `privileged: true` asks for the
-/// privileged keyring, which this wallet does not hold (the handlers refuse
-/// it); absent, `null` or `false` is the everyday key. The reason only
-/// accompanies a privileged request.
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct Privileged {
-    /// `true` asks for the privileged keyring.
-    #[serde(default)]
-    pub privileged: Option<bool>,
-    /// The caller's justification for a privileged request.
-    #[serde(default)]
-    pub privileged_reason: Option<String>,
-}
-
 /// MetaNet Client request for getPublicKey
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McGetPublicKeyReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     #[serde(default)]
     pub identity_key: bool,
     #[serde(default, alias = "protocolID")]
@@ -46,9 +31,10 @@ pub struct McGetPublicKeyRes {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McCreateSignatureReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     /// Raw data to hash-then-sign. Mutually exclusive with
     /// `hash_to_directly_sign` (ts-sdk sends exactly one of the two).
     #[serde(default)]
@@ -271,9 +257,10 @@ pub struct McInternalizeActionRes {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McVerifySignatureReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     #[serde(default)]
     pub data: Option<Vec<u8>>,
     pub signature: Vec<u8>,
@@ -291,9 +278,10 @@ pub struct McVerifySignatureReq {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McEncryptReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     pub plaintext: Vec<u8>,
     #[serde(alias = "protocolID")]
     pub protocol_id: serde_json::Value,
@@ -307,9 +295,10 @@ pub struct McEncryptReq {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McDecryptReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     pub ciphertext: Vec<u8>,
     #[serde(alias = "protocolID")]
     pub protocol_id: serde_json::Value,
@@ -323,9 +312,10 @@ pub struct McDecryptReq {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McCreateHmacReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     pub data: Vec<u8>,
     #[serde(alias = "protocolID")]
     pub protocol_id: serde_json::Value,
@@ -339,9 +329,10 @@ pub struct McCreateHmacReq {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McVerifyHmacReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
     pub data: Vec<u8>,
     pub hmac: Vec<u8>,
     #[serde(alias = "protocolID")]
@@ -360,24 +351,26 @@ pub struct McVerifyHmacReq {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McRevealCounterpartyKeyLinkageReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
     pub counterparty: String,
     pub verifier: String,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
 }
 
 /// MetaNet Client request for revealSpecificKeyLinkage
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McRevealSpecificKeyLinkageReq {
-    /// `privileged`, refused when `true`, and `privilegedReason` (#145).
-    #[serde(flatten)]
-    pub privileged: Privileged,
     pub counterparty: String,
     pub verifier: String,
     #[serde(alias = "protocolID")]
     pub protocol_id: serde_json::Value,
     #[serde(alias = "keyID")]
     pub key_id: String,
+    /// BRC-100's `privileged`, refused when `true` (#145).
+    pub privileged: Option<bool>,
+    /// The justification that accompanies a privileged request (#145).
+    pub privileged_reason: Option<String>,
 }

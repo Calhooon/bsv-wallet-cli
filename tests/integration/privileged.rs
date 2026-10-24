@@ -205,3 +205,28 @@ async fn privileged_true_is_refused_before_the_call_is_audited() {
         assert_eq!(entries[before]["method"], *path, "{path}");
     }
 }
+
+/// A non-boolean `privileged` is the framework's 422 on each of the nine
+/// calls, never the everyday key's answer, and its text names the field's
+/// path (`privileged: invalid type`); a JSON array body is judged by
+/// position (`[0]`), as a struct with plain fields is.
+#[tokio::test]
+async fn a_non_boolean_privileged_is_a_422_that_names_its_path() {
+    let (base, client, _tmp) = setup().await;
+    for (path, body, _) in bodies(&base, &client).await {
+        let url = format!("{base}/{path}");
+        for bad in [json!("true"), json!(1)] {
+            let resp = post_json(&client, &url, with(&body, &json!({"privileged": bad}))).await;
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap();
+            assert_eq!(status, 422, "{path} {bad}: {text}");
+            assert!(text.contains("privileged: invalid type"), "{path}: {text}");
+        }
+        let resp = post_json(&client, &url, json!([body])).await;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap();
+        assert_eq!(status, 422, "{path} array: {text}");
+        assert!(text.contains("[0]"), "{path} array: {text}");
+        assert!(!text.contains("expected struct"), "{path} array: {text}");
+    }
+}
