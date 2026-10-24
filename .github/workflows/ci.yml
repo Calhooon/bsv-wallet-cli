@@ -170,9 +170,11 @@ jobs:
   # base ref's (read as the ratchet job reads its record: the base branch's
   # tip on a PR, the commit before on a push): a changed margin, a dropped
   # entry or bench id, a rewritten run, or a new run that does not match
-  # this run's measure fails. The comparison gates once the entry for this
-  # runner's CPU carries five runs; until then it warns and passes. The
-  # artifact bench-baseline is the candidate the captain commits.
+  # this run's measure fails. The reference is the base's entry, never the
+  # tree's; the comparison gates once the base's entry for this runner's CPU
+  # carries five runs; until then it warns and passes, and with no base
+  # nothing is gated. The artifact bench-baseline is the candidate the
+  # captain commits: the base's file with this run appended.
   bench:
     name: bench
     runs-on: ubuntu-latest
@@ -215,7 +217,7 @@ jobs:
             echo "bench: the base baseline is $rev:benches/baseline.json"
             base=(--base "$RUNNER_TEMP/base-baseline.json")
           else
-            echo "::warning::no base ref: the tree's own benches/baseline.json is the reference, unchecked"
+            echo "::warning::no base ref: the tree's own benches/baseline.json is read unchecked; nothing is gated"
           fi
           mkdir -p "$RUNNER_TEMP/bench/results"
           BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci "${base[@]}" \

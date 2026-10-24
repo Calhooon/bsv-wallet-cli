@@ -51,7 +51,7 @@ def baseline(runs, **extra):
 
 
 def judge(tree, base, measured=None):
-    lines, errors, regressions, gating, candidate = bc.judge(
+    lines, warnings, errors, regressions, gating, candidate = bc.judge(
         tree, base, measured or measure(), CTX)
     return errors, regressions, gating, candidate
 
@@ -154,10 +154,39 @@ class TheTreeCannotTurnTheGateOff(unittest.TestCase):
         base = baseline(runs(5))
         tree = copy.deepcopy(base)
         tree["margin"] = 10
-        lines, errors, regressions, _, candidate = bc.judge(tree, base, measure(scale=1.5), CTX)
+        lines, warnings, errors, regressions, _, candidate = bc.judge(tree, base, measure(scale=1.5), CTX)
         self.assertEqual(len(regressions), 2, "compared at the base's margin, not the tree's")
         self.assertEqual(candidate["margin"], 0.05)
         self.assertEqual(len(candidate["profiles"][KEY]["runs"]), 6)
+
+    def test_an_appended_slow_run_is_not_the_reference(self):
+        # The PR appends a run 3x slower than the base's and the job measures
+        # at that speed: the appended run matches this run's measure, so the
+        # tree's check holds, and the reference is still the base's runs.
+        base = baseline(runs(bc.MIN_RUNS))
+        tree = baseline(runs(bc.MIN_RUNS) + [run(scale=3.0)])
+        lines, warnings, errors, regressions, gating, candidate = bc.judge(tree, base, measure(scale=3.0), CTX)
+        self.assertEqual(errors, [])
+        self.assertTrue(gating)
+        self.assertEqual(len(regressions), 2, lines)
+        self.assertTrue(any(l.endswith(" FAIL") for l in lines), lines)
+        self.assertEqual(len(candidate["profiles"][KEY]["runs"]), bc.MIN_RUNS + 1, "the base plus this run")
+
+    def test_an_appended_slow_run_is_over_in_the_warn_only_period(self):
+        base = baseline(runs(bc.MIN_RUNS - 1))
+        tree = baseline(runs(bc.MIN_RUNS - 1) + [run(scale=3.0)])
+        lines, warnings, errors, regressions, gating, _ = bc.judge(tree, base, measure(scale=3.0), CTX)
+        self.assertEqual(errors, [])
+        self.assertFalse(gating)
+        self.assertEqual(len(regressions), 2)
+        self.assertTrue(any(l.endswith(" over") for l in lines), lines)
+
+    def test_no_base_gates_nothing(self):
+        tree = baseline(runs(bc.MIN_RUNS))
+        lines, warnings, errors, regressions, gating, _ = bc.judge(tree, None, measure(scale=3.0), CTX)
+        self.assertEqual(errors, [])
+        self.assertFalse(gating)
+        self.assertTrue(any("nothing is gated" in w for w in warnings), warnings)
 
 
 class WhatTheGateLetsThrough(unittest.TestCase):
@@ -171,7 +200,7 @@ class WhatTheGateLetsThrough(unittest.TestCase):
         errors, _, gating, candidate = judge(baseline([run(scale=1.03)]), bc.empty())
         self.assertEqual(errors, [])
         self.assertFalse(gating)
-        self.assertEqual(len(candidate["profiles"][KEY]["runs"]), 2)
+        self.assertEqual(len(candidate["profiles"][KEY]["runs"]), 1, "the base's file plus this run")
 
     def test_matching_appended_run_passes(self):
         errors, *_ = judge(baseline(runs(4) + [run(scale=0.97)]), baseline(runs(4)))
