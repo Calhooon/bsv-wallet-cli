@@ -230,12 +230,12 @@ def module_file(parent, name, path, files):
 
 
 def test_files(lexed):
-    """Files that are test code whole: under a top-level tests/ or benches/,
+    """Files that are test code whole: under a top-level tests/, benches/ or fuzz/,
     or reached through a `#[cfg(test)] mod x;`, and every file under such a
     module's directory. A file's name decides nothing: a `tests.rs` that a
     plain `mod tests;` declares is production code."""
     files = set(lexed)
-    test = {f for f in files if f.split("/")[0] in ("tests", "benches")}
+    test = {f for f in files if f.split("/")[0] in ("tests", "benches", "fuzz")}
     for f in sorted(files):
         for name, path in lexed[f][1]:
             m = module_file(f, name, path, files)
