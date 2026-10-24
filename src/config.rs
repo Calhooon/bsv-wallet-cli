@@ -45,8 +45,8 @@ mod read;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use knobs::shown_secret;
-pub use knobs::{shown_url, Knob};
+pub(crate) use knobs::{shown_secret, url_or};
+pub use knobs::{shown_url, Knob, Value};
 pub(crate) use read::{Raw, Reader};
 
 /// The global flags the configuration takes, as [`Config::knobs`] names

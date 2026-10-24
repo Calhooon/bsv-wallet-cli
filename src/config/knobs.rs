@@ -1,13 +1,62 @@
 //! The configuration as a list: every setting with its effective value and
 //! its source, for `bsv-wallet config` and the start line of `daemon` and
 //! `serve`. A secret's value is `<set>`, or `empty` when its variable is set
-//! to nothing in effect; a setting with no value is `-`; a
-//! URL's userinfo and query are `<set>` ([`shown_url`]).
+//! to nothing in effect; a setting with no value is `-` (`unset`, `off` or
+//! `empty` where that is its word), `null` in the JSON; a switch is `on` or
+//! `off`, a boolean in the JSON; a URL's userinfo and query are `<set>`
+//! ([`shown_url`]).
+
+use std::fmt;
 
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use super::{Config, Secret, Source};
+
+/// A setting's effective value, as the table shows it ([`fmt::Display`])
+/// and as the JSON carries it ([`Serialize`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Value {
+    /// No value in effect: `null` in the JSON, the table's word for it
+    /// (`-`, `unset`, `off`, `empty`).
+    None(&'static str),
+    /// A switch: a boolean in the JSON, `on` or `off` in the table.
+    Switch(bool),
+    /// A value (a secret's `<set>`, a URL as [`shown_url`] shows it).
+    Text(String),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Self::None(word) => word,
+            Self::Switch(on) => {
+                if *on {
+                    "on"
+                } else {
+                    "off"
+                }
+            }
+            Self::Text(text) => text,
+        })
+    }
+}
+
+impl Serialize for Value {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::None(_) => serializer.serialize_none(),
+            Self::Switch(on) => serializer.serialize_bool(*on),
+            Self::Text(text) => serializer.serialize_str(text),
+        }
+    }
+}
+
+impl From<String> for Value {
+    fn from(text: String) -> Self {
+        Self::Text(text)
+    }
+}
 
 /// One setting: its name (a variable, or a flag), its effective value and
 /// where it came from.
@@ -15,9 +64,9 @@ use super::{Config, Secret, Source};
 pub struct Knob {
     /// The variable's name, or the flag (`--db`).
     pub name: &'static str,
-    /// The effective value; `<set>` for a secret that is set, `empty` for
-    /// one set to nothing, `-` for none.
-    pub value: String,
+    /// The effective value; `<set>` for a secret that is set, `empty` (no
+    /// value) for one set to nothing.
+    pub value: Value,
     /// Where the value came from.
     pub source: Source,
     /// The shape the value must have, when it was refused at start (the
@@ -63,26 +112,24 @@ pub fn shown_url(value: &str) -> String {
 /// secret read from it: `<set>` when it holds a value, `empty` when the
 /// variable is set but holds none in effect (`AUTH_TOKEN=` is no token at
 /// the bind guard), `-` when it is unset.
-pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> String {
+pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> Value {
     match (set, secret) {
-        (_, Some(s)) if !s.expose().is_empty() => s.to_string(),
-        (Some(_), _) => "empty".to_string(),
-        (None, _) => "-".to_string(),
+        (_, Some(s)) if !s.expose().is_empty() => Value::Text(s.to_string()),
+        (Some(_), _) => Value::None("empty"),
+        (None, _) => NONE,
     }
 }
 
-const NONE: &str = "-";
+/// No value, `-` in the table.
+pub(crate) const NONE: Value = Value::None("-");
 
-fn on_off(on: bool) -> String {
-    if on { "on" } else { "off" }.to_string()
+fn or_none(value: Option<&str>) -> Value {
+    value.map_or(NONE, |v| Value::Text(v.to_string()))
 }
 
-fn or_none(value: Option<&str>) -> String {
-    value.unwrap_or(NONE).to_string()
-}
-
-fn url_or_none(value: Option<&str>) -> String {
-    value.map_or_else(|| NONE.to_string(), shown_url)
+/// A URL as [`shown_url`] shows it, or `none` when there is none.
+pub(crate) fn url_or(value: Option<&str>, none: Value) -> Value {
+    value.map_or(none, |v| Value::Text(shown_url(v)))
 }
 
 impl Config {
@@ -100,7 +147,7 @@ impl Config {
                 let refused = self.refused.iter().find(|e| e.variable == name);
                 Knob {
                     name,
-                    value: refused.map_or(value, |e| e.value.clone()),
+                    value: refused.map_or(value, |e| Value::Text(e.value.clone())),
                     source: self.source(name),
                     refused: refused.map(|e| e.expected),
                 }
@@ -120,22 +167,22 @@ impl Config {
     }
 
     /// A secret's row: [`super::shown_secret`] of its variable as read.
-    fn secret(&self, name: &str, value: Option<&Secret>) -> String {
+    fn secret(&self, name: &str, value: Option<&Secret>) -> Value {
         shown_secret(self.raw.get(name), value)
     }
 
-    fn wallet_values(&self) -> Vec<(&'static str, String)> {
+    fn wallet_values(&self) -> Vec<(&'static str, Value)> {
         let w = &self.wallet;
         vec![
-            ("--db", w.db.clone()),
-            ("--testnet", on_off(w.chain == Chain::Test)),
-            ("--port", w.port.to_string()),
+            ("--db", w.db.clone().into()),
+            ("--testnet", Value::Switch(w.chain == Chain::Test)),
+            ("--port", w.port.to_string().into()),
             ("ROOT_KEY", self.secret("ROOT_KEY", w.root_key.as_ref())),
-            ("RUST_LOG", w.log_filter().0),
+            ("RUST_LOG", w.log_filter().0.into()),
         ]
     }
 
-    fn services_values(&self) -> Vec<(&'static str, String)> {
+    fn services_values(&self) -> Vec<(&'static str, Value)> {
         let s = &self.services;
         let defaults = match self.chain() {
             Chain::Main => ServicesOptions::mainnet(),
@@ -149,26 +196,24 @@ impl Config {
         let mut values = vec![
             (
                 "CHAINTRACKS_URL",
-                s.chaintracks_url
-                    .as_deref()
-                    .map_or_else(|| "unset".into(), shown_url),
+                url_or(s.chaintracks_url.as_deref(), Value::None("unset")),
             ),
             (
                 "BREAK_GLASS_EXPLORER_HEADERS",
-                on_off(s.break_glass_explorer_headers),
+                Value::Switch(s.break_glass_explorer_headers),
             ),
-            ("ARC_URL", arc_url),
+            ("ARC_URL", arc_url.into()),
             // ARC_MODE's own value as set: the mode in effect is this or
             // ARCADE's, each on its own row.
             ("ARC_MODE", or_none(self.raw.get("ARC_MODE"))),
-            ("ARCADE", on_off(s.arcade_flag)),
+            ("ARCADE", Value::Switch(s.arcade_flag)),
             (
                 "CALLBACK_TOKEN",
                 self.secret("CALLBACK_TOKEN", s.callback_token.as_ref()),
             ),
             (
                 "PUBLIC_CALLBACK_URL",
-                url_or_none(s.public_callback_url.as_deref()),
+                url_or(s.public_callback_url.as_deref(), NONE),
             ),
             (
                 "TAAL_API_KEY",
@@ -179,44 +224,46 @@ impl Config {
                 self.secret("MAIN_TAAL_API_KEY", s.main_taal_api_key.as_ref()),
             ),
         ];
-        values.extend(s.explorers.values(&self.raw));
-        let gorillapool = s.explorers.bases.gorillapool.as_deref();
+        values.extend(s.explorers.values(&self.raw, self.chain()));
         values.push((
             "ARC_GORILLAPOOL_URL",
-            gorillapool.map_or_else(|| "off".into(), shown_url),
+            url_or(s.explorers.bases.gorillapool.as_deref(), Value::None("off")),
         ));
         values
     }
 
-    fn host_values(&self) -> Vec<(&'static str, String)> {
+    fn host_values(&self) -> Vec<(&'static str, Value)> {
         let (h, r, v) = (&self.host, &self.reconcile, &self.verify);
         vec![
-            ("SPEND_DEPTH", h.spend_depth.to_string()),
-            ("SPEND_OWN_CHANGE", on_off(h.spend_own_change)),
-            ("TRACKER_AGE_SECS", h.tracker_age_secs.to_string()),
-            ("TRACKER_MAX_ASKS", h.tracker_max_asks.to_string()),
-            ("BROADCAST_RECONCILE", on_off(r.enabled)),
+            ("SPEND_DEPTH", h.spend_depth.to_string().into()),
+            ("SPEND_OWN_CHANGE", Value::Switch(h.spend_own_change)),
+            ("TRACKER_AGE_SECS", h.tracker_age_secs.to_string().into()),
+            ("TRACKER_MAX_ASKS", h.tracker_max_asks.to_string().into()),
+            ("BROADCAST_RECONCILE", Value::Switch(r.enabled)),
             (
                 "BROADCAST_RECONCILE_INTERVAL_SECS",
-                r.interval_secs.to_string(),
+                r.interval_secs.to_string().into(),
             ),
-            ("BROADCAST_ABSENCE_MINUTES", r.absence_minutes.to_string()),
-            ("BSV_WALLET_SKIP_BROADCAST_VERIFY", on_off(v.skip)),
+            (
+                "BROADCAST_ABSENCE_MINUTES",
+                r.absence_minutes.to_string().into(),
+            ),
+            ("BSV_WALLET_SKIP_BROADCAST_VERIFY", Value::Switch(v.skip)),
             (
                 "BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS",
-                v.attempts.to_string(),
+                v.attempts.to_string().into(),
             ),
             (
                 "BSV_WALLET_BROADCAST_VERIFY_DELAY_MS",
-                v.delay_ms.to_string(),
+                v.delay_ms.to_string().into(),
             ),
         ]
     }
 
-    fn server_values(&self) -> Vec<(&'static str, String)> {
+    fn server_values(&self) -> Vec<(&'static str, Value)> {
         let (s, d) = (&self.server, &self.daemon);
         vec![
-            ("BIND_ADDR", s.bind_addr.to_string()),
+            ("BIND_ADDR", s.bind_addr.to_string().into()),
             (
                 "AUTH_TOKEN",
                 self.secret("AUTH_TOKEN", s.auth_token.as_ref()),
@@ -226,16 +273,16 @@ impl Config {
             (
                 "MONITOR_CHECK_PROOFS_INTERVAL_SECS",
                 d.check_proofs_interval_secs
-                    .map_or_else(|| NONE.into(), |s| s.to_string()),
+                    .map_or(NONE, |s| s.to_string().into()),
             ),
-            ("MIN_UTXOS", d.min_utxos.to_string()),
-            ("RECONCILE_ABANDONED", on_off(d.reconcile_abandoned)),
+            ("MIN_UTXOS", d.min_utxos.to_string().into()),
+            ("RECONCILE_ABANDONED", Value::Switch(d.reconcile_abandoned)),
             (
                 "RECONCILE_ABANDONED_MIN_AGE_SECS",
-                d.reconcile_abandoned_min_age_secs.to_string(),
+                d.reconcile_abandoned_min_age_secs.to_string().into(),
             ),
-            ("RELAY_URL", url_or_none(d.relay_url.as_deref())),
-            ("RELAY_POLL_SECS", d.relay_poll_secs.to_string()),
+            ("RELAY_URL", url_or(d.relay_url.as_deref(), NONE)),
+            ("RELAY_POLL_SECS", d.relay_poll_secs.to_string().into()),
         ]
     }
 }

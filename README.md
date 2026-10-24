@@ -81,9 +81,11 @@ exits 1. `RELAY_POLL_SECS` (the daemon's poll of `RELAY_URL`, default 10)
 is at least 1 second: 0 is refused at start, naming it.
 `bsv-wallet config` prints every setting with its effective value
 and its source (env, flag, default), keys and tokens as `<set>` (`empty` when
-set to nothing) and a URL's userinfo and query as `<set>` (`--json` for the
-same as an array); `daemon` and `serve` log the same list as one line at
-start. [GIFT.md](GIFT.md) documents gift flows and limits.
+set to nothing), a URL's userinfo and query as `<set>`, and `BANANABLOCKS_BASE`
+as the base in effect (the chain's default when unset); `--json` gives the same
+as an array of `{name, value, source}`, `value` `null` for no value (`-`,
+`unset`, `off`, `empty` in the table), `true` or `false` for a switch, a string
+otherwise; `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
 The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
 

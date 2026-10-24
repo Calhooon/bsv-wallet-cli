@@ -569,7 +569,7 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/commands/export_beefs.rs` | 360 | One BEEF file per transaction holding a coin of ours, from the store alone (C10) | wallet host |
 | `src/commands/backup.rs` | 58 | Copy `.env` and the store, with a digest | plumbing |
 | `src/commands/services.rs` | 57 | The services' health (chain, height) | plumbing |
-| `src/commands/config.rs` | 70 | `bsv-wallet config`: every setting, its effective value and its source (env, flag, default), as a table or `--json`; secrets `<set>` | plumbing |
+| `src/commands/config.rs` | 70 | `bsv-wallet config`: every setting, its effective value and its source (env, flag, default), as a table or `--json` (`null` for no value, booleans for the switches); secrets `<set>` | plumbing |
 | `src/commands/ui.rs` | 479 | The read-only database inspector (its own Axum server, SELECT only) | plumbing |
 | `src/ui/index.html` | | The inspector's page, embedded by `ui.rs` | plumbing |
 | `src/gift/mod.rs` | 16 | The TimeLockedGift covenant module | wallet host |

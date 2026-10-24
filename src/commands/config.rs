@@ -1,6 +1,7 @@
 //! `bsv-wallet config`: every setting with its effective value and its
 //! source (env, flag, default), as a table or, with `--json`, as an array
-//! of `{name, value, source}`. Keys and tokens print as `<set>`
+//! of `{name, value, source}` whose `value` is `null` for no value, a
+//! boolean for a switch and a string otherwise. Keys and tokens print as `<set>`
 //! (`crate::config::Secret`). A setting refused at start is printed as set
 //! and marked (`refused` in the JSON), and the command then exits 1 naming
 //! every refused variable.
@@ -28,7 +29,7 @@ fn table(knobs: &[Knob]) -> String {
     let name_width = knobs.iter().map(|k| k.name.len()).max().unwrap_or(0).max(4);
     let value_width = knobs
         .iter()
-        .map(|k| k.value.len())
+        .map(|k| k.value.to_string().len())
         .max()
         .unwrap_or(0)
         .max(5);
@@ -76,6 +77,9 @@ mod tests {
         for knob in config.knobs() {
             line(knob.name);
         }
+        let source_column = |l: &str| l.rfind(' ').map(|at| at + 1);
+        let header = source_column(out.lines().next().unwrap());
+        assert!(out.lines().all(|l| source_column(l) == header), "{out}");
     }
 
     #[test]
