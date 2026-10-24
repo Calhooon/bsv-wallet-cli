@@ -962,7 +962,7 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
         .create_action_offering(template(), "gate.local", &lazy.offer())
         .await
         .expect_err("the big coin alone cannot be carried");
-    assert!(is_unspendable(&direct), "{direct}");
+    assert!(crate::toolbox_words::is_unspendable(&direct), "{direct}");
 
     let result = create_action(&wallet, template(), "gate.local", &gate)
         .await
@@ -980,7 +980,7 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
     else {
         panic!("the big coin alone is unspendable");
     };
-    assert!(is_unspendable(&e), "{e}");
+    assert!(crate::toolbox_words::is_unspendable(&e), "{e}");
 }
 
 /// F9 (c) of the #44 CLI review: one offer names at most [`OFFER_CAP`]
@@ -1559,7 +1559,7 @@ fn the_refusal_as_json_is_the_routes_body() {
             origin: Origin::Received,
             age_minutes: 3,
             reason: "depth 1: 0 blocks; received, no proof".to_string(),
-            headers_fault: false,
+            headers_fault: None,
             output_id: 1,
         }],
         capped: None,
@@ -2302,7 +2302,10 @@ async fn a_header_service_fault_is_read_once_more_and_is_could_not_verify_now() 
     assert_eq!(refusal.held.len(), 1);
     let coin = &refusal.held[0];
     assert_eq!(coin.outpoint, format!("{mined}.0"));
-    assert!(coin.headers_fault);
+    assert_eq!(
+        coin.headers_fault.as_deref(),
+        Some("Service error: mock: the chain tip header is unavailable")
+    );
     assert_eq!(
         coin.reason,
         "headers unavailable: Service error: mock: the chain tip header is unavailable"
@@ -2339,7 +2342,7 @@ async fn a_shortfall_the_faulted_coins_could_not_cover_stays_insufficient_funds(
     };
     assert_eq!(wallet.services().call_count("get_chain_tip_header"), 2);
     assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
-    assert!(refusal.held[0].headers_fault);
+    assert!(refusal.held[0].headers_fault.is_some());
     assert!(
         refusal.to_string().starts_with("Insufficient funds"),
         "{refusal}"
@@ -2358,7 +2361,7 @@ async fn the_re_read_offers_the_coin_when_the_service_answers_again() {
         .unwrap();
     assert!(!once.headers_retried);
     assert!(once.offered.is_empty());
-    assert!(once.held[0].headers_fault);
+    assert!(once.held[0].headers_fault.is_some());
     assert_eq!(wallet.services().call_count("get_chain_tip_header"), 1);
 
     let recover = async {

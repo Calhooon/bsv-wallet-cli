@@ -32,6 +32,7 @@ use bsv_wallet_cli::backstop_log::{BackstopFilter, BackstopLayer};
 use bsv_wallet_cli::spend_gate;
 // The store's two doors and the typed busy.
 use bsv_wallet_cli::store;
+use bsv_wallet_cli::toolbox_words;
 use clap::Parser;
 use cli::{Cli, Commands};
 use tracing_subscriber::layer::SubscriberExt;
