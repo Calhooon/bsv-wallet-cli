@@ -96,6 +96,22 @@ pub(crate) async fn record_store_faults(r: &mut Recorder) {
         .await;
 }
 
+/// abortAction under a store no reader can open (#168): its pre-check's
+/// read is the store busy, 503 `STORE_BUSY`. Recorded last, so no file
+/// before it moves.
+pub(crate) async fn record_abort_store_busy(r: &mut Recorder) {
+    use serde_json::json;
+    r.case(
+        "abortAction.storeBusy",
+        "busy-read",
+        post(
+            "/abortAction",
+            json!({"reference": "bm8tc3VjaC1yZWZlcmVuY2U="}),
+        ),
+    )
+    .await;
+}
+
 /// The funded world: a 200 body from each spending or state-changing
 /// call. Each action asks for exactly its coin less the fee, so the
 /// toolbox builds no change output (whose derivation it draws at

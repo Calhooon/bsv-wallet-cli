@@ -34,7 +34,7 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 10] = [
+pub(crate) const WORLDS: [&str; 11] = [
     "fresh",
     "auth",
     "callback",
@@ -44,6 +44,7 @@ pub(crate) const WORLDS: [&str; 10] = [
     "broken",
     "broken-host",
     "busy",
+    "busy-read",
     "funded",
 ];
 
@@ -525,6 +526,9 @@ impl World {
     /// - `broken-host`: `fresh` with the tracker's rows unreadable (the
     ///   feed status not JSON, the states table without its columns).
     /// - `busy`: a file store whose write lock another connection holds.
+    /// - `busy-read`: a file store no reader can open: it is opened on
+    ///   SQLite's dotfile locking, which has no shared memory and so no
+    ///   WAL, and another connection holds its one lock.
     /// - `funded`: four mined coins the wallet can sign for
     ///   ([`FUNDED_COINS`]), the header stub answering the blocks of the
     ///   stranger's payments ([`Payment`]) and of the puzzle ([`PUZZLE`]),
@@ -557,8 +561,8 @@ impl World {
         }
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
         // The wallet is opened (its opening writes made), then the lock.
-        if name == "busy" {
-            let lock = hold_write_lock(&storage_path(&keep)).await;
+        if name == "busy" || name == "busy-read" {
+            let lock = hold_write_lock(&storage_path(&keep), name == "busy-read").await;
             keep.push(Box::new(lock));
         }
         let mut config = ServerConfig {
@@ -578,12 +582,19 @@ impl World {
     }
 
     /// The world's store, migrated: a file under a temp directory `keep`
-    /// holds for `busy` (another connection must open it), else in memory.
+    /// holds for `busy` and `busy-read` (another connection must open it),
+    /// `busy-read`'s on the dotfile locking, else in memory.
     async fn store(name: &str, keep: &mut Vec<Box<dyn std::any::Any + Send>>) -> StorageSqlx {
-        let storage = if name == "busy" {
+        let storage = if name == "busy" || name == "busy-read" {
             let tmp = tempfile::TempDir::new().unwrap();
             let path = tmp.path().join("wire.db");
-            let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+            let storage = if name == "busy-read" {
+                StorageSqlx::new(&format!("sqlite:{}?vfs={DOTFILE}", path.display()))
+                    .await
+                    .unwrap()
+            } else {
+                StorageSqlx::open(path.to_str().unwrap()).await.unwrap()
+            };
             keep.push(Box::new(tmp));
             storage
         } else {
@@ -687,19 +698,29 @@ pub(crate) fn resolve(file: &str, req: &Req, served: &HashMap<String, J>) -> Req
     req
 }
 
+/// SQLite's dotfile locking: one lock (a `.lock` beside the file) for
+/// readers and writers alike, and no shared memory, so the store keeps its
+/// rollback journal and a held lock keeps every reader out.
+const DOTFILE: &str = "unix-dotfile";
+
 /// Another connection to the store at `path`, holding its write lock
-/// (never closed: the lock is held for as long as it is kept).
-async fn hold_write_lock(path: &Path) -> sqlx::SqliteConnection {
+/// (never closed: the lock is held for as long as it is kept); on the
+/// `dotfile` locking, its one lock.
+async fn hold_write_lock(path: &Path, dotfile: bool) -> sqlx::SqliteConnection {
     use sqlx::{ConnectOptions, Connection};
-    let mut other = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(path)
-        .connect()
-        .await
-        .unwrap();
-    sqlx::query("BEGIN IMMEDIATE")
-        .execute(&mut other)
-        .await
-        .unwrap();
+    let mut options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
+    if dotfile {
+        options = options.vfs(DOTFILE);
+    }
+    let mut other = options.connect().await.unwrap();
+    sqlx::query(if dotfile {
+        "BEGIN EXCLUSIVE"
+    } else {
+        "BEGIN IMMEDIATE"
+    })
+    .execute(&mut other)
+    .await
+    .unwrap();
     let _ = other.ping().await;
     other
 }

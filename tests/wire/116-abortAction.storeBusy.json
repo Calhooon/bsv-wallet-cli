@@ -1,0 +1,28 @@
+{
+  "world": "busy-read",
+  "request": {
+    "method": "POST",
+    "path": "/abortAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "reference": "bm8tc3VjaC1yZWZlcmVuY2U="
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "retry-after": "1",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "STORE_BUSY",
+      "message": "error returned from database: (code: 5) database is locked"
+    }
+  }
+}

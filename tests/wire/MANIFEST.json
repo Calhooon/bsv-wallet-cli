@@ -114,6 +114,7 @@
     "112-verifySignature.privileged.json",
     "113-verifyHmac.privileged.json",
     "114-revealCounterpartyKeyLinkage.privileged.json",
-    "115-revealSpecificKeyLinkage.privileged.json"
+    "115-revealSpecificKeyLinkage.privileged.json",
+    "116-abortAction.storeBusy.json"
   ]
 }
