@@ -32,11 +32,8 @@
 //! and its [`Source`]; `bsv-wallet config` prints that list, and `daemon`
 //! and `serve` log it as one line ([`Config::log_line`]) at start.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fmt;
 use std::net::IpAddr;
-use std::str::FromStr;
 
 use anyhow::Context;
 use bsv_tracker::{Height, Timestamp};
@@ -44,10 +41,13 @@ use bsv_wallet_toolbox::Chain;
 use serde::Serialize;
 
 mod knobs;
+mod read;
 #[cfg(test)]
 mod tests;
 
-pub use knobs::Knob;
+pub(crate) use knobs::shown_secret;
+pub use knobs::{shown_url, Knob};
+pub(crate) use read::{Raw, Reader};
 
 /// The global flags the configuration takes, as [`Config::knobs`] names
 /// them.
@@ -95,18 +95,6 @@ impl fmt::Display for Secret {
     }
 }
 
-/// A secret as the knob list shows it, from its variable as set and the
-/// secret read from it: `<set>` when it holds a value, `empty` when the
-/// variable is set but holds none in effect (`AUTH_TOKEN=` is no token at
-/// the bind guard), `-` when it is unset.
-pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> String {
-    match (set, secret) {
-        (_, Some(s)) if !s.expose().is_empty() => s.to_string(),
-        (Some(_), _) => "empty".to_string(),
-        (None, _) => "-".to_string(),
-    }
-}
-
 /// Where a setting's effective value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -127,39 +115,6 @@ impl fmt::Display for Source {
             Self::Default => "default",
         })
     }
-}
-
-/// A URL as it may be shown: its userinfo and its query (or fragment) are
-/// `<set>`, its scheme, host, port and path as set. Read as text, so a
-/// value that does not parse is shown the same way (a credential in a URL
-/// is never printed, #80).
-#[must_use]
-pub fn shown_url(value: &str) -> String {
-    let (scheme, rest) = value
-        .split_once("://")
-        .map_or(("", value), |(scheme, rest)| (scheme, rest));
-    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
-    let mut shown = String::new();
-    if !scheme.is_empty() {
-        shown.push_str(scheme);
-        shown.push_str("://");
-    }
-    match authority.rfind('@') {
-        Some(at) => {
-            shown.push_str("<set>@");
-            shown.push_str(&authority[at + 1..]);
-        }
-        None => shown.push_str(authority),
-    }
-    match tail.find(['?', '#']) {
-        Some(q) => {
-            shown.push_str(&tail[..q]);
-            shown.push_str(&tail[q..=q]);
-            shown.push_str("<set>");
-        }
-        None => shown.push_str(tail),
-    }
-    shown
 }
 
 /// A setting refused at start: the variable, the value it holds (a URL as
@@ -250,122 +205,6 @@ impl Default for Flags {
             verbose: false,
             given: Vec::new(),
         }
-    }
-}
-
-/// The environment as it was read at start, by name: what each group
-/// parses, what [`Source`] and the fleet's uniformity check read. Its
-/// `Debug` prints how many variables it holds, never a name or a value.
-#[derive(Clone, Default)]
-pub(crate) struct Raw(BTreeMap<String, String>);
-
-impl fmt::Debug for Raw {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Raw({} variables)", self.0.len())
-    }
-}
-
-impl Raw {
-    fn read(vars: impl IntoIterator<Item = (String, String)>) -> Self {
-        Self(vars.into_iter().collect())
-    }
-
-    /// The value as set, when it is set.
-    pub(crate) fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(String::as_str)
-    }
-}
-
-/// The environment being parsed into its settings: the snapshot, and every
-/// setting refused so far. A refused setting reads as unset (its default),
-/// so the reading goes on and every refusal is found in one pass.
-pub(crate) struct Reader<'a> {
-    raw: &'a Raw,
-    refused: RefCell<Vec<ConfigError>>,
-}
-
-impl<'a> Reader<'a> {
-    fn new(raw: &'a Raw) -> Self {
-        Self {
-            raw,
-            refused: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// The settings refused, in the order they were read.
-    fn into_refused(self) -> Vec<ConfigError> {
-        self.refused.into_inner()
-    }
-
-    /// `result`'s value, or `None` with its refusal kept.
-    fn kept<T>(&self, result: Result<Option<T>, ConfigError>) -> Option<T> {
-        result.unwrap_or_else(|e| {
-            self.refused.borrow_mut().push(e);
-            None
-        })
-    }
-
-    /// The value as set, when it is set.
-    pub(crate) fn get(&self, name: &str) -> Option<&'a str> {
-        self.raw.0.get(name).map(String::as_str)
-    }
-
-    /// The value when it is set and not blank, trimmed.
-    fn given(&self, name: &str) -> Option<&'a str> {
-        self.get(name).map(str::trim).filter(|v| !v.is_empty())
-    }
-
-    /// The value as set, when it is set and not empty (blank is kept).
-    fn non_empty(&self, name: &str) -> Option<&'a str> {
-        self.get(name).filter(|v| !v.is_empty())
-    }
-
-    fn secret(&self, name: &str) -> Option<Secret> {
-        self.non_empty(name).map(Secret::new)
-    }
-
-    /// A switch: `on(value)` when set, `unset` when not.
-    fn switch(&self, name: &str, unset: bool, on: fn(&str) -> bool) -> bool {
-        self.get(name).map_or(unset, on)
-    }
-
-    /// A number: unset or blank is `None`, anything else must parse.
-    fn number<T: FromStr>(&self, name: &'static str, expected: &'static str) -> Option<T> {
-        self.kept(
-            self.given(name)
-                .map(|v| v.parse().map_err(|_| refused(name, v, expected)))
-                .transpose(),
-        )
-    }
-
-    /// A URL: unset or blank is `None`, anything else must be an http or
-    /// https URL with a host. The value is kept as set, trimmed.
-    pub(crate) fn url(&self, name: &'static str) -> Option<String> {
-        self.kept(self.given(name).map(|v| checked_url(name, v)).transpose())
-    }
-
-    /// A URL whose empty value means something (off): unset is `None`, set
-    /// is the value trimmed, which must be a URL unless it is blank.
-    pub(crate) fn present_url(&self, name: &'static str) -> Option<String> {
-        self.kept(match self.get(name).map(str::trim) {
-            Some(v) if !v.is_empty() => checked_url(name, v).map(Some),
-            other => Ok(other.map(str::to_string)),
-        })
-    }
-}
-
-fn refused(variable: &'static str, value: &str, expected: &'static str) -> ConfigError {
-    ConfigError {
-        variable,
-        value: value.to_string(),
-        expected,
-    }
-}
-
-fn checked_url(name: &'static str, value: &str) -> Result<String, ConfigError> {
-    match url::Url::parse(value) {
-        Ok(u) if matches!(u.scheme(), "http" | "https") && u.has_host() => Ok(value.to_string()),
-        _ => Err(refused(name, &shown_url(value), "an http or https URL")),
     }
 }
 
