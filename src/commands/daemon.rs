@@ -71,7 +71,7 @@ where
             if let Err(e) = signal {
                 return Err(stop_on_fault(
                     anyhow::Error::new(e),
-                    "failed to listen for ctrl-c",
+                    CTRL_C_FAULT,
                     stop_monitor,
                     grace,
                 )
@@ -107,16 +107,33 @@ where
     Ok(())
 }
 
-/// The context of a server that stopped on its own.
-const SERVER_STOPPED: &str = "the daemon's HTTP server stopped";
+/// A fault that ends the daemon: the phrase its log line names and the
+/// context of the error the daemon returns.
+struct Fault {
+    log: &'static str,
+    context: &'static str,
+}
+
+/// A server that stopped on its own.
+const SERVER_STOPPED: Fault = Fault {
+    log: "the HTTP server stopped",
+    context: "the daemon's HTTP server stopped",
+};
+
+/// The daemon's own ctrl-c listener failed.
+const CTRL_C_FAULT: Fault = Fault {
+    log: "failed to listen for ctrl-c",
+    context: "failed to listen for ctrl-c",
+};
 
 /// A fault that ends the daemon (the server's, or the ctrl-c listener's),
-/// logged with its words under `context`; the monitor stopped within `grace`
-/// (a monitor that fails or hangs is logged, never the daemon's answer); the
-/// fault, with `context`, is what the daemon returns.
+/// logged at error level as `daemon: {fault.log}; stopping the monitor` with
+/// its words; the monitor stopped within `grace` (a monitor that fails or
+/// hangs is logged, never the daemon's answer); the fault, with
+/// `fault.context`, is what the daemon returns.
 async fn stop_on_fault<S, F>(
     e: anyhow::Error,
-    context: &'static str,
+    fault: Fault,
     stop_monitor: S,
     grace: Duration,
 ) -> anyhow::Error
@@ -125,8 +142,10 @@ where
     F: Future<Output = Result<()>>,
 {
     tracing::error!(
+        marker = "daemon_fault",
         error = %format!("{e:#}"),
-        "daemon: {context}; stopping the monitor"
+        "daemon: {}; stopping the monitor",
+        fault.log
     );
     match tokio::time::timeout(grace, stop_monitor()).await {
         Ok(Ok(())) => {}
@@ -136,7 +155,7 @@ where
             "daemon: the monitor did not stop within the grace"
         ),
     }
-    e.context(context)
+    e.context(fault.context)
 }
 
 #[cfg(test)]
@@ -152,8 +171,20 @@ mod tests {
         }
     }
 
+    /// The one `daemon_fault` line a test logged, its message and error.
+    fn fault_line(markers: &crate::test_support::Markers) -> (String, String) {
+        let lines = markers.named("daemon_fault");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = lines[0].clone();
+        (
+            line.message.unwrap_or_default(),
+            line.error.unwrap_or_default(),
+        )
+    }
+
     #[tokio::test]
     async fn a_server_that_fails_ends_the_daemon_with_its_error_within_the_grace() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
         let stopped = Arc::new(AtomicBool::new(false));
         let server =
             tokio::spawn(async { Err(anyhow::anyhow!("Address already in use (os error 48)")) });
@@ -176,10 +207,17 @@ mod tests {
         );
         assert!(words.contains("Address already in use"), "{words}");
         assert!(stopped.load(Ordering::SeqCst), "the monitor was stopped");
+        let (message, error) = fault_line(&markers);
+        assert_eq!(
+            message,
+            "daemon: the HTTP server stopped; stopping the monitor"
+        );
+        assert!(error.contains("Address already in use"), "{error}");
     }
 
     #[tokio::test]
     async fn a_server_that_panics_ends_the_daemon_with_an_error() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
         let stopped = Arc::new(AtomicBool::new(false));
         let server: JoinHandle<Result<()>> = tokio::spawn(async { panic!("boom") });
         let e = tokio::time::timeout(
@@ -196,10 +234,17 @@ mod tests {
         .expect_err("a panicked server is the daemon's error");
         assert!(format!("{e:#}").contains("server task panicked"));
         assert!(stopped.load(Ordering::SeqCst));
+        let (message, error) = fault_line(&markers);
+        assert_eq!(
+            message,
+            "daemon: the HTTP server stopped; stopping the monitor"
+        );
+        assert!(error.contains("server task panicked"), "{error}");
     }
 
     #[tokio::test]
     async fn a_ctrl_c_listener_fault_stops_the_monitor_and_is_the_daemons_error() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
         let stopped = Arc::new(AtomicBool::new(false));
         let server = tokio::spawn(async {
             tokio::task::yield_now().await;
@@ -221,6 +266,12 @@ mod tests {
         assert!(words.contains("failed to listen for ctrl-c"), "{words}");
         assert!(words.contains("signal registration refused"), "{words}");
         assert!(stopped.load(Ordering::SeqCst), "the monitor was stopped");
+        let (message, error) = fault_line(&markers);
+        assert_eq!(
+            message,
+            "daemon: failed to listen for ctrl-c; stopping the monitor"
+        );
+        assert!(error.contains("signal registration refused"), "{error}");
     }
 
     #[tokio::test]
