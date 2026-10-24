@@ -19,7 +19,8 @@
 //!
 //! - `read_creators`: the creator's reading. Its word must be the row's: a
 //!   difference is this test's construction failing, never a finding. Its
-//!   suspect mark is read after the guard's own recheck and is compared.
+//!   suspect mark is read after the guard (which never clears it, #164) and
+//!   is compared.
 //! - `hold_reason` on that reading: the creator's door (`door_spendable`;
 //!   `guard_depth` where the reason names the depth).
 //! - `assess_named` (a named input) and `assess` (the allocation's offer):
@@ -572,8 +573,8 @@ async fn creator_checks(checks: &mut Checks<'_>, built: &Built, origin: Origin) 
          construction, not the gate)",
         checks.key
     );
-    // The mark after the guard's own recheck (`SpendAttempt`, `Recheck`):
-    // the gate's answer, compared.
+    // The mark after the guard, which reads it and never clears it
+    // (#164): the gate's answer, compared.
     checks.field("read_creators", "creator_suspect", &reading.suspect);
     for (tag, opts) in &words {
         let door = hold_reason(reading, origin, (&built.txid, built.vout), opts);

@@ -9,27 +9,9 @@
     "no-lineage": {
       "what": "The gate judges the creator only; Wallet.deadLineage holds a coin when some ancestor of ours is dead (void parent, the lvDead cases), so the gate offers coins the Lean holds as 'dead lineage'.",
       "answer_moves": true
-    },
-    "fork-recheck-clears-suspect": {
-      "what": "A fork stored from the feed marks the creator suspect, but the spend guard's own recheck (SpendAttempt then Recheck, tracker_host readme_spend_guard) clears the mark while the header at the creator's height still carries its root, so the gate offers the coin; the Lean holds it while the fork is in progress ('creator suspect'). An open split (tracker_meta open_splits) is not cleared this way.",
-      "answer_moves": true
     }
   },
   "divergences": [
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received false", "door": "assess", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received false", "door": "assess", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received false", "door": "assess_named", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received false", "door": "read_creators", "field": "creator_suspect", "lean": "true", "cli": "false", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess (scoped)", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable", "lean": "false", "cli": "true", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "assess_named (scoped)", "field": "offerable_clause", "lean": "creator suspect (fork in progress)", "cli": "offered", "finding": "fork-recheck-clears-suspect"},
-    {"row": "Wallet.Check.latch (fork at 2) | step 5 | T.0 | allow_received true", "door": "read_creators", "field": "creator_suspect", "lean": "true", "cli": "false", "finding": "fork-recheck-clears-suspect"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess", "field": "offerable", "lean": "false", "cli": "true", "finding": "no-lineage"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess", "field": "offerable_clause", "lean": "dead lineage", "cli": "offered", "finding": "no-lineage"},
     {"row": "Wallet.Check.lvDead (R's block reorged) | step 10 | D.0 | allow_received false", "door": "assess_named", "field": "offerable", "lean": "false", "cli": "true", "finding": "no-lineage"},
