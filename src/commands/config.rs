@@ -1,11 +1,13 @@
 //! `bsv-wallet config`: every setting with its effective value and its
 //! source (env, flag, default), as a table or, with `--json`, as an array
 //! of `{name, value, source}`. Keys and tokens print as `<set>`
-//! (`crate::config::Secret`).
+//! (`crate::config::Secret`). A setting refused at start is printed as set
+//! and marked (`refused` in the JSON), and the command then exits 1 naming
+//! every refused variable.
 
 use anyhow::Result;
 
-use crate::config::{Config, Knob};
+use crate::config::{Config, ConfigErrors, Knob};
 
 pub fn run(config: &Config, json: bool) -> Result<()> {
     let knobs = config.knobs();
@@ -14,7 +16,11 @@ pub fn run(config: &Config, json: bool) -> Result<()> {
     } else {
         print!("{}", table(&knobs));
     }
-    Ok(())
+    if config.refused().is_empty() {
+        Ok(())
+    } else {
+        Err(ConfigErrors(config.refused().to_vec()).into())
+    }
 }
 
 /// The knobs as three aligned columns under a header.
@@ -31,10 +37,14 @@ fn table(knobs: &[Knob]) -> String {
         "NAME", "VALUE"
     );
     for k in knobs {
-        out.push_str(&format!(
-            "{:<name_width$}  {:<value_width$}  {}\n",
+        let line = format!(
+            "{:<name_width$}  {:<value_width$}  {}",
             k.name, k.value, k.source
-        ));
+        );
+        match k.refused {
+            Some(expected) => out.push_str(&format!("{line}  REFUSED: not {expected}\n")),
+            None => out.push_str(&format!("{line}\n")),
+        }
     }
     out
 }
@@ -66,6 +76,40 @@ mod tests {
         for knob in config.knobs() {
             line(knob.name);
         }
+    }
+
+    #[test]
+    fn a_refused_setting_is_marked_and_the_command_exits_non_zero() {
+        let refused =
+            Config::from_pairs(&[("MIN_UTXOS", "x"), ("RELAY_POLL_SECS", "soon")]).unwrap_err();
+        let out = table(&refused.config.knobs());
+        let line = |name: &str| {
+            out.lines()
+                .find(|l| l.split_whitespace().next() == Some(name))
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            line("MIN_UTXOS"),
+            [
+                "MIN_UTXOS",
+                "x",
+                "env",
+                "REFUSED:",
+                "not",
+                "a",
+                "whole",
+                "number"
+            ]
+        );
+        assert_eq!(line("SPEND_DEPTH"), ["SPEND_DEPTH", "1", "default"]);
+        let e = run(&refused.config, true).unwrap_err().to_string();
+        assert!(
+            e.contains("MIN_UTXOS") && e.contains("RELAY_POLL_SECS"),
+            "{e}"
+        );
+        assert!(run(&Config::default(), true).is_ok());
     }
 
     #[test]

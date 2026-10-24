@@ -8,7 +8,9 @@ fn config(pairs: &[(&str, &str)]) -> Config {
 }
 
 fn refusal(pairs: &[(&str, &str)]) -> ConfigError {
-    Config::from_pairs(pairs).unwrap_err()
+    let mut refused = Config::from_pairs(pairs).unwrap_err().errors.0;
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    refused.remove(0)
 }
 
 #[test]
@@ -74,6 +76,60 @@ fn a_malformed_value_is_refused_naming_the_variable_and_the_shape() {
         assert!(text.contains(value), "{text}");
         assert!(text.contains(shape), "{text}");
     }
+}
+
+#[test]
+fn every_malformed_value_is_refused_together() {
+    let refused = Config::from_pairs(&[
+        ("MIN_UTXOS", "x"),
+        ("SPEND_DEPTH", "two"),
+        ("RELAY_URL", "relay"),
+        ("WOC_BASE", "nope"),
+        ("BIND_ADDR", "localhost"),
+        ("TRACKER_MAX_ASKS", "7"),
+    ])
+    .unwrap_err();
+    let names: Vec<_> = refused.errors.0.iter().map(|e| e.variable).collect();
+    assert_eq!(
+        names,
+        [
+            "WOC_BASE",
+            "SPEND_DEPTH",
+            "BIND_ADDR",
+            "MIN_UTXOS",
+            "RELAY_URL"
+        ]
+    );
+    let text = refused.to_string();
+    assert_eq!(text.lines().count(), 5, "{text}");
+    for name in names {
+        assert!(text.lines().any(|l| l.starts_with(name)), "{text}");
+    }
+    // The configuration beside the refusal: each refused setting at its
+    // default, the rest as set, and the refused rows marked.
+    let c = &refused.config;
+    assert_eq!(c.refused(), refused.errors.0.as_slice());
+    assert_eq!((c.daemon.min_utxos, c.host.tracker_max_asks), (3, 7));
+    let min_utxos = c
+        .knobs()
+        .into_iter()
+        .find(|k| k.name == "MIN_UTXOS")
+        .unwrap();
+    assert_eq!(
+        (
+            min_utxos.value.as_str(),
+            min_utxos.source,
+            min_utxos.refused
+        ),
+        ("x", Source::Env, Some("a whole number"))
+    );
+    let asks = c
+        .knobs()
+        .into_iter()
+        .find(|k| k.name == "TRACKER_MAX_ASKS")
+        .unwrap();
+    assert_eq!(asks.refused, None);
+    assert!(Config::default().refused().is_empty());
 }
 
 #[test]
@@ -354,5 +410,8 @@ fn the_relay_reads_its_own_settings() {
     );
     assert!(r.require_register);
     let e = RelaySettings::from_vars(vars(&[("RELAY_PORT", "99999")])).unwrap_err();
-    assert_eq!(e.variable, "RELAY_PORT");
+    assert_eq!(e.0[0].variable, "RELAY_PORT");
+    let e = RelaySettings::from_vars(vars(&[("RELAY_PORT", "x"), ("BIND_ADDR", "y")])).unwrap_err();
+    let names: Vec<_> = e.0.iter().map(|e| e.variable).collect();
+    assert_eq!(names, ["RELAY_PORT", "BIND_ADDR"]);
 }
