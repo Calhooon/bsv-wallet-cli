@@ -1,0 +1,816 @@
+#!/usr/bin/env python3
+"""The differential harness (#70): the base build against the head on the hermetic suite.
+
+    tools/differential                      build the base (the merge-base of HEAD and
+                                            origin/beta) and the head, run both, diff
+    tools/differential --base REV           the base at REV
+    tools/differential --base-bin B --head-bin H
+                                            take built binaries (CI passes artifacts);
+                                            bsv-wallet-mcp is read beside each
+    tools/differential --same [--head-bin H]
+                                            the floor: one binary run twice
+    tools/differential --compare R1 R2      diff two recordings already made
+    tools/differential --exclusions         print the normalization list and exit
+
+Each run is `E2E_HERMETIC=1 node tests/e2e/run.js` from this tree's harness (the
+scenarios, the stub and its fixtures are the head's for both builds, so only the
+binary differs), with DIFF_RECORD set (tests/e2e/lib/record.js writes every HTTP
+call and CLI command as a JSON line) and DIFF_ROOT_KEYS set to four keys this tool
+draws once per comparison, so both runs drive the same wallets on the same ports.
+
+The two recordings are compared byte for byte after the normalizations of
+EXCLUSIONS, and only those; each names what it rewrites and why two runs of the
+same code legitimately differ there. The report: per scenario, per call, the
+earliest differing field with both values, and the line
+`DIFFERENTIAL: 0 differences over N calls and M commands` (or the count).
+Exit 0 on zero differences, 1 on differences, 2 when a build or a run failed.
+
+docs/DIFFERENTIAL.md says how a lane runs it and what the label rule is. A Python
+script with the standard library only, like tools/ratchet.
+"""
+
+import argparse
+import base64
+import difflib
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+HARNESS = ROOT / "tests" / "e2e" / "run.js"
+
+# The ports of the hermetic run, the same for both runs (the harness's own
+# defaults, off every port of the registry).
+PORTS = {
+    "WALLET_A_PORT": "3370",
+    "WALLET_B_PORT": "3371",
+    "WALLET_C_PORT": "3372",
+    "FUNDER_PORT": "3373",
+    "E2E_STUB_PORT": "3380",
+}
+
+# What may differ between two runs of the same binary with the same keys, the
+# same stub and the same ports, and only that. Each entry: the field path it
+# rewrites (`*` any key, `[]` any index), and why it differs. The floor run
+# (`--same`) is the evidence: with these removed it is zero.
+EXCLUSIONS = [
+    (
+        "GET /isAuthenticated answered by no response (status null)",
+        "startWallet's readiness poll: how many refused connections precede "
+        "the listen of a freshly spawned serve is the scheduler's (a 500 ms "
+        "poll). Every poll that got a response, the one that answers among "
+        "them, stays compared; the port check before the spawn is refused in "
+        "both runs and goes with the others",
+    ),
+    (
+        "wallet.dir, and the directory inside any string",
+        "the wallet's scratch directory is mkdtemp's (a random suffix); it is "
+        "rewritten to <dir:SEAT>",
+    ),
+    (
+        "rand atoms: txids, scriptSigs, P2PKH hash160s, merkle path hashes and "
+        "Atomic BEEF subjects held by one run's recording and not the other's",
+        "the toolbox draws each action's change derivation (derivationPrefix, "
+        "derivationSuffix) from thread_rng (storage/sqlx/create_action.rs "
+        "random_derivation; no seed knob), so every change script, and every "
+        "txid, signature and merkle path over it, is new in each run. Every "
+        "transaction in the recording (raw, BEEF V1/V2, Atomic BEEF; a byte "
+        "array or a hex string, alone or inside text) is parsed and an atom "
+        "present in one run only is rewritten <rand:N>, numbered in order of "
+        "appearance; an atom both runs hold stays literal. Equal normalized "
+        "recordings are a consistent bijection of the random atoms: the same "
+        "structure, amounts, counts and order, every deterministic value byte "
+        "for byte",
+    ),
+    (
+        "rand strings: *.reference, *.derivationPrefix, *.derivationSuffix "
+        "(also inside a JSON string) held by one run only",
+        "the same thread_rng draws as plain base64 (random_reference, "
+        "random_derivation); rewritten <rand:N> under the same numbering",
+    ),
+    (
+        "ciphertexts: *.ciphertext, *.encryptedLinkage, *.encryptedLinkageProof "
+        "(hex, and the base64 the harness makes of a ciphertext), the values of "
+        "*.keyringForVerifier, held by one run only",
+        "BRC-2 encryption is AES-GCM with an IV drawn per call (bsv-rs "
+        "SymmetricKey), so the same plaintext and key give new bytes each run; "
+        "the certificate fields of scenario 6 are the harness's base64 of "
+        "/encrypt's answer, and proveCertificate re-encrypts the keyring for the "
+        "verifier",
+    ),
+    (
+        "the order of a transaction's inputs",
+        "compared by the outpoint each spends (a literal one, or a rand atom "
+        "already named), not as listed: the toolbox's coin selection ranks a "
+        "candidate by LENGTH(t.input_beef) (create_action.rs, the change pick), "
+        "and that length follows the 70 to 72 byte DER signatures of the rand "
+        "transactions, so one binary picks the same coins in another order (the "
+        "floor's sweep of B, 2026-10-24). Which coins, and how many, stay compared",
+    ),
+    (
+        "cli.stderr: a tracing line's timestamp, and its fields *ms, beef_len, "
+        "beef_bytes, bytes and the dump file beef-<8 hex>.hex",
+        "the log's own clock and durations; the byte counts are lengths of BEEFs "
+        "holding DER signatures of rand transactions; the dump file is named by "
+        "a rand txid's prefix. The lines, their order and every other field "
+        "stay compared",
+    ),
+]
+
+# Not a normalization but how the recording is made: under DIFF_RECORD the
+# harness's calls run one at a time in the order the scenarios issue them
+# (tests/e2e/lib/record.js `serial`), so scenario 10's five concurrent sends
+# reach the spending lock in issue order and the coin graph after them is the
+# same in both runs. The race itself is the plain hermetic run's to test.
+RECORDING_RULES = [
+    "the harness's HTTP calls run one at a time, in issue order (record.js serial): "
+    "concurrent calls reach the spending lock in the scheduler's order otherwise",
+]
+
+TX_KEYS = ("tx", "rawTx", "beef", "atomicBEEF", "inputBEEF")
+
+
+# ---------------------------------------------------------------- transactions
+
+
+def _varint(b, i):
+    n = b[i]
+    if n < 0xFD:
+        return n, i + 1
+    if n == 0xFD:
+        return int.from_bytes(b[i + 1 : i + 3], "little"), i + 3
+    if n == 0xFE:
+        return int.from_bytes(b[i + 1 : i + 5], "little"), i + 5
+    return int.from_bytes(b[i + 1 : i + 9], "little"), i + 9
+
+
+def _sha256d(b):
+    return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+
+
+def _parse_tx(b, i):
+    """One raw transaction at b[i:]; returns (tx, end). 32-byte ids are in display order."""
+    start = i
+    version = int.from_bytes(b[i : i + 4], "little")
+    i += 4
+    n_in, i = _varint(b, i)
+    if n_in == 0 or n_in > 100_000:
+        raise ValueError("inputs")
+    inputs = []
+    for _ in range(n_in):
+        prev = b[i : i + 32]
+        if len(prev) != 32:
+            raise ValueError("short")
+        vout = int.from_bytes(b[i + 32 : i + 36], "little")
+        i += 36
+        n, i = _varint(b, i)
+        script = b[i : i + n]
+        if len(script) != n:
+            raise ValueError("short")
+        i += n
+        inputs.append({"prev": prev[::-1], "vout": vout, "script": script,
+                       "seq": int.from_bytes(b[i : i + 4], "little")})
+        i += 4
+    n_out, i = _varint(b, i)
+    if n_out > 100_000:
+        raise ValueError("outputs")
+    outputs = []
+    for _ in range(n_out):
+        sats = int.from_bytes(b[i : i + 8], "little")
+        i += 8
+        n, i = _varint(b, i)
+        script = b[i : i + n]
+        if len(script) != n:
+            raise ValueError("short")
+        i += n
+        outputs.append({"satoshis": sats, "script": script})
+    locktime = int.from_bytes(b[i : i + 4], "little")
+    i += 4
+    if i > len(b):
+        raise ValueError("short")
+    txid = _sha256d(b[start:i])[::-1]
+    return {"txid": txid, "version": version, "inputs": inputs, "outputs": outputs, "locktime": locktime}, i
+
+
+def _parse_bump(b, i):
+    height, i = _varint(b, i)
+    tree_height = b[i]
+    i += 1
+    levels = []
+    for _ in range(tree_height):
+        n, i = _varint(b, i)
+        leaves = []
+        for _ in range(n):
+            offset, i = _varint(b, i)
+            flags = b[i]
+            i += 1
+            leaf = {"offset": offset, "flags": flags}
+            if flags & 1 == 0:
+                leaf["hash"] = b[i : i + 32][::-1]
+                i += 32
+            leaves.append(leaf)
+        levels.append(leaves)
+    return {"height": height, "levels": levels}, i
+
+
+BEEF_V1 = b"\x01\x00\xbe\xef"
+BEEF_V2 = b"\x02\x00\xbe\xef"
+
+
+def parse_container(b):
+    """A raw transaction, a BEEF (V1, V2) or an Atomic BEEF as a structure; None if it is none."""
+    try:
+        out = {}
+        i = 0
+        if b[:4] == b"\x01\x01\x01\x01":
+            out["atomic"] = b[4:36][::-1]
+            i = 36
+        version = b[i : i + 4]
+        if version in (BEEF_V1, BEEF_V2):
+            out["form"] = "BEEF_V1" if version == BEEF_V1 else "BEEF_V2"
+            i += 4
+            n_bumps, i = _varint(b, i)
+            out["bumps"] = []
+            for _ in range(n_bumps):
+                bump, i = _parse_bump(b, i)
+                out["bumps"].append(bump)
+            n_tx, i = _varint(b, i)
+            out["txs"] = []
+            for _ in range(n_tx):
+                bump = None
+                if version == BEEF_V2:
+                    # BRC-96: 0 a raw tx, 1 a bump index then a raw tx, 2 a txid alone.
+                    fmt = b[i]
+                    i += 1
+                    if fmt == 2:
+                        out["txs"].append({"txidOnly": b[i : i + 32][::-1]})
+                        i += 32
+                        continue
+                    if fmt == 1:
+                        bump, i = _varint(b, i)
+                    tx, i = _parse_tx(b, i)
+                else:
+                    tx, i = _parse_tx(b, i)
+                    has_bump = b[i]
+                    i += 1
+                    if has_bump:
+                        bump, i = _varint(b, i)
+                out["txs"].append({"bump": bump, "tx": tx})
+        elif i == 0:
+            out["form"] = "raw"
+            out["tx"], i = _parse_tx(b, 0)
+        else:
+            return None
+        if i != len(b):
+            return None
+        return out
+    except (IndexError, ValueError):
+        return None
+
+
+def _p2pkh(script):
+    return len(script) == 25 and script[:3] == b"\x76\xa9\x14" and script[23:] == b"\x88\xac"
+
+
+def _tx_atoms(tx):
+    yield tx["txid"]
+    for x in tx["inputs"]:
+        if x["prev"] != bytes(32):
+            yield x["prev"]
+        if len(x["script"]) >= 20:
+            yield x["script"]
+    for o in tx["outputs"]:
+        if _p2pkh(o["script"]):
+            yield o["script"][3:23]
+
+
+def tx_atoms(b):
+    """The atoms of a raw transaction, a BEEF or an Atomic BEEF; None if it is none."""
+    c = parse_container(b)
+    if c is None:
+        return None
+    atoms = []
+    if "atomic" in c:
+        atoms.append(c["atomic"])
+    if c["form"] == "raw":
+        atoms += _tx_atoms(c["tx"])
+        return atoms
+    for bump in c["bumps"]:
+        atoms += [leaf["hash"] for level in bump["levels"] for leaf in level if "hash" in leaf]
+    for t in c["txs"]:
+        atoms += [t["txidOnly"]] if "txidOnly" in t else list(_tx_atoms(t["tx"]))
+    return atoms
+
+
+def _is_bytes(v):
+    return (
+        isinstance(v, list)
+        and len(v) >= 32
+        and all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 255 for x in v)
+    )
+
+
+HEX_RE = re.compile(r"[0-9a-f]{120,}")
+HEX_FULL = re.compile(r"[0-9a-f]+")
+RAND_KEYS = ("reference", "derivationPrefix", "derivationSuffix")
+# BRC-2 ciphertexts: AES-GCM with an IV drawn per call (bsv-rs SymmetricKey).
+CIPHER_KEYS = ("ciphertext", "encryptedLinkage", "encryptedLinkageProof")
+# A certificate keyring the wallet re-encrypts for a verifier: field -> base64 ciphertext.
+ENCRYPTED_MAPS = ("keyringForVerifier",)
+# The tracing fields that follow from the draws: a BEEF's length (a DER
+# signature is 70 to 72 bytes) and the dump file named by its txid's prefix.
+LOG_RES = (
+    (re.compile(r"((?:beef_len|beef_bytes|bytes|\w*ms)(?:\x1b\[0m\x1b\[2m)?=(?:\x1b\[0m)?)\d+"), r"\1<n>"),
+    (re.compile(r"beef-[0-9a-f]{8}\.hex"), "beef-<txid8>.hex"),
+)
+# A tracing line's own clock (the CLI's stderr, RFC 3339 with fractions).
+TIME_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z")
+
+
+def _strings(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _strings(x)
+
+
+def _rand_strings(v, out):
+    if isinstance(v, dict):
+        for k, x in v.items():
+            if k in RAND_KEYS and isinstance(x, str) and len(x) >= 8:
+                out.add(x)
+            elif k in ENCRYPTED_MAPS and isinstance(x, dict):
+                out.update(y for y in x.values() if isinstance(y, str) and len(y) >= 8)
+            elif k in CIPHER_KEYS and isinstance(x, str) and re.fullmatch(r"(?:[0-9a-f]{2}){48,}", x):
+                # BRC-2's AES-GCM draws its IV per call: the hex and the
+                # base64 the harness makes of it (certificate fields).
+                out.add(x)
+                out.add(base64.b64encode(bytes.fromhex(x)).decode())
+            else:
+                _rand_strings(x, out)
+    elif isinstance(v, list):
+        for x in v:
+            _rand_strings(x, out)
+    elif isinstance(v, str) and v[:1] in "{[":
+        try:
+            _rand_strings(json.loads(v), out)
+        except ValueError:
+            pass
+
+
+def _hexify(v):
+    """Byte arrays of transactions become hex strings, so atoms are found and shown alike."""
+    if isinstance(v, dict):
+        return {k: (bytes(x).hex() if _is_bytes(x) else _hexify(x)) for k, x in v.items()}
+    if isinstance(v, list):
+        if _is_bytes(v):
+            return bytes(v).hex()
+        return [_hexify(x) for x in v]
+    return v
+
+
+def collect_atoms(events):
+    """Every hex atom (both byte orders for 32-byte ones) and rand string of a recording."""
+    hexes = set()
+    strings = set()
+    for e in events:
+        for s in _strings(e):
+            for m in HEX_RE.finditer(s):
+                atoms = tx_atoms(bytes.fromhex(m.group(0)[: len(m.group(0)) // 2 * 2]))
+                if atoms is None:
+                    continue
+                for a in atoms:
+                    hexes.add(a.hex())
+                    if len(a) == 32:
+                        hexes.add(a[::-1].hex())
+        _rand_strings(e, strings)
+    return hexes, strings
+
+
+# ------------------------------------------------------------------ normalize
+
+
+def load(path):
+    events = [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    events.sort(key=lambda e: e["seq"])
+    return [_hexify(e) for e in events]
+
+
+class Renamer:
+    """Rewrites the atoms one run holds alone to <rand:N>, N in order of appearance.
+
+    A string that is a transaction (raw, BEEF, Atomic BEEF) becomes its
+    structure, so a difference is named by its place (txs[2].inputs[0].prev)
+    and a transaction's inputs are compared in a canonical order: by the
+    outpoint they spend, as literal or as an already named atom (the
+    toolbox's coin selection ranks by LENGTH(input_beef), which follows the
+    DER lengths of the signatures; EXCLUSIONS). A string that is JSON (the
+    CLI's --json stdout) is compared as its value.
+    """
+
+    def __init__(self, hexes, strings, dirs):
+        self.names = {}
+        self.unique = hexes | strings
+        self.dirs = dirs
+        alts = sorted(self.unique, key=len, reverse=True)
+        self.re = re.compile("|".join(re.escape(a) for a in alts)) if alts else None
+
+    def name(self, a):
+        if a not in self.unique:
+            return a
+        if a not in self.names:
+            self.names[a] = f"<rand:{len(self.names)}>"
+        return self.names[a]
+
+    def _name(self, m):
+        return self.name(m.group(0))
+
+    def text(self, s):
+        for d, seat in self.dirs:
+            s = s.replace(d, f"<dir:{seat}>")
+        s = TIME_RE.sub("<time>", s)
+        for r, to in LOG_RES:
+            s = r.sub(to, s)
+        return self.re.sub(self._name, s) if self.re else s
+
+    def _script(self, script):
+        if _p2pkh(script):
+            return "76a914" + self.name(script[3:23].hex()) + "88ac"
+        return self.text(script.hex())
+
+    def tx(self, tx):
+        out = {"txid": self.name(tx["txid"].hex()), "version": tx["version"]}
+
+        def key(item):
+            i, x = item
+            prev = x["prev"].hex()
+            if prev not in self.unique:
+                return (0, prev, x["vout"], i)
+            if prev in self.names:
+                return (1, int(self.names[prev][6:-1]), x["vout"], i)
+            return (2, i)
+
+        inputs = []
+        for _, x in sorted(enumerate(tx["inputs"]), key=key):
+            script = x["script"].hex()
+            inputs.append({"prev": self.name(x["prev"].hex()), "vout": x["vout"],
+                           "script": self.name(script) if len(x["script"]) >= 20 else script,
+                           "seq": x["seq"]})
+        out["inputs"] = inputs
+        out["outputs"] = [{"satoshis": o["satoshis"], "script": self._script(o["script"])} for o in tx["outputs"]]
+        out["locktime"] = tx["locktime"]
+        return out
+
+    def container(self, c):
+        out = {"form": c["form"]}
+        if "atomic" in c:
+            out["atomic"] = self.name(c["atomic"].hex())
+        if c["form"] == "raw":
+            out["tx"] = self.tx(c["tx"])
+            return {"$tx": out}
+        out["bumps"] = [
+            {"height": bump["height"],
+             "levels": [[{**leaf, **({"hash": self.name(leaf["hash"].hex())} if "hash" in leaf else {})}
+                         for leaf in level] for level in bump["levels"]]}
+            for bump in c["bumps"]
+        ]
+        out["txs"] = [
+            {"txidOnly": self.name(t["txidOnly"].hex())} if "txidOnly" in t
+            else {"bump": t["bump"], "tx": self.tx(t["tx"])}
+            for t in c["txs"]
+        ]
+        return {"$tx": out}
+
+    def string(self, s):
+        if len(s) >= 120 and len(s) % 2 == 0 and HEX_FULL.fullmatch(s):
+            c = parse_container(bytes.fromhex(s))
+            if c is not None:
+                return self.container(c)
+        if s[:1] in "{[":
+            try:
+                return {"$json": self.value(json.loads(s))}
+            except ValueError:
+                pass
+        return self.text(s)
+
+    def value(self, v):
+        if isinstance(v, str):
+            return self.string(v)
+        if isinstance(v, dict):
+            return {k: self.value(v[k]) for k in sorted(v)}
+        if isinstance(v, list):
+            return [self.value(x) for x in v]
+        return v
+
+
+def normalize(a, b):
+    """The two recordings with EXCLUSIONS applied, each against the other."""
+    ha, sa = collect_atoms(a)
+    hb, sb = collect_atoms(b)
+
+    def dirs(events):
+        out = [(e["dir"], e["seat"]) for e in events if e.get("kind") == "wallet"]
+        return sorted(out, key=lambda d: len(d[0]), reverse=True)
+
+    def polls(events):
+        return [e for e in events
+                if not (e.get("kind") == "http" and e.get("path") == "/isAuthenticated" and e.get("status") is None)]
+
+    a, b = polls(a), polls(b)
+    ra = Renamer(ha - hb, sa - sb, dirs(a))
+    rb = Renamer(hb - ha, sb - sa, dirs(b))
+    na = [ra.value({k: v for k, v in e.items() if k != "seq"}) for e in a]
+    nb = [rb.value({k: v for k, v in e.items() if k != "seq"}) for e in b]
+    return na, nb, len(ra.names), len(rb.names)
+
+
+# ----------------------------------------------------------------------- diff
+
+
+def first_difference(x, y, path=""):
+    if type(x) is not type(y):
+        return path or ".", x, y
+    if isinstance(x, dict):
+        for k in sorted(set(x) | set(y)):
+            if k not in x or k not in y:
+                return f"{path}.{k}", x.get(k, "<absent>"), y.get(k, "<absent>")
+            d = first_difference(x[k], y[k], f"{path}.{k}")
+            if d:
+                return d
+        return None
+    if isinstance(x, list):
+        for i, (u, v) in enumerate(zip(x, y)):
+            d = first_difference(u, v, f"{path}[{i}]")
+            if d:
+                return d
+        if len(x) != len(y):
+            return f"{path}.length", len(x), len(y)
+        return None
+    if x != y:
+        return path or ".", x, y
+    return None
+
+
+def label(e):
+    if e.get("kind") == "http":
+        return f"{e['method']} {e['path']} (seat {e['seat']})"
+    if e.get("kind") == "cli":
+        words = [w if isinstance(w, str) else "<tx>" for w in e["argv"][:4]]
+        return f"bsv-wallet {' '.join(words)[:60]} (seat {e['seat']})"
+    return f"{e.get('kind')} (seat {e.get('seat')})"
+
+
+def show(v, other=None, width=160):
+    """A value for the report; a long string is shown around its earliest difference from `other`."""
+    if isinstance(v, str) and isinstance(other, str) and len(v) > width:
+        at = next((i for i, (x, y) in enumerate(zip(v, other)) if x != y), min(len(v), len(other)))
+        lo = max(0, at - 40)
+        return f"@{at}: " + ("..." if lo else "") + json.dumps(v[lo : lo + width])[1:-1] + ("..." if lo + width < len(v) else "")
+    s = json.dumps(v)
+    return s if len(s) <= width else s[: width - 3] + "..."
+
+
+def signature(e):
+    """What a call is, apart from its answer: aligns the two runs' calls."""
+    if e.get("kind") == "http":
+        return ("http", e["seat"], e["method"], e["path"])
+    if e.get("kind") == "cli":
+        return ("cli", e["seat"], tuple(w for w in e["argv"] if isinstance(w, str) and not w.startswith("<rand"))[:3])
+    return (e.get("kind"), e.get("seat"))
+
+
+def diff(a, b):
+    """Per phase (setup, each scenario, sweep), call by call: the report lines and the count.
+
+    The calls of a phase are aligned by what they are (seat, method, path or
+    argv), so a call one run made and the other did not is named alone and
+    the calls after it still compare with their counterparts.
+    """
+    phases = []
+    for e in a + b:
+        if e["phase"] not in phases:
+            phases.append(e["phase"])
+    lines = []
+    count = 0
+    for p in phases:
+        xa = [e for e in a if e["phase"] == p]
+        xb = [e for e in b if e["phase"] == p]
+        here = []
+        sm = difflib.SequenceMatcher(None, [signature(e) for e in xa], [signature(e) for e in xb], autojunk=False)
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            pairs = list(zip(range(i1, i2), range(j1, j2))) if op in ("equal", "replace") else []
+            for i, j in pairs:
+                d = first_difference(xa[i], xb[j])
+                if d:
+                    path, u, v = d
+                    here.append(f"  #{i} {label(xa[i])}: {path}\n      base {show(u, v)}\n      head {show(v, u)}")
+                    count += 1
+            if op in ("replace", "delete"):
+                for i in range(i1 + len(pairs), i2):
+                    here.append(f"  #{i} {label(xa[i])}: only the base made this call")
+                    count += 1
+            if op in ("replace", "insert"):
+                for j in range(j1 + len(pairs), j2):
+                    here.append(f"  #{j} {label(xb[j])}: only the head made this call (head #{j})")
+                    count += 1
+        if len(xa) != len(xb):
+            here.insert(0, f"  calls: base {len(xa)}, head {len(xb)}")
+        if here:
+            lines.append(f"[{p}]")
+            lines += here
+    return lines, count
+
+
+def compare(rec_a, rec_b, names=("base", "head")):
+    a, b = load(rec_a), load(rec_b)
+    na, nb, ka, kb = normalize(a, b)
+    lines, count = diff(na, nb)
+    calls = sum(1 for e in na if e.get("kind") == "http")
+    commands = sum(1 for e in na if e.get("kind") == "cli")
+    out = [
+        f"differential: {names[0]} {rec_a}",
+        f"differential: {names[1]} {rec_b}",
+        f"events: {names[0]} {len(a)}, {names[1]} {len(b)}; "
+        f"rand atoms renamed: {names[0]} {ka}, {names[1]} {kb}",
+        "",
+    ]
+    out += lines
+    if lines:
+        out.append("")
+    out.append(
+        f"DIFFERENTIAL: {count} difference{'s' if count != 1 else ''} over {calls} calls and {commands} commands"
+    )
+    return "\n".join(out), count
+
+
+# ---------------------------------------------------------------------- build
+
+
+def run(cmd, **kw):
+    print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr, flush=True)
+    return subprocess.run(cmd, check=True, **kw)
+
+
+def scratch_root():
+    base = os.environ.get("TMPDIR") or str(Path.home() / "bsv" / "targets")
+    if base.rstrip("/") in ("/tmp", "/private/tmp"):
+        base = str(Path.home() / "bsv" / "targets")
+    return Path(base) / "bsv-wallet-differential"
+
+
+def build(tree, target):
+    env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
+    run(["cargo", "build", "--release", "--locked"], cwd=tree, env=env)
+    run(["cargo", "build", "--release", "--locked", "-p", "bsv-wallet-mcp"], cwd=tree, env=env)
+    return Path(target) / "release" / "bsv-wallet"
+
+
+def head_target():
+    meta = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    return Path(json.loads(meta.stdout)["target_directory"])
+
+
+def build_base(rev, target):
+    sha = subprocess.run(["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=ROOT,
+                         check=True, capture_output=True, text=True).stdout.strip()
+    tree = scratch_root() / f"base-{sha[:12]}"
+    if tree.exists():
+        run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    run(["git", "worktree", "add", "--detach", str(tree), sha], cwd=ROOT)
+    try:
+        return build(tree, target), sha
+    finally:
+        run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
+
+
+def merge_base():
+    return subprocess.run(["git", "merge-base", "HEAD", "origin/beta"], cwd=ROOT,
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+# ------------------------------------------------------------------------ run
+
+
+class Failure(Exception):
+    """A build, a path or a run that failed: exit 2, never read as a difference."""
+
+
+def record(binary, keys, out, name):
+    """One hermetic run of the suite against `binary`, recorded to out/<name>.jsonl."""
+    binary = Path(binary).resolve()
+    mcp = binary.parent / "bsv-wallet-mcp"
+    for b in (binary, mcp):
+        if not b.is_file():
+            raise Failure(f"{b} is not a file (bsv-wallet-mcp is read beside bsv-wallet)")
+    rec = out / f"{name}.jsonl"
+    rec.unlink(missing_ok=True)
+    tmp = out / f"{name}-wallets"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    env = {
+        **os.environ,
+        **PORTS,
+        "E2E_HERMETIC": "1",
+        "NODE_USE_ENV_PROXY": "1",
+        "DIFF_RECORD": str(rec),
+        "DIFF_ROOT_KEYS": ",".join(keys),
+        "BSV_WALLET_BIN": str(binary),
+        "BSV_WALLET_MCP_BIN": str(mcp),
+        "E2E_WALLET_TMP": str(tmp),
+    }
+    log = out / f"{name}.log"
+    print(f"differential: run {name}: {binary}", file=sys.stderr, flush=True)
+    with open(log, "w") as f:
+        r = subprocess.run(["node", str(HARNESS)], cwd=ROOT, env=env, stdout=f, stderr=subprocess.STDOUT)
+    tail = log.read_text().splitlines()
+    passed = next((l.strip() for l in reversed(tail) if l.strip().startswith("Passed:")), "Passed: ?")
+    print(f"differential: run {name}: exit {r.returncode}, {passed} (log {log})", file=sys.stderr, flush=True)
+    return rec, r.returncode, passed
+
+
+def default_out():
+    return scratch_root() / time.strftime("run-%Y%m%dT%H%M%S")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--base", help="the base rev (default: the merge-base of HEAD and origin/beta)")
+    ap.add_argument("--base-bin", help="a built base bsv-wallet (bsv-wallet-mcp beside it)")
+    ap.add_argument("--head-bin", help="a built head bsv-wallet (default: built from the tree)")
+    ap.add_argument("--base-target", help="the base build's CARGO_TARGET_DIR (default: under the scratch root)")
+    ap.add_argument("--same", action="store_true", help="the floor: run the head binary twice")
+    ap.add_argument("--compare", nargs=2, metavar=("BASE", "HEAD"), help="diff two recordings")
+    ap.add_argument("--out", help="where the recordings, logs and report go")
+    ap.add_argument("--exclusions", action="store_true", help="print the normalization list and exit")
+    args = ap.parse_args()
+
+    if args.exclusions:
+        for field, why in EXCLUSIONS:
+            print(f"- {field}\n    {why}")
+        for rule in RECORDING_RULES:
+            print(f"- recording: {rule}")
+        return 0
+
+    if args.compare:
+        text, count = compare(*args.compare)
+        print(text)
+        return 0 if count == 0 else 1
+
+    out = Path(args.out) if args.out else default_out()
+    out.mkdir(parents=True, exist_ok=True)
+
+    head = Path(args.head_bin) if args.head_bin else build(ROOT, head_target())
+    if args.same:
+        base, names = head, ("run1", "run2")
+        base_label = head_label = str(head)
+    else:
+        names = ("base", "head")
+        if args.base_bin:
+            base, base_label = Path(args.base_bin), args.base_bin
+        else:
+            rev = args.base or merge_base()
+            target = Path(args.base_target) if args.base_target else scratch_root() / "target-base"
+            base, sha = build_base(rev, target)
+            base_label = f"{rev} ({sha[:12]})"
+        head_label = str(head)
+
+    keys = [secrets.token_hex(32) for _ in range(4)]
+    rec_a, code_a, passed_a = record(base, keys, out, names[0])
+    rec_b, code_b, passed_b = record(head, keys, out, names[1])
+    text, count = compare(rec_a, rec_b, names)
+    header = [
+        f"differential: {names[0]} build {base_label}: suite exit {code_a}, {passed_a}",
+        f"differential: {names[1]} build {head_label}: suite exit {code_b}, {passed_b}",
+        "differential: exclusions (tools/differential --exclusions):",
+    ] + [f"  - {field}" for field, _ in EXCLUSIONS] + [f"  - recording: {r}" for r in RECORDING_RULES]
+    report = "\n".join(header) + "\n" + text + "\n"
+    (out / "report.txt").write_text(report)
+    print(report, end="")
+    print(f"differential: report {out / 'report.txt'}", file=sys.stderr)
+    if code_a != 0 or code_b != 0:
+        print("differential: a suite run failed; the differences above are not a verdict", file=sys.stderr)
+        return 2
+    return 0 if count == 0 else 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Failure, subprocess.CalledProcessError, OSError, ValueError) as e:
+        print(f"differential: failed: {e}", file=sys.stderr)
+        sys.exit(2)
