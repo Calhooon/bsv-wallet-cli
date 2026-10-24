@@ -3,15 +3,20 @@
  * Spawns fresh wallets on test ports, funds them from the e2e funder (default :3320).
  */
 
-const { execSync, spawn } = require('child_process');
-const fs = require('fs');
 const path = require('path');
-const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./wallet-client');
-const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
+const record = require('./record');
 
 // The release binary: the repository's target by default; BSV_WALLET_BIN names
 // another (a shared CARGO_TARGET_DIR).
 const BSV = process.env.BSV_WALLET_BIN || path.resolve(__dirname, '../../../target/release/bsv-wallet');
+// Under DIFF_RECORD the binary's commands are recorded: execSync is wrapped
+// before this file and the scenarios take it from child_process.
+record.install(BSV);
+
+const { execSync, spawn } = require('child_process');
+const fs = require('fs');
+const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./wallet-client');
+const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
 const FUNDER_PORT = parseInt(process.env.FUNDER_PORT || '3320');
 const FUNDER_DIR = process.env.FUNDER_DIR || path.resolve(__dirname, '..', '..', '..', 'e2e-funder');
 // Where a test wallet's directory is made (`/tmp` as before; E2E_WALLET_TMP
@@ -35,8 +40,13 @@ async function startWallet(port, name) {
   }
   const dir = fs.mkdtempSync(path.join(WALLET_TMP, `bsv-wallet-${name}-`));
 
-  // Init wallet (generates ROOT_KEY + wallet.db)
-  execSync(`cd "${dir}" && "${BSV}" init`, { stdio: 'pipe' });
+  record.walletDir(name, dir);
+
+  // Init wallet (generates ROOT_KEY + wallet.db). Under DIFF_ROOT_KEYS
+  // (hermetic only, refused otherwise) the seat's key is imported instead,
+  // so two differential runs drive the same wallets.
+  const key = record.rootKeyFor(name);
+  execSync(`cd "${dir}" && "${BSV}" init${key ? ` --key ${key}` : ''}`, { stdio: 'pipe' });
 
   // Start serve in background. The monitor daemon is NOT needed for test wallets
   // because internalized txs are spent via BEEF which includes the parent tx
@@ -87,6 +97,7 @@ async function startWallet(port, name) {
   const addrResult = execSync(`cd "${dir}" && "${BSV}" address`, { encoding: 'utf-8' })
     .trim().split('\n')[0].trim();
 
+  record.wallet(name, { dir, port, identityKey });
   return { dir, proc, client, identityKey, address: addrResult, port, logPath };
 }
 

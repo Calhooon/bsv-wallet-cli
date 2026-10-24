@@ -1,7 +1,10 @@
 /**
  * BRC-100 Wallet HTTP Client
  * Wraps all 28 endpoints with proper Origin header and JSON handling.
+ * Under DIFF_RECORD every call is recorded here (./record.js).
  */
+const record = require('./record');
+
 class WalletClient {
   /**
    * `allowPending: 'received'` names the spend gate's word R1 (d) on every
@@ -22,13 +25,22 @@ class WalletClient {
   }
 
   async post(endpoint, body = {}) {
-    const resp = await fetch(`${this.base}/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Origin': this.origin, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000), // 3 min — broadcast can retry across multiple providers
-    });
-    const text = await resp.text();
+    return record.serial(() => this.postNow(endpoint, body));
+  }
+
+  async postNow(endpoint, body) {
+    const done = record.httpStart(this.name, 'POST', `/${endpoint}`, body);
+    let resp, text;
+    try {
+      resp = await fetch(`${this.base}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Origin': this.origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(180_000), // 3 min — broadcast can retry across multiple providers
+      });
+      text = await resp.text();
+    } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
+    done(resp.status, text);
     let data = {};
     try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
     if (!resp.ok) {
@@ -44,10 +56,19 @@ class WalletClient {
   }
 
   async get(endpoint) {
-    const resp = await fetch(`${this.base}/${endpoint}`, {
-      headers: { 'Origin': this.origin },
-    });
-    const text = await resp.text();
+    return record.serial(() => this.getNow(endpoint));
+  }
+
+  async getNow(endpoint) {
+    const done = record.httpStart(this.name, 'GET', `/${endpoint}`);
+    let resp, text;
+    try {
+      resp = await fetch(`${this.base}/${endpoint}`, {
+        headers: { 'Origin': this.origin },
+      });
+      text = await resp.text();
+    } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
+    done(resp.status, text);
     try { return text ? JSON.parse(text) : {}; } catch { return { _raw: text }; }
   }
 
