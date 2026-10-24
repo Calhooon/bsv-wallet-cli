@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
 """The scoreboard of docs/NORTH-STAR.md, rendered from the records in the tree (#77).
 
-    tools/scoreboard            print the table the records give
-    tools/scoreboard --render   rewrite the table between the markers of docs/NORTH-STAR.md
-    tools/scoreboard --check    exit 1 with a diff when the committed table is stale
+    tools/scoreboard                    print the table the records give
+    tools/scoreboard --render           rewrite the table between the markers of docs/NORTH-STAR.md
+    tools/scoreboard --check            exit 1 with a diff when the committed table is stale
+    tools/scoreboard --check --base F   also exit 1 when a number fell from the base's values F
+    tools/scoreboard --json             print the tree's comparable values (the --base input)
+    --root DIR                          read the tree at DIR instead of this checkout
 
 The table lives between `<!-- scoreboard:begin -->` and `<!-- scoreboard:end -->`
 and is never edited by hand: a PR that moves a record (re-records the ratchet,
 adds a fixture, moves a floor) runs --render and commits the table with it; the
-CI job `ratchet` runs --check. A Python script with the standard library only,
-like tools/ratchet. It reads files and runs no cargo, no git and no network.
+CI job `ratchet` runs --check against the values of the base ref's tree, which
+it renders with this tool's --json (--root on the base's tree, read with git
+archive, as the ratchet's own step reads the base record). A Python script with
+the standard library only, like tools/ratchet. It reads files and runs no cargo,
+no git and no network.
 
-The records it reads, each optional except the first two (a record not yet in
-the tree renders as a row that says so):
+A record that is MISSING renders as a row that says so ("not in the tree yet",
+"unmeasured", "no baseline yet"). A record that is PRESENT must match its shape
+below, or the tool exits 1 naming the file and the field; it never reads a
+malformed record as an absent one.
 
-  docs/ratchets.json             the seven ratchets and the commit they were recorded at
+  docs/ratchets.json             {"commit": <40-hex sha>, "ratchets": {name: int}}
   tests/wire/MANIFEST.json       {"fixtures": [names]}: the wire fixtures
   tests/wire/consumers/          the consumers' fixtures: its MANIFEST.json when present
                                  ({"fixtures": [paths]}), else every *.json under it, by
                                  its first directory (one directory per consumer)
   docs/ARCH-RULES.md             the rules table: one row per rule whose first cell
-                                 starts with A<n>; the column headed "Allowlist today"
+                                 starts with A<n>; the column headed "Allowlist today";
+                                 a table with no rule row is a fault
   .github/workflows/nightly.yml  the mutation floors: the JSON object of MUTANTS_FLOORS
   docs/scoreboard/mutants.json   the measured scores, written by the captain from the
                                  nightly's "Mutation score" summary (shape below)
-  benches/baseline.json          the bench baseline: {"profiles": {name: {"runs":
-                                 [{"benches": {id: {...}}}]}}}, tools/bench-compare's shape
+  benches/baseline.json          the bench baseline, tools/bench-compare's shape:
+                                 {"profiles": {name: {"runs": [{"benches": {id:
+                                 {"p50_us": n, "p99_us": n, ..}}}]}}}
   tests/e2e/scenarios/*.js       the e2e scenarios (run.js loads every .js there)
   tests/e2e/run.js               the hermetic flag: present when it reads E2E_HERMETIC
 
@@ -46,6 +56,13 @@ docs/scoreboard/mutants.json, the measured column of the floors' rows:
 .github/nightly/mutants_score.py); the counts are its columns and are kept for the
 reader, the table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
+
+The values --json prints and --base reads: {"schema": 1, "values": {key: number}}.
+A key `floor:<file>`, `fixtures:wire`, `fixtures:consumers`, `consumers`,
+`e2e:scenarios`, `e2e:hermetic` (1 or 0) or `arch:rules` may not fall below the
+base's, and a key the base holds may not leave the tree; a key
+`allowlist:<rule>:files` or `allowlist:<rule>:sites` may not rise above the
+base's. The ratchets' own numbers are tools/ratchet's to compare.
 """
 
 import argparse
@@ -56,65 +73,120 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DOC = ROOT / "docs" / "NORTH-STAR.md"
 BEGIN = "<!-- scoreboard:begin -->"
 END = "<!-- scoreboard:end -->"
 
-RATCHETS = ROOT / "docs" / "ratchets.json"
-WIRE = ROOT / "tests" / "wire" / "MANIFEST.json"
-CONSUMERS = ROOT / "tests" / "wire" / "consumers"
-ARCH = ROOT / "docs" / "ARCH-RULES.md"
-NIGHTLY = ROOT / ".github" / "workflows" / "nightly.yml"
-MUTANTS = ROOT / "docs" / "scoreboard" / "mutants.json"
-BENCH = ROOT / "benches" / "baseline.json"
-SCENARIOS = ROOT / "tests" / "e2e" / "scenarios"
-RUN_JS = ROOT / "tests" / "e2e" / "run.js"
+DOC = "docs/NORTH-STAR.md"
+RATCHETS = "docs/ratchets.json"
+WIRE = "tests/wire/MANIFEST.json"
+CONSUMERS = "tests/wire/consumers"
+ARCH = "docs/ARCH-RULES.md"
+NIGHTLY = ".github/workflows/nightly.yml"
+MUTANTS = "docs/scoreboard/mutants.json"
+BENCH = "benches/baseline.json"
+SCENARIOS = "tests/e2e/scenarios"
+RUN_JS = "tests/e2e/run.js"
 
 ABSENT = "not in the tree yet"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# A key's direction: "floor" may not fall (nor leave the tree), "ceiling" may not rise.
+FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules)$")
+CEILING_KEYS = re.compile(r"^allowlist:A\d+:(files|sites)$")
 
 
-def rel(path):
-    return path.relative_to(ROOT).as_posix()
+def path(name):
+    return ROOT / name
 
 
-def load_json(path):
-    with open(path) as f:
-        return json.load(f)
+def fail(name, field, why):
+    raise SystemExit(f"scoreboard: {name}: {field}: {why}")
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def load_json(name):
+    """A present record's JSON; an empty or unparsable file is a fault, never an absence."""
+    text = path(name).read_text()
+    if not text.strip():
+        fail(name, "(the file)", "present and empty; a record that is not measured yet is absent, not empty")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        fail(name, "(the file)", f"not JSON ({e})")
+
+
+def require_object(name, field, v):
+    if not isinstance(v, dict):
+        fail(name, field, f"must be an object, is {type(v).__name__}")
+    return v
+
+
+class Row:
+    def __init__(self, row, value, measured="", record="", values=None):
+        self.cells = (row, value, measured, record)
+        self.values = values or {}
 
 
 def ratchet_rows():
-    record = load_json(RATCHETS)
-    commit = record["commit"][:7]
-    source = f"`{rel(RATCHETS)}` at {commit}"
-    return [(f"ratchet `{key}`", str(value), "", source) for key, value in record["ratchets"].items()]
+    if not path(RATCHETS).exists():
+        return [Row("ratchets", ABSENT, "", f"`{RATCHETS}`")]
+    record = require_object(RATCHETS, "(the file)", load_json(RATCHETS))
+    commit = record.get("commit")
+    if not isinstance(commit, str) or not SHA.match(commit):
+        fail(RATCHETS, "commit", "must be a full 40-hex sha")
+    ratchets = require_object(RATCHETS, "ratchets", record.get("ratchets"))
+    if not ratchets:
+        fail(RATCHETS, "ratchets", "holds no ratchet")
+    for key, value in ratchets.items():
+        if not is_int(value) or value < 0:
+            fail(RATCHETS, f"ratchets.{key}", "must be a count (an integer at least 0)")
+    source = f"`{RATCHETS}` at {commit[:7]}"
+    return [Row(f"ratchet `{key}`", str(value), "", source) for key, value in ratchets.items()]
 
 
 def wire_rows():
-    count = len(load_json(WIRE)["fixtures"])
-    return [("wire fixtures", str(count), "", f"`{rel(WIRE)}`")]
+    if not path(WIRE).exists():
+        return [Row("wire fixtures", ABSENT, "", f"`{WIRE}`")]
+    fixtures = require_object(WIRE, "(the file)", load_json(WIRE)).get("fixtures")
+    if not isinstance(fixtures, list) or not all(isinstance(f, str) and f for f in fixtures):
+        fail(WIRE, "fixtures", "must be a list of fixture names")
+    if len(set(fixtures)) != len(fixtures):
+        fail(WIRE, "fixtures", "names a fixture twice")
+    return [Row("wire fixtures", str(len(fixtures)), "", f"`{WIRE}`", {"fixtures:wire": len(fixtures)})]
 
 
 def consumer_rows():
-    source = f"`{rel(CONSUMERS)}/`"
-    manifest = CONSUMERS / "MANIFEST.json"
-    if manifest.exists():
-        fixtures = load_json(manifest)["fixtures"]
-        source = f"`{rel(manifest)}`"
-    elif CONSUMERS.is_dir():
-        fixtures = sorted(p.relative_to(CONSUMERS).as_posix() for p in CONSUMERS.rglob("*.json"))
+    source = f"`{CONSUMERS}/`"
+    manifest = f"{CONSUMERS}/MANIFEST.json"
+    if path(manifest).exists():
+        fixtures = require_object(manifest, "(the file)", load_json(manifest)).get("fixtures")
+        if not isinstance(fixtures, list) or not all(isinstance(f, str) and f for f in fixtures):
+            fail(manifest, "fixtures", "must be a list of fixture paths")
+        source = f"`{manifest}`"
+    elif path(CONSUMERS).is_dir():
+        fixtures = sorted(p.relative_to(path(CONSUMERS)).as_posix() for p in path(CONSUMERS).rglob("*.json"))
     else:
-        return [("consumers' fixtures", ABSENT, "", source)]
+        return [Row("consumers' fixtures", ABSENT, "", source)]
     consumers = {f.split("/")[0] for f in fixtures if "/" in f}
     value = f"{len(fixtures)} over {len(consumers)} consumers" if consumers else str(len(fixtures))
-    return [("consumers' fixtures", value, "", source)]
+    return [Row("consumers' fixtures", value, "", source,
+                {"fixtures:consumers": len(fixtures), "consumers": len(consumers)})]
 
 
 def arch_rows():
-    source = f"`{rel(ARCH)}`"
-    if not ARCH.exists():
-        return [("architecture rules", ABSENT, "", source)]
+    source = f"`{ARCH}`"
+    if not path(ARCH).exists():
+        return [Row("architecture rules", ABSENT, "", source)]
     header, rules = None, []
-    for line in ARCH.read_text().splitlines():
+    for line in path(ARCH).read_text().splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -123,114 +195,250 @@ def arch_rows():
         elif header is not None and re.match(r"A\d+\b", cells[0]):
             rules.append(cells)
     if header is None:
-        raise SystemExit(f"scoreboard: {rel(ARCH)} has no rules table with an 'Allowlist' column")
+        fail(ARCH, "the rules table", "no table with an 'Allowlist' column")
+    if not rules:
+        fail(ARCH, "the rules table", "a header and no rule row (a row whose first cell starts A<n>)")
     col = next(i for i, c in enumerate(header) if c.lower().startswith("allowlist"))
-    rows = [("architecture rules", str(len(rules)), "", source)]
+    rows = [Row("architecture rules", str(len(rules)), "", source, {"arch:rules": len(rules)})]
     for cells in rules:
+        if col >= len(cells) or not cells[col]:
+            fail(ARCH, f"rule {cells[0][:3]}", "has no 'Allowlist' cell")
         rule = re.match(r"A\d+", cells[0]).group(0)
-        rows.append((f"arch rule {rule} allowlist", cells[col], "", source))
+        rows.append(Row(f"arch rule {rule} allowlist", cells[col], "", source))
     return rows
 
 
 def floors():
     """MUTANTS_FLOORS from nightly.yml: the folded scalar after the key, read as JSON."""
-    lines = NIGHTLY.read_text().splitlines()
-    for i, line in enumerate(lines):
-        m = re.match(r"(\s*)MUTANTS_FLOORS:\s*(.*)$", line)
-        if not m:
-            continue
-        indent, rest = len(m.group(1)), m.group(2).strip()
-        if rest and rest not in (">", ">-", "|", "|-"):
-            return json.loads(rest.strip("'\""))
+    lines = path(NIGHTLY).read_text().splitlines()
+    found = [i for i, line in enumerate(lines) if re.match(r"\s*MUTANTS_FLOORS:", line)]
+    if len(found) != 1:
+        fail(NIGHTLY, "MUTANTS_FLOORS", f"must be set once, is set {len(found)} times")
+    i = found[0]
+    m = re.match(r"(\s*)MUTANTS_FLOORS:\s*(.*)$", lines[i])
+    indent, rest = len(m.group(1)), m.group(2).strip()
+    if rest and rest not in (">", ">-", "|", "|-"):
+        text = rest.strip("'\"")
+    else:
         body = []
         for nxt in lines[i + 1:]:
             if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
                 break
             body.append(nxt.strip())
-        return json.loads(" ".join(body))
-    raise SystemExit(f"scoreboard: no MUTANTS_FLOORS in {rel(NIGHTLY)}")
+        text = " ".join(body)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as e:
+        fail(NIGHTLY, "MUTANTS_FLOORS", f"not a JSON object ({e})")
+    require_object(NIGHTLY, "MUTANTS_FLOORS", value)
+    if not value:
+        fail(NIGHTLY, "MUTANTS_FLOORS", "holds no floor")
+    for file, floor in value.items():
+        if not is_num(floor) or not 0 <= floor <= 100:
+            fail(NIGHTLY, f"MUTANTS_FLOORS.{file}", "must be a score from 0 to 100")
+    return value
+
+
+def measured_scores():
+    """docs/scoreboard/mutants.json's scores, by file; {} when the record is absent."""
+    if not path(MUTANTS).exists():
+        return {}, ""
+    record = require_object(MUTANTS, "(the file)", load_json(MUTANTS))
+    if record.get("schema") != 1:
+        fail(MUTANTS, "schema", "must be 1")
+    commit = record.get("commit")
+    if not isinstance(commit, str) or not SHA.match(commit):
+        fail(MUTANTS, "commit", "must be the full 40-hex sha the nightly mutated")
+    if not isinstance(record.get("run"), str) or not record["run"]:
+        fail(MUTANTS, "run", "must be the nightly run's URL")
+    if not isinstance(record.get("date"), str) or not DATE.match(record["date"]):
+        fail(MUTANTS, "date", "must be YYYY-MM-DD")
+    files = require_object(MUTANTS, "files", record.get("files"))
+    if not files:
+        fail(MUTANTS, "files", "holds no file; a nightly that measured nothing is not a record")
+    scores = {}
+    for file, entry in files.items():
+        require_object(MUTANTS, f"files.{file}", entry)
+        if not is_num(entry.get("score")) or not 0 <= entry["score"] <= 100:
+            fail(MUTANTS, f"files.{file}.score", "must be a score from 0 to 100")
+        for n in ("caught", "missed", "timeout", "unviable"):
+            if not is_int(entry.get(n)) or entry[n] < 0:
+                fail(MUTANTS, f"files.{file}.{n}", "must be a count (an integer at least 0)")
+        scores[file] = entry["score"]
+    return scores, commit[:7]
 
 
 def mutation_rows():
-    measured = load_json(MUTANTS) if MUTANTS.exists() else {"files": {}}
-    commit = measured.get("commit", "")[:7]
+    if not path(NIGHTLY).exists():
+        return [Row("mutation floors", ABSENT, "", f"`{NIGHTLY}`")]
+    scores, commit = measured_scores()
     rows = []
     for file, floor in sorted(floors().items()):
-        score = measured["files"].get(file, {}).get("score")
+        score = scores.get(file)
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
-        rows.append((f"mutation floor `{file}`", f"{floor:g}", cell, f"`{rel(NIGHTLY)}`"))
+        rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`", {f"floor:{file}": floor}))
     return rows
 
 
 def bench_rows():
-    source = f"`{rel(BENCH)}`"
-    if not BENCH.exists() or BENCH.stat().st_size == 0:
-        return [("bench baseline", "no baseline yet", "", source)]
-    profiles = load_json(BENCH).get("profiles", {})
+    source = f"`{BENCH}`"
+    if not path(BENCH).exists():
+        return [Row("bench baseline", "no baseline yet", "", source)]
+    record = require_object(BENCH, "(the file)", load_json(BENCH))
+    profiles = require_object(BENCH, "profiles", record.get("profiles"))
     if not profiles:
-        return [("bench baseline", "no baseline yet", "", source)]
+        return [Row("bench baseline", "no entry yet", "", source)]
     rows = []
     for name, entry in sorted(profiles.items()):
-        runs = entry.get("runs", [])
-        benches = len(runs[0].get("benches", {})) if runs else 0
-        rows.append((f"bench baseline `{name}`", f"{benches} benches, {len(runs)} runs", "", source))
+        require_object(BENCH, f"profiles.{name}", entry)
+        runs = entry.get("runs")
+        if not isinstance(runs, list) or not runs:
+            fail(BENCH, f"profiles.{name}.runs", "must be a list of at least one run")
+        ids = None
+        for i, run in enumerate(runs):
+            benches = require_object(BENCH, f"profiles.{name}.runs[{i}].benches",
+                                     require_object(BENCH, f"profiles.{name}.runs[{i}]", run).get("benches"))
+            if not benches:
+                fail(BENCH, f"profiles.{name}.runs[{i}].benches", "holds no bench")
+            for id, m in benches.items():
+                for n in ("p50_us", "p99_us"):
+                    if not is_num(require_object(BENCH, f"profiles.{name}.runs[{i}].benches.{id}", m).get(n)):
+                        fail(BENCH, f"profiles.{name}.runs[{i}].benches.{id}.{n}", "must be a number")
+            if ids is not None and set(benches) != ids:
+                fail(BENCH, f"profiles.{name}.runs[{i}].benches", "measures other bench ids than run 0")
+            ids = set(benches)
+        rows.append(Row(f"bench baseline `{name}`", f"{len(ids)} benches, {len(runs)} runs", "", source))
     return rows
 
 
 def e2e_rows():
-    count = len([p for p in SCENARIOS.iterdir() if p.name.endswith(".js")])
-    hermetic = "present" if "E2E_HERMETIC" in RUN_JS.read_text() else "absent"
+    if not path(SCENARIOS).is_dir():
+        return [Row("e2e scenarios", ABSENT, "", f"`{SCENARIOS}/`")]
+    count = len([p for p in path(SCENARIOS).iterdir() if p.name.endswith(".js")])
+    present = path(RUN_JS).exists() and "E2E_HERMETIC" in path(RUN_JS).read_text()
     return [
-        ("e2e scenarios", str(count), "", f"`{rel(SCENARIOS)}/`"),
-        ("hermetic flag `E2E_HERMETIC`", hermetic, "", f"`{rel(RUN_JS)}`"),
+        Row("e2e scenarios", str(count), "", f"`{SCENARIOS}/`", {"e2e:scenarios": count}),
+        Row("hermetic flag `E2E_HERMETIC`", "present" if present else "absent", "", f"`{RUN_JS}`",
+            {"e2e:hermetic": 1 if present else 0}),
     ]
 
 
-def table():
-    rows = (ratchet_rows() + wire_rows() + consumer_rows() + arch_rows()
+def rows():
+    return (ratchet_rows() + wire_rows() + consumer_rows() + arch_rows()
             + mutation_rows() + bench_rows() + e2e_rows())
+
+
+def table(all_rows):
     out = ["| row | value | measured | record |", "|---|---:|---|---|"]
-    out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in rows]
+    out += ["| {} | {} | {} | {} |".format(*r.cells) for r in all_rows]
     return "\n".join(out) + "\n"
+
+
+def values(all_rows):
+    out = {}
+    for r in all_rows:
+        out.update(r.values)
+    return out
+
+
+def load_base(file):
+    name = f"--base {file}"
+    try:
+        text = Path(file).read_text()
+    except OSError as e:
+        fail(name, "(the file)", f"not readable ({e})")
+    try:
+        base = json.loads(text)
+    except json.JSONDecodeError as e:
+        fail(name, "(the file)", f"not JSON ({e})")
+    require_object(name, "(the file)", base)
+    if base.get("schema") != 1:
+        fail(name, "schema", "must be 1")
+    vals = require_object(name, "values", base.get("values"))
+    for key, v in vals.items():
+        if not (FLOOR_KEYS.match(key) or CEILING_KEYS.match(key)):
+            fail(name, f"values.{key}", "is not a key this tool compares")
+        if not is_num(v):
+            fail(name, f"values.{key}", "must be a number")
+    return vals
+
+
+def falls(base, tree):
+    """Every number of the tree that fell from the base's (or rose, for an allowlist)."""
+    out = []
+    for key in sorted(base):
+        b, t = base[key], tree.get(key)
+        if FLOOR_KEYS.match(key):
+            if t is None:
+                out.append(f"{key}: {b:g} at the base, gone from the tree")
+            elif t < b:
+                out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall")
+        elif t is not None and t > b:
+            out.append(f"{key}: {b:g} at the base, {t:g} in the tree; an allowlist may not grow")
+    return out
 
 
 def split_doc(text):
     if text.count(BEGIN) != 1 or text.count(END) != 1 or text.index(BEGIN) > text.index(END):
-        raise SystemExit(f"scoreboard: {rel(DOC)} must hold {BEGIN} once, then {END} once")
+        raise SystemExit(f"scoreboard: {DOC} must hold {BEGIN} once, then {END} once")
     head, rest = text.split(BEGIN)
     body, tail = rest.split(END)
     return head, body, tail
 
 
 def main():
+    global ROOT
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--render", action="store_true", help="rewrite the table in docs/NORTH-STAR.md")
     mode.add_argument("--check", action="store_true", help="exit 1 when the committed table is stale")
+    mode.add_argument("--json", action="store_true", help="print the tree's comparable values")
+    ap.add_argument("--base", metavar="FILE", help="with --check: the base tree's --json values")
+    ap.add_argument("--root", metavar="DIR", help="the tree to read (default: this checkout)")
     args = ap.parse_args()
+    if args.base and not args.check:
+        ap.error("--base goes with --check")
+    if args.root:
+        ROOT = Path(args.root).resolve()
 
-    fresh = table()
+    all_rows = rows()
+    if args.json:
+        print(json.dumps({"schema": 1, "values": values(all_rows)}, indent=2, sort_keys=True))
+        return 0
+    fresh = table(all_rows)
     if not (args.render or args.check):
         sys.stdout.write(fresh)
         return 0
-    text = DOC.read_text()
-    head, body, tail = split_doc(text)
+    doc = path(DOC)
+    head, body, tail = split_doc(doc.read_text())
     want = "\n" + fresh
     if args.render:
         if body != want:
-            DOC.write_text(head + BEGIN + want + END + tail)
-            print(f"scoreboard: rendered {rel(DOC)}")
+            doc.write_text(head + BEGIN + want + END + tail)
+            print(f"scoreboard: rendered {DOC}")
         else:
-            print(f"scoreboard: {rel(DOC)} is current")
+            print(f"scoreboard: {DOC} is current")
         return 0
+    status = 0
     if body == want:
-        print(f"scoreboard: {rel(DOC)} is current")
-        return 0
-    diff = difflib.unified_diff(body.splitlines(keepends=True), want.splitlines(keepends=True),
-                                f"{rel(DOC)} (committed)", "the records (tools/scoreboard)")
-    sys.stdout.writelines(diff)
-    print(f"scoreboard: {rel(DOC)} is stale; run python3 tools/scoreboard --render and commit it")
-    return 1
+        print(f"scoreboard: {DOC} is current")
+    else:
+        diff = difflib.unified_diff(body.splitlines(keepends=True), want.splitlines(keepends=True),
+                                    f"{DOC} (committed)", "the records (tools/scoreboard)")
+        sys.stdout.writelines(diff)
+        print(f"scoreboard: {DOC} is stale; run python3 tools/scoreboard --render and commit it")
+        status = 1
+    if args.base:
+        base = load_base(args.base)
+        fell = falls(base, values(all_rows))
+        for line in fell:
+            print(f"scoreboard: {line}")
+        if fell:
+            print(f"scoreboard: {len(fell)} numbers moved the wrong way from the base ({args.base})")
+            status = 1
+        else:
+            print(f"scoreboard: no number moved the wrong way from the base ({len(base)} values)")
+    return status
 
 
 if __name__ == "__main__":
