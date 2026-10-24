@@ -27,9 +27,11 @@ malformed record as an absent one.
   tests/wire/consumers/          the consumers' fixtures: its MANIFEST.json when present
                                  ({"fixtures": [paths]}), else every *.json under it, by
                                  its first directory (one directory per consumer)
-  docs/ARCH-RULES.md             the rules table: one row per rule whose first cell
-                                 starts with A<n>; the column headed "Allowlist today";
-                                 a table with no rule row is a fault
+  tests/arch_*.rs                the architecture rules (#73): each file holds one
+                                 `const ALLOWED: &[(&str, usize, &str)] = &[..];` of
+                                 ("src/file.rs", count, "reason") tuples and one
+                                 `const RULE: Rule = Rule { name: "A<n>: .." ..`; the
+                                 rows count the allowlist's own data, never a doc
   .github/workflows/nightly.yml  the mutation floors: the JSON object of MUTANTS_FLOORS
   docs/scoreboard/mutants.json   the measured scores, written by the captain from the
                                  nightly's "Mutation score" summary (shape below)
@@ -80,7 +82,7 @@ DOC = "docs/NORTH-STAR.md"
 RATCHETS = "docs/ratchets.json"
 WIRE = "tests/wire/MANIFEST.json"
 CONSUMERS = "tests/wire/consumers"
-ARCH = "docs/ARCH-RULES.md"
+ARCH_GLOB = "tests/arch_*.rs"
 NIGHTLY = ".github/workflows/nightly.yml"
 MUTANTS = "docs/scoreboard/mutants.json"
 BENCH = "benches/baseline.json"
@@ -181,30 +183,64 @@ def consumer_rows():
                 {"fixtures:consumers": len(fixtures), "consumers": len(consumers)})]
 
 
+# One tuple of an allowlist: ("src/file.rs", 12, "the reason"), a trailing comma allowed.
+STR = r'"(?:[^"\\]|\\.)*"'
+TUPLE = re.compile(r'\(\s*(' + STR + r')\s*,\s*(\d+)\s*,\s*(' + STR + r')\s*,?\s*\)\s*(?:,|$)\s*', re.S)
+ALLOWED_OPEN = "const ALLOWED: &[(&str, usize, &str)] = &["
+RULE_NAME = re.compile(r'const RULE: Rule = Rule \{\s*name:\s*"(A\d+): [^"]+",')
+
+
+def allowlist(name, text):
+    """The (file, count) tuples of the file's one ALLOWED literal, read strictly."""
+    if text.count(ALLOWED_OPEN) != 1:
+        fail(name, "ALLOWED", f"must hold `{ALLOWED_OPEN}` exactly once")
+    body = text.split(ALLOWED_OPEN, 1)[1]
+    end = body.find("\n];")
+    if end < 0:
+        fail(name, "ALLOWED", "the literal does not close with `];` on its own line")
+    body, pos, entries = body[:end], 0, []
+    body = body.strip()
+    while pos < len(body):
+        m = TUPLE.match(body, pos)
+        if not m:
+            snippet = body[pos:pos + 60].split("\n")[0]
+            fail(name, f"ALLOWED entry {len(entries) + 1}",
+                 f"not a (\"file\", count, \"reason\") tuple: {snippet!r}")
+        file, count = json.loads(m.group(1)), int(m.group(2))
+        if not file.startswith("src/") or not file.endswith(".rs"):
+            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file!r} is not a src/ .rs file")
+        if count == 0:
+            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file} counts 0; an entry at zero is removed")
+        if not json.loads(m.group(3)).strip():
+            fail(name, f"ALLOWED entry {len(entries) + 1}", f"{file} carries no reason")
+        entries.append((file, count))
+        pos = m.end()
+    files = [f for f, _ in entries]
+    if len(set(files)) != len(files):
+        fail(name, "ALLOWED", "names a file twice")
+    return entries
+
+
 def arch_rows():
-    source = f"`{ARCH}`"
-    if not path(ARCH).exists():
-        return [Row("architecture rules", ABSENT, "", source)]
-    header, rules = None, []
-    for line in path(ARCH).read_text().splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if header is None and any(c.lower().startswith("allowlist") for c in cells):
-            header = cells
-        elif header is not None and re.match(r"A\d+\b", cells[0]):
-            rules.append(cells)
-    if header is None:
-        fail(ARCH, "the rules table", "no table with an 'Allowlist' column")
-    if not rules:
-        fail(ARCH, "the rules table", "a header and no rule row (a row whose first cell starts A<n>)")
-    col = next(i for i, c in enumerate(header) if c.lower().startswith("allowlist"))
-    rows = [Row("architecture rules", str(len(rules)), "", source, {"arch:rules": len(rules)})]
-    for cells in rules:
-        if col >= len(cells) or not cells[col]:
-            fail(ARCH, f"rule {cells[0][:3]}", "has no 'Allowlist' cell")
-        rule = re.match(r"A\d+", cells[0]).group(0)
-        rows.append(Row(f"arch rule {rule} allowlist", cells[col], "", source))
+    tests = sorted(ROOT.glob(ARCH_GLOB))
+    if not tests:
+        return [Row("architecture rules", ABSENT, "", f"`{ARCH_GLOB}`")]
+    rules = {}
+    for p in tests:
+        name, text = p.relative_to(ROOT).as_posix(), p.read_text()
+        names = RULE_NAME.findall(text)
+        if len(names) != 1:
+            fail(name, "RULE", 'must hold one `const RULE: Rule = Rule { name: "A<n>: ..",`')
+        rule = names[0]
+        if rule in rules:
+            fail(name, "RULE", f"{rule} is also {rules[rule][0]}'s rule")
+        rules[rule] = (name, allowlist(name, text))
+    rows = [Row("architecture rules", str(len(rules)), "", f"`{ARCH_GLOB}`", {"arch:rules": len(rules)})]
+    for rule in sorted(rules, key=lambda r: int(r[1:])):
+        name, entries = rules[rule]
+        files, sites = len(entries), sum(c for _, c in entries)
+        rows.append(Row(f"arch rule {rule} allowlist", f"{files} files, {sites} sites", "", f"`{name}` ALLOWED",
+                        {f"allowlist:{rule}:files": files, f"allowlist:{rule}:sites": sites}))
     return rows
 
 
