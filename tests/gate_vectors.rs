@@ -39,7 +39,7 @@ use bsv_sdk::primitives::hash::{sha256, sha256d};
 use bsv_sdk::transaction::MerklePath;
 use bsv_tracker::{ChainEnvelope, ChainEvent, EventHeader, Hint, HintStatus};
 use bsv_wallet_cli::spend_gate::{
-    assess, assess_named, hold_reason, AllowPending, GateOptions, Origin,
+    assess, assess_named, hold_reason, AllowPending, GateError, GateOptions, Origin,
 };
 use bsv_wallet_cli::tracker_host::{heard, read_creators, SystemClock, TickOptions};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
@@ -589,11 +589,21 @@ async fn creator_checks(checks: &mut Checks<'_>, built: &Built, origin: Origin) 
 async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
     let coin = [(built.txid.clone(), built.vout)];
     for (tag, opts) in &words(checks.row, built) {
-        let held = assess_named(&built.storage, &built.services, opts, &coin, None)
-            .await
-            .unwrap();
+        // A coin the wallet does not hold is refused at the gate, the
+        // caller's error (#166): the Lean's 'no coin', not offerable.
+        let held = match assess_named(&built.storage, &built.services, opts, &coin, &[], None).await
+        {
+            Ok(held) => Some(held),
+            Err(GateError::Scope(_)) if built.output_id.is_none() => None,
+            Err(e) => panic!("{}: assess_named: {e}", checks.key),
+        };
         let door = format!("assess_named{tag}");
-        checks.field(&door, "offerable", &held.is_empty());
+        checks.field(
+            &door,
+            "offerable",
+            &held.as_ref().is_some_and(Vec::is_empty),
+        );
+        let held = held.unwrap_or_default();
         if built.output_id.is_some() {
             let reason = held.first().map(|c| c.reason.as_str());
             checks.field(&door, "offerable_clause", &clause_of(reason));

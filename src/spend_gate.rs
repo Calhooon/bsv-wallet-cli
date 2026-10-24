@@ -64,7 +64,14 @@
 //! Coins a caller names (`createAction`'s `inputs`, `respend`'s exact
 //! inputs) pass the same per-coin judgment ([`assess_named`]); a named coin
 //! the gate would hold refuses the action with the same `held[]` listing
-//! (the charter's `onCreate`: every input offerable).
+//! (the charter's `onCreate`: every input offerable). A named outpoint that
+//! is not a coin of this wallet is refused at the gate too, the caller's
+//! 400 ([`GateError::Scope`], [`NOT_HELD`]), before anything is stored or
+//! the toolbox asked (#166; the charter: a coin is an output of ours, and
+//! the door decides before the store is asked). The one outpoint left to
+//! the toolbox is the caller's own input whose transaction its `inputBEEF`
+//! carries whole (a covenant, a puzzle): not a coin of ours, and the
+//! toolbox checks the BEEF.
 //!
 //! # The shape: the offer
 //!
@@ -633,7 +640,8 @@ pub enum GateError {
     /// The store or the header service failed under the gate.
     Gate(anyhow::Error),
     /// The caller's scoped word names a coin that is not a received coin
-    /// this wallet could spend (#63): the caller's error, before the door.
+    /// this wallet could spend (#63), or a named input is not a coin of
+    /// this wallet (#166): the caller's error, before the door.
     Scope(String),
 }
 
@@ -1215,16 +1223,22 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
 /// replaces), lost (`spendable = 0` with no spender), or a creator the gate
 /// would not offer. Returns every named coin it holds. An outpoint that is
-/// not one of this wallet's outputs is not a coin of ours and is left to the
-/// toolbox (a covenant or a foreign input carried in `inputBEEF`).
+/// not one of this wallet's outputs is not a coin of ours: the caller's
+/// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
+/// (#166), unless `carried` (the transactions the caller's `inputBEEF`
+/// carries whole, [`carried_txids`]) holds its transaction: the caller's own
+/// input (a covenant, a puzzle), left to the toolbox.
 pub async fn assess_named<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
     opts: &GateOptions,
     named: &[(String, u32)],
+    carried: &[String],
     reserved_to: Option<i64>,
-) -> Result<Vec<HeldCoin>> {
-    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
+) -> std::result::Result<Vec<HeldCoin>, GateError> {
+    let frozen = crate::tracker_host::frozen_outpoints(storage)
+        .await
+        .map_err(GateError::Gate)?;
     let pool = storage.pool();
     let mut coins = Vec::new();
     for (txid, vout) in named {
@@ -1243,9 +1257,20 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         .bind(&txid)
         .bind(i64::from(*vout))
         .fetch_optional(pool)
-        .await?;
-        let Some(r) = row else { continue };
-        coins.push((txid, *vout, r));
+        .await
+        .map_err(|e| GateError::Gate(e.into()))?;
+        match row {
+            Some(r) => coins.push((txid, *vout, r)),
+            None if carried.contains(&txid) => {}
+            None => {
+                return Err(GateError::Scope(named_refusal(
+                    "inputs",
+                    &format!("{txid}.{vout}"),
+                    "a coin this wallet could spend",
+                    NOT_HELD,
+                )))
+            }
+        }
     }
     let is_frozen = |txid: &str, vout: u32| frozen.contains(&(txid.to_string(), i64::from(vout)));
     let is_locked = |r: &sqlx::sqlite::SqliteRow| {
@@ -1264,7 +1289,9 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     let readings = if creators.is_empty() {
         HashMap::new()
     } else {
-        read_creators(storage, services, &opts.tick(), &creators).await?
+        read_creators(storage, services, &opts.tick(), &creators)
+            .await
+            .map_err(GateError::Gate)?
     };
     let mut held = Vec::new();
     for (txid, vout, r) in coins {
@@ -1423,9 +1450,9 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         })
         .collect();
     if !named.is_empty() {
-        let mut held = assess_named(storage, wallet.services(), opts, &named, None)
-            .await
-            .map_err(GateError::Gate)?;
+        let carried = carried_txids(args.input_beef.as_deref());
+        let mut held =
+            assess_named(storage, wallet.services(), opts, &named, &carried, None).await?;
         // A named coin held on the header service's fault is read once
         // more (#59), as the allocation's coins are.
         if held.iter().any(|c| c.headers_fault.is_some()) {
@@ -1435,9 +1462,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
                 "spend gate: the header service did not answer for a named input; reading it once more"
             );
             tokio::time::sleep(HEADER_RETRY_PAUSE).await;
-            held = assess_named(storage, wallet.services(), opts, &named, None)
-                .await
-                .map_err(GateError::Gate)?;
+            held = assess_named(storage, wallet.services(), opts, &named, &carried, None).await?;
         }
         if !held.is_empty() {
             // Every named input must be offerable: one held by a rule is
@@ -1472,6 +1497,23 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     run_gated(wallet, args, originator, opts).await
 }
 
+/// The transactions a caller's `inputBEEF` carries whole (not a txid-only
+/// entry): a named input over one of them that is not a coin of this wallet
+/// is the caller's own, left to the toolbox, which checks the BEEF. A BEEF
+/// that does not parse carries none.
+fn carried_txids(input_beef: Option<&[u8]>) -> Vec<String> {
+    input_beef
+        .and_then(|b| bsv_sdk::transaction::Beef::from_binary(b).ok())
+        .map(|beef| {
+            beef.txs
+                .iter()
+                .filter(|t| t.tx().is_some())
+                .map(bsv_sdk::transaction::BeefTx::txid)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The header service's error a coin is held on.
 fn service_error(coin: &HeldCoin) -> Option<String> {
     coin.headers_fault.clone()
@@ -1481,6 +1523,17 @@ fn service_error(coin: &HeldCoin) -> Option<String> {
 /// [`hold_reason`] gives after `headers unavailable: `.
 fn headers_error(reading: &CreatorReading) -> Option<String> {
     reading.fault.clone().filter(|_| reading.headers_fault)
+}
+
+/// Why a named outpoint is refused when it is not an output of this wallet:
+/// the one word for "not held", the scoped word's ([`check_scope`]) and a
+/// named input's ([`assess_named`]) alike (#166).
+pub const NOT_HELD: &str = "not a coin of this wallet";
+
+/// The caller's error for a coin it names (the 400 of [`GateError::Scope`]):
+/// `word` names `outpoint`, which is not `what`, because `why`.
+fn named_refusal(word: &str, outpoint: &str, what: &str, why: &str) -> String {
+    format!("Invalid argument: {word} names {outpoint}, which is not {what}: {why}")
 }
 
 /// The coins a scoped word names (#63), checked before the door: each must
@@ -1515,7 +1568,7 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
         .fetch_optional(pool)
         .await?;
         let why = match row {
-            None => "not a coin of this wallet".to_string(),
+            None => NOT_HELD.to_string(),
             Some(r) => {
                 let status: String = r.get("status");
                 if r.get::<i64, _>("is_outgoing") != 0 {
@@ -1541,8 +1594,11 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
                 }
             }
         };
-        return Ok(Some(format!(
-            "Invalid argument: allowPending: received names {txid}:{vout}, which is not a received coin this wallet could spend under it: {why}"
+        return Ok(Some(named_refusal(
+            "allowPending: received",
+            &format!("{txid}:{vout}"),
+            "a received coin this wallet could spend under it",
+            &why,
         )));
     }
     Ok(None)

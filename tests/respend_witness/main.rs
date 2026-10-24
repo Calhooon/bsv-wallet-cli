@@ -332,6 +332,9 @@ async fn respend_refuses_unavailable_status_sources_without_posting() {
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
 }
 
+/// #166: a source the wallet does not hold is refused at the gate, the
+/// word a named input's is, before a creator is read; nothing posted or
+/// written.
 #[tokio::test]
 async fn respend_refuses_an_input_outside_the_wallet() {
     let f = fixture().await;
@@ -346,7 +349,15 @@ async fn respend_refuses_an_input_outside_the_wallet() {
     let err = build_and_post(f.wallet.storage(), &absent, &f.root, &f.phantom, &["mock"])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("not the wallet's"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "respend refused: Invalid argument: inputs names {}.0, which is not a coin this \
+             wallet could spend: {}",
+            f.funding,
+            bsv_wallet_cli::spend_gate::NOT_HELD
+        )
+    );
     assert_eq!(absent.call_count("post_beef"), 0);
     assert_eq!(words(&f).await, before);
 }

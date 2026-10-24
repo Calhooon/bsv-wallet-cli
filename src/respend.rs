@@ -205,8 +205,22 @@ pub async fn build_and_post(
         .iter()
         .map(|i| Ok((i.get_source_txid()?, i.source_output_index)))
         .collect::<bsv_sdk::Result<_>>()?;
-    let held =
-        crate::spend_gate::assess_named(storage, services, &gate, &named, Some(phantom_id)).await?;
+    // A source that is not a coin of this wallet is refused here, before a
+    // creator is read (#166): the respend carries no caller's BEEF.
+    let held = match crate::spend_gate::assess_named(
+        storage,
+        services,
+        &gate,
+        &named,
+        &[],
+        Some(phantom_id),
+    )
+    .await
+    {
+        Ok(held) => held,
+        Err(crate::spend_gate::GateError::Scope(why)) => bail!("respend refused: {why}"),
+        Err(e) => return Err(e.into()),
+    };
     if !held.is_empty() {
         bail!(
             "respend refused: {}",
