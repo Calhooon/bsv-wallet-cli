@@ -84,8 +84,9 @@ EXCLUSIONS = [
         "txid, signature and merkle path over it, is new in each run. Every "
         "transaction in the recording (raw, BEEF V1/V2, Atomic BEEF; a byte "
         "array or a hex string, alone or inside text) is parsed and an atom "
-        "present in one run only is rewritten <rand:N>, numbered in order of "
-        "appearance; an atom both runs hold stays literal. An input script is "
+        "present in one run only is rewritten <rand:N/LB>, numbered in order of "
+        "appearance, L its byte length (compared; a signature's DER body is "
+        "<rand:N/der>); an atom both runs hold stays literal. An input script is "
         "split into its pushes: the push count, each push's opcode, each "
         "signature's sighash byte and strict DER form (BIP 66, low-S) stay "
         "compared. Equal normalized recordings are a consistent bijection of "
@@ -96,7 +97,8 @@ EXCLUSIONS = [
         "rand strings: *.reference, *.derivationPrefix, *.derivationSuffix "
         "(also inside a JSON string) held by one run only",
         "the same thread_rng draws as plain base64 (random_reference, "
-        "random_derivation); rewritten <rand:N> under the same numbering",
+        "random_derivation); rewritten <rand:N/LB> under the same numbering, L "
+        "the decoded byte length, so a longer or shorter draw is a difference",
     ),
     (
         "ciphertexts: *.ciphertext, *.encryptedLinkage, *.encryptedLinkageProof "
@@ -106,7 +108,8 @@ EXCLUSIONS = [
         "SymmetricKey), so the same plaintext and key give new bytes each run; "
         "the certificate fields of scenario 6 are the harness's base64 of "
         "/encrypt's answer, and proveCertificate re-encrypts the keyring for the "
-        "verifier",
+        "verifier. Each is <rand:N/LB>, L its decoded length (the IV, the "
+        "plaintext's length and the tag), compared",
     ),
     (
         "the length byte of a push whose signature's DER body is a rand atom",
@@ -462,8 +465,9 @@ def _hexify(v):
 
 
 def collect_atoms(events):
-    """Every hex atom (both byte orders for 32-byte ones) and rand string of a recording."""
+    """Every hex atom (both byte orders for 32-byte ones), signature DER body and rand string of a recording."""
     hexes = set()
+    ders = set()
     strings = set()
     for e in events:
         for s in _strings(e):
@@ -475,8 +479,20 @@ def collect_atoms(events):
                     hexes.add(a.hex())
                     if len(a) == 32:
                         hexes.add(a[::-1].hex())
+                    elif _sig(a + b"\x01") is not None:
+                        ders.add(a.hex())
         _rand_strings(e, strings)
-    return hexes, strings
+    return hexes, ders, strings
+
+
+def decoded_length(atom, is_hex):
+    """An atom's length in the placeholder: its bytes (hex, else base64), else its characters."""
+    if is_hex or (len(atom) % 2 == 0 and HEX_FULL.fullmatch(atom)):
+        return f"{len(atom) // 2}B"
+    try:
+        return f"{len(base64.b64decode(atom, validate=True))}B"
+    except ValueError:
+        return f"{len(atom)}c"
 
 
 # ------------------------------------------------------------------ normalize
@@ -489,7 +505,12 @@ def load(path):
 
 
 class Renamer:
-    """Rewrites the atoms one run holds alone to <rand:N>, N in order of appearance.
+    """Rewrites the atoms one run holds alone to <rand:N/LB>, N in order of appearance.
+
+    L is the atom's decoded byte length (hex, else base64; `c` characters when
+    it is neither), so a reference, a derivation or a ciphertext that grows or
+    shrinks is a difference. A signature's DER body is <rand:N/der>: its length
+    is the draw's (EXCLUSIONS), its form is compared beside it.
 
     A string that is a transaction (raw, BEEF, Atomic BEEF) becomes its
     structure, so a difference is named by its place (txs[2].inputs[0].prev)
@@ -500,8 +521,10 @@ class Renamer:
     CLI's --json stdout) is compared as its value.
     """
 
-    def __init__(self, hexes, strings, dirs):
+    def __init__(self, hexes, ders, strings, dirs):
         self.names = {}
+        self.hexes = hexes
+        self.ders = ders
         self.unique = hexes | strings
         self.dirs = dirs
         alts = sorted(self.unique, key=len, reverse=True)
@@ -511,7 +534,8 @@ class Renamer:
         if a not in self.unique:
             return a
         if a not in self.names:
-            self.names[a] = f"<rand:{len(self.names)}>"
+            size = "der" if a in self.ders else decoded_length(a, a in self.hexes)
+            self.names[a] = f"<rand:{len(self.names)}/{size}>"
         return self.names[a]
 
     def _name(self, m):
@@ -570,7 +594,7 @@ class Renamer:
             if prev not in self.unique:
                 return (0, prev, x["vout"], i)
             if prev in self.names:
-                return (1, int(self.names[prev][6:-1]), x["vout"], i)
+                return (1, int(self.names[prev][6:].split("/")[0]), x["vout"], i)
             return (2, i)
 
         inputs = []
@@ -627,8 +651,8 @@ class Renamer:
 
 def normalize(a, b):
     """The two recordings with EXCLUSIONS applied, each against the other."""
-    ha, sa = collect_atoms(a)
-    hb, sb = collect_atoms(b)
+    ha, da, sa = collect_atoms(a)
+    hb, db, sb = collect_atoms(b)
 
     def dirs(events):
         out = [(e["dir"], e["seat"]) for e in events if e.get("kind") == "wallet"]
@@ -639,8 +663,8 @@ def normalize(a, b):
                 if not (e.get("kind") == "http" and e.get("path") == "/isAuthenticated" and e.get("status") is None)]
 
     a, b = polls(a), polls(b)
-    ra = Renamer(ha - hb, sa - sb, dirs(a))
-    rb = Renamer(hb - ha, sb - sa, dirs(b))
+    ra = Renamer(ha - hb, da - db, sa - sb, dirs(a))
+    rb = Renamer(hb - ha, db - da, sb - sa, dirs(b))
     na = [ra.value({k: v for k, v in e.items() if k != "seq"}) for e in a]
     nb = [rb.value({k: v for k, v in e.items() if k != "seq"}) for e in b]
     return na, nb, len(ra.names), len(rb.names)
