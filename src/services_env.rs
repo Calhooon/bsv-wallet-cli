@@ -130,7 +130,7 @@ pub fn bananablocks_base_from_env() -> Option<String> {
     bananablocks_base_for(std::env::var(BANANABLOCKS_BASE_ENV).ok().as_deref())
 }
 
-/// The environment variable that moves WhatsOnChain's API base for the
+/// The environment variable that moves `WhatsOnChain`'s API base for the
 /// CLI's own rungs (bsv-wallet-cli #74).
 pub const WOC_BASE_ENV: &str = "WOC_BASE";
 
@@ -139,7 +139,7 @@ pub const WOC_BASE_ENV: &str = "WOC_BASE";
 pub const BITAILS_BASE_ENV: &str = "BITAILS_BASE";
 
 /// The environment variable that moves (or, empty, leaves out) the
-/// GorillaPool ARC (#74).
+/// `GorillaPool` ARC (#74).
 pub const ARC_GORILLAPOOL_URL_ENV: &str = "ARC_GORILLAPOOL_URL";
 
 /// A base URL from its configured value: unset or blank is `None` (the
@@ -153,23 +153,23 @@ pub fn base_for(configured: Option<&str>) -> Option<String> {
 }
 
 /// The bases of the explorers and the third-party broadcaster the CLI's
-/// own rungs ask (`explorers.rs`, `broadcast_verify.rs`): WhatsOnChain and
+/// own rungs ask (`explorers.rs`, `broadcast_verify.rs`): `WhatsOnChain` and
 /// Bitails always on, at the chain's default or where `WOC_BASE` /
-/// `BITAILS_BASE` point; GorillaPool at the chain's default (mainnet only),
+/// `BITAILS_BASE` point; `GorillaPool` at the chain's default (mainnet only),
 /// where `ARC_GORILLAPOOL_URL` points, or left out when it is empty. A
 /// hermetic run points all three at a local stub (#74).
 ///
-/// The toolbox's own WhatsOnChain and Bitails providers do not take a base
-/// (`ServicesOptions` has `bananablocks_base` alone); GorillaPool's URL is
+/// The toolbox's own `WhatsOnChain` and Bitails providers do not take a base
+/// (`ServicesOptions` has `bananablocks_base` alone); `GorillaPool`'s URL is
 /// its `arc_gorillapool_url`, set from here by
 /// [`services_options_from_env`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerBases {
-    /// WhatsOnChain's API base, no trailing slash.
+    /// `WhatsOnChain`'s API base, no trailing slash.
     pub woc: String,
     /// Bitails' API base, no trailing slash.
     pub bitails: String,
-    /// The GorillaPool ARC's base, `None` when it is left out.
+    /// The `GorillaPool` ARC's base, `None` when it is left out.
     pub gorillapool: Option<String>,
 }
 
@@ -190,8 +190,9 @@ impl ExplorerBases {
     }
 
     /// The bases from their configured values: unset or blank is the
-    /// default; for GorillaPool, unset is the default and an empty or blank
+    /// default; for `GorillaPool`, unset is the default and an empty or blank
     /// value leaves it out.
+    #[must_use]
     pub fn configured(
         chain: Chain,
         woc: Option<&str>,
@@ -210,6 +211,7 @@ impl ExplorerBases {
     }
 
     /// The bases from `WOC_BASE`, `BITAILS_BASE` and `ARC_GORILLAPOOL_URL`.
+    #[must_use]
     pub fn from_env(chain: Chain) -> Self {
         let woc = std::env::var(WOC_BASE_ENV).ok();
         let bitails = std::env::var(BITAILS_BASE_ENV).ok();
@@ -223,7 +225,7 @@ impl ExplorerBases {
     }
 }
 
-/// GorillaPool on `ServicesOptions` from `ARC_GORILLAPOOL_URL`'s configured
+/// `GorillaPool` on `ServicesOptions` from `ARC_GORILLAPOOL_URL`'s configured
 /// value: unset leaves the options' own default untouched (the toolbox's,
 /// never a copy of it); empty or blank leaves it out; a URL moves it.
 pub fn apply_gorillapool(opts: &mut ServicesOptions, configured: Option<&str>) {
@@ -512,7 +514,7 @@ mod tests {
     }
 
     /// `ARC_GORILLAPOOL_URL` unset leaves `ServicesOptions`' own default
-    /// for either chain; empty or blank leaves GorillaPool out; a URL moves it.
+    /// for either chain; empty or blank leaves `GorillaPool` out; a URL moves it.
     #[test]
     fn gorillapool_unset_leaves_the_toolbox_default() {
         for base in [ServicesOptions::mainnet(), ServicesOptions::testnet()] {
@@ -582,7 +584,7 @@ mod tests {
     }
 
     /// `ARC_GORILLAPOOL_URL` (#74): unset is the chain's default, empty or
-    /// blank leaves GorillaPool out, a URL moves it.
+    /// blank leaves `GorillaPool` out, a URL moves it.
     #[test]
     fn gorillapool_unset_is_the_default_and_empty_is_out() {
         let at =

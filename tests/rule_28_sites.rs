@@ -177,7 +177,7 @@ fn no_explorer_is_named_outside_the_listed_sites() {
 
 /// The toolbox's explorer base constants (toolbox 0.13.0,
 /// `services::providers::{whatsonchain, bitails, bananablocks}`) and its
-/// WhatsOnChain and Bitails providers, by the names a CLI file would use.
+/// `WhatsOnChain` and Bitails providers, by the names a CLI file would use.
 const EXPLORER_BASES: &[&str] = &[
     "WOC_MAINNET_URL",
     "WOC_TESTNET_URL",
@@ -203,7 +203,7 @@ const EXPLORER_BASE_HOLDERS: &[(&str, &str)] = &[
     ),
 ];
 
-/// #74: the hermetic e2e run tolerates walled attempts at WhatsOnChain and
+/// #74: the hermetic e2e run tolerates walled attempts at `WhatsOnChain` and
 /// Bitails because the toolbox's own providers for them take no base
 /// (toolbox #98). The tolerance is by host, so it would also hide a new CLI
 /// site that reached those hosts by the toolbox's constants or providers
