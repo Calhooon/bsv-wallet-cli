@@ -20,12 +20,22 @@ const SIDES: [&str; 3] = ["request", "response", "refusal"];
 /// `(call or "*", side, dotted path)`.
 type Key = (String, String, String);
 
+/// The `Record` fields we serve where the BRC has them elsewhere: bsv-rs's
+/// `CertificateResult` nests the BRC's `certificates.fields` under
+/// `certificate` (#122 item 8). Each is a row of the extensions table.
+const NESTED_RECORDS: [(&str, &str, &str); 1] = [(
+    "listCertificates",
+    "response",
+    "certificates.certificate.fields",
+)];
+
 /// What the BRC names: its calls, every field as a [`Key`] (the error
-/// structure under `*`, `refusal`) and the names of its `Record` fields.
+/// structure under `*`, `refusal`) and its `Record` fields as keys (with
+/// [`NESTED_RECORDS`]), each by its call, side and full dotted path.
 struct Brc {
     calls: BTreeSet<String>,
     named: BTreeSet<Key>,
-    records: BTreeSet<String>,
+    records: BTreeSet<Key>,
 }
 
 /// What the corpus shows: every key on the 28 calls, and each fixture of
@@ -57,7 +67,10 @@ fn load_brc(fields: &Value) -> Brc {
     let mut brc = Brc {
         calls: BTreeSet::new(),
         named: BTreeSet::new(),
-        records: BTreeSet::new(),
+        records: NESTED_RECORDS
+            .iter()
+            .map(|(c, s, p)| key(c, s, p))
+            .collect(),
     };
     for (call, spec) in fields["calls"].as_object().expect("calls") {
         brc.calls.insert(call.clone());
@@ -66,8 +79,7 @@ fn load_brc(fields: &Value) -> Brc {
                 let name = field["name"].as_str().expect("name");
                 brc.named.insert(key(call, side, name));
                 if field["record"] == Value::Bool(true) {
-                    brc.records
-                        .insert(name.rsplit('.').next().unwrap_or(name).into());
+                    brc.records.insert(key(call, side, name));
                 }
             }
         }
@@ -79,12 +91,18 @@ fn load_brc(fields: &Value) -> Brc {
     brc
 }
 
-/// Every dotted path of `value` under `path`; the keys of an object that
-/// is a `Record` field's value are `*` and are not paths of their own.
-fn paths(value: &Value, path: &str, records: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+/// Every dotted path of `value` under `path` on `call`'s `side`; the keys
+/// of an object at a `Record` field's path (on that call and side) are `*`
+/// and are not paths of their own.
+fn paths(
+    value: &Value,
+    (call, side, path): (&str, &str, &str),
+    records: &BTreeSet<Key>,
+    out: &mut BTreeSet<String>,
+) {
     match value {
         Value::Object(map) => {
-            let is_record = records.contains(path.rsplit('.').next().unwrap_or(path));
+            let is_record = records.contains(&key(call, side, path));
             for (name, inner) in map {
                 let next = if is_record {
                     format!("{path}.*")
@@ -96,10 +114,12 @@ fn paths(value: &Value, path: &str, records: &BTreeSet<String>, out: &mut BTreeS
                 if !is_record {
                     out.insert(next.clone());
                 }
-                paths(inner, &next, records, out);
+                paths(inner, (call, side, &next), records, out);
             }
         }
-        Value::Array(items) => items.iter().for_each(|v| paths(v, path, records, out)),
+        Value::Array(items) => items
+            .iter()
+            .for_each(|v| paths(v, (call, side, path), records, out)),
         _ => {}
     }
 }
@@ -129,17 +149,21 @@ fn load_corpus(brc: &Brc) -> Corpus {
         let answer = if status < 300 { "response" } else { "refusal" };
         for (side, body) in [("request", &request["json"]), (answer, &response["json"])] {
             let mut found = BTreeSet::new();
-            paths(body, "", &brc.records, &mut found);
+            paths(body, (call, side, ""), &brc.records, &mut found);
             corpus.keys.extend(found.iter().map(|p| key(call, side, p)));
         }
     }
     corpus
 }
 
-/// The rows of the table under `header`, each with its line number.
-fn rows<'a>(doc: &'a str, header: &str) -> Vec<(usize, Vec<&'a str>)> {
+/// The rows of the table under `header`, each with its line number. The
+/// table's `##` heading states its row count (`## Gaps: 72 rows`), which
+/// must be the number of rows read; a `|` line after the table ends and
+/// before the next `##` (a blank line inside the table) is a malformed row.
+fn rows<'a>(doc: &'a str, header: &str, failures: &mut Vec<String>) -> Vec<(usize, Vec<&'a str>)> {
     let lines: Vec<&str> = doc.lines().collect();
     let Some(start) = lines.iter().position(|l| l.trim_end() == header) else {
+        failures.push(format!("no table under `{header}`"));
         return Vec::new();
     };
     let cells = |l: &'a str| {
@@ -149,10 +173,45 @@ fn rows<'a>(doc: &'a str, header: &str) -> Vec<(usize, Vec<&'a str>)> {
             .map(str::trim)
             .collect()
     };
-    (start + 2..lines.len())
-        .take_while(|&i| lines[i].starts_with('|'))
+    let is_row = |i: usize| lines[i].trim_start().starts_with('|');
+    let end = (start + 2..lines.len())
+        .find(|&i| !is_row(i))
+        .unwrap_or(lines.len());
+    let section_end = (end..lines.len())
+        .find(|&i| lines[i].starts_with("## "))
+        .unwrap_or(lines.len());
+    for i in (end..section_end).filter(|&i| is_row(i)) {
+        failures.push(format!(
+            "line {}: a row after the table under `{header}` ended (a blank line inside the table?)",
+            i + 1
+        ));
+    }
+    let found = (start + 2..end)
         .map(|i| (i + 1, cells(lines[i])))
-        .collect()
+        .collect::<Vec<_>>();
+    match (0..start).rev().find(|&i| lines[i].starts_with("## ")) {
+        None => failures.push(format!("no `##` heading over `{header}`")),
+        Some(h) => {
+            let stated = lines[h]
+                .trim_end()
+                .strip_suffix(" rows")
+                .and_then(|t| t.rsplit(' ').next())
+                .and_then(|n| n.parse::<usize>().ok());
+            match stated {
+                None => failures.push(format!(
+                    "line {}: the heading over `{header}` states no row count (`: N rows`)",
+                    h + 1
+                )),
+                Some(n) if n != found.len() => failures.push(format!(
+                    "line {}: the heading states {n} rows, the table under `{header}` has {}",
+                    h + 1,
+                    found.len()
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+    found
 }
 
 fn code(cell: &str) -> Option<&str> {
@@ -162,7 +221,7 @@ fn code(cell: &str) -> Option<&str> {
 /// A key table's rows as keys; a row the format does not allow is a failure.
 fn key_rows(doc: &str, header: &str, brc: &Brc, failures: &mut Vec<String>) -> Vec<(usize, Key)> {
     let mut keys = Vec::new();
-    for (line, cells) in rows(doc, header) {
+    for (line, cells) in rows(doc, header, failures) {
         let parsed = match (
             cells.len(),
             code(cells[0]),
@@ -195,6 +254,13 @@ fn check_keys(brc: &Brc, corpus: &Corpus, doc: &str) -> Vec<String> {
     let mut failures = Vec::new();
     let extensions = key_rows(doc, EXTENSIONS, brc, &mut failures);
     let listed: BTreeSet<Key> = extensions.iter().map(|(_, k)| k.clone()).collect();
+    for (c, s, p) in NESTED_RECORDS {
+        if !listed.contains(&key(c, s, p)) {
+            failures.push(format!(
+                "{c} {s} `{p}`: a nested record that is not a listed extension"
+            ));
+        }
+    }
     for (call, side, path) in &corpus.keys {
         if !matches(&brc.named, call, side, path) && !matches(&listed, call, side, path) {
             failures.push(format!(
@@ -245,7 +311,7 @@ fn route_matches(pattern: &str, route: &str) -> bool {
 fn check_hosts(corpus: &Corpus, doc: &str) -> Vec<String> {
     let mut failures = Vec::new();
     let mut hosts = Vec::new();
-    for (line, cells) in rows(doc, HOSTS) {
+    for (line, cells) in rows(doc, HOSTS, &mut failures) {
         match (cells.len(), code(cells[0])) {
             (4, Some(route)) => hosts.push((line, route)),
             _ => failures.push(format!("line {line}: not a row of `{HOSTS}`")),
@@ -289,7 +355,10 @@ fn every_served_key_is_brc100_or_a_listed_extension_and_every_row_is_true() {
     let (brc, corpus, doc) = setup();
     assert_eq!(brc.calls.len(), 28, "fields.json names the 28 calls");
     for header in [EXTENSIONS, GAPS, UNRECORDED, HOSTS] {
-        assert!(!rows(&doc, header).is_empty(), "no table under {header}");
+        assert!(
+            !rows(&doc, header, &mut Vec::new()).is_empty(),
+            "no table under {header}"
+        );
     }
     let failures = judge(&brc, &corpus, &doc);
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
@@ -319,11 +388,85 @@ fn an_unlisted_key_and_a_dead_row_fail_by_name() {
 }
 
 #[test]
+fn a_blank_line_inside_a_table_fails_by_its_line() {
+    let (brc, corpus, doc) = setup();
+    let lines: Vec<&str> = doc.lines().collect();
+    for header in [GAPS, UNRECORDED] {
+        let start = lines.iter().position(|l| *l == header).expect("table");
+        // A blank line after the table's second row: the rows below it are
+        // the plant's victims and the first of them is named.
+        let mut planted: Vec<&str> = lines.clone();
+        planted.insert(start + 4, "");
+        let failures = judge(&brc, &corpus, &planted.join("\n")).join("\n");
+        let victim = start + 6;
+        assert!(
+            failures.contains(&format!(
+                "line {victim}: a row after the table under `{header}` ended"
+            )),
+            "{failures}"
+        );
+        assert!(failures.contains("the heading states"), "{failures}");
+    }
+}
+
+#[test]
 fn a_record_field_keys_are_the_callers_not_the_brcs() {
-    let records = BTreeSet::from(["spends".to_string()]);
+    let records = BTreeSet::from([key("signAction", "request", "spends")]);
     let body = serde_json::json!({"spends": {"0": {"unlockingScript": "51"}}, "reference": "r"});
     let mut found = BTreeSet::new();
-    paths(&body, "", &records, &mut found);
+    paths(&body, ("signAction", "request", ""), &records, &mut found);
     let want = ["reference", "spends", "spends.*.unlockingScript"];
     assert_eq!(found, want.iter().map(|s| (*s).to_string()).collect());
+}
+
+#[test]
+fn a_record_is_its_call_and_full_path_not_its_last_name() {
+    let (brc, ..) = setup();
+    // `fields` is a Record at `certificates.fields` on `listCertificates`,
+    // never an object named `fields` on another call or at another path.
+    let body = serde_json::json!({"fields": {"name": "x"}, "outer": {"fields": {"age": 1}}});
+    let mut found = BTreeSet::new();
+    paths(
+        &body,
+        ("createAction", "request", ""),
+        &brc.records,
+        &mut found,
+    );
+    let want = [
+        "fields",
+        "fields.name",
+        "outer",
+        "outer.fields",
+        "outer.fields.age",
+    ];
+    assert_eq!(found, want.iter().map(|s| (*s).to_string()).collect());
+    let body = serde_json::json!({"certificates": [{"fields": {"name": "x"}}]});
+    let mut found = BTreeSet::new();
+    paths(
+        &body,
+        ("listCertificates", "response", ""),
+        &brc.records,
+        &mut found,
+    );
+    let want = ["certificates", "certificates.fields"];
+    assert_eq!(found, want.iter().map(|s| (*s).to_string()).collect());
+    // And the judge names such a key: a `fields` object on `createAction`'s
+    // outputs is not skipped as a Record.
+    let (brc, mut corpus, doc) = setup();
+    let body = serde_json::json!({"outputs": [{"fields": {"name": "x"}}]});
+    let mut found = BTreeSet::new();
+    paths(
+        &body,
+        ("createAction", "request", ""),
+        &brc.records,
+        &mut found,
+    );
+    corpus
+        .keys
+        .extend(found.iter().map(|p| key("createAction", "request", p)));
+    let failures = judge(&brc, &corpus, &doc).join("\n");
+    assert!(
+        failures.contains("createAction request `outputs.fields.name`: neither"),
+        "{failures}"
+    );
 }
