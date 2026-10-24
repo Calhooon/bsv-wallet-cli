@@ -38,7 +38,7 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{shown_url, ConfigError, Raw, Secret, ServicesSettings};
+use crate::config::{shown_secret, shown_url, ConfigError, Raw, Secret, ServicesSettings};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -210,11 +210,13 @@ impl ExplorerSettings {
     }
 
     /// The settings' rows for `crate::config::Config::knobs`, in their order.
-    pub(crate) fn values(&self) -> Vec<(&'static str, String)> {
-        let secret = |s: &Option<Secret>| s.as_ref().map_or("-".into(), ToString::to_string);
+    /// A key's row reads `raw`, the environment as read at start, to tell an
+    /// empty key from an unset one.
+    pub(crate) fn values(&self, raw: &Raw) -> Vec<(&'static str, String)> {
+        let key = |name, s: &Option<Secret>| (name, shown_secret(raw.get(name), s.as_ref()));
         vec![
-            ("WOC_API_KEY", secret(&self.woc_api_key)),
-            ("BITAILS_API_KEY", secret(&self.bitails_api_key)),
+            key("WOC_API_KEY", &self.woc_api_key),
+            key("BITAILS_API_KEY", &self.bitails_api_key),
             (
                 "BANANABLOCKS_BASE",
                 match self.bananablocks_base.as_deref() {
