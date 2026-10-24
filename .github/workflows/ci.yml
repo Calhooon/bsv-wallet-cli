@@ -415,9 +415,13 @@ jobs:
   # at its tip and the PR's head, both built here with the ratchet's pinned
   # toolchain, each run once through the hermetic suite with the same keys,
   # ports and stub, the two recordings compared byte for byte after the
-  # normalizations tools/differential lists (`--exclusions`). It fails on
-  # differences only when the PR carries the label `refactor`: a feature PR
-  # changes outputs by design, and its differences are its review's reading.
+  # normalizations tools/differential lists (`--exclusions`). It is to fail
+  # on differences only when the PR carries the label `refactor` (a feature
+  # PR changes outputs by design, and its differences are its review's
+  # reading), but that failure is held (REFACTOR_FAILS below) until
+  # bsv-wallet-toolbox-rs #105, the coin tie, is pinned: until then two runs
+  # of one binary can differ from scenario 22 on, and a refactor PR's report
+  # carries the floor pair's numbers beside its own (docs/DIFFERENTIAL.md).
   # A failed build or suite run, or an incomplete recording (exit 3), fails
   # it either way. The labels are read when the differential step runs, with
   # `gh pr view --json labels`, never from the event payload (a re-run reuses
@@ -495,6 +499,9 @@ jobs:
 
       - name: Run the differential
         env:
+          # Held: `false` until bsv-wallet-toolbox-rs #105 (the coin tie) is
+          # pinned; then `true`, and a refactor PR with differences fails.
+          REFACTOR_FAILS: 'false'
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -520,7 +527,7 @@ jobs:
             echo
             echo "\`$line\`"
             echo
-            echo "label refactor: $REFACTOR; the report is the artifact \`differential\`"
+            echo "label refactor: $REFACTOR (read at run time); the refactor failure: $([ "$REFACTOR_FAILS" = true ] && echo on || echo 'held until bsv-wallet-toolbox-rs #105'); the report is the artifact \`differential\`"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$code" -eq 3 ]; then
             echo "::error::$line: a recording is not a whole run (its INCOMPLETE lines in the report)"
@@ -531,11 +538,15 @@ jobs:
             exit 1
           fi
           if [ "$code" -eq 1 ]; then
-            if [ "$REFACTOR" = "true" ]; then
+            if [ "$REFACTOR" = "true" ] && [ "$REFACTOR_FAILS" = "true" ]; then
               echo "::error::$line on a PR labelled refactor"
               exit 1
             fi
-            echo "::notice::$line (no refactor label: reported, not failed)"
+            if [ "$REFACTOR" = "true" ]; then
+              echo "::warning::$line on a PR labelled refactor: reported, the failure held until bsv-wallet-toolbox-rs #105 is pinned; read it against the floor pair's (docs/DIFFERENTIAL.md)"
+            else
+              echo "::notice::$line (no refactor label: reported, not failed)"
+            fi
           fi
 
       # The report, the recordings and the run logs; never the wallets'

@@ -59,7 +59,7 @@ On the binary of beta at 6227a9c the floor is zero in five pairs of nine. In the
 
 The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull request. It builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`.
 
-- A PR carrying the label `refactor` fails the job on any difference.
+- A PR carrying the label `refactor` is to fail the job on any difference. **That failure is held** until bsv-wallet-toolbox-rs #105 (the coin tie of "The floor today") is pinned: until then two runs of one binary can differ from scenario 22 on, so a refactor that changed nothing could fail. The job reports the differences as a warning, and a refactor PR carries the floor pair's numbers (`--same` on its head binary) beside its own, both in the lane's REPORT. The failure switches on by one line, `REFACTOR_FAILS: 'true'` in the job, in the PR that pins the toolbox release holding #105.
 - Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
 - A failed build or suite run, or an incomplete recording (exit 3), fails the job either way.
 
@@ -67,4 +67,4 @@ The labels are read when the job's differential step runs (`gh pr view --json la
 
 ## The exit test
 
-A refactor PR carries the report with zero differences: `DIFFERENTIAL: 0 differences over N calls and M commands`. A lane cannot mark a refactor done without it.
+A refactor PR carries the report with zero differences: `DIFFERENTIAL: 0 differences over N calls and M commands`. A lane cannot mark a refactor done without it. Until bsv-wallet-toolbox-rs #105 is pinned, the exit test is the pair: the head against its base and the floor (`--same`) on the head, both `DIFFERENTIAL:` lines in the REPORT; a difference the floor does not show (an earlier scenario, another field than the coin choice's) is the refactor's.
