@@ -55,3 +55,5 @@ A number may rise only by a PR that says why, re-records, and is landed by the c
 ## The file-length ratchet is the shipped code's (2026-10-24)
 
 `files_over_800_lines` counts files under `src/` and `mcp/src/` only. A test harness file over the bound (a recorder, a replay, a rule runner) is listed under `detail.tests_files_over_800_lines` and reported, not gated: splitting a harness file is a structure item, never a release gate, while the shipped code's bound is. Every other ratchet (pedantic lints, unwraps outside tests, long functions, complexity, duplication, docs) still measures test code.
+
+`fuzz/` is test code to the ratchet, as `tests/` and `benches/` are (2026-10-24): a fuzz target's unwraps are a harness's, and its files over the bound are reported, not gated; its duplication and lints still count.
