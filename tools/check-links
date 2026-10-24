@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""Every relative link in docs/*.md resolves to a file in the tree (#77).
+"""Every relative link in docs/**/*.md resolves to a file in the tree (#77).
 
-    tools/check-links          check docs/*.md; exit 1 naming each broken link
+    tools/check-links          check every .md under docs/; exit 1 naming each broken link
     tools/check-links FILE...  check the files named instead
 
-A link is a Markdown inline link or image `[text](target)`, a reference
-definition `[label]: target`, or an HTML `href="target"`, outside fenced code
-blocks and code spans. A target with a scheme (`https:`, `mailto:`) or one that
-is only an anchor (`#section`) is not relative and is not checked; the anchor
-and query of a relative target are dropped. The target resolves from the
-linking file's directory, or from the repository's root when it starts with
-`/`, and must be a file git tracks or a directory holding one. A Python script
+A link is a Markdown inline link or image `[text](target)` or `[text](<target>)`
+(the angle form may hold spaces), a reference definition `[label]: target`, or an
+HTML `href="target"`, outside fenced code blocks and code spans. A target with a
+scheme (`https:`, `mailto:`) is not relative and is not checked. The query of a
+relative target is dropped; its path resolves from the linking file's directory,
+or from the repository's root when it starts with `/`, and must be a file git
+tracks or a directory holding one. An anchor (`file.md#section`, or `#section`
+alone for the linking file) on a Markdown file must name one of that file's
+headings by GitHub's slug rule (the heading's text lowercased, every character
+that is not a letter, a digit, a space, `-` or `_` dropped, each space a `-`, and
+a repeated slug suffixed `-1`, `-2` in order), or an HTML `id`/`name` in it; an
+anchor on any other file (a line anchor on source) is not checked. A Python script
 with the standard library and git only, like tools/ratchet.
 """
 
 import re
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
 
-INLINE = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-REFDEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
+INLINE = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*(?:<([^<>\n]*)>|([^)\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
+REFDEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(?:<([^<>\n]*)>|(\S+))(?:\s+.*)?$")
 HREF = re.compile(r"""href=["']([^"']+)["']""")
+IDS = re.compile(r"""\b(?:id|name)=["']([^"']+)["']""")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 SPAN = re.compile(r"(`+).+?\1")
+ATX = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
+SETEXT = re.compile(r"^\s{0,3}(=+|-+)\s*$")
 
 
 def tracked():
@@ -36,7 +46,8 @@ def tracked():
     return files, dirs
 
 
-def links(text):
+def lines_outside_fences(text):
+    """(line number, line) for every line outside a fenced code block."""
     fence = None
     for n, line in enumerate(text.splitlines(), 1):
         m = re.match(r"^\s*(`{3,}|~{3,})", line)
@@ -47,21 +58,57 @@ def links(text):
             elif fence == mark:
                 fence = None
             continue
-        if fence:
-            continue
+        if not fence:
+            yield n, line
+
+
+def links(text):
+    for n, line in lines_outside_fences(text):
         line = SPAN.sub("", line)
-        for rx in (INLINE, HREF):
-            for m in rx.finditer(line):
-                yield n, m.group(1)
+        for m in INLINE.finditer(line):
+            yield n, m.group(1) if m.group(1) is not None else m.group(2)
+        for m in HREF.finditer(line):
+            yield n, m.group(1)
         m = REFDEF.match(line)
         if m:
-            yield n, m.group(1)
+            yield n, m.group(1) if m.group(1) is not None else m.group(2)
 
 
-def resolve(doc, target):
-    path = target.split("#", 1)[0].split("?", 1)[0]
+def slug(heading):
+    """GitHub's anchor for a heading's text."""
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading)  # a link reads as its text
+    text = re.sub(r"<[^>]+>", "", text).strip().lower()
+    keep = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if ch in " -_" or cat[0] in "LN" or cat == "Mn":
+            keep.append("-" if ch == " " else ch)
+    return "".join(keep)
+
+
+def anchors(text):
+    """Every anchor a Markdown file defines: its headings' slugs and its HTML ids."""
+    seen, out, prev = {}, set(), None
+    for _, line in lines_outside_fences(text):
+        heading = None
+        m = ATX.match(line)
+        if m:
+            heading = m.group(2)
+        elif prev and prev.strip() and SETEXT.match(line) and not prev.lstrip().startswith(("|", "-", "*", ">")):
+            heading = prev.strip()
+        if heading is not None:
+            s = slug(heading)
+            n = seen.get(s, 0)
+            seen[s] = n + 1
+            out.add(s if n == 0 else f"{s}-{n}")
+        out.update(IDS.findall(line))
+        prev = line
+    return out
+
+
+def resolve(doc, path):
     if not path:
-        return None
+        return doc
     base = PurePosixPath() if path.startswith("/") else PurePosixPath(doc).parent
     parts = []
     for part in (base / path.lstrip("/")).parts:
@@ -76,17 +123,31 @@ def resolve(doc, target):
 
 def main(argv):
     files, dirs = tracked()
-    docs = argv or sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").glob("*.md"))
+    docs = argv or sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
+    cache = {}
+
+    def anchors_of(path):
+        if path not in cache:
+            cache[path] = anchors((ROOT / path).read_text())
+        return cache[path]
+
     broken = 0
     for doc in docs:
         for n, target in links((ROOT / doc).read_text()):
-            if SCHEME.match(target) or target.startswith("#"):
+            if SCHEME.match(target):
                 continue
-            path = resolve(doc, target)
-            if path is None or path in files or path in dirs:
+            target = target.strip()
+            path, _, anchor = target.partition("#")
+            path = unquote(path.split("?", 1)[0])
+            where = resolve(doc, path)
+            if where != doc and where not in files and where not in dirs:
+                print(f"{doc}:{n}: {target} does not resolve to a file in the tree")
+                broken += 1
                 continue
-            print(f"{doc}:{n}: {target} does not resolve to a file in the tree")
-            broken += 1
+            if anchor and where.endswith(".md") and where not in dirs:
+                if unquote(anchor).lower() not in {a.lower() for a in anchors_of(where)}:
+                    print(f"{doc}:{n}: {target}: {where} has no heading or id with the anchor #{anchor}")
+                    broken += 1
     print(f"check-links: {len(docs)} files, {broken} broken links")
     return 1 if broken else 0
 
