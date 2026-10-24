@@ -55,7 +55,7 @@ const HOST_ROUTES: [&str; 5] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 12] = [
+pub(crate) const APP_CODES: [(u16, &str); 13] = [
     (400, "VALIDATION_ERROR"),
     (400, "INVALID_BEEF"),
     (400, "ERROR"),
@@ -65,6 +65,7 @@ pub(crate) const APP_CODES: [(u16, &str); 12] = [
     (409, "UNSPENDABLE_COIN"),
     (409, "CONFLICT"),
     (500, "INTERNAL_ERROR"),
+    (501, "PRIVILEGED_NOT_SUPPORTED"),
     (502, "SERVICE_ERROR"),
     (503, "STORE_BUSY"),
     (503, "HEADERS_UNAVAILABLE"),
@@ -112,6 +113,7 @@ pub(crate) fn app_codes_in_source() -> BTreeSet<(u16, String)> {
             "NOT_FOUND" => 404,
             "CONFLICT" => 409,
             "INTERNAL_SERVER_ERROR" => 500,
+            "NOT_IMPLEMENTED" => 501,
             "BAD_GATEWAY" => 502,
             "SERVICE_UNAVAILABLE" => 503,
             other => panic!("StatusCode::{other}: not in the scanner's table"),

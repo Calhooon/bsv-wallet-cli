@@ -105,6 +105,15 @@
     "103-internalizeAction.badUnlock.json",
     "104-internalizeAction.walletPayment.json",
     "105-listOutputs.funded.json",
-    "106-listActions.funded.json"
+    "106-listActions.funded.json",
+    "107-getPublicKey.privileged.json",
+    "108-createSignature.privileged.json",
+    "109-encrypt.privileged.json",
+    "110-decrypt.privileged.json",
+    "111-createHmac.privileged.json",
+    "112-verifySignature.privileged.json",
+    "113-verifyHmac.privileged.json",
+    "114-revealCounterpartyKeyLinkage.privileged.json",
+    "115-revealSpecificKeyLinkage.privileged.json"
   ]
 }
