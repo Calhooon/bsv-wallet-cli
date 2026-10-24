@@ -50,3 +50,8 @@ Each number is a debt a reviewer cannot see growing one PR at a time: a panic pa
 4. In its own commit of that PR, run `tools/ratchet --record` and commit `docs/ratchets.json`. The PR says it re-records and names each number that fell. A PR that does not say so does not touch `docs/ratchets.json`.
 
 A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record, and name every number that moved.
+
+
+## The file-length ratchet is the shipped code's (2026-10-24)
+
+`files_over_800_lines` counts files under `src/` and `mcp/src/` only. A test harness file over the bound (a recorder, a replay, a rule runner) is listed under `detail.tests_files_over_800_lines` and reported, not gated: splitting a harness file is a structure item, never a release gate, while the shipped code's bound is. Every other ratchet (pedantic lints, unwraps outside tests, long functions, complexity, duplication, docs) still measures test code.

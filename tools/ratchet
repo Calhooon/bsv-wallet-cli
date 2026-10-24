@@ -391,7 +391,18 @@ def measure():
         n = unwrap_expect(lexed[f][0], lexed[f][2])
         if n:
             unwraps[f] = n
-    big = sorted(((f, n) for f, n in lines.items() if n > FILE_LINES), key=lambda x: (-x[1], x[0]))
+    # The file-length ratchet is the shipped code's (src/, mcp/src/): a test
+    # harness file over the bound is reported beside it, not gated (the
+    # recorders and replays of the oracle run long by nature; splitting them
+    # is a structure item, not a release gate).
+    big = sorted(
+        ((f, n) for f, n in lines.items() if n > FILE_LINES and f not in tests),
+        key=lambda x: (-x[1], x[0]),
+    )
+    tests_big = sorted(
+        ((f, n) for f, n in lines.items() if n > FILE_LINES and f in tests),
+        key=lambda x: (-x[1], x[0]),
+    )
     blocks, dup_tokens = duplicates({f: lexed[f] for f in files})
     by_lint = clippy()
     pedantic = {
@@ -423,6 +434,7 @@ def measure():
             "sources": {r: {"files": v[0], "lines": v[1]} for r, v in sorted(roots.items())},
             "test_files": len(tests),
             "files_over_800_lines": [{"path": f, "lines": n} for f, n in big],
+            "tests_files_over_800_lines": [{"path": f, "lines": n} for f, n in tests_big],
             "unwrap_expect_by_file": dict(sorted(unwraps.items(), key=lambda x: (-x[1], x[0]))),
             "duplicated_blocks": blocks,
             "clippy_pedantic_by_lint": dict(sorted(pedantic.items(), key=lambda x: (-x[1], x[0]))),
