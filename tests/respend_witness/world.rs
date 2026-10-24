@@ -52,12 +52,8 @@ pub(crate) fn status_source(
     status: &str,
     broadcaster: BroadcastStatus,
 ) -> MockWalletServices {
-    MockWalletServices::builder()
-        .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
-            "mock",
-            &[],
-        )]))
-        .get_status_for_txids_response(MockResponse::Success(GetStatusForTxidsResult {
+    status_answer(
+        GetStatusForTxidsResult {
             name: "mock".into(),
             status: "success".into(),
             error: None,
@@ -66,7 +62,23 @@ pub(crate) fn status_source(
                 status: status.into(),
                 ..Default::default()
             }],
-        }))
+        },
+        broadcaster,
+    )
+}
+
+/// The status sources answering `result` for the phantom, Arcade's own
+/// word `broadcaster`.
+pub(crate) fn status_answer(
+    result: GetStatusForTxidsResult,
+    broadcaster: BroadcastStatus,
+) -> MockWalletServices {
+    MockWalletServices::builder()
+        .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
+            "mock",
+            &[],
+        )]))
+        .get_status_for_txids_response(MockResponse::Success(result))
         .broadcaster_statuses(vec![("mock".into(), broadcaster)])
         .build()
 }
@@ -211,22 +223,6 @@ pub(crate) fn proof(txid: &str) -> Vec<u8> {
         }]],
     }
     .to_binary()
-}
-
-/// The status sources answering `result` for the phantom, Arcade's own
-/// word `broadcaster`.
-pub(crate) fn status_answer(
-    result: GetStatusForTxidsResult,
-    broadcaster: BroadcastStatus,
-) -> MockWalletServices {
-    MockWalletServices::builder()
-        .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
-            "mock",
-            &[],
-        )]))
-        .get_status_for_txids_response(MockResponse::Success(result))
-        .broadcaster_statuses(vec![("mock".into(), broadcaster)])
-        .build()
 }
 
 /// Every marked line: (marker, txid).
