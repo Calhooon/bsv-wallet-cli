@@ -162,24 +162,24 @@ jobs:
       - name: No fixture was written by the run
         run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
 
-  # The hot path's benches (#71), gated on this runner's numbers alone: the
-  # profile ubuntu-latest (BENCH_PROFILE), never a developer machine's entry
-  # (docs/BENCHES.md). The reference is the base's baseline, read from the base
-  # ref as the ratchet job reads its record and never from the PR's own
-  # benches/baseline.json: on a PR the base branch's tip, on a push the commit
-  # before it. A p99 more than the margin (5 percent) above it fails, and so
-  # does a PR whose baseline raises the base's; a PR may lower it. With no
-  # entry for the profile the run records one, compares nothing and passes:
-  # the measured baseline is the artifact bench-baseline, which the captain
-  # commits. The toolchain is pinned (a new compiler moves the numbers with
-  # no change to the tree) and named in the entry.
+  # The hot path's benches (#71). tools/bench-compare --ci holds the gate's
+  # profile, margin, sample floor and history floor as constants; nothing
+  # here names them (docs/BENCHES.md). The job checks out the PR's head and
+  # stamps the candidate baseline with that sha, measures into a directory
+  # of its own, and checks the tree's benches/baseline.json against the
+  # base ref's (read as the ratchet job reads its record: the base branch's
+  # tip on a PR, the commit before on a push): a changed margin, a dropped
+  # entry or bench id, a rewritten run, or a new run that does not match
+  # this run's measure fails. The comparison gates once the entry for this
+  # runner's CPU carries five runs; until then it warns and passes. The
+  # artifact bench-baseline is the candidate the captain commits.
   bench:
     name: bench
     runs-on: ubuntu-latest
-    env:
-      BENCH_PROFILE: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
@@ -187,10 +187,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: The gate's planted cases
+        run: python3 tools/test_bench_compare.py
+
       - name: No p99 above the base's baseline
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          BENCH_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           rev=""
           if [ -n "$BASE_REF" ]; then
@@ -204,17 +208,20 @@ jobs:
             fi
           fi
           base=()
-          if [ -n "$rev" ] && git show "$rev:benches/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+          if [ -n "$rev" ]; then
+            # A base with no baseline file is a baseline with no entry.
+            git show "$rev:benches/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null \
+              || : > "$RUNNER_TEMP/base-baseline.json"
             echo "bench: the base baseline is $rev:benches/baseline.json"
             base=(--base "$RUNNER_TEMP/base-baseline.json")
           else
-            echo "::notice::no base baseline (${rev:-no base ref}): the tree's own benches/baseline.json is the reference"
+            echo "::warning::no base ref: the tree's own benches/baseline.json is the reference, unchecked"
           fi
           mkdir -p "$RUNNER_TEMP/bench/results"
-          BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --record-missing "${base[@]}" \
+          BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci "${base[@]}" \
             --out "$RUNNER_TEMP/bench/baseline.json"
 
-      - name: Keep the measured JSON and any baseline the run recorded
+      - name: Keep the measured JSON and the candidate baseline
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

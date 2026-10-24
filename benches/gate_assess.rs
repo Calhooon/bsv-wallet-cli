@@ -22,16 +22,18 @@ fn gate_assess(c: &mut Criterion) {
         let fixture = rt.block_on(wallet_of(coins));
         let wallet = &fixture.wallet;
         for (name, need) in [("need", Some(NEED)), ("all", None)] {
-            // Calls for a stable p99: about 3,000 at 1,000 coins (p50 ~3 ms
-            // and ~20 ms on the lane's machine), about 300 at 10,000 (~80 ms
-            // and ~260 ms), so a CI run of every bench stays near ten minutes.
-            let (samples, measure) = match (need, coins) {
-                (Some(_), 1_000) => (50, Duration::from_secs(10)),
-                (None, 1_000) => (50, Duration::from_secs(25)),
-                (Some(_), _) => (30, Duration::from_secs(30)),
-                (None, _) => (30, Duration::from_secs(90)),
+            // Calls for a stable p99, never fewer than the 100 samples: about
+            // 3,000 at 1,000 coins (p50 ~3 ms and ~20 ms on the lane's
+            // machine), about 300 at 10,000 (~80 ms and ~260 ms; 100 calls
+            // of `all` need 26 s), so a CI run of every bench stays near
+            // ten minutes.
+            let measure = match (need, coins) {
+                (Some(_), 1_000) => Duration::from_secs(10),
+                (None, 1_000) => Duration::from_secs(25),
+                (Some(_), _) => Duration::from_secs(30),
+                (None, _) => Duration::from_secs(90),
             };
-            configure(&mut group, samples, Duration::from_secs(2), measure);
+            configure(&mut group, Duration::from_secs(2), measure);
             let calls = Calls::new();
             group.bench_with_input(BenchmarkId::new(name, coins), &need, |b, need| {
                 b.iter_custom(|iters| {
@@ -53,7 +55,7 @@ fn gate_assess(c: &mut Criterion) {
                     })
                 })
             });
-            report(&format!("gate_assess/{name}/{coins}"), &calls, samples);
+            report(&format!("gate_assess/{name}/{coins}"), &calls);
         }
     }
     group.finish();
