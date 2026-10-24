@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Every relative link in docs/*.md resolves to a file in the tree (#77).
+
+    tools/check-links          check docs/*.md; exit 1 naming each broken link
+    tools/check-links FILE...  check the files named instead
+
+A link is a Markdown inline link or image `[text](target)`, a reference
+definition `[label]: target`, or an HTML `href="target"`, outside fenced code
+blocks and code spans. A target with a scheme (`https:`, `mailto:`) or one that
+is only an anchor (`#section`) is not relative and is not checked; the anchor
+and query of a relative target are dropped. The target resolves from the
+linking file's directory, or from the repository's root when it starts with
+`/`, and must be a file git tracks or a directory holding one. A Python script
+with the standard library and git only, like tools/ratchet.
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path, PurePosixPath
+
+ROOT = Path(__file__).resolve().parent.parent
+
+INLINE = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+REFDEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
+HREF = re.compile(r"""href=["']([^"']+)["']""")
+SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+SPAN = re.compile(r"(`+).+?\1")
+
+
+def tracked():
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True,
+                         capture_output=True, text=True).stdout
+    files = {f for f in out.split("\0") if f}
+    dirs = {str(p) for f in files for p in PurePosixPath(f).parents}
+    return files, dirs
+
+
+def links(text):
+    fence = None
+    for n, line in enumerate(text.splitlines(), 1):
+        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if m:
+            mark = m.group(1)[0]
+            if fence is None:
+                fence = mark
+            elif fence == mark:
+                fence = None
+            continue
+        if fence:
+            continue
+        line = SPAN.sub("", line)
+        for rx in (INLINE, HREF):
+            for m in rx.finditer(line):
+                yield n, m.group(1)
+        m = REFDEF.match(line)
+        if m:
+            yield n, m.group(1)
+
+
+def resolve(doc, target):
+    path = target.split("#", 1)[0].split("?", 1)[0]
+    if not path:
+        return None
+    base = PurePosixPath() if path.startswith("/") else PurePosixPath(doc).parent
+    parts = []
+    for part in (base / path.lstrip("/")).parts:
+        if part == "..":
+            if not parts:
+                return "<outside the tree>"
+            parts.pop()
+        elif part != ".":
+            parts.append(part)
+    return "/".join(parts)
+
+
+def main(argv):
+    files, dirs = tracked()
+    docs = argv or sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").glob("*.md"))
+    broken = 0
+    for doc in docs:
+        for n, target in links((ROOT / doc).read_text()):
+            if SCHEME.match(target) or target.startswith("#"):
+                continue
+            path = resolve(doc, target)
+            if path is None or path in files or path in dirs:
+                continue
+            print(f"{doc}:{n}: {target} does not resolve to a file in the tree")
+            broken += 1
+    print(f"check-links: {len(docs)} files, {broken} broken links")
+    return 1 if broken else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
