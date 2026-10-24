@@ -1,6 +1,6 @@
 # The ratchets: the numbers that may only fall (#72)
 
-Seven numbers of the tree, measured by `tools/ratchet` and recorded in `docs/ratchets.json`. The CI job `ratchet` measures every PR and push and fails when any number is above the base's record, printing which and by how much. The base's record is read from the base ref (`git show origin/<base>:docs/ratchets.json` on a PR, the commit before it on a push), never from the PR's own tree: a PR that edits `docs/ratchets.json` may lower a number of the base's record, never raise one, and the job fails when the PR's record is above the base's on any number. A base with no record yet (the PR that brings the ratchet) checks the tree against its own record alone. The job keeps the measured JSON as the run's artifact `ratchets`. Nothing has to be fixed at once; nothing may get worse. A lane picks a number and moves it down.
+Eight numbers of the tree, measured by `tools/ratchet` and recorded in `docs/ratchets.json`. The CI job `ratchet` measures every PR and push and fails when any number is above the base's record, printing which and by how much. The base's record is read from the base ref (`git show origin/<base>:docs/ratchets.json` on a PR, the commit before it on a push), never from the PR's own tree: a PR that edits `docs/ratchets.json` may lower a number of the base's record, never raise one, and the job fails when the PR's record is above the base's on any number. A base with no record yet (the PR that brings the ratchet) checks the tree against its own record alone. The job keeps the measured JSON as the run's artifact `ratchets`. Nothing has to be fixed at once; nothing may get worse. A lane picks a number and moves it down.
 
 ```bash
 tools/ratchet            # measure the tree, print one JSON object
@@ -24,7 +24,8 @@ Every tracked `*.rs` file of the repository (`git ls-files '*.rs'`): `src/`, `mc
 |---|---|---|
 | `clippy_pedantic` | clippy warnings at `--force-warn clippy::pedantic` | `cargo clippy --workspace --all-targets --locked -- --force-warn clippy::pedantic ...`, every `clippy::` warning except the two counted on their own rows below; `detail.clippy_pedantic_by_lint` lists them by lint |
 | `unwrap_expect_outside_tests` | `.unwrap()` and `.expect(` outside test code | the tool's lexer (comments and string literals are not code); the tokens `.` `unwrap` `(` and `.` `expect` `(`; `unwrap_or`, `unwrap_err` and the like are not counted; `detail.unwrap_expect_by_file` lists them |
-| `files_over_800_lines` | files of more than 800 lines | newline count of each file in scope; `detail.files_over_800_lines` is the list |
+| `files_over_800_lines` | shipped code's files of more than 800 lines | newline count of each file in scope that is not test code; `detail.files_over_800_lines` is the list |
+| `tests_files_over_800_lines` | test code's files of more than 800 lines | newline count of each file of test code (the scope's rule above); `detail.tests_files_over_800_lines` is the list |
 | `functions_over_60_lines` | functions of more than 60 lines of code | `clippy::too_many_lines` at `too-many-lines-threshold = 60` (blank and comment lines are not counted, clippy's rule) |
 | `cognitive_complexity_over_25` | functions of cognitive complexity over 25 | `clippy::cognitive_complexity` at `cognitive-complexity-threshold = 25` |
 | `duplicated_tokens` | tokens of exact duplicate code | below; `detail.duplicated_blocks` is the blocks they form, reported and not ratcheted |
@@ -52,8 +53,10 @@ Each number is a debt a reviewer cannot see growing one PR at a time: a panic pa
 A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record, and name every number that moved.
 
 
-## The file-length ratchet is the shipped code's (2026-10-24)
+## Two file-length ratchets: the shipped code's and the test code's (2026-10-24)
 
-`files_over_800_lines` counts files under `src/` and `mcp/src/` only. A test harness file over the bound (a recorder, a replay, a rule runner) is listed under `detail.tests_files_over_800_lines` and reported, not gated: splitting a harness file is a structure item, never a release gate, while the shipped code's bound is. Every other ratchet (pedantic lints, unwraps outside tests, long functions, complexity, duplication, docs) still measures test code.
+`files_over_800_lines` counts the shipped code's files (`src/` and `mcp/src/`, test code excepted). The test code's files over the bound were listed under `detail.tests_files_over_800_lines` and reported, not gated, while the oracle's harness files ran long; #133 split those (`tests/integration/`, `tests/wire_harness/`, `tests/wire_consumers_harness/`, `tests/respend_witness/`), and the count became the ratchet `tests_files_over_800_lines`, with the same only-falls rule. Its record is 3: the unit-test files of `src/` the list names (`src/spend_gate/tests.rs`, `src/tracker_words_witnesses.rs`, `src/chain_feed_tests.rs`), each a lane of its own. Every other ratchet (pedantic lints, unwraps outside tests, long functions, complexity, duplication, docs) measures test code as before.
 
-`fuzz/` is test code to the ratchet, as `tests/` and `benches/` are (2026-10-24): a fuzz target's unwraps are a harness's, and its files over the bound are reported, not gated; its duplication and lints still count.
+A base record that predates a ratchet (the PR that adds the key) holds nothing to be above: `--check --base` prints the key as `new` and compares the rest. The record the tree is checked against must hold every key the tool measures; one it lacks fails the check as `UNRECORDED`, and a key a record drops is a rise.
+
+`fuzz/` is test code to the ratchet, as `tests/` and `benches/` are (2026-10-24): a fuzz target's unwraps are a harness's, and its files over the bound count in `tests_files_over_800_lines`, not `files_over_800_lines`; its duplication and lints still count.
