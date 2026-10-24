@@ -34,6 +34,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_funded_abort_and_broadcast(r).await;
     record_funded_relinquish_and_caller_input(r).await;
     record_payments_and_listings(r).await;
+    record_privileged(r).await;
 }
 
 /// A key derivation request: `protocol` at level 2, `key_id`, counterparty
@@ -465,4 +466,56 @@ async fn record_unknown_certificates_and_discovery(r: &mut Recorder) {
         ),
     )
     .await;
+}
+
+/// BRC-100's privileged keyring asked for (#145): each of the nine calls
+/// that name `privileged` refuses `privileged: true`, this wallet holding
+/// no privileged key; the refusal comes before any field past the
+/// originator is read, so the bodies carry what a caller would send.
+async fn record_privileged(r: &mut Recorder) {
+    use serde_json::json;
+    let data = json!(b"wire".to_vec());
+    let privileged = |mut body: serde_json::Value| {
+        body["privileged"] = json!(true);
+        body["privilegedReason"] = json!("wire privileged");
+        body
+    };
+    let mut cases = vec![("getPublicKey", pk("wire test", "1"))];
+    for (path, field) in [
+        ("createSignature", "data"),
+        ("encrypt", "plaintext"),
+        ("decrypt", "ciphertext"),
+        ("createHmac", "data"),
+    ] {
+        let mut body = pk("wire test", "1");
+        body[field] = if path == "decrypt" {
+            json!(DECRYPT_CIPHERTEXT.to_vec())
+        } else {
+            data.clone()
+        };
+        cases.push((path, body));
+    }
+    let mut verify = pk("wire test", "1");
+    verify["data"] = data.clone();
+    verify["signature"] = json!([48, 6, 2, 1, 1, 2, 1, 1]);
+    cases.push(("verifySignature", verify));
+    let mut verify = pk("wire test", "1");
+    verify["data"] = data;
+    verify["hmac"] = json!(vec![0u8; 32]);
+    cases.push(("verifyHmac", verify));
+    cases.push((
+        "revealCounterpartyKeyLinkage",
+        json!({"counterparty": G, "verifier": G}),
+    ));
+    let mut specific = pk("wire test", "1");
+    specific["verifier"] = json!(G);
+    cases.push(("revealSpecificKeyLinkage", specific));
+    for (path, body) in cases {
+        r.case(
+            &format!("{path}.privileged"),
+            "fresh",
+            post(&format!("/{path}"), privileged(body)),
+        )
+        .await;
+    }
 }
