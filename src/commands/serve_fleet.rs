@@ -110,7 +110,7 @@ pub fn root_key_from_env_file(env_path: &Path) -> Result<String> {
     bail!("no ROOT_KEY in {}", env_path.display())
 }
 
-/// Service-relevant env keys `services_env`/the server read from PROCESS env.
+/// Service-relevant env keys the process's configuration reads (`Config`).
 /// A per-seat `.env` line for one of these would have applied under the
 /// per-process shape but is INVISIBLE to a shared process — so a divergent
 /// value must refuse the fleet rather than silently misconfigure one tenant.
@@ -131,15 +131,16 @@ pub const SHARED_ENV_KEYS: &[&str] = &[
 ];
 
 /// Refuse a seat whose .env sets a SHARED key to a value differing from the
-/// process env (values never printed — these are secrets).
-pub fn assert_env_uniform(env_path: &Path) -> Result<()> {
+/// process env as the configuration read it at start (values never printed
+/// — these are secrets).
+pub fn assert_env_uniform(env_path: &Path, config: &Config) -> Result<()> {
     let iter = dotenvy::from_path_iter(env_path)
         .with_context(|| format!("reading {}", env_path.display()))?;
     for item in iter {
         let (k, v) = item.with_context(|| format!("parsing {}", env_path.display()))?;
         if SHARED_ENV_KEYS.contains(&k.as_str()) {
-            match std::env::var(&k) {
-                Ok(procv) if procv == v => {}
+            match config.raw(&k) {
+                Some(procv) if procv == v => {}
                 _ => bail!(
                     "fleet env divergence: {} sets {} to a value the shared process env does not carry — \
                      under per-process daemons that line applied; in one process it would be silently ignored. \
@@ -178,7 +179,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
     let mut keys = Vec::with_capacity(n);
     for e in &entries {
         let env_path = e.dir.join(".env");
-        assert_env_uniform(&env_path)?;
+        assert_env_uniform(&env_path, config)?;
         keys.push(root_key_from_env_file(&env_path)?);
     }
 
@@ -328,8 +329,10 @@ mod tests {
         )
         .unwrap();
         // process env does not carry TAAL_API_KEY (or carries another value):
-        std::env::remove_var("TAAL_API_KEY");
-        let err = assert_env_uniform(&env_path).unwrap_err().to_string();
+        let none = Config::default();
+        let err = assert_env_uniform(&env_path, &none)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("fleet env divergence"), "{err}");
         assert!(err.contains("TAAL_API_KEY"), "{err}");
         assert!(
@@ -337,11 +340,10 @@ mod tests {
             "secret leaked: {err}"
         );
         // matching value passes; ROOT_KEY alone always passes
-        std::env::set_var("TAAL_API_KEY", "seat-specific-secret");
-        assert!(assert_env_uniform(&env_path).is_ok());
-        std::env::remove_var("TAAL_API_KEY");
+        let same = Config::from_pairs(&[("TAAL_API_KEY", "seat-specific-secret")]).unwrap();
+        assert!(assert_env_uniform(&env_path, &same).is_ok());
         std::fs::write(&env_path, "ROOT_KEY=aa\n").unwrap();
-        assert!(assert_env_uniform(&env_path).is_ok());
+        assert!(assert_env_uniform(&env_path, &none).is_ok());
         std::fs::remove_dir_all(&dir).ok();
     }
 

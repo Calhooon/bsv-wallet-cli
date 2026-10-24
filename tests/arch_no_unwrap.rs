@@ -12,7 +12,6 @@ use arch_support::{calls, calls_any, count, Rule};
 /// `(file, today's count, why)`. Only shrinks.
 const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/atomic_beef.rs", 1, "the one leaf of a length-one list"),
-    ("src/bin/bsv-wallet-relay.rs", 1, "a literal address parse"),
     ("src/commands/gift_send.rs", 1, "midnight of a parsed date"),
     (
         "src/gift/covenant.rs",

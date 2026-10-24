@@ -1,8 +1,9 @@
 //! Rule A1 (#73): the process environment is read in one place. Every
 //! `env::var` and `env::var_os` of the shipped code lives in
-//! `src/services_env.rs`; every other file that reads one today is listed
-//! with its count, and #80 empties the list (#80's `src/config.rs` joins the
-//! homes when it exists, not before).
+//! `src/config.rs` (#80 emptied the list; `src/services_env.rs`, the home
+//! before it, now builds the services from the configuration and reads
+//! nothing). A7 (`tests/arch_config_env.rs`) holds the same home for every
+//! door to the environment; this rule stays as the first one's record.
 //!
 //! A read is a call of `var(` or `var_os(` by any path (`std::env::var(`,
 //! `env::var_os(`, `e::var(`) or bare (after a `use std::env::var`), and the
@@ -13,17 +14,16 @@ mod arch_support;
 
 use arch_support::{calls_any, imports, Rule};
 
-/// The files that may read the environment freely.
-const HOMES: &[&str] = &["src/services_env.rs"];
+/// The file that may read the environment freely.
+const HOMES: &[&str] = &["src/config.rs"];
 
 /// The readers, by name.
 const READS: &[&str] = &["var", "var_os"];
 
-/// `(file, today's reads, why)`. Only shrinks; #80 empties it.
+/// `(file, today's reads, why)`. Emptied by #80; stays empty. Kept open over
+/// two lines, as `tools/scoreboard` reads an allowlist.
+#[rustfmt::skip]
 const ALLOWED: &[(&str, usize, &str)] = &[
-    ("src/bin/bsv-wallet-relay.rs", 5, "the relay binary's own settings (RELAY_DB, RELAY_PORT, BIND_ADDR, the admin token, RELAY_REQUIRE_REGISTER)"),
-    ("src/commands/daemon_tenant.rs", 6, "the daemon's own settings: the proof check interval, MIN_UTXOS, the abandoned reconcile, the relay"),
-    ("src/commands/serve_fleet.rs", 1, "the fleet's check of each seat's .env against the process environment"),
 ];
 
 const RULE: Rule = Rule {
