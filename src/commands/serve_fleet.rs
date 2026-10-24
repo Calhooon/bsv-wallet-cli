@@ -34,7 +34,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
 use crate::context::WalletContext;
-use crate::server::{self, ServerConfig, TlsConfig};
+use crate::server::{self, ServerConfig};
 
 /// One `--wallet` spec, parsed.
 #[derive(Debug, PartialEq, Eq)]
@@ -153,35 +153,16 @@ pub fn assert_env_uniform(env_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Build one tenant's ServerConfig — the same env-driven shape `serve` builds,
-/// with the callback token resolved per-db (Arcade runtime is db-anchored).
+/// Build one tenant's ServerConfig — the same shape `serve` builds, with
+/// the callback token resolved per-db (Arcade runtime is db-anchored).
 fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
-    let tls = match (
-        std::env::var("TLS_CERT_PATH").ok(),
-        std::env::var("TLS_KEY_PATH").ok(),
-    ) {
-        (Some(cert_path), Some(key_path)) => Some(TlsConfig {
-            cert_path,
-            key_path,
-        }),
-        _ => None,
-    };
-    let callback_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
-        .map(|rt| rt.callback_token)
-        .or_else(|| {
-            std::env::var("CALLBACK_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-    let bind_addr = server::bind_addr_from_env();
-    Ok(ServerConfig {
-        auth_token: std::env::var("AUTH_TOKEN").ok(),
-        tls,
-        chain: ctx.chain,
-        bind_addr,
-        callback_token,
-        settings: ctx.config.clone(),
-    })
+    let arcade_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
+        .map(|rt| rt.callback_token);
+    Ok(ServerConfig::from_config(
+        &ctx.config,
+        ctx.chain,
+        arcade_token,
+    ))
 }
 
 pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>) -> Result<()> {
@@ -189,6 +170,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
     let n = entries.len();
     let chain = config.chain();
     let testnet = chain == bsv_wallet_toolbox::Chain::Test;
+    tracing::info!("config: {}", config.log_line());
 
     // Validate EVERY seat (env uniformity + key present) BEFORE anything binds:
     // a fleet that cannot fully start must not half-start (the runner would

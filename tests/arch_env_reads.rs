@@ -22,11 +22,8 @@ const READS: &[&str] = &["var", "var_os"];
 /// `(file, today's reads, why)`. Only shrinks; #80 empties it.
 const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/bin/bsv-wallet-relay.rs", 5, "the relay binary's own settings (RELAY_DB, RELAY_PORT, BIND_ADDR, the admin token, RELAY_REQUIRE_REGISTER)"),
-    ("src/broadcast_reconcile.rs", 2, "the reconciler's switch and its tuning reads"),
-    ("src/commands/daemon_tenant.rs", 10, "the daemon's settings: intervals, TLS, tokens, MIN_UTXOS, the abandoned reconcile, the relay"),
-    ("src/commands/serve.rs", 4, "TLS and the tokens of serve"),
-    ("src/commands/serve_fleet.rs", 5, "each tenant's keys, TLS and the tokens of serve-fleet"),
-    ("src/server/mod.rs", 2, "BIND_ADDR and AUTH_TOKEN"),
+    ("src/commands/daemon_tenant.rs", 6, "the daemon's own settings: the proof check interval, MIN_UTXOS, the abandoned reconcile, the relay"),
+    ("src/commands/serve_fleet.rs", 1, "the fleet's check of each seat's .env against the process environment"),
 ];
 
 const RULE: Rule = Rule {

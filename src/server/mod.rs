@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::Config;
+use crate::config::{Config, ServerSettings};
 use handlers::WalletState;
 
 /// Lock that serializes spending operations (createAction).
@@ -75,13 +75,27 @@ impl Default for ServerConfig {
     }
 }
 
-/// The address to bind: `BIND_ADDR` when it parses, else `127.0.0.1`. Read
-/// by every served command and by the bind guard, so the two agree.
-pub fn bind_addr_from_env() -> std::net::IpAddr {
-    std::env::var("BIND_ADDR")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]))
+impl ServerConfig {
+    /// The served wallet's server settings from the configuration
+    /// (`BIND_ADDR`, `AUTH_TOKEN`, `TLS_CERT_PATH` with `TLS_KEY_PATH`), on
+    /// `chain`. `/arc-callback` is enabled when a callback token exists: the
+    /// Arcade runtime's (`arcade_token`), else an explicit `CALLBACK_TOKEN`.
+    pub fn from_config(settings: &Arc<Config>, chain: Chain, arcade_token: Option<String>) -> Self {
+        let (server, services) = (&settings.server, &settings.services);
+        let owned = |t: &crate::config::Secret| t.expose().to_string();
+        let tls = (server.tls_cert_path.clone()).zip(server.tls_key_path.clone());
+        Self {
+            auth_token: server.auth_token.as_ref().map(owned),
+            tls: tls.map(|(cert_path, key_path)| TlsConfig {
+                cert_path,
+                key_path,
+            }),
+            chain,
+            bind_addr: server.bind_addr,
+            callback_token: arcade_token.or_else(|| services.callback_token.as_ref().map(owned)),
+            settings: settings.clone(),
+        }
+    }
 }
 
 /// The bind guard (0.7.1). With no bearer token a served wallet answers any
@@ -105,11 +119,11 @@ pub fn refuse_open_bind(
     )
 }
 
-/// [`refuse_open_bind`] on the environment the served commands read
+/// [`refuse_open_bind`] on the settings the served commands bind with
 /// (`BIND_ADDR`, `AUTH_TOKEN`).
-pub fn refuse_open_bind_from_env(allow_no_token: bool) -> Result<()> {
-    let token = std::env::var("AUTH_TOKEN").ok();
-    refuse_open_bind(bind_addr_from_env(), token.as_deref(), allow_no_token)
+pub fn refuse_open_bind_for(settings: &ServerSettings, allow_no_token: bool) -> Result<()> {
+    let token = settings.auth_token.as_ref().map(|t| t.expose());
+    refuse_open_bind(settings.bind_addr, token, allow_no_token)
 }
 
 /// Auth middleware — checks Bearer token if configured.

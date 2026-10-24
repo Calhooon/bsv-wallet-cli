@@ -152,29 +152,23 @@ pub struct ReconcileOptions {
 
 impl ReconcileOptions {
     /// The command's options: every unproven transaction, `max_probes` of
-    /// them probed, applied only with `execute`.
-    pub fn for_command(execute: bool, max_probes: usize, sse: Option<ArcadeSse>) -> Self {
+    /// them probed, applied only with `execute`, a chain-index absence
+    /// named after `absence_minutes` (`BROADCAST_ABSENCE_MINUTES`).
+    pub fn for_command(
+        execute: bool,
+        max_probes: usize,
+        absence_minutes: i64,
+        sse: Option<ArcadeSse>,
+    ) -> Self {
         Self {
             execute,
             max_probes,
             max_age_hours: None,
-            absence_minutes: absence_minutes_from_env(),
+            absence_minutes,
             max_locked_checks: max_probes.max(DEFAULT_MAX_LOCKED_CHECKS),
             sse,
         }
     }
-}
-
-/// `BROADCAST_ABSENCE_MINUTES`, default [`DEFAULT_ABSENCE_MINUTES`].
-pub fn absence_minutes_from_env() -> i64 {
-    env_parse("BROADCAST_ABSENCE_MINUTES", DEFAULT_ABSENCE_MINUTES)
-}
-
-fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.trim().parse::<T>().ok())
-        .unwrap_or(default)
 }
 
 /// The Arcade SSE location for a wallet at `db_path`, when it runs in Arcade
@@ -491,11 +485,13 @@ pub struct SweepReport {
     pub locked: LockedInputReport,
 }
 
-/// See [`SweepReport`].
+/// See [`SweepReport`]. `absence_minutes` is `BROADCAST_ABSENCE_MINUTES`
+/// (default [`DEFAULT_ABSENCE_MINUTES`]).
 pub async fn run_sweep(
     storage: &StorageSqlx,
     services: &dyn WalletServices,
     execute: bool,
+    absence_minutes: i64,
 ) -> Result<SweepReport> {
     if execute {
         crate::respend::settle_proven(storage, services).await?;
@@ -509,15 +505,7 @@ pub async fn run_sweep(
         if covered.contains(&root) {
             continue;
         }
-        match retire_never_announced(
-            storage,
-            services,
-            &root,
-            execute,
-            absence_minutes_from_env(),
-        )
-        .await?
-        {
+        match retire_never_announced(storage, services, &root, execute, absence_minutes).await? {
             Guarded::Ran(report) => {
                 log_poison(&report, "sweep", execute);
                 covered.insert(report.origin.clone());
@@ -661,13 +649,14 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
     clock: &C,
     tracker: &TickOptions,
     sse: Option<&ArcadeSse>,
+    absence_minutes: i64,
 ) -> Result<ServedPassReport> {
     let sse_events = match sse {
         Some(sse) => drain_sse(storage, sse).await.0,
         None => 0,
     };
     let tracker = crate::tracker_host::tick(storage, services, clock, tracker).await?;
-    let sweep = run_sweep(storage, services, true).await?;
+    let sweep = run_sweep(storage, services, true, absence_minutes).await?;
     let guard = crate::spend_guard::run(storage).await?;
     Ok(ServedPassReport {
         sse_events,
@@ -704,10 +693,7 @@ pub fn spawn_served_loop(
     feed_held: bool,
     monitor_runs: bool,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    let enabled = std::env::var("BROADCAST_RECONCILE")
-        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-        .unwrap_or(true);
-    if !enabled {
+    if !config.reconcile.enabled {
         tracing::info!("broadcast reconcile loop disabled (BROADCAST_RECONCILE=0)");
         return None;
     }
@@ -716,8 +702,8 @@ pub fn spawn_served_loop(
         monitor_runs,
         ..TickOptions::from_config(config)
     };
-    let interval_secs =
-        env_parse("BROADCAST_RECONCILE_INTERVAL_SECS", DEFAULT_INTERVAL_SECS).max(5);
+    let interval_secs = config.reconcile.interval_secs;
+    let absence_minutes = config.reconcile.absence_minutes;
     tracing::info!(
         interval_secs,
         tracker_age_secs = tracker.age_threshold,
@@ -740,6 +726,7 @@ pub fn spawn_served_loop(
                 &SystemClock,
                 &tracker,
                 sse.as_ref(),
+                absence_minutes,
             )
             .await
             {
@@ -1214,7 +1201,7 @@ mod tests {
 
     #[test]
     fn options_read_the_env_knobs_with_defaults() {
-        let command = ReconcileOptions::for_command(false, 7, None);
+        let command = ReconcileOptions::for_command(false, 7, DEFAULT_ABSENCE_MINUTES, None);
         assert!(!command.execute);
         assert_eq!(command.max_probes, 7);
         assert_eq!(command.max_age_hours, None);
@@ -1521,15 +1508,29 @@ mod tests {
             monitor_runs: false,
         };
         let now = Utc::now().timestamp() as u64;
-        let report = run_served_pass(&storage, &services, &At(now), &opts, None)
-            .await
-            .unwrap();
+        let report = run_served_pass(
+            &storage,
+            &services,
+            &At(now),
+            &opts,
+            None,
+            DEFAULT_ABSENCE_MINUTES,
+        )
+        .await
+        .unwrap();
         // The broadcaster's SEEN is 31 minutes of silence old at most by
         // the next pass: the age asks for the proof, once, by name.
         assert!(report.tracker.mined.is_empty(), "{:?}", report.tracker);
-        let report = run_served_pass(&storage, &services, &At(now + 601), &opts, None)
-            .await
-            .unwrap();
+        let report = run_served_pass(
+            &storage,
+            &services,
+            &At(now + 601),
+            &opts,
+            None,
+            DEFAULT_ABSENCE_MINUTES,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.tracker.mined, vec![txid.clone()]);
         assert_eq!(services.call_count("get_merkle_path"), 1);
         assert_eq!(

@@ -14,6 +14,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
     let opts = ReconcileOptions::for_command(
         execute,
         max_probes,
+        ctx.config.reconcile.absence_minutes,
         broadcast_reconcile::arcade_sse_for(&ctx.config.services, &ctx.db_path),
     );
     println!(

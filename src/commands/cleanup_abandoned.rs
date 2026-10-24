@@ -4,7 +4,6 @@ use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletServices};
 use sqlx::Row;
 use std::future::Future;
 
-use crate::broadcast_reconcile::absence_minutes_from_env;
 use crate::broadcast_verify::{
     BroadcastVerification, BroadcastVerifier, ChainIndexAnswer, PresenceReport,
 };
@@ -198,7 +197,7 @@ pub async fn reconcile<V: WalletServices>(
     reconcile_with(
         storage,
         min_age_secs,
-        absence_minutes_from_env(),
+        config.reconcile.absence_minutes,
         execute,
         |txid: String| {
             let v = verifier.clone();

@@ -10,6 +10,7 @@ use crate::config::Config;
 /// ROOT_KEY, ctrl-c stops the monitor then the server.
 pub async fn run(config: &Arc<Config>) -> Result<()> {
     let root_key_hex = config.wallet.root_key()?;
+    tracing::info!("config: {}", config.log_line());
 
     let tenant = super::daemon_tenant::start(
         &config.wallet.db,

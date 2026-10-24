@@ -2539,6 +2539,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::broadcast_reconcile::DEFAULT_ABSENCE_MINUTES;
     use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
     use bsv_wallet_toolbox::services::{BlockHeader, GetMerklePathResult};
     use bsv_wallet_toolbox::{
@@ -3163,6 +3164,7 @@ pub(crate) mod tests {
             &FixedClock(now),
             &opts(),
             None,
+            DEFAULT_ABSENCE_MINUTES,
         )
         .await
         .unwrap();
@@ -3199,6 +3201,7 @@ pub(crate) mod tests {
             &FixedClock(now + 60),
             &opts(),
             None,
+            DEFAULT_ABSENCE_MINUTES,
         )
         .await
         .unwrap();
@@ -3246,6 +3249,7 @@ pub(crate) mod tests {
             &FixedClock(now + 120),
             &opts(),
             None,
+            DEFAULT_ABSENCE_MINUTES,
         )
         .await
         .unwrap();

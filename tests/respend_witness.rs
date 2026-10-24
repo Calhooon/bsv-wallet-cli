@@ -37,6 +37,9 @@ struct Fixture {
 /// The header service's view of the funding block: the header at 800
 /// carries the funding proof's root, so the spend gate's read of the
 /// respend's inputs (0.11.0, #29) finds the coin mined.
+/// The sweep's absence threshold: `BROADCAST_ABSENCE_MINUTES`' default.
+const ABSENCE: i64 = bsv_wallet_cli::broadcast_reconcile::DEFAULT_ABSENCE_MINUTES;
+
 /// The respend under the gate's default settings.
 async fn build_and_post(
     storage: &StorageSqlx,
@@ -339,7 +342,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     )
     .await
     .unwrap();
-    bsv_wallet_cli::broadcast_reconcile::run_sweep(s, proof_services.as_ref(), true)
+    bsv_wallet_cli::broadcast_reconcile::run_sweep(s, proof_services.as_ref(), true, ABSENCE)
         .await
         .unwrap();
     let replacement_row =
@@ -678,7 +681,7 @@ async fn served_pass_recovers_a_durable_build_interrupted_before_processing() {
         .execute(s.writer())
         .await
         .unwrap();
-    bsv_wallet_cli::broadcast_reconcile::run_sweep(s, &absent, true)
+    bsv_wallet_cli::broadcast_reconcile::run_sweep(s, &absent, true, ABSENCE)
         .await
         .unwrap();
     let request: String = sqlx::query_scalar("SELECT status FROM proven_tx_reqs WHERE txid=?")

@@ -351,9 +351,16 @@ async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
     let services = MockWalletServices::builder().build();
     services.set_header_for_height(header(900, &txid, 0));
     services.set_tip_header(header_with_hash(900, &"0a".repeat(32), 0));
-    crate::broadcast_reconcile::run_served_pass(&storage, &services, &clock(), &opts(), None)
-        .await
-        .unwrap();
+    crate::broadcast_reconcile::run_served_pass(
+        &storage,
+        &services,
+        &clock(),
+        &opts(),
+        None,
+        crate::broadcast_reconcile::DEFAULT_ABSENCE_MINUTES,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         word(&storage, &txid).await,
         ("mined".to_string(), Some(900), None)
