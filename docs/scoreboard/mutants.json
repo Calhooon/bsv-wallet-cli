@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "commit": "93f160f393b9875291f63d1c80ddc8abea366acd",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/40074725488",
+  "date": "2026-10-24",
+  "files": {
+    "src/broadcast_verify.rs": {"score": 75.5, "caught": 148, "missed": 48, "timeout": 0, "unviable": 36},
+    "src/explorers.rs": {"score": 74.2, "caught": 46, "missed": 16, "timeout": 0, "unviable": 16},
+    "src/server/handlers.rs": {"score": 74.2, "caught": 92, "missed": 32, "timeout": 0, "unviable": 252},
+    "src/spend_gate.rs": {"score": 87.1, "caught": 169, "missed": 25, "timeout": 0, "unviable": 7},
+    "src/tracker_host.rs": {"score": 72.6, "caught": 170, "missed": 64, "timeout": 0, "unviable": 38}
+  }
+}
