@@ -76,16 +76,43 @@
           "version": 1
         },
         {
+          "description": "wire broadcast",
+          "isOutgoing": true,
+          "lockTime": 0,
+          "satoshis": -30000,
+          "status": "unproven",
+          "txid": "b237c50358d96b396d1727531bc4bd4cefdbb3accddc21988fd225bdfbf5c49f",
+          "version": 1
+        },
+        {
+          "description": "wire caller input",
+          "isOutgoing": true,
+          "lockTime": 0,
+          "satoshis": 0,
+          "status": "nosend",
+          "txid": "cf5daa64decf23cf8ae51705f7b7bbb6011b1a64aa6cc291536a15daabf68969",
+          "version": 1
+        },
+        {
           "description": "wire stranger payment",
           "isOutgoing": false,
           "lockTime": 0,
           "satoshis": 0,
           "status": "unproven",
-          "txid": "498fedcac23bdeb44a8381aba0e4ad74f929dd3d85600b2b2849da5da0b55c60",
+          "txid": "549151857183bc2070937ac58b8b505e276f03a1b36216966ad81f4fb1b8e266",
+          "version": 1
+        },
+        {
+          "description": "wire bad unlock",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 0,
+          "status": "unproven",
+          "txid": "56648b3b1e546a4dbebf436769cd6e6c03a63ce11d33719e9fed260ceaed6483",
           "version": 1
         }
       ],
-      "totalActions": 7
+      "totalActions": 11
     }
   }
 }
