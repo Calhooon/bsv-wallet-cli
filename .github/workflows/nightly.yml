@@ -1,0 +1,279 @@
+name: Nightly
+
+# The oracle's night shift (#75, #76; docs/NIGHTLY.md): the five fuzz targets
+# of fuzz/ for an hour each on the corpus checked in, and cargo-mutants over
+# the hot paths with a floor per file. Its own file: ci.yml is the PR gate and
+# this is not. Every action is pinned by commit sha.
+#
+# GitHub fires `schedule` only from the default branch (main) and registers
+# workflow_dispatch there too, so this copy lives on main and checks out beta
+# on the schedule (the programme's line) until beta merges into main; a
+# dispatch (`gh workflow run nightly.yml --ref beta`) runs the ref it names. The
+# merges into main.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: 0.13.2
+  CARGO_MUTANTS_VERSION: 27.1.0
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [beef_reader, brc29_remittance, served_json, explorer_bodies, allow_pending]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line, until beta merges into main. A dispatch runs
+          # the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz -> target
+          key: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+
+      # One hour on the checked-in corpus. New entries land in new/, crashes
+      # in crashes/; the step records the exit and whether libFuzzer wrote
+      # an input (a crash, a timeout, out of memory) and never fails, so the
+      # corpus and the crash are uploaded before the job's verdict. A
+      # non-zero exit with no input (the target did not build, cargo-fuzz
+      # failed) is not a crash: the job fails and no issue is opened.
+      - name: Fuzz for an hour
+        id: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "new/$TARGET" "crashes/$TARGET"
+          set +e
+          cargo fuzz run "$TARGET" "new/$TARGET" "fuzz/corpus/$TARGET" -- \
+            -max_total_time=3600 -timeout=60 -print_final_stats=1 \
+            -artifact_prefix="crashes/$TARGET/" 2>&1 | tee fuzz.log
+          status=${PIPESTATUS[0]}
+          echo "exit=$status" >> "$GITHUB_OUTPUT"
+          # libFuzzer's stopping inputs; a slow-unit-* it may also write is
+          # not one, and the run went on past it.
+          inputs=$(find "crashes/$TARGET" -type f \( -name 'crash-*' -o -name 'timeout-*' \
+            -o -name 'oom-*' -o -name 'leak-*' \) -print -quit)
+          if [ "$status" != "0" ] && [ -n "$inputs" ]; then
+            echo "crashed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "crashed=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      # The entries that add coverage beyond the checked-in corpus, by
+      # libFuzzer's merge: the run's corpus growth, for a PR to commit.
+      - name: Keep the corpus entries that add coverage
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p merged additions
+          cp "fuzz/corpus/$TARGET"/* merged/
+          cargo fuzz run "$TARGET" merged "new/$TARGET" -- -merge=1 2>&1 | tail -5
+          for f in merged/*; do
+            [ -e "fuzz/corpus/$TARGET/$(basename "$f")" ] || cp "$f" additions/
+          done
+          echo "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # A PR from this workflow is refused by the repository's setting
+      # (Actions may not create pull requests), so the additions are an
+      # artifact; docs/NIGHTLY.md says how they are committed.
+      - name: Upload the corpus additions
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: corpus-${{ matrix.target }}
+          path: additions/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload the crash inputs
+        if: always() && steps.fuzz.outputs.crashed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crash-${{ matrix.target }}
+          path: |
+            crashes/${{ matrix.target }}/
+            fuzz.log
+          retention-days: 90
+
+      # A crash is an issue with the input attached: each input base64 in
+      # the body (an issue takes no file), the panic's tail, the run. One
+      # open issue per target; a later crash comments on it.
+      - name: Open or update the crash issue
+        if: always() && steps.fuzz.outputs.crashed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly fuzz: $TARGET crashed"
+          {
+            echo "The nightly fuzz target \`$TARGET\` stopped with exit ${{ steps.fuzz.outputs.exit }} ($RUN, artifact \`crash-$TARGET\`)."
+            echo
+            echo "Reproduce: save an input below (\`base64 -d\`) and run \`cargo +nightly fuzz run $TARGET <file>\` from the checkout's root."
+            for f in crashes/"$TARGET"/*; do
+              [ -f "$f" ] || continue
+              echo
+              size=$(wc -c < "$f" | tr -d ' ')
+              if [ "$size" -gt 16384 ]; then
+                echo "**$(basename "$f")** ($size bytes; the first 16 KB, base64; the whole input is in the artifact):"
+              else
+                echo "**$(basename "$f")** ($size bytes, base64):"
+              fi
+              echo '```'
+              head -c 16384 "$f" | base64 -w 76
+              echo '```'
+            done
+            echo
+            echo "The log's tail:"
+            echo '```'
+            tail -n 40 fuzz.log
+            echo '```'
+          } > body.md
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file body.md
+          fi
+
+      - name: The verdict
+        if: always()
+        env:
+          EXIT: ${{ steps.fuzz.outputs.exit }}
+          CRASHED: ${{ steps.fuzz.outputs.crashed }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ "$CRASHED" = "true" ]; then
+            echo "::error::$TARGET crashed (exit $EXIT)"
+            exit 1
+          elif [ "$EXIT" != "0" ]; then
+            echo "::error::$TARGET did not run (exit $EXIT, no crash input: the build or cargo-fuzz failed; see the fuzz step's log)"
+            exit 1
+          fi
+
+  # cargo-mutants over the hot paths, in twenty shards (about 1,160 mutants;
+  # one mutant is a build and the package's tests, about two minutes on a
+  # runner). Copy mode (never --in-place); a mutant's tests stop at five
+  # minutes, a timeout, scored as not caught.
+  mutants:
+    name: Mutants (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line, until beta merges into main. A dispatch runs
+          # the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: mutants
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --version "$CARGO_MUTANTS_VERSION" --locked
+
+      # cargo-mutants exits non-zero when a mutant survives; the score job
+      # judges, so this step records and goes on.
+      - name: Mutate the hot paths
+        run: |
+          cargo mutants \
+            -f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs \
+            -f src/broadcast_verify.rs -f src/explorers.rs \
+            --shard ${{ matrix.shard }}/20 --timeout 300 --build-timeout 900 \
+            --test-workspace false --output out -- --locked || echo "cargo-mutants exit $?"
+
+      - name: Upload the outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutants-${{ matrix.shard }}
+          path: |
+            out/mutants.out/outcomes.json
+            out/mutants.out/missed.txt
+            out/mutants.out/diff/
+          retention-days: 30
+
+  mutants-score:
+    name: Mutation score
+    needs: mutants
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line, until beta merges into main. A dispatch runs
+          # the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutants-*
+          path: outcomes
+
+      # The floor is 80 percent a file. A file below 80 on the lane's own
+      # run is floored at that score rounded down, with the issue that
+      # raises it; a floor only goes up. The lane's run (2026-10-23,
+      # cargo-mutants 27.1.0): src/spend_gate.rs 86.6, src/explorers.rs 69.7
+      # (floor 69 until #75's raise lands it at 80: fault_status, log_call,
+      # is_txid, woc_base and Rung::name survive). tracker_host.rs,
+      # handlers.rs and broadcast_verify.rs were not run by the lane: their
+      # floors are 80 until the nightly's run says otherwise. A timeout is
+      # not caught (mutants_score.py); the lane's run had none (281 tested:
+      # 214 caught, 46 missed, 21 unviable), so these scores and floors
+      # stand as they were.
+      - name: Score per file against the floors
+        env:
+          MUTANTS_FLOORS: >-
+            {"src/spend_gate.rs": 80,
+             "src/tracker_host.rs": 80,
+             "src/server/handlers.rs": 80,
+             "src/broadcast_verify.rs": 80,
+             "src/explorers.rs": 69}
+        run: python3 .github/nightly/mutants_score.py outcomes
