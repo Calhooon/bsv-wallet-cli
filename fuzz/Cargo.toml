@@ -22,8 +22,8 @@ arbitrary = { version = "1", features = ["derive"] }
 bsv-wallet-cli = { path = ".." }
 # The names the CLI's own files use, so `src/atomic_beef.rs` and
 # `src/brc29.rs` (binary-only modules) compile here unchanged by `#[path]`.
-bsv-sdk = { package = "bsv-rs", version = "=0.8.1", features = ["full"] }
-bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "=0.12.1", features = ["sqlite"] }
+bsv-sdk = { package = "bsv-rs", version = "=0.8.2", features = ["full"] }
+bsv-wallet-toolbox = { package = "bsv-wallet-toolbox-rs", version = "=0.13.0", features = ["sqlite"] }
 anyhow = "1"
 hex = "0.4"
 serde_json = "1"
