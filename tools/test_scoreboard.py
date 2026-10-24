@@ -482,6 +482,37 @@ class NoNumberFallsFromTheBase(Case):
         self.refused_against(base, "floor:src/spend_gate.rs: measured 86.6 in the tree's record, floor 87 in the tree; "
                                    "a floor is never above the measured score rounded down: 86, not 87")
 
+    # A floor left unchanged above a new, lower measurement is refused too.
+
+    def test_a_provisional_floor_left_above_its_first_measurement_is_refused(self):
+        base = self.tree.values()
+        self.lower_spend_gate(75.5, floor=80)
+        self.refused_against(base, "floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 80 in the tree; "
+                                   "a floor is never above the measured score rounded down: 75, not 80")
+
+    def test_a_measured_floor_left_above_a_later_lower_record_is_refused(self):
+        self.lower_spend_gate(75.5, floor=75)
+        base = self.tree.values()
+        self.lower_spend_gate(70.0, floor=75)
+        self.refused_against(base, "floor:src/spend_gate.rs: measured 70 in the tree's record, floor 75 in the tree; "
+                                   "a floor is never above the measured score rounded down: 70, not 75")
+
+    def test_the_real_unchanged_floors_under_the_nights_record_pass(self):
+        # This PR's tip at base and tree: spend_gate 80 under 87.1, explorers 69
+        # under 74.2, every floor at or under its score rounded down.
+        with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
+            self.tree.write(".github/workflows/nightly.yml", f.read())
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            mutants = f.read()
+        scores = {k: v["score"] for k, v in json.loads(mutants)["files"].items()}
+        self.assertEqual((scores["src/spend_gate.rs"], scores["src/explorers.rs"]), (87.1, 74.2))
+        self.tree.write("docs/scoreboard/mutants.json", mutants)
+        base = self.tree.values()
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
     def test_the_real_floors_against_the_nights_record_pass(self):
         # This PR's three provisional floors (80 at the base, before any night)
         # against the first full night's record and the workflow's floors.
