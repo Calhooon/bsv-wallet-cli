@@ -20,22 +20,19 @@
 //! stub, the broadcaster a closed local port, every other request goes
 //! through a proxy on a closed local port.
 
+mod wire_support;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use axum::body::Body;
-use axum::http::Request;
-use axum::Router;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_cli::server::{self, ServerConfig};
-use bsv_wallet_toolbox::{
-    Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
+use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletStorageWriter};
+use serde::{Deserialize, Serialize};
+use wire_support::{
+    diff, header_stub, on_runtime, read_fixture, replace_number, services, Normalizer, Req, Resp,
+    CLOSED, J, ROOT_KEY,
 };
-use serde::de::{MapAccess, SeqAccess, Visitor};
-use serde::ser::{SerializeMap, SerializeSeq};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
 // The consumers and the fixtures each one must have, by file name. The list
@@ -134,109 +131,6 @@ const CONSUMERS: [(&str, &[&str]); 7] = [
     ),
 ];
 
-// ---------------------------------------------------------------------------
-// JSON that keeps its key order (serde_json's `Value` sorts keys here, and a
-// key moved is a byte changed).
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, PartialEq)]
-enum J {
-    Null,
-    Bool(bool),
-    Num(serde_json::Number),
-    Str(String),
-    Arr(Vec<J>),
-    Obj(Vec<(String, J)>),
-}
-
-impl J {
-    fn compact(&self) -> String {
-        serde_json::to_string(self).expect("serialize")
-    }
-
-    fn parse(bytes: &[u8]) -> Option<J> {
-        serde_json::from_slice(bytes).ok()
-    }
-}
-
-impl Serialize for J {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            J::Null => s.serialize_unit(),
-            J::Bool(b) => s.serialize_bool(*b),
-            J::Num(n) => n.serialize(s),
-            J::Str(v) => s.serialize_str(v),
-            J::Arr(items) => {
-                let mut seq = s.serialize_seq(Some(items.len()))?;
-                for item in items {
-                    seq.serialize_element(item)?;
-                }
-                seq.end()
-            }
-            J::Obj(fields) => {
-                let mut map = s.serialize_map(Some(fields.len()))?;
-                for (k, v) in fields {
-                    map.serialize_entry(k, v)?;
-                }
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for J {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<J, D::Error> {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = J;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("JSON")
-            }
-            fn visit_unit<E>(self) -> Result<J, E> {
-                Ok(J::Null)
-            }
-            fn visit_none<E>(self) -> Result<J, E> {
-                Ok(J::Null)
-            }
-            fn visit_bool<E>(self, v: bool) -> Result<J, E> {
-                Ok(J::Bool(v))
-            }
-            fn visit_u64<E>(self, v: u64) -> Result<J, E> {
-                Ok(J::Num(v.into()))
-            }
-            fn visit_i64<E>(self, v: i64) -> Result<J, E> {
-                Ok(J::Num(v.into()))
-            }
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<J, E> {
-                serde_json::Number::from_f64(v)
-                    .map(J::Num)
-                    .ok_or_else(|| E::custom("non-finite number"))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<J, E> {
-                Ok(J::Str(v.to_string()))
-            }
-            fn visit_string<E>(self, v: String) -> Result<J, E> {
-                Ok(J::Str(v))
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<J, A::Error> {
-                let mut items = Vec::new();
-                while let Some(item) = a.next_element()? {
-                    items.push(item);
-                }
-                Ok(J::Arr(items))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<J, A::Error> {
-                let mut fields = Vec::new();
-                while let Some((k, v)) = a.next_entry::<String, J>()? {
-                    fields.push((k, v));
-                }
-                Ok(J::Obj(fields))
-            }
-        }
-        d.deserialize_any(V)
-    }
-}
-
 /// A request body from its JSON text, its keys in the order the consumer
 /// writes them (`serde_json::json!` would sort them).
 fn body(text: &str) -> J {
@@ -259,30 +153,6 @@ struct Fixture {
     world: String,
     request: Req,
     response: Resp,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Req {
-    method: String,
-    path: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    headers: BTreeMap<String, String>,
-    /// A JSON body, sent as its compact bytes with `content-type:
-    /// application/json`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    json: Option<J>,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
-struct Resp {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    /// A JSON body, normalized.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    json: Option<J>,
-    /// A body that is not JSON, byte for byte, normalized.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
 }
 
 /// The response headers that are part of the contract (the wire oracle's
@@ -309,61 +179,34 @@ const VOLATILE_KEYS: [(&str, &str); 5] = [
     ("revelationTime", "<timestamp>"),
 ];
 
-fn normalize(v: J) -> J {
-    match v {
-        J::Obj(fields) => J::Obj(
-            fields
-                .into_iter()
-                .map(|(k, v)| {
-                    let v = match VOLATILE_KEYS.iter().find(|(key, _)| *key == k) {
-                        Some((_, placeholder)) if !matches!(v, J::Null) => {
-                            J::Str(placeholder.to_string())
-                        }
-                        _ => normalize(v),
-                    };
-                    (k, v)
-                })
-                .collect(),
-        ),
-        J::Arr(items) => J::Arr(items.into_iter().map(normalize).collect()),
-        J::Str(s) => J::Str(normalize_text(&s)),
-        other => other,
-    }
+/// The consumers' normalizer: the [`KEPT_HEADERS`], each of the
+/// [`VOLATILE_KEYS`] by its placeholder, and [`normalize_text`].
+const NORMALIZER: Normalizer = Normalizer {
+    kept_headers: &KEPT_HEADERS,
+    volatile,
+    text: normalize_text,
+};
+
+fn volatile(key: &str, _: &J) -> Option<String> {
+    VOLATILE_KEYS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, placeholder)| placeholder.to_string())
 }
 
 fn normalize_text(s: &str) -> String {
-    replace_number_before(s, " min old", "<minutes>")
-}
-
-fn replace_number_before(s: &str, marker: &str, placeholder: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find(marker) {
-        let head = &rest[..at];
-        let digits = head.bytes().rev().take_while(u8::is_ascii_digit).count();
-        out.push_str(&head[..head.len() - digits]);
-        if digits > 0 {
-            out.push_str(placeholder);
-        }
-        out.push_str(marker);
-        rest = &rest[at + marker.len()..];
-    }
-    out.push_str(rest);
-    out
+    replace_number(s, " min old", "<minutes>", false)
 }
 
 // ---------------------------------------------------------------------------
 // The worlds.
 // ---------------------------------------------------------------------------
 
-/// The wire oracle's fixed root key: the identity key, every derived key
-/// and every (RFC 6979) signature is the same on every run.
-const ROOT_KEY: &str = "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f";
 /// The bearer of the `auth` world.
 const BEARER: &str = "wire-bearer";
 
-/// The header stub's tip.
-const TIP: u32 = 900_010;
+/// The header stub's root, at every height.
+const HEADER_ROOT: &str = "5555555555555555555555555555555555555555555555555555555555555555";
 
 /// The seeded coins (hand-written rows, never broadcast): a received
 /// payment not yet mined, and a second one (the scoped word names one).
@@ -377,49 +220,7 @@ const UNKNOWN: &str = "333333333333333333333333333333333333333333333333333333333
 const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 struct World {
-    router: Router,
-}
-
-/// A local header service: the tip at [`TIP`], any height's header.
-async fn header_stub() -> String {
-    use axum::extract::Query;
-    use axum::routing::get;
-    fn header(height: u32) -> serde_json::Value {
-        serde_json::json!({
-            "status": "success",
-            "value": {
-                "version": 536_870_912_u32,
-                "previousHash": "0".repeat(64),
-                "merkleRoot": "5".repeat(64),
-                "time": 1_700_000_000_u32,
-                "bits": 402_917_821_u32,
-                "nonce": 7u32,
-                "height": height,
-                "hash": format!("{:064x}", height),
-            }
-        })
-    }
-    let app = Router::new()
-        .route(
-            "/findChainTipHeaderHex",
-            get(|| async { axum::Json(header(TIP)) }),
-        )
-        .route(
-            "/getPresentHeight",
-            get(|| async { axum::Json(serde_json::json!({"status": "success", "value": TIP})) }),
-        )
-        .route(
-            "/findHeaderHexForHeight",
-            get(|Query(q): Query<HashMap<String, u32>>| async move {
-                axum::Json(header(q.get("height").copied().unwrap_or(0)))
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("the header stub's port");
-    let url = format!("http://{}", listener.local_addr().expect("its address"));
-    tokio::spawn(async move { axum::serve(listener, app).await });
-    url
+    router: axum::Router,
 }
 
 /// Two received coins not yet mined (no proof stored), as an
@@ -491,12 +292,10 @@ impl World {
             "pending" => seed_pending(&storage, &identity).await,
             other => panic!("no world named {other}"),
         }
-        let mut options = ServicesOptions::mainnet()
-            .with_chaintracks_url(header_stub().await)
-            .without_bananablocks();
-        options.arc_url = "http://127.0.0.1:9".to_string();
-        options.arc_gorillapool_url = None;
-        let services = Services::with_options(Chain::Main, options).unwrap();
+        let services = services(
+            header_stub(false, HashMap::new(), HEADER_ROOT).await,
+            CLOSED.to_string(),
+        );
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
         let mut config = ServerConfig::default();
         if name == "auth" {
@@ -508,95 +307,8 @@ impl World {
     }
 
     async fn serve(&self, req: &Req) -> Resp {
-        let mut builder = Request::builder()
-            .method(req.method.as_str())
-            .uri(req.path.as_str());
-        for (k, v) in &req.headers {
-            builder = builder.header(k, v);
-        }
-        let body = match &req.json {
-            Some(json) => {
-                builder = builder.header("content-type", "application/json");
-                Body::from(json.compact())
-            }
-            None => Body::empty(),
-        };
-        let response = self
-            .router
-            .clone()
-            .oneshot(builder.body(body).unwrap())
-            .await
-            .unwrap();
-        let status = response.status().as_u16();
-        let headers = KEPT_HEADERS
-            .iter()
-            .filter_map(|h| {
-                let values: Vec<&str> = response
-                    .headers()
-                    .get_all(*h)
-                    .iter()
-                    .map(|v| v.to_str().unwrap())
-                    .collect();
-                (!values.is_empty()).then(|| (h.to_string(), values.join(", ")))
-            })
-            .collect();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        match J::parse(&bytes) {
-            Some(json) => {
-                assert_eq!(
-                    json.compact().as_bytes(),
-                    &bytes[..],
-                    "{} {}: the body is not compact JSON",
-                    req.method,
-                    req.path
-                );
-                Resp {
-                    status,
-                    headers,
-                    json: Some(normalize(json)),
-                    text: None,
-                }
-            }
-            None => Resp {
-                status,
-                headers,
-                json: None,
-                text: Some(normalize_text(&String::from_utf8_lossy(&bytes))),
-            },
-        }
+        NORMALIZER.serve(&self.router, req).await.0
     }
-}
-
-/// The process's environment, set once before any world: no request leaves
-/// the machine, and no operator setting changes a served answer.
-fn quiet_environment() {
-    for var in [
-        "ROOT_KEY",
-        "SPEND_DEPTH",
-        "SPEND_OWN_CHANGE",
-        "ARC_MODE",
-        "ARCADE",
-        "ARC_URL",
-        "ARC_API_KEY",
-        "CHAINTRACKS_URL",
-        "BREAK_GLASS_EXPLORER_HEADERS",
-        "WOC_API_KEY",
-        "BITAILS_API_KEY",
-        "BANANABLOCKS_BASE",
-        "AUTH_TOKEN",
-        "BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS",
-        "BSV_WALLET_BROADCAST_VERIFY_DELAY_MS",
-    ] {
-        std::env::remove_var(var);
-    }
-    for var in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
-        std::env::set_var(var, "http://127.0.0.1:9");
-    }
-    std::env::set_var("NO_PROXY", "127.0.0.1");
-    std::env::set_var("no_proxy", "127.0.0.1");
-    std::env::set_var("BSV_WALLET_SKIP_BROADCAST_VERIFY", "1");
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +375,7 @@ impl Case {
             path: fill(self.path, self.bytes),
             headers,
             json: self.body.map(|text| body(&fill(text, self.bytes))),
+            ..Req::default()
         }
     }
 }
@@ -1265,43 +978,11 @@ fn read_fixtures(dir: &Path) -> Vec<(String, Fixture)> {
         .into_iter()
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .map(|p| {
-            let text = std::fs::read_to_string(&p).unwrap();
-            let fixture: Fixture =
-                serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            let fixture: Fixture = read_fixture(&p);
             let name = p.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
             (name, fixture)
         })
         .collect()
-}
-
-/// A line diff of two pretty renderings (the fixture's, the served).
-fn diff(want: &str, got: &str) -> String {
-    let (w, g): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
-    let mut lcs = vec![vec![0usize; g.len() + 1]; w.len() + 1];
-    for i in (0..w.len()).rev() {
-        for k in (0..g.len()).rev() {
-            lcs[i][k] = if w[i] == g[k] {
-                lcs[i + 1][k + 1] + 1
-            } else {
-                lcs[i + 1][k].max(lcs[i][k + 1])
-            };
-        }
-    }
-    let (mut i, mut k, mut out) = (0, 0, String::new());
-    while i < w.len() || k < g.len() {
-        if i < w.len() && k < g.len() && w[i] == g[k] {
-            writeln!(out, "  {}", w[i]).unwrap();
-            i += 1;
-            k += 1;
-        } else if k < g.len() && (i == w.len() || lcs[i][k + 1] >= lcs[i + 1][k]) {
-            writeln!(out, "+ {}", g[k]).unwrap();
-            k += 1;
-        } else {
-            writeln!(out, "- {}", w[i]).unwrap();
-            i += 1;
-        }
-    }
-    out
 }
 
 /// What the corpus must keep: every file of [`CONSUMERS`]' list on disk,
@@ -1334,26 +1015,11 @@ fn judge(dir: &Path, fixtures: &[(String, Fixture)]) -> Vec<String> {
     gaps
 }
 
-/// The router's futures are deep in a debug build: the run gets its own
-/// stacks.
+/// The consumers' replay (or, `WIRE_RECORD=1`, their recording first), on
+/// the run's own runtime.
 #[test]
 fn wire_consumers() {
-    const STACK: usize = 64 * 1024 * 1024;
-    quiet_environment();
-    std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(STACK)
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(record_or_replay());
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    on_runtime(record_or_replay);
 }
 
 async fn record_or_replay() {
