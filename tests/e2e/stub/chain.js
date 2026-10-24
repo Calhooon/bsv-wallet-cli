@@ -151,6 +151,24 @@ class Chain {
     return { txid: cb.txid, vout: 0, satoshis, height: block.height, hash: block.hash, beef: this.beefFor(cb.txid, { atomic: true }).toString('hex') };
   }
 
+  /**
+   * A forged funding, the negative of `fund`: a coinbase paying `satoshis` to
+   * `script` whose AtomicBEEF carries a BUMP claiming it alone in the block at
+   * the recorded chain's last height (a mainnet header, never a block this
+   * stub mined). The BUMP's root (the coinbase's own txid) is not that
+   * block's merkle root, so a wallet that checks the root against the header
+   * service refuses it. Nothing is mined or held.
+   */
+  forgedFund(script, satoshis) {
+    const height = this.headers[this.recordedTip].height;
+    const cb = T.makeCoinbase(height, script, satoshis);
+    const header = this.headerAt(height);
+    const root = T.merkleRoot([cb.txid]);
+    if (root === header.merkleRoot) throw new Error('forged root matches the header; not a negative');
+    const beef = T.buildBeef([{ raw: cb.raw, bumpIndex: 0, txid: cb.txid }], [T.bump(height, [cb.txid], 0)], cb.txid);
+    return { txid: cb.txid, vout: 0, satoshis, height, root, headerRoot: header.merkleRoot, beef: beef.toString('hex') };
+  }
+
   /** The BUMP of a mined transaction, or null. */
   bumpFor(txid) {
     const e = this.get(txid);

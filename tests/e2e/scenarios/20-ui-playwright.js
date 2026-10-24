@@ -99,7 +99,17 @@ module.exports = {
 
       let browserChecks = 0;
       if (playwrightAvailable) {
-        const browser = await chromium.launch({ headless: true });
+        // Under E2E_HERMETIC=1 Chromium is pointed at the stub's wall by its
+        // launch args (it reads no proxy environment of its own): Chromium
+        // bypasses the loopback itself, so the inspector on localhost is
+        // reached direct, and anything else is a CONNECT the stub refuses and
+        // counts, which fails the run (docs/E2E-HERMETIC.md). Not Playwright's
+        // `proxy` option: it adds `<-loopback>` and sends localhost to the wall.
+        const launch = { headless: true };
+        if (process.env.E2E_HERMETIC === '1') {
+          launch.args = [`--proxy-server=${process.env.HTTPS_PROXY}`];
+        }
+        const browser = await chromium.launch(launch);
         try {
           const page = await browser.newPage();
           await page.goto(`http://localhost:${UI_PORT}`, { waitUntil: 'networkidle' });
