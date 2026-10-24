@@ -3,7 +3,8 @@
 
     tools/scoreboard                    print the table the records give
     tools/scoreboard --render           rewrite the table between the markers of docs/NORTH-STAR.md
-    tools/scoreboard --check            exit 1 with a diff when the committed table is stale
+    tools/scoreboard --check            exit 1 with a diff when the committed table is stale, or
+                                        when a floor stands above its measured score (rule 1 below)
     tools/scoreboard --check --base F   also exit 1 when a number fell from the base's values F
     tools/scoreboard --json             print the tree's comparable values (the --base input)
     --root DIR                          read the tree at DIR instead of this checkout
@@ -21,8 +22,8 @@ The base is rendered by the BASE'S OWN copy of this tool (git show
 <base>:tools/scoreboard, run with --root on the base's tree), never by the
 PR's: a PR controls its tree and its tool, so a base its tool rendered would be
 a base the PR chose. Only while the base holds no tools/scoreboard is this
-tree's copy used, and the step's log says which. The comparison, falls(), is
-the tree's, so a PR that weakens it is a diff of this file for its review to
+tree's copy used, and the step's log says which. The comparisons, ceiling() and
+falls(), are the tree's, so a PR that weakens them is a diff of this file for its review to
 read. That a weakened tree tool cannot change what the base's tool renders is
 not testable in-process (the planted cases run one copy); this rule and the CI
 step hold it.
@@ -87,18 +88,28 @@ an element). A key the base holds may not vanish from the tree, of any kind.
 The ratchets' own numbers are tools/ratchet's to compare.
 
 A key `floor:<file>:measured` (true or false) says whether
-docs/scoreboard/mutants.json names the file. The floors' rule: a floor may fall
-only when the base carries no measurement for its file (no
-docs/scoreboard/mutants.json at the base, or no entry for the file in it) and
-the tree's record carries one, so a provisional floor is replaced by its first
-measured value once and with a notice, and that value is the tree's measured
-score rounded down, never any lower floor; a floor whose file the tree's
-record measures is never above that score rounded down, whether it rose,
-stayed or fell (a floor is never above what a night measured); a floor with a measurement at the base
-may never fall, a provisional floor may not be lowered without a night's
-measurement, and a measurement at the base may not vanish from the tree. A base
-rendered by a tool older than the key carries no `:measured` key at all, and
-every floor of it reads as unmeasured: such a base also predates
+docs/scoreboard/mutants.json names the file. A floor is measured when the
+record names its file and provisional when it does not. The floors' rule:
+
+  1. The ceiling. A floor whose file the tree's record measures is never above
+     that score rounded down, whether it rose, stayed, fell or is new. It is a
+     property of the tree alone, so every --check holds it, with a base or
+     without one (CI on a push whose previous commit cannot be fetched), for
+     every floor of MUTANTS_FLOORS; a fault names the file, the floor and the
+     score.
+  2. The fall (--base). A floor with a measurement at the base never falls; a
+     provisional floor never falls without a measurement in the tree's record;
+     a measurement at the base never vanishes from the tree.
+  3. The first measurement (--base). A provisional floor at the base whose file
+     the tree's record measures may fall once, and then to exactly the measured
+     score rounded down, never any lower (and, by 1, never higher); the check
+     prints a notice naming the file and both floors.
+  4. The provisional notice. A floor of the tree with no measurement is allowed
+     as a provisional floor, held to no score, and every --check prints a notice
+     naming it.
+
+A base rendered by a tool older than the `:measured` key carries no such key,
+and every floor of it reads as unmeasured: such a base also predates
 docs/scoreboard/mutants.json, which landed with the key (#76). A base that
 carries the key for some floors and not for another is a fault.
 """
@@ -609,13 +620,30 @@ def is_floor(key):
     return key.startswith("floor:") and not MEASURED_KEYS.match(key) and not LIST_KEYS.match(key)
 
 
+def ceiling(tree, scores):
+    """Rules 1 and 4 of the floors' rule, on the tree alone: the faults, one per
+    floor above its measured score rounded down, and the notices, one per
+    provisional floor (scores: the tree's docs/scoreboard/mutants.json, by file).
+    Every --check runs it, with --base or without, so the two cannot drift."""
+    out, notices = [], []
+    for key in sorted(k for k in tree if is_floor(k)):
+        t, score = tree[key], scores.get(key[len("floor:"):])
+        if score is None:
+            notices.append(f"{key}: {t:g} in the tree, no measurement in the tree's record; "
+                           "a provisional floor, held to no score until a night measures its file")
+        elif t > math.floor(score):
+            out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
+                       f"a floor is never above the measured score rounded down: {math.floor(score)}, not {t:g}")
+    return out, notices
+
+
 def falls(base, tree, scores):
     """Every value of the tree that moved the wrong way from the base's: a number
     that fell (or rose, for an allowlist), a list that lost an element, a key
-    that vanished, a floor that fell to anything but its measured score rounded
-    down or that stands above it, risen, unchanged or fallen (scores: the tree's docs/scoreboard/mutants.json, by file); and
-    the notices, one per provisional floor its first measurement lowered (the
-    floors' rule, in the header)."""
+    that vanished, a floor that fell against rules 2 and 3 of the floors' rule
+    (scores: the tree's docs/scoreboard/mutants.json, by file); and the notices,
+    one per provisional floor its first measurement lowered. A floor above its
+    score is ceiling()'s, never this function's."""
     out, notices = [], []
     for key in sorted(base):
         b, t = base[key], tree.get(key)
@@ -626,23 +654,20 @@ def falls(base, tree, scores):
                 out.append(f"{key}: measured at the base, unmeasured in the tree; a measurement may not vanish")
         elif is_floor(key):
             score = scores.get(key[len("floor:"):])
-            if t < b and base.get(f"{key}:measured", False):
+            if t >= b:
+                pass
+            elif base.get(f"{key}:measured", False):
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; a measured floor may not fall")
-            elif t < b and score is None:
+            elif score is None:
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall "
                            "(a provisional floor may not be lowered without a night's measurement)")
-            elif t < b and t != math.floor(score):
+            elif t < math.floor(score):
                 out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
                            f"a provisional floor takes the measured score rounded down: {math.floor(score)}, not {t:g}")
-                continue
-            elif t < b:
+            elif t == math.floor(score):
                 notices.append(f"{key}: {b:g} at the base (provisional, unmeasured), {t:g} in the tree "
                                "(measured); the first measurement replaces a provisional floor once")
-            # Risen, unchanged or fallen: a floor is never above what the
-            # tree's record measured, rounded down.
-            if score is not None and t > math.floor(score):
-                out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
-                           f"a floor is never above the measured score rounded down: {math.floor(score)}, not {t:g}")
+            # Above the score rounded down: the ceiling's fault (rule 1).
         elif LIST_KEYS.match(key):
             for lost in sorted(set(b) - set(t)):
                 out.append(f"{key}: {lost} at the base, gone from the tree; a list may not lose an element")
@@ -704,9 +729,20 @@ def main():
         sys.stdout.writelines(diff)
         print(f"scoreboard: {DOC} is stale; run python3 tools/scoreboard --render and commit it")
         status = 1
+    scores = measured_scores()[0]
+    above, notices = ceiling(values(all_rows), scores)
+    for line in notices:
+        print(f"scoreboard: notice: {line}")
+    for line in above:
+        print(f"scoreboard: {line}")
+    if above:
+        n = len(above)
+        print(f"scoreboard: {n} floor{' stands' if n == 1 else 's stand'} above "
+              f"{'its measured score' if n == 1 else 'their measured scores'} rounded down")
+        status = 1
     if args.base:
         base = load_base(args.base)
-        fell, notices = falls(base, values(all_rows), measured_scores()[0])
+        fell, notices = falls(base, values(all_rows), scores)
         for line in notices:
             print(f"scoreboard: notice: {line}")
         for line in fell:

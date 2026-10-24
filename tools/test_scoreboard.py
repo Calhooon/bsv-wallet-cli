@@ -464,7 +464,7 @@ class NoNumberFallsFromTheBase(Case):
         base = self.tree.values()
         self.lower_spend_gate(75.5, floor=76)
         self.refused_against(base, "floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 76 in the tree; "
-                                   "a provisional floor takes the measured score rounded down: 75, not 76")
+                                   "a floor is never above the measured score rounded down: 75, not 76")
 
     def test_a_measured_floor_raised_to_its_score_rounded_down_passes(self):
         self.tree.write("docs/scoreboard/mutants.json", json.dumps(MUTANTS))
@@ -533,6 +533,69 @@ class NoNumberFallsFromTheBase(Case):
         self.assertEqual(code, 0, out)
         for file, floor in real.items():
             self.assertIn(f"notice: floor:{file}: 80 at the base (provisional, unmeasured), {floor} in the tree", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    # The ceiling is the tree's alone (rule 1): a plain --check, with no base,
+    # holds every floor of MUTANTS_FLOORS, a new one too, under its record.
+
+    def plain_checked(self):
+        code, out = self.tree.run("--render")
+        self.assertEqual(code, 0, out)
+        return self.tree.run("--check")
+
+    def add_new_floor(self, score):
+        self.tree.write(".github/workflows/nightly.yml",
+                        NIGHTLY.replace('"src/explorers.rs": 69}', '"src/explorers.rs": 69,\n             "src/new.rs": 90}'))
+        mutants = json.loads(json.dumps(MUTANTS))
+        if score is not None:
+            mutants["files"]["src/new.rs"] = {"score": score, "caught": 5, "missed": 5, "timeout": 0, "unviable": 0}
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+
+    def test_a_new_floor_above_its_record_under_plain_check_is_refused(self):
+        self.add_new_floor(50.0)
+        code, out = self.plain_checked()
+        needle = ("scoreboard: floor:src/new.rs: measured 50 in the tree's record, floor 90 in the tree; "
+                  "a floor is never above the measured score rounded down: 50, not 90")
+        self.assertEqual(code, 1, out)
+        self.assertIn(needle, out)
+        self.assertIn("1 floor stands above its measured score rounded down", out)
+        print(f"\n    exit 1: {needle}", end=" ", file=sys.stderr)
+
+    def test_a_new_floor_above_its_record_under_base_is_refused(self):
+        # The finding: the base holds no floor:src/new.rs, so a loop over the
+        # base's keys never saw it.
+        base = self.tree.values()
+        self.add_new_floor(50.0)
+        self.refused_against(base, "floor:src/new.rs: measured 50 in the tree's record, floor 90 in the tree; "
+                                   "a floor is never above the measured score rounded down: 50, not 90")
+
+    def test_a_new_floor_with_no_record_under_plain_check_is_a_notice(self):
+        self.add_new_floor(None)
+        code, out = self.plain_checked()
+        needle = ("scoreboard: notice: floor:src/new.rs: 90 in the tree, no measurement in the tree's record; "
+                  "a provisional floor, held to no score until a night measures its file")
+        self.assertEqual(code, 0, out)
+        self.assertIn(needle, out)
+        self.assertNotIn("above its measured", out)
+        print(f"\n    exit 0: {needle}", end=" ", file=sys.stderr)
+
+    def test_a_floor_above_its_record_under_plain_check_is_refused(self):
+        self.lower_spend_gate(75.5, floor=80)
+        code, out = self.plain_checked()
+        self.assertEqual(code, 1, out)
+        self.assertIn("floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 80 in the tree", out)
+        print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_the_real_floors_under_plain_check_pass(self):
+        # This PR's tip: the workflow's five floors under the first full night's
+        # record, every one measured, so no provisional notice.
+        for name in (".github/workflows/nightly.yml", "docs/scoreboard/mutants.json"):
+            with open(os.path.join(REPO, name)) as f:
+                self.tree.write(name, f.read())
+        code, out = self.plain_checked()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("notice", out)
+        self.assertNotIn("above its measured", out)
         print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
 
     def test_a_removed_floor_is_refused(self):
