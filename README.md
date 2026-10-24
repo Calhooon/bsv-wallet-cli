@@ -323,6 +323,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 409 | `CONFLICT` | `Duplicate entity:`, `Invalid operation:` |
 | 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
 | 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
+| 501 | `PRIVILEGED_NOT_SUPPORTED` | `privileged: true` on `getPublicKey`, the six crypto calls (`encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature`) or the two key-linkage calls: this wallet holds no privileged keyring, and a privileged request is never answered with the everyday key (#145) |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |

@@ -58,7 +58,7 @@ Only JSON keys are judged. The transport (HTTP methods, headers, status codes, t
 
 41 extensions.
 
-## Gaps: 82 rows
+## Gaps: 68 rows
 
 Fields the BRC names that we do not read or do not serve. A request gap is a field the handler's type does not read (serde drops it) or refuses; a response gap is a field the BRC's shape has that the served body does not. An optional response field we never set (`context` of an error, `BEEF` of a `listOutputs` asked for no transactions) is not a gap.
 
@@ -74,28 +74,14 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 | `createAction` | request | `options.noSendChange` | not read (a chained `noSend` batch cannot name its change) | #147 |
 | `createAction` | request | `options.sendWith` | not read (a `noSend` batch cannot be sent through `createAction`) | #147 |
 | `internalizeAction` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `getPublicKey` | request | `privileged` | not read; the everyday key | #145 |
-| `getPublicKey` | request | `privilegedReason` | not read | #145 |
 | `getPublicKey` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `encrypt` | request | `privileged` | not read; the everyday key | #145 |
-| `encrypt` | request | `privilegedReason` | not read | #145 |
 | `encrypt` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `decrypt` | request | `privileged` | not read; the everyday key | #145 |
-| `decrypt` | request | `privilegedReason` | not read | #145 |
 | `decrypt` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `createHmac` | request | `privileged` | not read; the everyday key | #145 |
-| `createHmac` | request | `privilegedReason` | not read | #145 |
 | `createHmac` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `verifyHmac` | request | `privileged` | not read; the everyday key | #145 |
-| `verifyHmac` | request | `privilegedReason` | not read | #145 |
 | `verifyHmac` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `createSignature` | request | `counterparty` | required, where the BRC has it optional (line 1177); a request without it is a 422 | #148 |
-| `createSignature` | request | `privileged` | not read; the everyday key | #145 |
-| `createSignature` | request | `privilegedReason` | not read | #145 |
 | `createSignature` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `verifySignature` | request | `hashToDirectlyVerify` | not read: the handler passes the toolbox no hash (`hash_to_directly_verify: None`) | #146 |
-| `verifySignature` | request | `privileged` | not read; the everyday key | #145 |
-| `verifySignature` | request | `privilegedReason` | not read | #145 |
 | `verifySignature` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `acquireCertificate` | request | `type` | refused, 422; `certificateType` is read | #122 item 1 |
 | `proveCertificate` | request | `certificate.type` | refused, 422; `certificate.certificateType` is read | #122 item 1 |
@@ -149,7 +135,7 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 | `revealSpecificKeyLinkage` | response | `encryptedLinkage` | `linkage.encryptedLinkage`, hex | #122 item 2 |
 | `revealSpecificKeyLinkage` | response | `encryptedLinkageProof` | `linkage.encryptedLinkageProof`, hex | #122 item 2 |
 
-82 gaps, each with its issue: 19 are #122's items 1 and 2 (bsv-rs's `certificateType` and its key-linkage shapes); 32 are #122 item 8 (the certificate's fields nested under `certificate`, 18, and the discover calls' fields the BRC requires and bsv-rs makes optional, 14); 22 are #145 (`privileged` and `privilegedReason` not read, 14; `seekPermission` held unread while every originator is granted, 8); 5 are #147 (`createAction`'s `version` and options); one is #146 (`hashToDirectlyVerify`); one is #148 (`createSignature`'s required `counterparty`); 2 are #149 (the refusal's `status` and `description`). None is fixed here. Beside the table, two disagreements of value, not of field: `getVersion` answers the toolbox's version, not this wallet's (#122 item 6), and the 422 and 400 rejections are the framework's text, not a JSON body (#122 item 3). The others of #122 (items 4, 5, 7) are of codes and statuses, which `tests/wire.rs` judges.
+68 gaps, each with its issue: 19 are #122's items 1 and 2 (bsv-rs's `certificateType` and its key-linkage shapes); 32 are #122 item 8 (the certificate's fields nested under `certificate`, 18, and the discover calls' fields the BRC requires and bsv-rs makes optional, 14); 8 are #145's `seekPermission`, held unread while every originator is granted (its `privileged` and `privilegedReason` rows left with the refusal below); 5 are #147 (`createAction`'s `version` and options); one is #146 (`hashToDirectlyVerify`); one is #148 (`createSignature`'s required `counterparty`); 2 are #149 (the refusal's `status` and `description`). None is fixed here. Beside the table, two disagreements of value, not of field: `getVersion` answers the toolbox's version, not this wallet's (#122 item 6), and the 422 and 400 rejections are the framework's text, not a JSON body (#122 item 3). The others of #122 (items 4, 5, 7) are of codes and statuses, which `tests/wire.rs` judges.
 
 ## Served by the source, not in the corpus: 20 rows
 
@@ -191,6 +177,14 @@ The router's own routes beyond BRC-100 (`src/server/mod.rs`), not endpoint exten
 | `/arc-callback` | POST | The ARC/Arcade proof-delivery webhook, behind the callback token, not the wallet's bearer: `ok`, `action`; 404 `CALLBACK_DISABLED` without a token configured. | 9b0d436 (#6, 2026-07-14) |
 
 The callback relay is a binary of its own (`bsv-wallet-relay`, `src/relay.rs`): `GET /health`, `POST /arc-callback`, `GET /pull`, `POST /register`. The MCP server's `health`, `pull` and `register` tools reach them on `RELAY_URL`. They are not the wallet's routes and no wire fixture calls them.
+
+## Privileged requests: refused (#145)
+
+BRC-100 names `privileged` and `privilegedReason` on `getPublicKey`, `encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature`, the two key-linkage calls and the certificate calls: `privileged: true` asks for the wallet's secondary, privileged keyring (line 42; line 324: "when implemented, a secondary and more secure set of keys is used instead of the primary ones"), and `privilegedReason` is the justification that accompanies it (lines 961 and 962: "required if this is a privileged operation").
+
+This wallet holds one keyring and no privileged key. The field is read, never ignored: on the seven calls above and the two key-linkage calls, `privileged: true` is refused with 501 `PRIVILEGED_NOT_SUPPORTED`, body `{"code": "PRIVILEGED_NOT_SUPPORTED", "message": "<call>: privileged is not supported: this wallet holds no privileged keyring, and a privileged request is never answered with the everyday key"}`, before any key is derived and before the call is recorded in the permission audit. Through 0.18.1 the seven calls dropped the field and the two key-linkage calls passed it to the toolbox, which drops it too, so a privileged request was answered with the everyday key. BRC-100 has no refusal code for a capability the wallet does not implement (its vocabulary at lines 314 to 316 is `ERR_MISSING_PARAMETER`, `ERR_INVALID_PARAMETER_VALUE`, `ERR_CONFLICTING_PARAMETERS`), so the code is named in the style of this server's others; 501 is HTTP's "does not support the functionality required". `privileged: false`, `null` or absent is the call as before, byte for byte. `privilegedReason` without `privileged: true` is read and ignored, as the BRC reads it: it accompanies a privileged request and changes nothing without one. The refusal stands until this wallet holds a privileged key. The certificate calls take bsv-rs's own argument types, so their `privileged` is bsv-rs's to read.
+
+`seekPermission` stays unread on every call that names it: this server grants every originator (the permission audit records what a wallet with a human behind it would have prompted for; it does not refuse), so there is no permission to seek.
 
 ## The transport
 
