@@ -248,6 +248,28 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Markers {
     }
 }
 
+/// The two halves of a real `SQLITE_BUSY` for the tests: the options of a
+/// file at `path` with no busy timeout, and a holder connection that has
+/// made `table` there; a test takes the lock on the holder and asks with
+/// another connection (#44, #168).
+pub fn no_wait_file(path: &std::path::Path) -> sqlx::sqlite::SqliteConnectOptions {
+    sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .busy_timeout(std::time::Duration::ZERO)
+}
+
+/// The holder of [`no_wait_file`]'s file, `table` made.
+pub async fn busy_holder(
+    options: &sqlx::sqlite::SqliteConnectOptions,
+    table: &str,
+) -> sqlx::SqliteConnection {
+    use sqlx::ConnectOptions;
+    let mut holder = options.connect().await.unwrap();
+    sqlx::query(table).execute(&mut holder).await.unwrap();
+    holder
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

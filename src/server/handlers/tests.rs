@@ -715,19 +715,13 @@ fn the_nine_request_structs_read_privileged_and_its_reason() {
 /// pre-check keeps its 400 `ERROR`.
 #[tokio::test]
 async fn the_abort_pre_check_under_a_busy_store_is_503_store_busy() {
-    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
-    use sqlx::{ConnectOptions, Connection};
+    use crate::test_support::{busy_holder, no_wait_file};
+    use sqlx::sqlite::SqliteJournalMode;
+    use sqlx::Connection;
     let dir = tempfile::TempDir::new().unwrap();
-    let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("busy.db"))
-        .create_if_missing(true)
-        .journal_mode(SqliteJournalMode::Delete)
-        .busy_timeout(std::time::Duration::ZERO);
-    let mut holder = options.connect().await.unwrap();
-    sqlx::query("CREATE TABLE transactions (txid TEXT, reference TEXT)")
-        .execute(&mut holder)
-        .await
-        .unwrap();
+    let options = no_wait_file(&dir.path().join("busy.db")).journal_mode(SqliteJournalMode::Delete);
+    let table = "CREATE TABLE transactions (txid TEXT, reference TEXT)";
+    let mut holder = busy_holder(&options, table).await;
     let reader = sqlx::SqlitePool::connect_with(options).await.unwrap();
     sqlx::query("BEGIN EXCLUSIVE")
         .execute(&mut holder)
