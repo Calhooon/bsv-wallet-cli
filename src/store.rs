@@ -266,18 +266,11 @@ mod tests {
     /// for the write lock the first holds, with no busy timeout.
     #[tokio::test]
     async fn sqlites_own_busy_is_busy() {
-        use sqlx::sqlite::SqliteConnectOptions;
         use sqlx::{ConnectOptions, Connection};
         let dir = tempfile::TempDir::new().unwrap();
-        let options = SqliteConnectOptions::new()
-            .filename(dir.path().join("busy.db"))
-            .create_if_missing(true)
-            .busy_timeout(std::time::Duration::ZERO);
-        let mut holder = options.connect().await.unwrap();
-        sqlx::query("CREATE TABLE t (x INTEGER)")
-            .execute(&mut holder)
-            .await
-            .unwrap();
+        let options = crate::test_support::no_wait_file(&dir.path().join("busy.db"));
+        let mut holder =
+            crate::test_support::busy_holder(&options, "CREATE TABLE t (x INTEGER)").await;
         sqlx::query("BEGIN IMMEDIATE")
             .execute(&mut holder)
             .await
