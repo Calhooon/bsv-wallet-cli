@@ -508,7 +508,8 @@ pub struct DaemonSettings {
     pub reconcile_abandoned_min_age_secs: i64,
     /// `RELAY_URL`, when not empty: a `bsv-wallet-relay` to drain.
     pub relay_url: Option<String>,
-    /// `RELAY_POLL_SECS`, default 10.
+    /// `RELAY_POLL_SECS`, default 10, at least 1: 0 is refused at start
+    /// (the relay loop's `tokio::time::interval` panics on a zero period).
     pub relay_poll_secs: u64,
 }
 
@@ -525,7 +526,9 @@ impl DaemonSettings {
                 .number("RECONCILE_ABANDONED_MIN_AGE_SECS", seconds)
                 .unwrap_or(3600),
             relay_url: raw.url("RELAY_URL"),
-            relay_poll_secs: raw.number("RELAY_POLL_SECS", seconds).unwrap_or(10),
+            relay_poll_secs: raw
+                .number_from("RELAY_POLL_SECS", "a number of seconds, at least 1", 1)
+                .unwrap_or(10),
         }
     }
 }
