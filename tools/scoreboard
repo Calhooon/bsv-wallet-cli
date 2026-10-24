@@ -71,8 +71,11 @@ docs/scoreboard/mutants.json, the measured column of the floors' rows:
   }
 
 `score` is the summary's score column (caught / (caught + missed + timeout) * 100,
-.github/nightly/mutants_score.py); the counts are its columns and are kept for the
-reader, the table shows the score and the commit. A floored file the object does
+.github/nightly/mutants_score.py); the counts are its columns, and the score must
+equal the one they give, to one place (mutation_score(), the nightly's formula), or
+the tool exits 1 naming the file, the stored score and the computed one: a score is
+never read as given, since the ceiling holds a floor under it. A file whose caught,
+missed and timeout are all 0 is malformed. The table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
 
 The values --json prints and --base reads: {"schema": 1, "values": {key: value}}.
@@ -392,6 +395,12 @@ def floors():
     return value
 
 
+def mutation_score(caught, missed, timeout):
+    """The nightly's own score (.github/nightly/mutants_score.py, its table):
+    caught over the judged (a timeout weighs as a miss), to one place."""
+    return round(100.0 * caught / (caught + missed + timeout), 1)
+
+
 def measured_scores():
     """docs/scoreboard/mutants.json's scores, by file; {} when the record is absent."""
     if not path(MUTANTS).exists():
@@ -417,6 +426,14 @@ def measured_scores():
         for n in ("caught", "missed", "timeout", "unviable"):
             if not is_int(entry.get(n)) or entry[n] < 0:
                 fail(MUTANTS, f"files.{file}.{n}", "must be a count (an integer at least 0)")
+        judged = entry["caught"] + entry["missed"] + entry["timeout"]
+        if judged == 0:
+            fail(MUTANTS, f"files.{file}", "caught + missed + timeout is 0; a file no mutant judged has no score")
+        computed = mutation_score(entry["caught"], entry["missed"], entry["timeout"])
+        if entry["score"] != computed:
+            fail(MUTANTS, f"files.{file}.score",
+                 f"{entry['score']:g} stored, {computed:g} computed from its counts "
+                 f"(100 * caught / (caught + missed + timeout), to one place); the score is its counts'")
         scores[file] = entry["score"]
     return scores, commit[:7]
 

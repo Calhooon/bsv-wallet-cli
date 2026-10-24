@@ -112,6 +112,12 @@ class Tree:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
+def counted(score):
+    """A record's entry whose counts give `score` (to one place), over 1,000 judged."""
+    caught = round(score * 10)
+    return {"score": score, "caught": caught, "missed": 1000 - caught, "timeout": 0, "unviable": 0}
+
+
 def tail(out):
     return out.splitlines()[-1] if out else ""
 
@@ -382,7 +388,7 @@ class NoNumberFallsFromTheBase(Case):
         self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", f": {floor},"))
         if score is not None:
             mutants = json.loads(json.dumps(MUTANTS))
-            mutants["files"]["src/spend_gate.rs"]["score"] = score
+            mutants["files"]["src/spend_gate.rs"] = counted(score)
             self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
 
     def test_a_provisional_floor_its_first_measurement_lowers_passes(self):
@@ -756,6 +762,78 @@ class AScenarioIsAModuleThatExportsRun(Case):
         self.assertEqual(code, 1, out)
         self.assertIn("e2e:scenarios: 3 at the base, 2 in the tree; it may not fall", out)
         print(f"\n    exit 1: {[l for l in out.splitlines() if 'e2e:scenarios' in l][0]}", end=" ", file=sys.stderr)
+
+
+class TheScoreIsItsCounts(Case):
+    """(I) A record's score is never read as given: it must equal the nightly's
+    own formula over the counts beside it, or the ceiling would hold a floor
+    under a number nothing measured."""
+
+    def with_entry(self, file, entry):
+        mutants = json.loads(json.dumps(MUTANTS))
+        mutants["files"][file] = entry
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+
+    def real(self):
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            return json.load(f)["files"]
+
+    def test_a_score_of_95_over_counts_of_72_6_is_refused(self):
+        # The finding: tracker_host's counts with its score raised to 95.0 and
+        # its floor to 95 passed every check.
+        self.tree.write(".github/workflows/nightly.yml",
+                        NIGHTLY.replace('"src/explorers.rs": 69}', '"src/explorers.rs": 69,\n             "src/tracker_host.rs": 95}'))
+        self.with_entry("src/tracker_host.rs", dict(self.real()["src/tracker_host.rs"], score=95.0))
+        self.refused("docs/scoreboard/mutants.json: files.src/tracker_host.rs.score: 95 stored, "
+                     "72.6 computed from its counts")
+        self.refused("72.6 computed from its counts", "--check")
+
+    def test_a_score_off_by_a_tenth_is_refused(self):
+        self.with_entry("src/spend_gate.rs", dict(MUTANTS["files"]["src/spend_gate.rs"], score=86.7))
+        self.refused("files.src/spend_gate.rs.score: 86.7 stored, 86.6 computed from its counts")
+
+    def test_a_record_with_no_judged_mutant_is_refused(self):
+        self.with_entry("src/spend_gate.rs", {"score": 0, "caught": 0, "missed": 0, "timeout": 0, "unviable": 12})
+        self.refused("docs/scoreboard/mutants.json: files.src/spend_gate.rs: caught + missed + timeout is 0; "
+                     "a file no mutant judged has no score")
+
+    def test_a_timeout_weighs_as_a_miss(self):
+        self.with_entry("src/spend_gate.rs", {"score": 50.0, "caught": 5, "missed": 0, "timeout": 5, "unviable": 0})
+        self.assertIn("| 50.0 at abcdef0 |", self.table())
+        self.with_entry("src/spend_gate.rs", {"score": 100.0, "caught": 5, "missed": 0, "timeout": 5, "unviable": 0})
+        self.refused("files.src/spend_gate.rs.score: 100 stored, 50 computed from its counts")
+
+    def test_the_five_real_entries_pass(self):
+        for name in (".github/workflows/nightly.yml", "docs/scoreboard/mutants.json"):
+            with open(os.path.join(REPO, name)) as f:
+                self.tree.write(name, f.read())
+        self.assertEqual(len(self.real()), 5)
+        out = self.table()
+        for file, e in self.real().items():
+            self.assertIn(f"| {e['score']:.1f} at ", out)
+        print(f"\n    exit 0: {len(self.real())} real entries, each score its counts'", end=" ", file=sys.stderr)
+
+    def test_the_formula_is_the_nightlys_on_the_five_real_entries(self):
+        # The nightly's table, run on outcomes planted to the real counts, prints
+        # the score the tool computes and the record stores.
+        outcomes = []
+        for file, e in self.real().items():
+            for summary, n in (("CaughtMutant", e["caught"]), ("MissedMutant", e["missed"]),
+                               ("Timeout", e["timeout"]), ("Unviable", e["unviable"])):
+                outcomes += [{"scenario": {"Mutant": {"file": file, "name": f"m{i}"}}, "summary": summary}
+                             for i in range(n)]
+        self.tree.write("outcomes.json", json.dumps({"outcomes": outcomes}))
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_STEP_SUMMARY"}
+        r = subprocess.run([sys.executable, "-B", os.path.join(REPO, ".github/nightly/mutants_score.py"),
+                            os.path.join(self.tree.root, "outcomes.json")],
+                           capture_output=True, text=True, env=env)
+        tool = scoreboard()
+        for file, e in self.real().items():
+            row = next(l for l in r.stdout.splitlines() if l.startswith(f"| `{file}` |"))
+            nightly = float(row.split("|")[6])
+            self.assertEqual(nightly, tool.mutation_score(e["caught"], e["missed"], e["timeout"]), row)
+            self.assertEqual(nightly, e["score"], row)
+        print(f"\n    agree: {len(self.real())} files, the nightly's table and mutation_score()", end=" ", file=sys.stderr)
 
 
 class TheConsumersCorpusIsReadWhereItLives(Case):
