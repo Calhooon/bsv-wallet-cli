@@ -304,7 +304,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: No number above the base's record
+      # The base ref, read once for the ratchet and the scoreboard: on a PR
+      # the base branch's tip, on a push the commit before it, none on a
+      # push with no fetchable before.
+      - name: The base ref
+        id: base
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -320,6 +324,13 @@ jobs:
               echo "::warning::the commit before the push ($BEFORE) is not fetchable"
             fi
           fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: No number above the base's record
+        env:
+          REV: ${{ steps.base.outputs.rev }}
+        run: |
+          rev="$REV"
           base=()
           if [ -n "$rev" ] && git show "$rev:docs/ratchets.json" > "$RUNNER_TEMP/base-ratchets.json" 2>/dev/null; then
             echo "ratchet: the base record is $rev:docs/ratchets.json"
@@ -331,9 +342,28 @@ jobs:
           python3 tools/ratchet --check "${base[@]}" --out "$RUNNER_TEMP/ratchet/ratchets.json"
 
       # docs/NORTH-STAR.md's table is rendered from the records in the tree
-      # (#77); a PR that moves a record runs tools/scoreboard --render.
+      # (#77); a PR that moves a record runs tools/scoreboard --render. The
+      # base's values are the base ref's tree rendered by this tree's tool
+      # (--json on a git archive of the base, never the PR's own records):
+      # no floor, fixture, scenario or rule count may fall from them and no
+      # allowlist may grow. A base ref whose tree the tool cannot read fails
+      # the step (a malformed base record is never "no base").
       - name: scoreboard
-        run: python3 tools/scoreboard --check
+        env:
+          REV: ${{ steps.base.outputs.rev }}
+        run: |
+          python3 -B tools/test_scoreboard.py
+          base=()
+          if [ -n "$REV" ]; then
+            mkdir -p "$RUNNER_TEMP/base-tree"
+            git archive "$REV" | tar -x -C "$RUNNER_TEMP/base-tree"
+            python3 -B tools/scoreboard --root "$RUNNER_TEMP/base-tree" --json > "$RUNNER_TEMP/base-scoreboard.json"
+            echo "scoreboard: the base values are $REV's tree"
+            base=(--base "$RUNNER_TEMP/base-scoreboard.json")
+          else
+            echo "::notice::no base ref: the table is checked against the tree alone"
+          fi
+          python3 -B tools/scoreboard --check "${base[@]}"
 
       - name: links
         run: python3 tools/check-links
