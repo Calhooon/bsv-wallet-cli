@@ -86,12 +86,7 @@ impl Config {
             ("--testnet", on_off(w.chain == Chain::Test)),
             ("--port", w.port.to_string()),
             ("ROOT_KEY", self.secret("ROOT_KEY", w.root_key.as_ref())),
-            (
-                "RUST_LOG",
-                w.rust_log
-                    .clone()
-                    .unwrap_or_else(|| super::DEFAULT_LOG_FILTER.into()),
-            ),
+            ("RUST_LOG", w.log_filter().0),
         ]
     }
 

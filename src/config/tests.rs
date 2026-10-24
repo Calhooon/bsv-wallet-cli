@@ -319,6 +319,33 @@ fn arc_mode_and_arcade_each_show_their_own_value() {
     assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
 }
 
+#[test]
+fn the_rust_log_row_is_the_filter_in_effect() {
+    let row = |c: &Config| {
+        let k = c
+            .knobs()
+            .into_iter()
+            .find(|k| k.name == "RUST_LOG")
+            .unwrap();
+        (k.value, k.source)
+    };
+    let default = (DEFAULT_LOG_FILTER.to_string(), Source::Default);
+    assert_eq!(row(&Config::default()), default);
+    let c = config(&[("RUST_LOG", "bsv_wallet=trace")]);
+    assert_eq!(row(&c), ("bsv_wallet=trace".to_string(), Source::Env));
+    // A filter that does not parse is the default in effect, as main reads it.
+    let c = config(&[("RUST_LOG", "bsv_wallet=[")]);
+    assert_eq!(c.wallet.rust_log.as_deref(), Some("bsv_wallet=["));
+    assert_eq!(row(&c), default);
+    let verbose = Flags {
+        verbose: true,
+        ..Flags::default()
+    };
+    let c = Config::from_vars(&verbose, vars(&[("RUST_LOG", "warn")])).unwrap();
+    assert_eq!(row(&c), ("debug".to_string(), Source::Flag));
+    assert_eq!(c.wallet.log_filter(), row(&c));
+}
+
 /// Every environment variable `bsv-wallet` reads, in the knob list's order.
 const VARIABLES: &[&str] = &[
     "ROOT_KEY",
