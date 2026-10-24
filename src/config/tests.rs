@@ -52,6 +52,37 @@ fn an_empty_environment_is_every_default_of_the_served_settings() {
 }
 
 #[test]
+fn a_relay_poll_of_zero_seconds_is_refused_naming_the_floor() {
+    // tokio::time::interval panics on a zero period (#170).
+    let e = refusal(&[("RELAY_POLL_SECS", "0")]);
+    assert_eq!(e.variable, "RELAY_POLL_SECS");
+    assert_eq!(
+        e.to_string(),
+        "RELAY_POLL_SECS is \"0\", which is not a number of seconds, at least 1: \
+         set it so, or unset it for the default"
+    );
+    let refused = Config::from_pairs(&[("RELAY_POLL_SECS", "0")]).unwrap_err();
+    assert_eq!(refused.config.daemon.relay_poll_secs, 10);
+    assert_eq!(
+        config(&[("RELAY_POLL_SECS", "1")]).daemon.relay_poll_secs,
+        1
+    );
+    assert_eq!(
+        config(&[("RELAY_POLL_SECS", " 30 ")])
+            .daemon
+            .relay_poll_secs,
+        30
+    );
+    assert_eq!(config(&[]).daemon.relay_poll_secs, 10);
+    assert_eq!(
+        config(&[("RELAY_POLL_SECS", "")]).daemon.relay_poll_secs,
+        10
+    );
+    let e = refusal(&[("RELAY_POLL_SECS", "soon")]);
+    assert!(e.to_string().contains("at least 1"), "{e}");
+}
+
+#[test]
 fn a_malformed_value_is_refused_naming_the_variable_and_the_shape() {
     for (name, value, shape) in [
         ("SPEND_DEPTH", "two", "a block depth"),

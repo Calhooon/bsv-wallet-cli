@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn a_refused_setting_is_marked_and_the_command_exits_non_zero() {
         let refused =
-            Config::from_pairs(&[("MIN_UTXOS", "x"), ("RELAY_POLL_SECS", "soon")]).unwrap_err();
+            Config::from_pairs(&[("MIN_UTXOS", "x"), ("RELAY_POLL_SECS", "0")]).unwrap_err();
         let out = table(&refused.config.knobs());
         let line = |name: &str| {
             out.lines()
@@ -104,6 +104,23 @@ mod tests {
             ]
         );
         assert_eq!(line("SPEND_DEPTH"), ["SPEND_DEPTH", "1", "default"]);
+        assert_eq!(
+            line("RELAY_POLL_SECS"),
+            [
+                "RELAY_POLL_SECS",
+                "0",
+                "env",
+                "REFUSED:",
+                "not",
+                "a",
+                "number",
+                "of",
+                "seconds,",
+                "at",
+                "least",
+                "1"
+            ]
+        );
         let e = run(&refused.config, true).unwrap_err().to_string();
         assert!(
             e.contains("MIN_UTXOS") && e.contains("RELAY_POLL_SECS"),

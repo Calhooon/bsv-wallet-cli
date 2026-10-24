@@ -98,6 +98,24 @@ impl<'a> Reader<'a> {
         )
     }
 
+    /// A number with a floor: as [`Reader::number`], and a value below
+    /// `floor` is refused too (`expected` names the floor), never clamped.
+    pub(crate) fn number_from<T: FromStr + PartialOrd>(
+        &self,
+        name: &'static str,
+        expected: &'static str,
+        floor: T,
+    ) -> Option<T> {
+        self.kept(
+            self.given(name)
+                .map(|v| match v.parse() {
+                    Ok(n) if n >= floor => Ok(n),
+                    _ => Err(refused(name, v, expected)),
+                })
+                .transpose(),
+        )
+    }
+
     /// A URL: unset or blank is `None`, anything else must be an http or
     /// https URL with a host. The value is kept as set, trimmed.
     pub(crate) fn url(&self, name: &'static str) -> Option<String> {

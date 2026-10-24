@@ -77,7 +77,9 @@ are defined in [src/config.rs](src/config.rs): every variable is read once at
 start, and a malformed number, address or URL is refused there, naming the
 variable; every refused variable is named at once, `init` runs regardless,
 and `bsv-wallet config` prints the table with the refused rows marked and
-exits 1. `bsv-wallet config` prints every setting with its effective value
+exits 1. `RELAY_POLL_SECS` (the daemon's poll of `RELAY_URL`, default 10)
+is at least 1 second: 0 is refused at start, naming it.
+`bsv-wallet config` prints every setting with its effective value
 and its source (env, flag, default), keys and tokens as `<set>` (`empty` when
 set to nothing) and a URL's userinfo and query as `<set>` (`--json` for the
 same as an array); `daemon` and `serve` log the same list as one line at
