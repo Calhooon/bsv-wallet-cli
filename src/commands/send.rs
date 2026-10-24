@@ -72,7 +72,7 @@ pub async fn run(
     // on a deep unconfirmed BEEF), because the toolbox misclassifies a 465 as a
     // transient service error. Confirm the tx actually reached the network before
     // reporting success, so a phantom (never-mined) txid is never printed + exit 0.
-    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+    ctx.verifier()
         .verify(&txid_hex)
         .await
         .into_send_result(&txid_hex)?;

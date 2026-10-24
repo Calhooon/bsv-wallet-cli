@@ -179,8 +179,11 @@ fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
 
 /// The Arcade SSE location for a wallet at `db_path`, when it runs in Arcade
 /// mode (mirrors `services_env::arcade_runtime`).
-pub fn arcade_sse_for(db_path: &str) -> Option<ArcadeSse> {
-    crate::services_env::arcade_runtime(db_path)
+pub fn arcade_sse_for(
+    settings: &crate::config::ServicesSettings,
+    db_path: &str,
+) -> Option<ArcadeSse> {
+    crate::services_env::arcade_runtime(settings, db_path)
         .ok()
         .flatten()
         .map(|rt| ArcadeSse {
@@ -680,9 +683,11 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
 /// Arcade SSE stream when it has one.
 pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
+    config: &crate::config::Config,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    spawn_served_loop(wallet, arcade_sse_for(db_path), false, false)
+    let sse = arcade_sse_for(&config.services, db_path);
+    spawn_served_loop(wallet, sse, false, false)
 }
 
 /// The served loop with the SSE stream named by the caller: `daemon` passes

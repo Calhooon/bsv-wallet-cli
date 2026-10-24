@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::config::Config;
 use crate::context::WalletContext;
 use crate::server::{self, ServerConfig, TlsConfig};
 
@@ -165,7 +166,7 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
         }),
         _ => None,
     };
-    let callback_token = crate::services_env::arcade_runtime(&ctx.db_path)?
+    let callback_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
         .map(|rt| rt.callback_token)
         .or_else(|| {
             std::env::var("CALLBACK_TOKEN")
@@ -179,17 +180,15 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
         chain: ctx.chain,
         bind_addr,
         callback_token,
+        settings: ctx.config.clone(),
     })
 }
 
-pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
+pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>) -> Result<()> {
     let entries = parse_fleet(specs)?;
     let n = entries.len();
-    let chain = if testnet {
-        bsv_wallet_toolbox::Chain::Test
-    } else {
-        bsv_wallet_toolbox::Chain::Main
-    };
+    let chain = config.chain();
+    let testnet = chain == bsv_wallet_toolbox::Chain::Test;
 
     // Validate EVERY seat (env uniformity + key present) BEFORE anything binds:
     // a fleet that cannot fully start must not half-start (the runner would
@@ -217,7 +216,7 @@ pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
                 e.port,
                 &ident[..12.min(ident.len())]
             );
-            let tenant = super::daemon_tenant::start(db_str, key, chain, e.port)
+            let tenant = super::daemon_tenant::start(db_str, key, chain, e.port, config)
                 .await
                 .with_context(|| format!("starting tenant {}", e.dir.display()))?;
             let port = tenant.port;
@@ -256,7 +255,7 @@ pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
         let db_str = db
             .to_str()
             .with_context(|| format!("non-UTF8 path {}", db.display()))?;
-        let ctx = WalletContext::load_with(db_str, key, testnet, false)
+        let ctx = WalletContext::load_with(db_str, key, testnet, false, config)
             .await
             .with_context(|| format!("loading wallet {}", e.dir.display()))?;
         eprintln!(
@@ -271,15 +270,16 @@ pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
     // One exit ends the fleet (fail-fast supervision unit).
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(u16, Result<()>)>(n.max(1));
     for (ctx, port) in tenants {
-        let config = tenant_config(&ctx)?;
+        let server_config = tenant_config(&ctx)?;
         let db_path = ctx.db_path.clone();
         let state = server::make_wallet_state(ctx.wallet);
         // Bare serve has no monitor: each tenant gets its own served loop
         // (the SSE drain, the tracker's pass, the sweep; every 60 s).
-        let reconcile = crate::broadcast_reconcile::spawn_serve_loop(state.clone(), &db_path);
+        let reconcile =
+            crate::broadcast_reconcile::spawn_serve_loop(state.clone(), config, &db_path);
         let tx = tx.clone();
         tokio::spawn(async move {
-            let res = server::run(state, port, config).await;
+            let res = server::run(state, port, server_config).await;
             if let Some(handle) = reconcile {
                 handle.abort();
             }

@@ -191,7 +191,7 @@ pub async fn run(
 
     // Same loud-failure bar as `send`/`drain`: a gift whose broadcast was
     // silently dropped must not print a claimable txid + exit 0.
-    crate::broadcast_verify::BroadcastVerifier::from_env(ctx.chain)
+    ctx.verifier()
         .verify(&txid_hex)
         .await
         .into_send_result(&txid_hex)?;

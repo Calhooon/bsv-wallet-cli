@@ -116,10 +116,10 @@ pub struct Explorers {
 }
 
 impl Explorers {
-    /// The process's rungs for `chain`, built once from the environment
-    /// (`WOC_API_KEY`, `BANANABLOCKS_BASE`; see `services_env`), so a
-    /// Retry-After one command or pass met holds for the next.
-    pub fn from_env(chain: Chain) -> Arc<Self> {
+    /// The process's rungs for `chain`, built once from the configuration
+    /// (`WOC_BASE`, `WOC_API_KEY`, `BANANABLOCKS_BASE`; see `services_env`),
+    /// so a Retry-After one command or pass met holds for the next.
+    pub fn for_settings(chain: Chain, settings: &crate::config::ServicesSettings) -> Arc<Self> {
         static MAIN: OnceLock<Arc<Explorers>> = OnceLock::new();
         static TEST: OnceLock<Arc<Explorers>> = OnceLock::new();
         let cell = match chain {
@@ -129,9 +129,13 @@ impl Explorers {
         cell.get_or_init(|| {
             Arc::new(Self::configured_at(
                 chain,
-                &crate::services_env::ExplorerBases::from_env(chain).woc,
-                crate::services_env::woc_api_key_from_env(),
-                crate::services_env::bananablocks_base_from_env(),
+                &settings.explorers.bases.woc,
+                settings
+                    .explorers
+                    .woc_api_key
+                    .as_ref()
+                    .map(|k| k.expose().to_string()),
+                settings.explorers.bananablocks_base.clone(),
             ))
         })
         .clone()
@@ -140,7 +144,7 @@ impl Explorers {
     /// The rungs for `chain`: `WhatsOnChain` at the chain's default base,
     /// `BananaBlocks` at `bananablocks_base` (`None` the chain's default,
     /// empty off: the toolbox's `ServicesOptions::bananablocks_base_for`).
-    #[allow(dead_code)] // the binary builds through `from_env` (the configured bases); the tests call this
+    #[allow(dead_code)] // the binary builds through `for_settings` (the configured bases); the tests call this
     pub fn configured(
         chain: Chain,
         woc_api_key: Option<String>,
@@ -177,7 +181,7 @@ impl Explorers {
     /// The rungs at explicit bases (a fixture in a test, a mirror): `None`
     /// leaves that rung out. The WhatsOnChain rung's gate is its own, never
     /// the process's, so a test's 429 never carries into another case.
-    #[allow(dead_code)] // the binary builds through `from_env`; the tests and the library's callers call this
+    #[allow(dead_code)] // the binary builds through `for_settings`; the tests and the library's callers call this
     pub fn at(woc: Option<&str>, bananablocks: Option<&str>, woc_api_key: Option<String>) -> Self {
         let woc = woc.map(|base| {
             (

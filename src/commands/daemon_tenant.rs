@@ -10,8 +10,8 @@
 //! task, and its own HTTP server — the same composition `daemon` runs for one
 //! wallet, N times on one runtime.
 //!
-//! Env stays GLOBAL (services config, TLS, AUTH_TOKEN, BIND_ADDR, monitor
-//! knobs): the fleet is uniform by design, and `serve_fleet` REFUSES a seat
+//! The configuration stays GLOBAL (services config, TLS, AUTH_TOKEN,
+//! BIND_ADDR, monitor knobs: the process's one `Config`): the fleet is uniform by design, and `serve_fleet` REFUSES a seat
 //! whose own .env diverges on a service-relevant key before this module ever
 //! runs (fail-fast beats a silently misconfigured tenant).
 
@@ -23,6 +23,7 @@ use bsv_wallet_toolbox::{
 };
 use std::sync::Arc;
 
+use crate::config::Config;
 use crate::server::{self, ServerConfig, TlsConfig};
 use crate::services_env;
 
@@ -35,8 +36,15 @@ pub struct TenantHandle {
 
 /// Start one wallet's FULL daemon composition (monitor + reconcile task +
 /// relay poller when configured + HTTP server) on `port`. Mirrors
-/// `daemon::run` exactly, parameterized by (db, root key, port).
-pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Result<TenantHandle> {
+/// `daemon::run` exactly, parameterized by (db, root key, port), under the
+/// process's one configuration.
+pub async fn start(
+    db: &str,
+    root_key_hex: &str,
+    chain: Chain,
+    port: u16,
+    config: &Arc<Config>,
+) -> Result<TenantHandle> {
     let root_key = PrivateKey::from_hex(root_key_hex)?;
 
     // One store over the file (`store::open_shared`): the wallet's handle
@@ -45,11 +53,11 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
 
     let db_path = db.to_string();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
-        let opts = services_env::services_options_from_env(chain, &db_path)?;
+        let opts = services_env::services_options(&config.services, chain, &db_path)?;
         Ok(Services::with_options(chain, opts)?)
     };
 
-    let arcade_rt = services_env::arcade_runtime(db)?;
+    let arcade_rt = services_env::arcade_runtime(&config.services, db)?;
     if let Some(ref rt) = arcade_rt {
         eprintln!(
             "[{port}] Arcade V2 mode: {} (SSE status stream enabled)",
@@ -97,8 +105,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // The header service's chain-event feed: one stream, one stored
     // cursor, every envelope to the tracker (`chain_feed`). `off` has no
     // header service and so no feed.
-    let feed_url =
-        services_env::chaintracks_url_for(std::env::var("CHAINTRACKS_URL").ok().as_deref())?;
+    let feed_url = config.services.header_service()?;
     let feed_held = feed_url.is_some();
     if let Some(feed_url) = feed_url {
         let feed_storage = storage_arc.clone();
@@ -145,12 +152,13 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                 .filter(|s| !s.is_empty())
         });
     let bind_addr = server::bind_addr_from_env();
-    let config = ServerConfig {
+    let server_config = ServerConfig {
         auth_token: std::env::var("AUTH_TOKEN").ok(),
         tls,
         chain,
         bind_addr,
         callback_token,
+        settings: config.clone(),
     };
 
     // The served pass, as `serve` runs it (`broadcast_reconcile`): the
@@ -179,6 +187,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         .unwrap_or(3);
     let check_wallet = wallet_state.clone();
     let reconcile_chain = chain;
+    let reconcile_config = config.clone();
     let reconcile_enabled = std::env::var("RECONCILE_ABANDONED")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
         .unwrap_or(true);
@@ -229,6 +238,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
                     check_wallet.storage(),
                     check_wallet.services(),
                     reconcile_chain,
+                    &reconcile_config,
                     reconcile_min_age_secs,
                     true,
                 )
@@ -310,7 +320,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
     // Proof-delivery ladder rung (c): drain a bsv-wallet-relay queue.
     if let Ok(relay_url) = std::env::var("RELAY_URL") {
         if !relay_url.is_empty() {
-            if let Some(relay_token) = config.callback_token.clone() {
+            if let Some(relay_token) = server_config.callback_token.clone() {
                 let relay_wallet = wallet_state.clone();
                 let poll_secs: u64 = std::env::var("RELAY_POLL_SECS")
                     .ok()
@@ -388,7 +398,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         }
     }
 
-    let server = tokio::spawn(server::run(wallet_state, port, config));
+    let server = tokio::spawn(server::run(wallet_state, port, server_config));
     Ok(TenantHandle {
         port,
         monitor,

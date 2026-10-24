@@ -6,19 +6,25 @@
 //! service, `chaintracks-cloudflare`, documents no public URL (its
 //! `wrangler.toml` and README name none), so the setting is required.
 //!
-//! One test in its own process: it sets the environment.
+//! The settings come from the configuration (`Config::from_pairs`), never
+//! the process environment.
 
-use bsv_wallet_cli::services_env::services_options_from_env;
-use bsv_wallet_toolbox::Chain;
+use bsv_wallet_cli::config::Config;
+use bsv_wallet_cli::services_env::services_options;
+use bsv_wallet_toolbox::{Chain, ServicesOptions};
+
+fn options(pairs: &[(&str, &str)], db: &str) -> anyhow::Result<ServicesOptions> {
+    let config = Config::from_pairs(pairs)?;
+    services_options(&config.services, Chain::Main, db)
+}
 
 #[test]
 fn an_unset_header_source_is_refused_never_a_third_party_default() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let db = dir.path().join("wallet.db");
     let db = db.to_str().unwrap();
-    std::env::remove_var("CHAINTRACKS_URL");
 
-    match services_options_from_env(Chain::Main, db) {
+    match options(&[], db) {
         Ok(opts) => panic!(
             "an unset CHAINTRACKS_URL resolved to {:?}",
             opts.chaintracks_url
@@ -30,9 +36,8 @@ fn an_unset_header_source_is_refused_never_a_third_party_default() {
     }
 
     // An explicit header service is used as is, with no explorer behind it.
-    std::env::set_var("CHAINTRACKS_URL", "https://headers.example");
-    std::env::remove_var("BREAK_GLASS_EXPLORER_HEADERS");
-    let opts = services_options_from_env(Chain::Main, db).expect("a header service");
+    let opts =
+        options(&[("CHAINTRACKS_URL", "https://headers.example")], db).expect("a header service");
     assert_eq!(
         opts.chaintracks_url.as_deref(),
         Some("https://headers.example")
@@ -40,15 +45,17 @@ fn an_unset_header_source_is_refused_never_a_third_party_default() {
     assert!(!opts.break_glass_explorer_headers, "off by default");
 
     // `off` is the explicit choice of none.
-    std::env::set_var("CHAINTRACKS_URL", "off");
-    let opts = services_options_from_env(Chain::Main, db).expect("off is a choice");
+    let opts = options(&[("CHAINTRACKS_URL", "off")], db).expect("off is a choice");
     assert!(opts.chaintracks_url.is_none());
 
     // Break-glass only when asked for by name.
-    std::env::set_var("CHAINTRACKS_URL", "https://headers.example");
-    std::env::set_var("BREAK_GLASS_EXPLORER_HEADERS", "1");
-    let opts = services_options_from_env(Chain::Main, db).expect("break-glass");
+    let opts = options(
+        &[
+            ("CHAINTRACKS_URL", "https://headers.example"),
+            ("BREAK_GLASS_EXPLORER_HEADERS", "1"),
+        ],
+        db,
+    )
+    .expect("break-glass");
     assert!(opts.break_glass_explorer_headers);
-    std::env::remove_var("BREAK_GLASS_EXPLORER_HEADERS");
-    std::env::remove_var("CHAINTRACKS_URL");
 }
