@@ -31,7 +31,7 @@
       "code": "HEADERS_UNAVAILABLE",
       "held": [
         {
-          "ageMinutes": "<minutes>",
+          "ageMinutes": "<uint:2>",
           "origin": "received",
           "outpoint": "6666666666666666666666666666666666666666666666666666666666666666.0",
           "reason": "headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",

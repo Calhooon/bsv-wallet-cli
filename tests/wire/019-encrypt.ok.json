@@ -31,7 +31,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "ciphertext": "<ciphertext>"
+      "ciphertext": "<bytes:52>"
     }
   }
 }

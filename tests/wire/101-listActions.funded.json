@@ -1,0 +1,91 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "labels": []
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [
+        {
+          "description": "a funded coin",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 50000,
+          "status": "completed",
+          "txid": "5fa6158addc40b183cb01203278bb19a2253c1c99b81b1b21829dbccd4c6ff8f",
+          "version": 1
+        },
+        {
+          "description": "a funded coin",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 40000,
+          "status": "completed",
+          "txid": "e2995d9693e97bed5c4b440b81b5ba2aa8c2d898419b40e1eb19d6824d1c5cd8",
+          "version": 1
+        },
+        {
+          "description": "a funded coin",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 30000,
+          "status": "completed",
+          "txid": "704d4f296eaf181d24a6572d1c50f98f69f3d381de4251eb8a788e2385b8793a",
+          "version": 1
+        },
+        {
+          "description": "a funded coin",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 20000,
+          "status": "completed",
+          "txid": "b70d8c07806b8eb62c8b36b9fd377b032fed8b15bf725ca887084efeaebae2a4",
+          "version": 1
+        },
+        {
+          "description": "wire no send",
+          "isOutgoing": true,
+          "lockTime": 0,
+          "satoshis": -50000,
+          "status": "nosend",
+          "txid": "8abe686447938a1c335a1bdb2ada8cb1c56cd552f5f7e4b1f2a1b234623951a9",
+          "version": 1
+        },
+        {
+          "description": "wire template",
+          "isOutgoing": true,
+          "lockTime": 0,
+          "satoshis": -40000,
+          "status": "nosend",
+          "txid": "305c7d1cc4dd3c4b2476f6c76b8e44582b1b0f402bc5cc1fa37847187aa93124",
+          "version": 1
+        },
+        {
+          "description": "wire stranger payment",
+          "isOutgoing": false,
+          "lockTime": 0,
+          "satoshis": 0,
+          "status": "unproven",
+          "txid": "498fedcac23bdeb44a8381aba0e4ad74f929dd3d85600b2b2849da5da0b55c60",
+          "version": 1
+        }
+      ],
+      "totalActions": 7
+    }
+  }
+}

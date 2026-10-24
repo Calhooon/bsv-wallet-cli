@@ -1,0 +1,27 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/relinquishOutput",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "default",
+      "output": "b70d8c07806b8eb62c8b36b9fd377b032fed8b15bf725ca887084efeaebae2a4.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "relinquished": true
+    }
+  }
+}

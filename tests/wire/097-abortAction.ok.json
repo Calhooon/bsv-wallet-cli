@@ -1,0 +1,32 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/abortAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "reference": "<bound>"
+    },
+    "bind": {
+      "/reference": {
+        "file": "096-createAction.templateToAbort.json",
+        "pointer": "/signableTransaction/reference"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "aborted": true
+    }
+  }
+}
