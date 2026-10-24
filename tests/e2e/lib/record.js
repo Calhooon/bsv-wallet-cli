@@ -6,7 +6,10 @@
  * body, status, response body) and every CLI command a scenario runs through
  * `execSync` (its seat, argv, exit code, stdout, stderr), each with the phase
  * it ran in (`setup`, a scenario's name, `sweep`) and a sequence number taken
- * when the call starts, so concurrent calls keep their order of issue. The
+ * when the call starts, so concurrent calls keep their order of issue. At the
+ * end of each phase of a hermetic run, a `stub` event holds the calls the
+ * stub answered in it, by provider and route with its status (the explorer
+ * ladder's side: which rung was asked, how often). The
  * wallets' directories and ports are written once, as `wallet` events, so
  * tools/differential can name them by seat. Unset, nothing is recorded and
  * nothing is wrapped.
@@ -85,6 +88,32 @@ function walletDir(name, dir) {
 function wallet(name, { dir, port, identityKey }) {
   if (!enabled) return;
   write({ kind: 'wallet', seq: seq++, phase, seat: seatOf(name), dir, port, identityKey });
+}
+
+/**
+ * The calls the hermetic stub answered since the last read, by provider and
+ * `route status` (the stub's own generalized keys), written as the ending
+ * phase's `stub` event. Call it before each setPhase and once after the
+ * sweep. A failed read is written as the event's error, never skipped.
+ */
+let stubSeen = {};
+async function stubCalls(stub) {
+  if (!enabled || !stub) return;
+  const event = { kind: 'stub', seq: seq++, phase };
+  try {
+    const now = (await stub.stats()).calls || {};
+    const calls = {};
+    for (const [provider, routes] of Object.entries(now)) {
+      for (const [route, n] of Object.entries(routes)) {
+        const d = n - ((stubSeen[provider] || {})[route] || 0);
+        if (d !== 0) (calls[provider] ||= {})[route] = d;
+      }
+    }
+    stubSeen = JSON.parse(JSON.stringify(now));
+    write({ ...event, calls });
+  } catch (e) {
+    write({ ...event, error: e.message || String(e) });
+  }
 }
 
 /**
@@ -194,4 +223,4 @@ function argvOf(cmd, bin) {
   return words;
 }
 
-module.exports = { enabled, install, setPhase, walletDir, wallet, serial, httpStart, rootKeyFor, seatOf, redact };
+module.exports = { enabled, install, setPhase, walletDir, wallet, serial, httpStart, stubCalls, rootKeyFor, seatOf, redact };

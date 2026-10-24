@@ -33,9 +33,10 @@ Under `DIFF_RECORD=<file>` the harness writes one JSON line per event (`tests/e2
 - every HTTP call a `WalletClient` makes (`tests/e2e/lib/wallet-client.js`): the seat (A, B, C, funder), the method, the path, the request body, the status and the response body;
 - every command of the wallet binary a scenario or `setup.js` runs through `execSync`: the seat, the argv, the exit code, stdout and stderr;
 - each wallet's directory, port and identity key once, as a `wallet` event;
+- at the end of each phase, a `stub` event: the calls the hermetic stub answered in that phase, by provider and route with its status (`woc` `GET /tx/{id}/hex 200: 3`), so a refactor of the explorer ladder that asks another rung, or asks one more often, is a difference;
 - each with its phase (`setup`, the scenario's name, `sweep`) and a sequence number taken when the call starts.
 
-Not recorded: scenario 20's fetches of the inspector UI and its browser, scenario 21's JSON-RPC to the MCP server (the MCP server's own HTTP calls to the wallet included), the `serve` logs, and the stub's side. Those scenarios still run and must pass in both runs.
+Not recorded: scenario 20's fetches of the inspector UI and its browser, scenario 21's JSON-RPC to the MCP server (the MCP server's own HTTP calls to the wallet included), the `serve` logs, and the stub's requests and answers themselves (only their counts, above). Those scenarios still run and must pass in both runs.
 
 Under `DIFF_RECORD` the harness's HTTP calls run one at a time in the order the scenarios issue them. Scenario 10 fires five sends together; they would otherwise reach the wallet's spending lock in the scheduler's order, and every coin graph after them would follow that order. The race itself is the plain hermetic run's to test, which records nothing.
 

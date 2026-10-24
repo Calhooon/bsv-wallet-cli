@@ -154,6 +154,7 @@ async function main() {
         continue;
       }
 
+      await record.stubCalls(stub);
       record.setPhase(scenario.name);
       // Balance checkpoint before scenario
       const aBalBefore = await walletA.client.balance();
@@ -190,6 +191,7 @@ async function main() {
     console.log(`  FATAL: ${e.message}`);
   } finally {
     // Sweep and teardown
+    await record.stubCalls(stub);
     record.setPhase('sweep');
     console.log('================================================================');
     console.log('  Sweeping remaining funds back to funder...');
@@ -222,6 +224,7 @@ async function main() {
     // home: fatal, as is any new walled target and any unserved route (judged
     // at the end). Then the funder and the stub go (the funder's directory
     // kept, like the wallets', when the run failed).
+    await record.stubCalls(stub);
     let wall = null;
     let statsError = null;
     if (hermetic.enabled) {
