@@ -66,11 +66,11 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | arch rule A6 allowlist | 5 files, 10 sites |  | `tests/arch_spawn_sites.rs` ALLOWED |
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |
-| mutation floor `src/broadcast_verify.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |
-| mutation floor `src/explorers.rs` | 69 | unmeasured | `.github/workflows/nightly.yml` |
-| mutation floor `src/server/handlers.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |
-| mutation floor `src/spend_gate.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |
-| mutation floor `src/tracker_host.rs` | 80 | unmeasured | `.github/workflows/nightly.yml` |
+| mutation floor `src/broadcast_verify.rs` | 75 | 75.5 at 93f160f | `.github/workflows/nightly.yml` |
+| mutation floor `src/explorers.rs` | 69 | 74.2 at 93f160f | `.github/workflows/nightly.yml` |
+| mutation floor `src/server/handlers.rs` | 74 | 74.2 at 93f160f | `.github/workflows/nightly.yml` |
+| mutation floor `src/spend_gate.rs` | 80 | 87.1 at 93f160f | `.github/workflows/nightly.yml` |
+| mutation floor `src/tracker_host.rs` | 72 | 72.6 at 93f160f | `.github/workflows/nightly.yml` |
 | bench baseline | no baseline yet |  | `benches/baseline.json` |
 | e2e scenarios | 23 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/hermetic.js` |
@@ -97,7 +97,7 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 - Q5: #126 ratchet: a unit test for `check()` against a base record; the base comparison has never executed; waits on nothing.
 - Q6: #127 ratchet: a tool fingerprint in the record; a PR that edits the tool changes what is counted unseen; waits on Q5 (the same function, landed in turn).
 - Q7: #132 ratchet `--record` refuses a toolchain other than the pinned one; a re-record under the wrong toolchain is written today; waits on Q6 (the same file, landed in turn).
-- Q8: #124 raise `src/explorers.rs`'s mutation floor to 80; the one floor below 80 (its row in section 4); waits on the nightly's measured run on `beta` (`docs/scoreboard/mutants.json`).
+- Q8: #124 raise `src/explorers.rs`'s mutation floor to 80; one of four floors below 80 since the first full night (its row in section 4; the others are #173, #174, #175); the night on `beta` measured it at 74.2 (`docs/scoreboard/mutants.json`); waits on nothing.
 - Q9: #119 the e2e harness's `relinquishOutput` body shape; the harness sends a body the server answers 422; waits on #110 (its exit test is a consumers' fixture).
 - Q10: #122 the places the served shape disagrees with BRC-100 or itself; each a recorded decision; waits on Q2, and each shape change on the owner's word.
 - Q11: #117 the refusal shape `HTTPWalletJSON` expects; Zanaadu and teragunv2 read our refusals as transport errors; waits on Q2 and the owner's word (the wire contract).

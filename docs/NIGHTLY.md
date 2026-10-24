@@ -32,7 +32,7 @@ A target that stops (a panic, a failed property, a timeout, out of memory) and l
 
 `cargo-mutants` (copy mode, never `--in-place`) mutates `src/spend_gate.rs`, `src/tracker_host.rs`, `src/server/handlers.rs`, `src/broadcast_verify.rs` and `src/explorers.rs` in twenty shards; a mutant's tests stop at five minutes. `.github/nightly/mutants_score.py` scores each file as caught / (caught + missed + timeout): a timeout has its own column and is not caught (its tests ran past the limit, which no test's verdict showed wrong; it weighs as a miss does), and an unviable mutant (one that does not build) is counted nowhere, and fails the job when a file is below its floor or has no outcome. The target is 80 percent a file. A floor is a measured floor that only rises: a file's floor is the score a night measured, rounded down, named in the workflow with the issue that raises it, and it is raised in the same commit as the tests that earn the raise, never by an edit alone. A floor set before any night measured its file was provisional; the first full night replaced those with what it measured.
 
-The first full night on `beta` (run 40074725488, dispatched 2026-10-24 at `93f160f`, cargo-mutants 27.1.0, no timeout; the record is `docs/scoreboard/mutants.json`):
+The first full night on `beta` (run 40074725488, dispatched 2026-10-24 at `93f160f`, cargo-mutants 27.1.0, no timeout; the record is [`docs/scoreboard/mutants.json`](scoreboard/mutants.json)):
 
 | file | caught | timeout | missed | unviable | score | floor | raised by |
 |---|---:|---:|---:|---:|---:|---:|---|
