@@ -202,8 +202,15 @@ where
         }
     })
     .await;
+    fleet_outcome(outcome)
+}
+
+/// The fleet's word on the tenant exit that ended it, read the same in both
+/// modes.
+fn fleet_outcome(outcome: Option<(u16, Result<()>)>) -> Result<()> {
     match outcome {
         Some((port, Ok(()))) => {
+            // A clean exit (the graceful shutdown signal) ends the whole fleet.
             eprintln!("[serve-fleet] port {port} exited cleanly — shutting the fleet down");
             Ok(())
         }
@@ -253,7 +260,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
             let monitor = tenant.monitor;
             monitors.push((
                 format!("serve-fleet: tenant {} (port {port})", e.dir.display()),
-                move || async move { monitor.stop().await.map_err(|e| anyhow::anyhow!("{}", e)) },
+                move || async move { monitor.stop().await.map_err(anyhow::Error::from) },
             ));
             let tx = tx.clone();
             tokio::spawn(async move {
@@ -310,15 +317,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
     drop(tx);
     eprintln!("[serve-fleet] {n} wallet(s) serving");
 
-    match rx.recv().await {
-        Some((port, Ok(()))) => {
-            // A clean exit (graceful shutdown signal) — end the whole fleet.
-            eprintln!("[serve-fleet] port {port} exited cleanly — shutting the fleet down");
-            Ok(())
-        }
-        Some((port, Err(e))) => bail!("tenant on port {port} failed: {e:#}"),
-        None => bail!("serve-fleet: no tenants ran"),
-    }
+    fleet_outcome(rx.recv().await)
 }
 
 #[cfg(test)]
