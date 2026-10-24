@@ -919,7 +919,7 @@ pub async fn abort_action(
     if let Some(txid) =
         crate::retire_guard::abort_refused_for(wallet.storage().pool(), &args.reference)
             .await
-            .map_err(AppError::from)?
+            .map_err(abort_pre_check_fault)?
     {
         return Err(AppError::new(
             Kind::Conflict,
@@ -949,6 +949,17 @@ pub async fn abort_action(
         err
     })?;
     Ok(Json(result))
+}
+
+/// The abort's pre-check fault: the store busy by its type
+/// ([`crate::store::is_store_busy`]) is 503 `STORE_BUSY` with
+/// `Retry-After: 1`, as at every door (#168); any other keeps its word.
+fn abort_pre_check_fault(e: anyhow::Error) -> AppError {
+    if crate::store::is_store_busy(&e) {
+        AppError::new(Kind::StoreBusy, e.to_string())
+    } else {
+        AppError::from(e)
+    }
 }
 
 /// POST /listActions
