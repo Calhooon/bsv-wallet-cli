@@ -242,14 +242,10 @@ fn internalize_strips_the_gate_rule_label() {
     assert_eq!(internalize_args(req).labels, None);
 }
 
-/// The served `createAction` body to the toolbox's arguments
-/// (`create_action_args`, the one mapping the handler and the fuzz target
-/// `served_json` both call): the outputs' scripts decoded from hex, the
-/// named inputs mapped (an absent list stays `Some(vec![])`, the wallet
-/// funding the action), the options and `trustSelf: "known"` carried, the
-/// door's `allowPending` word read; a bad word or a bad hex is the error.
-#[test]
-fn create_action_args_maps_the_served_body() {
+/// The served `createAction` body every field of which
+/// `create_action_args` maps (the one mapping the handler and the fuzz
+/// target `served_json` both call), and the txid of its named input.
+fn served_create_body() -> (McCreateActionReq, String) {
     let txid = "ab".repeat(32);
     let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
         "description": "a send",
@@ -265,7 +261,15 @@ fn create_action_args_maps_the_served_body() {
         "allowPending": { "received": [format!("{txid}:3")] }
     }))
     .unwrap();
-    let (args, allow_pending) = create_action_args(req).unwrap();
+    (req, txid)
+}
+
+/// The served body's own fields and its outputs, the scripts decoded from
+/// hex.
+#[test]
+fn create_action_args_maps_the_served_body() {
+    let (req, _) = served_create_body();
+    let (args, _) = create_action_args(req).unwrap();
     assert_eq!(args.description, "a send");
     assert_eq!(args.input_beef, Some(vec![1, 2]));
     assert_eq!(args.lock_time, Some(500));
@@ -279,6 +283,13 @@ fn create_action_args_maps_the_served_body() {
     assert_eq!(outputs[0].basket.as_deref(), Some("b"));
     assert_eq!(outputs[0].custom_instructions, None);
     assert_eq!(outputs[0].tags, Some(vec!["t".to_string()]));
+}
+
+/// The served body's named inputs, mapped.
+#[test]
+fn create_action_args_maps_the_served_inputs() {
+    let (req, txid) = served_create_body();
+    let (args, _) = create_action_args(req).unwrap();
     let inputs = args.inputs.unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].outpoint.to_string(), format!("{txid}.3"));
@@ -286,6 +297,14 @@ fn create_action_args_maps_the_served_body() {
     assert_eq!(inputs[0].unlocking_script, Some(vec![0]));
     assert_eq!(inputs[0].unlocking_script_length, None);
     assert_eq!(inputs[0].sequence_number, Some(7));
+}
+
+/// The served body's options and `trustSelf: "known"` carried, the door's
+/// `allowPending` word read.
+#[test]
+fn create_action_args_maps_the_served_options_and_word() {
+    let (req, _) = served_create_body();
+    let (args, allow_pending) = create_action_args(req).unwrap();
     let options = args.options.unwrap();
     assert_eq!(options.no_send, Some(true));
     assert_eq!(options.sign_and_process, Some(false));
@@ -296,9 +315,12 @@ fn create_action_args_maps_the_served_body() {
         allow_pending,
         crate::spend_gate::AllowPending::ReceivedOnly(_)
     ));
+}
 
-    // The bare body: no inputs is the wallet's own funding, no options,
-    // no word.
+/// The bare body: no inputs is the wallet's own funding
+/// (`Some(vec![])`), no options, no word.
+#[test]
+fn create_action_args_maps_the_bare_body() {
     let req: McCreateActionReq =
         serde_json::from_value(serde_json::json!({ "description": "bare" })).unwrap();
     let (args, allow_pending) = create_action_args(req).unwrap();
@@ -306,9 +328,13 @@ fn create_action_args_maps_the_served_body() {
     assert!(args.outputs.is_none());
     assert!(args.options.is_none());
     assert_eq!(allow_pending, crate::spend_gate::AllowPending::Off);
+}
 
-    // The door's refusals, in the handler's words (a scope naming an
-    // outpoint that does not parse; a string that is not the word is Off).
+/// The door's refusals, in the handler's words: a scope naming an outpoint
+/// that does not parse, a locking script that is not hex, an input
+/// outpoint that does not parse.
+#[test]
+fn create_action_args_refuses_a_bad_word_hex_or_outpoint() {
     let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
         "description": "bad scope", "allowPending": { "received": ["nope"] }
     }))

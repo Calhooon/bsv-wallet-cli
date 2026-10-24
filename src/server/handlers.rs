@@ -681,6 +681,7 @@ pub async fn internalize_action(
 
 /// The toolbox's `internalizeAction` arguments for a caller's request, the
 /// gate's rule label stripped from its labels.
+#[must_use]
 pub fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
     let mut args = InternalizeActionArgs {
         tx: req.tx,
@@ -716,6 +717,11 @@ pub fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
 /// The toolbox's `createAction` arguments for a caller's request, with the
 /// door's `allowPending` word. The handler calls it (then the lock, the
 /// guard, the gate); the fuzz target `served_json` calls it with no store.
+///
+/// # Errors
+///
+/// An `allowPending` word the gate does not read, a locking or unlocking
+/// script that is not hex, or an input outpoint that does not parse.
 pub fn create_action_args(
     req: McCreateActionReq,
 ) -> Result<(CreateActionArgs, crate::spend_gate::AllowPending)> {
@@ -724,8 +730,27 @@ pub fn create_action_args(
     let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
         .map_err(|message| anyhow::anyhow!("Invalid argument: {message}"))?;
 
-    let outputs = req
-        .outputs
+    let outputs = create_action_outputs(req.outputs)?;
+    let inputs = create_action_inputs(req.inputs)?;
+
+    let args = CreateActionArgs {
+        description: req.description,
+        input_beef: req.input_beef,
+        inputs,
+        outputs,
+        lock_time: req.lock_time,
+        version: None,
+        labels: req.labels,
+        options: req.options.as_ref().map(create_action_options),
+    };
+    Ok((args, allow_pending))
+}
+
+/// A request's outputs, each locking script decoded from hex.
+fn create_action_outputs(
+    outputs: Option<Vec<McCreateActionOutput>>,
+) -> Result<Option<Vec<CreateActionOutput>>> {
+    outputs
         .map(|outs| {
             outs.into_iter()
                 .map(|o| {
@@ -740,57 +765,52 @@ pub fn create_action_args(
                 })
                 .collect::<Result<Vec<_>>>()
         })
-        .transpose()?;
+        .transpose()
+}
 
-    // Map caller-provided explicit inputs (e.g. a covenant spend carrying a full
-    // unlockingScript). An absent/empty list stays `Some(vec![])` so the wallet
-    // auto-selects its own funding UTXOs — the prior behaviour for plain sends.
-    // Before this, the handler discarded `inputs`/`inputBEEF`/`lockTime`, so any
-    // covenant input was silently dropped and the tx was funded from change.
-    let inputs = match req.inputs {
-        Some(reqs) if !reqs.is_empty() => {
-            let mut mapped = Vec::with_capacity(reqs.len());
-            for i in reqs {
-                let outpoint = Outpoint::from_string(&i.outpoint)
-                    .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
-                let unlocking_script = match i.unlocking_script {
-                    Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
-                    None => None,
-                };
-                mapped.push(CreateActionInput {
-                    outpoint,
-                    input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
-                    unlocking_script,
-                    unlocking_script_length: i.unlocking_script_length,
-                    sequence_number: i.sequence_number,
-                });
-            }
-            Some(mapped)
-        }
-        _ => Some(vec![]),
+/// Map caller-provided explicit inputs (e.g. a covenant spend carrying a full
+/// unlockingScript). An absent/empty list stays `Some(vec![])` so the wallet
+/// auto-selects its own funding UTXOs: the prior behaviour for plain sends.
+/// Before this, the handler discarded `inputs`/`inputBEEF`/`lockTime`, so any
+/// covenant input was silently dropped and the tx was funded from change.
+fn create_action_inputs(
+    inputs: Option<Vec<McCreateActionInput>>,
+) -> Result<Option<Vec<CreateActionInput>>> {
+    let Some(reqs) = inputs.filter(|reqs| !reqs.is_empty()) else {
+        return Ok(Some(vec![]));
     };
+    let mut mapped = Vec::with_capacity(reqs.len());
+    for i in reqs {
+        let outpoint = Outpoint::from_string(&i.outpoint)
+            .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
+        let unlocking_script = match i.unlocking_script {
+            Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
+            None => None,
+        };
+        mapped.push(CreateActionInput {
+            outpoint,
+            input_description: i.input_description.unwrap_or_else(|| "input".to_string()),
+            unlocking_script,
+            unlocking_script_length: i.unlocking_script_length,
+            sequence_number: i.sequence_number,
+        });
+    }
+    Ok(Some(mapped))
+}
 
-    let args = CreateActionArgs {
-        description: req.description,
-        input_beef: req.input_beef,
-        inputs,
-        outputs,
-        lock_time: req.lock_time,
-        version: None,
-        labels: req.labels,
-        options: req.options.map(|o| CreateActionOptions {
-            accept_delayed_broadcast: o.accept_delayed_broadcast,
-            randomize_outputs: o.randomize_outputs,
-            sign_and_process: o.sign_and_process,
-            no_send: o.no_send,
-            trust_self: match o.trust_self.as_deref() {
-                Some("known") => Some(TrustSelf::Known),
-                _ => None,
-            },
-            ..Default::default()
-        }),
-    };
-    Ok((args, allow_pending))
+/// A request's options; `trustSelf` is read only as `"known"`.
+fn create_action_options(o: &McCreateActionOptions) -> CreateActionOptions {
+    CreateActionOptions {
+        accept_delayed_broadcast: o.accept_delayed_broadcast,
+        randomize_outputs: o.randomize_outputs,
+        sign_and_process: o.sign_and_process,
+        no_send: o.no_send,
+        trust_self: match o.trust_self.as_deref() {
+            Some("known") => Some(TrustSelf::Known),
+            _ => None,
+        },
+        ..Default::default()
+    }
 }
 
 // --- Helpers ---
