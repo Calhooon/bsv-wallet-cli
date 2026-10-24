@@ -7,6 +7,12 @@ fn config(pairs: &[(&str, &str)]) -> Config {
     Config::from_pairs(pairs).unwrap()
 }
 
+/// The knob `name`'s row: its value as the table shows it, and its source.
+fn row(c: &Config, name: &str) -> (String, Source) {
+    let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
+    (k.value.to_string(), k.source)
+}
+
 fn refusal(pairs: &[(&str, &str)]) -> ConfigError {
     let mut refused = Config::from_pairs(pairs).unwrap_err().errors.0;
     assert_eq!(refused.len(), 1, "{refused:?}");
@@ -330,10 +336,7 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
         ("WOC_API_KEY", "  "),
         ("TAAL_API_KEY", "key-taal"),
     ]);
-    let of = |name: &str| {
-        let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
-        (k.value.to_string(), k.source)
-    };
+    let of = |name: &str| row(&c, name);
     for name in ["ROOT_KEY", "AUTH_TOKEN", "CALLBACK_TOKEN", "WOC_API_KEY"] {
         assert_eq!(of(name), ("empty".to_string(), Source::Env), "{name}");
     }
@@ -349,10 +352,6 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
 
 #[test]
 fn arc_mode_and_arcade_each_show_their_own_value() {
-    let row = |c: &Config, name: &str| {
-        let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
-        (k.value.to_string(), k.source)
-    };
     let c = config(&[("ARCADE", "1")]);
     assert!(c.services.arcade());
     assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
@@ -367,14 +366,7 @@ fn arc_mode_and_arcade_each_show_their_own_value() {
 
 #[test]
 fn the_rust_log_row_is_the_filter_in_effect() {
-    let row = |c: &Config| {
-        let k = c
-            .knobs()
-            .into_iter()
-            .find(|k| k.name == "RUST_LOG")
-            .unwrap();
-        (k.value.to_string(), k.source)
-    };
+    let row = |c: &Config| row(c, "RUST_LOG");
     let default = (DEFAULT_LOG_FILTER.to_string(), Source::Default);
     assert_eq!(row(&Config::default()), default);
     let c = config(&[("RUST_LOG", "bsv_wallet=trace")]);
@@ -592,4 +584,154 @@ fn the_json_of_set_empty_and_refused_values() {
     let row = json_row(&json_rows(&refused.config), "MIN_UTXOS");
     assert_eq!(row["value"], "x");
     assert_eq!(row["refused"], "a whole number");
+}
+
+fn testnet(pairs: &[(&str, &str)]) -> Config {
+    let flags = Flags {
+        testnet: true,
+        given: vec!["--testnet"],
+        ..Flags::default()
+    };
+    Config::from_vars(&flags, vars(pairs)).unwrap()
+}
+
+/// `--testnet`: the test chain's bases, `GorillaPool` left out as the
+/// toolbox's testnet options leave it, `BananaBlocks` at its test base.
+#[test]
+fn the_testnet_defaults_are_the_test_bases_with_gorillapool_off() {
+    let c = testnet(&[]);
+    assert_eq!(c.chain(), Chain::Test);
+    let bases = &c.services.explorers.bases;
+    let (test, main) = (
+        crate::services_env::ExplorerBases::defaults(Chain::Test),
+        crate::services_env::ExplorerBases::defaults(Chain::Main),
+    );
+    assert_eq!(*bases, test);
+    assert!(bases.woc.ends_with("/bsv/test"), "{}", bases.woc);
+    assert!(
+        bases.bitails.starts_with("https://test-"),
+        "{}",
+        bases.bitails
+    );
+    assert_ne!((&bases.woc, &bases.bitails), (&main.woc, &main.bitails));
+    assert_eq!(bases.gorillapool, None);
+    let row = |name: &str| row(&c, name);
+    assert_eq!(row("--testnet"), ("on".to_string(), Source::Flag));
+    assert_eq!(
+        row("ARC_GORILLAPOOL_URL"),
+        ("off".to_string(), Source::Default)
+    );
+    assert_eq!(
+        row("BANANABLOCKS_BASE"),
+        (
+            "https://test.bananablocks.com/api/v1".to_string(),
+            Source::Default
+        )
+    );
+    assert_eq!(
+        row("ARC_URL"),
+        ("https://arc-test.taal.com".to_string(), Source::Default)
+    );
+    // A URL still moves GorillaPool on the test chain.
+    let c = testnet(&[("ARC_GORILLAPOOL_URL", "https://gp.example/")]);
+    assert_eq!(
+        c.services.explorers.bases.gorillapool.as_deref(),
+        Some("https://gp.example")
+    );
+}
+
+/// `RECONCILE_ABANDONED`: `0` or `false` (any case) turn it off, untrimmed;
+/// any other word, or unset, leaves it on.
+#[test]
+fn reconcile_abandoned_is_off_only_for_zero_or_false() {
+    let on = |v| {
+        config(&[("RECONCILE_ABANDONED", v)])
+            .daemon
+            .reconcile_abandoned
+    };
+    for off in ["0", "false", "FALSE", "False"] {
+        assert!(!on(off), "{off:?}");
+    }
+    for still_on in ["1", "true", "no", "off", " 0", "false ", ""] {
+        assert!(on(still_on), "{still_on:?}");
+    }
+    assert!(Config::default().daemon.reconcile_abandoned);
+}
+
+/// A URL setting that is set, not blank and not an http or https URL with a
+/// host is refused naming the variable; the setting reads as its default.
+#[test]
+fn the_callback_bitails_and_gorillapool_urls_are_refused_when_malformed() {
+    for name in ["PUBLIC_CALLBACK_URL", "BITAILS_BASE", "ARC_GORILLAPOOL_URL"] {
+        for value in [
+            "not a url",
+            "ftp://host.example",
+            "https://",
+            "host.example/path",
+        ] {
+            let e = refusal(&[(name, value)]);
+            assert_eq!(
+                (e.variable, e.expected),
+                (name, "an http or https URL"),
+                "{name}={value:?}"
+            );
+            assert!(e.to_string().starts_with(name), "{e}");
+        }
+    }
+    let refused = Config::from_pairs(&[
+        ("PUBLIC_CALLBACK_URL", "nope"),
+        ("BITAILS_BASE", "nope"),
+        ("ARC_GORILLAPOOL_URL", "nope"),
+    ])
+    .unwrap_err();
+    let s = &refused.config.services;
+    assert_eq!(s.public_callback_url, None);
+    assert_eq!(
+        s.explorers.bases,
+        crate::services_env::ExplorerBases::defaults(Chain::Main)
+    );
+    // Blank is no value, never refused: GorillaPool's empty leaves it out.
+    let s = config(&[
+        ("PUBLIC_CALLBACK_URL", " "),
+        ("BITAILS_BASE", " "),
+        ("ARC_GORILLAPOOL_URL", " "),
+    ])
+    .services;
+    assert_eq!(s.public_callback_url, None);
+    assert_eq!(
+        s.explorers.bases.bitails,
+        crate::services_env::ExplorerBases::defaults(Chain::Main).bitails
+    );
+    assert_eq!(s.explorers.bases.gorillapool, None);
+}
+
+/// The bases of the CLI's rungs and `GorillaPool`'s are trimmed of
+/// whitespace and of trailing slashes; the knob rows show them so.
+/// `BananaBlocks`' base is the toolbox's, trimmed of whitespace only.
+#[test]
+fn the_bases_are_trimmed_of_trailing_slashes() {
+    let c = config(&[
+        ("WOC_BASE", " https://woc.example/v1/ "),
+        ("BITAILS_BASE", "https://bitails.example//"),
+        ("ARC_GORILLAPOOL_URL", " https://gp.example/arc/ "),
+        ("BANANABLOCKS_BASE", " https://bb.example/api/ "),
+    ]);
+    let bases = &c.services.explorers.bases;
+    assert_eq!(bases.woc, "https://woc.example/v1");
+    assert_eq!(bases.bitails, "https://bitails.example");
+    assert_eq!(bases.gorillapool.as_deref(), Some("https://gp.example/arc"));
+    let line = c.log_line();
+    for shown in [
+        "WOC_BASE=https://woc.example/v1 ",
+        "BITAILS_BASE=https://bitails.example ",
+        "ARC_GORILLAPOOL_URL=https://gp.example/arc ",
+        "BANANABLOCKS_BASE=https://bb.example/api/ ",
+    ] {
+        assert!(line.contains(shown), "{shown} in {line}");
+    }
+    // The defaults carry no trailing slash on either chain.
+    for chain in [Chain::Main, Chain::Test] {
+        let d = crate::services_env::ExplorerBases::defaults(chain);
+        assert!(!d.woc.ends_with('/') && !d.bitails.ends_with('/'), "{d:?}");
+    }
 }

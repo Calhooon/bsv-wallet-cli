@@ -507,7 +507,7 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/context.rs` | 88 | `WalletContext`: the `Config`, `ROOT_KEY`, the store, the services, the chain tracker set on the store, one `Wallet`; the gate's settings and the verifier from the `Config` | wallet host |
 | `src/config.rs` | 770 | The configuration (#80): every variable and the global flags read once at start, typed and checked (a malformed value refused naming the variable and its shape), secrets redacted; the crate's one reader of the environment (A7); the relay's own settings | plumbing |
 | `src/config/knobs.rs` | 184 | Every setting with its effective value and its source, for `bsv-wallet config` and the start line of `daemon` and `serve` | plumbing |
-| `src/config/tests.rs` | 261 | The configuration's tests: the defaults, each switch's words, the refusals, the redaction, the sources | plumbing |
+| `src/config/tests.rs` | 261 | The configuration's tests: the defaults (both chains), each switch's words, the refusals, the bases' trimming, the redaction, the sources, the `--json` shape | plumbing |
 | `src/services_env.rs` | 430 | The one settings-to-`ServicesOptions` resolver, over typed settings (#172: it parses none): `CHAINTRACKS_URL` required, break-glass headers, explorer keys and bases (`GorillaPool`'s one base, the knob's and the toolbox's), Arcade runtime, the callback token | wallet host (plumbing) |
 | `src/store.rs` | 320 | The store's two doors (reader pool, one writer), `open_shared` (one store per file per process), the busy told by its type | wallet host |
 | `src/spend_gate.rs` | 1593 | The spend gate: the offer, the word and its scope, the refusal, the header-fault retry, the holds' heal | wallet host |
