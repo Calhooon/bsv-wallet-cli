@@ -30,6 +30,18 @@ A target that stops (a panic, a failed property, a timeout, out of memory) and l
 
 ## The mutation score and what a surviving mutant becomes
 
-`cargo-mutants` (copy mode, never `--in-place`) mutates `src/spend_gate.rs`, `src/tracker_host.rs`, `src/server/handlers.rs`, `src/broadcast_verify.rs` and `src/explorers.rs` in twenty shards; a mutant's tests stop at five minutes. `.github/nightly/mutants_score.py` scores each file as caught / (caught + missed + timeout): a timeout has its own column and is not caught (its tests ran past the limit, which no test's verdict showed wrong; it weighs as a miss does), and an unviable mutant (one that does not build) is counted nowhere, and fails the job when a file is below its floor or has no outcome. The floor is 80 percent; a file below 80 when the floor was set is floored at that score rounded down, named in the workflow with the issue that raises it, and a floor only goes up. The lane's run (2026-10-23, 281 mutants: 214 caught, 46 missed, 21 unviable) had no timeout, so its scores (`spend_gate.rs` 86.6, `explorers.rs` 69.7) and the floors (80, and 69 for `explorers.rs`) are the same under this count.
+`cargo-mutants` (copy mode, never `--in-place`) mutates `src/spend_gate.rs`, `src/tracker_host.rs`, `src/server/handlers.rs`, `src/broadcast_verify.rs` and `src/explorers.rs` in twenty shards; a mutant's tests stop at five minutes. `.github/nightly/mutants_score.py` scores each file as caught / (caught + missed + timeout): a timeout has its own column and is not caught (its tests ran past the limit, which no test's verdict showed wrong; it weighs as a miss does), and an unviable mutant (one that does not build) is counted nowhere, and fails the job when a file is below its floor or has no outcome. The target is 80 percent a file. A floor is a measured floor that only rises: a file's floor is the score a night measured, rounded down, named in the workflow with the issue that raises it, and it is raised in the same commit as the tests that earn the raise, never by an edit alone. A floor set before any night measured its file was provisional; the first full night replaced those with what it measured.
+
+The first full night on `beta` (run 40074725488, dispatched 2026-10-24 at `93f160f`, cargo-mutants 27.1.0, no timeout; the record is `docs/scoreboard/mutants.json`):
+
+| file | caught | timeout | missed | unviable | score | floor | raised by |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `src/spend_gate.rs` | 169 | 0 | 25 | 7 | 87.1 | 80 | stays 80: one night is not a trend; 85 when a second night holds 87.1 |
+| `src/explorers.rs` | 46 | 0 | 16 | 16 | 74.2 | 69 | #124 |
+| `src/broadcast_verify.rs` | 148 | 0 | 48 | 36 | 75.5 | 75 | #173 |
+| `src/server/handlers.rs` | 92 | 0 | 32 | 252 | 74.2 | 74 | #174 |
+| `src/tracker_host.rs` | 170 | 0 | 64 | 38 | 72.6 | 72 | #175 |
+
+The floors of `broadcast_verify.rs`, `handlers.rs` and `tracker_host.rs` were provisional (80, never measured) until that night, which failed on them. #75's lane run (2026-10-23, 281 mutants: 214 caught, 46 missed, 21 unviable, no timeout) set `explorers.rs` at 69 from its 69.7. The scoreboard's measured column (`docs/NORTH-STAR.md`) is rendered from the record; a later night is recorded there by the captain, in the shape `tools/scoreboard`'s header defines.
 
 A surviving mutant is a place a lane could change the code and no test would notice. On a hot path it becomes an issue (or a line on the file's raise-the-floor issue): the mutant's name and diff from the artifact, and the test that would kill it. The fix is a test, never an exclusion; a mutant that is equivalent (no behaviour can tell it apart) is named in the issue with the reason, and only then skipped by an `exclude_re` line in `.cargo/mutants.toml` that names that issue.
