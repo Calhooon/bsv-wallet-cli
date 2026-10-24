@@ -4,13 +4,17 @@ PR could turn the gate off, and the cases it must let through. Run by the
 CI job bench before the benches: python3 tools/test_bench_compare.py
 """
 
+import contextlib
 import copy
+import io
 import importlib.machinery
 import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+import unittest.mock
 
 sys.dont_write_bytecode = True  # nothing in the tree
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -195,6 +199,25 @@ class WhatTheGateLetsThrough(unittest.TestCase):
         self.assertEqual((errors, regressions, gating), ([], [], False))
         self.assertEqual(candidate["profiles"][KEY]["runs"][0]["benches"], measure())
         self.assertEqual(candidate["profiles"][KEY]["runs"][0]["commit"], "c" * 40)
+
+    def test_a_cpu_with_no_entry_is_loud(self):
+        other = "Intel Xeon Platinum 8370C, 4 cores"
+        ctx = dict(CTX, machine=other, key=bc.gate_key(other))
+        base = baseline(runs(bc.MIN_RUNS))
+        lines, warnings, errors, regressions, gating, candidate = bc.judge(base, base, measure(scale=3.0), ctx)
+        self.assertEqual((errors, regressions, gating), ([], [], False))
+        self.assertTrue(any(other in w and "nothing is gated" in w for w in warnings), warnings)
+        self.assertEqual(len(candidate["profiles"][ctx["key"]]["runs"]), 1, "the candidate opens the entry")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
+            summary = os.path.join(d, "summary.md")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), unittest.mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": summary}):
+                bc.announce(warnings, "::")
+            with open(summary) as f:
+                written = f.read()
+        self.assertIn(f"::warning::no gate entry for this runner's CPU ({other}", out.getvalue())
+        self.assertIn(f"no gate entry for this runner's CPU ({other}", written)
+        self.assertIn("nothing is gated", written)
 
     def test_matching_opening_entry_passes(self):
         errors, _, gating, candidate = judge(baseline([run(scale=1.03)]), bc.empty())

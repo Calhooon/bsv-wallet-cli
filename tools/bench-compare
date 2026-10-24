@@ -263,7 +263,10 @@ def judge(tree, base, measured, ctx):
     gating = False
     fresh = {"profile": key, "gate": True, "machine": ctx["machine"], "toolchain": ctx["toolchain"], "runs": [this_run]}
     if entry is None:
-        lines.append(f"no baseline for {key}: this run is the candidate opening entry; nothing is compared")
+        # Not a failure: a hosted runner's CPU is its allotment, not the PR's
+        # code. Loud instead: an annotation and the step summary name it.
+        warnings.append(f"no gate entry for this runner's CPU ({ctx['machine']}, {key}): nothing is gated; "
+                        f"this run is the candidate opening entry in the artifact bench-baseline")
         new_entry = fresh
     elif entry["toolchain"] != ctx["toolchain"]:
         warnings.append(f"{key} was recorded with {entry['toolchain']}, this run is {ctx['toolchain']}: "
@@ -306,6 +309,17 @@ def write(path, data):
         f.write("\n")
 
 
+def announce(warnings, gh):
+    """Each warning as a GitHub annotation (plain text off Actions) and a
+    line of the job's step summary, when the job has one."""
+    for w in warnings:
+        print(f"{gh}warning{'::' if gh else ': '}{w}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if warnings and summary:
+        with open(summary, "a") as f:
+            f.write("### bench: warnings\n\n" + "".join(f"- {w}\n" for w in warnings) + "\n")
+
+
 def ci(args):
     gh = "::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
     profile = os.environ.get("BENCH_PROFILE")
@@ -328,8 +342,7 @@ def ci(args):
     base = load(args["base"]) if args["base"] else None
     lines, warnings, errors, regressions, gating, candidate = judge(load(TREE), base, measured, ctx)
     print("\n".join(lines))
-    for w in warnings:
-        print(f"{gh}warning{'::' if gh else ': '}{w}")
+    announce(warnings, gh)
     write(args["out"], candidate)
     print(f"bench-compare: this run's candidate baseline is in {args['out']} (the artifact bench-baseline), "
           f"stamped {head[:12]}")

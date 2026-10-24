@@ -173,8 +173,9 @@ jobs:
   # this run's measure fails. The reference is the base's entry, never the
   # tree's; the comparison gates once the base's entry for this runner's CPU
   # carries five runs; until then it warns and passes, and with no base
-  # nothing is gated. The artifact bench-baseline is the candidate the
-  # captain commits: the base's file with this run appended.
+  # nothing is gated. A runner CPU with no entry gates nothing and says so
+  # in an annotation and the step summary. The artifact bench-baseline is
+  # the candidate the captain commits: the base's file with this run appended.
   bench:
     name: bench
     runs-on: ubuntu-latest
