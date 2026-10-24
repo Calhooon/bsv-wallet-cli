@@ -410,3 +410,114 @@ jobs:
           name: e2e-hermetic-kept
           path: ${{ runner.temp }}/e2e/
           if-no-files-found: ignore
+
+  # The differential oracle (#70, docs/DIFFERENTIAL.md): the PR's base branch
+  # at its tip and the PR's head, both built here with the ratchet's pinned
+  # toolchain, each run once through the hermetic suite with the same keys,
+  # ports and stub, the two recordings compared byte for byte after the
+  # normalizations tools/differential lists (`--exclusions`). It fails on
+  # differences only when the PR carries the label `refactor`: a feature PR
+  # changes outputs by design, and its differences are its review's reading.
+  # A failed build or suite run fails it either way. Labels are read when the
+  # run starts; a label added later takes a re-run of this job. Not a required
+  # check yet: the captain decides after it has run a week. The report is the
+  # run's artifact `differential`, and its DIFFERENTIAL line is in the summary.
+  differential:
+    name: differential
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NODE_USE_ENV_PROXY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # The base's tree in a worktree beside the checkout, built into the same
+      # target dir before the head (the dependencies are shared), its two
+      # binaries copied out before the head's build replaces them.
+      - name: Build the base (the PR's base branch at its tip)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          git worktree add --detach "$RUNNER_TEMP/base-src" "origin/$BASE_REF"
+          echo "base: $(git -C "$RUNNER_TEMP/base-src" log --oneline -1)"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+          (cd "$RUNNER_TEMP/base-src" && cargo build --release --locked && cargo build --release --locked -p bsv-wallet-mcp)
+          mkdir -p "$RUNNER_TEMP/bin-base"
+          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-base/"
+
+      - name: Build the head
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          cargo build --release --locked -p bsv-wallet-mcp
+          mkdir -p "$RUNNER_TEMP/bin-head"
+          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-head/"
+
+      # Node 24 for NODE_USE_ENV_PROXY, and scenario 20's Chromium, as the
+      # e2e-hermetic job has them.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+
+      - name: Install the harness's dependency (Playwright)
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
+
+      - name: Install Chromium
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the differential
+        env:
+          REFACTOR: ${{ contains(github.event.pull_request.labels.*.name, 'refactor') }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/differential"
+          mkdir -p "$out"
+          python3 tools/differential \
+            --base-bin "$RUNNER_TEMP/bin-base/bsv-wallet" \
+            --head-bin "$RUNNER_TEMP/bin-head/bsv-wallet" \
+            --out "$out"
+          code=$?
+          line=$(grep '^DIFFERENTIAL:' "$out/report.txt" 2>/dev/null || echo "DIFFERENTIAL: no report (exit $code)")
+          {
+            echo "### differential"
+            echo
+            echo "\`$line\`"
+            echo
+            echo "label refactor: $REFACTOR; the report is the artifact \`differential\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -eq 2 ] || { [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; }; then
+            echo "::error::a build's suite run failed (exit $code); see the report and the run logs"
+            exit 1
+          fi
+          if [ "$code" -eq 1 ]; then
+            if [ "$REFACTOR" = "true" ]; then
+              echo "::error::$line on a PR labelled refactor"
+              exit 1
+            fi
+            echo "::notice::$line (no refactor label: reported, not failed)"
+          fi
+
+      - name: Keep the report and the recordings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: differential
+          path: ${{ runner.temp }}/differential/
+          if-no-files-found: warn
