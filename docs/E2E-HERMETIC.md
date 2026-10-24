@@ -94,7 +94,7 @@ gate (`max_acceptable_proof_height`, written by the monitor) is closed under
 ## The routes the stub serves
 
 Each answers in the shape the toolbox's provider or the CLI's rung parses
-(`bsv-wallet-toolbox-rs` 0.12.1 `src/services/providers/*.rs`,
+(`bsv-wallet-toolbox-rs` 0.13.0 `src/services/providers/*.rs`,
 `src/explorers.rs`, `src/broadcast_verify.rs`). A fault injected for a provider
 (`POST /_stub/fault`) is served before any of its routes.
 
@@ -172,7 +172,7 @@ funding block is proven by the BUMP inside its BEEF instead.
 - **The toolbox's WhatsOnChain and Bitails providers** keep their default bases
   (`api.whatsonchain.com`, `api.bitails.io`): `ServicesOptions` takes no
   `whatsonchain_base` or `bitails_base` (toolbox #98 asks for the knobs). So
-  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.12.1,
+  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.13.0,
   `Services::with_options`) these rungs never run hermetically today; each
   reaches the wall, is refused, and the ladder moves on (to BananaBlocks,
   which the stub serves, or to the stub's ARC):

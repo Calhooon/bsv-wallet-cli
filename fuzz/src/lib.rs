@@ -68,7 +68,7 @@ pub fn brc29_key(
 }
 
 /// The toolbox wallet's checks of an internalize before its store is
-/// touched. Mirror of bsv-wallet-toolbox-rs 0.12.1
+/// touched. Mirror of bsv-wallet-toolbox-rs 0.13.0
 /// `src/wallet/wallet.rs` `internalize_action` (the derivation checks, the
 /// "death spiral prevention"), with the deriver at `root`.
 pub fn internalize_precheck(args: &InternalizeActionArgs, root: &PrivateKey) -> Result<(), String> {
