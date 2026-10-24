@@ -48,9 +48,10 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     (
         "src/services_env.rs",
         33,
-        "the explorers' settings (#80: ExplorerSettings, their variables BITAILS_API_KEY, \
-         BANANABLOCKS_BASE and BITAILS_BASE parsed here from the environment src/config.rs read once, \
-         their knob rows, their two fields and their use in the toolbox's options) and the \
+        "the explorers' settings (#80, #172: ExplorerSettings, their variables BITAILS_API_KEY, \
+         BANANABLOCKS_BASE and BITAILS_BASE named here to src/config.rs's reader, which parses \
+         them, as src/config.rs may name no explorer; their knob rows, their two fields and their \
+         use in the toolbox's options) and the \
          break-glass warning; the bases' configuration (#74, PR 131): the toolbox's bitails and \
          whatsonchain default-URL imports, ExplorerBases' bitails field, its chain defaults and its \
          overrides; no request is made here",

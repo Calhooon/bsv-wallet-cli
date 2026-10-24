@@ -80,6 +80,11 @@ impl<'a> Reader<'a> {
         self.non_empty(name).map(Secret::new)
     }
 
+    /// A key: the value trimmed, when it is set and not blank.
+    pub(crate) fn key(&self, name: &str) -> Option<Secret> {
+        self.given(name).map(Secret::new)
+    }
+
     /// A switch: `on(value)` when set, `unset` when not.
     pub(crate) fn switch(&self, name: &str, unset: bool, on: fn(&str) -> bool) -> bool {
         self.get(name).map_or(unset, on)

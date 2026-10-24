@@ -11,7 +11,7 @@ use std::fmt;
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
 use serde::{Serialize, Serializer};
 
-use super::{Config, Secret, Source};
+use super::{Config, HeaderService, Secret, Source};
 
 /// A setting's effective value, as the table shows it ([`fmt::Display`])
 /// and as the JSON carries it ([`Serialize`]).
@@ -112,7 +112,7 @@ pub fn shown_url(value: &str) -> String {
 /// secret read from it: `<set>` when it holds a value, `empty` when the
 /// variable is set but holds none in effect (`AUTH_TOKEN=` is no token at
 /// the bind guard), `-` when it is unset.
-pub(crate) fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> Value {
+fn shown_secret(set: Option<&str>, secret: Option<&Secret>) -> Value {
     match (set, secret) {
         (_, Some(s)) if !s.expose().is_empty() => Value::Text(s.to_string()),
         (Some(_), _) => Value::None("empty"),
@@ -166,7 +166,7 @@ impl Config {
             .join(" ")
     }
 
-    /// A secret's row: [`super::shown_secret`] of its variable as read.
+    /// A secret's row: [`shown_secret`] of its variable as read.
     fn secret(&self, name: &str, value: Option<&Secret>) -> Value {
         shown_secret(self.raw.get(name), value)
     }
@@ -196,7 +196,11 @@ impl Config {
         let mut values = vec![
             (
                 "CHAINTRACKS_URL",
-                url_or(s.chaintracks_url.as_deref(), Value::None("unset")),
+                match &s.chaintracks_url {
+                    None => Value::None("unset"),
+                    Some(HeaderService::Off) => Value::Text("off".to_string()),
+                    Some(HeaderService::Url(url)) => Value::Text(shown_url(url)),
+                },
             ),
             (
                 "BREAK_GLASS_EXPLORER_HEADERS",
@@ -224,7 +228,10 @@ impl Config {
                 self.secret("MAIN_TAAL_API_KEY", s.main_taal_api_key.as_ref()),
             ),
         ];
-        values.extend(s.explorers.values(&self.raw, self.chain()));
+        values.extend(
+            s.explorers
+                .values(self.chain(), |name, key| self.secret(name, key)),
+        );
         values.push((
             "ARC_GORILLAPOOL_URL",
             url_or(s.explorers.bases.gorillapool.as_deref(), Value::None("off")),

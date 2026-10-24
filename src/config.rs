@@ -45,7 +45,7 @@ mod read;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use knobs::{shown_secret, url_or};
+pub(crate) use knobs::url_or;
 pub use knobs::{shown_url, Knob, Value};
 pub(crate) use read::{Raw, Reader};
 
@@ -287,14 +287,24 @@ impl WalletSettings {
     }
 }
 
+/// `CHAINTRACKS_URL` when it is set: the header service, or none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderService {
+    /// `off` (any case): no header service, so every proof is refused.
+    Off,
+    /// The header service's URL, trimmed.
+    Url(String),
+}
+
 /// The services: the header service, the broadcasters and the explorers
 /// (see `services_env`, which builds the toolbox's options from them).
 #[derive(Debug, Clone)]
 pub struct ServicesSettings {
-    /// `CHAINTRACKS_URL`, trimmed: a URL, or `off` (any case); unset or
-    /// blank is refused where services are built.
-    pub chaintracks_url: Option<String>,
-    /// `BREAK_GLASS_EXPLORER_HEADERS`: `1`, `true` or `yes`; else off.
+    /// `CHAINTRACKS_URL`: a URL, or `off` (any case); unset or blank is
+    /// `None`, refused where services are built.
+    pub chaintracks_url: Option<HeaderService>,
+    /// `BREAK_GLASS_EXPLORER_HEADERS`: `1`, `true` or `yes` (any case,
+    /// trimmed); else off.
     pub break_glass_explorer_headers: bool,
     /// `ARC_URL`: the broadcaster (the Arcade endpoint in Arcade mode).
     pub arc_url: Option<String>,
@@ -310,25 +320,24 @@ pub struct ServicesSettings {
     pub taal_api_key: Option<Secret>,
     /// `MAIN_TAAL_API_KEY`, when not empty (raw `Authorization: <key>`).
     pub main_taal_api_key: Option<Secret>,
-    /// The explorers' keys and bases, read by `services_env`
-    /// ([`crate::services_env::ExplorerSettings`]).
+    /// The explorers' keys and bases ([`crate::services_env::ExplorerSettings`]),
+    /// `GorillaPool`'s among them: `ARC_GORILLAPOOL_URL`, read here once,
+    /// is its base (`explorers.bases.gorillapool`), the one the knob shows
+    /// and the toolbox takes.
     pub explorers: crate::services_env::ExplorerSettings,
-    /// `ARC_GORILLAPOOL_URL`, trimmed: unset the toolbox's default, empty
-    /// leaves `GorillaPool` out.
-    pub arc_gorillapool_url: Option<String>,
 }
 
 impl ServicesSettings {
     fn read(raw: &Reader, chain: Chain) -> Self {
         let chaintracks_url = match raw.given("CHAINTRACKS_URL") {
-            Some(v) if v.eq_ignore_ascii_case("off") => Some(v.to_string()),
-            _ => raw.url("CHAINTRACKS_URL"),
+            Some(v) if v.eq_ignore_ascii_case("off") => Some(HeaderService::Off),
+            _ => raw.url("CHAINTRACKS_URL").map(HeaderService::Url),
         };
+        // Unset is the chain's default, set and blank leaves it out.
+        let gorillapool = raw.present_url("ARC_GORILLAPOOL_URL");
         Self {
             chaintracks_url,
-            break_glass_explorer_headers: raw.switch("BREAK_GLASS_EXPLORER_HEADERS", false, |v| {
-                crate::services_env::break_glass_explorer_headers(Some(v))
-            }),
+            break_glass_explorer_headers: raw.switch("BREAK_GLASS_EXPLORER_HEADERS", false, yes),
             arc_url: raw.url("ARC_URL"),
             arc_mode_arcade: raw.switch("ARC_MODE", false, |v| v.eq_ignore_ascii_case("arcade")),
             arcade_flag: raw.switch("ARCADE", false, yes),
@@ -336,8 +345,11 @@ impl ServicesSettings {
             public_callback_url: raw.url("PUBLIC_CALLBACK_URL"),
             taal_api_key: raw.secret("TAAL_API_KEY"),
             main_taal_api_key: raw.secret("MAIN_TAAL_API_KEY"),
-            explorers: crate::services_env::ExplorerSettings::read(raw, chain),
-            arc_gorillapool_url: raw.present_url("ARC_GORILLAPOOL_URL"),
+            explorers: crate::services_env::ExplorerSettings::read(
+                raw,
+                chain,
+                gorillapool.as_deref(),
+            ),
         }
     }
 
@@ -353,7 +365,7 @@ impl ServicesSettings {
     ///
     /// `CHAINTRACKS_URL` is unset or blank: there is no default.
     pub fn header_service(&self) -> anyhow::Result<Option<String>> {
-        crate::services_env::chaintracks_url_for(self.chaintracks_url.as_deref())
+        crate::services_env::chaintracks_url_for(self.chaintracks_url.as_ref())
     }
 }
 

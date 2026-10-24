@@ -221,7 +221,13 @@ fn each_switch_keeps_its_words() {
             .services
             .break_glass_explorer_headers
     };
-    assert!(break_glass("yes") && !break_glass("on"));
+    for on in ["1", "true", "YES", " yes "] {
+        assert!(break_glass(on), "{on:?}");
+    }
+    for off in ["", "0", "false", "no", "on"] {
+        assert!(!break_glass(off), "{off:?}");
+    }
+    assert!(!Config::default().services.break_glass_explorer_headers);
     assert!(config(&[("ARC_MODE", "Arcade")]).services.arcade());
     assert!(config(&[("ARCADE", " true ")]).services.arcade());
     assert!(!config(&[("ARC_MODE", "arc"), ("ARCADE", "0")])
@@ -237,11 +243,7 @@ fn the_services_keep_their_empty_meanings() {
         Some(""),
         "empty is off"
     );
-    assert_eq!(
-        s.arc_gorillapool_url.as_deref(),
-        Some(""),
-        "empty leaves it out"
-    );
+    assert_eq!(s.explorers.bases.gorillapool, None, "empty leaves it out");
     let s = config(&[
         ("WOC_API_KEY", "  "),
         ("TAAL_API_KEY", ""),
@@ -251,8 +253,21 @@ fn the_services_keep_their_empty_meanings() {
     assert!(
         s.explorers.woc_api_key.is_none() && s.taal_api_key.is_none() && s.callback_token.is_none()
     );
+    // An explorer's key is trimmed; blank is no key.
+    let s = config(&[("WOC_API_KEY", " k "), ("BITAILS_API_KEY", "\t")]).services;
+    assert_eq!(
+        s.explorers.woc_api_key.as_ref().map(Secret::expose),
+        Some("k")
+    );
+    assert!(s.explorers.bitails_api_key.is_none());
     let s = config(&[("CHAINTRACKS_URL", " OFF ")]).services;
+    assert_eq!(s.chaintracks_url, Some(HeaderService::Off));
     assert_eq!(s.header_service().unwrap(), None);
+    for blank in ["", "   "] {
+        let s = config(&[("CHAINTRACKS_URL", blank)]).services;
+        assert_eq!(s.chaintracks_url, None, "{blank:?}");
+        assert!(s.header_service().is_err(), "{blank:?}");
+    }
     let s = config(&[("CHAINTRACKS_URL", "https://headers.example ")]).services;
     assert_eq!(
         s.header_service().unwrap().as_deref(),
