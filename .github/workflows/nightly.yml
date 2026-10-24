@@ -23,6 +23,18 @@ on:
 permissions:
   contents: read
 
+# Six mutants shards at a time, and one night at a time (#144). The first
+# dispatched night (run 40074725488) started its twenty shards and five fuzz
+# targets at once, took every runner the account has for over an hour and
+# starved every PR check. The mutants matrix now runs at most six shards at
+# once (about 1,160 runner-minutes in all, so near three and a half hours at
+# six), beside the five fuzz targets' hour: the night peaks at eleven runners
+# and holds six after the fuzz hour. The group is one name, never one per
+# ref: the schedule runs from main and a dispatch from the ref it names, so a
+# group of nightly-${{ github.ref }} would let a dispatched night on beta and
+# the scheduled one run side by side. A night started while one runs waits
+# for it (cancel-in-progress: false, so a night is never cut short); GitHub
+# keeps one waiting run per group and cancels an older waiting one.
 concurrency:
   group: nightly
   cancel-in-progress: false
@@ -196,6 +208,8 @@ jobs:
     timeout-minutes: 340
     strategy:
       fail-fast: false
+      # Six shards at a time, so a night leaves runners for the PR checks (#144).
+      max-parallel: 6
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     steps:
