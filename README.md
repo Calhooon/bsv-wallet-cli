@@ -75,9 +75,12 @@ The server implements the wallet interface and serializes spending operations.
 feeds are hints until their evidence is checked. Configuration and defaults
 are defined in [src/config.rs](src/config.rs): every variable is read once at
 start, and a malformed number, address or URL is refused there, naming the
-variable. `bsv-wallet config` prints every setting with its effective value
-and its source (env, flag, default), keys and tokens as `<set>` (`--json` for
-the same as an array); `daemon` and `serve` log the same list as one line at
+variable; every refused variable is named at once, `init` runs regardless,
+and `bsv-wallet config` prints the table with the refused rows marked and
+exits 1. `bsv-wallet config` prints every setting with its effective value
+and its source (env, flag, default), keys and tokens as `<set>` (`empty` when
+set to nothing) and a URL's userinfo and query as `<set>` (`--json` for the
+same as an array); `daemon` and `serve` log the same list as one line at
 start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
 The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
@@ -87,6 +90,13 @@ The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](
 | `WOC_API_KEY` | WhatsOnChain key, sent as `woc-api-key` and `Authorization: Bearer`; optional |
 | `BITAILS_API_KEY` | Bitails key; optional |
 | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it; BananaBlocks takes no key and paces itself at 60 requests a minute |
+| `WOC_BASE` | the base of the CLI's own WhatsOnChain rungs: unset or blank is the chain's default (`https://api.whatsonchain.com/v1/bsv/main`, `.../test`), a URL moves it (the hermetic e2e run points it at its stub); the toolbox's own WhatsOnChain provider takes no base |
+| `BITAILS_BASE` | the base of the CLI's own Bitails rung: unset or blank is the chain's default (`https://api.bitails.io`, `https://test-api.bitails.io`), a URL moves it; the toolbox's own Bitails provider takes no base |
+| `ARC_GORILLAPOOL_URL` | the GorillaPool ARC's base: unset is the toolbox's default (`https://arc.gorillapool.io` on mainnet, none on testnet), empty or blank leaves GorillaPool out, a URL moves it |
+
+A set value of `BANANABLOCKS_BASE`, `WOC_BASE`, `BITAILS_BASE` or
+`ARC_GORILLAPOOL_URL` that is not blank and not an `http` or `https` URL is
+refused at start, naming the variable.
 
 ## The chain-event feed
 
