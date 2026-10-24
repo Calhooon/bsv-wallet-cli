@@ -419,15 +419,22 @@ jobs:
   # differences only when the PR carries the label `refactor`: a feature PR
   # changes outputs by design, and its differences are its review's reading.
   # A failed build or suite run, or an incomplete recording (exit 3), fails
-  # it either way. Labels are read when the
-  # run starts; a label added later takes a re-run of this job. Not a required
-  # check yet: the captain decides after it has run a week. The report is the
-  # run's artifact `differential`, and its DIFFERENTIAL line is in the summary.
+  # it either way. The labels are read when the differential step runs, with
+  # `gh pr view --json labels`, never from the event payload (a re-run reuses
+  # the payload of the event that started it): a label added after the run
+  # started counts on a re-run of this job. Label changes do not trigger CI
+  # (labeled/unlabeled would re-run, and cancel, every job of this workflow).
+  # Not a required check yet: the captain decides after it has run a week.
+  # The report is the run's artifact `differential`, and its DIFFERENTIAL
+  # line is in the summary.
   differential:
     name: differential
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       NODE_USE_ENV_PROXY: '1'
     steps:
@@ -488,9 +495,18 @@ jobs:
 
       - name: Run the differential
         env:
-          REFACTOR: ${{ contains(github.event.pull_request.labels.*.name, 'refactor') }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -uo pipefail
+          # The PR's labels now, not the event's (a label added after the
+          # run started counts on a re-run). A failed read is no "no label".
+          if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
+              --jq '[.labels[].name] | index("refactor") != null'); then
+            echo "::error::the PR's labels could not be read (gh pr view)"
+            exit 1
+          fi
+          echo "label refactor: $REFACTOR (read at run time)"
           out="$RUNNER_TEMP/differential"
           mkdir -p "$out"
           python3 tools/differential \
