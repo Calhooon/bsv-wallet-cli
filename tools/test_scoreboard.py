@@ -50,6 +50,16 @@ const RULE: Rule = Rule {
     sites: |l| 0,
 };
 '''
+SCENARIO = """const { x } = require('../lib/x');
+
+module.exports = {
+  name: 'S',
+  description: 'a scenario',
+  async run(walletA, walletB, assert) {
+    return { ok: { run: 1 } };
+  },
+};
+"""
 MUTANTS = {"schema": 1, "commit": SHA, "run": "https://example.invalid/run/1", "date": "2026-10-23",
            "files": {"src/spend_gate.rs": {"score": 86.6, "caught": 194, "missed": 30,
                                            "timeout": 0, "unviable": 12}}}
@@ -68,7 +78,7 @@ class Tree:
         self.write(".github/workflows/nightly.yml", NIGHTLY)
         self.write("tests/arch_no_unwrap.rs", ARCH)
         for i in range(3):
-            self.write(f"tests/e2e/scenarios/{i:02}-s.js", "module.exports = {};\n")
+            self.write(f"tests/e2e/scenarios/{i:02}-s.js", SCENARIO)
         self.write("tests/e2e/run.js", "const hermetic = require('./lib/hermetic');\n")
         self.write("tests/e2e/lib/hermetic.js", "const enabled = process.env.E2E_HERMETIC === '1';\n")
         for c, n in (("mcp", 2), ("x402-skill", 1)):
@@ -387,6 +397,55 @@ class TheHermeticFlagIsTheKnobsRead(Case):
         self.tree.remove("tests/e2e/lib/hermetic.js")
         self.tree.write("tests/e2e/run.js", "const on = process.env['E2E_HERMETIC'] === '1';\n")
         self.assertIn("| present |  | `tests/e2e/run.js` |", self.flag())
+
+
+    def test_a_string_literal_is_not_the_knob(self):
+        self.tree.write("tests/e2e/lib/hermetic.js",
+                        "const a = 'process.env.E2E_HERMETIC';\n"
+                        "const b = \"process.env['E2E_HERMETIC']\";\n"
+                        "const c = `process.env.E2E_HERMETIC ${a}`;\n"
+                        "const d = /process.env.E2E_HERMETIC/;\nconst enabled = false;\n")
+        self.assertIn("| absent |", self.flag())
+        print("\n    absent: the knob named in four string, template and regex literals", end=" ", file=sys.stderr)
+
+    def test_a_url_in_a_string_does_not_hide_the_read(self):
+        self.tree.write("tests/e2e/lib/hermetic.js",
+                        "const u = 'http://x/*'; const on = process.env.E2E_HERMETIC === '1'; // */\n")
+        self.assertIn("| present |", self.flag())
+
+
+class AScenarioIsAModuleThatExportsRun(Case):
+    """(I) As run.js calls scenario.run: a .js under scenarios/ without one is not counted."""
+
+    def count(self):
+        return [l for l in self.table().splitlines() if l.startswith("| e2e scenarios")][0]
+
+    def test_files_without_a_run_are_not_counted(self):
+        for name, text in (("90-empty.js", "module.exports = {};\n"),
+                           ("91-comment.js", "// async run(a, b) {}\nmodule.exports = { name: 'x' };\n"),
+                           ("92-string.js", "module.exports = { name: 'run', d: 'async run(a) {}' };\n"),
+                           ("93-nested.js", "module.exports = { opts: { run() {} }, f: (run) => run };\n"),
+                           ("94-local.js", "async function run() {}\nmodule.exports = { name: 'x' };\n")):
+            self.tree.write(f"tests/e2e/scenarios/{name}", text)
+        self.assertIn("| e2e scenarios | 3 |", self.count())
+        print("\n    3: five .js files that export no run are not scenarios", end=" ", file=sys.stderr)
+
+    def test_the_forms_of_run_are_counted(self):
+        for name, text in (("90-prop.js", "module.exports.run = async (a, b) => ({});\n"),
+                           ("91-key.js", "async function go() {}\nmodule.exports = { name: 'x', run: go };\n"),
+                           ("92-short.js", "async function run() {}\nmodule.exports = { name: 'x', run };\n"),
+                           ("93-quoted.js", "module.exports = { 'run': async () => {} };\n")):
+            self.tree.write(f"tests/e2e/scenarios/{name}", text)
+        self.assertIn("| e2e scenarios | 7 |", self.count())
+
+    def test_a_scenario_emptied_of_its_run_is_refused(self):
+        base = self.tree.values()
+        self.tree.write("tests/e2e/scenarios/02-s.js", "// " + SCENARIO.replace("\n", "\n// "))
+        self.tree.run("--render")
+        code, out = self.tree.run("--check", "--base", base)
+        self.assertEqual(code, 1, out)
+        self.assertIn("e2e:scenarios: 3 at the base, 2 in the tree; it may not fall", out)
+        print(f"\n    exit 1: {[l for l in out.splitlines() if 'e2e:scenarios' in l][0]}", end=" ", file=sys.stderr)
 
 
 class TheConsumersCorpusIsReadWhereItLives(Case):
