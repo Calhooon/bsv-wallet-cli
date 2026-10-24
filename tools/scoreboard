@@ -59,12 +59,17 @@ docs/scoreboard/mutants.json, the measured column of the floors' rows:
 reader, the table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
 
-The values --json prints and --base reads: {"schema": 1, "values": {key: number}}.
+The values --json prints and --base reads: {"schema": 1, "values": {key: value}}.
 A key `floor:<file>`, `fixtures:wire`, `fixtures:consumers`, `consumers`,
-`e2e:scenarios`, `e2e:hermetic` (1 or 0) or `arch:rules` may not fall below the
-base's, and a key the base holds may not leave the tree; a key
-`allowlist:<rule>:files` or `allowlist:<rule>:sites` may not rise above the
-base's. The ratchets' own numbers are tools/ratchet's to compare.
+`e2e:scenarios`, `e2e:hermetic` (1 or 0) or `arch:rules` is a number that may
+not fall below the base's; a key `allowlist:<rule>:files` or
+`allowlist:<rule>:sites` is a number that may not rise above the base's; a key
+`arch:rule-ids`, `floor:files` or `consumers:names` is the sorted list of the
+rule ids, floored files or consumer names, and may not lose an element the
+base's holds (a count can be kept by a swap, a list cannot: renaming rule A3 to
+A9, or deleting A4's file and adding an empty A7, keeps `arch:rules` and loses
+an element). A key the base holds may not vanish from the tree, of any kind.
+The ratchets' own numbers are tools/ratchet's to compare.
 """
 
 import argparse
@@ -96,6 +101,8 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # A key's direction: "floor" may not fall (nor leave the tree), "ceiling" may not rise.
 FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules)$")
 CEILING_KEYS = re.compile(r"^allowlist:A\d+:(files|sites)$")
+# A key whose value is a sorted list of names: it may not lose an element.
+LIST_KEYS = re.compile(r"^(arch:rule-ids|floor:files|consumers:names)$")
 
 
 def path(name):
@@ -184,7 +191,8 @@ def consumer_rows():
         fail(CONSUMERS, "(the directory)", "present and holds no fixture")
     value = f"{len(fixtures)} over {len(consumers)} consumers"
     return [Row("consumers' fixtures", value, "", source,
-                {"fixtures:consumers": len(fixtures), "consumers": len(consumers)})]
+                {"fixtures:consumers": len(fixtures), "consumers": len(consumers),
+                 "consumers:names": sorted(consumers)})]
 
 
 # One tuple of an allowlist: ("src/file.rs", 12, "the reason"), a trailing comma allowed.
@@ -239,8 +247,10 @@ def arch_rows():
         if rule in rules:
             fail(name, "RULE", f"{rule} is also {rules[rule][0]}'s rule")
         rules[rule] = (name, allowlist(name, text))
-    rows = [Row("architecture rules", str(len(rules)), "", f"`{ARCH_GLOB}`", {"arch:rules": len(rules)})]
-    for rule in sorted(rules, key=lambda r: int(r[1:])):
+    ids = sorted(rules, key=lambda r: int(r[1:]))
+    rows = [Row("architecture rules", str(len(rules)), "", f"`{ARCH_GLOB}`",
+                {"arch:rules": len(rules), "arch:rule-ids": ids})]
+    for rule in ids:
         name, entries = rules[rule]
         files, sites = len(entries), sum(c for _, c in entries)
         rows.append(Row(f"arch rule {rule} allowlist", f"{files} files, {sites} sites", "", f"`{name}` ALLOWED",
@@ -312,11 +322,12 @@ def mutation_rows():
     if not path(NIGHTLY).exists():
         return [Row("mutation floors", ABSENT, "", f"`{NIGHTLY}`")]
     scores, commit = measured_scores()
-    rows = []
-    for file, floor in sorted(floors().items()):
+    rows, named = [], sorted(floors().items())
+    for file, floor in named:
         score = scores.get(file)
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
         rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`", {f"floor:{file}": floor}))
+    rows[0].values["floor:files"] = [file for file, _ in named]
     return rows
 
 
@@ -414,24 +425,33 @@ def load_base(file):
         fail(name, "schema", "must be 1")
     vals = require_object(name, "values", base.get("values"))
     for key, v in vals.items():
-        if not (FLOOR_KEYS.match(key) or CEILING_KEYS.match(key)):
+        if LIST_KEYS.match(key):
+            if not isinstance(v, list) or not all(isinstance(e, str) and e for e in v):
+                fail(name, f"values.{key}", "must be a list of names")
+        elif FLOOR_KEYS.match(key) or CEILING_KEYS.match(key):
+            if not is_num(v):
+                fail(name, f"values.{key}", "must be a number")
+        else:
             fail(name, f"values.{key}", "is not a key this tool compares")
-        if not is_num(v):
-            fail(name, f"values.{key}", "must be a number")
     return vals
 
 
 def falls(base, tree):
-    """Every number of the tree that fell from the base's (or rose, for an allowlist)."""
+    """Every value of the tree that moved the wrong way from the base's: a number
+    that fell (or rose, for an allowlist), a list that lost an element, a key
+    that vanished."""
     out = []
     for key in sorted(base):
         b, t = base[key], tree.get(key)
-        if FLOOR_KEYS.match(key):
-            if t is None:
-                out.append(f"{key}: {b:g} at the base, gone from the tree")
-            elif t < b:
+        if t is None:
+            out.append(f"a key may not vanish: {key}")
+        elif LIST_KEYS.match(key):
+            for lost in sorted(set(b) - set(t)):
+                out.append(f"{key}: {lost} at the base, gone from the tree; a list may not lose an element")
+        elif FLOOR_KEYS.match(key):
+            if t < b:
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall")
-        elif t is not None and t > b:
+        elif t > b:
             out.append(f"{key}: {b:g} at the base, {t:g} in the tree; an allowlist may not grow")
     return out
 
