@@ -170,7 +170,7 @@ jobs:
   # base ref's (read as the ratchet job reads its record: the base branch's
   # tip on a PR, the commit before on a push): a changed margin, a dropped
   # entry or bench id, a rewritten run, or a new run that does not match
-  # this run's measure fails. The reference is the base's entry, never the
+  # this run's measure or is over the base's reference fails. The reference is the base's entry, never the
   # tree's; the comparison gates once the base's entry for this runner's CPU
   # carries five runs; until then it warns and passes, and with no base
   # nothing is gated. A runner CPU with no entry gates nothing and says so

@@ -165,25 +165,46 @@ class TheTreeCannotTurnTheGateOff(unittest.TestCase):
 
     def test_an_appended_slow_run_is_not_the_reference(self):
         # The PR appends a run 3x slower than the base's and the job measures
-        # at that speed: the appended run matches this run's measure, so the
-        # tree's check holds, and the reference is still the base's runs.
+        # at that speed: the appended run matches this run's measure, and
+        # the reference is still the base's runs.
         base = baseline(runs(bc.MIN_RUNS))
         tree = baseline(runs(bc.MIN_RUNS) + [run(scale=3.0)])
         lines, warnings, errors, regressions, gating, candidate = bc.judge(tree, base, measure(scale=3.0), CTX)
-        self.assertEqual(errors, [])
+        self.assertTrue(any("over the base's reference" in e and "+200.0%" in e for e in errors), errors)
         self.assertTrue(gating)
         self.assertEqual(len(regressions), 2, lines)
         self.assertTrue(any(l.endswith(" FAIL") for l in lines), lines)
         self.assertEqual(len(candidate["profiles"][KEY]["runs"]), bc.MIN_RUNS + 1, "the base plus this run")
 
-    def test_an_appended_slow_run_is_over_in_the_warn_only_period(self):
+    def test_a_3x_fifth_run_append_fails_in_the_warn_only_period(self):
+        # Four runs in the base: the measure is only over, but the fifth run
+        # the PR commits would switch the gate on with it in the reference.
         base = baseline(runs(bc.MIN_RUNS - 1))
         tree = baseline(runs(bc.MIN_RUNS - 1) + [run(scale=3.0)])
         lines, warnings, errors, regressions, gating, _ = bc.judge(tree, base, measure(scale=3.0), CTX)
-        self.assertEqual(errors, [])
+        self.assertTrue(any("appended run is over the base's reference" in e and "+200.0%" in e
+                            for e in errors), errors)
         self.assertFalse(gating)
         self.assertEqual(len(regressions), 2)
         self.assertTrue(any(l.endswith(" over") for l in lines), lines)
+
+    def test_a_10_percent_append_over_a_4_9_percent_measure_fails(self):
+        # The measure is within the margin of the reference and the appended
+        # run within the margin of the measure: the creep the ceiling stops.
+        base = baseline(runs(bc.MIN_RUNS))
+        tree = baseline(runs(bc.MIN_RUNS) + [run(scale=1.10)])
+        errors, regressions, gating, _ = judge(tree, base, measure(scale=1.049))
+        self.assertEqual((regressions, gating), ([], True))
+        self.assertTrue(any("appended run is over the base's reference" in e and "+10.0%" in e
+                            for e in errors), errors)
+        self.assertFalse(any("does not match this run's measure" in e for e in errors), errors)
+
+    def test_a_slow_re_record_fails_over_the_base_reference(self):
+        base = baseline(runs(bc.MIN_RUNS))
+        base["profiles"][KEY]["toolchain"] = "rustc 1.97.0 (bbbbbbbbb 2026-08-01)"
+        tree = baseline([run(scale=1.5)])
+        errors, *_ = judge(tree, base, measure(scale=1.5))
+        self.assertTrue(any("re-record" in e and "over the base's reference" in e for e in errors), errors)
 
     def test_no_base_gates_nothing(self):
         tree = baseline(runs(bc.MIN_RUNS))
@@ -228,6 +249,12 @@ class WhatTheGateLetsThrough(unittest.TestCase):
     def test_matching_appended_run_passes(self):
         errors, *_ = judge(baseline(runs(4) + [run(scale=0.97)]), baseline(runs(4)))
         self.assertEqual(errors, [])
+
+    def test_an_append_within_the_margin_of_the_reference_passes(self):
+        for n in (bc.MIN_RUNS - 1, bc.MIN_RUNS):
+            errors, regressions, _, _ = judge(baseline(runs(n) + [run(scale=1.049)]), baseline(runs(n)),
+                                              measure(scale=1.03))
+            self.assertEqual((errors, regressions), ([], []))
 
     def test_warn_only_below_five_runs(self):
         base = baseline(runs(4))
