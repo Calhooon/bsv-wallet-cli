@@ -97,9 +97,14 @@
     "095-signAction.ok.json",
     "096-createAction.templateToAbort.json",
     "097-abortAction.ok.json",
-    "098-relinquishOutput.ok.json",
-    "099-internalizeAction.basketInsertion.json",
-    "100-listOutputs.funded.json",
-    "101-listActions.funded.json"
+    "098-createAction.broadcast.json",
+    "099-relinquishOutput.ok.json",
+    "100-createAction.callerInput.json",
+    "101-signAction.spends.json",
+    "102-internalizeAction.basketInsertion.json",
+    "103-internalizeAction.badUnlock.json",
+    "104-internalizeAction.walletPayment.json",
+    "105-listOutputs.funded.json",
+    "106-listActions.funded.json"
   ]
 }

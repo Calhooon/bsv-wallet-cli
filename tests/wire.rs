@@ -22,8 +22,9 @@
 //! fixtures of one world run in their file order, so a fixture may read the
 //! state an earlier one of its world left (a certificate acquired, then
 //! listed). Nothing reaches the network: the header service is a local
-//! stub, the broadcaster a closed local port, and every other request goes
-//! through a proxy on a closed local port.
+//! stub, the broadcaster a closed local port (in `funded`, a local stub
+//! that takes every post), and every other request goes through a proxy on
+//! a closed local port.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -104,8 +105,7 @@ impl J {
             at = match at {
                 J::Obj(fields) => fields
                     .iter_mut()
-                    .find(|(k, _)| k == step)
-                    .map(|(_, v)| v)
+                    .find_map(|(k, v)| (k == step).then_some(v))
                     .unwrap_or_else(|| panic!("no `{step}` on the way to {pointer}")),
                 J::Arr(items) => {
                     let i: usize = step
@@ -290,7 +290,7 @@ const KEPT_HEADERS: [&str; 9] = [
 // ---------------------------------------------------------------------------
 
 /// Keys whose values differ on every run, anywhere in a body.
-const VOLATILE_KEYS: [&str; 7] = [
+const VOLATILE_KEYS: [&str; 6] = [
     // AES-GCM under a fresh random IV: a new ciphertext each call.
     "ciphertext",
     // A key linkage revealed is encrypted for the verifier the same way.
@@ -304,9 +304,6 @@ const VOLATILE_KEYS: [&str; 7] = [
     // The reference of a signable transaction: the toolbox draws it at
     // random.
     "reference",
-    // The clock's now on the toolbox's note of an immediate post that drew
-    // no accepting word (the `broadcast` hint).
-    "when",
 ];
 
 /// The placeholder for a volatile value: its shape, never its bytes.
@@ -368,41 +365,31 @@ fn normalize(v: J) -> J {
 /// held coin's age in a refusal's listing (`<n> min old`), and the
 /// platform's errno in a refused connection's words (`os error <n>`).
 fn normalize_text(s: &str) -> String {
-    let s = replace_number_after(s, "127.0.0.1:", "<port>");
-    let s = replace_number_after(&s, "os error ", "<errno>");
-    replace_number_before(&s, " min old", "<minutes>")
+    let s = replace_number(s, "127.0.0.1:", "<port>", true);
+    let s = replace_number(&s, "os error ", "<errno>", true);
+    replace_number(&s, " min old", "<minutes>", false)
 }
 
-/// Every run of digits right after `marker`, replaced by `placeholder`.
-fn replace_number_after(s: &str, marker: &str, placeholder: &str) -> String {
+/// Every run of digits right after `marker` (`after`), or right before it,
+/// replaced by `placeholder`.
+fn replace_number(s: &str, marker: &str, placeholder: &str, after: bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(at) = rest.find(marker) {
-        out.push_str(&rest[..at + marker.len()]);
-        rest = &rest[at + marker.len()..];
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits > 0 {
-            out.push_str(placeholder);
+        let (head, tail) = (&rest[..at], &rest[at + marker.len()..]);
+        if after {
+            let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+            out.push_str(head);
+            out.push_str(marker);
+            out.push_str(if digits > 0 { placeholder } else { "" });
+            rest = &tail[digits..];
+        } else {
+            let digits = head.bytes().rev().take_while(u8::is_ascii_digit).count();
+            out.push_str(&head[..head.len() - digits]);
+            out.push_str(if digits > 0 { placeholder } else { "" });
+            out.push_str(marker);
+            rest = tail;
         }
-        rest = &rest[digits..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Every run of digits right before `marker`, replaced by `placeholder`.
-fn replace_number_before(s: &str, marker: &str, placeholder: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find(marker) {
-        let head = &rest[..at];
-        let digits = head.bytes().rev().take_while(u8::is_ascii_digit).count();
-        out.push_str(&head[..head.len() - digits]);
-        if digits > 0 {
-            out.push_str(placeholder);
-        }
-        out.push_str(marker);
-        rest = &rest[at + marker.len()..];
     }
     out.push_str(rest);
     out
@@ -457,10 +444,23 @@ const FUNDED_COINS: [(u8, u32, u64, &str); 4] = [
     (0xa3, 899_903, 30_000, "Qw=="),
     (0xa4, 899_904, 20_000, "RA=="),
 ];
-/// The stranger's payment `internalizeAction` accepts in `funded`: its
-/// mined parent's seed and height.
-const STRANGER_SEED: u8 = 0xe1;
-const STRANGER_AT: u32 = 899_905;
+/// The stranger's key: fixed, so each payment's signature (RFC 6979) and
+/// txid are the same on every run.
+const STRANGER_KEY: &str = "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e";
+/// The derivation of the stranger's BRC-29 payment to the wallet (the
+/// `wallet payment` protocol's remittance).
+const PAYMENT_PREFIX: &str = "eDQwMg==";
+const PAYMENT_SUFFIX: &str = "cGF5";
+/// A puzzle the caller unlocks in `signAction`'s `spends`: `OP_1
+/// OP_EQUAL`, unlocked by `OP_1`. Its coin's mined parent's seed, height
+/// and satoshis.
+const PUZZLE_LOCK: &str = "5187";
+const PUZZLE_UNLOCK: &str = "51";
+const PUZZLE: (u8, u32, u64) = (0xe4, 899_908, 5_000);
+/// The toolbox's fee for the puzzle's one input (one byte of unlocking
+/// script) and one P2PKH output: the template asks for the puzzle less
+/// this, so no change output is made.
+const FEE_PUZZLE_1_OUT: u64 = 9;
 /// The toolbox's fee for one P2PKH input and one output, at its rate: a
 /// case asks for exactly the coin less this, so no change output is made
 /// (a change output's derivation is drawn at random, and the built bytes
@@ -489,13 +489,13 @@ async fn header_stub(down: bool, roots: HashMap<u32, String>) -> String {
         serde_json::json!({
             "status": "success",
             "value": {
-                "version": 536870912u32,
+                "version": 536_870_912_u32,
                 "previousHash": "0".repeat(64),
                 // Every seeded proof is a one-leaf block: its root is the
                 // coin's txid.
                 "merkleRoot": root,
-                "time": 1700000000u32,
-                "bits": 402917821u32,
+                "time": 1_700_000_000_u32,
+                "bits": 402_917_821_u32,
                 "nonce": 7u32,
                 "height": height,
                 "hash": format!("{:064x}", height),
@@ -521,17 +521,52 @@ async fn header_stub(down: bool, roots: HashMap<u32, String>) -> String {
                 "/findHeaderHexForHeight",
                 get(|Query(q): Query<HashMap<String, u32>>| async move {
                     let height = q.get("height").copied().unwrap_or(0);
-                    let root = roots.get(&height).map(String::as_str).unwrap_or(RECEIVED);
+                    let root = roots.get(&height).map_or(RECEIVED, String::as_str);
                     axum::Json(header(height, root))
                 }),
             )
     };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.ok();
-    });
-    format!("http://{addr}")
+    serve_local(app).await
+}
+
+/// Serve `app` on a fresh local port for the run's life: its base URL.
+async fn serve_local(app: Router) -> String {
+    use std::future::IntoFuture;
+    let socket = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("a local port");
+    let url = format!("http://{}", socket.local_addr().expect("its address"));
+    tokio::spawn(axum::serve(socket, app).into_future());
+    url
+}
+
+/// A local ARC that takes every post (the mock services'
+/// `post_beef_success`, over the wire: the server's state holds the real
+/// `Services`): `POST /v1/tx` answers `SEEN_ON_NETWORK` for the posted
+/// transaction, the BEEF's subject or the raw transaction's own txid. Every
+/// other request is a 404.
+async fn arc_stub() -> String {
+    use axum::routing::post;
+    async fn take(body: axum::body::Bytes) -> axum::Json<serde_json::Value> {
+        let bytes = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["rawTx"].as_str().and_then(|h| hex::decode(h).ok()))
+            .unwrap_or_else(|| body.to_vec());
+        let txid = match bsv_sdk::transaction::Beef::from_binary(&bytes) {
+            Ok(beef) => beef
+                .txs
+                .last()
+                .map(bsv_sdk::transaction::BeefTx::txid)
+                .unwrap_or_default(),
+            Err(_) => bsv_sdk::transaction::Transaction::from_binary(&bytes)
+                .as_ref()
+                .map(bsv_sdk::transaction::Transaction::id)
+                .unwrap_or_default(),
+        };
+        axum::Json(serde_json::json!({"txid": txid, "txStatus": "SEEN_ON_NETWORK"}))
+    }
+    let app = Router::new().route("/v1/tx", post(take));
+    serve_local(app).await
 }
 
 /// The time of every seeded row: half an hour before the world is built,
@@ -570,8 +605,7 @@ fn funded_lock(key: &PrivateKey, suffix: &str) -> Vec<u8> {
             &Counterparty::Self_,
         )
         .unwrap();
-    let hash = signing.public_key().hash160();
-    [&[0x76, 0xa9, 0x14][..], &hash[..], &[0x88, 0xac][..]].concat()
+    p2pkh(&signing.public_key().hash160())
 }
 
 /// The `funded` world's coins ([`FUNDED_COINS`]): each a mined coin the
@@ -583,23 +617,16 @@ async fn seed_funded(
     identity: &str,
     key: &PrivateKey,
 ) -> HashMap<u32, String> {
-    let (user, _) = storage.find_or_insert_user(identity).await.unwrap();
-    let basket = storage
-        .find_or_create_default_basket(user.user_id)
-        .await
-        .unwrap()
-        .basket_id;
-    let pool = storage.writer().clone();
+    let rows = Rows::open(storage, identity).await;
     // The basket wants no more coins than it has: the toolbox then makes
     // no change output for an action that spends a coin exactly (with the
     // default of six wanted, it adds change outputs, each with a random
     // derivation, and the built bytes move on every run).
     sqlx::query("UPDATE output_baskets SET number_of_desired_utxos = 0 WHERE basket_id = ?")
-        .bind(basket)
-        .execute(&pool)
+        .bind(rows.basket)
+        .execute(&rows.pool)
         .await
         .unwrap();
-    let now = row_time();
     let mut roots = HashMap::new();
     for (seed, height, satoshis, suffix) in FUNDED_COINS {
         let lock = funded_lock(key, suffix);
@@ -607,40 +634,120 @@ async fn seed_funded(
         let txid = parent.id();
         roots.insert(height, txid.clone());
         let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, height);
+        let proven = rows
+            .proven(
+                &txid,
+                height,
+                &txid,
+                one_leaf.to_binary(),
+                parent.to_binary(),
+            )
+            .await;
+        rows.coin(Coin {
+            txid: &txid,
+            proven: Some(proven),
+            satoshis,
+            description: "a funded coin",
+            raw: parent.to_binary(),
+            lock,
+            derivation: Some(suffix),
+        })
+        .await;
+    }
+    for payment in Payment::ALL {
+        let (parent, _) = stranger_payment(payment, key).await;
+        roots.insert(payment.parent_at().1, parent.id());
+    }
+    roots.insert(PUZZLE.1, puzzle_parent().0.id());
+    roots
+}
+
+/// A seeded world's way into the store: the wallet's user, its default
+/// basket, and the store's writer.
+struct Rows {
+    pool: sqlx::SqlitePool,
+    user: i64,
+    basket: i64,
+}
+
+/// A coin of the wallet's, written as the toolbox would have stored it.
+struct Coin<'a> {
+    txid: &'a str,
+    /// Its creator's proof row, if it is mined.
+    proven: Option<i64>,
+    satoshis: u64,
+    description: &'a str,
+    /// Its creator's bytes, as stored.
+    raw: Vec<u8>,
+    lock: Vec<u8>,
+    /// The suffix of its BRC-29 derivation under [`FUNDED_PREFIX`], for a
+    /// coin the wallet signs for.
+    derivation: Option<&'a str>,
+}
+
+impl Rows {
+    async fn open(storage: &StorageSqlx, identity: &str) -> Rows {
+        let user = storage
+            .find_or_insert_user(identity)
+            .await
+            .unwrap()
+            .0
+            .user_id;
+        let basket = storage.find_or_create_default_basket(user).await;
+        Rows {
+            pool: storage.writer().clone(),
+            user,
+            basket: basket.unwrap().basket_id,
+        }
+    }
+
+    /// A proof row: `txid` mined at `height` in a block whose root is
+    /// `root`. Its id.
+    async fn proven(
+        &self,
+        txid: &str,
+        height: u32,
+        root: &str,
+        path: Vec<u8>,
+        raw: Vec<u8>,
+    ) -> i64 {
+        let now = row_time();
         sqlx::query(
             "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
              VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&txid)
-        .bind(height as i64)
+        .bind(txid)
+        .bind(i64::from(height))
         .bind(format!("{height:064x}"))
-        .bind(&txid)
-        .bind(one_leaf.to_binary())
-        .bind(parent.to_binary())
+        .bind(root)
+        .bind(path)
+        .bind(raw)
         .bind(now)
         .bind(now)
-        .execute(&pool)
+        .execute(&self.pool)
         .await
-        .unwrap();
-        let proven_id: i64 =
-            sqlx::query_scalar("SELECT proven_tx_id FROM proven_txs WHERE txid = ?")
-                .bind(&txid)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        .unwrap()
+        .last_insert_rowid()
+    }
+
+    /// A completed incoming transaction and its one output, the coin.
+    async fn coin(&self, coin: Coin<'_>) {
+        let now = row_time();
+        let satoshis = i64::try_from(coin.satoshis).unwrap();
         let tx_row = sqlx::query(
             "INSERT INTO transactions (user_id, proven_tx_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, 'completed', ?, 0, ?, 1, 0, 'a funded coin', ?, ?, ?, ?)",
+             VALUES (?, ?, 'completed', ?, 0, ?, 1, 0, ?, ?, ?, ?, ?)",
         )
-        .bind(user.user_id)
-        .bind(proven_id)
-        .bind(format!("ref-{}", &txid[..8]))
-        .bind(satoshis as i64)
-        .bind(&txid)
-        .bind(parent.to_binary())
+        .bind(self.user)
+        .bind(coin.proven)
+        .bind(format!("ref-{}", &coin.txid[..8]))
+        .bind(satoshis)
+        .bind(coin.description)
+        .bind(coin.txid)
+        .bind(coin.raw)
         .bind(now)
         .bind(now)
-        .execute(&pool)
+        .execute(&self.pool)
         .await
         .unwrap()
         .last_insert_rowid();
@@ -648,144 +755,207 @@ async fn seed_funded(
             "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, created_at, updated_at) \
              VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?, ?, ?)",
         )
-        .bind(user.user_id)
+        .bind(self.user)
         .bind(tx_row)
-        .bind(basket)
-        .bind(satoshis as i64)
-        .bind(&lock)
-        .bind(&txid)
-        .bind(FUNDED_PREFIX)
-        .bind(suffix)
+        .bind(self.basket)
+        .bind(satoshis)
+        .bind(coin.lock)
+        .bind(coin.txid)
+        .bind(coin.derivation.map(|_| FUNDED_PREFIX))
+        .bind(coin.derivation)
         .bind(now)
         .bind(now)
-        .execute(&pool)
+        .execute(&self.pool)
         .await
         .unwrap();
     }
-    let (stranger, _) = stranger_payment();
-    roots.insert(STRANGER_AT, stranger.id());
-    roots
 }
 
-/// A stranger's payment to the wallet: a mined parent ([`STRANGER_SEED`],
-/// [`STRANGER_AT`]) and the child spending it, paying 9,000 to [`P2PKH`].
-/// (the parent, the child's AtomicBEEF).
-fn stranger_payment() -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
-    let parent = parent_tx(STRANGER_SEED, 10_000, &hex::decode(P2PKH).unwrap());
+/// The stranger's payments `internalizeAction` is offered in `funded`.
+/// Each is a mined parent paying the stranger's P2PKH and a child spending
+/// it.
+#[derive(Clone, Copy)]
+enum Payment {
+    /// A valid spend paying 9,000 to [`P2PKH`] (a basket insertion).
+    Insertion,
+    /// The same, its input's unlocking script `OP_0`: a spend whose script
+    /// fails (`OP_EQUALVERIFY`).
+    BadUnlock,
+    /// A valid spend paying 9,000 to the wallet's BRC-29 key for the
+    /// stranger, [`PAYMENT_PREFIX`] and [`PAYMENT_SUFFIX`].
+    Wallet,
+}
+
+impl Payment {
+    const ALL: [Payment; 3] = [Payment::Insertion, Payment::BadUnlock, Payment::Wallet];
+
+    /// The seed of the parent's input and the height it is mined at.
+    fn parent_at(self) -> (u8, u32) {
+        match self {
+            Payment::Insertion => (0xe1, 899_905),
+            Payment::BadUnlock => (0xe2, 899_906),
+            Payment::Wallet => (0xe3, 899_907),
+        }
+    }
+
+    /// The lock the payment's one output pays.
+    fn pays_to(self, wallet: &PrivateKey) -> Vec<u8> {
+        use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
+        match self {
+            Payment::Insertion | Payment::BadUnlock => hex::decode(P2PKH).unwrap(),
+            // As the payer derives it: the stranger's key, the wallet the
+            // counterparty.
+            Payment::Wallet => p2pkh(
+                &KeyDeriver::new(Some(stranger_key()))
+                    .derive_public_key(
+                        &Protocol::new(SecurityLevel::Counterparty, BRC29_PROTOCOL),
+                        &format!("{PAYMENT_PREFIX} {PAYMENT_SUFFIX}"),
+                        &Counterparty::Other(wallet.public_key()),
+                        false,
+                    )
+                    .unwrap()
+                    .hash160(),
+            ),
+        }
+    }
+}
+
+fn stranger_key() -> PrivateKey {
+    PrivateKey::from_hex(STRANGER_KEY).unwrap()
+}
+
+/// The P2PKH lock of `hash`.
+fn p2pkh(hash: &[u8]) -> Vec<u8> {
+    [&[0x76, 0xa9, 0x14][..], hash, &[0x88, 0xac][..]].concat()
+}
+
+/// A stranger's payment ([`Payment`]): (its mined parent, the child's
+/// `AtomicBEEF`). The spend is checked here, before it is offered: a valid
+/// one verifies (its script runs true, its parent's proof at its height),
+/// the bad one does not.
+async fn stranger_payment(
+    payment: Payment,
+    wallet: &PrivateKey,
+) -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
+    use bsv_sdk::script::templates::P2PKH as Template;
+    use bsv_sdk::script::SignOutputs;
+    let stranger = stranger_key();
+    let (seed, at) = payment.parent_at();
+    let mut parent = parent_tx(seed, 10_000, &p2pkh(&stranger.public_key().hash160()));
+    parent.merkle_path = Some(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
+        &parent.id(),
+        at,
+    ));
     let mut child = bsv_sdk::transaction::Transaction::new();
-    let mut input = bsv_sdk::transaction::TransactionInput::new(parent.id(), 0);
-    input.unlocking_script = Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
+    let mut input =
+        bsv_sdk::transaction::TransactionInput::with_source_transaction(parent.clone(), 0);
+    match payment {
+        Payment::BadUnlock => {
+            input.unlocking_script =
+                Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
+        }
+        Payment::Insertion | Payment::Wallet => input
+            .set_unlocking_script_template(Template::unlock(&stranger, SignOutputs::All, false)),
+    }
     child.add_input(input).unwrap();
     child
         .add_output(bsv_sdk::transaction::TransactionOutput::new(
             9_000,
-            bsv_sdk::script::LockingScript::from_hex(P2PKH).unwrap(),
+            bsv_sdk::script::LockingScript::from_binary(&payment.pays_to(wallet)).unwrap(),
         ))
         .unwrap();
+    child.sign().await.unwrap();
+    let verified = child
+        .verify(
+            &bsv_sdk::transaction::AlwaysValidChainTracker::new(at),
+            None,
+        )
+        .await
+        .unwrap_or(false);
+    assert_eq!(
+        verified,
+        !matches!(payment, Payment::BadUnlock),
+        "the stranger's spend verifies exactly when it is meant to"
+    );
     let mut beef = bsv_sdk::transaction::Beef::new();
-    beef.merge_bump(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
-        &parent.id(),
-        STRANGER_AT,
-    ));
+    beef.merge_bump(parent.merkle_path.clone().unwrap());
     beef.merge_transaction(parent.clone());
     beef.merge_transaction(child.clone());
     let atomic = beef.to_binary_atomic(&child.id()).unwrap();
     (parent, atomic)
 }
 
+/// The puzzle's mined parent ([`PUZZLE`]) and the BEEF carrying it with its
+/// proof (a template's `inputBEEF`).
+fn puzzle_parent() -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
+    let (seed, at, satoshis) = PUZZLE;
+    let parent = parent_tx(seed, satoshis, &hex::decode(PUZZLE_LOCK).unwrap());
+    let mut beef = bsv_sdk::transaction::Beef::new();
+    beef.merge_bump(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
+        &parent.id(),
+        at,
+    ));
+    beef.merge_transaction(parent.clone());
+    (parent, beef.to_binary())
+}
+
 /// The world's rows, written into the store as the tracker and the toolbox
 /// would leave them (no transaction here was ever built or broadcast).
 async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
-    let (user, _) = storage.find_or_insert_user(identity).await.unwrap();
-    let basket = storage
-        .find_or_create_default_basket(user.user_id)
-        .await
-        .unwrap()
-        .basket_id;
-    let pool = storage.writer().clone();
+    let rows = Rows::open(storage, identity).await;
     // The tracker's table, made by a read of it.
     bsv_wallet_cli::tracker_host::stored_word(storage, UNKNOWN)
         .await
         .unwrap();
-    let now = row_time();
+    let mined = Some(i64::from(MINED_AT));
     for (txid, word, height, reask) in [
-        (MINED, "mined", Some(MINED_AT as i64), None),
+        (MINED, "mined", mined, None),
         (PENDING, "seen", None, Some("age")),
-        (RECEIVED, "mined", Some(MINED_AT as i64), None),
+        (RECEIVED, "mined", mined, None),
     ] {
         sqlx::query("INSERT INTO tracker_states (txid, word, height, reask) VALUES (?, ?, ?, ?)")
             .bind(txid)
             .bind(word)
             .bind(height)
             .bind(reask)
-            .execute(&pool)
+            .execute(&rows.pool)
             .await
             .unwrap();
     }
     // The tracker's mined word's proof (its root only is read), and the
     // received coin's: a one-leaf block at MINED_AT, so its root is its
-    // txid and the header stub answers that root.
+    // txid and the header stub answers that root. Neither stores its
+    // transaction's bytes.
+    let stub = vec![1u8, 0, 0, 0];
+    rows.proven(MINED, MINED_AT, ROOT, vec![0u8], stub.clone())
+        .await;
     let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(RECEIVED, MINED_AT);
-    for (txid, root, path) in [
-        (MINED, ROOT, vec![0u8]),
-        (RECEIVED, RECEIVED, one_leaf.to_binary()),
-    ] {
-        sqlx::query(
-            "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, 0, ?, ?, ?, X'01000000', ?, ?)",
+    let received = rows
+        .proven(
+            RECEIVED,
+            MINED_AT,
+            RECEIVED,
+            one_leaf.to_binary(),
+            stub.clone(),
         )
-        .bind(txid)
-        .bind(MINED_AT as i64)
-        .bind(format!("{:064x}", MINED_AT))
-        .bind(root)
-        .bind(path)
-        .bind(now)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    // A received coin, its creator mined at MINED_AT.
-    let proven_id: i64 = sqlx::query_scalar("SELECT proven_tx_id FROM proven_txs WHERE txid = ?")
-        .bind(RECEIVED)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let coins: Vec<(&str, Option<i64>)> = if frozen {
-        vec![(FROZEN, None)]
+        .await;
+    // A received coin, its creator mined at MINED_AT; or one of ours the
+    // chain feed froze, its creator unproven.
+    let (txid, proven) = if frozen {
+        (FROZEN, None)
     } else {
-        vec![(RECEIVED, Some(proven_id))]
+        (RECEIVED, Some(received))
     };
-    for (txid, proven) in coins {
-        let tx_row = sqlx::query(
-            "INSERT INTO transactions (user_id, proven_tx_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, 'completed', ?, 0, 50000, 1, 0, 'a received coin', ?, X'01000000', ?, ?)",
-        )
-        .bind(user.user_id)
-        .bind(proven)
-        .bind(format!("ref-{}", &txid[..8]))
-        .bind(txid)
-        .bind(now)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .unwrap()
-        .last_insert_rowid();
-        sqlx::query(
-            "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, created_at, updated_at) \
-             VALUES (?, ?, ?, 0, 50000, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?)",
-        )
-        .bind(user.user_id)
-        .bind(tx_row)
-        .bind(basket)
-        .bind(hex::decode(P2PKH).unwrap())
-        .bind(txid)
-        .bind(now)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    rows.coin(Coin {
+        txid,
+        proven,
+        satoshis: 50_000,
+        description: "a received coin",
+        raw: stub,
+        lock: hex::decode(P2PKH).unwrap(),
+        derivation: None,
+    })
+    .await;
 }
 
 impl World {
@@ -803,61 +973,18 @@ impl World {
     ///   feed status not JSON, the states table without its columns).
     /// - `busy`: a file store whose write lock another connection holds.
     /// - `funded`: four mined coins the wallet can sign for
-    ///   ([`FUNDED_COINS`]), and the header stub answering a stranger's
-    ///   payment's block ([`STRANGER_AT`]).
+    ///   ([`FUNDED_COINS`]), the header stub answering the blocks of the
+    ///   stranger's payments ([`Payment`]) and of the puzzle ([`PUZZLE`]),
+    ///   and a broadcaster that takes every post ([`arc_stub`]).
     ///
     /// Any other name is a panic naming it.
     async fn build(name: &str) -> World {
         known_world(name);
         let mut keep: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
         let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
-        let identity = key.public_key().to_hex();
-        let storage = if name == "busy" {
-            let tmp = tempfile::TempDir::new().unwrap();
-            let path = tmp.path().join("wire.db");
-            let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-            keep.push(Box::new(tmp));
-            storage
-        } else {
-            StorageSqlx::in_memory().await.unwrap()
-        };
-        storage.migrate("wire", &identity).await.unwrap();
-        storage.make_available().await.unwrap();
-        let mut roots = HashMap::new();
-        match name {
-            "tracked" => seed(&storage, &identity, true).await,
-            "received" | "headers-down" => seed(&storage, &identity, false).await,
-            "funded" => roots = seed_funded(&storage, &identity, &key).await,
-            _ => {}
-        }
-        if name == "broken" {
-            sqlx::query("DROP TABLE outputs")
-                .execute(storage.writer())
-                .await
-                .unwrap();
-        }
-        if name == "broken-host" {
-            // The tracker's tables, made by a read, then spoiled: a feed
-            // status that is not JSON, and a states table that keeps the
-            // columns the host's migration checks for and none it reads.
-            bsv_wallet_cli::tracker_host::stored_word(&storage, UNKNOWN)
-                .await
-                .unwrap();
-            for sql in [
-                "INSERT INTO tracker_meta (key, value) VALUES ('feed_status', 'not json')",
-                "DROP TABLE tracker_states",
-                "CREATE TABLE tracker_states (txid TEXT PRIMARY KEY, chain TEXT NOT NULL DEFAULT '[]', verdict TEXT, follow_up TEXT)",
-            ] {
-                sqlx::query(sql).execute(storage.writer()).await.unwrap();
-            }
-        }
-        let stub = header_stub(name == "headers-down", roots).await;
-        let mut options = ServicesOptions::mainnet()
-            .with_chaintracks_url(stub)
-            .without_bananablocks();
-        options.arc_url = "http://127.0.0.1:9".to_string();
-        options.arc_gorillapool_url = None;
-        let services = Services::with_options(Chain::Main, options).unwrap();
+        let storage = World::store(name, &mut keep).await;
+        let roots = World::fill(name, &storage, &key).await;
+        let services = World::services(name, roots).await;
         if name == "tracked" {
             bsv_wallet_cli::tracker_host::deliver_chain_event(
                 &storage,
@@ -878,20 +1005,8 @@ impl World {
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
         // The wallet is opened (its opening writes made), then the lock.
         if name == "busy" {
-            use sqlx::{ConnectOptions, Connection};
-            let path = storage_path(&keep);
-            let mut other = sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(path)
-                .connect()
-                .await
-                .unwrap();
-            sqlx::query("BEGIN IMMEDIATE")
-                .execute(&mut other)
-                .await
-                .unwrap();
-            // Never closed: the lock is held for the world's life.
-            let _ = other.ping().await;
-            keep.push(Box::new(other));
+            let lock = hold_write_lock(&storage_path(&keep)).await;
+            keep.push(Box::new(lock));
         }
         let mut config = ServerConfig::default();
         match name {
@@ -906,35 +1021,79 @@ impl World {
         }
     }
 
+    /// The world's store, migrated: a file under a temp directory `keep`
+    /// holds for `busy` (another connection must open it), else in memory.
+    async fn store(name: &str, keep: &mut Vec<Box<dyn std::any::Any + Send>>) -> StorageSqlx {
+        let storage = if name == "busy" {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let path = tmp.path().join("wire.db");
+            let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+            keep.push(Box::new(tmp));
+            storage
+        } else {
+            StorageSqlx::in_memory().await.unwrap()
+        };
+        let identity = PrivateKey::from_hex(ROOT_KEY)
+            .unwrap()
+            .public_key()
+            .to_hex();
+        storage.migrate("wire", &identity).await.unwrap();
+        storage.make_available().await.unwrap();
+        storage
+    }
+
+    /// The world's rows (seeded or spoiled): the roots the header stub must
+    /// answer, by height.
+    async fn fill(name: &str, storage: &StorageSqlx, key: &PrivateKey) -> HashMap<u32, String> {
+        let identity = key.public_key().to_hex();
+        match name {
+            "tracked" => seed(storage, &identity, true).await,
+            "received" | "headers-down" => seed(storage, &identity, false).await,
+            "funded" => return seed_funded(storage, &identity, key).await,
+            "broken" => {
+                sqlx::query("DROP TABLE outputs")
+                    .execute(storage.writer())
+                    .await
+                    .unwrap();
+            }
+            "broken-host" => {
+                // The tracker's tables, made by a read, then spoiled: a feed
+                // status that is not JSON, and a states table that keeps the
+                // columns the host's migration checks for and none it reads.
+                bsv_wallet_cli::tracker_host::stored_word(storage, UNKNOWN)
+                    .await
+                    .unwrap();
+                for sql in [
+                    "INSERT INTO tracker_meta (key, value) VALUES ('feed_status', 'not json')",
+                    "DROP TABLE tracker_states",
+                    "CREATE TABLE tracker_states (txid TEXT PRIMARY KEY, chain TEXT NOT NULL DEFAULT '[]', verdict TEXT, follow_up TEXT)",
+                ] {
+                    sqlx::query(sql).execute(storage.writer()).await.unwrap();
+                }
+            }
+            _ => {}
+        }
+        HashMap::new()
+    }
+
+    /// The toolbox's services, pointed at the world's stubs.
+    async fn services(name: &str, roots: HashMap<u32, String>) -> Services {
+        let stub = header_stub(name == "headers-down", roots).await;
+        let mut options = ServicesOptions::mainnet()
+            .with_chaintracks_url(stub)
+            .without_bananablocks();
+        options.arc_url = if name == "funded" {
+            arc_stub().await
+        } else {
+            "http://127.0.0.1:9".to_string()
+        };
+        options.arc_gorillapool_url = None;
+        Services::with_options(Chain::Main, options).unwrap()
+    }
+
     /// The normalized response, and the JSON body as served.
     async fn serve_raw(&self, req: &Req) -> (Resp, Option<J>) {
-        let mut builder = Request::builder()
-            .method(req.method.as_str())
-            .uri(req.path.as_str());
-        for (k, v) in &req.headers {
-            builder = builder.header(k, v);
-        }
-        assert!(
-            req.bind.is_empty() || !req.json.as_ref().is_some_and(has_bound_marker),
-            "{} {}: a bound value was not resolved before serving",
-            req.method,
-            req.path
-        );
-        let body = match (&req.json, &req.raw, req.fill) {
-            (Some(json), _, _) => {
-                builder = builder.header("content-type", "application/json");
-                Body::from(json.compact())
-            }
-            (None, Some(raw), _) => Body::from(raw.clone()),
-            (None, None, Some(fill)) => Body::from(" ".repeat(fill)),
-            (None, None, None) => Body::empty(),
-        };
-        let response = self
-            .router
-            .clone()
-            .oneshot(builder.body(body).unwrap())
-            .await
-            .unwrap();
+        let response = self.router.clone().oneshot(req.to_http()).await.unwrap();
         let status = response.status().as_u16();
         let headers = KEPT_HEADERS
             .iter()
@@ -951,35 +1110,56 @@ impl World {
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        match J::parse(&bytes) {
-            Some(json) => {
-                // The body is compact JSON in its own key order: what the
-                // fixture compares is the body itself.
-                assert_eq!(
-                    json.compact().as_bytes(),
-                    &bytes[..],
-                    "{} {}: the body is not compact JSON",
-                    req.method,
-                    req.path
-                );
-                let resp = Resp {
-                    status,
-                    headers,
-                    json: Some(normalize(json.clone())),
-                    text: None,
-                };
-                (resp, Some(json))
-            }
-            None => {
-                let resp = Resp {
-                    status,
-                    headers,
-                    json: None,
-                    text: Some(normalize_text(&String::from_utf8_lossy(&bytes))),
-                };
-                (resp, None)
-            }
+        let mut resp = Resp {
+            status,
+            headers,
+            json: None,
+            text: None,
+        };
+        let Some(json) = J::parse(&bytes) else {
+            resp.text = Some(normalize_text(&String::from_utf8_lossy(&bytes)));
+            return (resp, None);
+        };
+        // The body is compact JSON in its own key order: what the fixture
+        // compares is the body itself.
+        assert_eq!(
+            json.compact().as_bytes(),
+            &bytes[..],
+            "{} {}: the body is not compact JSON",
+            req.method,
+            req.path
+        );
+        resp.json = Some(normalize(json.clone()));
+        (resp, Some(json))
+    }
+}
+
+impl Req {
+    /// The request as sent: its headers, and its body (`json` with its
+    /// content type, `raw`, a `fill` of spaces, or none).
+    fn to_http(&self) -> Request<Body> {
+        assert!(
+            self.bind.is_empty() || !self.json.as_ref().is_some_and(has_bound_marker),
+            "{} {}: a bound value was not resolved before serving",
+            self.method,
+            self.path
+        );
+        let mut builder = Request::builder()
+            .method(self.method.as_str())
+            .uri(self.path.as_str());
+        for (k, v) in &self.headers {
+            builder = builder.header(k, v);
         }
+        let body = match (&self.json, &self.raw, self.fill) {
+            (Some(json), _, _) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(json.compact())
+            }
+            (None, Some(raw), _) => Body::from(raw.clone()),
+            (None, None, Some(fill)) => Body::from(" ".repeat(fill)),
+            (None, None, None) => Body::empty(),
+        };
+        builder.body(body).unwrap()
     }
 }
 
@@ -1025,6 +1205,23 @@ fn resolve(file: &str, req: &Req, served: &HashMap<String, J>) -> Req {
             .set_pointer(at, value.clone());
     }
     req
+}
+
+/// Another connection to the store at `path`, holding its write lock
+/// (never closed: the lock is held for as long as it is kept).
+async fn hold_write_lock(path: &Path) -> sqlx::SqliteConnection {
+    use sqlx::{ConnectOptions, Connection};
+    let mut other = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut other)
+        .await
+        .unwrap();
+    let _ = other.ping().await;
+    other
 }
 
 fn storage_path(keep: &[Box<dyn std::any::Any + Send>]) -> PathBuf {
@@ -1247,11 +1444,80 @@ impl Req {
     }
 }
 
+/// Every case, in order: the order is the files' (and a world's state
+/// runs through it).
 async fn record_all(r: &mut Recorder) {
-    use serde_json::json;
-    let pk = |protocol: &str, key_id: &str| json!({"protocolID": [2, protocol], "keyID": key_id, "counterparty": G});
+    record_status_and_keys(r).await;
+    record_signatures(r).await;
+    record_crypto(r).await;
+    record_linkage(r).await;
+    record_malformed(r).await;
+    record_empty_wallet(r).await;
+    record_unknown_references(r).await;
+    record_certificate_spelling(r).await;
+    record_certificates(r).await;
+    record_unknown_certificates_and_discovery(r).await;
+    record_host_routes(r).await;
+    record_arc_callback(r).await;
+    record_bearer(r).await;
+    record_preflights(r).await;
+    record_gate_refusals(r).await;
+    record_store_faults(r).await;
+    record_funded_sign(r).await;
+    record_funded_abort_and_broadcast(r).await;
+    record_funded_relinquish_and_caller_input(r).await;
+    record_payments_and_listings(r).await;
+}
 
-    // --- Status (each served on GET and POST).
+/// A key derivation request: `protocol` at level 2, `key_id`, counterparty
+/// [`G`].
+fn pk(protocol: &str, key_id: &str) -> serde_json::Value {
+    serde_json::json!({"protocolID": [2, protocol], "keyID": key_id, "counterparty": G})
+}
+
+/// A certificate request's body: the certificate's type under `type_key`
+/// (BRC-100's `type`, or the server's `certificateType`), then `rest`.
+fn typed(type_key: &str, rest: &serde_json::Value) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    body.insert(type_key.to_string(), CERT_TYPE.into());
+    body.extend(rest.as_object().cloned().unwrap_or_default());
+    body.into()
+}
+
+/// An `acquireCertificate` body, the `direct` protocol.
+fn acquire_body(type_key: &str) -> serde_json::Value {
+    let rest = serde_json::json!({"certifier": G, "acquisitionProtocol": "direct",
+        "fields": {"name": "wire"}, "serialNumber": "AQID",
+        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
+        "keyringRevealer": "certifier", "keyringForSubject": {}});
+    typed(type_key, &rest)
+}
+
+/// A `relinquishCertificate` body.
+fn relinquish_body(type_key: &str) -> serde_json::Value {
+    typed(
+        type_key,
+        &serde_json::json!({"serialNumber": "AQID", "certifier": G}),
+    )
+}
+
+/// A `proveCertificate` body for a certificate the wallet does not hold.
+fn prove_unheld_body(type_key: &str) -> serde_json::Value {
+    let rest = serde_json::json!({"subject": G, "serialNumber": "AQID", "certifier": G,
+        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
+        "fields": {"name": "wire"}});
+    serde_json::json!({"certificate": typed(type_key, &rest), "fieldsToReveal": ["name"], "verifier": G})
+}
+
+/// A funded coin's satoshis less the fee for spending it alone into one
+/// output ([`FEE_1_IN_1_OUT`]).
+fn exact(i: usize) -> u64 {
+    FUNDED_COINS[i].2 - FEE_1_IN_1_OUT
+}
+
+/// Status (each served on GET and POST), and the public keys.
+async fn record_status_and_keys(r: &mut Recorder) {
+    use serde_json::json;
     for (path, name) in [
         ("/isAuthenticated", "isAuthenticated"),
         ("/getHeight", "getHeight"),
@@ -1292,7 +1558,12 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
-    let data: Vec<u8> = b"wire".to_vec();
+}
+
+/// Signatures: made over data and over a hash, then verified.
+async fn record_signatures(r: &mut Recorder) {
+    use serde_json::json;
+    let data = b"wire".to_vec();
     let mut sign = pk("wire test", "1");
     sign["data"] = json!(data);
     let sig = r
@@ -1327,6 +1598,12 @@ async fn record_all(r: &mut Recorder) {
         post("/verifySignature", verify),
     )
     .await;
+}
+
+/// Encryption, decryption and HMACs.
+async fn record_crypto(r: &mut Recorder) {
+    use serde_json::json;
+    let data = b"wire".to_vec();
     let mut enc = pk("wire test", "1");
     enc["plaintext"] = json!(data);
     r.case("encrypt.ok", "fresh", post("/encrypt", enc)).await;
@@ -1356,6 +1633,11 @@ async fn record_all(r: &mut Recorder) {
     short["hmac"] = json!([1, 2, 3]);
     r.case("verifyHmac.short", "fresh", post("/verifyHmac", short))
         .await;
+}
+
+/// Key linkage revealed, and a counterparty key that is not one.
+async fn record_linkage(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "revealCounterpartyKeyLinkage.ok",
         "fresh",
@@ -1383,8 +1665,12 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+}
 
-    // --- The caller's malformed requests.
+/// The caller's malformed requests.
+async fn record_malformed(r: &mut Recorder) {
+    use serde_json::json;
+    let data = b"wire".to_vec();
     let mut no_origin = pk("wire test", "1");
     no_origin["plaintext"] = json!(data);
     r.case(
@@ -1430,8 +1716,11 @@ async fn record_all(r: &mut Recorder) {
     .await;
     r.case("unknownRoute", "fresh", post("/noSuchCall", json!({})))
         .await;
+}
 
-    // --- Actions and outputs, an empty wallet.
+/// Actions and outputs, an empty wallet.
+async fn record_empty_wallet(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "listActions.empty",
         "fresh",
@@ -1474,6 +1763,11 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+}
+
+/// Actions and outputs the wallet does not know, and a BEEF that is not one.
+async fn record_unknown_references(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "signAction.unknownReference",
         "fresh",
@@ -1512,29 +1806,17 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+}
 
-    // --- Certificates. BRC-100 names the certificate's type `type`; the
-    // server's types take `certificateType` (found by this corpus, #69): the
-    // BRC's spelling is recorded as served, then the server's, in order:
-    // acquire, list, prove, relinquish.
+/// Certificates. BRC-100 names the certificate's type `type`; the
+/// server's types take `certificateType` (found by this corpus, #69): the
+/// BRC's spelling is recorded as served, then the server's, in order:
+/// acquire, list, prove, relinquish.
+async fn record_certificate_spelling(r: &mut Recorder) {
     for (path, body) in [
-        (
-            "/acquireCertificate",
-            json!({"type": CERT_TYPE, "certifier": G, "acquisitionProtocol": "direct",
-                "fields": {"name": "wire"}, "serialNumber": "AQID",
-                "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
-                "keyringRevealer": "certifier", "keyringForSubject": {}}),
-        ),
-        (
-            "/relinquishCertificate",
-            json!({"type": CERT_TYPE, "serialNumber": "AQID", "certifier": G}),
-        ),
-        (
-            "/proveCertificate",
-            json!({"certificate": {"type": CERT_TYPE, "subject": G, "serialNumber": "AQID", "certifier": G,
-                "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef", "fields": {"name": "wire"}},
-                "fieldsToReveal": ["name"], "verifier": G}),
-        ),
+        ("/acquireCertificate", acquire_body("type")),
+        ("/relinquishCertificate", relinquish_body("type")),
+        ("/proveCertificate", prove_unheld_body("type")),
     ] {
         r.case(
             &format!("{}.brc100Type", &path[1..]),
@@ -1543,17 +1825,16 @@ async fn record_all(r: &mut Recorder) {
         )
         .await;
     }
+}
+
+/// A certificate acquired, then listed, proven and relinquished.
+async fn record_certificates(r: &mut Recorder) {
+    use serde_json::json;
     let acquired = r
         .case(
             "acquireCertificate.direct",
             "fresh",
-            post(
-                "/acquireCertificate",
-                json!({"certificateType": CERT_TYPE, "certifier": G, "acquisitionProtocol": "direct",
-                    "fields": {"name": "wire"}, "serialNumber": "AQID",
-                    "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
-                    "keyringRevealer": "certifier", "keyringForSubject": {}}),
-            ),
+            post("/acquireCertificate", acquire_body("certificateType")),
         )
         .await;
     r.case(
@@ -1582,30 +1863,24 @@ async fn record_all(r: &mut Recorder) {
     r.case(
         "relinquishCertificate.held",
         "fresh",
-        post(
-            "/relinquishCertificate",
-            json!({"certificateType": CERT_TYPE, "serialNumber": "AQID", "certifier": G}),
-        ),
+        post("/relinquishCertificate", relinquish_body("certificateType")),
     )
     .await;
+}
+
+/// Certificates the wallet does not hold, and discovery.
+async fn record_unknown_certificates_and_discovery(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "relinquishCertificate.unknown",
         "fresh",
-        post(
-            "/relinquishCertificate",
-            json!({"certificateType": CERT_TYPE, "serialNumber": "AQID", "certifier": G}),
-        ),
+        post("/relinquishCertificate", relinquish_body("certificateType")),
     )
     .await;
     r.case(
         "proveCertificate.unknown",
         "fresh",
-        post(
-            "/proveCertificate",
-            json!({"certificate": {"certificateType": CERT_TYPE, "subject": G, "serialNumber": "AQID", "certifier": G,
-                "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef", "fields": {"name": "wire"}},
-                "fieldsToReveal": ["name"], "verifier": G}),
-        ),
+        post("/proveCertificate", prove_unheld_body("certificateType")),
     )
     .await;
     r.case(
@@ -1623,8 +1898,11 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+}
 
-    // --- The host routes.
+/// The host routes.
+async fn record_host_routes(r: &mut Recorder) {
+    use serde_json::json;
     r.case("permission-audit.get", "fresh", get("/permission-audit"))
         .await;
     r.case(
@@ -1649,6 +1927,11 @@ async fn record_all(r: &mut Recorder) {
     r.case("tx.unknown", "tracked", get(&format!("/tx/{UNKNOWN}")))
         .await;
     r.case("tx.notHex", "tracked", get("/tx/nothex")).await;
+}
+
+/// The ARC callback: disabled, refused, and taken.
+async fn record_arc_callback(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "arc-callback.disabled",
         "fresh",
@@ -1700,8 +1983,10 @@ async fn record_all(r: &mut Recorder) {
             .fill(1_000_001),
     )
     .await;
+}
 
-    // --- The bearer.
+/// The bearer.
+async fn record_bearer(r: &mut Recorder) {
     r.case(
         "auth.isAuthenticated.noBearer",
         "auth",
@@ -1728,11 +2013,14 @@ async fn record_all(r: &mut Recorder) {
         get("/isAuthenticated").header("origin", "https://app.example"),
     )
     .await;
+}
 
-    // --- A browser's preflight, one per route class: a status route, a
-    // BRC-100 call, each host route; and under the bearer (recorded as
-    // served: the bearer is checked before CORS answers, so a preflight,
-    // which carries no credentials, is refused there).
+/// A browser's preflight, one per route class: a status route, a
+/// BRC-100 call, each host route; and under the bearer (recorded as
+/// served: the bearer is checked before CORS answers, so a preflight,
+/// which carries no credentials, is refused there; a known defect,
+/// docs/WIRE.md).
+async fn record_preflights(r: &mut Recorder) {
     for (name, path, method) in [
         ("options.isAuthenticated", "/isAuthenticated", "GET"),
         ("options.createAction", "/createAction", "POST"),
@@ -1759,8 +2047,11 @@ async fn record_all(r: &mut Recorder) {
         options("/createAction", "POST"),
     )
     .await;
+}
 
-    // --- The spend gate's refusals.
+/// The spend gate's refusals.
+async fn record_gate_refusals(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "createAction.inputNotOffered",
         "tracked",
@@ -1805,6 +2096,11 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+}
+
+/// A store fault, a store busy, and the host routes' faults.
+async fn record_store_faults(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "createAction.storeFault",
         "broken",
@@ -1835,15 +2131,16 @@ async fn record_all(r: &mut Recorder) {
         .await;
     r.case("tx.hostFault", "broken-host", get(&format!("/tx/{MINED}")))
         .await;
+}
 
-    // --- The funded world: a 200 body from each spending or state-changing
-    // call. Each action asks for exactly its coin less the fee, so the
-    // toolbox builds no change output (whose derivation it draws at
-    // random): the built bytes, the txid and the signature are the same
-    // on every run. The template's reference is random: the cases that
-    // send it back bind it to the served body.
-    let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
-    let exact = |i: usize| FUNDED_COINS[i].2 - FEE_1_IN_1_OUT;
+/// The funded world: a 200 body from each spending or state-changing
+/// call. Each action asks for exactly its coin less the fee, so the
+/// toolbox builds no change output (whose derivation it draws at
+/// random): the built bytes, the txid and the signature are the same
+/// on every run. The template's reference is random: the cases that
+/// send it back bind it to the served body.
+async fn record_funded_sign(r: &mut Recorder) {
+    use serde_json::json;
     r.case(
         "createAction.noSend",
         "funded",
@@ -1877,6 +2174,12 @@ async fn record_all(r: &mut Recorder) {
         .bind("/reference", &template, "/signableTransaction/reference"),
     )
     .await;
+}
+
+/// A template aborted, and an action in the default mode (signed and
+/// posted at once) on the coin the abort released.
+async fn record_funded_abort_and_broadcast(r: &mut Recorder) {
+    use serde_json::json;
     let to_abort = r
         .case(
             "createAction.templateToAbort",
@@ -1899,6 +2202,25 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+    // The default mode, as x402 asks it: signed and posted at once (the
+    // broadcaster takes it), on the coin the abort released.
+    r.case(
+        "createAction.broadcast",
+        "funded",
+        post(
+            "/createAction",
+            json!({"description": "wire broadcast", "outputs": [
+                {"lockingScript": P2PKH, "satoshis": exact(2), "outputDescription": "an output"}],
+                "options": {"acceptDelayedBroadcast": false, "randomizeOutputs": false}}),
+        ),
+    )
+    .await;
+}
+
+/// A coin relinquished, and a template over the caller's own input.
+async fn record_funded_relinquish_and_caller_input(r: &mut Recorder) {
+    use serde_json::json;
+    let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
     let (seed, _, satoshis, suffix) = FUNDED_COINS[3];
     let fourth = parent_tx(seed, satoshis, &funded_lock(&key, suffix)).id();
     r.case(
@@ -1910,7 +2232,50 @@ async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
-    let (_, atomic) = stranger_payment();
+    // A template over the caller's own input (the puzzle, carried in
+    // `inputBEEF`), its unlocking script supplied in `signAction`'s spends.
+    let (puzzle, input_beef) = puzzle_parent();
+    let puzzle_template = r
+        .case(
+            "createAction.callerInput",
+            "funded",
+            post(
+                "/createAction",
+                json!({"description": "wire caller input", "inputBEEF": input_beef,
+                    "inputs": [{"outpoint": format!("{}.0", puzzle.id()), "unlockingScriptLength": 1,
+                        "inputDescription": "the puzzle"}],
+                    "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
+                        "outputDescription": "an output"}],
+                    "options": {"signAndProcess": false, "randomizeOutputs": false}}),
+            ),
+        )
+        .await;
+    r.case(
+        "signAction.spends",
+        "funded",
+        post(
+            "/signAction",
+            json!({"spends": {"0": {"unlockingScript": PUZZLE_UNLOCK}}, "reference": BOUND,
+                "options": {"noSend": true}}),
+        )
+        .bind(
+            "/reference",
+            &puzzle_template,
+            "/signableTransaction/reference",
+        ),
+    )
+    .await;
+    // The stranger's payments: a valid spend inserted into a basket, the
+    // same with an unlocking script that fails (accepted: a known defect,
+    // recorded as served, docs/WIRE.md), and a BRC-29 payment to the
+    // wallet (x402's refund).
+}
+
+/// The stranger's payments, and what the funded wallet lists after.
+async fn record_payments_and_listings(r: &mut Recorder) {
+    use serde_json::json;
+    let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
+    let (_, atomic) = stranger_payment(Payment::Insertion, &key).await;
     r.case(
         "internalizeAction.basketInsertion",
         "funded",
@@ -1919,6 +2284,31 @@ async fn record_all(r: &mut Recorder) {
             json!({"tx": atomic, "outputs": [{"outputIndex": 0, "protocol": "basket insertion",
                 "insertionRemittance": {"basket": "wire"}}],
                 "description": "wire stranger payment"}),
+        ),
+    )
+    .await;
+    let (_, atomic) = stranger_payment(Payment::BadUnlock, &key).await;
+    r.case(
+        "internalizeAction.badUnlock",
+        "funded",
+        post(
+            "/internalizeAction",
+            json!({"tx": atomic, "outputs": [{"outputIndex": 0, "protocol": "basket insertion",
+                "insertionRemittance": {"basket": "wire"}}],
+                "description": "wire bad unlock"}),
+        ),
+    )
+    .await;
+    let (_, atomic) = stranger_payment(Payment::Wallet, &key).await;
+    r.case(
+        "internalizeAction.walletPayment",
+        "funded",
+        post(
+            "/internalizeAction",
+            json!({"tx": atomic, "outputs": [{"outputIndex": 0, "protocol": "wallet payment",
+                "paymentRemittance": {"derivationPrefix": PAYMENT_PREFIX, "derivationSuffix": PAYMENT_SUFFIX,
+                    "senderIdentityKey": stranger_key().public_key().to_hex()}}],
+                "description": "wire payment"}),
         ),
     )
     .await;
@@ -1981,13 +2371,11 @@ const HOST_ROUTES: [&str; 5] = [
     "/arc-callback",
 ];
 
-/// Every code the server answers with, by status; each must be answered
-/// at least once. `AppError`'s codes (`src/server/handlers.rs`) less the
-/// three no in-process world produces ([`UNPRODUCED`]), and the router's
-/// own (`src/server/mod.rs`). A fixture whose code is in neither list is a
-/// judgment gap.
-const CODES: [(u16, &str); 19] = [
-    // AppError.
+/// `AppError`'s codes (`src/server/handlers.rs`) some world produces, by
+/// status; each must be answered at least once. With [`UNPRODUCED`] they
+/// are every code the source writes ([`app_codes_in_source`]): a code added
+/// there without a fixture fails `every_app_error_code_is_judged`.
+const APP_CODES: [(u16, &str); 12] = [
     (400, "VALIDATION_ERROR"),
     (400, "INVALID_BEEF"),
     (400, "ERROR"),
@@ -2000,7 +2388,11 @@ const CODES: [(u16, &str); 19] = [
     (502, "SERVICE_ERROR"),
     (503, "STORE_BUSY"),
     (503, "HEADERS_UNAVAILABLE"),
-    // The router's own.
+];
+
+/// The router's own codes (`src/server/mod.rs`), by status; each must be
+/// answered at least once.
+const ROUTER_CODES: [(u16, &str); 7] = [
     (401, "UNAUTHORIZED"),
     (404, "CALLBACK_DISABLED"),
     (400, "BAD_JSON"),
@@ -2010,13 +2402,77 @@ const CODES: [(u16, &str); 19] = [
     (500, "ERR_TX_WORD"),
 ];
 
+/// Every code the corpus judges: a fixture whose code is in neither list is
+/// a judgment gap.
+fn judged_codes() -> impl Iterator<Item = (u16, &'static str)> {
+    APP_CODES.into_iter().chain(ROUTER_CODES)
+}
+
 /// `AppError` codes no in-process world produces, each named with why in
-/// docs/WIRE.md. A fixture that answers one moves it to [`CODES`].
+/// docs/WIRE.md. A fixture that answers one moves it to [`APP_CODES`].
 const UNPRODUCED: [(u16, &str); 3] = [
     (401, "AUTHENTICATION_REQUIRED"),
     (403, "ACCESS_DENIED"),
     (502, "BROADCAST_REJECTED"),
 ];
+
+/// The `(status, code)` pairs `src/server/handlers.rs` writes: each
+/// `(StatusCode::NAME, "CODE")` of the classifier, and each `code:` of a
+/// built `AppError` under the `status: StatusCode::NAME` before it (a
+/// constant's path read from its module's `const NAME: &str = "..."`).
+fn app_codes_in_source() -> BTreeSet<(u16, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read =
+        |p: &str| std::fs::read_to_string(root.join(p)).unwrap_or_else(|e| panic!("{p}: {e}"));
+    let source = read("src/server/handlers.rs");
+    let status = |name: &str| -> u16 {
+        match name {
+            "BAD_REQUEST" => 400,
+            "UNAUTHORIZED" => 401,
+            "PAYMENT_REQUIRED" => 402,
+            "FORBIDDEN" => 403,
+            "NOT_FOUND" => 404,
+            "CONFLICT" => 409,
+            "INTERNAL_SERVER_ERROR" => 500,
+            "BAD_GATEWAY" => 502,
+            "SERVICE_UNAVAILABLE" => 503,
+            other => panic!("StatusCode::{other}: not in the scanner's table"),
+        }
+    };
+    let quoted = |s: &str| -> Option<String> {
+        let s = s.trim().strip_prefix('"')?;
+        Some(s[..s.find('"')?].to_string())
+    };
+    let mut found = BTreeSet::new();
+    let mut last_status = None;
+    for line in source.lines().map(str::trim) {
+        if let Some(rest) = line.strip_prefix("(StatusCode::") {
+            if let Some((name, code)) = rest.split_once(',') {
+                if let Some(code) = quoted(code) {
+                    found.insert((status(name.trim()), code));
+                }
+            }
+        } else if let Some(rest) = line.strip_prefix("status: StatusCode::") {
+            last_status = Some(status(rest.trim_end_matches(',')));
+        } else if let Some(rest) = line.strip_prefix("code: ") {
+            let rest = rest.trim_end_matches(',');
+            let code = quoted(rest).or_else(|| {
+                // `crate::module::NAME`: the constant's value in its module.
+                let (module, name) = rest.strip_prefix("crate::")?.rsplit_once("::")?;
+                let text = read(&format!("src/{}.rs", module.replace("::", "/")));
+                let at = text.find(&format!("const {name}: &str = "))?;
+                quoted(text[at..].split_once('=')?.1)
+            });
+            if let Some(code) = code {
+                let at = last_status
+                    .take()
+                    .unwrap_or_else(|| panic!("`code: {rest}` with no `status:` before it"));
+                found.insert((at, code));
+            }
+        }
+    }
+    found
+}
 
 fn route_of(path: &str) -> String {
     if path.starts_with("/tx/") {
@@ -2044,17 +2500,17 @@ fn judge_coverage(fixtures: &[(String, Fixture)]) -> Vec<String> {
             missing.push(format!("no fixture serves {route}"));
         }
     }
-    for (status, code) in CODES {
+    for (status, code) in judged_codes() {
         if !codes.contains(&(status, code.to_string())) {
             missing.push(format!("no fixture answers {status} {code}"));
         }
     }
     for (status, code) in &codes {
-        if !CODES.contains(&(*status, code.as_str())) {
+        if !judged_codes().any(|c| c == (*status, code.as_str())) {
             let why = if UNPRODUCED.contains(&(*status, code.as_str())) {
-                "a world produces it now: move it from UNPRODUCED to CODES"
+                "a world produces it now: move it from UNPRODUCED to APP_CODES"
             } else {
-                "CODES does not judge it"
+                "neither APP_CODES nor ROUTER_CODES judges it"
             };
             missing.push(format!("a fixture answers {status} {code}: {why}"));
         }
@@ -2080,6 +2536,11 @@ struct Manifest {
     fixtures: Vec<String>,
 }
 
+/// Whether a file's name is a fixture's: a `.json` file.
+fn is_fixture_name(name: &str) -> bool {
+    Path::new(name).extension().is_some_and(|x| x == "json")
+}
+
 /// The fixtures the manifest lists, in its order, after judging the
 /// directory against it: every listed file present, every file on disk
 /// listed, and nothing but `.json` fixtures beside the manifest.
@@ -2100,7 +2561,7 @@ fn judge_manifest(dir: &Path) -> Result<Vec<String>, Vec<String>> {
         .filter(|name| name != MANIFEST)
         .collect();
     for name in &manifest.fixtures {
-        if !name.ends_with(".json") {
+        if !is_fixture_name(name) {
             faults.push(format!("{name}: listed, not a .json fixture"));
         }
         if !on_disk.contains(name) {
@@ -2108,7 +2569,7 @@ fn judge_manifest(dir: &Path) -> Result<Vec<String>, Vec<String>> {
         }
     }
     for name in &on_disk {
-        if !name.ends_with(".json") {
+        if !is_fixture_name(name) {
             faults.push(format!("{name}: on disk, not a .json fixture"));
         } else if !listed.contains(name.as_str()) {
             faults.push(format!("{name}: on disk, not listed in {MANIFEST}"));
@@ -2129,7 +2590,8 @@ fn wire_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire")
 }
 
-/// The fixtures the manifest names, in name order.
+/// The fixtures the manifest names, in name order; a fixture of an unknown
+/// world is a panic naming it.
 fn read_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, Vec<String>> {
     let mut files = judge_manifest(dir)?;
     files.sort();
@@ -2140,6 +2602,13 @@ fn read_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, Vec<String>> {
             let text = std::fs::read_to_string(&p).unwrap();
             let fixture: Fixture =
                 serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            // A world the run does not know fails before any is built.
+            assert!(
+                WORLDS.contains(&fixture.world.as_str()),
+                "{name}: unknown world `{}`: the worlds are {}",
+                fixture.world,
+                WORLDS.join(", ")
+            );
             (name, fixture)
         })
         .collect())
@@ -2147,6 +2616,7 @@ fn read_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, Vec<String>> {
 
 /// A line diff of two pretty renderings (the fixture's, the served).
 fn diff(want: &str, got: &str) -> String {
+    use std::fmt::Write;
     let (w, g): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
     // The longest common subsequence, line by line (the bodies are small).
     let mut lcs = vec![vec![0usize; g.len() + 1]; w.len() + 1];
@@ -2162,14 +2632,14 @@ fn diff(want: &str, got: &str) -> String {
     let (mut i, mut k, mut out) = (0, 0, String::new());
     while i < w.len() || k < g.len() {
         if i < w.len() && k < g.len() && w[i] == g[k] {
-            out.push_str(&format!("  {}\n", w[i]));
+            writeln!(out, "  {}", w[i]).unwrap();
             i += 1;
             k += 1;
         } else if k < g.len() && (i == w.len() || lcs[i][k + 1] >= lcs[i + 1][k]) {
-            out.push_str(&format!("+ {}\n", g[k]));
+            writeln!(out, "+ {}", g[k]).unwrap();
             k += 1;
         } else {
-            out.push_str(&format!("- {}\n", w[i]));
+            writeln!(out, "- {}", w[i]).unwrap();
             i += 1;
         }
     }
@@ -2189,9 +2659,11 @@ where
     F: std::future::Future<Output = T>,
     T: Send + 'static,
 {
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    quiet_environment();
     const STACK: usize = 64 * 1024 * 1024;
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    quiet_environment();
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
@@ -2269,14 +2741,6 @@ async fn replay(dir: &Path) -> Result<String, String> {
     })?;
     if fixtures.is_empty() {
         return Err(format!("no fixture under {}", dir.display()));
-    }
-    for (file, fixture) in &fixtures {
-        assert!(
-            WORLDS.contains(&fixture.world.as_str()),
-            "{file}: unknown world `{}`: the worlds are {}",
-            fixture.world,
-            WORLDS.join(", ")
-        );
     }
     let mut worlds: HashMap<String, World> = HashMap::new();
     let mut served: HashMap<String, J> = HashMap::new();
@@ -2401,10 +2865,10 @@ fn the_manifest_judges_the_set_on_disk() {
         write(
             MANIFEST,
             &serde_json::to_string(&Manifest {
-                fixtures: names.iter().map(|n| n.to_string()).collect(),
+                fixtures: names.iter().map(ToString::to_string).collect(),
             })
             .unwrap(),
-        )
+        );
     };
     assert!(
         judge_manifest(dir).unwrap_err()[0].contains(MANIFEST),
@@ -2481,7 +2945,7 @@ fn a_fixture_of_an_unknown_world_fails_the_replay() {
         Err(payload) => payload
             .downcast_ref::<String>()
             .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .or_else(|| payload.downcast_ref::<&str>().map(ToString::to_string))
             .unwrap_or_default(),
         Ok(result) => panic!("the replay did not panic: {result:?}"),
     };
@@ -2521,5 +2985,31 @@ fn the_normalizer_keeps_the_shape() {
     assert_eq!(
         normalize_text("tcp connect error: Connection refused (os error 61) at 127.0.0.1:4242"),
         "tcp connect error: Connection refused (os error <errno>) at 127.0.0.1:<port>"
+    );
+}
+
+/// The judged `AppError` codes and the unproduced ones are exactly the
+/// codes `src/server/handlers.rs` writes, at their statuses: a code added
+/// there with no fixture, or one gone from it, fails here by name.
+#[test]
+fn every_app_error_code_is_judged() {
+    let in_source = app_codes_in_source();
+    let listed: BTreeSet<(u16, String)> = APP_CODES
+        .iter()
+        .chain(UNPRODUCED.iter())
+        .map(|(s, c)| (*s, c.to_string()))
+        .collect();
+    assert_eq!(
+        APP_CODES.len() + UNPRODUCED.len(),
+        listed.len(),
+        "a code is listed twice"
+    );
+    let unlisted: Vec<_> = in_source.difference(&listed).collect();
+    let gone: Vec<_> = listed.difference(&in_source).collect();
+    assert!(
+        unlisted.is_empty() && gone.is_empty(),
+        "src/server/handlers.rs writes {unlisted:?}, which neither APP_CODES (with a fixture) nor \
+         UNPRODUCED (with its reason in docs/WIRE.md) lists; and lists {gone:?}, which it no \
+         longer writes"
     );
 }
