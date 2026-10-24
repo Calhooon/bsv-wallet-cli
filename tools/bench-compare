@@ -167,12 +167,18 @@ def judge(tree, base, measured, ctx):
 
     tree: the PR's benches/baseline.json; base: the base ref's, or None when
     the base is not readable; measured: this run's results; ctx: key,
-    machine, toolchain, commit, run_id, recorded. Returns (lines, errors,
-    regressions, gating, candidate): errors always fail (the tree turned
-    the gate off, or this run cannot be trusted), regressions fail only
-    when gating.
+    machine, toolchain, commit, run_id, recorded. Returns (lines, warnings,
+    errors, regressions, gating, candidate): errors always fail (the tree
+    turned the gate off, or this run cannot be trusted), regressions fail
+    only when gating, warnings name what was not gated.
+
+    The reference is the base's entry, never the tree's: the tree's is
+    checked against the base's and this run, but a run the PR appended is
+    the PR's own measure, and a reference that took it in would let a PR
+    land a slow run as its own baseline. The candidate is the base's file
+    with this run appended. With no base nothing is gated.
     """
-    lines, errors, regressions = [], [], []
+    lines, warnings, errors, regressions = [], [], [], []
     key = ctx["key"]
     this_run = {"commit": ctx["commit"], "recorded": ctx["recorded"], "benches": measured}
     if ctx.get("run_id"):
@@ -184,17 +190,18 @@ def judge(tree, base, measured, ctx):
         if m["calls"] < MIN_CALLS:
             errors.append(f"{id}: the p99 rests on {m['calls']} calls, fewer than {MIN_CALLS}")
 
-    margin = tree.get("margin", MARGIN)
-    tree_ok = True
+    # A run of the tree is checked at the base's margin, never its own.
+    trusted = tree if base is None else base
+    margin = trusted.get("margin", MARGIN)
     if base is None:
-        lines.append("warning: no base baseline to check the tree's against: the tree's own is the reference")
+        warnings.append("no base baseline to check the tree's against: the tree's own is read unchecked "
+                        "and nothing is gated")
         base_profiles = None
     else:
         base_profiles = base.get("profiles", {})
-        if margin != base.get("margin", MARGIN):
-            errors.append(f"the margin is {margin} in the tree and {base.get('margin', MARGIN)} in the base "
-                          f"(a PR may not change the margin)")
-            tree_ok = False
+        if tree.get("margin", MARGIN) != base.get("margin", MARGIN):
+            errors.append(f"the margin is {tree.get('margin', MARGIN)} in the tree and "
+                          f"{base.get('margin', MARGIN)} in the base (a PR may not change the margin)")
     tree_profiles = tree.get("profiles", {})
 
     for k in sorted(set(tree_profiles) | set(base_profiles or {})):
@@ -202,18 +209,15 @@ def judge(tree, base, measured, ctx):
             continue  # a developer's reading, never read by CI
         if not k.startswith(GATE_PROFILE + "-"):
             errors.append(f"{k}: a profile is {GATE_PROFILE}-<cpu> or dev-<cpu>")
-            tree_ok = False
             continue
         t = tree_profiles.get(k)
         b = (base_profiles or {}).get(k)
         if t is not None and not check_entry_shape(k, t, errors):
-            tree_ok = False
             continue
         if base_profiles is None:
             continue
         if b is not None and t is None:
             errors.append(f"{k}: the base's entry is dropped from the tree (a PR may not drop a gate entry)")
-            tree_ok = False
             continue
         if t is None or t == b:
             continue
@@ -221,7 +225,6 @@ def judge(tree, base, measured, ctx):
         if k != key:
             errors.append(f"{k}: the tree's entry differs from the base's, and this runner ({ctx['machine']}) "
                           f"cannot check another CPU's run; re-run the job until it lands on that CPU")
-            tree_ok = False
             continue
         rerecord = b is not None and t["toolchain"] != b["toolchain"] and t["toolchain"] == ctx["toolchain"]
         if b is None or rerecord:
@@ -236,7 +239,6 @@ def judge(tree, base, measured, ctx):
                 bad = gap(t["runs"][0], measured, margin)
             if bad:
                 errors.append(f"{k}: the tree's {what} does not match this run's measure: " + "; ".join(bad))
-                tree_ok = False
             continue
         bad = []
         if t["machine"] != b["machine"] or t["toolchain"] != b["toolchain"]:
@@ -256,10 +258,7 @@ def judge(tree, base, measured, ctx):
                 bad.append("the appended run does not match this run's measure: " + "; ".join(g))
         if bad:
             errors.append(f"{k}: " + "; ".join(bad))
-            tree_ok = False
 
-    trusted = tree if tree_ok else (base if base is not None else empty())
-    margin = trusted.get("margin", MARGIN)
     entry = trusted.get("profiles", {}).get(key)
     gating = False
     fresh = {"profile": key, "gate": True, "machine": ctx["machine"], "toolchain": ctx["toolchain"], "runs": [this_run]}
@@ -267,18 +266,19 @@ def judge(tree, base, measured, ctx):
         lines.append(f"no baseline for {key}: this run is the candidate opening entry; nothing is compared")
         new_entry = fresh
     elif entry["toolchain"] != ctx["toolchain"]:
-        lines.append(f"warning: {key} was recorded with {entry['toolchain']}, this run is {ctx['toolchain']}: "
-                     f"not gated; the candidate is a re-record on the new pin")
+        warnings.append(f"{key} was recorded with {entry['toolchain']}, this run is {ctx['toolchain']}: "
+                        f"not gated; the candidate is a re-record on the new pin")
         new_entry = fresh
     else:
         new_entry = {**entry, "runs": entry["runs"] + [this_run]}
     if entry is not None:
         ref = reference(entry)
         n = len(entry["runs"])
-        gating = n >= MIN_RUNS and entry["toolchain"] == ctx["toolchain"]
+        gating = base is not None and n >= MIN_RUNS and entry["toolchain"] == ctx["toolchain"]
         lines.append(f"{key} ({entry['machine']}, {entry['toolchain']}): the reference p99 is the highest of "
                      f"{n} runs, margin {margin:.0%}" + ("" if gating else
-                     f"; warn-only until the entry carries {MIN_RUNS} runs"))
+                     "; warn-only: no base" if base is None else
+                     f"; warn-only until the base's entry carries {MIN_RUNS} runs"))
         lines.append(f"{'bench':42} {'p50 us':>10} {'p99 us':>10} {'ref p99':>10} {'change':>8}")
         for id, r in sorted(ref.items()):
             m = measured.get(id)
@@ -296,7 +296,7 @@ def judge(tree, base, measured, ctx):
     candidate = json.loads(json.dumps(trusted))
     candidate.setdefault("margin", MARGIN)
     candidate.setdefault("profiles", {})[key] = new_entry
-    return lines, errors, regressions, gating, candidate
+    return lines, warnings, errors, regressions, gating, candidate
 
 
 def write(path, data):
@@ -326,8 +326,10 @@ def ci(args):
            "run_id": os.environ.get("GITHUB_RUN_ID"), "recorded": datetime.date.today().isoformat()}
     measured = read_results(run_benches())
     base = load(args["base"]) if args["base"] else None
-    lines, errors, regressions, gating, candidate = judge(load(TREE), base, measured, ctx)
+    lines, warnings, errors, regressions, gating, candidate = judge(load(TREE), base, measured, ctx)
     print("\n".join(lines))
+    for w in warnings:
+        print(f"{gh}warning{'::' if gh else ': '}{w}")
     write(args["out"], candidate)
     print(f"bench-compare: this run's candidate baseline is in {args['out']} (the artifact bench-baseline), "
           f"stamped {head[:12]}")
@@ -340,7 +342,8 @@ def ci(args):
         print("bench-compare: FAILED: a p99 over the margin")
         sys.exit(1)
     if regressions:
-        print(f"bench-compare: warn-only (fewer than {MIN_RUNS} runs in the entry): exit 0")
+        print("bench-compare: warn-only (nothing is gated with no base, or fewer than "
+              f"{MIN_RUNS} runs in the base's entry): exit 0")
     else:
         print("bench-compare: no p99 over the margin")
 
