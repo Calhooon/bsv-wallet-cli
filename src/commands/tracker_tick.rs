@@ -17,7 +17,7 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
         ctx.wallet.storage(),
         ctx.wallet.services(),
         &SystemClock,
-        &TickOptions::from_env(),
+        &TickOptions::from_config(&ctx.config),
     )
     .await?;
     tracker_host::record_accepted(&ctx.wallet, &mut report).await;

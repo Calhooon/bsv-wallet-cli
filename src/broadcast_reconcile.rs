@@ -687,7 +687,7 @@ pub fn spawn_serve_loop(
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let sse = arcade_sse_for(&config.services, db_path);
-    spawn_served_loop(wallet, sse, false, false)
+    spawn_served_loop(wallet, config, sse, false, false)
 }
 
 /// The served loop with the SSE stream named by the caller: `daemon` passes
@@ -699,6 +699,7 @@ pub fn spawn_serve_loop(
 /// up at the broadcasters, so the pass does not ([`TickOptions::monitor_runs`]).
 pub fn spawn_served_loop(
     wallet: std::sync::Arc<ServedWallet>,
+    config: &crate::config::Config,
     sse: Option<ArcadeSse>,
     feed_held: bool,
     monitor_runs: bool,
@@ -713,7 +714,7 @@ pub fn spawn_served_loop(
     let tracker = TickOptions {
         feed_held,
         monitor_runs,
-        ..TickOptions::from_env()
+        ..TickOptions::from_config(config)
     };
     let interval_secs =
         env_parse("BROADCAST_RECONCILE_INTERVAL_SECS", DEFAULT_INTERVAL_SECS).max(5);

@@ -56,7 +56,7 @@ pub async fn run(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
-            &crate::spend_gate::GateOptions::from_env().with_allow_pending(allow_pending),
+            &ctx.gate().with_allow_pending(allow_pending),
         )
         .await,
         ctx.json_output,

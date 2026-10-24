@@ -55,6 +55,11 @@ impl WalletContext {
         })
     }
 
+    /// The spend gate's settings, from the configuration.
+    pub fn gate(&self) -> crate::spend_gate::GateOptions {
+        crate::spend_gate::GateOptions::from_config(&self.config)
+    }
+
     /// The post-broadcast verifier, from the configuration.
     pub fn verifier(&self) -> crate::broadcast_verify::BroadcastVerifier {
         crate::broadcast_verify::BroadcastVerifier::new(self.chain, &self.config)

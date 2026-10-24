@@ -214,6 +214,9 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     // silently dropped an immediate broadcast (e.g. 465 fee-too-low on a deep
     // unconfirmed BEEF) instead of returning a phantom txid.
     let verifier = crate::broadcast_verify::BroadcastVerifier::new(config.chain, &config.settings);
+    // The spend gate's settings, once: a request reads these, never the
+    // environment.
+    let gate = crate::spend_gate::GateOptions::from_config(&config.settings);
 
     Router::new()
         // Existing 5 endpoints
@@ -318,6 +321,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
+        .layer(axum::Extension(gate))
         .layer(axum::Extension(owed))
         .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(BODY_CAP))

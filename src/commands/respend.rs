@@ -19,6 +19,7 @@ pub async fn run(ctx: &WalletContext, txid: &str) -> Result<()> {
         &ctx.root_key,
         txid,
         &sources,
+        &ctx.gate(),
     )
     .await?;
     // Posted: the request's word is read tolerantly, never the error.

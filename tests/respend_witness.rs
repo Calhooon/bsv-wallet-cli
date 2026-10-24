@@ -12,7 +12,8 @@ use bsv_sdk::wallet::{
     Counterparty, CreateActionArgs, CreateActionOptions, CreateActionOutput, KeyDeriver, Protocol,
     SecurityLevel, WalletInterface,
 };
-use bsv_wallet_cli::respend::{build_and_post, settle_proven};
+use bsv_wallet_cli::respend::settle_proven;
+use bsv_wallet_cli::spend_gate::GateOptions;
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
 };
@@ -36,6 +37,18 @@ struct Fixture {
 /// The header service's view of the funding block: the header at 800
 /// carries the funding proof's root, so the spend gate's read of the
 /// respend's inputs (0.11.0, #29) finds the coin mined.
+/// The respend under the gate's default settings.
+async fn build_and_post(
+    storage: &StorageSqlx,
+    services: &dyn WalletServices,
+    root: &PrivateKey,
+    phantom: &str,
+    sources: &[&str],
+) -> anyhow::Result<String> {
+    let gate = GateOptions::default();
+    bsv_wallet_cli::respend::build_and_post(storage, services, root, phantom, sources, &gate).await
+}
+
 fn headed(services: &MockWalletServices, funding: &str) {
     services.set_header_for_height(bsv_wallet_toolbox::services::BlockHeader {
         version: 1,
@@ -694,7 +707,7 @@ async fn respend_refuses_an_input_the_gate_holds() {
         s,
         &absent,
         &bsv_wallet_cli::tracker_host::SystemClock,
-        &bsv_wallet_cli::tracker_host::TickOptions::from_env(),
+        &bsv_wallet_cli::tracker_host::TickOptions::default(),
         1,
         bsv_tracker::ChainEvent::Frozen {
             outpoint: bsv_tracker::Outpoint {

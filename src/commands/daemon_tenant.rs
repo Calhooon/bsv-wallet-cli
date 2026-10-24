@@ -110,6 +110,7 @@ pub async fn start(
     if let Some(feed_url) = feed_url {
         let feed_storage = storage_arc.clone();
         let feed_services = services_arc.clone();
+        let feed_tracker = crate::tracker_host::TickOptions::from_config(config);
         eprintln!("[{port}] Chain-event feed: {feed_url}/events/stream");
         tokio::spawn(async move {
             crate::chain_feed::run(
@@ -117,7 +118,7 @@ pub async fn start(
                 &feed_storage,
                 &*feed_services,
                 &crate::tracker_host::SystemClock,
-                &crate::tracker_host::TickOptions::from_env(),
+                &feed_tracker,
                 &crate::chain_feed::FeedOptions::default(),
             )
             .await
@@ -174,6 +175,7 @@ pub async fn start(
     // long as the process.
     let _served = crate::broadcast_reconcile::spawn_served_loop(
         wallet_state.clone(),
+        config,
         None,
         feed_held,
         monitor_runs,

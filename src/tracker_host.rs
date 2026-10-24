@@ -1102,22 +1102,31 @@ pub struct TickOptions {
     pub monitor_runs: bool,
 }
 
-impl TickOptions {
-    /// `TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS` and `SPEND_DEPTH`, with their
-    /// defaults.
-    pub fn from_env() -> Self {
-        fn env<T: std::str::FromStr>(key: &str, default: T) -> T {
-            std::env::var(key)
-                .ok()
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(default)
-        }
+impl Default for TickOptions {
+    /// The defaults: what [`TickOptions::from_config`] gives with
+    /// `TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS` and `SPEND_DEPTH` unset.
+    fn default() -> Self {
         Self {
-            age_threshold: env("TRACKER_AGE_SECS", DEFAULT_AGE_SECS).max(1),
-            max_asks: env("TRACKER_MAX_ASKS", DEFAULT_MAX_ASKS),
-            spend_depth: env("SPEND_DEPTH", DEFAULT_SPEND_DEPTH),
+            age_threshold: DEFAULT_AGE_SECS,
+            max_asks: DEFAULT_MAX_ASKS,
+            spend_depth: DEFAULT_SPEND_DEPTH,
             feed_held: false,
             monitor_runs: false,
+        }
+    }
+}
+
+impl TickOptions {
+    /// `TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS` and `SPEND_DEPTH` as the
+    /// configuration read them at start (`crate::config::HostSettings`).
+    #[must_use]
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        let host = &config.host;
+        Self {
+            age_threshold: host.tracker_age_secs,
+            max_asks: host.tracker_max_asks,
+            spend_depth: host.spend_depth,
+            ..Self::default()
         }
         .floored()
     }

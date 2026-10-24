@@ -362,6 +362,7 @@ async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
         spend_depth: 1,
         own_change: true,
         allow_pending: crate::spend_gate::AllowPending::Off,
+        tracker: crate::tracker_host::TickOptions::default(),
     };
     let offered = |a: &crate::spend_gate::Assessment| a.offered_satoshis();
     let a = crate::spend_gate::assess(&storage, &services, &gate, None)

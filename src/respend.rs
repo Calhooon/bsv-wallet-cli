@@ -99,12 +99,15 @@ async fn require_silence(
 
 /// Build a competitor from the wallet's exact reserved inputs and post it.
 /// No input is released and no transaction word is written on the phantom.
+/// The inputs pass `gate` (the configuration's settings; the phantom's own
+/// word for R1 (d) replaces its `allow_pending`).
 pub async fn build_and_post(
     storage: &StorageSqlx,
     services: &dyn WalletServices,
     root: &PrivateKey,
     txid: &str,
     expected_sources: &[&str],
+    gate: &crate::spend_gate::GateOptions,
 ) -> Result<String> {
     let decoded = hex::decode(txid).context("respend requires a hex txid")?;
     ensure!(decoded.len() == 32, "respend requires a 32-byte txid");
@@ -194,7 +197,8 @@ pub async fn build_and_post(
         .await?
         .get(&txid)
         .cloned();
-    let gate = crate::spend_gate::GateOptions::from_env()
+    let gate = gate
+        .clone()
         .with_allow_received(under_rule.as_deref() == Some(crate::spend_gate::RECEIVED_PENDING));
     let named: Vec<(String, u32)> = phantom
         .inputs

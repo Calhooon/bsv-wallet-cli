@@ -110,6 +110,7 @@ fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
         spend_depth,
         own_change,
         allow_pending: AllowPending::Off,
+        tracker: crate::tracker_host::TickOptions::default(),
     }
 }
 
@@ -619,7 +620,10 @@ fn only_the_word_received_opens_the_door() {
     for off in [None, Some(""), Some("Received"), Some("all"), Some("true")] {
         assert!(!allow_pending(off), "{off:?}");
     }
-    assert_eq!(GateOptions::from_env().allow_pending, AllowPending::Off);
+    assert_eq!(
+        GateOptions::from_config(&crate::config::Config::default()).allow_pending,
+        AllowPending::Off
+    );
     assert_eq!(GateOptions::default().allow_pending, AllowPending::Off);
 }
 

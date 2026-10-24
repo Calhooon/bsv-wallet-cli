@@ -174,7 +174,8 @@ const HEADERS_UNAVAILABLE_PREFIX: &str = "headers unavailable: ";
 /// The refusal's toolbox line when a coin a caller named is held.
 pub const NAMED_INPUT_REFUSED: &str = "an input the spend guard does not offer";
 
-/// The gate's two settings.
+/// The gate's two settings, and the tracker's parameters its reads run
+/// under.
 #[derive(Debug, Clone)]
 pub struct GateOptions {
     /// `SPEND_DEPTH`, floor 1 (R3 (b)).
@@ -183,8 +184,11 @@ pub struct GateOptions {
     /// creator's word is `pending`.
     pub own_change: bool,
     /// R1 (d): this one action's word at the door ([`AllowPending`]).
-    /// Never read from the environment; off unless the caller says so.
+    /// Never read from the configuration; off unless the caller says so.
     pub allow_pending: AllowPending,
+    /// The tracker's parameters (`TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS`)
+    /// the gate's reads of the creators run under.
+    pub tracker: TickOptions,
 }
 
 impl Default for GateOptions {
@@ -193,6 +197,7 @@ impl Default for GateOptions {
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
             own_change: DEFAULT_SPEND_OWN_CHANGE,
             allow_pending: AllowPending::Off,
+            tracker: TickOptions::default(),
         }
     }
 }
@@ -333,20 +338,17 @@ pub fn parse_outpoint(text: &str) -> std::result::Result<(String, u32), String> 
 
 impl GateOptions {
     /// `SPEND_DEPTH` and `SPEND_OWN_CHANGE` (`0`, `false`, `no`, `off` turn
-    /// it off; anything else, or unset, leaves it on).
-    pub fn from_env() -> Self {
-        let own_change = std::env::var("SPEND_OWN_CHANGE")
-            .map(|v| {
-                !matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "0" | "false" | "no" | "off"
-                )
-            })
-            .unwrap_or(DEFAULT_SPEND_OWN_CHANGE);
+    /// it off; anything else, or unset, leaves it on), as the configuration
+    /// read them at start: built once, by the server at its start or by a
+    /// command, never per spend.
+    #[must_use]
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        let tracker = TickOptions::from_config(config);
         Self {
-            spend_depth: TickOptions::from_env().spend_depth,
-            own_change,
+            spend_depth: tracker.spend_depth,
+            own_change: config.host.spend_own_change,
             allow_pending: AllowPending::Off,
+            tracker,
         }
     }
 
@@ -370,7 +372,7 @@ impl GateOptions {
     fn tick(&self) -> TickOptions {
         TickOptions {
             spend_depth: self.spend_depth,
-            ..TickOptions::from_env()
+            ..self.tracker.clone()
         }
         .floored()
     }
