@@ -125,6 +125,8 @@ use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletServices};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
+use crate::server::error::Kind;
+use crate::toolbox_words;
 use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
 
 /// `SPEND_OWN_CHANGE` when unset: this host chains payments, so its own
@@ -166,7 +168,7 @@ pub const HEADER_RETRY_PAUSE: Duration = Duration::from_secs(2);
 pub const HEADERS_RETRY_AFTER_SECS: u64 = 2;
 /// The refusal's code when the header service's fault held the coins that
 /// could have covered the action (#59).
-pub const HEADERS_UNAVAILABLE: &str = "HEADERS_UNAVAILABLE";
+pub const HEADERS_UNAVAILABLE: &str = Kind::HeadersUnavailable.code();
 /// The reason prefix of a coin held on the header service's fault.
 const HEADERS_UNAVAILABLE_PREFIX: &str = "headers unavailable: ";
 /// The refusal's toolbox line when a coin a caller named is held.
@@ -403,11 +405,11 @@ pub struct HeldCoin {
     /// action of ours consumed, spent for good; it leaves the listing when
     /// that spender is completed (its proof lands) or failed (#53).
     pub reason: String,
-    /// The hold is the header service's fault (`headers unavailable:
-    /// <its error>`), no verdict on the coin: a later read may offer it
-    /// (#59).
+    /// The hold is the header service's fault (the reason `headers
+    /// unavailable: <its error>`): its error, no verdict on the coin; a
+    /// later read may offer it (#59).
     #[serde(skip)]
-    pub headers_fault: bool,
+    pub headers_fault: Option<String>,
     /// The store's output id; not in the JSON.
     #[serde(skip)]
     pub output_id: i64,
@@ -446,7 +448,7 @@ pub struct Capped {
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(fault) = &self.headers_fault {
-            let on_fault = self.held.iter().filter(|c| c.headers_fault);
+            let on_fault = self.held.iter().filter(|c| c.headers_fault.is_some());
             let (coins, sats) = on_fault.fold((0usize, 0u64), |(n, s), c| (n + 1, s + c.satoshis));
             if self.toolbox == NAMED_INPUT_REFUSED {
                 write!(
@@ -519,11 +521,11 @@ impl Refusal {
     /// held, else `INSUFFICIENT_FUNDS`.
     pub fn code(&self) -> &'static str {
         if self.headers_fault.is_some() {
-            HEADERS_UNAVAILABLE
+            Kind::HeadersUnavailable.code()
         } else if self.is_named_input() {
-            "INPUT_NOT_OFFERED"
+            Kind::InputNotOffered.code()
         } else {
-            "INSUFFICIENT_FUNDS"
+            Kind::InsufficientFunds.code()
         }
     }
 
@@ -584,7 +586,7 @@ pub fn refused_as_json<T>(
         Err(GateError::Scope(message)) if json => {
             println!(
                 "{}",
-                serde_json::json!({"code": "VALIDATION_ERROR", "message": message})
+                serde_json::json!({"code": Kind::Validation.code(), "message": message})
             );
             std::process::exit(1);
         }
@@ -609,7 +611,7 @@ pub fn busy_as_json<T>(result: anyhow::Result<T>, json: bool) -> anyhow::Result<
 /// "STORE_BUSY", message}`. Nothing was written, built, locked or posted;
 /// the same command may be repeated.
 pub fn busy_json(message: &str) -> serde_json::Value {
-    serde_json::json!({"code": "STORE_BUSY", "message": message})
+    serde_json::json!({"code": Kind::StoreBusy.code(), "message": message})
 }
 
 /// What a gated `createAction` failed on.
@@ -1008,7 +1010,7 @@ async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
                 &r.get::<Option<String>, _>("holder").unwrap_or_default(),
                 None,
             ),
-            headers_fault: false,
+            headers_fault: None,
             output_id: r.get("output_id"),
         })
         .collect())
@@ -1069,7 +1071,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 origin: c.origin,
                 age_minutes: c.age_minutes,
                 reason: FROZEN.to_string(),
-                headers_fault: false,
+                headers_fault: None,
                 output_id: c.output_id,
             });
             continue;
@@ -1135,7 +1137,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 origin: c.origin,
                 age_minutes: c.age_minutes,
                 reason,
-                headers_fault: reading.headers_fault,
+                headers_fault: headers_error(reading),
                 output_id: c.output_id,
             }),
         }
@@ -1236,7 +1238,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             Origin::Received
         };
         let reading = readings.get(&txid);
-        let mut headers_fault = false;
+        let mut headers_fault = None;
         let (word, reason) = if is_frozen(&txid, vout) {
             ("frozen".to_string(), Some(FROZEN.to_string()))
         } else if is_locked(&r) {
@@ -1250,7 +1252,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         } else {
             match reading {
                 Some(reading) => {
-                    headers_fault = reading.headers_fault;
+                    headers_fault = headers_error(reading);
                     (
                         reading.word.to_string(),
                         hold_reason(reading, origin, (&txid, vout), opts),
@@ -1339,18 +1341,6 @@ pub async fn heal_before_spend(storage: &StorageSqlx) {
     }
 }
 
-fn is_insufficient(e: &bsv_sdk::Error) -> bool {
-    e.to_string()
-        .to_ascii_lowercase()
-        .contains("insufficient funds")
-}
-
-/// The toolbox's `Unspendable coin:` refusal (409): a coin it was offered
-/// cannot be carried, and the other coins offered do not cover the action.
-fn is_unspendable(e: &bsv_sdk::Error) -> bool {
-    e.to_string().contains("Unspendable coin:")
-}
-
 /// One toolbox call, offered the coins the assessment offers: the door.
 async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
@@ -1400,9 +1390,9 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
             .map_err(GateError::Gate)?;
         // A named coin held on the header service's fault is read once
         // more (#59), as the allocation's coins are.
-        if held.iter().any(|c| c.headers_fault) {
+        if held.iter().any(|c| c.headers_fault.is_some()) {
             tracing::warn!(
-                coins = held.iter().filter(|c| c.headers_fault).count(),
+                coins = held.iter().filter(|c| c.headers_fault.is_some()).count(),
                 pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
                 "spend gate: the header service did not answer for a named input; reading it once more"
             );
@@ -1415,7 +1405,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
             // Every named input must be offerable: one held by a rule is
             // the refusal; held on the service's fault alone, it is "could
             // not verify now".
-            let headers_fault = if held.iter().all(|c| c.headers_fault) {
+            let headers_fault = if held.iter().all(|c| c.headers_fault.is_some()) {
                 held.iter().find_map(service_error)
             } else {
                 None
@@ -1444,12 +1434,15 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     run_gated(wallet, args, originator, opts).await
 }
 
-/// The header service's error a coin is held on, from its reason.
+/// The header service's error a coin is held on.
 fn service_error(coin: &HeldCoin) -> Option<String> {
-    coin.headers_fault
-        .then(|| coin.reason.strip_prefix(HEADERS_UNAVAILABLE_PREFIX))
-        .flatten()
-        .map(str::to_string)
+    coin.headers_fault.clone()
+}
+
+/// The header service's error when it is the reading's fault: the words
+/// [`hold_reason`] gives after `headers unavailable: `.
+fn headers_error(reading: &CreatorReading) -> Option<String> {
+    reading.fault.clone().filter(|_| reading.headers_fault)
 }
 
 /// The coins a scoped word names (#63), checked before the door: each must
@@ -1527,8 +1520,8 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         Ok(result) => return Ok(result),
         // An unspendable coin in the lazy offer: the coins not read may
         // cover without it (F7 of the #44 CLI review).
-        Err(e) if lazy && is_unspendable(&e) => {}
-        Err(e) if !is_insufficient(&e) => return Err(GateError::Wallet(e)),
+        Err(e) if lazy && toolbox_words::is_unspendable(&e) => {}
+        Err(e) if !toolbox_words::is_insufficient(&e) => return Err(GateError::Wallet(e)),
         Err(e) if !lazy => return Err(refusal(storage, &first, &e, outputs).await),
         Err(_) => {}
     }
@@ -1545,7 +1538,9 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     .map_err(GateError::Gate)?;
     match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
-        Err(e) if is_insufficient(&e) => Err(refusal(storage, &full, &e, outputs).await),
+        Err(e) if toolbox_words::is_insufficient(&e) => {
+            Err(refusal(storage, &full, &e, outputs).await)
+        }
         Err(e) => Err(GateError::Wallet(e)),
     }
 }
@@ -1567,7 +1562,7 @@ async fn refusal(
     }
     let on_fault: u64 = held
         .iter()
-        .filter(|c| c.headers_fault)
+        .filter(|c| c.headers_fault.is_some())
         .map(|c| c.satoshis)
         .sum();
     let headers_fault =
@@ -1576,12 +1571,14 @@ async fn refusal(
         } else {
             None
         };
-    let toolbox = e.to_string();
+    // The toolbox's own line: a `WalletError`'s text without bsv-rs's
+    // `wallet error: ` Display, any other error as it displays.
+    let toolbox = match e {
+        bsv_sdk::Error::WalletError(text) => text.clone(),
+        other => other.to_string(),
+    };
     GateError::Refused(Refusal {
-        toolbox: toolbox
-            .strip_prefix("wallet error: ")
-            .unwrap_or(&toolbox)
-            .to_string(),
+        toolbox,
         offered_satoshis: assessment.offered_satoshis(),
         held,
         capped: assessment.capped,

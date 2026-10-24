@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
 use axum::Json;
 use bsv_sdk::primitives::{to_hex, PublicKey};
 use bsv_sdk::wallet::{
@@ -70,6 +69,8 @@ use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet};
 use serde_json::json;
 use std::sync::Arc;
 
+pub use super::error::AppError;
+use super::error::Kind;
 use super::types::*;
 
 pub type WalletState = Arc<Wallet<StorageSqlx, Services>>;
@@ -99,9 +100,7 @@ fn level_num(l: SecurityLevel) -> u8 {
 }
 
 /// Extract originator from Origin or Originator header
-fn extract_originator(
-    headers: &HeaderMap,
-) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
     if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
         if let Ok(url) = url::Url::parse(origin) {
             if let Some(host) = url.host_str() {
@@ -112,263 +111,7 @@ fn extract_originator(
     if let Some(originator) = headers.get("originator").and_then(|v| v.to_str().ok()) {
         return Ok(originator.to_string());
     }
-    Err((
-        StatusCode::BAD_REQUEST,
-        Json(json!({"message": "Origin header required"})),
-    ))
-}
-
-/// Classified error response with proper HTTP status codes.
-pub struct AppError {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
-    /// The spend gate's refusal: every coin held back, and why.
-    refusal: Option<Box<crate::spend_gate::Refusal>>,
-}
-
-impl AppError {
-    /// Classify a wallet error message into an appropriate HTTP status + code.
-    fn classify(msg: &str) -> (StatusCode, &'static str) {
-        // Strip "wallet error: " prefix the SDK wraps errors with
-        let clean = msg.strip_prefix("wallet error: ").unwrap_or(msg);
-
-        // The store busy is never read from words: only its type answers 503
-        // (`store_busy`). A message that merely says so keeps its class.
-        if clean.starts_with("Insufficient funds:") || clean.starts_with("insufficient funds:") {
-            (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS")
-        } else if clean.starts_with("Authentication required")
-            || clean.starts_with("Invalid identity key:")
-        {
-            (StatusCode::UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
-        } else if clean.starts_with("Access denied:") {
-            (StatusCode::FORBIDDEN, "ACCESS_DENIED")
-        } else if clean.starts_with("Entity not found:") || clean.starts_with("not found:") {
-            (StatusCode::NOT_FOUND, "NOT_FOUND")
-        } else if clean.starts_with("Unspendable coin:") {
-            // The wallet's own coin, its stored ancestry incomplete: neither
-            // a shortfall nor the caller's bad input (toolbox 0.11.0).
-            (StatusCode::CONFLICT, "UNSPENDABLE_COIN")
-        } else if clean.starts_with("Duplicate entity:") || clean.starts_with("Invalid operation:")
-        {
-            (StatusCode::CONFLICT, "CONFLICT")
-        } else if clean.starts_with("Invalid BEEF at byte") {
-            // The toolbox's streaming reader: the offset and the kind of
-            // the invalid byte (never a size or a count).
-            (StatusCode::BAD_REQUEST, "INVALID_BEEF")
-        } else if clean.starts_with("Validation error:")
-            || clean.starts_with("Invalid argument:")
-            || clean.starts_with("Origin header required")
-        {
-            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
-        } else if clean.starts_with("Storage error:")
-            || clean.starts_with("Database error:")
-            || clean.starts_with("Internal error:")
-        {
-            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
-        } else if clean.starts_with("Service error:")
-            || clean.starts_with("Network error:")
-            || clean.starts_with("Broadcast failed:")
-        {
-            (StatusCode::BAD_GATEWAY, "SERVICE_ERROR")
-        } else {
-            (StatusCode::BAD_REQUEST, "ERROR")
-        }
-    }
-
-    /// The store busy (#44): 503 `STORE_BUSY`, `Retry-After: 1`. Nothing
-    /// was written, built, locked or posted; the same call may be repeated
-    /// unchanged. Built only from a typed busy: the toolbox's
-    /// `WalletBusy` from a wallet door, or a pre-door gate or guard fault
-    /// that is SQLite's busy or the writer's acquire ceiling
-    /// ([`crate::store::is_store_busy`]).
-    fn store_busy(message: String) -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "STORE_BUSY",
-            message,
-            refusal: None,
-        }
-    }
-
-    /// A pre-door fault of the spend gate or the spend guard: the store
-    /// busy by its type, else a 500 in the gate's words.
-    pub(crate) fn from_pre_door(e: anyhow::Error, words: &str) -> Self {
-        let message = format!("Storage error: {words}: {e}");
-        if crate::store::is_store_busy(&e) {
-            Self::store_busy(message)
-        } else {
-            Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "INTERNAL_ERROR",
-                message,
-                refusal: None,
-            }
-        }
-    }
-
-    /// Create from a wallet/SDK error (the most common path). The SDK's
-    /// `WalletBusy` is the store busy, by its type; everything else is
-    /// classified by its prefix.
-    fn from_wallet_error<E: std::fmt::Display + 'static>(e: E) -> Self {
-        if let Some(bsv_sdk::Error::WalletBusy { .. }) =
-            (&e as &dyn std::any::Any).downcast_ref::<bsv_sdk::Error>()
-        {
-            return Self::store_busy(e.to_string());
-        }
-        let message = e.to_string();
-        let (status, code) = Self::classify(&message);
-        Self {
-            status,
-            code,
-            message,
-            refusal: None,
-        }
-    }
-
-    /// A gated `createAction`'s failure: the refusal keeps its listing.
-    /// "Could not verify now" (#59: the header service's fault held the
-    /// coins that could have covered it) is 503 `HEADERS_UNAVAILABLE` with
-    /// `Retry-After`, never a verdict; a scoped word naming a coin that is
-    /// not one the wallet could spend under it (#63) is the caller's 400.
-    pub(crate) fn from_gate_error(e: crate::spend_gate::GateError) -> Self {
-        match e {
-            crate::spend_gate::GateError::Refused(refusal) if refusal.is_headers_fault() => Self {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: crate::spend_gate::HEADERS_UNAVAILABLE,
-                message: refusal.to_string(),
-                refusal: Some(Box::new(refusal)),
-            },
-            crate::spend_gate::GateError::Scope(message) => Self {
-                status: StatusCode::BAD_REQUEST,
-                code: "VALIDATION_ERROR",
-                message,
-                refusal: None,
-            },
-            crate::spend_gate::GateError::Refused(refusal) if refusal.is_named_input() => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "INPUT_NOT_OFFERED",
-                message: refusal.to_string(),
-                refusal: Some(Box::new(refusal)),
-            },
-            crate::spend_gate::GateError::Refused(refusal) => Self {
-                status: StatusCode::PAYMENT_REQUIRED,
-                code: "INSUFFICIENT_FUNDS",
-                message: refusal.to_string(),
-                refusal: Some(Box::new(refusal)),
-            },
-            crate::spend_gate::GateError::Wallet(e) => Self::from_wallet_error(e),
-            crate::spend_gate::GateError::Gate(e) => Self::from_pre_door(e, "spend gate"),
-        }
-    }
-
-    fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Append an operator-facing recovery hint to the error message.
-    fn with_hint(mut self, hint: &str) -> Self {
-        self.message = format!("{} (hint: {})", self.message, hint);
-        self
-    }
-
-    /// A broadcast no broadcaster took (`sendWithResults` `sending`), absent
-    /// from the broadcaster it was submitted to and from an independent chain
-    /// index after the full probe window, which this wallet then retired (the
-    /// host's act on a template never announced). The retire releases an
-    /// input only where the chain vouches it unspent; the message promises
-    /// nothing more.
-    fn broadcast_rejected(txid: &str) -> Self {
-        Self {
-            status: StatusCode::BAD_GATEWAY,
-            code: "BROADCAST_REJECTED",
-            message: format!(
-                "broadcast rejected: no broadcaster accepted transaction {txid}, and it is \
-                 absent from the broadcaster it was submitted to and from an independent chain \
-                 index after the full probe window; this wallet retired it (failed). An input \
-                 it spent is released only where the chain vouches it unspent; any other stays \
-                 locked and is re-checked."
-            ),
-            refusal: None,
-        }
-    }
-}
-
-impl From<anyhow::Error> for AppError {
-    fn from(err: anyhow::Error) -> Self {
-        Self::from_wallet_error(err)
-    }
-}
-
-impl From<(StatusCode, Json<serde_json::Value>)> for AppError {
-    fn from((status, json): (StatusCode, Json<serde_json::Value>)) -> Self {
-        let message = json
-            .0
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let (_, code) = Self::classify(&message);
-        Self {
-            status,
-            code,
-            message,
-            refusal: None,
-        }
-    }
-}
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        tracing::warn!(
-            status = self.status.as_u16(),
-            code = self.code,
-            message = %self.message,
-            "request error"
-        );
-        let mut body = json!({"code": self.code, "message": self.message});
-        if let Some(refusal) = &self.refusal {
-            body["offeredSatoshis"] = json!(refusal.offered_satoshis);
-            body["held"] = refusal.held_json();
-        }
-        if self.code == "UNSPENDABLE_COIN" {
-            if let Some(coin) = unspendable_coin(&self.message) {
-                body["coin"] = json!(coin);
-            }
-        }
-        if self.code == "STORE_BUSY" {
-            // Nothing was written; one second is the writer's turn.
-            return (
-                self.status,
-                [(axum::http::header::RETRY_AFTER, "1")],
-                Json(body),
-            )
-                .into_response();
-        }
-        if self.code == crate::spend_gate::HEADERS_UNAVAILABLE {
-            // Nothing was written, built, locked or posted: the header
-            // service did not answer, twice; ask again after the pause.
-            return (
-                self.status,
-                [(
-                    axum::http::header::RETRY_AFTER,
-                    crate::spend_gate::HEADERS_RETRY_AFTER_SECS.to_string(),
-                )],
-                Json(body),
-            )
-                .into_response();
-        }
-        (self.status, Json(body)).into_response()
-    }
-}
-
-/// The coin an `Unspendable coin: <txid.vout>: ...` refusal names.
-fn unspendable_coin(message: &str) -> Option<&str> {
-    let rest = &message[message.find("Unspendable coin: ")? + "Unspendable coin: ".len()..];
-    rest.split(':')
-        .next()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
+    Err(AppError::new(Kind::Validation, "Origin header required"))
 }
 
 /// GET /isAuthenticated
@@ -408,7 +151,7 @@ pub async fn get_public_key(
     let result = wallet
         .get_public_key(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
 
     Ok(Json(McGetPublicKeyRes {
         public_key: result.public_key,
@@ -429,12 +172,16 @@ pub async fn create_signature(
         .hash_to_directly_sign
         .map(|h| {
             <[u8; 32]>::try_from(h.as_slice()).map_err(|_| {
-                AppError::from_wallet_error("Validation error: hashToDirectlySign must be 32 bytes")
+                AppError::new(
+                    Kind::Validation,
+                    "Validation error: hashToDirectlySign must be 32 bytes",
+                )
             })
         })
         .transpose()?;
     if req.data.is_none() && hash_to_directly_sign.is_none() {
-        return Err(AppError::from_wallet_error(
+        return Err(AppError::new(
+            Kind::Validation,
             "Validation error: one of data or hashToDirectlySign is required",
         ));
     }
@@ -458,7 +205,7 @@ pub async fn create_signature(
     let result = wallet
         .create_signature(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
 
     Ok(Json(McCreateSignatureRes {
         signature: result.signature,
@@ -658,7 +405,7 @@ pub async fn internalize_action(
     let result = wallet
         .internalize_action(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
 
     tracing::info!(
         originator = %originator,
@@ -728,7 +475,7 @@ pub fn create_action_args(
     // R1 (d): the action's word, read here at the door and nowhere else:
     // `"received"`, or the scoped `{"received": ["txid:vout", ...]}` (#63).
     let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
-        .map_err(|message| anyhow::anyhow!("Invalid argument: {message}"))?;
+        .map_err(bsv_wallet_toolbox::Error::InvalidArgument)?;
 
     let outputs = create_action_outputs(req.outputs)?;
     let inputs = create_action_inputs(req.inputs)?;
@@ -857,7 +604,7 @@ pub async fn get_height(
     let result = wallet
         .get_height("localhost")
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -868,7 +615,7 @@ pub async fn get_network(
     let result = wallet
         .get_network("localhost")
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -879,7 +626,7 @@ pub async fn get_version(
     let result = wallet
         .get_version("localhost")
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -890,7 +637,7 @@ pub async fn wait_for_authentication(
     let result = wallet
         .wait_for_authentication("localhost")
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -908,7 +655,7 @@ pub async fn get_header_for_height(
     let result = wallet
         .get_header_for_height(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -938,7 +685,7 @@ pub async fn verify_signature(
     let result = wallet
         .verify_signature(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(json!({ "valid": result.valid })))
 }
 
@@ -969,7 +716,7 @@ pub async fn encrypt(
     let result = wallet
         .encrypt(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(json!({ "ciphertext": result.ciphertext })))
 }
 
@@ -1000,7 +747,7 @@ pub async fn decrypt(
     let result = wallet
         .decrypt(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(json!({ "plaintext": result.plaintext })))
 }
 
@@ -1031,7 +778,7 @@ pub async fn create_hmac(
     let result = wallet
         .create_hmac(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(json!({ "hmac": result.hmac.to_vec() })))
 }
 
@@ -1059,7 +806,7 @@ pub async fn verify_hmac(
     let result = wallet
         .verify_hmac(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(json!({ "valid": result.valid })))
 }
 
@@ -1078,7 +825,7 @@ pub async fn sign_action(
     let result = wallet
         .sign_action(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
@@ -1113,12 +860,15 @@ pub async fn abort_action(
     if let Some(txid) =
         crate::retire_guard::abort_refused_for(wallet.storage().pool(), &args.reference)
             .await
-            .map_err(AppError::from_wallet_error)?
+            .map_err(AppError::from)?
     {
-        return Err(AppError::from_wallet_error(format!(
-            "Invalid operation: a broadcaster took transaction {txid}; it is not aborted. It stays, \
+        return Err(AppError::new(
+            Kind::Conflict,
+            format!(
+                "Invalid operation: a broadcaster took transaction {txid}; it is not aborted. It stays, \
              re-asked, until a proof, a node verdict or a competitor's checked proof decides it"
-        )));
+            ),
+        ));
     }
     let result = wallet.abort_action(args, &originator).await.map_err(|e| {
         // Since toolbox 0.3.60 a broadcast ('unproven' / 'sending') tx is
@@ -1127,8 +877,9 @@ pub async fn abort_action(
         // the broadcast memory told never to skip it again. It is refused
         // when the chain index, a proof, or a mined report vouches for the
         // tx: failing it then would fabricate a double spend.
-        let mut err = AppError::from_wallet_error(e);
-        if err.message().contains("the network has transaction") {
+        let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
+        let mut err = AppError::from(e);
+        if on_chain_evidence {
             err = err.with_hint(
                 "the wallet holds chain evidence for this transaction, so it \
                  cannot be aborted; if it is a phantom after all, \
@@ -1151,12 +902,12 @@ pub async fn list_actions(
     let result = wallet
         .list_actions(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     let rules = crate::spend_gate::action_rules(wallet.storage())
         .await
-        .map_err(|e| AppError::from_wallet_error(format!("Storage error: {e}")))?;
+        .map_err(|e| AppError::new(Kind::Internal, format!("Storage error: {e}")))?;
     let result = serde_json::to_value(result)
-        .map_err(|e| AppError::from_wallet_error(format!("Internal error: {e}")))?;
+        .map_err(|e| AppError::new(Kind::Internal, format!("Internal error: {e}")))?;
     Ok(Json(with_rules(result, &rules)))
 }
 
@@ -1207,7 +958,7 @@ pub async fn list_outputs(
     let result = wallet
         .list_outputs(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1226,7 +977,7 @@ pub async fn relinquish_output(
     let result = wallet
         .relinquish_output(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1244,7 +995,7 @@ pub async fn acquire_certificate(
     let result = wallet
         .acquire_certificate(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1258,7 +1009,7 @@ pub async fn list_certificates(
     let result = wallet
         .list_certificates(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1272,7 +1023,7 @@ pub async fn prove_certificate(
     let result = wallet
         .prove_certificate(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1286,7 +1037,7 @@ pub async fn relinquish_certificate(
     let result = wallet
         .relinquish_certificate(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1304,7 +1055,7 @@ pub async fn discover_by_identity_key(
     let result = wallet
         .discover_by_identity_key(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1318,7 +1069,7 @@ pub async fn discover_by_attributes(
     let result = wallet
         .discover_by_attributes(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1339,7 +1090,7 @@ pub async fn reveal_counterparty_key_linkage(
     let result = wallet
         .reveal_counterparty_key_linkage(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
@@ -1361,7 +1112,7 @@ pub async fn reveal_specific_key_linkage(
     let result = wallet
         .reveal_specific_key_linkage(args, &originator)
         .await
-        .map_err(AppError::from_wallet_error)?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 

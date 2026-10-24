@@ -3,6 +3,8 @@
 //! and status.
 
 use super::*;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use bsv_wallet_toolbox::WalletStorageWriter;
 
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {
@@ -18,9 +20,10 @@ async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) 
     (status, retry, serde_json::from_slice(&bytes).unwrap())
 }
 
-/// Every input the classifier reads, the old belt's busy words among them:
-/// none answers 503 by its words, and the word STORE_BUSY is in no 4xx
-/// body.
+/// Every word the old classifier read, the old belt's busy words among
+/// them: none answers 503 by its words (a `WalletError`'s text, the same
+/// text doubly wrapped, an untyped `anyhow`), and the word STORE_BUSY is in
+/// no 4xx body.
 #[tokio::test]
 async fn no_message_is_store_busy_by_its_words_and_no_4xx_says_it() {
     let inputs = [
@@ -56,29 +59,238 @@ async fn no_message_is_store_busy_by_its_words_and_no_4xx_says_it() {
         "anything else",
     ];
     for msg in inputs {
-        for wrapped in [msg.to_string(), format!("wallet error: {msg}")] {
-            let (status, retry, body) = answer(AppError::from_wallet_error(wrapped.clone())).await;
-            assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE, "{wrapped}");
-            assert_ne!(body["code"], "STORE_BUSY", "{wrapped}");
-            assert!(retry.is_none(), "{wrapped}");
+        for e in [
+            AppError::from(bsv_sdk::Error::WalletError(msg.to_string())),
+            AppError::from(bsv_sdk::Error::WalletError(format!("wallet error: {msg}"))),
+            AppError::from(anyhow::anyhow!("{msg}")),
+        ] {
+            let (status, retry, body) = answer(e).await;
+            assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE, "{msg}");
+            assert_ne!(body["code"], "STORE_BUSY", "{msg}");
+            assert!(retry.is_none(), "{msg}");
             if status.is_client_error() {
-                assert!(
-                    !body.to_string().contains("STORE_BUSY"),
-                    "{wrapped}: {body}"
-                );
+                assert!(!body.to_string().contains("STORE_BUSY"), "{msg}: {body}");
             }
         }
     }
-    // The same through the SDK's own error, untyped.
-    for msg in inputs {
-        let (status, _, body) = answer(AppError::from_wallet_error(bsv_sdk::Error::WalletError(
-            msg.to_string(),
-        )))
+}
+
+/// `AppError::classify` as it stood before #81: the served kind of every
+/// error was read from its Display's prefix. Kept here, in test code, as
+/// the oracle the typed mapping is held to.
+fn prefix_classify(msg: &str) -> (StatusCode, &'static str) {
+    let clean = msg.strip_prefix("wallet error: ").unwrap_or(msg);
+    let any = |words: &[&str]| words.iter().any(|w| clean.starts_with(w));
+    if any(&["Insufficient funds:", "insufficient funds:"]) {
+        (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS")
+    } else if any(&["Authentication required", "Invalid identity key:"]) {
+        (StatusCode::UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+    } else if any(&["Access denied:"]) {
+        (StatusCode::FORBIDDEN, "ACCESS_DENIED")
+    } else if any(&["Entity not found:", "not found:"]) {
+        (StatusCode::NOT_FOUND, "NOT_FOUND")
+    } else if any(&["Unspendable coin:"]) {
+        (StatusCode::CONFLICT, "UNSPENDABLE_COIN")
+    } else if any(&["Duplicate entity:", "Invalid operation:"]) {
+        (StatusCode::CONFLICT, "CONFLICT")
+    } else if any(&["Invalid BEEF at byte"]) {
+        (StatusCode::BAD_REQUEST, "INVALID_BEEF")
+    } else if any(&[
+        "Validation error:",
+        "Invalid argument:",
+        "Origin header required",
+    ]) {
+        (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+    } else if any(&["Storage error:", "Database error:", "Internal error:"]) {
+        (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
+    } else if any(&["Service error:", "Network error:", "Broadcast failed:"]) {
+        (StatusCode::BAD_GATEWAY, "SERVICE_ERROR")
+    } else {
+        (StatusCode::BAD_REQUEST, "ERROR")
+    }
+}
+
+/// The toolbox's refusals (=0.13.0), one instance of each variant.
+fn toolbox_refusals() -> Vec<bsv_wallet_toolbox::Error> {
+    use bsv_wallet_toolbox::Error as T;
+    let s = || "x".to_string();
+    vec![
+        T::NotFound {
+            entity: s(),
+            id: s(),
+        },
+        T::Duplicate {
+            entity: s(),
+            id: s(),
+        },
+        T::AuthenticationRequired,
+        T::InvalidIdentityKey(s()),
+        T::UserNotFound(s()),
+        T::AccessDenied(s()),
+        T::InsufficientFunds {
+            needed: 2,
+            available: 1,
+        },
+        T::UnspendableCoin {
+            outpoint: format!("{}.1", "ab".repeat(32)),
+            missing: vec!["cd".repeat(32)],
+        },
+        T::FailedAncestor {
+            txid: "ef".repeat(32),
+        },
+        T::ValidationError(s()),
+        T::InvalidBeef {
+            offset: 9,
+            kind: bsv_sdk::transaction::Kind::BadVersion,
+        },
+        T::InvalidArgument(s()),
+        T::InvalidOperation(s()),
+        T::InvalidTransactionStatus(s()),
+    ]
+}
+
+/// The toolbox's faults (=0.13.0), one instance of each variant.
+fn toolbox_faults() -> Vec<bsv_wallet_toolbox::Error> {
+    use bsv_wallet_toolbox::Error as T;
+    let s = || "x".to_string();
+    vec![
+        T::StorageNotAvailable,
+        T::StorageError(s()),
+        T::DatabaseError(s()),
+        T::StoreBusy {
+            reason: bsv_wallet_toolbox::StoreBusyReason::InFlight,
+        },
+        T::MigrationError(s()),
+        T::ServiceError(s()),
+        T::NetworkError(s()),
+        T::BroadcastFailed(s()),
+        T::NoServicesAvailable,
+        T::RateLimited {
+            provider: s(),
+            retry_after_secs: 1,
+        },
+        T::NoExplorerAnswered {
+            faults: vec![(s(), s())],
+        },
+        T::TransactionError(s()),
+        T::SigningError(s()),
+        T::SyncError(s()),
+        T::SyncConflict(s()),
+        T::LockTimeout(s()),
+        T::SdkError(bsv_sdk::Error::InvalidHex(s())),
+        T::SdkError(bsv_sdk::Error::WalletError(
+            "Insufficient funds: need 2, have 1".to_string(),
+        )),
+        T::JsonError(serde_json::from_str::<u8>("x").unwrap_err()),
+        T::IoError(std::io::Error::other("x")),
+        T::SqlxError(s()),
+        T::HttpError(s()),
+        T::Internal(s()),
+    ]
+}
+
+/// Every variant of the toolbox's error (=0.13.0).
+fn every_toolbox_error() -> Vec<bsv_wallet_toolbox::Error> {
+    let mut all = toolbox_refusals();
+    all.extend(toolbox_faults());
+    all
+}
+
+/// `served` answers `expected` with `display` as its message.
+async fn served_as(served: AppError, expected: (StatusCode, &str), display: &str) {
+    let (status, _, body) = answer(served).await;
+    assert_eq!(
+        (status, body["code"].as_str().unwrap()),
+        expected,
+        "{display}"
+    );
+    assert_eq!(body["message"], display);
+}
+
+/// The errors a door gives the served layer: every word of the table and
+/// its neighbours as a `WalletError`'s text, every toolbox variant as the
+/// `WalletInterface` boundary gives it (its `From<Error> for
+/// bsv_rs::Error`), and bsv-rs's other variants.
+fn door_errors() -> Vec<bsv_sdk::Error> {
+    let mut texts: Vec<String> = crate::toolbox_words::WORDS
+        .iter()
+        .flat_map(|(w, _)| {
+            [
+                format!("{w} x"),
+                format!("wallet error: {w} x"),
+                w.to_string(),
+            ]
+        })
+        .collect();
+    texts.extend(
+        [
+            "anything else",
+            "Store busy: sqlite code 5",
+            "cannot abort action: the network has transaction ab (a proof)",
+            "Insufficient fund",
+            "",
+        ]
+        .map(str::to_string),
+    );
+    let mut errors: Vec<bsv_sdk::Error> =
+        texts.into_iter().map(bsv_sdk::Error::WalletError).collect();
+    errors.extend(every_toolbox_error().into_iter().map(bsv_sdk::Error::from));
+    errors.extend([
+        bsv_sdk::Error::InvalidHex("zz".to_string()),
+        bsv_sdk::Error::InvalidPublicKey("02".to_string()),
+        bsv_sdk::Error::DecryptionFailed,
+        bsv_sdk::Error::WalletTransport {
+            status: Some(503),
+            detail: "Service error: upstream".to_string(),
+        },
+    ]);
+    errors
+}
+
+/// The typed mapping serves what the prefix table served (#81): every
+/// error a door gives ([`door_errors`]), as it is and inside an `anyhow`,
+/// at the same status, code and message, the store busy by its type as
+/// before. bsv-rs's `WalletBusy` inside an `anyhow` is the store busy too,
+/// by its type, where the table read its words (no door gives one).
+#[tokio::test]
+async fn the_typed_mapping_serves_what_the_prefix_table_served() {
+    for e in door_errors() {
+        let display = e.to_string();
+        let expected = if matches!(e, bsv_sdk::Error::WalletBusy { .. }) {
+            (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY")
+        } else {
+            prefix_classify(&display)
+        };
+        served_as(AppError::from(e.clone()), expected, &display).await;
+        served_as(AppError::from(anyhow::Error::new(e)), expected, &display).await;
+    }
+    // A handler's own words that name no class.
+    for msg in ["invalid input outpoint 'nope': x", "Odd number of digits"] {
+        served_as(
+            AppError::from(anyhow::anyhow!("{msg}")),
+            prefix_classify(msg),
+            msg,
+        )
         .await;
-        assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE, "{msg}");
-        if status.is_client_error() {
-            assert!(!body.to_string().contains("STORE_BUSY"), "{msg}: {body}");
-        }
+    }
+}
+
+/// The toolbox's error reaching the served layer typed, which no door
+/// gives today, is served by its variant as its Display was by the table;
+/// two by design otherwise: `StoreBusy` is the store busy (503) by its
+/// type, and `SdkError` is its bsv-rs error, as the boundary passes it.
+#[tokio::test]
+async fn a_typed_toolbox_error_is_served_by_its_variant() {
+    for e in every_toolbox_error() {
+        let display = e.to_string();
+        let expected = match &e {
+            bsv_wallet_toolbox::Error::StoreBusy { .. } => {
+                (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY")
+            }
+            bsv_wallet_toolbox::Error::SdkError(sdk) => prefix_classify(&sdk.to_string()),
+            _ => prefix_classify(&display),
+        };
+        served_as(AppError::from(e), expected, &display).await;
     }
 }
 
@@ -93,7 +305,7 @@ async fn the_typed_wallet_busy_from_the_door_is_503_retry_after_one() {
     let display = busy.to_string();
     for e in [
         AppError::from_gate_error(crate::spend_gate::GateError::Wallet(busy.clone())),
-        AppError::from_wallet_error(busy),
+        AppError::from(busy),
     ] {
         let (status, retry, body) = answer(e).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -159,26 +371,39 @@ async fn a_pre_door_fault_is_503_only_when_it_is_the_store_busy() {
 #[tokio::test]
 async fn the_unspendable_coin_is_409_and_names_the_coin() {
     let coin = format!("{}.1", "ab".repeat(32));
-    let msg = format!(
-        "wallet error: Unspendable coin: {coin}: its stored ancestry is incomplete, ancestor(s) not stored: [{}]; createAction fetches none, and the wallet's other coins do not cover the action",
-        "cd".repeat(32)
-    );
-    let (status, retry, body) = answer(AppError::from_wallet_error(msg.clone())).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert!(retry.is_none());
-    assert_eq!(body["code"], "UNSPENDABLE_COIN");
-    assert_eq!(body["coin"], coin);
-    assert_eq!(body["message"], msg);
+    let unspendable = bsv_wallet_toolbox::Error::UnspendableCoin {
+        outpoint: coin.clone(),
+        missing: vec!["cd".repeat(32)],
+    };
+    let msg = format!("wallet error: {unspendable}");
+    // As the door gives it (its variant erased), and typed.
+    for e in [
+        AppError::from(bsv_sdk::Error::from(unspendable)),
+        AppError::from(bsv_wallet_toolbox::Error::UnspendableCoin {
+            outpoint: coin.clone(),
+            missing: vec!["cd".repeat(32)],
+        }),
+    ] {
+        let (status, retry, body) = answer(e).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(retry.is_none());
+        assert_eq!(body["code"], "UNSPENDABLE_COIN");
+        assert_eq!(body["coin"], coin);
+        assert!(msg.ends_with(body["message"].as_str().unwrap()), "{body}");
+    }
 
-    let (status, _, body) = answer(AppError::from_wallet_error(
-        "wallet error: Service error: the header service was not read",
-    ))
+    let (status, _, body) = answer(AppError::from(bsv_sdk::Error::WalletError(
+        "Service error: the header service was not read".to_string(),
+    )))
     .await;
     assert_eq!(
         (status, &body["code"]),
         (StatusCode::BAD_GATEWAY, &json!("SERVICE_ERROR"))
     );
-    let (status, _, body) = answer(AppError::from_wallet_error("Insufficient funds: need 5")).await;
+    let (status, _, body) = answer(AppError::from(bsv_sdk::Error::WalletError(
+        "Insufficient funds: need 5".to_string(),
+    )))
+    .await;
     assert_eq!(
         (status, &body["code"]),
         (StatusCode::PAYMENT_REQUIRED, &json!("INSUFFICIENT_FUNDS"))
@@ -368,7 +593,10 @@ async fn the_header_services_fault_is_503_headers_unavailable_with_retry_after()
         origin: Origin::Received,
         age_minutes: 9,
         reason: "headers unavailable: Service error: get_chain_tip_header: no header service answered (chaintracks: timeout)".to_string(),
-        headers_fault: true,
+        headers_fault: Some(
+            "Service error: get_chain_tip_header: no header service answered (chaintracks: timeout)"
+                .to_string(),
+        ),
         output_id: 0,
     };
     let refusal = Refusal {

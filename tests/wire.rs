@@ -1960,7 +1960,7 @@ const HOST_ROUTES: [&str; 5] = [
     "/arc-callback",
 ];
 
-/// `AppError`'s codes (`src/server/handlers.rs`) some world produces, by
+/// `AppError`'s codes (`src/server/error.rs`) some world produces, by
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
@@ -2005,15 +2005,13 @@ const UNPRODUCED: [(u16, &str); 3] = [
     (502, "BROADCAST_REJECTED"),
 ];
 
-/// The `(status, code)` pairs `src/server/handlers.rs` writes: each
-/// `(StatusCode::NAME, "CODE")` of the classifier, and each `code:` of a
-/// built `AppError` under the `status: StatusCode::NAME` before it (a
-/// constant's path read from its module's `const NAME: &str = "..."`).
+/// The `(status, code)` pairs `src/server/error.rs` writes: each
+/// `(StatusCode::NAME, "CODE")` of `Kind::answer`, the served layer's one
+/// table (#81).
 fn app_codes_in_source() -> BTreeSet<(u16, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let read =
-        |p: &str| std::fs::read_to_string(root.join(p)).unwrap_or_else(|e| panic!("{p}: {e}"));
-    let source = read("src/server/handlers.rs");
+    let path = "src/server/error.rs";
+    let source = std::fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
     let status = |name: &str| -> u16 {
         match name {
             "BAD_REQUEST" => 400,
@@ -2028,37 +2026,21 @@ fn app_codes_in_source() -> BTreeSet<(u16, String)> {
             other => panic!("StatusCode::{other}: not in the scanner's table"),
         }
     };
-    let quoted = |s: &str| -> Option<String> {
-        let s = s.trim().strip_prefix('"')?;
-        Some(s[..s.find('"')?].to_string())
-    };
     let mut found = BTreeSet::new();
-    let mut last_status = None;
-    for line in source.lines().map(str::trim) {
-        if let Some(rest) = line.strip_prefix("(StatusCode::") {
-            if let Some((name, code)) = rest.split_once(',') {
-                if let Some(code) = quoted(code) {
-                    found.insert((status(name.trim()), code));
-                }
-            }
-        } else if let Some(rest) = line.strip_prefix("status: StatusCode::") {
-            last_status = Some(status(rest.trim_end_matches(',')));
-        } else if let Some(rest) = line.strip_prefix("code: ") {
-            let rest = rest.trim_end_matches(',');
-            let code = quoted(rest).or_else(|| {
-                // `crate::module::NAME`: the constant's value in its module.
-                let (module, name) = rest.strip_prefix("crate::")?.rsplit_once("::")?;
-                let text = read(&format!("src/{}.rs", module.replace("::", "/")));
-                let at = text.find(&format!("const {name}: &str = "))?;
-                quoted(text[at..].split_once('=')?.1)
-            });
-            if let Some(code) = code {
-                let at = last_status
-                    .take()
-                    .unwrap_or_else(|| panic!("`code: {rest}` with no `status:` before it"));
-                found.insert((at, code));
-            }
-        }
+    for line in source.lines() {
+        let Some((_, rest)) = line.split_once("(StatusCode::") else {
+            continue;
+        };
+        let (name, code) = rest
+            .split_once(',')
+            .unwrap_or_else(|| panic!("{path}: `{}` has no code", line.trim()));
+        let code = code
+            .trim()
+            .strip_prefix('"')
+            .and_then(|c| c.split_once('"'));
+        let (code, _) =
+            code.unwrap_or_else(|| panic!("{path}: `{}`: the code is not a literal", line.trim()));
+        found.insert((status(name.trim()), code.to_string()));
     }
     found
 }
@@ -2508,7 +2490,7 @@ fn the_normalizer_keeps_the_shape() {
 }
 
 /// The judged `AppError` codes and the unproduced ones are exactly the
-/// codes `src/server/handlers.rs` writes, at their statuses: a code added
+/// codes `src/server/error.rs` writes, at their statuses: a code added
 /// there with no fixture, or one gone from it, fails here by name.
 #[test]
 fn every_app_error_code_is_judged() {
@@ -2527,7 +2509,7 @@ fn every_app_error_code_is_judged() {
     let gone: Vec<_> = listed.difference(&in_source).collect();
     assert!(
         unlisted.is_empty() && gone.is_empty(),
-        "src/server/handlers.rs writes {unlisted:?}, which neither APP_CODES (with a fixture) nor \
+        "src/server/error.rs writes {unlisted:?}, which neither APP_CODES (with a fixture) nor \
          UNPRODUCED (with its reason in docs/WIRE.md) lists; and lists {gone:?}, which it no \
          longer writes"
     );
