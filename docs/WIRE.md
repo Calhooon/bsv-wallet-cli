@@ -96,7 +96,7 @@ Two recordings in a row are byte-identical: a re-record with no change in `src/`
 
 ## What the normalizer hides, and why
 
-One function, `normalize` in `tests/wire.rs`, and only values that differ from run to run with no change to the code. A placeholder replaces a value, never a key, and it keeps the value's shape: its JSON type, a byte array's length, a string's kind and length, a number's sign and digit count. A field that changes from a byte array to a hex string, or grows by a byte, fails the replay.
+One normalizer, `NORMALIZER` in `tests/wire.rs` (its rules; the walk and the capture it drives are `Normalizer` in `tests/wire_support/mod.rs`, the replay machinery `tests/wire_consumers.rs` shares), and only values that differ from run to run with no change to the code. A placeholder replaces a value, never a key, and it keeps the value's shape: its JSON type, a byte array's length, a string's kind and length, a number's sign and digit count. A field that changes from a byte array to a hex string, or grows by a byte, fails the replay.
 
 | placeholder | for |
 |---|---|
