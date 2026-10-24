@@ -53,6 +53,14 @@ pub(crate) async fn local_header_service(height: u32) -> String {
 pub(crate) async fn setup_with_header_service(
     chaintracks_url: Option<String>,
 ) -> (String, Client, TempDir) {
+    setup_with_config(chaintracks_url, ServerConfig::default()).await
+}
+
+/// A fresh wallet over a header service (or none), served under `config`.
+pub(crate) async fn setup_with_config(
+    chaintracks_url: Option<String>,
+    config: ServerConfig,
+) -> (String, Client, TempDir) {
     let tmp = TempDir::new().expect("temp dir");
     let db_path = tmp.path().join("test.db");
 
@@ -80,7 +88,7 @@ pub(crate) async fn setup_with_header_service(
         .expect("wallet");
 
     let state = server::make_wallet_state(wallet);
-    let app = server::make_router(state, ServerConfig::default());
+    let app = server::make_router(state, config);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
