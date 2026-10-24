@@ -366,7 +366,9 @@ jobs:
           python3 -B tools/scoreboard --check "${base[@]}"
 
       - name: links
-        run: python3 tools/check-links
+        run: |
+          python3 -B tools/test_check_links.py
+          python3 -B tools/check-links
 
       - name: Keep the measured JSON
         if: always()
