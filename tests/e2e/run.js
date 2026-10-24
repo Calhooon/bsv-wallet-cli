@@ -53,23 +53,29 @@ async function main() {
   // The hermetic run's own: the stub process and the funder wallet it seeds.
   let stub = null;
   let funderWallet = null;
+  // Scenarios a hermetic run skipped (`hermetic: false`), named in the results.
+  const hermeticSkips = [];
 
   try {
     if (hermetic.enabled) {
+      // A failed seed is fatal before the funder's balance is read; the
+      // accounting below reads 0 then, not undefined.
+      funderBalanceBefore = 0;
       console.log('');
       console.log(`  E2E_HERMETIC=1: starting the stub on :${hermetic.STUB_PORT} and a funder on :${FUNDER_PORT}`);
       stub = await hermetic.startStub();
-      funderWallet = await startWallet(FUNDER_PORT, 'funder');
+      funderWallet = hermetic.stopOnExit(await startWallet(FUNDER_PORT, 'funder'));
       const seed = parseInt(process.env.FUND_AMOUNT || '100000') * 2 + 10_000;
       const coin = await hermetic.seedFunder(stub, funderWallet, seed);
       console.log(`  Funder seeded: ${seed.toLocaleString()} sats from the stub's coinbase ${coin.txid.slice(0, 16)}... at height ${coin.height}`);
+      const forged = await hermetic.seedForgedRefused(stub, funderWallet, seed);
+      console.log(`  Forged seed refused: root ${forged.root.slice(0, 16)}... is not the header's ${forged.headerRoot.slice(0, 16)}... at ${forged.height} (${forged.refusal.slice(0, 120)})`);
     }
 
     // Check funder is running
     const funder = new WalletClient(FUNDER_PORT, 'funder');
     try { await funder.isAuthenticated(); } catch {
       console.error(`ERROR: Funder wallet not running on :${FUNDER_PORT}`);
-      if (stub) stub.stop();
       process.exit(1);
     }
 
@@ -104,10 +110,6 @@ async function main() {
     const fundAmount = parseInt(process.env.FUND_AMOUNT || '100000');
     if (funderBalanceBefore < fundAmount + 1_000) {
       console.error(`ERROR: funder holds ${funderBalanceBefore.toLocaleString()} sats; a run funds ${fundAmount.toLocaleString()} and needs ${(fundAmount + 1_000).toLocaleString()} (FUND_AMOUNT lowers it; scenario 22 needs 50,000 in A at its start)`);
-      if (walletB) teardownWallet(walletB, { keep: false });
-      if (walletA) teardownWallet(walletA, { keep: false });
-      if (funderWallet) teardownWallet(funderWallet, { keep: false });
-      if (stub) stub.stop();
       process.exit(1);
     }
     console.log(`  Funding A with ${fundAmount.toLocaleString()} sats from funder...`);
@@ -145,7 +147,7 @@ async function main() {
       // silently, and counts as run.
       if (hermetic.enabled && scenario.hermetic === false) {
         console.log(`  [${num}] ${scenario.name}: SKIP under E2E_HERMETIC=1: ${scenario.hermeticReason || 'not hermetic'}`);
-        results.push({ num, name: scenario.name, status: 'SKIP', elapsed: '0.0', reason: scenario.hermeticReason });
+        hermeticSkips.push({ num, name: scenario.name, reason: scenario.hermeticReason || 'not hermetic' });
         continue;
       }
 
@@ -206,34 +208,38 @@ async function main() {
 
     // Final accounting
     const funderClient = new WalletClient(FUNDER_PORT, 'funder');
-    const funderBalanceAfter = await funderClient.balance().catch(() => funderBalanceBefore || 0);
+    const funderBalanceAfter = await funderClient.balance();
 
-    // The hermetic run's stats: every call each stub provider answered, and
-    // every attempt to leave the machine the wall refused. Then the funder
-    // and the stub go (the funder's directory kept, like the wallets', when
-    // the run failed).
-    let walled = 0;
-    if (stub) {
+    // The hermetic run's stats: every call each stub provider answered,
+    // every attempt to leave the machine the wall refused, every route the
+    // stub does not play. A stats read that fails is no proof the run stayed
+    // home: fatal, as is any new walled target and any unserved route (judged
+    // at the end). Then the funder and the stub go (the funder's directory
+    // kept, like the wallets', when the run failed).
+    let wall = null;
+    let statsError = null;
+    if (hermetic.enabled) {
       try {
         const stats = await stub.stats();
-        walled = Object.values(stats.leaks || {}).reduce((s, n) => s + n, 0);
+        wall = hermetic.classifyWalled(stats);
         console.log('');
         console.log(`  Stub (${stats.total} calls; chain tip ${stats.chain.height}, ${stats.chain.minedBlocks} block(s) mined, ${stats.chain.transactions} transactions held):`);
         console.log(hermetic.describeStats(stats));
+        for (const [target, n] of Object.entries(wall.unknown)) if (!(stats.leaks || {})[target]) console.log(`    ${target} x${n}: NEW LEAK`);
         console.log(`  Stub log: ${stub.logPath}`);
       } catch (e) {
-        console.log(`  WARNING: the stub's stats could not be read: ${e.message}`);
+        statsError = e;
+        console.log(`  FATAL: the stub's stats could not be read: ${e.message}`);
       }
     }
-    if (funderWallet) {
-      const keepFunder = fatal !== null || results.some(r => r.status === 'FAIL') || results.length < expected || walled > 0;
+    if (hermetic.enabled) {
+      const keepFunder = fatal !== null || results.some(r => r.status === 'FAIL') || results.length + hermeticSkips.length < expected || statsError !== null || wall.unknownCount > 0 || wall.unservedCount > 0;
       funderWallet.left = 0; // the hermetic funder's sats are the stub's, not mainnet's
       teardownWallet(funderWallet, { keep: keepFunder });
+      stub.stop();
     }
-    if (stub) stub.stop();
 
     const passed = results.filter(r => r.status === 'PASS').length;
-    const skipped = results.filter(r => r.status === 'SKIP').length;
     const total = results.length;
     const netCost = funderBalanceBefore - funderBalanceAfter;
     // Sats a kept wallet still holds are stranded, not spent: the key is in
@@ -247,17 +253,24 @@ async function main() {
     console.log('================================================================');
 
     for (const r of results) {
-      const icon = r.status === 'PASS' ? 'OK' : r.status === 'SKIP' ? '--' : '!!';
+      const icon = r.status === 'PASS' ? 'OK' : '!!';
       const leak = r.netLeak != null ? ` leak=${r.netLeak}` : '';
-      const reason = r.status === 'SKIP' ? ` (${r.reason || 'not hermetic'})` : '';
-      console.log(`  [${icon}] ${r.num}. ${r.name}: ${r.status} (${r.elapsed}s)${leak}${reason}`);
+      console.log(`  [${icon}] ${r.num}. ${r.name}: ${r.status} (${r.elapsed}s)${leak}`);
+    }
+
+    if (hermetic.enabled) {
+      for (const k of hermeticSkips) console.log(`  [--] ${k.num}. ${k.name}: SKIP under E2E_HERMETIC=1 (${k.reason})`);
     }
 
     const totalLeak = results.reduce((s, r) => s + (r.netLeak || 0), 0);
 
     console.log('----------------------------------------------------------------');
-    console.log(`  Passed:        ${passed}/${total}${skipped ? ` (${skipped} skipped under E2E_HERMETIC=1)` : ''}`);
-    if (hermetic.enabled) console.log(`  Walled:        ${walled} attempt(s) to leave the machine`);
+    console.log(`  Passed:        ${passed}/${total}`);
+    if (hermetic.enabled) console.log(`  Skipped:       ${hermeticSkips.length} under E2E_HERMETIC=1`);
+    if (hermetic.enabled && wall) {
+      console.log(`  Walled:        ${wall.knownCount + wall.unknownCount} attempt(s) to leave the machine: ${wall.knownCount} known (${Object.keys(hermetic.KNOWN_WALLED).join(', ')}), ${wall.unknownCount} new`);
+      console.log(`  Unserved:      ${wall.unservedCount} request(s) for routes the stub does not play`);
+    }
     console.log(`  Funder before: ${funderBalanceBefore.toLocaleString()} sats`);
     console.log(`  Funder after:  ${funderBalanceAfter.toLocaleString()} sats`);
     console.log(`  Net cost:      ${netCost.toLocaleString()} sats`);
@@ -278,6 +291,34 @@ async function main() {
       process.exit(1);
     }
 
+    // A hermetic run is judged on its stats: unread stats, a walled target
+    // other than the toolbox's two knobless providers, or a route the stub
+    // does not play each fail it (the stats above name them); a scenario it
+    // skipped counts as run.
+    if (hermetic.enabled) {
+      if (statsError !== null) {
+        console.log(`  NOT HERMETIC: the stub's stats could not be read (${statsError.message})`);
+        process.exit(1);
+      }
+      if (wall.unknownCount > 0) {
+        console.log(`  NOT HERMETIC: ${wall.unknownCount} attempt(s) to reach a host other than ${Object.keys(hermetic.KNOWN_WALLED).join(' and ')}: ${Object.keys(wall.unknown).join(', ')}`);
+        process.exit(1);
+      }
+      if (wall.unservedCount > 0) {
+        console.log(`  NOT HERMETIC: ${wall.unservedCount} request(s) for routes the stub does not play: ${Object.keys(wall.unserved).join(', ')}`);
+        process.exit(1);
+      }
+      if (fatal !== null) {
+        console.log(`  FAILED before the scenarios ran: ${fatal.message}`);
+        process.exit(1);
+      }
+      if (total + hermeticSkips.length < expected) {
+        console.log(`  FAILED: ${total + hermeticSkips.length} of ${expected} scenarios ran`);
+        process.exit(1);
+      }
+      process.exit(passed === total ? 0 : 1);
+    }
+
     if (fatal !== null) {
       console.log(`  FAILED before the scenarios ran: ${fatal.message}`);
       process.exit(1);
@@ -286,14 +327,7 @@ async function main() {
       console.log(`  FAILED: ${total} of ${expected} scenarios ran`);
       process.exit(1);
     }
-    // A hermetic run that tried to leave the machine is not hermetic: the
-    // wall refused each attempt, and the stats above name the host and the
-    // route that lacks a knob.
-    if (walled > 0) {
-      console.log(`  NOT HERMETIC: ${walled} attempt(s) to reach a real host were walled; see the stub's stats above`);
-      process.exit(1);
-    }
-    process.exit(passed + skipped === total ? 0 : 1);
+    process.exit(passed === total ? 0 : 1);
   }
 }
 

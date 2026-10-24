@@ -48,19 +48,43 @@ the signer and the stub is the oracle of inclusion, not of validity.
 base URL (`ServicesOptions` has `bananablocks_base` alone), and a fault in a
 rung the stub serves would send the binary to the next real host. So the run
 sets `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` to the stub and `NO_PROXY` to
-`127.0.0.1,localhost`: reqwest reads these (hyper-util's system matcher), every
-request to a real host becomes a `CONNECT host:443` at the stub, and the stub
-refuses it with 403 and counts it under `leaks`. The binary sees a fault
-("could not look", never a verdict), the run sees the host in its stats, and the
-run fails: a hermetic run that tried to leave the machine is not hermetic, and
-the stats name the route that lacks a knob.
+`127.0.0.1,localhost`, and every request from the binary and the harness
+becomes a `CONNECT host:443` at the stub (or, for plain HTTP, an absolute-URI
+request), which the stub refuses with 403 and counts under `leaks`:
+
+- the binary's clients are reqwest's, which read the proxy environment
+  (hyper-util's system matcher);
+- the harness's Node reads it under `NODE_USE_ENV_PROXY=1` (Node 24, 22.21),
+  which `lib/hermetic.js` sets for every child and CI sets for the harness
+  itself; since a Node reads it at start, the harness also refuses its own
+  fetch to anything but the loopback before it is made and counts it as a
+  leak, on any Node;
+- Playwright's Chromium (scenario 20) reads no proxy environment and is given
+  `--proxy-server` in its launch args under the flag; it bypasses the loopback
+  itself, so the inspector on localhost is reached direct. (Playwright's
+  `proxy` launch option is not used: it adds `<-loopback>` and sends
+  localhost to the wall.)
+
+The binary sees a fault ("could not look", never a verdict) and the run sees
+the host in its stats. A walled attempt at any target other than the two the
+toolbox gives no knob for (below) fails the run, as does a stats read that
+fails and any route the stub does not play.
+
+What the wall is not: an OS-level block. The runner's egress is open; a client
+that ignores the proxy environment (a raw socket, a library with its own
+resolver) would reach the network unseen. Blocking egress at the OS
+(`unshare -n` for a loopback-only namespace, or a firewall rule) changes how
+the job runs its step and is its own concern: #136.
 
 **The funder** is a third stub-backed wallet the harness starts on :3373
 (`FUNDER_PORT` moves it; 3320 is refused) in a scratch directory. The stub mines
 a coinbase paying the funder's BRC-29 address (`POST /_stub/fund`) and the
 funder internalizes its AtomicBEEF: the wallet checks the BUMP's root against the
 stub's header for that height (`/findHeaderHexForHeight`), as it would against
-the real header service. The proof itself is not stored: the toolbox's proof
+the real header service. The check is shown to run: the harness then offers a
+forged coinbase (`POST /_stub/forge`: a BUMP claiming it alone in the recorded
+block at the last fixture height, whose root is not that header's) and the
+run is fatal unless the funder refuses it and its balance does not move. The proof itself is not stored: the toolbox's proof
 gate (`max_acceptable_proof_height`, written by the monitor) is closed under
 `serve`, so the coin is a received unproven coin and the funder spends it under
 `allowPending: received`, exactly as every coin of the mainnet run is spent.
@@ -111,12 +135,13 @@ told apart by their leading bytes; or JSON `{"rawTx": hex}`; answers
 bytes that do not parse), `POST /v1/txs` (a JSON array of `{rawTx}`, one answer
 each), `GET /v1/tx/{txid}` (the status, 404 when unknown), `GET /v1/policy`.
 
-`/_stub`: `GET /stats` (calls per provider and route, `leaks`, the chain),
+`/_stub`: `GET /stats` (calls per provider and route, `leaks`, `unserved`, the chain),
 `GET /chain`, `POST /mine` (`{txids?}`), `POST /fund` (`{script, satoshis}`:
 a coinbase mined alone, its AtomicBEEF returned), `POST /fault`
 (`{provider, status, retryAfter?, count?, body?}`: the next `count` requests to
 that provider answer `status`, with `Retry-After` when given), `DELETE /fault`,
-`GET /beef/{txid}` (the AtomicBEEF of anything held), `GET /tx/{txid}` (the
+`POST /forge` (`{script, satoshis}`: the forged negative of `/fund`, nothing
+held), `GET /beef/{txid}` (the AtomicBEEF of anything held), `GET /tx/{txid}` (the
 stub's own view: block, outputs, spenders).
 
 The TSC proof of a transaction mined alone has no nodes, which the toolbox's
@@ -136,24 +161,35 @@ funding block is proven by the BUMP inside its BEEF instead.
    add one in `src/services_env.rs` (the brief's one allowed `src/` change) or
    let the wall count it and say so in the report.
 4. Run `E2E_HERMETIC=1 node tests/e2e/run.js`; the stats at the end list every
-   route each provider answered and every walled attempt. A route the binary
-   asked that the stub lacks is a 404 in the stats under that provider.
+   route each provider answered, every walled attempt and every unserved
+   route. A route the binary asked that the stub lacks is answered 501
+   (`stub: unserved route <method> <path>`), never a 404 the binary would read
+   as a clean absent, and is counted under `unserved`; the run fails on any.
 5. List it here.
 
 ## What is not hermetic, and why
 
-- **The toolbox's WhatsOnChain and Bitails providers** keep their default bases:
-  `ServicesOptions` takes no `whatsonchain_base` or `bitails_base`. Their calls
-  (the raw-tx, merkle-path, utxo-status and status-for-txids ladders, and the
-  break-glass header fallback) reach the wall, are refused, and the ladder moves
-  to BananaBlocks, which the stub serves. None of the 23 scenarios' flows
-  under `serve` asks those ladders, so the run passes; a chaos scenario that
-  faults the stub's ARC would send the toolbox's `postBeef` ladder to the wall
-  at GorillaPool only when `ARC_GORILLAPOOL_URL` is not empty. The stack
-  keeper's item: `ServicesOptions::whatsonchain_base` and `bitails_base`, fed
-  through `WhatsOnChain::with_base_url_and_config` and `Bitails::with_base_url`
-  (both exist, `pub(crate)`), then `services_env.rs` passes `WOC_BASE` and
-  `BITAILS_BASE` through.
+- **The toolbox's WhatsOnChain and Bitails providers** keep their default bases
+  (`api.whatsonchain.com`, `api.bitails.io`): `ServicesOptions` takes no
+  `whatsonchain_base` or `bitails_base` (toolbox #98 asks for the knobs). So
+  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.12.1,
+  `Services::with_options`) these rungs never run hermetically today; each
+  reaches the wall, is refused, and the ladder moves on (to BananaBlocks,
+  which the stub serves, or to the stub's ARC):
+  `getMerklePath` (WhatsOnChain, Bitails), `getRawTx` (WhatsOnChain, Bitails),
+  `postBeef` (the Bitails and WhatsOnChain broadcasters behind the ARCs),
+  `getUtxoStatus` (WhatsOnChain, Bitails), `getStatusForTxids` (WhatsOnChain,
+  Bitails), `getScriptHashHistory` (WhatsOnChain, Bitails), the BSV exchange
+  rate (WhatsOnChain), and the break-glass header fallback by hash
+  (WhatsOnChain, Bitails; off unless `BREAK_GLASS_EXPLORER_HEADERS`, which the
+  run drops). The harness names these two walled targets,
+  `CONNECT api.whatsonchain.com:443` and `CONNECT api.bitails.io:443`
+  (`KNOWN_WALLED` in `lib/hermetic.js`), and tolerates walled attempts at them
+  only; a walled attempt at any other target fails the run, so a new leak
+  elsewhere is seen. On 2026-10-23 the 23 scenarios under `serve` made none
+  (walled 0): the CLI's own rungs, which the stub serves, answered ahead of them. When
+  #98 lands, `services_env.rs` passes `WOC_BASE` and `BITAILS_BASE` through
+  and `KNOWN_WALLED` empties.
 - **Overlay discovery** (`discoverByIdentityKey`, `discoverByAttributes`): the
   toolbox builds `HttpLookupResolver::mainnet()` inline, whose SLAP tracker
   hosts are bsv-rs defaults, and the wallet takes no resolver of the caller's.
@@ -172,7 +208,8 @@ funding block is proven by the BUMP inside its BEEF instead.
   mainnet gate).
 - **Scenario 20's browser checks** need Playwright's Chromium; without it the
   scenario's API checks run and the browser checks are skipped by the scenario
-  itself. CI installs Chromium.
+  itself. CI installs Chromium; under the flag it runs behind the wall by its
+  launch args (above).
 - **A scenario that cannot be hermetic** says `hermetic: false` with a
   `hermeticReason` on its module; the runner skips it under the flag, prints
   the reason, and counts it as run. As of this writing no scenario needs it.
@@ -181,7 +218,8 @@ funding block is proven by the BUMP inside its BEEF instead.
 
 `CHAINTRACKS_URL`, `ARC_URL`, `BANANABLOCKS_BASE`, `WOC_BASE`, `BITAILS_BASE`
 at the stub; `ARC_GORILLAPOOL_URL=` (out); `HTTPS_PROXY`, `HTTP_PROXY`,
-`ALL_PROXY` at the stub and `NO_PROXY=127.0.0.1,localhost` (both letter cases);
+`ALL_PROXY` at the stub and `NO_PROXY=127.0.0.1,localhost` (both letter cases),
+`NODE_USE_ENV_PROXY=1`;
 `FUNDER_PORT` 3373 unless set (3320 refused); `E2E_WALLET_TMP` the system
 temporary directory unless set (the wallets' directories, the stub's log and
 CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
@@ -197,6 +235,7 @@ and can run on every PR. T2 (headers and a proof): the wallet verifies the
 funding BUMP against a header the stub serves, the same check as on mainnet.
 T3 (fast and cheap): no sats, no explorer rate limits, no network latency. T4
 (the rule in script or math): the merkle root, the BUMP and the TSC fold are
-computed, not recorded. T5 (fewer trusted words): a walled attempt is counted
-and fails the run; the stub's double-spend answer is derived from its own
+computed, not recorded. T5 (fewer trusted words): a walled attempt outside the
+two named targets, an unserved route or unread stats fails the run, and the
+seed's root check is shown to refuse a forged root; the stub's double-spend answer is derived from its own
 spends, not asserted. T6 (executable): `E2E_HERMETIC=1 node tests/e2e/run.js`.

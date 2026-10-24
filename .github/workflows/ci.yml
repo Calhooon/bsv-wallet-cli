@@ -268,17 +268,23 @@ jobs:
 
   # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 23 scenarios of
   # tests/e2e against a local stub of the header service, the three explorers
-  # and the broadcaster (tests/e2e/stub), with HTTPS_PROXY walling every other
-  # host. No sat moves and nothing leaves the runner; a walled attempt fails
-  # the run. The mainnet run stays the release gate. On failure the kept
-  # wallet directories (keys and serve.log), the stub's log and the run's log
-  # are uploaded.
+  # and the broadcaster (tests/e2e/stub), with the proxy environment walling
+  # every other host: every request from the binary and the harness becomes a
+  # CONNECT the stub refuses and counts (Node 24 with NODE_USE_ENV_PROXY=1 for
+  # the harness's own fetch; Chromium by its launch args). The wall binds the
+  # clients that honour it; the runner's egress is not blocked at the OS
+  # (docs/E2E-HERMETIC.md, "The wall"). No sat moves; a walled attempt at a
+  # host other than the toolbox's two knobless providers, an unserved stub
+  # route or unread stats fails the run. The mainnet run stays the release
+  # gate. On failure the kept wallet directories (keys and serve.log), the
+  # stub's log and the run's log are uploaded.
   e2e-hermetic:
     name: e2e-hermetic
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       E2E_WALLET_TMP: ${{ runner.temp }}/e2e
+      NODE_USE_ENV_PROXY: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -292,6 +298,12 @@ jobs:
         run: |
           cargo build --release --locked
           cargo build --release --locked -p bsv-wallet-mcp
+
+      # Node 24: its fetch and http obey the proxy environment under
+      # NODE_USE_ENV_PROXY=1 (Node 20 ignores it).
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
 
       # Scenario 20 drives the inspector UI through Playwright's Chromium;
       # the browser is cached by the lock file, its system libraries are not.
@@ -313,6 +325,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$E2E_WALLET_TMP"
+          node --version
           E2E_HERMETIC=1 node tests/e2e/run.js 2>&1 | tee "$E2E_WALLET_TMP/run.log"
 
       - name: Keep the wallets, the stub's log and the run's log

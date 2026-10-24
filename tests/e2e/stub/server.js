@@ -34,7 +34,7 @@ class Stub {
     this.started = Date.now();
     /** provider -> [{ status, retryAfter, count, body }] */
     this.faults = new Map();
-    this.stats = { calls: {}, total: 0, leaks: {}, faulted: 0 };
+    this.stats = { calls: {}, total: 0, leaks: {}, unserved: {}, faulted: 0 };
   }
 
   // ─── stats and faults ─────────────────────────────────────────────────
@@ -48,6 +48,17 @@ class Stub {
 
   leak(target) {
     this.stats.leaks[target] = (this.stats.leaks[target] || 0) + 1;
+  }
+
+  /**
+   * A route the binary asked that the stub does not play: 501, never a 404
+   * the binary would read as a clean absent. Counted under `unserved` (the
+   * harness fails on any), and under the provider's calls.
+   */
+  unserved(req, provider, route, done) {
+    const key = `${req.method} /${provider}${generalize(route)}`;
+    this.stats.unserved[key] = (this.stats.unserved[key] || 0) + 1;
+    return done(501, `stub: unserved route ${req.method} /${provider}${route}`, 'text/plain');
   }
 
   /** The injected fault for a provider's next request, consumed; null when none. */
@@ -118,7 +129,7 @@ class Stub {
       send(res, status, payload, type);
     };
     if (provider === '_stub') return this.stubRoute(req, url, route, body, done);
-    if (!PROVIDERS.includes(provider)) return done(404, { error: `no such provider: /${provider}` });
+    if (!PROVIDERS.includes(provider)) return this.unserved(req, provider, route, done);
     const fault = this.takeFault(provider);
     if (fault) {
       if (fault.retryAfter != null) res.setHeader('Retry-After', String(fault.retryAfter));
@@ -130,7 +141,7 @@ class Stub {
       case 'bitails': return this.bitails(req, url, route, body, done);
       case 'bananablocks': return this.bananablocks(req, url, route, done);
       case 'arc': return this.arc(req, route, body, done);
-      default: return done(404, { error: 'unreachable' });
+      default: return this.unserved(req, provider, route, done);
     }
   }
 
@@ -140,7 +151,7 @@ class Stub {
     const m = (method, re) => req.method === method && re.exec(route);
     let mm;
     if (m('GET', /^\/stats$/)) {
-      return done(200, { uptimeMs: Date.now() - this.started, chain: this.chain.summary(), calls: this.stats.calls, total: this.stats.total, faulted: this.stats.faulted, faults: this.faultsView(), leaks: this.stats.leaks });
+      return done(200, { uptimeMs: Date.now() - this.started, chain: this.chain.summary(), calls: this.stats.calls, total: this.stats.total, faulted: this.stats.faulted, faults: this.faultsView(), leaks: this.stats.leaks, unserved: this.stats.unserved });
     }
     if (m('GET', /^\/chain$/)) return done(200, this.chain.summary());
     if (m('POST', /^\/mine$/)) {
@@ -153,6 +164,13 @@ class Stub {
       const sats = Number(args.satoshis);
       if (!Number.isInteger(sats) || sats <= 0) throw new HttpError(400, 'satoshis: a positive integer');
       return done(200, this.chain.fund(Buffer.from(args.script, 'hex'), sats));
+    }
+    if (m('POST', /^\/forge$/)) {
+      const args = JSON.parse(body.toString());
+      if (!/^[0-9a-fA-F]+$/.test(args.script || '')) throw new HttpError(400, 'script: hex locking script required');
+      const sats = Number(args.satoshis);
+      if (!Number.isInteger(sats) || sats <= 0) throw new HttpError(400, 'satoshis: a positive integer');
+      return done(200, this.chain.forgedFund(Buffer.from(args.script, 'hex'), sats));
     }
     if (m('POST', /^\/fault$/)) return done(200, { faults: this.addFault(JSON.parse(body.toString())) });
     if (m('DELETE', /^\/fault$/)) { this.faults.clear(); return done(200, { faults: {} }); }
@@ -172,7 +190,7 @@ class Stub {
   chaintracks(req, url, route, done) {
     const frame = (value) => ({ status: 'success', value });
     const header = (h) => ({ version: h.version, previousHash: h.previousHash, merkleRoot: h.merkleRoot, time: h.time, bits: h.bits, nonce: h.nonce, height: h.height, hash: h.hash });
-    if (req.method !== 'GET') return done(405, { status: 'error', value: null });
+    if (req.method !== 'GET') return this.unserved(req, 'chaintracks', route, done);
     if (route === '/getPresentHeight') return done(200, frame(this.chain.height()));
     if (route === '/findChainTipHeaderHex') return done(200, frame(header(this.chain.tip())));
     if (route === '/findHeaderHexForHeight') {
@@ -184,7 +202,7 @@ class Stub {
       const h = this.chain.headerByHash(url.searchParams.get('hash') || '');
       return h ? done(200, frame(header(h))) : done(404, { status: 'error', value: null, error: 'no header with that hash' });
     }
-    return done(404, { status: 'error', value: null, error: `no such route ${route}` });
+    return this.unserved(req, 'chaintracks', route, done);
   }
 
   // ─── /woc (WhatsOnChain's shape) ──────────────────────────────────────
@@ -254,7 +272,7 @@ class Stub {
       return done(200, { hash: h.hash, size: null, height: h.height, version: h.version, versionHex: h.version.toString(16).padStart(8, '0'), merkleroot: h.merkleRoot, time: h.time, mediantime: h.time, nonce: h.nonce, bits: h.bits.toString(16), difficulty: null, chainwork: null, previousblockhash: h.previousHash, nextblockhash: next ? next.hash : null, confirmations: this.chain.confirmations(h.height), txcount: block ? block.txids.length : null });
     }
     if (m('GET', /^\/exchangerate$/)) return done(200, { currency: 'USD', rate: 50.0, time: Math.floor(Date.now() / 1000) });
-    return done(404, 'Not Found', 'text/plain');
+    return this.unserved(req, 'woc', route, done);
   }
 
   wocTx(e) {
@@ -311,7 +329,7 @@ class Stub {
     if ((mm = m('GET', /^\/address\/scripthash\/([0-9a-fA-F]{64})\/history$/))) {
       return done(200, this.chain.historyOfScriptHash(mm[1]).map(h => ({ txid: h.txid, height: h.height })));
     }
-    return done(404, { error: 'not found' });
+    return this.unserved(req, 'bitails', route, done);
   }
 
   // ─── /bananablocks ────────────────────────────────────────────────────
@@ -349,7 +367,7 @@ class Stub {
       const unspent = this.chain.outputsOfHash160(h160).filter(o => !o.spentBy);
       return done(200, { items: unspent.map(o => ({ txid: o.txid, vout: o.vout, value: o.satoshis, block_height: o.height, script_type: 'p2pkh' })), hasMore: false });
     }
-    return done(404, { error: 'not found' });
+    return this.unserved(req, 'bananablocks', route, done);
   }
 
   // ─── /arc (classic ARC) ───────────────────────────────────────────────
@@ -381,7 +399,7 @@ class Stub {
       return done(200, this.arcStatus(e));
     }
     if (m('GET', /^\/v1\/policy$/)) return done(200, { policy: { maxscriptsizepolicy: 500000, maxtxsigopscountspolicy: 4294967295, maxtxsizepolicy: 10000000, miningFee: { satoshis: 1, bytes: 1000 } }, timestamp: new Date().toISOString() });
-    return done(404, arcError(404, 'Not Found', `no such route ${route}`));
+    return this.unserved(req, 'arc', route, done);
   }
 
   arcAnswer(answer) {

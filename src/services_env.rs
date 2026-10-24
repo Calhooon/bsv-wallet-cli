@@ -223,6 +223,15 @@ impl ExplorerBases {
     }
 }
 
+/// GorillaPool on `ServicesOptions` from `ARC_GORILLAPOOL_URL`'s configured
+/// value: unset leaves the options' own default untouched (the toolbox's,
+/// never a copy of it); empty or blank leaves it out; a URL moves it.
+pub fn apply_gorillapool(opts: &mut ServicesOptions, configured: Option<&str>) {
+    if let Some(v) = configured {
+        opts.arc_gorillapool_url = base_for(Some(v));
+    }
+}
+
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
 #[derive(Debug, Clone)]
 pub struct ArcadeRuntime {
@@ -356,9 +365,12 @@ pub fn services_options_from_env(chain: Chain, db_path: &str) -> Result<Services
         opts = opts.with_bitails_api_key(key);
     }
     opts.bananablocks_base = bananablocks_base_from_env();
-    // GorillaPool, the toolbox's second broadcaster: the chain's default,
-    // moved or left out by `ARC_GORILLAPOOL_URL` (#74).
-    opts.arc_gorillapool_url = ExplorerBases::from_env(chain).gorillapool;
+    // GorillaPool, the toolbox's second broadcaster: the toolbox's default
+    // unless `ARC_GORILLAPOOL_URL` moves it or, empty, leaves it out (#74).
+    apply_gorillapool(
+        &mut opts,
+        std::env::var(ARC_GORILLAPOOL_URL_ENV).ok().as_deref(),
+    );
 
     // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
     // that provider is the failover behind Arcade).
@@ -496,6 +508,32 @@ mod tests {
                 .bananablocks_base_for(Chain::Main)
                 .as_deref(),
             Some("https://mirror.example/api/v1")
+        );
+    }
+
+    /// `ARC_GORILLAPOOL_URL` unset leaves `ServicesOptions`' own default
+    /// for either chain; empty or blank leaves GorillaPool out; a URL moves it.
+    #[test]
+    fn gorillapool_unset_leaves_the_toolbox_default() {
+        for base in [ServicesOptions::mainnet(), ServicesOptions::testnet()] {
+            let mut opts = base.clone();
+            apply_gorillapool(&mut opts, None);
+            assert_eq!(opts.arc_gorillapool_url, base.arc_gorillapool_url);
+            for blank in ["", "  "] {
+                let mut opts = base.clone();
+                apply_gorillapool(&mut opts, Some(blank));
+                assert_eq!(opts.arc_gorillapool_url, None, "{blank:?}");
+            }
+            let mut opts = base.clone();
+            apply_gorillapool(&mut opts, Some(" http://127.0.0.1:3380/arc/ "));
+            assert_eq!(
+                opts.arc_gorillapool_url.as_deref(),
+                Some("http://127.0.0.1:3380/arc")
+            );
+        }
+        assert_eq!(
+            ServicesOptions::mainnet().arc_gorillapool_url.as_deref(),
+            Some("https://arc.gorillapool.io")
         );
     }
 
