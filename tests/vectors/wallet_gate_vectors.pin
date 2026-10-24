@@ -1,0 +1,8 @@
+# The pin of wallet_gate_vectors.json: a byte-identical copy of the stack's
+# conformance/wallet-gate-vectors.json (bsv-stack-lean #184). tests/gate_vectors.rs
+# checks the copy's sha256 against this line before it replays a row.
+# Move it: docs/GATE-VECTORS.md.
+repo bsv-stack-lean
+commit 103c5bd6101917b829e5d403152ec87fa8046aae
+path conformance/wallet-gate-vectors.json
+sha256 8ea731e553ec1ac0ffb6711e7007adae51d89d9d6793241d6174b0d1d1bab87d
