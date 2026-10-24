@@ -2039,8 +2039,17 @@ pub struct CreatorReading {
     /// A fork in progress, or a split not yet resolved, at or below its
     /// height marks it suspect.
     pub suspect: bool,
+    /// The guard's door with the mark set aside: a checked `mined` word
+    /// whose block is deep enough under the spend depth (floor 1), suspect
+    /// or not. False for every other word, whose door is the rule's, read
+    /// by [`crate::spend_gate::hold_reason`] from the origin and the
+    /// options. The stack's `Wallet.doorSpendable` reads no mark
+    /// (`offerableUnder` checks `!a.tracker.suspect` apart from the door);
+    /// the gate's answer is `offered`.
+    pub door: bool,
     /// `mined`, checked against the headers of the moment, not suspect, at
-    /// the spend depth (floor 1): the guard offers it with no rule.
+    /// the spend depth (floor 1): the guard offers it with no rule. It is
+    /// `door && !suspect`.
     pub offered: bool,
     /// Could not look (no tip, no header at the height, a stored path that
     /// does not parse): the fault. Nothing is offered on it. For the
@@ -2109,10 +2118,20 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
             Some(fault) if !matches!(fault, CheckError::RootMismatch(_)) => Some(fault),
             _ => None,
         };
+        // The door: a `mined` word deep enough, the mark set aside. A tip
+        // the depth could not read is the guard's fault for a word it
+        // offers, as before; for a suspect word, which the guard refuses
+        // before the depth, it closes the door and is no fault.
         let verdict = match fault {
             Some(_) => Ok(false),
             None => guard_state(&mut state, &params, &snapshot).and_then(|offered| {
-                Ok(offered && deep_enough(&state, &snapshot, opts.spend_depth)?)
+                if !matches!(state.word(), Word::Mined(_)) {
+                    return Ok(false);
+                }
+                match deep_enough(&state, &snapshot, opts.spend_depth) {
+                    Err(e) if offered => Err(e),
+                    deep => Ok(deep.unwrap_or(false)),
+                }
             }),
         };
         let depth = match (state.word().height(), snapshot.tip()) {
@@ -2121,8 +2140,8 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
             }
             _ => 0,
         };
-        let (offered, fault) = match verdict {
-            Ok(offered) => (offered, fault),
+        let (door, fault) = match verdict {
+            Ok(door) => (door, fault),
             Err(e) => (false, fault.or(Some(e))),
         };
         let headers_fault = matches!(fault, Some(CheckError::Headers(_)));
@@ -2133,7 +2152,8 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
                 word: word_label(state.word()),
                 depth,
                 suspect: state.suspect() || split,
-                offered: offered && !split,
+                door,
+                offered: door && !state.suspect() && !split,
                 fault: fault.as_ref().map(fault_text),
                 headers_fault,
             },
@@ -3316,6 +3336,37 @@ pub(crate) mod tests {
         assert_eq!((offered.suspect, offered.offered), (false, true));
         let guard = guard_of(&storage, &services, &clock, &txid).await;
         assert_eq!(guard, Ok(true));
+    }
+
+    /// The reading's door sets the mark aside: a suspect `mined` creator 6
+    /// blocks deep has its door open and is not offered (the stack's
+    /// `offerableUnder`, `!a.tracker.suspect && doorSpendable ...`); at a
+    /// spend depth of 7 the same creator is too shallow and both are false.
+    #[tokio::test]
+    async fn a_suspect_creators_door_is_its_depth_and_its_answer_is_held() {
+        let txid = "eb".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        deliver(&storage, &services, &clock, 1, fork_at(900, &txid)).await;
+        let deep = reading(&storage, &services, &txid).await;
+        println!("read_creators under the fork, spend depth 1: {deep:?}");
+        assert_eq!(
+            (deep.depth, deep.suspect, deep.door, deep.offered),
+            (6, true, true, false)
+        );
+        let shallow_opts = TickOptions {
+            spend_depth: 7,
+            ..opts()
+        };
+        let shallow = read_creators(&storage, &services, &shallow_opts, &[(txid.clone(), None)])
+            .await
+            .unwrap()
+            .remove(&txid)
+            .unwrap();
+        println!("read_creators under the fork, spend depth 7: {shallow:?}");
+        assert_eq!(
+            (shallow.suspect, shallow.door, shallow.offered),
+            (true, false, false)
+        );
     }
 
     /// A fork above the creator's block marks nothing: the coin is offered

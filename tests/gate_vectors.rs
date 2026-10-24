@@ -576,8 +576,13 @@ async fn creator_checks(checks: &mut Checks<'_>, built: &Built, origin: Origin) 
     // The mark after the guard, which reads it and never clears it
     // (#164): the gate's answer, compared.
     checks.field("read_creators", "creator_suspect", &reading.suspect);
+    // The door with the mark set aside, the guard's door and not the guard
+    // recomputed: Wallet.lean `offerableUnder` checks the mark apart from
+    // `doorSpendable`, and the gate's hold word says the mark first.
+    let mut unmarked = reading.clone();
+    (unmarked.suspect, unmarked.offered) = (false, reading.door);
     for (tag, opts) in &words {
-        let door = hold_reason(reading, origin, (&built.txid, built.vout), opts);
+        let door = hold_reason(&unmarked, origin, (&built.txid, built.vout), opts);
         let name = format!("hold_reason{tag}");
         checks.field(&name, "door_spendable", &door.is_none());
         if let Some(depth) = depth_of(door.as_deref()) {
