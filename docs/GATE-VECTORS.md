@@ -31,7 +31,7 @@ Then the gate is asked through its public functions:
 | `spend_gate::assess_named` (a named input) | `offerable`, `offerable_clause` |
 | `spend_gate::assess` (the allocation's offer) | `offerable`; `offerable_clause` when the coin is offered or held with a reason |
 
-A hold's reason maps to the Lean's clause: `frozen` to frozen, `spent by` to held by a lock, `suspect:` to creator suspect, `<word>: never offered` to a chain word against the creator, `received, no proof` and `SPEND_OWN_CHANGE=0` to no rule for the creator's origin, a bare `depth N:` to mined shallower than the guard's depth.
+A hold's reason maps to the Lean's clause: `frozen` to frozen, `spent by` and `lost:` (the store's `spendable = 0` with no spender, #165) to held by a lock, `suspect:` to creator suspect, `<word>: never offered` to a chain word against the creator, `received, no proof` and `SPEND_OWN_CHANGE=0` to no rule for the creator's origin, a bare `depth N:` to mined shallower than the guard's depth.
 
 The columns the gate gives no value for are named by the test's `COLUMNS_NOT_ANSWERED` and printed on every run: `rule_for`, `received_pending`, `door_word`, `coin_word`, `dead_lineage` (the gate computes none of them apart from its hold), and `host_answer` (a row names its door but carries none of its arguments, so the host's answer at that door cannot be replayed from the row).
 
@@ -44,14 +44,13 @@ The columns the gate gives no value for are named by the test's `COLUMNS_NOT_ANS
 
 ## The divergences
 
-A difference between the gate and a row is a finding. It is never fixed by changing the gate in this test's commit, nor by changing a row. `wallet_gate_divergences.json` records each one. That list is exact too: a difference it does not hold fails the test, printed as a `DIVERGENCE` line ready to record, and so does an entry that no longer differs. When the gate is fixed, the fix's commit removes its entries. At this pin there are 302 differences over 64 rows, in five findings (the file describes each):
+A difference between the gate and a row is a finding. It is never fixed by changing the gate in this test's commit, nor by changing a row. `wallet_gate_divergences.json` records each one. That list is exact too: a difference it does not hold fails the test, printed as a `DIVERGENCE` line ready to record, and so does an entry that no longer differs. When the gate is fixed, the fix's commit removes its entries. At this pin there are 164 differences over 40 rows, in four findings (the file describes each); the fifth, `lost-coin-not-read` (24 rows, 138 differences, 22 rows on `offerable`: the gate did not read the relinquished record), left with its fix (#165):
 
 | finding | rows | `offerable` differs on |
 |---|---|---|
 | `stale-door-reads-seen`: the gate never offers a `stale` creator; `doorWord` reads stale as seen | 12 | 5 |
 | `no-lineage`: the gate reads no ancestor; `deadLineage` holds the coin | 12 | 12 |
 | `fork-recheck-clears-suspect`: the guard's recheck clears a stored fork's suspect mark while the root holds | 2 | 2 |
-| `lost-coin-not-read`: the gate does not read the relinquished record; the toolbox's allocation does | 24 | 22 |
 | `named-absent-coin`: `assess_named` leaves an outpoint that is not ours to the toolbox (by design); the Lean answers no coin | 14 | 14 |
 
 ## Moving the pin
