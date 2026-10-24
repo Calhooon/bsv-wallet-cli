@@ -1,0 +1,25 @@
+{
+  "world": "callback",
+  "request": {
+    "method": "POST",
+    "path": "/arc-callback",
+    "headers": {
+      "content-type": "application/json",
+      "x-callbacktoken": "wire-callback"
+    },
+    "fill": 1000001
+  },
+  "response": {
+    "status": 413,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "TOO_LARGE",
+      "message": "payload too large"
+    }
+  }
+}

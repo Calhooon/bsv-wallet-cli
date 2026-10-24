@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/createAction",
+    "headers": {
+      "access-control-request-headers": "content-type, authorization",
+      "access-control-request-method": "POST",
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-allow-methods": "POST",
+      "access-control-allow-origin": "http://wire.test",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": ""
+  }
+}

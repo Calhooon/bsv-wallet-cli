@@ -142,14 +142,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: The fixtures are present
-        run: ls tests/wire/*.json > /dev/null
+      - name: The fixtures and their manifest are present
+        run: ls tests/wire/*.json > /dev/null && test -f tests/wire/MANIFEST.json
 
-      # Replay only: WIRE_RECORD is never set here, and the check after it
-      # refuses a run that wrote a fixture.
+      # Replay only. A recording never passes (the test fails with the word
+      # to replay it), and this job refuses to start one: WIRE_RECORD set to
+      # anything fails here before cargo runs.
+      - name: WIRE_RECORD is not set
+        run: |
+          if [ -n "${WIRE_RECORD+set}" ]; then
+            echo "WIRE_RECORD is set (${WIRE_RECORD}); the wire job replays, never records"
+            exit 1
+          fi
+
       - name: Replay the wire fixtures
-        env:
-          WIRE_RECORD: ""
         run: cargo test --locked --test wire
 
       - name: No fixture was written by the run

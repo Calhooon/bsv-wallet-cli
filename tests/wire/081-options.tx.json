@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/tx/1111111111111111111111111111111111111111111111111111111111111111",
+    "headers": {
+      "access-control-request-headers": "content-type, authorization",
+      "access-control-request-method": "GET",
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-allow-methods": "GET",
+      "access-control-allow-origin": "http://wire.test",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": ""
+  }
+}
