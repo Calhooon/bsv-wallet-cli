@@ -294,10 +294,35 @@ class WhatTheGateLetsThrough(unittest.TestCase):
 
 
 class TheJobsInputs(unittest.TestCase):
-    def tool(self, *args, **env):
+    def tool(self, *args, rustc=None, **env):
+        """The tool run as the job runs it; rustc, when named, is what a
+        rustc on the PATH ahead of the toolchain's says to -V."""
         e = {k: v for k, v in os.environ.items() if k not in ("BENCH_PROFILE", "BENCH_COMMIT")}
         e.update(env)
-        return subprocess.run([sys.executable, TOOL, *args], env=e, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
+            if rustc is not None:
+                fake = os.path.join(d, "rustc")
+                with open(fake, "w") as f:
+                    f.write(f"#!/bin/sh\necho '{rustc}'\n")
+                os.chmod(fake, 0o755)
+                e["PATH"] = d + os.pathsep + e.get("PATH", "")
+            return subprocess.run([sys.executable, TOOL, *args], env=e, capture_output=True, text=True)
+
+    def test_ci_refuses_a_toolchain_off_the_pin(self):
+        # A PR's rust-toolchain.toml moves rustc -V in the checkout.
+        r = self.tool("--ci", "--out", os.devnull, rustc="rustc 1.99.0 (ccccccccc 2026-11-01)")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--ci runs on rustc 1.98.1", r.stderr)
+        self.assertIn("rustc 1.99.0", r.stderr)
+
+    def test_the_pin_is_the_jobs(self):
+        with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml")) as f:
+            ci = f.read()
+        bench = ci.split("\n  bench:\n", 1)[1].split("\n  # ", 1)[0]
+        ratchet = ci.split("\n  ratchet:\n", 1)[1].split("\n  # ", 1)[0]
+        self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", bench)
+        self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", bench)
+        self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", ratchet)
 
     def test_ci_refuses_a_renamed_profile(self):
         r = self.tool("--ci", "--out", os.devnull, BENCH_PROFILE="ubuntu-fast")
@@ -309,7 +334,7 @@ class TheJobsInputs(unittest.TestCase):
         self.assertIn("measures its own results", r.stderr)
 
     def test_ci_refuses_a_commit_that_is_not_the_checkout(self):
-        r = self.tool("--ci", "--out", os.devnull, BENCH_COMMIT="f" * 40)
+        r = self.tool("--ci", "--out", os.devnull, rustc=TOOLCHAIN, BENCH_COMMIT="f" * 40)
         self.assertIn("is not the checked-out commit", r.stderr)
 
     def test_a_gate_entry_is_never_recorded_by_hand(self):
