@@ -63,7 +63,7 @@ The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull reques
 - Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
 - A failed build or suite run, or an incomplete recording (exit 3), fails the job either way.
 
-Labels are read when the run starts; a label added later takes a re-run of the job. The job is not a required check yet; the captain decides after it has run a week.
+The labels are read when the job's differential step runs (`gh pr view --json labels`, with `pull-requests: read`), not from the event payload, which a re-run reuses: a label added or removed after the run started counts on a re-run of the job. A label change does not start a run by itself (`labeled` and `unlabeled` are not among the workflow's triggers: they would re-run, and cancel, every job of CI); a failed read of the labels fails the job. The job is not a required check yet; the captain decides after it has run a week.
 
 ## The exit test
 
