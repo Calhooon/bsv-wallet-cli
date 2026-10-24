@@ -220,8 +220,6 @@ jobs:
               || : > "$RUNNER_TEMP/base-baseline.json"
             echo "bench: the base baseline is $rev:benches/baseline.json"
             base=(--base "$RUNNER_TEMP/base-baseline.json")
-          else
-            echo "::warning::no base ref: the tree's own benches/baseline.json is read unchecked; nothing is gated"
           fi
           mkdir -p "$RUNNER_TEMP/bench/results"
           BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci "${base[@]}" \
