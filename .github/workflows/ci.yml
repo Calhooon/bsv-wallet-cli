@@ -349,6 +349,7 @@ jobs:
       # allowlist may grow. A base ref whose tree the tool cannot read fails
       # the step (a malformed base record is never "no base").
       - name: scoreboard
+        if: ${{ !cancelled() }}
         env:
           REV: ${{ steps.base.outputs.rev }}
         run: |
@@ -366,6 +367,7 @@ jobs:
           python3 -B tools/scoreboard --check "${base[@]}"
 
       - name: links
+        if: ${{ !cancelled() }}
         run: |
           python3 -B tools/test_check_links.py
           python3 -B tools/check-links
