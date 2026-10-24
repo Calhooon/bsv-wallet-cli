@@ -5,7 +5,8 @@
 ## Files
 
 - **`mod.rs`** (192 lines) — Router setup, CORS/auth/tracing middleware, TLS support, `SpendingLock` type, `ServerConfig`, graceful shutdown. Exports `make_router()`, `run()`, `make_wallet_state()`.
-- **`handlers.rs`** (800 lines) — One handler per endpoint. Translates between MetaNet Client JSON and SDK types, calls `wallet.<method>()`, maps errors via `AppError`. Defines `WalletState = Arc<Wallet<StorageSqlx, Services>>`.
+- **`handlers.rs`**: one handler per endpoint. Translates between MetaNet Client JSON and SDK types, calls `wallet.<method>()`, maps errors via `AppError`. Defines `WalletState = Arc<Wallet<StorageSqlx, Services>>`.
+- **`error.rs`**: `Kind` (a status and a code per refusal) and `AppError`, every typed error mapped by its variant (#81).
 - **`types.rs`** (263 lines) — `Mc*` request/response structs for endpoints whose SDK arg types lack serde derives. Endpoints with SDK serde support (batches 4-6) deserialize directly in handlers without wrapper types.
 
 ## Endpoint Map
@@ -48,17 +49,7 @@ All 28 endpoints, organized by batch:
 - **Three-file split**: `mod.rs` owns router setup/middleware/TLS, `handlers.rs` translates between MetaNet JSON and SDK types, `types.rs` defines the MetaNet Client JSON shapes. SDK arg types with serde derives are deserialized directly in handlers (batches 4-6); types without serde (crypto, core endpoints, key linkage) need `Mc*` wrapper structs in `types.rs`.
 - **SpendingLock (FIFO mutex)**: Only `createAction` acquires the lock. With limited UTXOs, concurrent spending requests would race on SQLite's write lock and get `SQLITE_BUSY_SNAPSHOT`. The lock queues them so each request sees the previous one's change output. All non-spending endpoints (crypto, queries, certs) remain fully concurrent. The lock is injected as an axum `Extension`.
 - **Originator from headers**: Every mutating POST endpoint extracts the originator from `Origin` (parsed as URL, host extracted) or `Originator` header. GET status endpoints hardcode `"localhost"`. Missing originator returns 400.
-- **Error classification**: `AppError::classify()` maps wallet error message prefixes to HTTP status codes. It strips the `"wallet error: "` prefix the SDK wraps errors with, then matches:
-  - 402 — `Insufficient funds:`
-  - 401 — `Authentication required`, `Invalid identity key:`
-  - 403 — `Access denied:`
-  - 404 — `Entity not found:`, `not found:`
-  - 409 — `Duplicate entity:`, `Invalid operation:`; `UNSPENDABLE_COIN` for `Unspendable coin:` (the coin named under `coin`)
-  - 400 — `Validation error:`, `Invalid argument:`, `Origin header required`
-  - 500 — `Storage error:`, `Database error:`, `Internal error:`
-  - 502 — `Service error:`, `Network error:`, `Broadcast failed:`
-  - Default: 400
-  - 503 `STORE_BUSY` with `Retry-After: 1` is never a prefix: `AppError::store_busy` is built only from the store busy by its type (`bsv_sdk::Error::WalletBusy` from a wallet door; a spend gate or guard fault before the door whose chain holds SQLite's code 5 or the writer's acquire timeout, `crate::store::is_store_busy`). CORS exposes `Retry-After` (#44).
+- **Errors by type (#81)**: `error.rs` holds `Kind`, one status and one code per refusal (`Kind::answer`, the one table), and `AppError` (`{code, message}`, plus the gate's `offeredSatoshis`/`held` or the unspendable `coin`). Every kind is reached by a typed error's variant, never by its words: bsv-rs's `Error` (`WalletBusy` is 503 `STORE_BUSY` with `Retry-After: 1`; `WalletTransport` is 400 `ERROR`, as before it had a type), the toolbox's `Error` variant by variant, the gate's `GateError`, the store busy before a door (`crate::store::is_store_busy`), or a kind the handler names (`AppError::new`). The one exception is a toolbox refusal the `WalletInterface` boundary erases to a `WalletError`'s text: `crate::toolbox_words::class` reads its words (`Insufficient funds:` 402, `Validation error:` 400, `Unspendable coin:` 409, ...), the crate's one place that reads an error's words, with the upstream issues that would type them. The message served is the error's Display. Arch rule A8 (`tests/arch_no_error_words.rs`) keeps any string test on an error's text out of `src/server/`, with an empty allowlist. CORS exposes `Retry-After` (#44).
   - Response body: `{"code": "ERROR_CODE", "message": "..."}`. Errors are also logged via `tracing::warn`.
 - **Layer ordering**: the last layer added runs first: the body limit, tracing, the extensions, auth, then the JSON body is read (`lenient_json_body`), then CORS. Auth runs before any body is read. The body cap is 50 MiB (`BODY_CAP`) on every route but the two BEEF doors (`BEEF_DOORS`: `/createAction`, `/internalizeAction`), which have none: a valid BEEF is never refused for its size, the body is held whole, and the toolbox refuses invalid bytes only (`INVALID_BEEF`, 400, the offset and the kind). `ServerConfig` and `SpendingLock` are injected via axum `Extension`, not per-handler.
 - **AtomicBEEF in createAction response**: The SDK returns standard BEEF with ancestors. The handler converts it to AtomicBEEF via `Beef::from_binary()` + `to_binary_atomic(&txid_hex)`. Falls back to raw tx bytes if conversion fails. Clients (x402, worm) expect AtomicBEEF format in the `tx` response field.
