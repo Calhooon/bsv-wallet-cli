@@ -38,7 +38,9 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{shown_secret, shown_url, Raw, Reader, Secret, ServicesSettings};
+use crate::config::{
+    shown_secret, shown_url, url_or, Raw, Reader, Secret, ServicesSettings, Value,
+};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -209,24 +211,25 @@ impl ExplorerSettings {
         }
     }
 
-    /// The settings' rows for `crate::config::Config::knobs`, in their order.
-    /// A key's row reads `raw`, the environment as read at start, to tell an
-    /// empty key from an unset one.
-    pub(crate) fn values(&self, raw: &Raw) -> Vec<(&'static str, String)> {
+    /// The settings' rows for `crate::config::Config::knobs`, in their order,
+    /// on `chain`. A key's row reads `raw`, the environment as read at start,
+    /// to tell an empty key from an unset one; `BananaBlocks`' row is the base
+    /// in effect, as `WOC_BASE`'s is.
+    pub(crate) fn values(&self, raw: &Raw, chain: Chain) -> Vec<(&'static str, Value)> {
         let key = |name, s: &Option<Secret>| (name, shown_secret(raw.get(name), s.as_ref()));
+        let base = |v: &str| Value::Text(shown_url(v));
         vec![
             key("WOC_API_KEY", &self.woc_api_key),
             key("BITAILS_API_KEY", &self.bitails_api_key),
             (
                 "BANANABLOCKS_BASE",
-                match self.bananablocks_base.as_deref() {
-                    None => "default".to_string(),
-                    Some("") => "off".to_string(),
-                    Some(v) => shown_url(v),
-                },
+                url_or(
+                    crate::explorers::bananablocks_base_in_effect(chain, self).as_deref(),
+                    Value::None("off"),
+                ),
             ),
-            ("WOC_BASE", shown_url(&self.bases.woc)),
-            ("BITAILS_BASE", shown_url(&self.bases.bitails)),
+            ("WOC_BASE", base(&self.bases.woc)),
+            ("BITAILS_BASE", base(&self.bases.bitails)),
         ]
     }
 }

@@ -115,6 +115,27 @@ pub struct Explorers {
     rotation: AtomicUsize,
 }
 
+/// The `BananaBlocks` base in effect on `chain` for `settings` (its
+/// `BANANABLOCKS_BASE`: unset the chain's default, empty off): the base the
+/// rung is built at, and the one `bsv-wallet config` shows.
+#[must_use]
+#[allow(dead_code)] // the knob rows call the library's copy (`services_env`); the binary's is unused
+pub fn bananablocks_base_in_effect(
+    chain: Chain,
+    settings: &crate::services_env::ExplorerSettings,
+) -> Option<String> {
+    base_in_effect(chain, settings.bananablocks_base.clone())
+}
+
+/// The toolbox's `ServicesOptions::bananablocks_base_for` of `configured`.
+fn base_in_effect(chain: Chain, configured: Option<String>) -> Option<String> {
+    ServicesOptions {
+        bananablocks_base: configured,
+        ..ServicesOptions::default()
+    }
+    .bananablocks_base_for(chain)
+}
+
 impl Explorers {
     /// The process's rungs for `chain`, built once from the configuration
     /// (`WOC_BASE`, `WOC_API_KEY`, `BANANABLOCKS_BASE`; see `services_env`),
@@ -168,11 +189,7 @@ impl Explorers {
         woc_api_key: Option<String>,
         bananablocks_base: Option<String>,
     ) -> Self {
-        let options = ServicesOptions {
-            bananablocks_base,
-            ..ServicesOptions::default()
-        };
-        let bananablocks = options.bananablocks_base_for(chain);
+        let bananablocks = base_in_effect(chain, bananablocks_base);
         let woc_api_key = woc_api_key.filter(|k| !k.trim().is_empty());
         let gate = shared_woc_gate(chain, woc_api_key.clone());
         Self::with_woc_gate(Some((woc, gate)), bananablocks.as_deref(), woc_api_key)

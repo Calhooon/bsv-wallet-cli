@@ -147,12 +147,12 @@ fn every_malformed_value_is_refused_together() {
         .find(|k| k.name == "MIN_UTXOS")
         .unwrap();
     assert_eq!(
+        (min_utxos.value, min_utxos.source, min_utxos.refused),
         (
-            min_utxos.value.as_str(),
-            min_utxos.source,
-            min_utxos.refused
-        ),
-        ("x", Source::Env, Some("a whole number"))
+            Value::Text("x".to_string()),
+            Source::Env,
+            Some("a whole number")
+        )
     );
     let asks = c
         .knobs()
@@ -317,7 +317,7 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
     ]);
     let of = |name: &str| {
         let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
-        (k.value, k.source)
+        (k.value.to_string(), k.source)
     };
     for name in ["ROOT_KEY", "AUTH_TOKEN", "CALLBACK_TOKEN", "WOC_API_KEY"] {
         assert_eq!(of(name), ("empty".to_string(), Source::Env), "{name}");
@@ -336,7 +336,7 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
 fn arc_mode_and_arcade_each_show_their_own_value() {
     let row = |c: &Config, name: &str| {
         let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
-        (k.value, k.source)
+        (k.value.to_string(), k.source)
     };
     let c = config(&[("ARCADE", "1")]);
     assert!(c.services.arcade());
@@ -358,7 +358,7 @@ fn the_rust_log_row_is_the_filter_in_effect() {
             .into_iter()
             .find(|k| k.name == "RUST_LOG")
             .unwrap();
-        (k.value, k.source)
+        (k.value.to_string(), k.source)
     };
     let default = (DEFAULT_LOG_FILTER.to_string(), Source::Default);
     assert_eq!(row(&Config::default()), default);
@@ -439,12 +439,15 @@ fn every_variable_is_a_knob_with_its_source() {
     assert_eq!(&names[3..], VARIABLES);
     let of = |name| knobs.iter().find(|k| k.name == name).unwrap();
     assert_eq!(
-        (of("--port").value.as_str(), of("--port").source),
+        (of("--port").value.to_string().as_str(), of("--port").source),
         ("4000", Source::Flag)
     );
     assert_eq!(of("--db").source, Source::Default);
     assert_eq!(
-        (of("MIN_UTXOS").value.as_str(), of("MIN_UTXOS").source),
+        (
+            of("MIN_UTXOS").value.to_string().as_str(),
+            of("MIN_UTXOS").source
+        ),
         ("7", Source::Env)
     );
     assert_eq!(of("RELAY_POLL_SECS").source, Source::Default);
@@ -490,4 +493,88 @@ fn the_relay_reads_its_own_settings() {
     let e = RelaySettings::from_vars(vars(&[("RELAY_PORT", "x"), ("BIND_ADDR", "y")])).unwrap_err();
     let names: Vec<_> = e.0.iter().map(|e| e.variable).collect();
     assert_eq!(names, ["RELAY_PORT", "BIND_ADDR"]);
+}
+
+/// The knobs as `bsv-wallet config --json` prints them, parsed back.
+fn json_rows(c: &Config) -> Vec<serde_json::Value> {
+    serde_json::from_str(&serde_json::to_string(&c.knobs()).unwrap()).unwrap()
+}
+
+fn json_row(rows: &[serde_json::Value], name: &str) -> serde_json::Value {
+    rows.iter()
+        .find(|r| r["name"] == name)
+        .unwrap_or_else(|| panic!("no {name}"))
+        .clone()
+}
+
+/// The exit test of #172: `--json` parses, no value is `null`, a switch is
+/// a boolean, every other value a string, and `BananaBlocks`' base is the
+/// one in effect.
+#[test]
+fn the_json_carries_null_for_no_value_and_booleans_for_switches() {
+    let rows = json_rows(&Config::default());
+    assert_eq!(rows.len(), Config::default().knobs().len());
+    for row in &rows {
+        let keys: Vec<_> = row.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, ["name", "source", "value"], "{row}");
+    }
+    for name in [
+        "ROOT_KEY",
+        "CHAINTRACKS_URL",
+        "ARC_MODE",
+        "PUBLIC_CALLBACK_URL",
+        "TLS_CERT_PATH",
+        "MONITOR_CHECK_PROOFS_INTERVAL_SECS",
+        "RELAY_URL",
+    ] {
+        assert_eq!(
+            json_row(&rows, name)["value"],
+            serde_json::Value::Null,
+            "{name}"
+        );
+    }
+    for (name, on) in [
+        ("--testnet", false),
+        ("BREAK_GLASS_EXPLORER_HEADERS", false),
+        ("ARCADE", false),
+        ("SPEND_OWN_CHANGE", true),
+        ("BROADCAST_RECONCILE", true),
+        ("BSV_WALLET_SKIP_BROADCAST_VERIFY", false),
+        ("RECONCILE_ABANDONED", true),
+    ] {
+        assert_eq!(json_row(&rows, name)["value"], on, "{name}");
+    }
+    assert_eq!(json_row(&rows, "MIN_UTXOS")["value"], "3");
+    assert_eq!(json_row(&rows, "MIN_UTXOS")["source"], "default");
+    assert_eq!(
+        json_row(&rows, "BANANABLOCKS_BASE")["value"],
+        "https://bananablocks.com/api/v1"
+    );
+}
+
+/// A variable set to nothing is `null` with its source `env`; a set secret
+/// is `<set>`; a refused value is the string as set, marked.
+#[test]
+fn the_json_of_set_empty_and_refused_values() {
+    let rows = json_rows(&config(&[
+        ("BANANABLOCKS_BASE", ""),
+        ("ARC_GORILLAPOOL_URL", ""),
+        ("AUTH_TOKEN", ""),
+        ("TAAL_API_KEY", "key-taal"),
+        ("ARCADE", "yes"),
+    ]));
+    for name in ["BANANABLOCKS_BASE", "ARC_GORILLAPOOL_URL", "AUTH_TOKEN"] {
+        assert_eq!(
+            json_row(&rows, name)["value"],
+            serde_json::Value::Null,
+            "{name}"
+        );
+        assert_eq!(json_row(&rows, name)["source"], "env", "{name}");
+    }
+    assert_eq!(json_row(&rows, "TAAL_API_KEY")["value"], "<set>");
+    assert_eq!(json_row(&rows, "ARCADE")["value"], true);
+    let refused = Config::from_pairs(&[("MIN_UTXOS", "x")]).unwrap_err();
+    let row = json_row(&json_rows(&refused.config), "MIN_UTXOS");
+    assert_eq!(row["value"], "x");
+    assert_eq!(row["refused"], "a whole number");
 }
