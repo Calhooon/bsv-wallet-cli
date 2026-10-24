@@ -44,14 +44,13 @@ The columns the gate gives no value for are named by the test's `COLUMNS_NOT_ANS
 
 ## The divergences
 
-A difference between the gate and a row is a finding. It is never fixed by changing the gate in this test's commit, nor by changing a row. `wallet_gate_divergences.json` records each one. That list is exact too: a difference it does not hold fails the test, printed as a `DIVERGENCE` line ready to record, and so does an entry that no longer differs. When the gate is fixed, the fix's commit removes its entries. At this pin there are 164 differences over 40 rows, in four findings (the file describes each); the fifth, `lost-coin-not-read` (24 rows, 138 differences, 22 rows on `offerable`: the gate did not read the relinquished record), left with its fix (#165):
+A difference between the gate and a row is a finding. It is never fixed by changing the gate in this test's commit, nor by changing a row. `wallet_gate_divergences.json` records each one. That list is exact too: a difference it does not hold fails the test, printed as a `DIVERGENCE` line ready to record, and so does an entry that no longer differs. When the gate is fixed, the fix's commit removes its entries. At this pin there are 143 differences over 26 rows, in three findings (the file describes each). Two left with their fixes: `lost-coin-not-read` (24 rows, 138 differences, 22 rows on `offerable`: the gate did not read the relinquished record, #165), and `named-absent-coin` (14 rows, 21 differences, all on `offerable`, #166): `assess_named` left an outpoint that is not a coin of this wallet to the toolbox's allocation to refuse, and the replay read that hand-off as offerable; the gate now refuses it itself, the caller's 400 (`GateError::Scope`, `not a coin of this wallet`, the scoped word's refusal), before a creator is read or anything is stored, and the replay reads that refusal as the Lean's `no coin`. The caller's own input whose transaction its `inputBEEF` carries whole is still the toolbox's (no row names one):
 
 | finding | rows | `offerable` differs on |
 |---|---|---|
 | `stale-door-reads-seen`: the gate never offers a `stale` creator; `doorWord` reads stale as seen | 12 | 5 |
 | `no-lineage`: the gate reads no ancestor; `deadLineage` holds the coin | 12 | 12 |
 | `fork-recheck-clears-suspect`: the guard's recheck clears a stored fork's suspect mark while the root holds | 2 | 2 |
-| `named-absent-coin`: `assess_named` leaves an outpoint that is not ours to the toolbox (by design); the Lean answers no coin | 14 | 14 |
 
 ## Moving the pin
 
