@@ -707,3 +707,47 @@ fn the_nine_request_structs_read_privileged_and_its_reason() {
     read::<McRevealCounterpartyKeyLinkageReq>(&body, |r| (r.privileged, r.privileged_reason));
     read::<McRevealSpecificKeyLinkageReq>(&body, |r| (r.privileged, r.privileged_reason));
 }
+
+/// abortAction's pre-check under a busy store (#168): a real `SQLITE_BUSY`
+/// from `abort_refused_for`'s own read (a rollback-journal file whose
+/// lock another connection holds, no busy timeout) is 503 `STORE_BUSY`
+/// with `Retry-After: 1`, as at every door; any other fault of the
+/// pre-check keeps its 400 `ERROR`.
+#[tokio::test]
+async fn the_abort_pre_check_under_a_busy_store_is_503_store_busy() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+    use sqlx::{ConnectOptions, Connection};
+    let dir = tempfile::TempDir::new().unwrap();
+    let options = SqliteConnectOptions::new()
+        .filename(dir.path().join("busy.db"))
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Delete)
+        .busy_timeout(std::time::Duration::ZERO);
+    let mut holder = options.connect().await.unwrap();
+    sqlx::query("CREATE TABLE transactions (txid TEXT, reference TEXT)")
+        .execute(&mut holder)
+        .await
+        .unwrap();
+    let reader = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    sqlx::query("BEGIN EXCLUSIVE")
+        .execute(&mut holder)
+        .await
+        .unwrap();
+    let busy = crate::retire_guard::abort_refused_for(&reader, "cmVm")
+        .await
+        .expect_err("the store's lock is held");
+    assert!(crate::store::is_store_busy(&busy), "{busy}");
+    let message = busy.to_string();
+    let (status, retry, body) = answer(abort_pre_check_fault(busy)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(retry.as_deref(), Some("1"));
+    assert_eq!(body, json!({"code": "STORE_BUSY", "message": message}));
+    let _ = holder.close().await;
+
+    let fault = anyhow::Error::new(sqlx::Error::RowNotFound);
+    let message = fault.to_string();
+    let (status, retry, body) = answer(abort_pre_check_fault(fault)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(retry.is_none());
+    assert_eq!(body, json!({"code": "ERROR", "message": message}));
+}
