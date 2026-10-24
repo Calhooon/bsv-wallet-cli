@@ -1482,17 +1482,24 @@ fn headers_error(reading: &CreatorReading) -> Option<String> {
 
 /// The coins a scoped word names (#63), checked before the door: each must
 /// be a received coin this wallet could spend under the word (an output of
-/// ours, change of the default basket, not consumed, its transaction
-/// `completed` or `unproven`, not an action of ours). The first that is not
-/// is the caller's error, naming it and why: the word never reaches own
-/// change, a nosend, a coin another action consumed, or a coin that is not
-/// ours. A named coin already mined is offered as any mined coin is: the
-/// word is moot for it, not wrong.
+/// ours, change of the default basket, not consumed, not frozen or lost,
+/// its transaction `completed` or `unproven`, not an action of ours). The
+/// first that is not is the caller's error, naming it and why: the word
+/// never reaches own change, a nosend, a coin another action consumed, a
+/// coin its own record holds (frozen, or lost: the store's `spendable = 0`
+/// with no spender, #165), or a coin that is not ours. A named coin already
+/// mined is offered as any mined coin is: the word is moot for it, not
+/// wrong.
 async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<Option<String>> {
+    if named.is_empty() {
+        return Ok(None);
+    }
     let pool = storage.pool();
+    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
     for (txid, vout) in named {
         let row = sqlx::query(
-            "SELECT o.change, o.spent_by, t.is_outgoing, t.status, b.name AS basket, \
+            "SELECT o.change, o.spent_by, o.spendable, t.is_outgoing, t.status, \
+                    b.name AS basket, \
                     COALESCE(s.txid, s.reference) AS holder \
              FROM outputs o \
              JOIN transactions t ON o.transaction_id = t.transaction_id \
@@ -1516,6 +1523,10 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
                         r.get::<Option<String>, _>("holder")
                             .unwrap_or_else(|| "an action of this wallet".to_string())
                     )
+                } else if frozen.contains(&(txid.to_ascii_lowercase(), i64::from(*vout))) {
+                    FROZEN.to_string()
+                } else if r.get::<i64, _>("spendable") == 0 {
+                    LOST.to_string()
                 } else if !matches!(status.as_str(), "completed" | "unproven") {
                     format!("its transaction is {status}")
                 } else if r.get::<Option<String>, _>("basket").as_deref() != Some("default")
