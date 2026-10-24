@@ -2,6 +2,8 @@
 
 `.github/workflows/nightly.yml` runs at 03:00Z every day and on `workflow_dispatch`. GitHub fires `schedule` only from the default branch (`main`): on `beta` the cron is inert and the night runs only by hand (`gh workflow run nightly.yml --ref beta`); the cron becomes live when `beta` merges into `main`. It is not a PR gate (`ci.yml` is); it is the map of where the tests do not yet hold the machine. Two halves: fuzz targets on the bytes that come from outside, and mutation testing on the hot paths.
 
+**One night at a time, six shards at a time (#144).** The workflow's concurrency group is the one name `nightly` (never one per ref: the schedule runs from `main` and a dispatch from the ref it names, so a per-ref group would let the two run side by side), with `cancel-in-progress: false`: a night started while one runs waits for it and is never cut short. The mutants matrix runs at most six of its twenty shards at once (`max-parallel: 6`). The dispatched night of 2026-10-24 (run 40074725488) started all twenty shards and the five fuzz targets together, held every runner for over an hour and starved every PR check; its shards took about 1,160 runner-minutes, so at six a night's mutants take near three and a half hours, and the night peaks at eleven runners (six shards beside the five fuzz targets' hour) and holds six after it.
+
 ## The fuzz targets
 
 `fuzz/` is a `cargo-fuzz` crate with its own manifest, workspace and `Cargo.lock`; the root `Cargo.toml` does not name it. Each target runs one hour a night on the corpus under `fuzz/corpus/<target>/`.
