@@ -111,14 +111,47 @@ impl fmt::Display for Source {
     }
 }
 
-/// A setting refused at start: the variable, the value it holds, and the
-/// shape it must have. Never built for a [`Secret`], whose value is not
-/// parsed.
+/// A URL as it may be shown: its userinfo and its query (or fragment) are
+/// `<set>`, its scheme, host, port and path as set. Read as text, so a
+/// value that does not parse is shown the same way (a credential in a URL
+/// is never printed, #80).
+#[must_use]
+pub fn shown_url(value: &str) -> String {
+    let (scheme, rest) = value
+        .split_once("://")
+        .map_or(("", value), |(scheme, rest)| (scheme, rest));
+    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let mut shown = String::new();
+    if !scheme.is_empty() {
+        shown.push_str(scheme);
+        shown.push_str("://");
+    }
+    match authority.rfind('@') {
+        Some(at) => {
+            shown.push_str("<set>@");
+            shown.push_str(&authority[at + 1..]);
+        }
+        None => shown.push_str(authority),
+    }
+    match tail.find(['?', '#']) {
+        Some(q) => {
+            shown.push_str(&tail[..q]);
+            shown.push_str(&tail[q..=q]);
+            shown.push_str("<set>");
+        }
+        None => shown.push_str(tail),
+    }
+    shown
+}
+
+/// A setting refused at start: the variable, the value it holds (a URL as
+/// [`shown_url`] shows it), and the shape it must have. Never built for a
+/// [`Secret`], whose value is not parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
     /// The variable's name.
     pub variable: &'static str,
-    /// The value it holds.
+    /// The value it holds (a URL's credentials `<set>`).
     pub value: String,
     /// The shape it must have.
     pub expected: &'static str,
@@ -240,7 +273,7 @@ fn refused(variable: &'static str, value: &str, expected: &'static str) -> Confi
 fn checked_url(name: &'static str, value: &str) -> Result<String, ConfigError> {
     match url::Url::parse(value) {
         Ok(u) if matches!(u.scheme(), "http" | "https") && u.has_host() => Ok(value.to_string()),
-        _ => Err(refused(name, value, "an http or https URL")),
+        _ => Err(refused(name, &shown_url(value), "an http or https URL")),
     }
 }
 

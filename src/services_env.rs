@@ -38,7 +38,7 @@ use bsv_wallet_toolbox::{
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::config::{ConfigError, Raw, Secret, ServicesSettings};
+use crate::config::{shown_url, ConfigError, Raw, Secret, ServicesSettings};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -218,14 +218,13 @@ impl ExplorerSettings {
             (
                 "BANANABLOCKS_BASE",
                 match self.bananablocks_base.as_deref() {
-                    None => "default",
-                    Some("") => "off",
-                    Some(v) => v,
-                }
-                .to_string(),
+                    None => "default".to_string(),
+                    Some("") => "off".to_string(),
+                    Some(v) => shown_url(v),
+                },
             ),
-            ("WOC_BASE", self.bases.woc.clone()),
-            ("BITAILS_BASE", self.bases.bitails.clone()),
+            ("WOC_BASE", shown_url(&self.bases.woc)),
+            ("BITAILS_BASE", shown_url(&self.bases.bitails)),
         ]
     }
 }

@@ -67,4 +67,60 @@ mod tests {
             line(knob.name);
         }
     }
+
+    #[test]
+    fn a_urls_credentials_are_never_printed() {
+        let planted = [
+            (
+                "CHAINTRACKS_URL",
+                "https://u1:secretpw1@headers.example/v1?key=secretq1",
+            ),
+            (
+                "ARC_URL",
+                "https://u2:secretpw2@arc.example:8443/arc?token=secretq2",
+            ),
+            (
+                "PUBLIC_CALLBACK_URL",
+                "https://cb.example/hook?secret=secretq3",
+            ),
+            ("RELAY_URL", "http://u4:secretpw4@relay.example"),
+            (
+                "BANANABLOCKS_BASE",
+                "https://u5:secretpw5@bb.example/api?k=secretq5",
+            ),
+            ("WOC_BASE", "https://woc.example/v1?apikey=secretq6"),
+            ("BITAILS_BASE", "https://u7:secretpw7@bitails.example/"),
+            (
+                "ARC_GORILLAPOOL_URL",
+                "https://u8:secretpw8@gp.example/arc#secretf8",
+            ),
+        ];
+        let config = Config::from_pairs(&planted).unwrap();
+        let shown = format!("{}\n{}", table(&config.knobs()), config.log_line());
+        let mut errors = String::new();
+        for (name, value) in planted {
+            let refused = value
+                .replacen("https://", "ftp://", 1)
+                .replacen("http://", "ftp://", 1);
+            let e = Config::from_pairs(&[(name, &refused)]).unwrap_err();
+            errors.push_str(&format!("{e}\n"));
+        }
+        for text in [&shown, &errors] {
+            for secret in ["secretpw", "secretq", "secretf", "u1:", "u4:"] {
+                assert!(!text.contains(secret), "{secret} printed:\n{text}");
+            }
+        }
+        assert!(
+            shown.contains("ARC_URL=https://<set>@arc.example:8443/arc?<set>"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("RELAY_URL=http://<set>@relay.example"),
+            "{shown}"
+        );
+        assert!(
+            errors.contains("RELAY_URL is \"ftp://<set>@relay.example\""),
+            "{errors}"
+        );
+    }
 }
