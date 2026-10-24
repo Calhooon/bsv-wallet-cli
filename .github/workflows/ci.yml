@@ -294,7 +294,7 @@ jobs:
           [ "$found" -gt 0 ] || echo "no committed Cargo.lock"
           exit "$status"
 
-  # The ratchet (#72): seven numbers of the tree that may only fall, measured
+  # The ratchet (#72): eight numbers of the tree that may only fall, measured
   # by tools/ratchet (docs/RATCHETS.md). The tree is checked against the
   # record of the base, read from the base ref and never from the PR's own
   # docs/ratchets.json (a PR that edited the record would pass itself): on a

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The ratchet: seven numbers of the tree that may only fall (#72).
+"""The ratchet: eight numbers of the tree that may only fall (#72, #133).
 
     tools/ratchet            measure the tree, print one JSON object
     tools/ratchet --check    measure, compare with docs/ratchets.json, fail on a rise
@@ -34,6 +34,7 @@ RATCHETS = [
     "clippy_pedantic",
     "unwrap_expect_outside_tests",
     "files_over_800_lines",
+    "tests_files_over_800_lines",
     "functions_over_60_lines",
     "cognitive_complexity_over_25",
     "duplicated_tokens",
@@ -391,10 +392,9 @@ def measure():
         n = unwrap_expect(lexed[f][0], lexed[f][2])
         if n:
             unwraps[f] = n
-    # The file-length ratchet is the shipped code's (src/, mcp/src/): a test
-    # harness file over the bound is reported beside it, not gated (the
-    # recorders and replays of the oracle run long by nature; splitting them
-    # is a structure item, not a release gate).
+    # Two file-length ratchets: the shipped code's (src/, mcp/src/) and the
+    # test code's (#133: the oracle's harness files split into modules, so
+    # its count falls and may only fall from there).
     big = sorted(
         ((f, n) for f, n in lines.items() if n > FILE_LINES and f not in tests),
         key=lambda x: (-x[1], x[0]),
@@ -425,6 +425,7 @@ def measure():
             "clippy_pedantic": sum(pedantic.values()),
             "unwrap_expect_outside_tests": sum(unwraps.values()),
             "files_over_800_lines": len(big),
+            "tests_files_over_800_lines": len(tests_big),
             "functions_over_60_lines": by_lint.get("clippy::too_many_lines", 0),
             "cognitive_complexity_over_25": by_lint.get("clippy::cognitive_complexity", 0),
             "duplicated_tokens": dup_tokens,
@@ -459,10 +460,21 @@ def load(path, now):
 
 
 def above(new, old):
-    """The numbers of `new` above `old`'s, as report lines."""
+    """The numbers of `new` above `old`'s, as report lines. A key `old` does
+    not hold is a ratchet added since `old` was recorded: nothing to be above.
+    A key `old` holds and `new` does not is a ratchet dropped: a rise."""
     return [
-        f"  {k}: {old[k]} -> {new[k]} (+{new[k] - old[k]})" for k in RATCHETS if new[k] > old[k]
+        f"  {k}: {old[k]} -> absent (a ratchet dropped)"
+        if k not in new
+        else f"  {k}: {old[k]} -> {new[k]} (+{new[k] - old[k]})"
+        for k in RATCHETS
+        if k in old and (k not in new or new[k] > old[k])
     ]
+
+
+def of(rec, k):
+    """A record's number for `k`, or `new` when the record predates the key."""
+    return rec["ratchets"].get(k, "new")
 
 
 def check(now, path, base_path):
@@ -473,18 +485,24 @@ def check(now, path, base_path):
     if base:
         print(f"ratchet: base record {base_path} at {base['commit'][:12]}")
     for k in RATCHETS:
-        of_base = f", base {base['ratchets'][k]}" if base else ""
-        print(f"  {k:32} {tree[k]:>6} (record {rec['ratchets'][k]}{of_base})")
-    ref = base or rec
+        of_base = f", base {of(base, k)}" if base else ""
+        print(f"  {k:32} {tree[k]:>6} (record {of(rec, k)}{of_base})")
+    ref = (base or rec)["ratchets"]
     better = [
-        f"  {k}: {ref['ratchets'][k]} -> {tree[k]} (-{ref['ratchets'][k] - tree[k]})"
+        f"  {k}: {ref[k]} -> {tree[k]} (-{ref[k] - tree[k]})"
         for k in RATCHETS
-        if tree[k] < ref["ratchets"][k]
+        if k in ref and tree[k] < ref[k]
     ]
     if better:
         print("lower than the record (re-record in its own commit: tools/ratchet --record):")
         print("\n".join(better))
     failed = False
+    if unrecorded := [k for k in RATCHETS if k not in rec["ratchets"]]:
+        # A base record may predate a ratchet (the PR that adds it), never
+        # the record the tree is checked against: an unrecorded number gates nothing.
+        print(f"UNRECORDED: {path} does not hold {', '.join(unrecorded)}"
+              " (record it in its own commit: tools/ratchet --record)")
+        failed = True
     for what, new, old in [
         (f"the tree is above the record {path}", tree, rec["ratchets"]),
         *([(f"the tree is above the base record {base_path}", tree, base["ratchets"]),
