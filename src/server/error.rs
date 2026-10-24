@@ -56,6 +56,10 @@ pub enum Kind {
     /// The header service did not answer for the coins that could have
     /// covered the action (#59): could not verify now.
     HeadersUnavailable,
+    /// A request with `privileged: true` (BRC-100's privileged keyring,
+    /// #145): this wallet holds no privileged key, so the call is refused,
+    /// never answered with the everyday key.
+    PrivilegedNotSupported,
 }
 
 impl Kind {
@@ -77,6 +81,9 @@ impl Kind {
             Kind::BroadcastRejected => (StatusCode::BAD_GATEWAY, "BROADCAST_REJECTED"),
             Kind::StoreBusy => (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY"),
             Kind::HeadersUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "HEADERS_UNAVAILABLE"),
+            Kind::PrivilegedNotSupported => {
+                (StatusCode::NOT_IMPLEMENTED, "PRIVILEGED_NOT_SUPPORTED")
+            }
         }
     }
 

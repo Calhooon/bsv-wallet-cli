@@ -114,6 +114,27 @@ fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
     Err(AppError::new(Kind::Validation, "Origin header required"))
 }
 
+/// BRC-100's privileged keyring (#145): this wallet holds none, so a
+/// request with `privileged: true` is refused by its kind, before any key
+/// is derived or the call audited; never answered with the everyday key.
+/// Absent or `false` is the call as before. `privilegedReason` is read and
+/// only logged: it accompanies a privileged request and changes nothing
+/// without one.
+fn refuse_privileged(call: &str, asked: &Privileged) -> Result<(), AppError> {
+    if asked.privileged != Some(true) {
+        return Ok(());
+    }
+    let reason = asked.privileged_reason.as_deref();
+    tracing::info!(call, reason, "privileged request refused");
+    Err(AppError::new(
+        Kind::PrivilegedNotSupported,
+        format!(
+            "{call}: privileged is not supported: this wallet holds no privileged keyring, \
+             and a privileged request is never answered with the everyday key"
+        ),
+    ))
+}
+
 /// GET /isAuthenticated
 pub async fn is_authenticated() -> Json<serde_json::Value> {
     Json(json!({"authenticated": true}))
@@ -126,6 +147,7 @@ pub async fn get_public_key(
     Json(req): Json<McGetPublicKeyReq>,
 ) -> Result<Json<McGetPublicKeyRes>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("getPublicKey", &req.privileged)?;
 
     let args = GetPublicKeyArgs {
         identity_key: req.identity_key,
@@ -165,6 +187,7 @@ pub async fn create_signature(
     Json(req): Json<McCreateSignatureReq>,
 ) -> Result<Json<McCreateSignatureRes>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("createSignature", &req.privileged)?;
 
     // ts-sdk sends exactly one of `data` (hash-then-sign) or
     // `hashToDirectlySign` (sign the 32-byte digest as-is).
@@ -671,6 +694,7 @@ pub async fn verify_signature(
     Json(req): Json<McVerifySignatureReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("verifySignature", &req.privileged)?;
     let args = VerifySignatureArgs {
         data: req.data,
         hash_to_directly_verify: None,
@@ -697,6 +721,7 @@ pub async fn encrypt(
     Json(req): Json<McEncryptReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("encrypt", &req.privileged)?;
     let args = EncryptArgs {
         plaintext: req.plaintext,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
@@ -728,6 +753,7 @@ pub async fn decrypt(
     Json(req): Json<McDecryptReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("decrypt", &req.privileged)?;
     let args = DecryptArgs {
         ciphertext: req.ciphertext,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
@@ -759,6 +785,7 @@ pub async fn create_hmac(
     Json(req): Json<McCreateHmacReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("createHmac", &req.privileged)?;
     let args = CreateHmacArgs {
         data: req.data,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
@@ -790,6 +817,7 @@ pub async fn verify_hmac(
     Json(req): Json<McVerifyHmacReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("verifyHmac", &req.privileged)?;
     let hmac: [u8; 32] = req
         .hmac
         .try_into()
@@ -1081,12 +1109,13 @@ pub async fn reveal_counterparty_key_linkage(
     Json(req): Json<McRevealCounterpartyKeyLinkageReq>,
 ) -> Result<Json<RevealCounterpartyKeyLinkageResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("revealCounterpartyKeyLinkage", &req.privileged)?;
     let args = WalletRevealCounterpartyArgs {
         counterparty: PublicKey::from_hex(&req.counterparty)
             .map_err(|e| anyhow::anyhow!("{}", e))?,
         verifier: PublicKey::from_hex(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
-        privileged: req.privileged,
-        privileged_reason: req.privileged_reason,
+        privileged: req.privileged.privileged,
+        privileged_reason: req.privileged.privileged_reason,
     };
     let result = wallet
         .reveal_counterparty_key_linkage(args, &originator)
@@ -1102,13 +1131,14 @@ pub async fn reveal_specific_key_linkage(
     Json(req): Json<McRevealSpecificKeyLinkageReq>,
 ) -> Result<Json<RevealSpecificKeyLinkageResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    refuse_privileged("revealSpecificKeyLinkage", &req.privileged)?;
     let args = WalletRevealSpecificArgs {
         counterparty: parse_counterparty(&req.counterparty)?,
         verifier: PublicKey::from_hex(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
         key_id: req.key_id,
-        privileged: req.privileged,
-        privileged_reason: req.privileged_reason,
+        privileged: req.privileged.privileged,
+        privileged_reason: req.privileged.privileged_reason,
     };
     let result = wallet
         .reveal_specific_key_linkage(args, &originator)
