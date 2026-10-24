@@ -824,6 +824,8 @@ def label(e):
     if e.get("kind") == "cli":
         words = [w if isinstance(w, str) else "<tx>" for w in e["argv"][:4]]
         return f"bsv-wallet {' '.join(words)[:60]} (seat {e['seat']})"
+    if e.get("kind") == "stub":
+        return "the stub's calls at the phase's end (by provider, route and status)"
     return f"{e.get('kind')} (seat {e.get('seat')})"
 
 

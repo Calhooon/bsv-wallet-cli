@@ -359,6 +359,27 @@ class ReadinessPollsOnly(unittest.TestCase):
         self.assertIn("GET /isAuthenticated (seat A): only the head made this call", out)
 
 
+class StubCounts(unittest.TestCase):
+    """Finding 9: the stub's per-provider counts are in the recording, so a ladder change shows."""
+
+    def with_stub(self, calls):
+        r = recording()
+        r.append({"kind": "stub", "seq": len(r), "phase": "sweep", "calls": calls})
+        return r
+
+    def test_floor_same_counts(self):
+        calls = {"woc": {"GET /tx/{id}/hex 200": 2}, "bitails": {"GET /tx/{id} 200": 1}}
+        lines, count = compare(self.with_stub(calls), self.with_stub(json.loads(json.dumps(calls))))
+        self.assertEqual(count, 0, lines)
+
+    def test_planted_the_ladder_asks_another_rung(self):
+        lines, count = compare(self.with_stub({"woc": {"GET /tx/{id}/hex 200": 2}}),
+                               self.with_stub({"woc": {"GET /tx/{id}/hex 200": 1}, "bananablocks": {"GET /tx/{id}/hex 200": 1}}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn("the stub's calls at the phase's end", lines[1])
+        self.assertIn(".calls.woc", lines[1])
+
+
 def plant_sighash(events, old=0x41, new=0xC1):
     """The events with every input signature's sighash byte `old` rewritten `new`, as a
     build signing with the wrong byte would: each transaction's txid recomputed and
