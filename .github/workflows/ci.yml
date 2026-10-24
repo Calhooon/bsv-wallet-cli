@@ -487,6 +487,9 @@ jobs:
       - name: The tool's own tests (its planted cases)
         run: python3 tools/test_differential.py -v
 
+      - name: The differential step's exit mapping (a stand-in tool, each code and label)
+        run: bash tools/test_differential_step.sh
+
       - name: Cache Playwright's Chromium
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -504,8 +507,13 @@ jobs:
           REFACTOR_FAILS: 'false'
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+        # The shell runs with -e (GitHub's `bash -e {0}`, and the set below
+        # says so): the tool's exit is captured with `&& code=0 || code=$?`,
+        # never a bare call then `code=$?`, which -e aborts on exit 1 before
+        # the mapping reads it. tools/test_differential_step.sh runs this
+        # body against a stand-in tool for each exit code and label state.
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # The PR's labels now, not the event's (a label added after the
           # run started counts on a re-run). A failed read is no "no label".
           if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
@@ -519,8 +527,7 @@ jobs:
           python3 tools/differential \
             --base-bin "$RUNNER_TEMP/bin-base/bsv-wallet" \
             --head-bin "$RUNNER_TEMP/bin-head/bsv-wallet" \
-            --out "$out"
-          code=$?
+            --out "$out" && code=0 || code=$?
           line=$(grep '^DIFFERENTIAL:' "$out/report.txt" 2>/dev/null || echo "DIFFERENTIAL: no report (exit $code)")
           {
             echo "### differential"
@@ -547,7 +554,9 @@ jobs:
             else
               echo "::notice::$line (no refactor label: reported, not failed)"
             fi
+            exit 0
           fi
+          echo "::notice::$line"
 
       # The report, the recordings and the run logs; never the wallets'
       # directories a failed run keeps under --out (their .env holds the
