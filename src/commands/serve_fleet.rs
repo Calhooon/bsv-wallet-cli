@@ -28,7 +28,9 @@
 //! createAction-502 class returns (the serveWallet lesson). HTTP-only mode
 //! stays for wallets something else keeps proven.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
@@ -166,6 +168,50 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
     ))
 }
 
+/// The daemon mode's join: the first tenant's server to end decides the
+/// fleet's exit (as it always has); then every tenant's monitor is stopped,
+/// all at once, each under `grace` (`daemon::stop_within_grace`), so the
+/// fleet's exit is bounded by one grace whatever the number of tenants. A
+/// monitor whose stop fails or outlasts the grace is logged at error level
+/// (marker `daemon_fault`) under its tenant's name and never holds the exit
+/// (#182).
+async fn join_daemons<S, F>(
+    mut ended: tokio::sync::mpsc::Receiver<(u16, Result<()>)>,
+    monitors: Vec<(String, S)>,
+    grace: Duration,
+) -> Result<()>
+where
+    S: FnOnce() -> F,
+    F: Future<Output = Result<()>>,
+{
+    let outcome = ended.recv().await;
+    // Every stop polled on this task at once (no spawn: rule A6), each one
+    // bounded by its own grace.
+    let mut stops: Vec<_> = monitors
+        .into_iter()
+        .map(|(who, stop)| {
+            Box::pin(async move { super::daemon::stop_within_grace(&who, stop, grace).await })
+        })
+        .collect();
+    std::future::poll_fn(|cx| {
+        stops.retain_mut(|stop| stop.as_mut().poll(cx).is_pending());
+        if stops.is_empty() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+    match outcome {
+        Some((port, Ok(()))) => {
+            eprintln!("[serve-fleet] port {port} exited cleanly — shutting the fleet down");
+            Ok(())
+        }
+        Some((port, Err(e))) => bail!("tenant on port {port} failed: {e:#}"),
+        None => bail!("serve-fleet: no tenants ran"),
+    }
+}
+
 pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>) -> Result<()> {
     let entries = parse_fleet(specs)?;
     let n = entries.len();
@@ -186,7 +232,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
     if daemon {
         // FULL daemon composition per tenant (monitor + reconcile + server).
         let mut monitors = Vec::with_capacity(n);
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<(u16, Result<()>)>(n.max(1));
+        let (tx, rx) = tokio::sync::mpsc::channel::<(u16, Result<()>)>(n.max(1));
         for (e, key) in entries.iter().zip(&keys) {
             let db = e.dir.join("wallet.db");
             let db_str = db
@@ -204,7 +250,11 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
                 .with_context(|| format!("starting tenant {}", e.dir.display()))?;
             let port = tenant.port;
             let server = tenant.server;
-            monitors.push(tenant.monitor);
+            let monitor = tenant.monitor;
+            monitors.push((
+                format!("serve-fleet: tenant {} (port {port})", e.dir.display()),
+                move || async move { monitor.stop().await.map_err(|e| anyhow::anyhow!("{}", e)) },
+            ));
             let tx = tx.clone();
             tokio::spawn(async move {
                 let res = match server.await {
@@ -216,19 +266,7 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
         }
         drop(tx);
         eprintln!("[serve-fleet] {n} wallet(s) serving (daemon mode)");
-        let outcome = rx.recv().await;
-        // Whatever ended first, stop every monitor before exiting.
-        for m in monitors {
-            let _ = m.stop().await;
-        }
-        return match outcome {
-            Some((port, Ok(()))) => {
-                eprintln!("[serve-fleet] port {port} exited cleanly — shutting the fleet down");
-                Ok(())
-            }
-            Some((port, Err(e))) => bail!("tenant on port {port} failed: {e:#}"),
-            None => bail!("serve-fleet: no tenants ran"),
-        };
+        return join_daemons(rx, monitors, super::daemon::SHUTDOWN_GRACE).await;
     }
 
     // HTTP-only mode.
@@ -287,6 +325,8 @@ pub async fn run(specs: &[String], daemon: bool, config: &std::sync::Arc<Config>
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn parses_dir_colon_port() {
@@ -363,5 +403,144 @@ mod tests {
         let missing = dir.join("missing.env");
         assert!(root_key_from_env_file(&missing).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    type Stop =
+        Box<dyn FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send>;
+
+    /// A tenant's monitor that stops at once and says so.
+    fn clean(name: &str, stopped: &Arc<AtomicUsize>) -> (String, Stop) {
+        let stopped = stopped.clone();
+        (
+            name.to_string(),
+            Box::new(move || {
+                Box::pin(async move {
+                    stopped.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            }),
+        )
+    }
+
+    /// A tenant's monitor that never returns from its stop.
+    fn hung(name: &str) -> (String, Stop) {
+        (
+            name.to_string(),
+            Box::new(|| Box::pin(std::future::pending())),
+        )
+    }
+
+    /// The fleet's channel with the first tenant's end already in it.
+    fn ended(port: u16, res: Result<()>) -> tokio::sync::mpsc::Receiver<(u16, Result<()>)> {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send((port, res)).unwrap();
+        rx
+    }
+
+    #[tokio::test]
+    async fn a_fleet_whose_monitor_hangs_exits_within_the_grace_naming_that_tenant() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
+        let grace = Duration::from_millis(50);
+        let stopped = Arc::new(AtomicUsize::new(0));
+        let monitors = vec![
+            clean("serve-fleet: tenant a (port 3401)", &stopped),
+            hung("serve-fleet: tenant b (port 3402)"),
+            clean("serve-fleet: tenant c (port 3403)", &stopped),
+        ];
+        let exit = tokio::time::timeout(
+            grace + Duration::from_secs(1),
+            join_daemons(ended(3401, Ok(())), monitors, grace),
+        )
+        .await
+        .expect("the fleet exits past a hung monitor");
+        assert!(exit.is_ok(), "the first end still decides: {exit:?}");
+        assert_eq!(
+            stopped.load(Ordering::SeqCst),
+            2,
+            "the clean monitors stopped"
+        );
+        let lines = markers.named("daemon_fault");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(
+            lines[0].message.as_deref(),
+            Some("serve-fleet: tenant b (port 3402): the monitor did not stop within the grace")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_fleets_stops_run_at_once_so_its_exit_is_one_grace_not_n() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
+        let grace = Duration::from_millis(300);
+        let monitors = vec![
+            hung("serve-fleet: tenant a (port 3401)"),
+            hung("serve-fleet: tenant b (port 3402)"),
+            hung("serve-fleet: tenant c (port 3403)"),
+        ];
+        let started = tokio::time::Instant::now();
+        let exit = tokio::time::timeout(
+            grace * 2,
+            join_daemons(
+                ended(3402, Err(anyhow::anyhow!("Address already in use"))),
+                monitors,
+                grace,
+            ),
+        )
+        .await
+        .expect("three hung monitors hold the fleet one grace, not three");
+        assert!(started.elapsed() >= grace);
+        let words = format!(
+            "{:#}",
+            exit.expect_err("the failed tenant is the fleet's error")
+        );
+        assert!(words.contains("tenant on port 3402 failed"), "{words}");
+        assert!(words.contains("Address already in use"), "{words}");
+        let mut named: Vec<String> = markers
+            .named("daemon_fault")
+            .into_iter()
+            .filter_map(|m| m.message)
+            .collect();
+        named.sort();
+        assert_eq!(
+            named,
+            ["a (port 3401)", "b (port 3402)", "c (port 3403)"].map(|t| format!(
+                "serve-fleet: tenant {t}: the monitor did not stop within the grace"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fleet_of_clean_monitors_exits_as_today() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
+        let stopped = Arc::new(AtomicUsize::new(0));
+        let monitors = vec![
+            clean("serve-fleet: tenant a (port 3401)", &stopped),
+            clean("serve-fleet: tenant b (port 3402)", &stopped),
+        ];
+        let exit = tokio::time::timeout(
+            Duration::from_secs(1),
+            join_daemons(
+                ended(3402, Ok(())),
+                monitors,
+                super::super::daemon::SHUTDOWN_GRACE,
+            ),
+        )
+        .await
+        .expect("clean monitors stop at once");
+        assert!(exit.is_ok(), "{exit:?}");
+        assert_eq!(stopped.load(Ordering::SeqCst), 2);
+        assert!(markers.named("daemon_fault").is_empty());
+
+        let failed = join_daemons(
+            ended(3401, Err(anyhow::anyhow!("listener fault"))),
+            vec![clean("serve-fleet: tenant a (port 3401)", &stopped)],
+            super::super::daemon::SHUTDOWN_GRACE,
+        )
+        .await
+        .expect_err("a failed tenant is the fleet's error, as today");
+        assert_eq!(
+            format!("{failed:#}"),
+            "tenant on port 3401 failed: listener fault"
+        );
+        assert_eq!(stopped.load(Ordering::SeqCst), 3);
     }
 }

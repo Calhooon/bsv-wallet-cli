@@ -11,7 +11,7 @@ use crate::config::Config;
 /// it returns the server's error anyway. The other tasks (the served pass,
 /// the reconcile loop, the relay poll, the feed) end with the runtime when
 /// `main` returns the error.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+pub(super) const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// Monitor + HTTP server for ONE wallet — the composition itself lives in
 /// `daemon_tenant::start` so `serve-fleet --daemon` can run it N times in one
@@ -147,15 +147,34 @@ where
         "daemon: {}; stopping the monitor",
         fault.log
     );
+    stop_within_grace("daemon", stop_monitor, grace).await;
+    e.context(fault.context)
+}
+
+/// Stop a monitor within `grace`. A stop that fails or outlasts the grace is
+/// logged at error level (marker `daemon_fault`) as `{who}: the monitor did
+/// not stop cleanly` or `{who}: the monitor did not stop within the grace`,
+/// and is never the caller's answer: the caller's exit is not held. Shared
+/// by the daemon and `serve-fleet --daemon` (#182), whose `who` names the
+/// tenant.
+pub(super) async fn stop_within_grace<S, F>(who: &str, stop_monitor: S, grace: Duration)
+where
+    S: FnOnce() -> F,
+    F: Future<Output = Result<()>>,
+{
     match tokio::time::timeout(grace, stop_monitor()).await {
         Ok(Ok(())) => {}
-        Ok(Err(stop)) => tracing::error!(error = %stop, "daemon: the monitor did not stop cleanly"),
+        Ok(Err(stop)) => tracing::error!(
+            marker = "daemon_fault",
+            error = %stop,
+            "{who}: the monitor did not stop cleanly"
+        ),
         Err(_) => tracing::error!(
+            marker = "daemon_fault",
             grace_ms = grace.as_millis() as u64,
-            "daemon: the monitor did not stop within the grace"
+            "{who}: the monitor did not stop within the grace"
         ),
     }
-    e.context(fault.context)
 }
 
 #[cfg(test)]
