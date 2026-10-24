@@ -25,7 +25,7 @@ The field names each shape must keep are BRC-100's (`wallet/0100.md` of bsv-bloc
 }
 ```
 
-- **`world`**: the wallet and the server config the request is served from. Each world is built once per run from its name alone (`World::build` in `tests/wire.rs`); a fixture naming any other world fails the run before a world is built, naming the file and the world.
+- **`world`**: the wallet and the server config the request is served from. Each world is built once per run from its name alone (`World::build` in `tests/wire_harness/worlds.rs`); a fixture naming any other world fails the run before a world is built, naming the file and the world.
 
   | world | what it is |
   |---|---|
@@ -60,7 +60,7 @@ Beyond the byte comparison, the replay fails when the corpus stops covering:
 
 `APP_CODES` is typed by hand, but it is checked against the source: `every_app_error_code_is_judged` reads every `(StatusCode::NAME, "CODE")` of `Kind::answer` in `src/server/error.rs`, the one table of the served layer's statuses and codes (#81), and fails unless `APP_CODES` and `UNPRODUCED` together are exactly that set, at the same statuses. A code added to the source with no fixture fails it by name, and so does one gone from the source.
 
-Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire.rs`; a fixture that answers one moves it to `APP_CODES`):
+Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
 
 | code | why no world produces it |
 |---|---|
@@ -84,19 +84,19 @@ A fixture records what the server answers, defect included; the fix changes the 
 A PR that changes what the server answers changes its fixture in the same PR, in a commit of its own:
 
 1. Make the change in `src/` (one commit).
-2. `WIRE_RECORD=1 cargo test --locked --test wire` re-records every fixture and the manifest from the cases in `tests/wire.rs`. A recording never passes: the run ends with the word that a recording is not a replay and must be replayed by a second run. Nothing else re-records: unset, the run only replays, and any other value (`0`, `true`, an empty string) fails the run naming it.
+2. `WIRE_RECORD=1 cargo test --locked --test wire` re-records every fixture and the manifest from the cases in `tests/wire_harness/` (`record_all` in `cases.rs` and the `record_*` functions it calls). A recording never passes: the run ends with the word that a recording is not a replay and must be replayed by a second run. Nothing else re-records: unset, the run only replays, and any other value (`0`, `true`, an empty string) fails the run naming it.
 3. `cargo test --locked --test wire` replays what was recorded.
 4. `git diff tests/wire` shows exactly the bytes the change moved. Commit them alone, with a subject that says which answer changed and why (`wire: /listActions carries underRule`).
 
 CI's `wire` job replays only: it fails before cargo runs if `WIRE_RECORD` is set to anything, the empty string included, and it refuses a run that left a fixture changed.
 
-A new served call or refusal gets a case in one of the `record_*` functions `record_all` calls in order (`tests/wire.rs`) and, if it is a route or a code the judge must keep, an entry in `ENDPOINTS`, `HOST_ROUTES`, `APP_CODES` or `ROUTER_CODES` (a new `AppError` code with no entry fails `every_app_error_code_is_judged`). Re-recording writes the files with fresh sequence numbers, so a case added in the middle renames the files after it; the diff shows them as moved, their bodies unchanged.
+A new served call or refusal gets a case in one of the `record_*` functions `record_all` calls in order (`tests/wire_harness/cases.rs`, `cases_routes.rs`, `cases_spending.rs`) and, if it is a route or a code the judge must keep, an entry in `ENDPOINTS`, `HOST_ROUTES`, `APP_CODES` or `ROUTER_CODES` (a new `AppError` code with no entry fails `every_app_error_code_is_judged`). Re-recording writes the files with fresh sequence numbers, so a case added in the middle renames the files after it; the diff shows them as moved, their bodies unchanged.
 
 Two recordings in a row are byte-identical: a re-record with no change in `src/` leaves `git status` clean. A bound request value is written as `<bound>`, never as the value sent, for that reason.
 
 ## What the normalizer hides, and why
 
-One normalizer, `NORMALIZER` in `tests/wire.rs` (its rules; the walk and the capture it drives are `Normalizer` in `tests/wire_support/mod.rs`, the replay machinery `tests/wire_consumers.rs` shares), and only values that differ from run to run with no change to the code. A placeholder replaces a value, never a key, and it keeps the value's shape: its JSON type, a byte array's length, a string's kind and length, a number's sign and digit count. A field that changes from a byte array to a hex string, or grows by a byte, fails the replay.
+One normalizer, `NORMALIZER` in `tests/wire_harness/fixture.rs` (its rules; the walk and the capture it drives are `Normalizer` in `tests/wire_support/mod.rs`, the replay machinery `tests/wire_consumers.rs` shares), and only values that differ from run to run with no change to the code. A placeholder replaces a value, never a key, and it keeps the value's shape: its JSON type, a byte array's length, a string's kind and length, a number's sign and digit count. A field that changes from a byte array to a hex string, or grows by a byte, fails the replay.
 
 | placeholder | for |
 |---|---|
