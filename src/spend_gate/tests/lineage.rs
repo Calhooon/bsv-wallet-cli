@@ -93,10 +93,27 @@ async fn both_doors(
     opts: &GateOptions,
     txid: &str,
 ) -> (Option<String>, Option<String>) {
+    doors_at(storage, services, opts, (txid, 0)).await
+}
+
+/// [`both_doors`] for the coin at `vout`.
+async fn doors_at(
+    storage: &StorageSqlx,
+    services: &MockWalletServices,
+    opts: &GateOptions,
+    (txid, vout): (&str, u32),
+) -> (Option<String>, Option<String>) {
     let a = assess(storage, services, opts, None).await.unwrap();
-    let named = assess_named(storage, services, opts, &[(txid.to_string(), 0)], &[], None)
-        .await
-        .unwrap();
+    let named = assess_named(
+        storage,
+        services,
+        opts,
+        &[(txid.to_string(), vout)],
+        &[],
+        None,
+    )
+    .await
+    .unwrap();
     (reason_of(&a, txid), named.first().map(|c| c.reason.clone()))
 }
 
@@ -164,8 +181,7 @@ async fn a_grandchild_is_held_through_two_steps() {
 }
 
 /// The other dead words: a parent `rejected` by the tracker, a parent the
-/// toolbox holds `failed` (the CLI's abandon). A `failed` parent with a
-/// proof in `proven_txs` is mined to the tracker, and its child offered.
+/// toolbox holds `failed` (the CLI's abandon).
 #[tokio::test]
 async fn a_child_of_a_rejected_or_failed_parent_is_held() {
     for (death, word) in [
@@ -176,15 +192,6 @@ async fn a_child_of_a_rejected_or_failed_parent_is_held() {
         let (p, d, _) = parent_and_child(&store, Some(death)).await;
         held_naming(&store.0, &quiet_headers(), &opts(1, true), &d, (&p, word)).await;
     }
-
-    let store = wallet_store().await;
-    let (p, d) = ("e6".repeat(32), "e7".repeat(32));
-    let p0 = coin(&store.0, store.1, &p, true, Some(800), 6_000, 3).await;
-    change(&store, &d).await;
-    spends(&store.0, &d, p0).await;
-    kill(&store.0, &p, Death::Failed).await;
-    let (offer, named) = both_doors(&store.0, &quiet_headers(), &opts(1, true), &d).await;
-    assert_eq!((offer, named), (None, None));
 }
 
 /// A child of a live parent is offered as before; with the rule off, the
@@ -261,10 +268,14 @@ async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reach
     spends(&store.0, &a, b0).await;
     second_output(&store, &b, 1).await;
     let walk = || async {
-        tokio::time::timeout(Duration::from_secs(5), dead_lineages(store.0.pool()))
-            .await
-            .expect("the walk hung")
-            .unwrap()
+        let (services, tick) = (quiet_headers(), opts(1, true).tick());
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            dead_lineages(&store.0, &services, &tick),
+        )
+        .await
+        .expect("the walk hung")
+        .unwrap()
     };
     assert!(walk().await.is_empty());
     let a1 = assess(&store.0, &quiet_headers(), &opts(1, true), None)
@@ -338,4 +349,158 @@ async fn a_named_coin_of_a_dead_lineage_refuses_the_action_and_stores_nothing() 
         format!("dead lineage: ancestor {p} conflicted")
     );
     assert_eq!(held[0].headers_fault, None);
+}
+
+/// The planted shape of the round-two review: our parent P mined at 800
+/// with its proof in `proven_txs` (its root is P's txid), dead as `death`
+/// (a tracker word stored as `node_verdict` stores it, beside its verdict,
+/// or the toolbox's `failed`), its change P0 spent by our child D and a
+/// second coin P1 free. (P's txid, D's txid.)
+async fn dead_parent_with_proof(store: &Store, death: Death) -> (String, String) {
+    let (p, d) = ("f3".repeat(32), "f4".repeat(32));
+    let p0 = coin(&store.0, store.1, &p, true, Some(800), 6_000, 3).await;
+    second_output(store, &p, 1).await;
+    change(store, &d).await;
+    spends(&store.0, &d, p0).await;
+    match death {
+        Death::Word(word) => {
+            let verdict = serde_json::json!({"kind": word, "competitors": ["fd".repeat(32)]});
+            sqlx::query("INSERT INTO tracker_states (txid, word, verdict) VALUES (?, ?, ?)")
+                .bind(&p)
+                .bind(word)
+                .bind(verdict.to_string())
+                .execute(store.0.writer())
+                .await
+                .unwrap();
+        }
+        Death::Failed => kill(&store.0, &p, death).await,
+    }
+    (p, d)
+}
+
+/// One creator, one word: through each door, P's free coin P1 is held
+/// exactly when D's coin is held by P's lineage. (P1's reasons, D's.)
+async fn agreeing(
+    store: &Store,
+    services: &MockWalletServices,
+    opts: &GateOptions,
+    (p, d): (&str, &str),
+) -> (
+    (Option<String>, Option<String>),
+    (Option<String>, Option<String>),
+) {
+    let parent = doors_at(&store.0, services, opts, (p, 1)).await;
+    let child = both_doors(&store.0, services, opts, d).await;
+    let by_lineage = |r: &Option<String>| r.as_deref().is_some_and(|r| r.starts_with(DEAD_LINEAGE));
+    assert_eq!(
+        parent.0.is_some(),
+        by_lineage(&child.0),
+        "the allocation: {parent:?} {child:?}"
+    );
+    assert_eq!(
+        parent.1.is_some(),
+        by_lineage(&child.1),
+        "the named input: {parent:?} {child:?}"
+    );
+    (parent, child)
+}
+
+/// A checked proof outranks a stored dead word (`Tracker.lean`
+/// `onProof_of_rootChecks`), for the walk as for the door (`Wallet.lean`
+/// `State.skel` reads the one word): P conflicted beside a proof whose root
+/// checks at 800, 101 deep, is offered as mined, and D with it, through
+/// both doors, under every word.
+#[tokio::test]
+async fn a_checked_proof_outranks_a_stored_dead_word_for_the_walk_as_for_the_door() {
+    let store = wallet_store().await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+    let services = headers_with(&p, 800, 900);
+    for o in every_word(&d) {
+        let read = agreeing(&store, &services, &o, (&p, &d)).await;
+        assert_eq!(read, ((None, None), (None, None)), "under {o:?}");
+    }
+}
+
+/// P conflicted beside a proof `services` does not clear: both readings
+/// keep the stored word, the door holding P1 `held` and D held by P's
+/// lineage.
+async fn the_stored_word_stands(services: &MockWalletServices, held: &str) {
+    let store = wallet_store().await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+    let held = Some(held.to_string());
+    let lineage = Some(format!("dead lineage: ancestor {p} conflicted"));
+    assert_eq!(
+        agreeing(&store, services, &opts(1, true), (&p, &d)).await,
+        ((held.clone(), held), (lineage.clone(), lineage))
+    );
+}
+
+/// The header service silent: P's proof is not checked, so P keeps its
+/// stored word for both readings: the door holds P closed on the fault,
+/// and D is held by P's lineage, never "could not verify now".
+#[tokio::test]
+async fn a_proof_the_headers_could_not_check_leaves_the_stored_word() {
+    let services = headers_with(&"f3".repeat(32), 800, 900);
+    services.set_tip_unavailable();
+    let fault = "Service error: mock: the chain tip header is unavailable";
+    the_stored_word_stands(&services, &format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}")).await;
+}
+
+/// A proof whose root does not match the header at its height: P keeps
+/// its stored word, `conflicted: never offered` at the door, and D is held
+/// by P's lineage.
+#[tokio::test]
+async fn a_proof_whose_root_does_not_match_leaves_the_stored_word() {
+    let services = headers_with(&"0d".repeat(32), 800, 900);
+    the_stored_word_stands(&services, "conflicted: never offered").await;
+}
+
+/// A `failed` parent whose proof checks reads mined, and its child is
+/// offered as before, now by the reading. The allocation never lists a
+/// `failed` creator's coin (the toolbox's candidates are `completed` or
+/// `unproven`), so P1 reads offered there by its absence.
+#[tokio::test]
+async fn a_failed_parent_whose_proof_checks_leaves_its_child_offered() {
+    let store = wallet_store().await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Failed).await;
+    let read = agreeing(
+        &store,
+        &headers_with(&p, 800, 900),
+        &opts(1, true),
+        (&p, &d),
+    )
+    .await;
+    assert_eq!(read, ((None, None), (None, None)));
+    // The same proof against a header it does not match: D held.
+    let services = headers_with(&"0d".repeat(32), 800, 900);
+    held_naming(&store.0, &services, &opts(1, true), &d, (&p, "failed")).await;
+}
+
+/// A parent `p` (made, or received) whose tracker row, keyed by the
+/// lowercase txid as the tick writes it, says `conflicted`, and our child
+/// spending its coin: the child is held naming `p`.
+async fn a_conflicted_parent_holds_our_child(p: &str, made: bool) {
+    let store = wallet_store().await;
+    let d = "f7".repeat(32);
+    let p0 = coin(&store.0, store.1, p, made, None, 6_000, 3).await;
+    change(&store, &d).await;
+    spends(&store.0, &d, p0).await;
+    kill(&store.0, &p.to_ascii_lowercase(), Death::Word("conflicted")).await;
+    let services = quiet_headers();
+    held_naming(&store.0, &services, &opts(1, true), &d, (p, "conflicted")).await;
+}
+
+/// The toolbox's txid in upper case beside the tracker's lowercase row
+/// (the tick's adoption writes `lower(txid)`): the walk still finds P.
+#[tokio::test]
+async fn an_uppercase_parent_txid_is_walked() {
+    a_conflicted_parent_holds_our_child(&"F6".repeat(32), true).await;
+}
+
+/// A received parent whose word is conflicted: our D spending its coin is
+/// dead (the Lean's `w.actions` holds received actions, and `skel` reads a
+/// parent's word whatever its origin).
+#[tokio::test]
+async fn a_received_dead_parent_kills_our_child() {
+    a_conflicted_parent_holds_our_child(&"f1".repeat(32), false).await;
 }

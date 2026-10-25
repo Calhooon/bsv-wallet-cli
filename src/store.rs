@@ -29,36 +29,71 @@ pub async fn has_column(reader: &SqlitePool, table: &str, column: &str) -> Resul
     Ok(n > 0)
 }
 
+/// One (heir, dead ancestor) pair of the lineage walk
+/// ([`dead_lineage_rows`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineageRow {
+    /// The heir's txid, as the toolbox stores it.
+    pub heir: String,
+    /// The dead ancestor's txid, or its reference when it was never signed.
+    pub ancestor: String,
+    /// The ancestor's stored dead word: `conflicted`, `rejected`,
+    /// `abandoned` (the tracker's) or `failed` (the toolbox's status).
+    pub word: String,
+    /// When the ancestor holds a proof (its tracker row's bump, or the
+    /// toolbox's `proven_txs` row): the pair the door hands
+    /// [`crate::tracker_host::read_creators`] for it, its lowercase txid
+    /// and the stored merkle path's bytes. `None`: no proof held, and the
+    /// stored word is the only word there is to read.
+    pub proof: Option<(String, Option<Vec<u8>>)>,
+}
+
 /// The lineage walk of the spend gate ([`crate::spend_gate::dead_lineages`],
-/// #163), one statement on the reader: each action of ours a dead action's
+/// #163), one statement on the reader: each action a dead candidate's
 /// output reaches through `outputs.spent_by`, directly or through other
-/// such actions, as `(its txid, the dead ancestor's txid or reference, the
-/// ancestor's word)`, by the heir's row, then the latest-created ancestor,
-/// then a tracker word before a `failed` status. Dead: the tracker's stored
-/// word `conflicted`, `rejected` or `abandoned`, or the toolbox's `failed`
-/// with no proof in `proven_txs`. `UNION` keeps each (heir, ancestor) pair
-/// once, so a cycle in `spent_by` ends the walk. A store the tracker never
-/// touched has no words: its dead are the `failed` alone.
+/// such actions, with that candidate, by the heir's row, then the
+/// latest-created ancestor, then a tracker word before a `failed` status.
+/// A candidate: the tracker's stored word `conflicted`, `rejected` or
+/// `abandoned`, or the toolbox's `failed`, made or received; the gate reads
+/// a candidate that holds a proof before it counts it dead. The tracker's
+/// rows are keyed by the lowercase txid (the tick's adoption writes
+/// `lower(txid)`), so the tracker's join reads `lower(t.txid)`; the proof's
+/// row is joined as the door's own reads join it (`p.txid = t.txid`), so
+/// the walk and the door find the same proof. `UNION` keeps each (heir,
+/// ancestor) pair once, so a cycle in `spent_by` ends the walk; the rows
+/// are every such pair, not the nearest per heir, since which candidates
+/// stay dead is known only once the gate has read their proofs. A store
+/// the tracker never touched has no words: its candidates are the `failed`
+/// alone.
 ///
 /// # Errors
 ///
 /// The store's error when the read fails.
-pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<(String, String, String)>> {
-    let words = if has_column(reader, "tracker_states", "word").await? {
-        "SELECT t.transaction_id, COALESCE(t.txid, t.reference), s.word, 0 \
-         FROM tracker_states s JOIN transactions t ON t.txid = s.txid \
-         WHERE s.word IN ('conflicted', 'rejected', 'abandoned') UNION "
+pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<LineageRow>> {
+    // The tracker's words, and its bump beside a `failed` status, when the
+    // tracker's table holds words at all.
+    let (words, failed_bump, failed_join) = if has_column(reader, "tracker_states", "word").await? {
+        (
+            "SELECT t.transaction_id, COALESCE(t.txid, t.reference), s.word, 0, lower(t.txid), \
+                    s.bump IS NOT NULL OR p.txid IS NOT NULL, p.merkle_path \
+             FROM tracker_states s JOIN transactions t ON s.txid = lower(t.txid) \
+             LEFT JOIN proven_txs p ON p.txid = t.txid \
+             WHERE s.word IN ('conflicted', 'rejected', 'abandoned') UNION ",
+            "s.bump IS NOT NULL",
+            "LEFT JOIN tracker_states s ON s.txid = lower(t.txid)",
+        )
     } else {
-        ""
+        ("", "0", "")
     };
     let sql = format!(
         "WITH RECURSIVE \
-           dead(transaction_id, name, word, rank) AS ( \
+           dead(transaction_id, name, word, rank, txid, held, merkle_path) AS ( \
              {words} \
-             SELECT t.transaction_id, COALESCE(t.txid, t.reference), 'failed', 1 \
+             SELECT t.transaction_id, COALESCE(t.txid, t.reference), 'failed', 1, lower(t.txid), \
+                    {failed_bump} OR p.txid IS NOT NULL, p.merkle_path \
              FROM transactions t \
-             WHERE t.status = 'failed' \
-               AND NOT EXISTS (SELECT 1 FROM proven_txs p WHERE p.txid = t.txid)), \
+             LEFT JOIN proven_txs p ON p.txid = t.txid {failed_join} \
+             WHERE t.status = 'failed'), \
            heir(transaction_id, ancestor) AS ( \
              SELECT o.spent_by, d.transaction_id FROM dead d \
              JOIN outputs o ON o.transaction_id = d.transaction_id \
@@ -67,14 +102,35 @@ pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<(String, Strin
              SELECT o.spent_by, h.ancestor FROM heir h \
              JOIN outputs o ON o.transaction_id = h.transaction_id \
              WHERE o.spent_by IS NOT NULL) \
-         SELECT t.txid, d.name, d.word FROM heir h \
+         SELECT t.txid, d.name, d.word, d.txid, d.held, d.merkle_path FROM heir h \
          JOIN transactions t ON t.transaction_id = h.transaction_id \
          JOIN dead d ON d.transaction_id = h.ancestor \
          WHERE t.txid IS NOT NULL \
          ORDER BY h.transaction_id, d.transaction_id DESC, d.rank"
     );
-    Ok(sqlx::query_as(&sql).fetch_all(reader).await?)
+    let rows: Vec<LineageTuple> = sqlx::query_as(&sql).fetch_all(reader).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(heir, ancestor, word, txid, held, path)| LineageRow {
+            heir,
+            ancestor,
+            word,
+            proof: txid.filter(|_| held).map(|txid| (txid, path)),
+        })
+        .collect())
 }
+
+/// A row of [`dead_lineage_rows`]' statement: the heir's txid, the
+/// ancestor's name and word, its lowercase txid, whether it holds a proof,
+/// and the stored merkle path.
+type LineageTuple = (
+    String,
+    String,
+    String,
+    Option<String>,
+    bool,
+    Option<Vec<u8>>,
+);
 
 /// One store per file per process (F9 (b) of the #44 CLI review): the file
 /// opened once, made available, and answered as two handles of the one
