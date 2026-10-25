@@ -664,14 +664,15 @@ async fn a_candidate_is_read_no_more_than_a_creator() {
 
 /// A wallet over [`conflicted_with_proof`]'s plant with the tip silent,
 /// and a createAction naming D's coin alone, P only its lineage's
-/// candidate: the gate's answer, and whether the toolbox was asked. The
-/// tip comes back 300 ms in when `recovers`.
+/// candidate: the gate's answer, whether the toolbox was asked, P's txid,
+/// and the number of tip calls. The tip comes back 300 ms in when `recovers`.
 async fn named_through_create_action(
     recovers: bool,
 ) -> (
     std::result::Result<CreateActionResult, GateError>,
     bool,
     String,
+    usize,
 ) {
     let root = PrivateKey::random();
     let store = store_for(&root.public_key().to_hex()).await;
@@ -688,7 +689,12 @@ async fn named_through_create_action(
     } else {
         door.await
     };
-    (result, asked, p)
+    (
+        result,
+        asked,
+        p,
+        wallet.services().call_count("get_chain_tip_header"),
+    )
 }
 
 /// Round four's finding: the named door's retry re-reads a lineage
@@ -698,7 +704,7 @@ async fn named_through_create_action(
 /// ([`the_retry_re_reads_a_candidate_with_the_creators`]).
 #[tokio::test]
 async fn the_named_door_retries_a_candidate_as_the_allocation_does() {
-    let (result, asked, _) = named_through_create_action(true).await;
+    let (result, asked, _, _) = named_through_create_action(true).await;
     if let Err(GateError::Refused(refusal)) = &result {
         panic!(
             "the named door refused D after the retry: {:?}",
@@ -712,7 +718,8 @@ async fn the_named_door_retries_a_candidate_as_the_allocation_does() {
 /// D named alone is refused 403 naming P, never "could not verify now".
 #[tokio::test]
 async fn the_named_door_silent_throughout_refuses_naming_the_ancestor() {
-    let (result, asked, p) = named_through_create_action(false).await;
+    let (result, asked, p, tip_calls) = named_through_create_action(false).await;
+    assert_eq!(tip_calls, 2, "the named door did not retry the silent tip");
     let Err(GateError::Refused(refusal)) = result else {
         panic!("D passed the gate with P unread: {result:?}");
     };
