@@ -45,22 +45,17 @@ enum Death {
 }
 
 async fn kill(storage: &StorageSqlx, txid: &str, death: Death) {
-    let (sql, value) = match death {
-        Death::Word(word) => (
-            "INSERT INTO tracker_states (txid, word) VALUES (?, ?)",
-            word,
-        ),
-        Death::Failed => (
-            "UPDATE transactions SET status = ? WHERE txid = ?",
-            "failed",
-        ),
-    };
-    let query = sqlx::query(sql);
-    let query = match death {
-        Death::Word(_) => query.bind(txid).bind(value),
-        Death::Failed => query.bind(value).bind(txid),
-    };
-    query.execute(storage.writer()).await.unwrap();
+    match death {
+        Death::Word(word) => {
+            sqlx::query("INSERT INTO tracker_states (txid, word) VALUES (?, ?)")
+                .bind(txid)
+                .bind(word)
+                .execute(storage.writer())
+                .await
+                .unwrap();
+        }
+        Death::Failed => fail(storage, txid).await,
+    }
 }
 
 /// Our own unproven change `txid` (made, a pending creator): its output id.
@@ -134,16 +129,6 @@ async fn held_naming(
         both_doors(store, services, opts, txid).await,
         (want.clone(), want)
     );
-}
-
-/// The host's own-change rule and the action's received word, plain and
-/// scoped to `txid`'s coin: every rule and word the door reads.
-fn every_word(txid: &str) -> Vec<GateOptions> {
-    vec![
-        opts(1, true),
-        opts(1, true).with_allow_received(true),
-        opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(txid.to_string(), 0)])),
-    ]
 }
 
 /// The scenario (P conflicted, D still announced): D's change is held
@@ -534,19 +519,24 @@ async fn a_proof_whose_root_does_not_match_leaves_the_stored_word() {
 /// A `failed` parent whose proof checks reads mined, and its child is
 /// offered as before, now by the reading. The allocation never lists a
 /// `failed` creator's coin (the toolbox's candidates are `completed` or
-/// `unproven`), so P1 reads offered there by its absence.
+/// `unproven`), so P1 is absent there. The named door holds P1 on its failed
+/// transaction's status before reading the proof; D still reads the proof.
 #[tokio::test]
 async fn a_failed_parent_whose_proof_checks_leaves_its_child_offered() {
     let store = wallet_store().await;
     let (p, d) = dead_parent_with_proof(&store, Death::Failed).await;
-    let read = agreeing(
-        &store,
-        &headers_with(&p, 800, 900),
-        &opts(1, true),
-        (&p, &d),
-    )
-    .await;
-    assert_eq!(read, ((None, None), (None, None)));
+    let services = headers_with(&p, 800, 900);
+    assert_eq!(
+        doors_at(&store, &services, &opts(1, true), (&p, 1)).await,
+        (
+            None,
+            Some("its transaction is failed: never offered".to_string())
+        )
+    );
+    assert_eq!(
+        both_doors(&store, &services, &opts(1, true), &d).await,
+        (None, None)
+    );
     // The same proof against a header it does not match: D held.
     let services = headers_with(&"0d".repeat(32), 800, 900);
     held_naming(&store, &services, &opts(1, true), &d, (&p, "failed")).await;
