@@ -265,8 +265,12 @@ string form `"received"` stays every received coin. The scope narrows what
 the word reaches and never widens it. The MCP tool `create_action` carries
 the string form only.
 
-A coin whose transaction is `stale`, `rejected`, `conflicted` or `abandoned`
-is never offered; a coin whose creator is `mined` at or above the
+A coin whose transaction is `rejected`, `conflicted` or `abandoned` is never
+offered; a coin whose transaction is `stale` (its proof's block left the
+chain, the transaction confirming again) ranks as an unproven one, offered
+under the same rule (our own change under `SPEND_OWN_CHANGE`, a received
+coin under the action's word) and never with no rule (the owner's ruling 7a
+of 2026-10-20); a coin whose creator is `mined` at or above the
 `forkHeight` of a `split` the feed delivered is held until that split's
 `splitResolved` (the open splits are kept in `tracker_meta`, `open_splits`,
 written in the delivery's transaction; the scenario
@@ -280,7 +284,8 @@ When no offered coin covers the action, the refusal lists every coin held
 back: its outpoint, the word, the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
-`own change, SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never offered`).
+`own change, SPEND_OWN_CHANGE=0`,
+`stale: its block left the chain; received, confirming again; offered under allowPending: received`, `spent by <txid> (unproven)`, `frozen: never offered`).
 `spent by <txid> (unproven)` names an input the live action `<txid>` consumed,
 spent for good; the coin leaves the listing when that spender is completed (its
 proof lands) or failed.

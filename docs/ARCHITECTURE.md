@@ -131,7 +131,8 @@ per call (`src/spend_gate.rs:1094-1121`, #59). Each coin's hold or offer is
 `hold_reason` (`src/spend_gate.rs:878`) over its creator's reading: mined at
 depth and not suspect, offered; our own `made` change under
 `SPEND_OWN_CHANGE`; a received pending coin under this action's word and
-within its scope; frozen, stale, rejected, conflicted, abandoned or under an
+within its scope; a stale creator's coin under the same rules, as a pending
+one's (ruling 7a, #162); frozen, rejected, conflicted, abandoned or under an
 open split, held with its reason. The offer is capped at the largest
 `OFFER_CAP` coins (`src/spend_gate.rs:146`, `cap_offer`).
 

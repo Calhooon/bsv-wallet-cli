@@ -79,8 +79,10 @@
 //! ends the matter, and only when every one that answered does not know it
 //! is it announced, once ([`REORG_ASKS_PER_PASS`] words a pass at most). A
 //! refusal the node gave writes the node's verdict on the row. The door
-//! (what a coin whose creator is `stale` may do) and the action's status
-//! are the toolbox's.
+//! (what a coin whose creator is `stale` may do) is the gate's: a `stale`
+//! creator reads as `seen`, offered under the rule a pending creator's coin
+//! is and never with no rule (ruling 7a, [`crate::spend_gate::hold_reason`]).
+//! The action's status is the toolbox's.
 //!
 //! One rule, not two: where the toolbox's monitor runs its reorg and review
 //! tasks (the daemon, [`TickOptions::monitor_runs`]), the follow-up of the
