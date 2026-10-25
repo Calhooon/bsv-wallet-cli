@@ -146,8 +146,10 @@ wallet, made or received, or of one of its dead lineage, is held
 `dead lineage: ancestor <txid> <word>` under every rule and word, mined
 included. Dead is the tracker's stored word `conflicted`, `rejected` or
 `abandoned`, or the toolbox's `failed` status (the CLI's abandon), read as
-the door reads it: a candidate holding a proof is read with its creators
-in one `read_creators` call; the allocation's door and `createAction`'s
+the door reads it: a candidate holding a proof is read only when one of
+its heirs is an eligible creator of the call (for the allocation every
+eligible creator, later lazy batches included; for the named door the
+eligible named creators), with its creators in one `read_creators` call; the allocation's door and `createAction`'s
 named inputs re-read once what faulted (`read_batch`); `respend`'s exact
 inputs read once. The dead set is derived after each door's reading, and
 a proof that checks reads it mined, so it is not dead (`Lineage::dead`;

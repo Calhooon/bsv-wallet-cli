@@ -274,7 +274,10 @@ the walk, was created by an action of this wallet, made or received, whose
 stored word is `conflicted`, `rejected` or `abandoned` or whose status is
 `failed`, unless a proof held for that action checks against the headers,
 which reads it mined for the walk as at the door: such an action is read
-once per call with the creators judged; the allocation's door and
+only when one of its heirs is an eligible creator of the call (for the
+allocation every eligible creator, later lazy batches included; for the
+named door the eligible named creators), once with the creators judged;
+the allocation's door and
 `createAction`'s named inputs re-read once what faulted; `respend`'s exact
 inputs read once. The dead set is derived after each door's reading
 (the owner's lineage ruling of 2026-10-22; `lean/Wallet.lean` `State.skel`

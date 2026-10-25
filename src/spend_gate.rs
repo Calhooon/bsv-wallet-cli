@@ -65,8 +65,11 @@
 //! `lean/Wallet.lean` `deadLineage`; held `dead lineage: ancestor <txid>
 //! <word>` after the door, in the Lean's clause order;
 //! [`lineage_candidates`], one read of the store per call, a dead word
-//! beside a proof read with the creators in the gate's one reading and its
-//! one retry, then [`Lineage::dead`]; the CLI's walk until the toolbox's
+//! beside a proof read only when one of its heirs is an eligible creator
+//! of the call (for the allocation every eligible creator, later lazy
+//! batches included; for the named door the eligible named creators), with
+//! the creators in the gate's one reading and its one retry, then
+//! [`Lineage::dead`]; the CLI's walk until the toolbox's
 //! lands, toolbox #42). A coin an action of ours holds is the toolbox's
 //! lock (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
