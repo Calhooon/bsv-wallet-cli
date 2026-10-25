@@ -1212,6 +1212,12 @@ const FROZEN: &str = "frozen: never offered";
 /// `lost(c)`, `Wallet.coinWord`), on a `completed` or `unproven` transaction.
 const LOST: &str = "lost: the store marks it not spendable";
 
+const FAILED: &str = "its transaction is failed: never offered";
+
+fn not_sent_reason(status: &str) -> String {
+    format!("its transaction is {status}: not spendable until it is sent")
+}
+
 /// The coins a live action of ours consumed (`spent_by` an action not yet
 /// `completed` or `failed`): listed in a refusal as `spent by <txid>
 /// (unproven)`, never offered. Not a hold that clears: each is an input that
@@ -1575,12 +1581,20 @@ fn named_record_hold(
         ));
     }
     let status: String = row.get("status");
-    if offered_status(&status) && row.get::<i64, _>("spendable") == 0 && spent_by.is_none() {
-        return Some(("lost".to_string(), LOST.to_string()));
+    let spendable: i64 = row.get("spendable");
+    let unspendable = spendable == 0 && spent_by.is_none();
+    if unspendable {
+        return Some(if offered_status(&status) {
+            ("lost".to_string(), LOST.to_string())
+        } else if status == "failed" {
+            (status, FAILED.to_string())
+        } else {
+            let reason = not_sent_reason(&status);
+            (status, reason)
+        });
     }
     if status == "failed" {
-        let reason = format!("its transaction is {status}: never offered");
-        return Some((status, reason));
+        return Some((status, FAILED.to_string()));
     }
     None
 }

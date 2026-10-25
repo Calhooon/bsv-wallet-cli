@@ -2757,6 +2757,8 @@ type ScopeReading = (
 /// The Lean's segment: received, frozen, spent by, lost on completed or
 /// unproven, failed, failed and frozen, and spent of failed. Both doors hold
 /// the same coins, with the scoped word's own refusal text.
+/// Swapping spent-by/lost or lost/failed cannot fail these disjoint
+/// predicates; removing lost's status qualifier fails both table tests.
 const LEAN_SEGMENT_READINGS: [ScopeReading; 10] = [
     (0, None, None),
     (2, Some("spent by "), Some(("locked", "spent by "))),
@@ -2775,8 +2777,11 @@ const LEAN_SEGMENT_READINGS: [ScopeReading; 10] = [
 ];
 
 /// The scoped word's domain: own change, live pre-broadcast statuses and a
-/// non-default basket. These are 400s at the scoped door, while the named
-/// door reads the creator (or the frozen record for frozen own change).
+/// non-default basket. These are 400s at the scoped door; the named door
+/// holds an unspendable record and otherwise reads the live creator (or
+/// the frozen record for frozen own change).
+/// Alongside the Lean table this catches the lost qualifier's removal:
+/// two failed table tests, while the two disjoint swaps preserve both.
 const SCOPED_WORD_DOMAIN_READINGS: [ScopeReading; 7] = [
     (
         1,
@@ -2784,7 +2789,14 @@ const SCOPED_WORD_DOMAIN_READINGS: [ScopeReading; 7] = [
         None,
     ),
     (3, Some("its transaction is nosend"), None),
-    (10, Some("its transaction is nosend"), None),
+    (
+        10,
+        Some("its transaction is nosend"),
+        Some((
+            "nosend",
+            "its transaction is nosend: not spendable until it is sent",
+        )),
+    ),
     (
         11,
         Some("own change of an action of this wallet, not a received coin"),
@@ -2854,7 +2866,8 @@ async fn the_scoped_and_named_doors_agree_on_the_lean_segment() {
 }
 
 /// A scoped word's domain refuses own change, pre-broadcast statuses and
-/// other baskets with 400; the named door retains the creator's reading.
+/// other baskets with 400; the named door holds the unspendable nosend
+/// record and reads the creator only when its record permits it.
 #[tokio::test]
 async fn the_scoped_and_named_doors_differ_on_the_scoped_words_domain() {
     assert_door_table(&SCOPED_WORD_DOMAIN_READINGS).await;
@@ -2906,10 +2919,14 @@ async fn assert_status_door(
     wallet: &Wallet<StorageSqlx, MockWalletServices>,
     txid: &str,
     status: &str,
+    reason: &str,
 ) {
-    use axum::response::IntoResponse;
-    let reason = format!("its transaction is {status}: never offered");
-    for gate in every_word(txid) {
+    for gate in every_word(txid).into_iter().flat_map(|gate| {
+        [true, false].map(|own_change| GateOptions {
+            own_change,
+            ..gate.clone()
+        })
+    }) {
         let held = named_under_word(wallet, txid, &gate).await;
         assert_eq!(
             held.len(),
@@ -2917,23 +2934,16 @@ async fn assert_status_door(
             "{status} was offered under {:?}",
             gate.allow_pending
         );
-        assert_eq!(
-            (&*held[0].word, &*held[0].reason),
-            (status, reason.as_str())
-        );
+        assert_eq!((&*held[0].word, &*held[0].reason), (status, reason));
         assert!(held[0].headers_fault.is_none());
         let mut args = pay(1_000);
         args.inputs = Some(vec![named_input(txid)]);
         let error = create_action(wallet, args, "gate.local", &gate)
             .await
             .unwrap_err();
-        let response = crate::server::error::AppError::from_gate_error(error).into_response();
+        let (code, body) = served_gate_error(error).await;
         let scoped = !gate.allow_pending.named().is_empty();
-        assert_eq!(response.status().as_u16(), if scoped { 400 } else { 403 });
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(code, if scoped { 400 } else { 403 });
         if scoped {
             assert_eq!(body["code"], "VALIDATION_ERROR");
             assert!(body["message"]
@@ -2954,23 +2964,45 @@ async fn assert_status_door(
 async fn a_failed_named_input_is_held_on_its_status_under_every_word() {
     let (wallet, coins) = scope_wallet().await;
     let before = stored_rows(wallet.storage()).await;
-    assert_status_door(&wallet, &coins[6], "failed").await;
+    let txid = &coins[6];
+    let flag: i64 = sqlx::query_scalar("SELECT spendable FROM outputs WHERE txid = ?")
+        .bind(txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(flag, 0, "the toolbox's failure write");
+    for flag in [0, 1] {
+        sqlx::query("UPDATE outputs SET spendable = ? WHERE txid = ?")
+            .bind(flag)
+            .bind(txid)
+            .execute(wallet.storage().writer())
+            .await
+            .unwrap();
+        assert_status_door(
+            &wallet,
+            txid,
+            "failed",
+            "its transaction is failed: never offered",
+        )
+        .await;
+    }
     assert_eq!(stored_rows(wallet.storage()).await, before);
 }
 
-/// A received nosend, unsigned or sending coin reads its live creator as
-/// before: held without a received word, offered with it. The scoped word
+/// A spendable received nosend, unsigned or sending coin reads its live
+/// creator: held without a received word, offered with it. The scoped word
 /// refuses each status with its own 400 before reading the creator.
 #[tokio::test]
 async fn live_statuses_at_the_named_door_read_the_received_creator() {
     let (wallet, coins) = scope_wallet().await;
-    for (i, status) in [
-        (3, "nosend"),
-        (10, "nosend"),
-        (14, "unsigned"),
-        (15, "sending"),
-    ] {
+    for (i, status) in [(3, "nosend"), (14, "unsigned"), (15, "sending")] {
         let txid = &coins[i];
+        let flag: i64 = sqlx::query_scalar("SELECT spendable FROM outputs WHERE txid = ?")
+            .bind(txid)
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+        assert_eq!(flag, 1, "{status}");
         let held = named_under_word(&wallet, txid, &opts(1, true)).await;
         assert_eq!(held.len(), 1, "{status}: {held:?}");
         assert_eq!(held[0].word, "unknown", "{status}");
@@ -3002,55 +3034,119 @@ async fn live_statuses_at_the_named_door_read_the_received_creator() {
     }
 }
 
-/// A real `noSend` action's made output reaches the toolbox as a named input
-/// of another `noSend` action under `SPEND_OWN_CHANGE=1`. Under 0 the gate holds
-/// it as own change. Toolbox 0.13.0 answers `wallet error: Validation error:
-/// inputs[0]: output <txid>:<vout> is not spendable`, its refusal after the gate.
+/// The same live statuses with unspendable records are held under every
+/// word and own-change setting. Row 10 is the scope table's real boundary.
 #[tokio::test]
-async fn a_made_nosend_input_reaches_the_toolbox_under_the_own_change_rule() {
+async fn unspendable_live_statuses_at_the_named_door_are_held_under_every_word() {
+    let (wallet, coins) = scope_wallet().await;
+    for (i, status) in [(10, "nosend"), (14, "unsigned"), (15, "sending")] {
+        let txid = &coins[i];
+        if i != 10 {
+            sqlx::query("UPDATE outputs SET spendable = 0 WHERE txid = ?")
+                .bind(txid)
+                .execute(wallet.storage().writer())
+                .await
+                .unwrap();
+        }
+        let flag: i64 = sqlx::query_scalar("SELECT spendable FROM outputs WHERE txid = ?")
+            .bind(txid)
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+        assert_eq!(flag, 0, "{status}");
+        let reason = format!("its transaction is {status}: not spendable until it is sent");
+        assert_status_door(&wallet, txid, status, &reason).await;
+    }
+}
+
+/// A real `noSend` action leaves both its change and its user output
+/// unspendable (toolbox 0.13.0 `process_action.rs:675-676`). Each is held at
+/// the named door before a second `createAction` can ask the toolbox.
+#[tokio::test]
+async fn a_made_nosend_actions_change_and_user_output_are_held_under_every_word() {
     let wallet = wallet_with_signable_funding().await;
     let mut args = pay(1_000);
     args.options.as_mut().unwrap().no_send = Some(true);
-    let parent = create_action(&wallet, args.clone(), "gate.local", &opts(1, true))
+    let parent = create_action(&wallet, args, "gate.local", &opts(1, true))
         .await
         .unwrap();
     let txid = hex::encode(parent.txid.unwrap());
-    let change = parent.no_send_change.unwrap().into_iter().next().unwrap();
-    let outpoint = format!("{txid}:{}", change.vout);
+    let changes = parent.no_send_change.unwrap();
     let status: String = sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ?")
         .bind(&txid)
         .fetch_one(wallet.storage().pool())
         .await
         .unwrap();
     assert_eq!(status, "nosend");
-    let mut input = named_input(&txid);
-    input.outpoint = change;
-    args.inputs = Some(vec![input]);
-    let (held, asked) = at_the_door(create_action(
-        &wallet,
-        args.clone(),
-        "gate.local",
-        &opts(1, false),
-    ))
-    .await;
-    assert!(!asked, "the disabled own-change rule reached the toolbox");
-    let Err(GateError::Refused(refusal)) = held else {
-        panic!("not held: {held:?}")
-    };
-    assert_eq!(refusal.held[0].origin, Origin::Made);
-    assert!(refusal.held[0]
-        .reason
-        .ends_with("own change, SPEND_OWN_CHANGE=0"));
-    let (answer, asked) =
-        at_the_door(create_action(&wallet, args, "gate.local", &opts(1, true))).await;
-    assert!(asked, "the made nosend input was held: {answer:?}");
-    let Err(GateError::Wallet(error)) = answer else {
-        panic!("the toolbox's answer changed: {answer:?}")
-    };
-    let expected =
-        format!("wallet error: Validation error: inputs[0]: output {outpoint} is not spendable");
-    assert_eq!(error.to_string(), expected);
-    println!("chained noSend toolbox answer: {error}");
+    let rows = sqlx::query(
+        "SELECT vout, change, spendable, spent_by FROM outputs WHERE txid = ? ORDER BY change DESC, vout",
+    )
+    .bind(&txid)
+    .fetch_all(wallet.storage().pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), changes.len() + 1, "change plus one user output");
+    for row in rows {
+        let vout: i64 = row.get("vout");
+        let change: i64 = row.get("change");
+        let flag: i64 = row.get("spendable");
+        assert_eq!(flag, 0, "vout {vout}, change={change}");
+        assert_eq!(row.get::<Option<i64>, _>("spent_by"), None);
+        assert_eq!(
+            change != 0,
+            changes.iter().any(|c| i64::from(c.vout) == vout)
+        );
+        println!(
+            "real noSend output: vout={vout}, change={change}, spendable={flag}, spent_by=NULL"
+        );
+        assert_nosend_output_is_held(&wallet, &txid, u32::try_from(vout).unwrap()).await;
+    }
+}
+
+async fn assert_nosend_output_is_held(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    txid: &str,
+    vout: u32,
+) {
+    let before = stored_rows(wallet.storage()).await;
+    for own_change in [true, false] {
+        for received in [false, true] {
+            let gate = opts(1, own_change).with_allow_received(received);
+            let mut args = pay(1_000);
+            args.options.as_mut().unwrap().no_send = Some(true);
+            let mut input = named_input(txid);
+            input.outpoint.vout = vout;
+            args.inputs = Some(vec![input]);
+            let (answer, asked) =
+                at_the_door(create_action(wallet, args, "gate.local", &gate)).await;
+            assert!(!asked, "the nosend input reached the toolbox: {answer:?}");
+            let (status, body) = served_gate_error(answer.unwrap_err()).await;
+            if own_change && !received {
+                println!(
+                    "named noSend vout={vout}: HTTP {status} {}, word={}, reason={}",
+                    body["code"], body["held"][0]["word"], body["held"][0]["reason"]
+                );
+            }
+            assert_eq!(status, 403);
+            assert_eq!(body["code"], "INPUT_NOT_OFFERED");
+            assert_eq!(body["held"][0]["word"], "nosend");
+            assert_eq!(
+                body["held"][0]["reason"],
+                "its transaction is nosend: not spendable until it is sent"
+            );
+        }
+    }
+    assert_eq!(stored_rows(wallet.storage()).await, before);
+}
+
+async fn served_gate_error(error: GateError) -> (u16, serde_json::Value) {
+    use axum::response::IntoResponse;
+    let response = crate::server::error::AppError::from_gate_error(error).into_response();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
 }
 
 /// A mined P2PKH coin with the derivation the toolbox needs to sign it.
