@@ -62,14 +62,13 @@
 //! on the walk, was created by an action of this wallet, made or received,
 //! whose word is dead, a held proof that checks reading mined for the walk
 //! as for the door (the owner's lineage ruling of 2026-10-22,
-//! `lean/Wallet.lean` `deadLineage`; held
-//! `dead lineage: ancestor <txid> <word>` after the
-//! door, in the Lean's clause order; [`lineage_candidates`], one read of
-//! the store per call, a dead word beside a proof read with the creators in
-//! the gate's one reading and its one retry, then [`Lineage::dead`]; the
-//! CLI's walk until the toolbox's lands, toolbox #42). A coin an action of
-//! ours holds is the toolbox's lock
-//! (`spent_by`) and is never a candidate. A frozen coin (the feed's
+//! `lean/Wallet.lean` `deadLineage`; held `dead lineage: ancestor <txid>
+//! <word>` after the door, in the Lean's clause order;
+//! [`lineage_candidates`], one read of the store per call, a dead word
+//! beside a proof read with the creators in the gate's one reading and its
+//! one retry, then [`Lineage::dead`]; the CLI's walk until the toolbox's
+//! lands, toolbox #42). A coin an action of ours holds is the toolbox's
+//! lock (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
 //! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or
 //! no rule (R6: never cleared here). A coin the store marks not spendable
@@ -138,15 +137,14 @@
 //! received --coin txid:vout` (repeatable) on the commands
 //! ([`AllowPending::ReceivedOnly`]). Only the named received coins are
 //! offered under it; every other received unproven coin is held as without
-//! the word: `received, no proof; not named under allowPending: received`, or
-//! `stale: its block left the chain; received, confirming again; not named
-//! under allowPending: received` for a stale received coin
-//! ([`NOT_NAMED_HINT`]). A named coin that is not a received coin this wallet
-//! could spend (not ours, own change, consumed by another action, a nosend)
-//! refuses the action before
-//! the door, naming it ([`GateError::Scope`]). The scope narrows what the
-//! word reaches and never widens it; the string form `"received"` stays
-//! every received coin.
+//! the word: `received, no proof; not named under allowPending: received`,
+//! or `stale: its block left the chain; received, confirming again; not
+//! named under allowPending: received` for a stale received coin
+//! ([`NOT_NAMED_HINT`]). A named coin that is not a received coin this
+//! wallet could spend (not ours, own change, consumed by another action, a
+//! nosend) refuses the action before the door, naming it
+//! ([`GateError::Scope`]). The scope narrows what the word reaches and
+//! never widens it; the string form `"received"` stays every received coin.
 //!
 //! # The header service's fault (#59, 0.18.0)
 //!
