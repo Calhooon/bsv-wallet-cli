@@ -2562,74 +2562,92 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// (`c4`), a lost coin of a completed transaction (`c5`), a frozen coin
 /// (`c6`), a failed one (`c7`), a lost coin of an unproven transaction (`c8`),
 /// a failed and frozen one (`ca`), a spent coin of a failed transaction
-/// (`cb`) and a nosend the store marks `spendable = 0` (`cc`).
-async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 11] {
+/// (`cb`), a nosend the store marks `spendable = 0` (`cc`), frozen own
+/// change (`d1`), a spent coin of a completed transaction (`d2`) and a
+/// spent and frozen coin (`d3`). The latter two have `spendable = 0`.
+async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 14] {
     let coins = [
-        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca", "cb", "cc",
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca", "cb", "cc", "d1", "d2", "d3",
     ]
     .map(|b| b.repeat(32));
-    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost] =
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost, made_frozen, spent_lost, spent_frozen] =
         &coins;
-    coin(storage, owner, received, false, None, 8_000, 5).await;
-    coin(storage, owner, made, true, None, 8_000, 5).await;
-    coin(storage, owner, spent, false, None, 8_000, 5).await;
-    coin(storage, owner, failed_spent, false, None, 8_000, 5).await;
-    fail(storage, failed_spent).await;
-    for txid in [spent, failed_spent] {
+    for (txid, made, mined_at) in [
+        (received, false, None),
+        (made, true, None),
+        (spent, false, None),
+        (nosend, false, None),
+        (lost, false, Some(900)),
+        (frozen, false, None),
+        (failed, false, None),
+        (lost_unproven, false, None),
+        (failed_frozen, false, None),
+        (failed_spent, false, None),
+        (nosend_lost, false, None),
+        (made_frozen, true, None),
+        (spent_lost, false, Some(900)),
+        (spent_frozen, false, None),
+    ] {
+        let id = coin(storage, owner, txid, made, mined_at, 8_000, 5).await;
+        if [lost, lost_unproven, nosend_lost, spent_lost, spent_frozen].contains(&txid) {
+            lose(storage, id).await;
+        }
+    }
+    for txid in [failed, failed_frozen, failed_spent] {
+        fail(storage, txid).await;
+    }
+    for txid in [nosend, nosend_lost] {
+        set_status(storage, txid, "nosend").await;
+    }
+    for txid in [spent, failed_spent, spent_lost, spent_frozen] {
         sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
             .bind(txid)
             .execute(storage.writer())
             .await
             .unwrap();
     }
-    let id = coin(storage, owner, lost, false, Some(900), 8_000, 5).await;
-    lose(storage, id).await;
-    coin(storage, owner, failed, false, None, 8_000, 5).await;
-    fail(storage, failed).await;
-    let id = coin(storage, owner, lost_unproven, false, None, 8_000, 5).await;
-    lose(storage, id).await;
-    coin(storage, owner, frozen, false, None, 8_000, 5).await;
-    freeze(storage, frozen, 9).await;
-    coin(storage, owner, failed_frozen, false, None, 8_000, 5).await;
-    fail(storage, failed_frozen).await;
-    freeze(storage, failed_frozen, 10).await;
-    coin(storage, owner, nosend, false, None, 8_000, 5).await;
-    set_status(storage, nosend, "nosend").await;
-    let id = coin(storage, owner, nosend_lost, false, None, 8_000, 5).await;
-    set_status(storage, nosend_lost, "nosend").await;
-    lose(storage, id).await;
+    for (txid, cursor) in [
+        (frozen, 9),
+        (failed_frozen, 10),
+        (made_frozen, 11),
+        (spent_frozen, 12),
+    ] {
+        freeze(storage, txid, cursor).await;
+    }
     coins
 }
 
 /// A scoped word naming a coin that is not a received coin this wallet
-/// could spend under it is the caller's error before the door, naming the
-/// coin and why: not ours, own change, consumed by another action, a
-/// nosend, and a coin its own record holds as a consumed one is (#165): a
-/// lost coin of a completed or an unproven transaction (the store's
-/// `spendable = 0`, no spender) and a frozen one. The order is the Lean's
-/// `coinWord` (#197): frozen, spent by, lost, the transaction's status; a
-/// received coin whose transaction failed (the toolbox's
-/// `mark_internalized_tx_failed`: `spendable = 0`, no spender) is refused
-/// with its transaction's word, not lost, a failed and frozen one reads
-/// frozen, a spent one of a failed transaction reads spent by, and a nosend
-/// the store marks `spendable = 0` reads its transaction's word. Nothing is read for the action, the toolbox is not asked, nothing
-/// is stored and nothing allocated.
+/// could spend under it is the caller's error before the door, naming
+/// the coin and why: not ours, own change, consumed by another action,
+/// a nosend, and a coin its own record holds as a consumed one is
+/// (#165): a lost coin of a completed or an unproven transaction (the
+/// store's `spendable = 0`, no spender) and a frozen one. Not ours and
+/// own change are read before the coin's word begins: the scoped word's
+/// domain is received coins only (#197). For the received coin left,
+/// the order is the Lean's `coinWord`: frozen, spent by, lost on a
+/// completed or unproven transaction, the transaction's status, then
+/// the basket and change. A received coin whose transaction failed (the
+/// toolbox's `mark_internalized_tx_failed`: `spendable = 0`, no
+/// spender) is refused with its transaction's word, not lost, a failed
+/// and frozen one reads frozen, a spent one of a failed transaction
+/// reads spent by, and a nosend the store marks `spendable = 0` reads
+/// its transaction's word. Nothing is read for the action, the toolbox
+/// is not asked, nothing is stored and nothing allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
     let services = headers_with(&"0c".repeat(32), 900, 900);
-    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost] =
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost, made_frozen, spent_lost, spent_frozen] =
         scope_table(&storage, (user, basket)).await;
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let before = stored_rows(wallet.storage()).await;
 
+    let own_change = "own change of an action of this wallet, not a received coin";
     let cases: Vec<(String, &str)> = vec![
         ("c9".repeat(32), NOT_HELD),
-        (
-            made.clone(),
-            "own change of an action of this wallet, not a received coin",
-        ),
+        (made.clone(), own_change),
         (spent.clone(), "spent by "),
         (nosend.clone(), "its transaction is nosend"),
         (lost.clone(), "lost: the store marks it not spendable"),
@@ -2642,6 +2660,9 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         (failed_frozen.clone(), "frozen: never offered"),
         (failed_spent.clone(), "spent by "),
         (nosend_lost.clone(), "its transaction is nosend"),
+        (made_frozen.clone(), own_change),
+        (spent_lost.clone(), "spent by "),
+        (spent_frozen.clone(), "frozen: never offered"),
     ];
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
@@ -2666,7 +2687,7 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
             .fetch_one(wallet.storage().pool())
             .await
             .unwrap();
-    assert_eq!(spent_count, 2, "nothing allocated");
+    assert_eq!(spent_count, 4, "nothing allocated");
 }
 
 /// The served `allowPending` and the commands' flags, parsed: the string
