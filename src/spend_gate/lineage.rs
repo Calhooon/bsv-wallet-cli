@@ -47,7 +47,9 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use bsv_wallet_toolbox::{StorageSqlx, WalletServices};
+
+use crate::tracker_host::{read_creators, TickOptions};
 
 /// The reason a dead lineage's hold opens with.
 pub const DEAD_LINEAGE: &str = "dead lineage";
@@ -71,20 +73,47 @@ impl DeadAncestor {
     }
 }
 
-/// Every action of ours whose lineage is dead, by lowercase txid, with the
-/// dead ancestor its reason names: of several, the latest created (the
-/// nearest in the creation order), a tracker word before a `failed` status.
-/// Read in one pass ([`crate::store::dead_lineage_rows`]); nothing is
-/// written.
+/// Every action whose lineage is dead, by lowercase txid, with the dead
+/// ancestor its reason names: of several, the latest created (the nearest
+/// in the creation order), a tracker word before a `failed` status. Read
+/// in one pass ([`crate::store::dead_lineage_rows`]); a candidate that
+/// holds a proof is read as the door reads it ([`read_creators`], the same
+/// (txid, stored path) pair and `opts`) and counts only when that reading's
+/// word is not `mined`. The header service is read only when such a
+/// candidate exists; its fault there leaves the candidate dead as stored,
+/// never a fault of the gate's. Nothing is written.
 ///
 /// # Errors
 ///
-/// The store's error when the read fails.
-pub async fn dead_lineages(pool: &SqlitePool) -> Result<HashMap<String, DeadAncestor>> {
+/// The store's error when a read fails.
+pub async fn dead_lineages<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    opts: &TickOptions,
+) -> Result<HashMap<String, DeadAncestor>> {
+    let rows = crate::store::dead_lineage_rows(storage.pool()).await?;
+    let mut proofs: Vec<(String, Option<Vec<u8>>)> = Vec::new();
+    for proof in rows.iter().filter_map(|r| r.proof.as_ref()) {
+        if !proofs.iter().any(|(t, _)| t == &proof.0) {
+            proofs.push(proof.clone());
+        }
+    }
+    let readings = if proofs.is_empty() {
+        HashMap::new()
+    } else {
+        read_creators(storage, services, opts, &proofs).await?
+    };
+    let mined = |txid: &str| readings.get(txid).is_some_and(|r| r.word == "mined");
     let mut out = HashMap::new();
-    for (heir, txid, word) in crate::store::dead_lineage_rows(pool).await? {
-        out.entry(heir.to_ascii_lowercase())
-            .or_insert(DeadAncestor { txid, word });
+    for row in rows {
+        if row.proof.as_ref().is_some_and(|(txid, _)| mined(txid)) {
+            continue;
+        }
+        out.entry(row.heir.to_ascii_lowercase())
+            .or_insert(DeadAncestor {
+                txid: row.ancestor,
+                word: row.word,
+            });
     }
     Ok(out)
 }

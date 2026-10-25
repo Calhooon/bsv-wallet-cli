@@ -1011,13 +1011,16 @@ fn coin_hold(
 }
 
 /// The dead lineages, read only when some coin of ours is judged: a gate
-/// over received coins alone reads none.
-async fn lineage_of(
+/// over received coins alone reads none. `tick` is the options the door
+/// reads its creators with, so a dead candidate's proof is read alike.
+async fn lineage_of<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
+    services: &V,
+    tick: &TickOptions,
     any_made: bool,
 ) -> Result<HashMap<String, DeadAncestor>> {
     if any_made {
-        dead_lineages(storage.pool()).await
+        dead_lineages(storage, services, tick).await
     } else {
         Ok(HashMap::new())
     }
@@ -1162,13 +1165,15 @@ async fn assess_inner<V: WalletServices + ?Sized>(
     retry: bool,
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
+    let tick = opts.tick();
     let dead = lineage_of(
         storage,
+        services,
+        &tick,
         all.iter()
             .any(|c| c.origin == Origin::Made && c.record_hold().is_none()),
     )
     .await?;
-    let tick = opts.tick();
     // Only a coin its own record does not hold needs its creator read: a
     // creator whose coins are all frozen or lost is never fetched.
     let mut by_creator: Vec<(String, Option<Vec<u8>>)> = Vec::new();
@@ -1374,7 +1379,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     let any_made = coins.iter().any(|(t, _, r)| {
         r.get::<i64, _>("is_outgoing") != 0 && creators.iter().any(|(c, _)| c == t)
     });
-    let dead = lineage_of(storage, any_made)
+    let dead = lineage_of(storage, services, &opts.tick(), any_made)
         .await
         .map_err(GateError::Gate)?;
     let mut held = Vec::new();

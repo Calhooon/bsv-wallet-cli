@@ -293,8 +293,16 @@ async fn replay(row: &Value, out: &mut Vec<Divergence>) {
     if let Some(origin) = built.origin {
         creator_checks(&mut checks, &built, origin).await;
     }
-    // The creator's lineage as the gate reads it (#163).
-    let dead = dead_lineages(built.storage.pool()).await.unwrap();
+    // The creator's lineage as the gate reads it (#163), a dead candidate's
+    // proof read with the door's options.
+    let tick = TickOptions {
+        spend_depth: height(row, "spend_depth").unwrap(),
+        ..TickOptions::default()
+    }
+    .floored();
+    let dead = dead_lineages(&built.storage, &built.services, &tick)
+        .await
+        .unwrap();
     checks.field(
         "dead_lineages",
         "dead_lineage",
