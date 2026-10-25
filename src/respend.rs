@@ -207,8 +207,9 @@ pub async fn build_and_post(
         .collect::<bsv_sdk::Result<_>>()?;
     // A source that is not a coin of this wallet is refused here, before a
     // creator is read (#166): the respend carries no caller's BEEF.
+    let coins = crate::spend_gate::UserCoins::new(storage, user_id);
     let held = match crate::spend_gate::assess_named(
-        storage,
+        coins,
         services,
         &gate,
         &named,
@@ -246,8 +247,9 @@ pub async fn build_and_post(
             outpoints.insert((source.clone(), input.source_output_index)),
             "respend refused: duplicate input"
         );
-        let coin = sqlx::query("SELECT output_id,satoshis,locking_script,derivation_prefix,derivation_suffix,sender_identity_key,spent_by,spendable FROM outputs WHERE user_id=? AND txid=? AND vout=?")
-            .bind(user_id).bind(&source).bind(input.source_output_index as i64).fetch_optional(storage.pool()).await?
+        let coin = coins
+            .outpoint(&source, input.source_output_index)
+            .await?
             .context("respend refused: an input is not the wallet's")?;
         ensure!(
             coin.get::<Option<i64>, _>("spent_by") == Some(phantom_id)

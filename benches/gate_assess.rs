@@ -7,7 +7,7 @@ mod common;
 
 use std::time::Duration;
 
-use bsv_wallet_cli::spend_gate::{assess, GateOptions};
+use bsv_wallet_cli::spend_gate::{assess, GateOptions, UserCoins};
 use common::{configure, measure_calls, runtime, timed, wallet_of, SIZES};
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -21,6 +21,7 @@ fn gate_assess(c: &mut Criterion) {
     for coins in SIZES {
         let fixture = rt.block_on(wallet_of(coins));
         let wallet = &fixture.wallet;
+        let scope = rt.block_on(UserCoins::from_wallet(wallet)).unwrap();
         for (name, need) in [("need", Some(NEED)), ("all", None)] {
             // Calls for a stable p99, never fewer than the 100 samples: about
             // 3,000 at 1,000 coins (p50 ~3 ms and ~20 ms on the lane's
@@ -39,11 +40,7 @@ fn gate_assess(c: &mut Criterion) {
                 &rt,
                 ("gate_assess", name, coins),
                 async |calls| {
-                    let (a, d) = timed(
-                        calls,
-                        assess(wallet.storage(), wallet.services(), &opts, need),
-                    )
-                    .await;
+                    let (a, d) = timed(calls, assess(scope, wallet.services(), &opts, need)).await;
                     assert!(a.unwrap().offered_satoshis() >= NEED);
                     wallet.services().reset_history();
                     d
