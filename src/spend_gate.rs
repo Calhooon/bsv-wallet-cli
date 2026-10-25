@@ -1695,6 +1695,16 @@ fn named_refusal(word: &str, outpoint: &str, what: &str, why: &str) -> String {
 /// with no spender, #165), or a coin that is not ours. A named coin already
 /// mined is offered as any mined coin is: the word is moot for it, not
 /// wrong.
+///
+/// The order is the offer path's ([`candidates`] keeps only a `completed` or
+/// `unproven` transaction before it reads lost) and the Lean's `coinWord`
+/// read backwards from the creator to the coin: the transaction's status
+/// before the coin's own record (spent by, frozen, lost), because a status
+/// the word cannot spend is the creator's word, not the coin's (#197). The
+/// toolbox writes the coin's `spendable = 0` itself when the transaction
+/// fails (0.13.0 `mark_internalized_tx_failed`: status `failed`, every
+/// output `spendable = 0`, no spender), so read first, lost would name a
+/// failed transaction's coin as one a competitor took.
 async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<Option<String>> {
     if named.is_empty() {
         return Ok(None);
@@ -1722,6 +1732,8 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
                 let status: String = r.get("status");
                 if r.get::<i64, _>("is_outgoing") != 0 {
                     "own change of an action of this wallet, not a received coin".to_string()
+                } else if !matches!(status.as_str(), "completed" | "unproven") {
+                    format!("its transaction is {status}")
                 } else if r.get::<Option<i64>, _>("spent_by").is_some() {
                     format!(
                         "spent by {}",
@@ -1732,8 +1744,6 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
                     FROZEN.to_string()
                 } else if r.get::<i64, _>("spendable") == 0 {
                     LOST.to_string()
-                } else if !matches!(status.as_str(), "completed" | "unproven") {
-                    format!("its transaction is {status}")
                 } else if r.get::<Option<String>, _>("basket").as_deref() != Some("default")
                     || r.get::<i64, _>("change") != 1
                 {
