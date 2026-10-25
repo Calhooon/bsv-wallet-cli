@@ -137,15 +137,59 @@ fn clause_of(reason: Option<&str>) -> String {
     clause.to_string()
 }
 
-#[test]
-fn a_named_transaction_status_maps_to_the_creators_chain_word_clause() {
-    for status in ["failed", "nosend", "unsigned", "sending", "unprocessed"] {
-        assert_eq!(
-            clause_of(Some(&format!("its transaction is {status}: never offered"))),
-            clause_of(Some("abandoned: never offered")),
-            "{status}"
-        );
-    }
+/// A real failed transaction's held listing must reach the existing
+/// chain-word mapping. Removing the named status hold offers this received
+/// coin under the word, so this checks the fix as well as `clause_of`.
+#[tokio::test]
+async fn a_failed_named_inputs_held_reason_maps_to_the_creators_chain_word_clause() {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    let rows: Value = serde_json::from_slice(VECTORS).unwrap();
+    let row = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            b(row, "coin_held") == Some(true)
+                && s(row, "coin_lock") == Some("free")
+                && b(row, "coin_frozen") == Some(false)
+                && s(row, "creator_origin") == Some("received")
+                && s(row, "creator_word") == Some("unknown")
+        })
+        .expect("a free received coin with an unknown creator");
+    let built = build(row).await;
+    built
+        .storage
+        .mark_internalized_tx_failed(&built.txid)
+        .await
+        .unwrap();
+    let gate = GateOptions {
+        spend_depth: height(row, "spend_depth").unwrap(),
+        own_change: true,
+        allow_pending: AllowPending::Received,
+        tracker: TickOptions::default(),
+    };
+    let held = assess_named(
+        UserCoins::new(&built.storage, built.user),
+        &built.services,
+        &gate,
+        &[(built.txid.clone(), built.vout)],
+        &[],
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        held.len(),
+        1,
+        "failed was offered under allowPending: received"
+    );
+    assert_eq!(held[0].word, "failed");
+    assert_eq!(held[0].reason, "its transaction is failed: never offered");
+    assert_eq!(
+        clause_of(Some(&held[0].reason)),
+        "door: a chain word against the creator"
+    );
 }
 
 /// The guard's depth a reason names (`depth N: ...`).
