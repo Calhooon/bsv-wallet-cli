@@ -176,7 +176,7 @@ The router's own routes beyond BRC-100 (`src/server/mod.rs`), not endpoint exten
 |---|---|---|---|
 | `/permission-audit` | GET | What a wallet with a human behind it would have prompted for: `count`, `entries` (method, originator, protocol, counterparty, satoshis). This server grants every originator; the audit records, it does not refuse. | d42ee8d (2026-08-14) |
 | `/permission-audit/reset` | POST | Clears the audit: `ok`. | d42ee8d (2026-08-14) |
-| `/chain-feed` | GET | The daemon's chain-event feed: `status`, `cursor`, `frozenCount` (0.11.0); 500 `ERR_CHAIN_FEED` on an unreadable status; 503 `STORE_BUSY` with `Retry-After: 1` when the store is busy (#203). | 0.9.0 (#26) |
+| `/chain-feed` | GET | The daemon's chain-event feed: `status`, `cursor`, `frozenCount` (0.11.0); any store fault from those reads is 500 `ERR_CHAIN_FEED` with its message unless busy by type, which is 503 `STORE_BUSY` with `Retry-After: 1` ([#203](https://github.com/Calhooon/bsv-wallet-cli/issues/203), [#227](https://github.com/Calhooon/bsv-wallet-cli/issues/227)). | 0.9.0 (#26) |
 | `/tx/{txid}` | GET | The tracker's stored word for one transaction: `txid`, `word`, `height`, `reask`, `evidence`; 404 for an unknown txid; 500 `ERR_TX_WORD`; 503 `STORE_BUSY` with `Retry-After: 1` when the store is busy (#203). | 0.11.0 (e891c4b) |
 | `/arc-callback` | POST | The ARC/Arcade proof-delivery webhook, behind the callback token, not the wallet's bearer: `ok`, `action`; 404 `CALLBACK_DISABLED` without a token configured. | 9b0d436 (#6, 2026-07-14) |
 
