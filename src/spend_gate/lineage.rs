@@ -76,7 +76,7 @@
 //! adds nothing a dead word does not reach. The rule is a view: nothing is
 //! written, no lock moves (`dead_lineage_releases_only_on_evidence`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use bsv_wallet_toolbox::StorageSqlx;
@@ -135,11 +135,26 @@ pub async fn lineage_candidates(storage: &StorageSqlx) -> Result<Lineage> {
 }
 
 impl Lineage {
-    /// The (txid, stored path) pairs of the candidates that hold a proof,
-    /// each once: what the gate reads beside its creators before it judges.
+    /// The distinct proof pairs of candidates with an heir in `creators`.
+    /// The gate reads these beside the creators it may judge in this call.
+    /// Keep their original order even when an earlier heir is not judged.
     #[must_use]
-    pub fn proofs(&self) -> &[Pair] {
-        &self.proofs
+    pub fn proofs(&self, creators: &[Pair]) -> Vec<Pair> {
+        if self.proofs.is_empty() {
+            return Vec::new();
+        }
+        let judged: HashSet<_> = creators.iter().map(|(txid, _)| txid.as_str()).collect();
+        let selected: HashSet<_> = self
+            .rows
+            .iter()
+            .filter(|r| judged.contains(r.heir.to_ascii_lowercase().as_str()))
+            .filter_map(|r| r.proof.as_ref().map(|(txid, _)| txid.as_str()))
+            .collect();
+        self.proofs
+            .iter()
+            .filter(|(txid, _)| selected.contains(txid.as_str()))
+            .cloned()
+            .collect()
     }
 
     /// Every action whose lineage is dead, by lowercase txid, with the dead

@@ -778,3 +778,5 @@ async fn the_named_door_retries_with_the_allocations_header_calls() {
     );
     assert_eq!(calls(), allocation);
 }
+
+mod proof_scope;
