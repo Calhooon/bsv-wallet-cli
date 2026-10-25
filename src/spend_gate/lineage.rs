@@ -40,10 +40,15 @@
 //! So a candidate that holds a proof (its tracker row's bump, or the
 //! toolbox's `proven_txs` row) is read by the door itself, in the gate's
 //! own readings: [`lineage_candidates`] reads the store alone and hands the
-//! gate those candidates' (txid, stored path) pairs; the gate reads them in
-//! one [`crate::tracker_host::read_creators`] call with the creators it
-//! judges (one read of the headers, so a candidate that is also a judged
-//! coin's creator is read once). The allocation's door and `createAction`'s
+//! gate the (txid, stored path) pairs of candidates whose heirs include an
+//! eligible creator for this call ([`Lineage::proofs`], #217). Allocation
+//! uses the whole eligible creator set, including later lazy batches, so
+//! their ancestors keep the same initial reading and retry; the named
+//! door uses its eligible named creators. A candidate with no eligible
+//! heir adds no proof read or retry pause. The gate reads the selected
+//! pairs in one [`crate::tracker_host::read_creators`] call with the
+//! initial creators (one read of the headers, so a candidate that is also
+//! a judged coin's creator is read once). The allocation's door and `createAction`'s
 //! named inputs re-read once what faulted in that call (#59), candidates
 //! and creators together (`read_batch`); `respend`'s exact inputs read once
 //! (`retry = false`). [`Lineage::dead`] derives the dead set after each
@@ -51,8 +56,8 @@
 //! the door, and it is not dead; a proof the headers could not check (the
 //! header service silent) or whose root does not match leaves the stored
 //! word, dead for both, the door holding that creator closed. The lineage
-//! adds a header read only when a candidate holds a proof and no judged
-//! creator brings the gate to the headers already, and its fault there is
+//! adds a header read only when a selected candidate holds a proof and no
+//! judged creator brings the gate to the headers already, and its fault there is
 //! the stored word, never the gate's fault. A candidate with no proof is
 //! dead as stored: a replay reads nothing else from a stored verdict, and
 //! a stored `abandoned` stays dead as stored. No chain event returns a dead
@@ -111,10 +116,10 @@ impl DeadAncestor {
 pub type Pair = (String, Option<Vec<u8>>);
 
 /// The store's half of the lineage rule: every (heir, dead candidate) pair
-/// of the walk ([`crate::store::dead_lineage_rows`]), and the candidates
-/// that hold a proof, each once, as the gate reads them. No header is read
-/// here: the gate reads those candidates with its own creators, in one
-/// reading per call, and [`Lineage::dead`] derives the dead set from it.
+/// of the walk ([`crate::store::dead_lineage_rows`]). [`Self::proofs`] selects
+/// the candidates with an eligible heir that hold a proof, each once.
+/// No header is read here: the gate reads those candidates with its own
+/// creators, in one reading per call, and [`Lineage::dead`] derives the dead set from it.
 #[derive(Debug, Default)]
 pub struct Lineage {
     rows: Vec<LineageRow>,
