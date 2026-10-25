@@ -290,12 +290,21 @@ consumed is spent: an input of that action, never a hold that clears. Coins a ca
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
 outpoint that is not one of the wallet's coins is left to the toolbox).
+The named coin is read frozen, spent by, lost only on a `completed` or
+`unproven` transaction, then its transaction's status. Any other status
+(`failed`, `nosend`, `unsigned`, `sending`, ...) is held before its creator
+is read: the listing's word is that status and its reason is
+`its transaction is <status>: never offered`, under every pending word.
+The toolbox's failure sets `spendable = 0`; it reads `failed`, never `lost`.
+A scoped word naming such a coin still meets the earlier
+`400 VALIDATION_ERROR` scope check. The allocation's candidate filter and
+listing are unchanged; respend's exact inputs gain the named reading.
 When no offered coin covers the action, the refusal lists every coin held
 back: its outpoint, the word, the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
 `own change, SPEND_OWN_CHANGE=0`,
-`stale: its block left the chain; received, confirming again; offered under allowPending: received`, `dead lineage: ancestor <txid> conflicted`, `spent by <txid> (unproven)`, `frozen: never offered`).
+`stale: its block left the chain; received, confirming again; offered under allowPending: received`, `dead lineage: ancestor <txid> conflicted`, `spent by <txid> (unproven)`, `frozen: never offered`, `its transaction is failed: never offered`).
 `spent by <txid> (unproven)` names an input the live action `<txid>` consumed,
 spent for good; the coin leaves the listing when that spender is completed (its
 proof lands) or failed.
