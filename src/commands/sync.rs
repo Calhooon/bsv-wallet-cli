@@ -409,7 +409,7 @@ mod tests {
     use super::*;
 
     use crate::commands::receive::tests::{stub, stub_context};
-    use crate::test_support::{raw_tx, txid_of, Fixture};
+    use crate::test_support::{raw_tx, txid_of, Fixture, TestChainTracker};
     use bsv_wallet_toolbox::services::mock::MockWalletServicesBuilder;
     use bsv_wallet_toolbox::services::mock::{MockErrorKind, MockResponse, MockWalletServices};
     use bsv_wallet_toolbox::{GetMerklePathResult, GetUtxoStatusResult, UtxoLead};
@@ -462,11 +462,10 @@ mod tests {
     /// A stub context whose header service takes the root of a proof at
     /// height 900,000.
     async fn headed_context() -> WalletContext {
-        use bsv_sdk::transaction::MockChainTracker;
         let ctx = stub_context().await;
         ctx.wallet
             .storage()
-            .set_chain_tracker(std::sync::Arc::new(MockChainTracker::always_valid(900_001)))
+            .set_chain_tracker(std::sync::Arc::new(TestChainTracker::always_valid(900_001)))
             .await;
         ctx
     }
@@ -834,11 +833,11 @@ mod tests {
     /// "could not decide", spendable and untouched.
     #[tokio::test]
     async fn missing_from_one_explorers_set_is_could_not_decide_never_spent() {
-        use bsv_sdk::transaction::{MerklePath, MockChainTracker};
+        use bsv_sdk::transaction::MerklePath;
         let ctx = stub_context().await;
         ctx.wallet
             .storage()
-            .set_chain_tracker(std::sync::Arc::new(MockChainTracker::always_valid(900_001)))
+            .set_chain_tracker(std::sync::Arc::new(TestChainTracker::always_valid(900_001)))
             .await;
         let script = brc29::deposit_script(&ctx.root_key).unwrap();
         let raw = raw_tx(

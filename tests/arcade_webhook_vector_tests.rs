@@ -13,6 +13,10 @@
 //! All vectors are synthetic: coinbase-style BUMPs checked against an
 //! in-test chain tracker. No network, no funded wallet.
 
+#[path = "../src/test_support/chain_tracker.rs"]
+mod chain_tracker;
+use chain_tracker::TestChainTracker;
+
 use async_trait::async_trait;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::{ChainTracker, ChainTrackerError, MerklePath};
@@ -102,7 +106,7 @@ async fn server_with(
         .await
         .expect("open the proof gate");
     storage
-        .set_chain_tracker(Arc::new(SharedTracker(headers)))
+        .set_chain_tracker(Arc::new(TestChainTracker::from(SharedTracker(headers))))
         .await;
     let pool = storage.writer().clone();
 

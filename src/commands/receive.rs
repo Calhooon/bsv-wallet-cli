@@ -219,7 +219,7 @@ fn vout_paying(beef_bytes: &[u8], txid: &str, deposit_script: &[u8]) -> Result<u
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture};
+    use crate::test_support::{p2pkh, raw_tx, txid_of, Fixture, TestChainTracker};
     use bsv_sdk::transaction::{Beef, MerklePath};
     use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
     use bsv_wallet_toolbox::services::GetMerklePathResult;
@@ -253,7 +253,6 @@ pub(crate) mod tests {
 
     pub(crate) async fn stub_context() -> WalletContext {
         use bsv_sdk::primitives::PrivateKey;
-        use bsv_sdk::transaction::MockChainTracker;
         use bsv_wallet_toolbox::{
             Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
         };
@@ -265,7 +264,7 @@ pub(crate) mod tests {
             .unwrap();
         storage.make_available().await.unwrap();
         storage
-            .set_chain_tracker(std::sync::Arc::new(MockChainTracker::new(900_001)))
+            .set_chain_tracker(std::sync::Arc::new(TestChainTracker::new(900_001)))
             .await;
         let services = Services::with_options(Chain::Main, ServicesOptions::mainnet()).unwrap();
         let wallet = Wallet::new(Some(root_key.clone()), storage, services)
