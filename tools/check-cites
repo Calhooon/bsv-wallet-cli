@@ -6,12 +6,15 @@
 
 Read the header's `Line numbers are those of `<sha>`` or `at ... (`<sha>`)`
 declaration. All declarations must resolve to the same commit, an ancestor of
-HEAD. No network is used. Outside fenced code, every src/path:N or src/path:N-M
-citation must exist there and contain the nearest preceding backticked Rust
+HEAD. No network is used. Outside fenced code (including Mermaid diagrams),
+every backticked src/path:N or tests/path:N citation, with an optional -M range, must
+exist there and contain the nearest preceding backticked Rust
 identifier in its sentence or table cell (the last :: segment, as a whole
 identifier). Paragraphs also end the search. A backticked :N or :N-M inherits
 the preceding citation's path in that same sentence or cell; it needs its own
 preceding identifier. An unnamed citation is a finding, even if its lines exist.
+Paths are resolved from the repository root, including prefixes such as mcp/;
+`mcp/src/main.rs:N` checks that file, never `src/main.rs:N`.
 
 The module map's `file | lines` table counts physical newline characters,
 including blank lines, exactly `git show <sha>:<path> | wc -l`, not non-blank
@@ -32,7 +35,8 @@ PINS = re.compile(r"Line numbers are those of\s+`(" + SHA + r")`|"
                   r"\bat\s+[^()]*\(\s*`(" + SHA + r")`\s*\)", re.I)
 SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*")
-CITE = re.compile(r"\bsrc/[A-Za-z_0-9./-]+:(\d+)(?:-(\d+))?\b")
+CITE = re.compile(r"(?<![\w/])(?:[A-Za-z_0-9.-]+/)*(?:src|tests)/"
+                  r"[A-Za-z_0-9./-]+:(\d+)(?:-(\d+))?\b")
 SHORT = re.compile(r":(\d+)(?:-(\d+))?")
 
 
@@ -77,9 +81,12 @@ def citations(text):
         spans = list(SPAN.finditer(context))
         names = [(m.start(), m.group(2).split("::")[-1]) for m in spans
                  if IDENTIFIER.fullmatch(m.group(2))]
-        found = [(m.start(), m.group(), m.group().split(":", 1)[0],
-                  int(m[1]), int(m[2] or m[1])) for m in CITE.finditer(context)]
+        found = []
         for m in spans:
+            cite = CITE.fullmatch(m.group(2))
+            if cite:
+                found.append((m.start(), cite.group(), cite.group().split(":", 1)[0],
+                              int(cite[1]), int(cite[2] or cite[1])))
             short = SHORT.fullmatch(m.group(2))
             if short:
                 found.append((m.start(), m.group(2), None,
