@@ -289,10 +289,12 @@ written in the delivery's transaction; the scenario
 consumed is spent: an input of that action, never a hold that clears. Coins a caller names (`createAction`'s `inputs`,
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list.
-The gate refuses an outpoint the wallet does not hold with `400 NOT_HELD`
+The gate refuses an outpoint the wallet does not hold with
+`400 VALIDATION_ERROR`, "inputs names `<txid>.<vout>`, which is not a coin
+this wallet could spend: not a coin of this wallet"
 ([#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166)). If the caller
-supplies its whole transaction in `inputBEEF` and signs the input, the
-toolbox's BEEF verification judges it.
+supplies its whole transaction in `inputBEEF`, the toolbox's BEEF
+verification judges it.
 The named coin is read frozen, spent by, then its unspendable record
 (`spendable = 0` with no spender), before its creator. That record is held
 whatever its transaction's status: `lost` on `completed` or `unproven`, with
