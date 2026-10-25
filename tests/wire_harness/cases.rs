@@ -2,7 +2,8 @@
 //! worlds without coins. Replay reads the fixtures, never these.
 
 use super::cases_routes::{
-    record_arc_callback, record_bearer, record_host_routes, record_preflights,
+    record_arc_callback, record_bearer, record_host_routes, record_host_store_busy,
+    record_preflights,
 };
 use super::cases_spending::{
     record_abort_store_busy, record_funded_abort_and_broadcast,
@@ -37,6 +38,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_payments_and_listings(r).await;
     record_privileged(r).await;
     record_abort_store_busy(r).await;
+    record_host_store_busy(r).await;
 }
 
 /// A key derivation request: `protocol` at level 2, `key_id`, counterparty
