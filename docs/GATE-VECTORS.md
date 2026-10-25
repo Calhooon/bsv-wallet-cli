@@ -10,6 +10,7 @@ The stack's `conformance/wallet-gate-vectors.json` (bsv-stack-lean #184, its pag
 | [`tests/vectors/wallet_gate_vectors.pin`](../tests/vectors/wallet_gate_vectors.pin) | the pin: the stack's commit, the path, the file's sha256 |
 | [`tests/vectors/wallet_gate_divergences.json`](../tests/vectors/wallet_gate_divergences.json) | every difference between the gate and a row (row, door, field, the Lean's value, the CLI's), each with its finding |
 | [`tests/gate_vectors.rs`](../tests/gate_vectors.rs) | the replay; `cargo test --locked --test gate_vectors -- --nocapture` prints the counts |
+| [`tests/gate_vectors_store/mod.rs`](../tests/gate_vectors_store/mod.rs) | each row's store, in the store's own records: the creator, its evidence, its dead parent, the coin, the header service |
 
 The pin at this writing: bsv-stack-lean `103c5bd6101917b829e5d403152ec87fa8046aae` (origin/main on 2026-10-24; the file last moved at `0e543b9`), sha256 `8ea731e553ec1ac0ffb6711e7007adae51d89d9d6793241d6174b0d1d1bab87d`.
 
