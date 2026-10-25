@@ -12,6 +12,8 @@ tools/ratchet --out F    # with any of the above, also write the measured JSON t
 
 The tool is a Python script with the standard library only (Python 3.8 or later, the cargo toolchain on `PATH`). A Rust bin would need its own manifest and lock and a build before it measures; the script adds no crate to the workspace, the CI runner already has `python3`, and the house's gate tools (`bsv-stack-lean/tools/`) are Python. It runs one `cargo clippy` pass and one `cargo doc` pass (about 15 seconds on a warm target dir) and reads every tracked `*.rs` file itself.
 
+The same job checks the documents with [tools/scoreboard](../tools/scoreboard), [tools/check-links](../tools/check-links) and [tools/check-cites](../tools/check-cites), alongside their planted tests. `check-cites` reads the architecture header's commit pin, requires it to be an ancestor of HEAD, and checks every named source range and module-map line count against that commit. Its checkout includes history so the pin and its ancestry are available; a later landing that moves source lines leaves the pinned numbers valid, while an incorrect citation or count fails the job.
+
 ## The scope
 
 Every tracked `*.rs` file of the repository (`git ls-files '*.rs'`): `src/`, `mcp/src/` and `tests/`. The clippy numbers are the workspace's every target (`--workspace --all-targets`, the gate's scope); `missing_docs` is what `cargo doc --workspace` documents (the lib and the bins).

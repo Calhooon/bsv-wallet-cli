@@ -309,6 +309,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # check-cites reads the document's pin and proves its ancestry.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
@@ -390,11 +393,13 @@ jobs:
           fi
           python3 -B tools/scoreboard --check "${base[@]}"
 
-      - name: links
+      - name: links and citations
         if: ${{ !cancelled() }}
         run: |
           python3 -B tools/test_check_links.py
           python3 -B tools/check-links
+          python3 -B tools/test_check_cites.py
+          python3 -B tools/check-cites
 
       - name: Keep the measured JSON
         if: always()
