@@ -1022,3 +1022,158 @@ rule to the two captains directly); #162 (its lane running at the close,
 the keeper's reading already on the issue: a stale creator ranks as seen at
 the door) then #163 by the sequence; #79 the evidence layer and #84 observability next by the queue;
 #78 one spend function once toolbox #105 is pinned.
+
+2026-10-25 (the night after the Phase 1 day, from midnight UTC): THE GATE'S
+LAST TWO CLUSTERS, by the sequence, each a lane, a cold review on Opus, a
+landing behind the one before:
+- #162 a stale creator ranks as seen at the door (PR 209, 08df657; the
+  keeper's reading on the issue: the owner's ruling 7a (b) of 2026-10-20, the
+  Lean's doorWord; the gate read `stale` beside the dead words and held it
+  "never offered"; now the pending tier's reading: our own change under
+  SPEND_OWN_CHANGE, a received coin under the action's plain or scoped word,
+  the hold naming the word, `stale: its block left the chain; ...`; the dead
+  words byte for byte; HEADERS_UNAVAILABLE untouched; 57 differences over 12
+  rows left the list, 129/24 to 72/12; the review's minor findings filed:
+  #210 the stale wording's doc gaps and ARCHITECTURE's drifted line numbers,
+  #211 the suspect mark read before the word for every word (hardening, not
+  reachable with bsv-tracker 0.8.0), #212 the `built` label on a stale
+  creator held under a header-service fault; the review's own finding on the
+  store: the toolbox keeps a creator whose proof a reorg took as `unproven`
+  with the proof row gone under the daemon and `completed` with its old
+  proof under serve, and allocates the demoted shape then refuses it as
+  "stored ancestry incomplete": the gate offers it, the toolbox's word is the
+  toolbox's);
+- #163 the lineage rule (PR 213, two rounds: the walk over our own store,
+  outputs.spent_by forward from the dead actions, one recursive read for the
+  whole call, nothing written, a cycle ends the walk; the replay builds the
+  conflicted parent P from the row's flag; the list ends empty, 0 over 0
+  rows, and the dead_lineage column is answered; the toolbox at 0.13.0 reads
+  no lineage at allocation and refuses a child only at its BEEF walk when the
+  parent is `failed` in its own store, never on the tracker's `conflicted`:
+  the walk is the CLI's until toolbox #42's; the review on Opus found the
+  walk and the door reading one creator two ways: a stored dead tracker word
+  beside a proof the toolbox holds is dead for the walk and mined for the
+  door, which checks the proof against the headers and lets it outrank the
+  verdict, so P was offered while its child was held for P; the Lean's
+  Tracker.onProof_of_rootChecks (a checked proof outranks every word;
+  dead_onChain is chain events only) and State.skel (the lineage reads the
+  same a.tracker.word the door reads) make the door's reading the charter's,
+  and the fix lane gives the walk one reading with the door: a dead
+  candidate with no proof is dead as stored, one with a proof is read
+  through read_creators and dead only when that reading is not mined; also
+  the joins on lower(txid), "an action of this wallet, made or received",
+  the stored abandoned word named; the second re-check found the two
+  readings still split on the header-service retry: the walk read a
+  candidate under its own snapshot and the door re-read the creator after
+  the pause, so P's coin was offered after the retry while D stayed held for
+  P; round three moves the candidates' read into the gate's own readings
+  map, one call with the first batch of creators, the one retry re-reading
+  both, the dead set derived after it, and lineage.rs reads no headers; the
+  fix lane's read-only finding, that a stored dead word beside a toolbox
+  proof is never corrected in tracker_states while the door reads it mined
+  each call, is #215; the third re-check found the named createAction
+  door's older outer retry re-called assess_named only for a coin held on
+  headers_fault, which a lineage hold never carries, so under one outage the
+  allocation offered D after its retry and the named door refused it naming
+  P; round four moves the retry into assess_named through the one helper,
+  creators and candidates in one call, and the outer re-call goes; respend's
+  exact inputs never retried and stay so; cognitive_complexity fell 20 to
+  19 along the way, a record for its own PR; the fourth re-check said merge
+  and PR 213 landed at 1c82737, 04:43Z: 641 tests, 20 lineage tests, the
+  differential inside the floor; its minors are #216 (the silent-throughout
+  test does not prove the retry ran; "each door" covers respend, which reads
+  once; a long doc line) and #217 (a candidate holding a proof costs the
+  pause on every door call even when it is no ancestor of the coins judged:
+  filter the candidates to the judged coins' ancestors), and ARCHITECTURE's
+  other stale spend_gate.rs pointers are noted on #210; the lane worktrees
+  and targets removed, 39 GB);
+- #197 the scoped word's check reads a named coin's transaction status
+  before lost (PR 218; the lane put the status first of all, before spent by
+  and frozen, and claimed the Lean's coinWord read backwards; the review on
+  Opus caught the claim and asked the owner for the order; the captain's
+  ruling on the issue: the Lean's coinWord order, frozen, the lock (spent
+  by, lost), the creator's word, with `lost` qualified to a completed or
+  unproven transaction as the offer path reads it, since a failed
+  transaction's spendable = 0 is the toolbox's own write at the failure; the
+  fix lane took the ruled order with the lost qualifier written once; the
+  second re-check found the docs skipping own change, which the code reads
+  before frozen beside not-ours (ruled: the scoped word's domain, read before
+  the coin's word begins), two promised outcomes with no row (a spent coin of
+  a failed transaction, a nosend coin with spendable = 0) and a test helper
+  copying the toolbox's failure write instead of calling it; round three
+  took those, and the third re-check asked for a row at every boundary of
+  the order (a frozen own-change coin, a spent coin with spendable = 0, a
+  spent and frozen coin, whose word moved from beta's "spent by" to frozen,
+  the Lean's first read, now said in the CHANGELOG); round four, on Codex
+  gpt-6.1-sol, added the rows (14, every adjacent swap failing a row; the
+  re-check ran nine orders and planted twelve coins, all as ruled) and its
+  only finding was the trailer `GPT-6`, which the captain reworded to the
+  exact model with the tree unchanged (46aea0c); landed 81d31b5, 07:27Z;
+  one word moved from beta, a spent and frozen coin reads frozen; the same
+  gap on the named door is #219; the lane worktrees and targets removed);
+- #201 every gate lookup scoped to the authenticated user (PR 220, the lane
+  on Codex gpt-6.1-sol by cca's pick, run on the box: one helper
+  UserCoins::query with WHERE o.user_id = ? for the named inputs, the scoped
+  word, the offers, the spent and lost listings and respend's lookup, the id
+  from the wallet as the toolbox finds it; two-user tests, four, each
+  failing with the filter removed five ways; the toolbox's own allocation
+  checks the owner (create_action.rs:1483 find_output_by_outpoint(user_id),
+  storage_sqlx.rs:897), so nothing to file there; the review on Opus found
+  the CHANGELOG claiming "every spend-gate output read" while the lineage
+  walk and the rule labels still read the whole store: the wording narrowed
+  in a fix round (on Codex again; the trailers reworded to the exact
+  model, the tree unchanged), the two reads filed as #221 with
+  frozen_outpoints noted there; the second re-check's one finding, the PR
+  body's opening sentence, the captain edited; landed c462da4, 08:27Z);
+- the ratchet record (cognitive 20 to 19 and duplicated_tokens 32759 to
+  32643 by the night's PRs, the six others equal): its lane, routed to
+  the box by cca's load rule, blocked at once, no pool account has a login
+  on the box for Opus (John's pending item); two reruns went to the box
+  again because zsh passed the chain script's `--host studio` as one word;
+  the third, with cca's CCA_NO_PEER=1, runs on the studio on Codex
+  gpt-6.1-sol (lane p1-ratchet-record3): PR 222, measured on c462da4,
+  cognitive 20 to 19 and duplicated_tokens 32759 to 32643, the six others
+  equal; the review re-measured it number for number and its one finding
+  was the Codex trailer against the review brief's two-model list, which is
+  not the rule (the trailer names the model the lane ran on): landed on the
+  captain's word, 462ff67, 08:4xZ; beta's record after the night:
+  duplicated_tokens 32643, missing_docs 150, clippy_pedantic 834,
+  unwrap_expect_outside_tests 6, files_over_800_lines 10,
+  tests_files_over_800_lines 3, functions_over_60_lines 89,
+  cognitive_complexity_over_25 19;
+- the HANDOFF addendum for the 24th into main (PR 208, 03e7af3).
+
+The night's lessons (memory lane-landing-lessons, gate-vectors-pin-protocol):
+one word per creator, the door's: any gate rule that reads a creator's word
+goes through read_creators' replay when a proof is held, never the stored
+tracker word alone (the Lean's State.skel and the door read the same word;
+a checked proof outranks every word; dead_onChain is chain events only); a
+review of an order change asks for a row at every adjacent boundary, the
+test helper calling the real store write, and every moved word named in the
+CHANGELOG, so brief it that way up front (#197 took four rounds for one
+function's order); cca may place a lane on Codex, so every brief and review
+brief names the three trailer forms (Claude Opus 5.5, Claude Fable 5.1,
+GPT-6.1 Sol (gpt-6.1-sol)), and a trailer-only reword on an identical tree
+is the captain's; cca routes a loaded studio's lanes to the box, where no
+pool account is logged in for Claude, so a Claude chain sets CCA_NO_PEER=1
+(and in zsh an unquoted ${VAR:+--host $VAR} is one word).
+
+Filed: #210 #211 #212 #214 (README:282 still hands a named absent outpoint
+to the toolbox, #166 made it the gate's 400) #215 (a stored dead word beside
+a toolbox proof is never corrected in tracker_states) #216 #217 #219 (the
+named door reads a failed input as lost) #221 (the lineage walk, the rule
+labels and frozen_outpoints read the whole store). Closed: #162 #163 #197
+#201.
+
+Open after the night: John's words (v0.18.1; the toolbox 0.13.1 and bsv-rs
+0.9.0-beta.1 tags, #198 and #199 reread against the index then; toolbox
+#106's constructor shape; toolbox #66 Q5-Q9; the pool logins on the box;
+the model rule to the two captains directly). The gate's divergence list
+against the stack's 490 vectors is EMPTY; a newly differing row is a finding
+on its own side (the pin protocol). Next by the queue: #203 #204 #206 (the
+hardening and the host routes' busy answer), #210 to #212, #214 to #217,
+#219, #221 (the gate's follow-ups), #186 #187 #184 #191 #193 #192 #195, #196
+on 0.13.1, #194 (toolbox #142) and #155 (toolbox #141) at their pins, #157
+with 0.13.1; the programme: #79 the evidence layer, #84 observability, #78
+one spend function once toolbox #105 is pinned, #173 to #175 the mutation
+floors, #171.
