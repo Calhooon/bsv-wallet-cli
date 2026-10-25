@@ -51,8 +51,12 @@
 //!    records (`spend_gate_actions`, by txid or by reference) keep
 //!    answering; nothing writes them from 0.16.
 //!
-//! A coin whose creator is `stale`, `rejected`, `conflicted` or `abandoned`
-//! is never offered; a coin an action of ours holds is the toolbox's lock
+//! A coin whose creator is `stale` (its proof's block left the chain, the
+//! transaction confirming again) ranks as `seen` at the door, offered under
+//! rule 2 or 3 as a `pending` creator's coin is and never with no rule (the
+//! owner's ruling 7a of 2026-10-20, `lean/Wallet.lean` `doorWord`,
+//! `stale_ranks_as_seen`). A coin whose creator is `rejected`, `conflicted`
+//! or `abandoned` is never offered; a coin an action of ours holds is the toolbox's lock
 //! (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
 //! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or
