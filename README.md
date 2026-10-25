@@ -255,17 +255,17 @@ the seat received from elsewhere): `allowPending: {"received": ["txid:vout",
 commands. Only the named received coins are offered under the word; every
 other received unproven coin is held as without it, with the reason
 `received, no proof; not named under allowPending: received`, or
-`stale: its block left the chain; received, confirming again; not named under allowPending: received`
-for a stale received coin; the action carries the same label. A named coin
-that is not a received coin this wallet could spend under the word (not
-one of its coins, its own change, a coin another action consumed, a
-`nosend`) refuses the call before anything is
-read, `400 VALIDATION_ERROR` naming the coin and why; a named coin already
-mined is offered as any mined coin (the word is moot for it, not wrong). An
-empty list is off; an object of another shape is the caller's 400; the
-string form `"received"` stays every received coin. The scope narrows what
-the word reaches and never widens it. The MCP tool `create_action` carries
-the string form only.
+`stale: its block left the chain; received, confirming again; not named
+under allowPending: received` for a stale received coin; the action
+carries the same label. A named coin that is not a received coin this
+wallet could spend under the word (not one of its coins, its own change,
+a coin another action consumed, a `nosend`) refuses the call before
+anything is read, `400 VALIDATION_ERROR` naming the coin and why; a named
+coin already mined is offered as any mined coin (the word is moot for it,
+not wrong). An empty list is off; an object of another shape is the
+caller's 400; the string form `"received"` stays every received coin. The
+scope narrows what the word reaches and never widens it. The MCP tool
+`create_action` carries the string form only.
 
 A coin whose transaction is `rejected`, `conflicted` or `abandoned` is never
 offered; nor, under any rule or word and mined included, is our own coin
@@ -292,15 +292,17 @@ written in the delivery's transaction; the scenario
 consumed is spent: an input of that action, never a hold that clears. Coins a caller names (`createAction`'s `inputs`,
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list.
-The gate refuses an outpoint the wallet does not hold with
-`400 VALIDATION_ERROR` (`not a coin of this wallet`), before a creator is
-read or anything is stored. The one exception is an input whose whole
-transaction the caller carries in `inputBEEF` and signs: the toolbox's
-BEEF verification judges it, and the exception requires that transaction
-to verify and the input to be the caller's to sign (the keeper's reading
-on [#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166), recorded in
-[the gate vectors](docs/GATE-VECTORS.md#the-divergences)). Named without
-its transaction, or for the wallet to sign, it is the gate's 400.
+A named outpoint the wallet does not hold is left to the toolbox whenever
+the caller's `inputBEEF` carries its whole transaction; the toolbox
+verifies the BEEF. Without its whole transaction, the outpoint gets the
+gate's `400 VALIDATION_ERROR` (`not a coin of this wallet`), before a
+creator is read or anything is stored
+([#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166)). A txid-only
+entry, or a BEEF that does not parse, carries nothing. The gate does not
+check who signs the input. The keeper's second condition, that the input
+be the caller's to sign, is a reading the gate does not yet enforce
+([#237](https://github.com/Calhooon/bsv-wallet-cli/issues/237);
+[the gate vectors](docs/GATE-VECTORS.md#the-divergences)).
 The named coin is read frozen, spent by, then its unspendable record
 (`spendable = 0` with no spender), before its creator. That record is held
 whatever its transaction's status: `lost` on `completed` or `unproven`, with
