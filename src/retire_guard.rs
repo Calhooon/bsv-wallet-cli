@@ -10,7 +10,11 @@
 //! (`announced`, `seen`, or a chain word) stays, re-asked on the cadence,
 //! until a proof, a node verdict or a competitor's checked proof decides it.
 //!
-//! [`broadcaster_took`] reads the wallet's own records for an accepting word.
+//! [`broadcaster_took`] reads the wallet's own records for an accepting word:
+//! a request past the post (`unfail` included), a proof's presence (the
+//! request's `proven_tx_id` or a `proven_txs` row), a completed transaction,
+//! an accepting broadcast-memory row, or a tracker word past `built`. A
+//! proof wins whatever the request's status says (the keeper's rule, #244).
 //! Every retire path of the CLI asks it first: the served sweep, the by-hand
 //! `reconcile-broadcasts`, the daemon's abandoned-transaction ticker and
 //! `cleanup-abandoned`, and the served follow-up after a broadcast. A chain
@@ -36,9 +40,10 @@ const TAKEN_MEMORY_STATUSES: [&str; 3] = ["accepted", "seen", "mined"];
 const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 
 /// Whether a broadcaster ever took `txid`, by the wallet's own records: its
-/// proof request past the post, a broadcast-memory row with an accepting
-/// word, or the tracker's stored word past `built`. A record the wallet does
-/// not hold (no request, no memory table, no tracker table) says nothing.
+/// proof request past the post (`unfail` included) or holding a proof, a
+/// `proven_txs` row, a completed transaction, a broadcast-memory row with an
+/// accepting word, or the tracker's stored word past `built`. A missing
+/// request row or optional proof, memory or tracker table says nothing.
 ///
 /// The memory alone is not enough: its ladder overwrites a provider's
 /// `accepted` with a later `rejected` (toolbox `ladder_step`), so an Arcade
