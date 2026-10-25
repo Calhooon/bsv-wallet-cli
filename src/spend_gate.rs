@@ -1450,18 +1450,17 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             }
         }
     }
-    let is_frozen = |txid: &str, vout: u32| frozen.contains(&(txid.to_string(), i64::from(vout)));
-    let is_locked = |r: &sqlx::sqlite::SqliteRow| {
-        let spent_by: Option<i64> = r.get("spent_by");
-        spent_by.is_some() && spent_by != reserved_to
+    let record_hold = |txid: &str, vout: u32, r: &SqliteRow| {
+        named_record_hold(
+            r,
+            frozen.contains(&(txid.to_string(), i64::from(vout))),
+            reserved_to,
+        )
     };
-    let is_lost = |r: &sqlx::sqlite::SqliteRow| {
-        r.get::<i64, _>("spendable") == 0 && r.get::<Option<i64>, _>("spent_by").is_none()
-    };
-    // Only a coin neither frozen, locked nor lost needs its creator read.
+    // Only an eligible coin whose record does not hold it needs its creator read.
     let creators: Vec<Pair> = named_coins
         .iter()
-        .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r) && !is_lost(r))
+        .filter(|(t, v, r)| record_hold(t, *v, r).is_none())
         .map(|(t, _, r)| (t.clone(), r.get("merkle_path")))
         .collect();
     let any_made = named_coins.iter().any(|(t, _, r)| {
@@ -1498,18 +1497,8 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         };
         let reading = readings.get(&txid);
         let mut headers_fault = None;
-        let (word, reason) = if is_frozen(&txid, vout) {
-            ("frozen".to_string(), Some(FROZEN.to_string()))
-        } else if is_locked(&r) {
-            (
-                "locked".to_string(),
-                Some(spent_by_reason(
-                    &r.get::<Option<String>, _>("holder").unwrap_or_default(),
-                    r.get::<Option<String>, _>("spender_status").as_deref(),
-                )),
-            )
-        } else if is_lost(&r) {
-            ("lost".to_string(), Some(LOST.to_string()))
+        let (word, reason) = if let Some((word, reason)) = record_hold(&txid, vout, &r) {
+            (word, Some(reason))
         } else {
             match reading {
                 Some(reading) => {
@@ -1537,6 +1526,37 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         }
     }
     Ok(held)
+}
+
+/// A named coin's own record, before its creator is read: the same order
+/// as the received coin in `check_scope`, with respend's own lock allowed.
+fn named_record_hold(
+    row: &SqliteRow,
+    frozen: bool,
+    reserved_to: Option<i64>,
+) -> Option<(String, String)> {
+    if frozen {
+        return Some(("frozen".to_string(), FROZEN.to_string()));
+    }
+    let spent_by: Option<i64> = row.get("spent_by");
+    if spent_by.is_some() && spent_by != reserved_to {
+        return Some((
+            "locked".to_string(),
+            spent_by_reason(
+                &row.get::<Option<String>, _>("holder").unwrap_or_default(),
+                row.get::<Option<String>, _>("spender_status").as_deref(),
+            ),
+        ));
+    }
+    let status: String = row.get("status");
+    if offered_status(&status) && row.get::<i64, _>("spendable") == 0 && spent_by.is_none() {
+        return Some(("lost".to_string(), LOST.to_string()));
+    }
+    if !offered_status(&status) {
+        let reason = format!("its transaction is {status}: never offered");
+        return Some((status, reason));
+    }
+    None
 }
 
 /// Heal the holds a 0.15 process left: every coin listed in

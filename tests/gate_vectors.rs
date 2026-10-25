@@ -122,6 +122,7 @@ fn clause_of(reason: Option<&str>) -> String {
     } else if reason.starts_with("dead lineage:") {
         "dead lineage"
     } else if reason.ends_with(": never offered") {
+        // Both `<word>` and the named door's `its transaction is <status>`.
         "door: a chain word against the creator"
     } else if reason.contains("; received, no proof;")
         || reason.contains("; received, confirming again;")
@@ -134,6 +135,17 @@ fn clause_of(reason: Option<&str>) -> String {
         return format!("(unmapped) {reason}");
     };
     clause.to_string()
+}
+
+#[test]
+fn a_named_transaction_status_maps_to_the_creators_chain_word_clause() {
+    for status in ["failed", "nosend", "unsigned", "sending", "unprocessed"] {
+        assert_eq!(
+            clause_of(Some(&format!("its transaction is {status}: never offered"))),
+            clause_of(Some("abandoned: never offered")),
+            "{status}"
+        );
+    }
 }
 
 /// The guard's depth a reason names (`depth N: ...`).

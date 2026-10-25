@@ -14,7 +14,7 @@ use bsv_wallet_cli::spend_gate::GateOptions;
 use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
 use bsv_wallet_toolbox::{
     BroadcastStatus, GetMerklePathResult, GetRawTxResult, GetStatusForTxidsResult, MonitorStorage,
-    StorageSqlx, TxStatusDetail, WalletServices, WalletStorageProvider,
+    StorageSqlx, TxStatusDetail, WalletServices, WalletStorageProvider, WalletStorageWriter,
 };
 
 use world::{
@@ -525,14 +525,34 @@ async fn respend_refuses_an_input_the_gate_holds() {
     )
     .await
     .unwrap();
-    let before = words(&f).await;
-    let err = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
+    assert_held_input(&f, &absent, "frozen: never offered").await;
+}
+
+/// A held exact input refuses the replacement without a post or a changed lock.
+async fn assert_held_input(f: &world::Fixture, services: &MockWalletServices, reason: &str) {
+    let before = words(f).await;
+    let error = build_and_post(f.wallet.storage(), services, &f.root, &f.phantom, &["mock"])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("frozen: never offered"), "{err}");
-    assert_eq!(absent.call_count("post_beef"), 0);
-    assert_eq!(words(&f).await, before);
-    assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
+    assert!(error.to_string().contains(reason), "{error}");
+    assert_eq!(services.call_count("post_beef"), 0);
+    assert_eq!(words(f).await, before);
+    assert_eq!(coin_state(f, f.coin).await, (false, Some(f.phantom_row)));
+}
+
+/// The lock reserved to the phantom does not hide the source's failed
+/// status, even though its funding proof still checks. No replacement is posted.
+#[tokio::test]
+async fn respend_refuses_an_input_whose_transaction_failed() {
+    let f = fixture().await;
+    let storage = f.wallet.storage();
+    storage
+        .mark_internalized_tx_failed(&f.funding)
+        .await
+        .unwrap();
+    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    assert_held_input(&f, &absent, "its transaction is failed: never offered").await;
 }
 
 /// F3 of the #44 CLI review: once the replacement is posted, the status
