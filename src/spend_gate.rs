@@ -1685,6 +1685,12 @@ fn named_refusal(word: &str, outpoint: &str, what: &str, why: &str) -> String {
     format!("Invalid argument: {word} names {outpoint}, which is not {what}: {why}")
 }
 
+/// A transaction status the offer path reads a coin of ([`candidates`]:
+/// `completed` or `unproven`).
+fn offered_status(status: &str) -> bool {
+    matches!(status, "completed" | "unproven")
+}
+
 /// The coins a scoped word names (#63), checked before the door: each must
 /// be a received coin this wallet could spend under the word (an output of
 /// ours, change of the default basket, not consumed, not frozen or lost,
@@ -1732,18 +1738,18 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
                 let status: String = r.get("status");
                 if r.get::<i64, _>("is_outgoing") != 0 {
                     "own change of an action of this wallet, not a received coin".to_string()
-                } else if !matches!(status.as_str(), "completed" | "unproven") {
-                    format!("its transaction is {status}")
+                } else if frozen.contains(&(txid.to_ascii_lowercase(), i64::from(*vout))) {
+                    FROZEN.to_string()
                 } else if r.get::<Option<i64>, _>("spent_by").is_some() {
                     format!(
                         "spent by {}",
                         r.get::<Option<String>, _>("holder")
                             .unwrap_or_else(|| "an action of this wallet".to_string())
                     )
-                } else if frozen.contains(&(txid.to_ascii_lowercase(), i64::from(*vout))) {
-                    FROZEN.to_string()
-                } else if r.get::<i64, _>("spendable") == 0 {
+                } else if offered_status(&status) && r.get::<i64, _>("spendable") == 0 {
                     LOST.to_string()
+                } else if !offered_status(&status) {
+                    format!("its transaction is {status}")
                 } else if r.get::<Option<String>, _>("basket").as_deref() != Some("default")
                     || r.get::<i64, _>("change") != 1
                 {

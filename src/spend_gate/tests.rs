@@ -2557,39 +2557,58 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
     );
 }
 
+/// The scope table's coins, each received unless named: a received coin
+/// (`c1`), own change (`c2`), a coin another action spent (`c3`), a nosend
+/// (`c4`), a lost coin of a completed transaction (`c5`), a frozen coin
+/// (`c6`), a failed one (`c7`), a lost coin of an unproven transaction (`c8`)
+/// and a failed and frozen one (`ca`).
+async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 9] {
+    let coins = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca"].map(|b| b.repeat(32));
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen] =
+        &coins;
+    coin(storage, owner, received, false, None, 8_000, 5).await;
+    coin(storage, owner, made, true, None, 8_000, 5).await;
+    coin(storage, owner, spent, false, None, 8_000, 5).await;
+    sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
+        .bind(spent)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    let id = coin(storage, owner, lost, false, Some(900), 8_000, 5).await;
+    lose(storage, id).await;
+    let id = coin(storage, owner, failed, false, None, 8_000, 5).await;
+    fail(storage, failed, id).await;
+    let id = coin(storage, owner, lost_unproven, false, None, 8_000, 5).await;
+    lose(storage, id).await;
+    coin(storage, owner, frozen, false, None, 8_000, 5).await;
+    freeze(storage, frozen, 9).await;
+    let id = coin(storage, owner, failed_frozen, false, None, 8_000, 5).await;
+    fail(storage, failed_frozen, id).await;
+    freeze(storage, failed_frozen, 10).await;
+    coin(storage, owner, nosend, false, None, 8_000, 5).await;
+    set_status(storage, nosend, "nosend").await;
+    coins
+}
+
 /// A scoped word naming a coin that is not a received coin this wallet
 /// could spend under it is the caller's error before the door, naming the
 /// coin and why: not ours, own change, consumed by another action, a
 /// nosend, and a coin its own record holds as a consumed one is (#165): a
-/// lost coin of a completed transaction (the store's `spendable = 0`, no
-/// spender) and a frozen one. A received coin whose transaction failed (the
-/// toolbox's `mark_internalized_tx_failed`: `spendable = 0`, no spender) is
-/// refused with its transaction's word, not lost (#197). Nothing is read for
-/// the action, the toolbox is not asked, nothing is stored and nothing
-/// allocated.
+/// lost coin of a completed or an unproven transaction (the store's
+/// `spendable = 0`, no spender) and a frozen one. The order is the Lean's
+/// `coinWord` (#197): frozen, spent by, lost, the transaction's status; a
+/// received coin whose transaction failed (the toolbox's
+/// `mark_internalized_tx_failed`: `spendable = 0`, no spender) is refused
+/// with its transaction's word, not lost, and a failed and frozen one reads
+/// frozen. Nothing is read for the action, the toolbox is not asked, nothing
+/// is stored and nothing allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
-    let [received, made, spent, nosend, lost, frozen, failed] =
-        ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].map(|b| b.repeat(32));
     let services = headers_with(&"0c".repeat(32), 900, 900);
-    coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
-    coin(&storage, (user, basket), &made, true, None, 8_000, 5).await;
-    coin(&storage, (user, basket), &spent, false, None, 8_000, 5).await;
-    sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
-        .bind(&spent)
-        .execute(storage.writer())
-        .await
-        .unwrap();
-    let lost_id = coin(&storage, (user, basket), &lost, false, Some(900), 8_000, 5).await;
-    lose(&storage, lost_id).await;
-    let failed_id = coin(&storage, (user, basket), &failed, false, None, 8_000, 5).await;
-    fail(&storage, &failed, failed_id).await;
-    coin(&storage, (user, basket), &frozen, false, None, 8_000, 5).await;
-    freeze(&storage, &frozen, 9).await;
-    coin(&storage, (user, basket), &nosend, false, None, 8_000, 5).await;
-    set_status(&storage, &nosend, "nosend").await;
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen] =
+        scope_table(&storage, (user, basket)).await;
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let before = stored_rows(wallet.storage()).await;
 
@@ -2604,6 +2623,11 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         (lost.clone(), "lost: the store marks it not spendable"),
         (frozen.clone(), "frozen: never offered"),
         (failed.clone(), "its transaction is failed"),
+        (
+            lost_unproven.clone(),
+            "lost: the store marks it not spendable",
+        ),
+        (failed_frozen.clone(), "frozen: never offered"),
     ];
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
