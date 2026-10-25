@@ -72,7 +72,15 @@ The server implements the wallet interface and serializes spending operations.
 `serve`, `daemon` and `serve-fleet` refuse a non-loopback bind without
 `AUTH_TOKEN`, unless the operator explicitly supplies `--allow-no-token`.
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
-feeds are hints until their evidence is checked. Configuration and defaults
+feeds are hints until their evidence is checked.
+
+`POST /arc-callback` receives ARC/Arcade status and proof deliveries behind
+the callback token. A store busy by type answers 503 `STORE_BUSY` with
+`Retry-After: 1`, so the sender can retry the payload (#226). Other invalid
+payloads keep 400 `BAD_PAYLOAD` and their existing messages; a valid status
+for an unknown transaction still answers 200 `StatusIgnored`.
+
+Configuration and defaults
 are defined in [src/config.rs](src/config.rs): every variable is read once at
 start, and a malformed number, address or URL is refused there, naming the
 variable; every refused variable is named at once, `init` runs regardless,
