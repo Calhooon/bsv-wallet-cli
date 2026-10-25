@@ -80,7 +80,6 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         2,
         "the follow-up's request history",
     ),
-    ("src/server/mod.rs", 2, "the server's own audit reads"),
     (
         "src/server/post_word.rs",
         2,

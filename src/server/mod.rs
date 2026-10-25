@@ -2,6 +2,7 @@ pub mod audit;
 pub mod broadcast_follow_up;
 pub mod error;
 pub mod handlers;
+mod host_reads;
 pub mod post_word;
 pub mod types;
 
@@ -628,26 +629,17 @@ async fn permission_audit() -> Json<serde_json::Value> {
 async fn chain_feed_status(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
 ) -> Response {
-    async fn read_feed(storage: &StorageSqlx) -> anyhow::Result<serde_json::Value> {
-        let status = crate::chain_feed::read_status(storage).await?;
-        let cursor = crate::tracker_host::feed_cursor(storage).await?;
-        let frozen = crate::tracker_host::frozen_count(storage).await?;
-        Ok(json!({
-            "status": status,
-            "cursor": cursor.to_string(),
-            "frozenCount": frozen,
-        }))
-    }
-    match read_feed(wallet.storage()).await {
-        Ok(body) => Json(body).into_response(),
-        Err(e) => host_route_fault(&e, "ERR_CHAIN_FEED"),
-    }
+    host_reads::answer_chain_feed(&host_reads::StoreReads {
+        storage: wallet.storage(),
+    })
+    .await
 }
 
 /// Host-route store faults keep their code unless the store is busy by
-/// type (#203). Each route has one fault site, so the busy tests cover
-/// every read by construction, including the proof read's wrapped bare
-/// sqlx error. Errors suppressed inside `read_status` remain its concern.
+/// type (#203). The position tests feed a real busy error at each read
+/// and require 503 with the shared body and retry header. Helper tests
+/// check that store reads preserve its type, including the proof query.
+/// Errors suppressed inside `read_status` remain its concern.
 fn host_route_fault(e: &anyhow::Error, code: &str) -> Response {
     if let Some(busy) = error::AppError::store_busy(e) {
         return busy.into_response();
@@ -673,58 +665,13 @@ async fn tx_word(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
     axum::extract::Path(txid): axum::extract::Path<String>,
 ) -> Response {
-    async fn read_word(
-        storage: &StorageSqlx,
-        txid: &str,
-    ) -> anyhow::Result<Option<serde_json::Value>> {
-        let Some((word, height, reask)) = crate::tracker_host::stored_word(storage, txid).await?
-        else {
-            return Ok(None);
-        };
-        let evidence = if word == "mined" {
-            let row = sqlx::query_as::<_, (String, i64)>(
-                "SELECT merkle_root, height FROM proven_txs WHERE lower(txid) = ?",
-            )
-            .bind(txid)
-            .fetch_optional(storage.pool())
-            .await
-            .map_err(anyhow::Error::from)?;
-            row.map(|(root, height)| json!({ "root": root, "height": height }))
-        } else {
-            None
-        };
-        let tier = crate::tracker_host::stored_tier(storage, txid).await?;
-        let mut body = json!({
-            "txid": txid,
-            "word": word,
-            "height": height,
-            "reask": reask,
-            "evidence": evidence,
-        });
-        if let Some(tier) = tier {
-            body["tier"] = json!(tier);
-        }
-        Ok(Some(body))
-    }
-    let txid = txid.trim().to_ascii_lowercase();
-    if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(
-                json!({ "code": "VALIDATION_ERROR", "message": "txid must be 64 hex characters" }),
-            ),
-        )
-            .into_response();
-    }
-    match read_word(wallet.storage(), &txid).await {
-        Ok(Some(body)) => Json(body).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "code": "NOT_FOUND", "message": format!("no word stored for {txid}") })),
-        )
-            .into_response(),
-        Err(e) => host_route_fault(&e, "ERR_TX_WORD"),
-    }
+    host_reads::answer_tx_word(
+        &host_reads::StoreReads {
+            storage: wallet.storage(),
+        },
+        &txid,
+    )
+    .await
 }
 
 /// POST /permission-audit/reset — call immediately before the flow you measure.

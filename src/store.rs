@@ -29,6 +29,20 @@ pub async fn has_column(reader: &SqlitePool, table: &str, column: &str) -> Resul
     Ok(n > 0)
 }
 
+/// The Merkle root and height stored for a proven transaction, if present.
+/// The host's transaction view reads this evidence without changing it.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`, preserving its type for busy classification.
+pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(String, i64)>> {
+    sqlx::query_as("SELECT merkle_root, height FROM proven_txs WHERE lower(txid) = ?")
+        .bind(txid)
+        .fetch_optional(reader)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
 /// One (heir, dead ancestor) pair of the lineage walk
 /// ([`dead_lineage_rows`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
