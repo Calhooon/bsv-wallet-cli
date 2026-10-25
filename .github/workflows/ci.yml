@@ -139,7 +139,7 @@ jobs:
           set -o pipefail
           cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
           grep -q '^gate vectors: 490 rows' gate_vectors.log
-          grep -q 'test result: ok. 2 passed' gate_vectors.log
+          grep -q 'test result: ok. 3 passed' gate_vectors.log
 
   # The wire oracle (#69): every served call and refusal body under
   # tests/wire/, replayed against the router in-process. A PR that changes a
