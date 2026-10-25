@@ -134,11 +134,17 @@ depth and not suspect, offered; our own `made` change under
 within its scope; a stale creator's coin under the same rules, as a pending
 one's (ruling 7a, #162); frozen, rejected, conflicted, abandoned or under an
 open split, held with its reason. After the door, the lineage
-(`dead_lineages`, one read of the store for the whole call, #163): our own
-coin whose creator spent an output of a dead action of this wallet, made
-or received, or of one of its dead lineage (a dead word beside a proof
-that checks reads mined, as at the door), is held `dead lineage: ancestor <txid> <word>` under every
-rule and word, mined included. The offer is capped at the largest
+(`lineage_candidates`, one read of the store for the whole call, #163):
+our own coin whose creator spent an output of a dead action of this
+wallet, made or received, or of one of its dead lineage, is held
+`dead lineage: ancestor <txid> <word>` under every rule and word, mined
+included. Dead is the tracker's stored word `conflicted`, `rejected` or
+`abandoned`, or the toolbox's `failed` status (the CLI's abandon), read as
+the door reads it: a candidate holding a proof is read in the gate's own
+`read_creators` reading, with the creators and in their one retry, and a
+proof that checks reads it mined, so it is not dead (`Lineage::dead`;
+`lean/Wallet.lean` `State.skel`, `lean/Tracker.lean`
+`onProof_of_rootChecks`). The offer is capped at the largest
 `OFFER_CAP` coins (`src/spend_gate.rs:146`, `cap_offer`).
 
 **Hop 5, the creators' reading.** The gate reads no explorer and decides

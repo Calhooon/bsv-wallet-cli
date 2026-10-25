@@ -63,9 +63,11 @@
 //! word is dead, a held proof that checks reading mined for the walk as for
 //! the door (the owner's lineage ruling of 2026-10-22, `lean/Wallet.lean`
 //! `deadLineage`; held `dead lineage: ancestor <txid> <word>` after the
-//! door, in the Lean's clause order; [`dead_lineages`], one read of the
-//! store per call and the header service only for a dead word beside a
-//! proof, the CLI's walk until the toolbox's lands, toolbox #42). A coin an action of ours holds is the toolbox's lock
+//! door, in the Lean's clause order; [`lineage_candidates`], one read of
+//! the store per call, a dead word beside a proof read with the creators in
+//! the gate's one reading and its one retry, then [`Lineage::dead`]; the
+//! CLI's walk until the toolbox's lands, toolbox #42). A coin an action of
+//! ours holds is the toolbox's lock
 //! (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
 //! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or
