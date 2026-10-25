@@ -545,10 +545,11 @@ fn pay_args() -> CreateActionArgs {
 /// Give synthetic funding a complete proof instead of relying on an
 /// incomplete coinbase stub being accepted as ancestry.
 async fn prove_funding(storage: &StorageSqlx, tx: &Transaction) {
-    use bsv_sdk::transaction::{MerklePath, MockChainTracker};
+    use crate::test_support::TestChainTracker;
+    use bsv_sdk::transaction::MerklePath;
     let txid = tx.id();
     let height = 800;
-    let mut tracker = MockChainTracker::new(height + 100);
+    let mut tracker = TestChainTracker::new(height + 100);
     tracker.add_root(height, txid.clone());
     storage.set_chain_tracker(Arc::new(tracker)).await;
     let now = Utc::now();

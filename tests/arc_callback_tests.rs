@@ -2,10 +2,14 @@
 //! (ARC/Arcade proof delivery straight into wallet storage).
 //!
 //! All vectors are synthetic: random throwaway keys, coinbase-style BUMPs
-//! validated against a MockChainTracker. No network, no funded wallets.
+//! validated against a TestChainTracker. No network, no funded wallets.
+
+#[path = "../src/test_support/chain_tracker.rs"]
+mod chain_tracker;
+use chain_tracker::TestChainTracker;
 
 use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::transaction::{MerklePath, MockChainTracker};
+use bsv_sdk::transaction::MerklePath;
 use bsv_wallet_cli::arc_ingest::PROOF_NOT_ACCEPTED;
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{
@@ -243,11 +247,11 @@ async fn mined_webhook_with_merkle_path_ingests_proof() {
     let height = 850_000u32;
 
     // Synthetic BUMP that validates: coinbase-style single-tx block, so the
-    // computed root equals the txid; MockChainTracker knows that root.
+    // computed root equals the txid; TestChainTracker knows that root.
     let bump = MerklePath::from_coinbase_txid(&txid, height);
     let bump_hex = hex::encode(bump.to_binary());
     let root = bump.compute_root(Some(&txid)).unwrap();
-    let mut tracker = MockChainTracker::new(height + 1);
+    let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, root);
 
     let (base, client, pool, _tmp) = setup_with_callback(
@@ -294,7 +298,7 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
     // Tracker knows a DIFFERENT root — proof must be rejected.
     let bump = MerklePath::from_coinbase_txid(&txid, height);
     let bump_hex = hex::encode(bump.to_binary());
-    let mut tracker = MockChainTracker::new(height + 1);
+    let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, "ff".repeat(32));
 
     let (base, client, pool, _tmp) = setup_with_callback(
@@ -537,7 +541,7 @@ fn production_fixture_bump_computes_true_block_root() {
 /// Webhook lane with the REAL enriched payload: ingested, records completed.
 #[tokio::test]
 async fn production_fixture_webhook_ingests_proof() {
-    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    let mut tracker = TestChainTracker::new(PROBE_HEIGHT + 1);
     tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
 
     let (base, client, pool, _tmp) = setup_with_callback(
@@ -577,7 +581,7 @@ async fn production_fixture_tampered_path_rejected() {
     let flipped = if orig == '0' { '1' } else { '0' };
     tampered.replace_range(mid..mid + 1, &flipped.to_string());
 
-    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    let mut tracker = TestChainTracker::new(PROBE_HEIGHT + 1);
     tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
 
     let (base, client, pool, _tmp) = setup_with_callback(
@@ -642,7 +646,7 @@ async fn sse_inline_proof_latches_without_webhook_or_fetch() {
     bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
         .await
         .expect("open the proof gate");
-    let mut tracker = MockChainTracker::new(PROBE_HEIGHT + 1);
+    let mut tracker = TestChainTracker::new(PROBE_HEIGHT + 1);
     tracker.add_root(PROBE_HEIGHT, PROBE_BLOCK_MERKLE_ROOT.to_string());
     storage.set_chain_tracker(Arc::new(tracker)).await;
     let pool = storage.writer().clone();
