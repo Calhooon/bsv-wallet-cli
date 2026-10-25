@@ -1702,15 +1702,16 @@ fn offered_status(status: &str) -> bool {
 /// mined is offered as any mined coin is: the word is moot for it, not
 /// wrong.
 ///
-/// The order is the offer path's ([`candidates`] keeps only a `completed` or
-/// `unproven` transaction before it reads lost) and the Lean's `coinWord`
-/// read backwards from the creator to the coin: the transaction's status
-/// before the coin's own record (spent by, frozen, lost), because a status
-/// the word cannot spend is the creator's word, not the coin's (#197). The
-/// toolbox writes the coin's `spendable = 0` itself when the transaction
-/// fails (0.13.0 `mark_internalized_tx_failed`: status `failed`, every
-/// output `spendable = 0`, no spender), so read first, lost would name a
-/// failed transaction's coin as one a competitor took.
+/// The order, after not ours, is the Lean's `coinWord` (`lean/Wallet.lean`):
+/// frozen, then the lock (spent by, then lost), then the creator's word (the
+/// transaction's status), then the basket and change (#197, the owner's
+/// ruling). Lost carries the qualifier the offer path has ([`candidates`]
+/// keeps only a `completed` or `unproven` transaction before it reads
+/// spendable): it is the store's `spendable = 0` with no spender on such a
+/// transaction. A `failed` transaction's `spendable = 0` is the toolbox's own
+/// write at the failure (0.13.0 `mark_internalized_tx_failed`), so a failed
+/// coin reads its status, never lost; a failed and frozen coin reads frozen,
+/// and a spent coin of any status reads spent by.
 async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<Option<String>> {
     if named.is_empty() {
         return Ok(None);
