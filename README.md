@@ -271,8 +271,9 @@ whose transaction's lineage is dead: an input of it, or of an ancestor on
 the walk, was created by an action of this wallet, made or received, whose
 stored word is `conflicted`, `rejected` or `abandoned` or whose status is
 `failed`, unless a proof held for that action checks against the headers,
-which reads it mined for the walk as at the door: the gate reads such an
-action once per call, with the creators it judges and in their one retry
+which reads it mined for the walk as at the door: each door, the
+allocation's and a named input's, reads such an action once per call with
+the creators it judges and re-reads once what faulted, the dead set after
 (the owner's lineage ruling of 2026-10-22; `lean/Wallet.lean` `State.skel`
 reads the word the door reads, `lean/Tracker.lean` `onProof_of_rootChecks`
 puts a checked proof above every word; #163); a coin whose transaction is `stale` (its proof's block left the
