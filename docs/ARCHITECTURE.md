@@ -15,7 +15,11 @@ marked `[D]`. The diagrams are Mermaid source; no renderer is in the tree,
 so they render where Markdown is viewed (GitHub does) and there is no SVG.
 
 Line numbers are those of `08f1f05`; a later commit moves them, the
-function names stay.
+function names stay. `python3 -B tools/check-cites` holds every numbered
+citation and the module map's line counts at that pin. Each citation names
+a Rust identifier before its range in the same sentence or table cell;
+the checker reads that range from git and requires the identifier there.
+Later modules and tests without coordinates at this pin are cited by name.
 
 ## 0. The shape, in one paragraph
 
