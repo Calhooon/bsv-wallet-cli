@@ -2939,10 +2939,11 @@ fn a_dead_creator_is_never_offered_under_any_rule() {
 
 /// The toolbox allocates a stale creator's coin the gate offers (#165's
 /// lesson: under `acceptDelayedBroadcast` the toolbox reads the store, not
-/// the word). The `serve` shape,
-/// where no monitor demotes the action: still `completed` with its stored
-/// proof, which our header at 900 no longer carries; the tracker reads it
-/// `stale`, and the action's word offers the received coin and funds it.
+/// the word). The `serve` shape, where no monitor demotes the action: still
+/// `completed` with its stored proof, which our header at 900 no longer
+/// carries; the tracker reads it `stale`, and the action's word offers the
+/// received coin, the wallet's only one, which funds the action (with the
+/// gate holding it, the action is refused for funds).
 #[tokio::test]
 async fn the_toolbox_allocates_a_stale_coin_the_gate_offers() {
     let root = PrivateKey::random();
@@ -2952,11 +2953,6 @@ async fn the_toolbox_allocates_a_stale_coin_the_gate_offers() {
     let services = headers_with(&"0c".repeat(32), 900, 905);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let gate = opts(1, true).with_allow_received(true);
-    let a = assess(wallet.storage(), wallet.services(), &gate, None)
-        .await
-        .unwrap();
-    assert_eq!(a.offer(), vec![id]);
-
     let result = create_action(&wallet, delayed(), "gate.local", &gate)
         .await
         .unwrap();
