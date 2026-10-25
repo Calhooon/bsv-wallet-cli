@@ -38,13 +38,19 @@
 //! `offerableUnder` do); a proof whose root checks outranks every other
 //! word (`lean/Tracker.lean` `onProof_of_rootChecks`, the charter's row).
 //! So a candidate that holds a proof (its tracker row's bump, or the
-//! toolbox's `proven_txs` row) is read as the door reads it
-//! ([`crate::tracker_host::read_creators`], the same (txid, stored path)
-//! pair and options): a proof that checks makes it `mined` for the walk as for the door, and it
+//! toolbox's `proven_txs` row) is read by the door itself, in the gate's
+//! own readings: [`lineage_candidates`] reads the store alone and hands the
+//! gate those candidates' (txid, stored path) pairs; the gate reads them in
+//! one [`crate::tracker_host::read_creators`] call with the creators it
+//! judges (one read of the headers, so a candidate that is also a judged
+//! coin's creator is read once), the door's retry (#59) re-reads them with
+//! the creators, and [`Lineage::dead`] derives the dead set after it. A
+//! proof that checks makes it `mined` for the walk as for the door, and it
 //! is not dead; a proof the headers could not check (the header service
 //! silent) or whose root does not match leaves the stored word, dead for
-//! both, the door holding that creator closed. The header service is read
-//! only when a candidate holds a proof, and its fault there is the stored
+//! both, the door holding that creator closed. The lineage adds a header
+//! read only when a candidate holds a proof and no judged creator brings
+//! the gate to the headers already, and its fault there is the stored
 //! word, never the gate's fault. A candidate with no proof is dead as
 //! stored: a replay reads nothing else from a stored verdict, and a stored
 //! `abandoned` stays dead as stored. No chain event returns a dead word to
@@ -61,13 +67,12 @@
 //! candidates stay dead is known only once their proofs are read: the pairs
 //! of a candidate the reading clears are dropped, and each descendant keeps
 //! the earliest pair left in the order [`Lineage::dead`] names. What
-//! remains is
-//! exactly the actions whose `lineageDead` holds: a descendant reached only
-//! through a cleared candidate is reached by no dead one. The rows are
-//! bounded by the (descendant, candidate) pairs, so a cycle planted in
-//! `spent_by` ends the walk instead of hanging the door, and adds nothing a
-//! dead word does not reach. The rule is a view: nothing is written, no
-//! lock moves (`dead_lineage_releases_only_on_evidence`).
+//! remains is exactly the actions whose `lineageDead` holds: a descendant
+//! reached only through a cleared candidate is reached by no dead one. The
+//! rows are bounded by the (descendant, candidate) pairs, so a cycle
+//! planted in `spent_by` ends the walk instead of hanging the door, and
+//! adds nothing a dead word does not reach. The rule is a view: nothing is
+//! written, no lock moves (`dead_lineage_releases_only_on_evidence`).
 
 use std::collections::HashMap;
 
