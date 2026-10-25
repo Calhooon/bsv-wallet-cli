@@ -115,6 +115,8 @@
     "113-verifyHmac.privileged.json",
     "114-revealCounterpartyKeyLinkage.privileged.json",
     "115-revealSpecificKeyLinkage.privileged.json",
-    "116-abortAction.storeBusy.json"
+    "116-abortAction.storeBusy.json",
+    "117-chain-feed.storeBusy.json",
+    "118-tx.storeBusy.json"
   ]
 }
