@@ -270,3 +270,89 @@ async fn a_wallet_without_dead_candidates_keeps_its_call_history() {
         }
     }
 }
+
+/// [`ancestor_only`] beside 40 larger unproven coins, so D's creator is
+/// the 41st eligible creator, in the allocation's second lazy batch.
+/// A need of 400,001 is past the 40 coins, so D is judged. (P, D, the 41
+/// coins named.)
+async fn later_batch_heir() -> (Store, String, String, Vec<(String, u32)>) {
+    let (store, p, d) = ancestor_only().await;
+    let mut named: Vec<(String, u32)> = (0x20..0x48u8)
+        .map(|b| (format!("{b:02x}").repeat(32), 0))
+        .collect();
+    for (txid, _) in &named {
+        coin(&store.0, store.1, txid, true, None, 10_000, 1).await;
+    }
+    named.push((d.clone(), 0));
+    (store, p, d, named)
+}
+
+const LATER_HEIR_NEED: u64 = 400_001;
+
+/// A tip silent at the start that answers after 300 ms when `recover`.
+async fn tip_after(services: &MockWalletServices, recover: bool) {
+    if recover {
+        recover_after_300_ms(services).await;
+    }
+}
+
+/// Both doors' answers under a tip silent at the start that recovers after
+/// 300 ms (`recover`) or stays silent: (the allocation, the named door,
+/// the named door's tip reads).
+async fn later_heir_doors(
+    store: &Store,
+    named: &[(String, u32)],
+    recover: bool,
+) -> (Assessment, Vec<HeldCoin>, usize) {
+    let services = silent_tip();
+    let (a, ()) = tokio::join!(
+        allocation_read(store, &services, Some(LATER_HEIR_NEED), true),
+        tip_after(&services, recover)
+    );
+    let services = silent_tip();
+    let coins = UserCoins::new(&store.0, store.1 .0);
+    let gate = opts(1, true);
+    let door = assess_named(coins, &services, &gate, named, &[], None, true);
+    let (held, ()) = tokio::join!(door, tip_after(&services, recover));
+    let tips = services.call_count("get_chain_tip_header");
+    (a, held.unwrap(), tips)
+}
+
+/// The heir in the second lazy batch is judged: P's proof, read with the
+/// first batch, checks on the retry once the tip recovers, so D is offered
+/// with the other 40 on both doors, as on beta. A selection filtered per
+/// batch leaves P unread and holds D.
+#[tokio::test]
+async fn a_later_batch_heir_is_offered_when_the_tip_recovers() {
+    let (store, _, d, named) = later_batch_heir().await;
+    let d0: i64 = sqlx::query_scalar("SELECT output_id FROM outputs WHERE txid = ?")
+        .bind(&d)
+        .fetch_one(store.0.pool())
+        .await
+        .unwrap();
+    let (a, held, tips) = later_heir_doors(&store, &named, true).await;
+    assert_eq!(reason_of(&a, &d), None, "D must be offered: {:?}", a.held);
+    assert!(a.offer().contains(&d0), "D is not offered");
+    assert_eq!(a.offered.len(), 41);
+    assert!(a.held.is_empty(), "{:?}", a.held);
+    assert!(held.is_empty(), "the named door held {held:?}");
+    assert!(a.headers_retried);
+    assert_eq!(tips, 2);
+}
+
+/// The tip silent throughout: P keeps its stored word, so D in the second
+/// lazy batch is held by P's lineage on both doors, as on beta.
+#[tokio::test]
+async fn a_later_batch_heir_is_held_when_the_tip_stays_silent() {
+    let (store, p, d, named) = later_batch_heir().await;
+    let want = format!("dead lineage: ancestor {p} conflicted");
+    let (a, held, tips) = later_heir_doors(&store, &named, false).await;
+    assert_eq!(reason_of(&a, &d), Some(want.clone()));
+    assert_eq!(a.offered.len(), 40);
+    assert_eq!(a.held.len(), 1, "{:?}", a.held);
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert!(held[0].outpoint.starts_with(&d));
+    assert_eq!(held[0].reason, want);
+    assert!(a.headers_retried);
+    assert_eq!(tips, 2);
+}
