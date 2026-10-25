@@ -186,6 +186,8 @@ fn clause_of(reason: Option<&str>) -> String {
         "held by a lock"
     } else if reason.starts_with("suspect:") {
         "creator suspect (fork in progress)"
+    } else if reason.starts_with("dead lineage:") {
+        "dead lineage"
     } else if reason.ends_with(": never offered") {
         "door: a chain word against the creator"
     } else if reason.contains("; received, no proof;")

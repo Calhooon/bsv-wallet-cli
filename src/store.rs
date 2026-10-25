@@ -29,6 +29,53 @@ pub async fn has_column(reader: &SqlitePool, table: &str, column: &str) -> Resul
     Ok(n > 0)
 }
 
+/// The lineage walk of the spend gate ([`crate::spend_gate::dead_lineages`],
+/// #163), one statement on the reader: each action of ours a dead action's
+/// output reaches through `outputs.spent_by`, directly or through other
+/// such actions, as `(its txid, the dead ancestor's txid or reference, the
+/// ancestor's word)`, by the heir's row, then the latest-created ancestor,
+/// then a tracker word before a `failed` status. Dead: the tracker's stored
+/// word `conflicted`, `rejected` or `abandoned`, or the toolbox's `failed`
+/// with no proof in `proven_txs`. `UNION` keeps each (heir, ancestor) pair
+/// once, so a cycle in `spent_by` ends the walk. A store the tracker never
+/// touched has no words: its dead are the `failed` alone.
+///
+/// # Errors
+///
+/// The store's error when the read fails.
+pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<(String, String, String)>> {
+    let words = if has_column(reader, "tracker_states", "word").await? {
+        "SELECT t.transaction_id, COALESCE(t.txid, t.reference), s.word, 0 \
+         FROM tracker_states s JOIN transactions t ON t.txid = s.txid \
+         WHERE s.word IN ('conflicted', 'rejected', 'abandoned') UNION "
+    } else {
+        ""
+    };
+    let sql = format!(
+        "WITH RECURSIVE \
+           dead(transaction_id, name, word, rank) AS ( \
+             {words} \
+             SELECT t.transaction_id, COALESCE(t.txid, t.reference), 'failed', 1 \
+             FROM transactions t \
+             WHERE t.status = 'failed' \
+               AND NOT EXISTS (SELECT 1 FROM proven_txs p WHERE p.txid = t.txid)), \
+           heir(transaction_id, ancestor) AS ( \
+             SELECT o.spent_by, d.transaction_id FROM dead d \
+             JOIN outputs o ON o.transaction_id = d.transaction_id \
+             WHERE o.spent_by IS NOT NULL \
+             UNION \
+             SELECT o.spent_by, h.ancestor FROM heir h \
+             JOIN outputs o ON o.transaction_id = h.transaction_id \
+             WHERE o.spent_by IS NOT NULL) \
+         SELECT t.txid, d.name, d.word FROM heir h \
+         JOIN transactions t ON t.transaction_id = h.transaction_id \
+         JOIN dead d ON d.transaction_id = h.ancestor \
+         WHERE t.txid IS NOT NULL \
+         ORDER BY h.transaction_id, d.transaction_id DESC, d.rank"
+    );
+    Ok(sqlx::query_as(&sql).fetch_all(reader).await?)
+}
+
 /// One store per file per process (F9 (b) of the #44 CLI review): the file
 /// opened once, made available, and answered as two handles of the one
 /// store, the first for the `Wallet` (which takes its store by value), the

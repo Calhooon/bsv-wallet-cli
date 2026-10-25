@@ -10,6 +10,8 @@ use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
+mod lineage;
+
 const LOCK: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// A migrated in-memory storage for `identity`: (storage, user, basket).
@@ -1836,6 +1838,17 @@ tokio::task_local! {
     pub(super) static AT_THE_DOOR: std::sync::Arc<dyn Fn() + Send + Sync>;
 }
 
+/// `call` run with the [`AT_THE_DOOR`] hook set: its answer, and whether the
+/// toolbox's door was reached.
+async fn at_the_door<T>(call: impl std::future::Future<Output = T>) -> (T, bool) {
+    let door = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reached = door.clone();
+    let hook =
+        std::sync::Arc::new(move || reached.store(true, std::sync::atomic::Ordering::SeqCst));
+    let result = AT_THE_DOOR.scope(hook, call).await;
+    (result, door.load(std::sync::atomic::Ordering::SeqCst))
+}
+
 /// The gate's `createAction` under `opts`, expected to refuse `args` as the
 /// caller's error before the door: the toolbox not asked (the
 /// [`AT_THE_DOOR`] hook not called) and nothing read from the services.
@@ -1845,20 +1858,11 @@ async fn refused_before_the_door(
     args: CreateActionArgs,
     opts: &GateOptions,
 ) -> String {
-    let door = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let reached = door.clone();
-    let hook =
-        std::sync::Arc::new(move || reached.store(true, std::sync::atomic::Ordering::SeqCst));
-    let result = AT_THE_DOOR
-        .scope(hook, create_action(wallet, args, "gate.local", opts))
-        .await;
+    let (result, asked) = at_the_door(create_action(wallet, args, "gate.local", opts)).await;
     let Err(GateError::Scope(message)) = result else {
         panic!("passed the gate: {result:?}");
     };
-    assert!(
-        !door.load(std::sync::atomic::Ordering::SeqCst),
-        "the toolbox was asked: {message}"
-    );
+    assert!(!asked, "the toolbox was asked: {message}");
     assert_eq!(wallet.services().total_calls(), 0, "a read: {message}");
     message
 }

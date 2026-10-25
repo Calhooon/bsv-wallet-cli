@@ -147,6 +147,9 @@ use crate::server::error::Kind;
 use crate::toolbox_words;
 use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
 
+mod lineage;
+pub use lineage::{dead_lineages, DeadAncestor, DEAD_LINEAGE};
+
 /// `SPEND_OWN_CHANGE` when unset: this host chains payments, so its own
 /// change is offered before it is mined (R1 (b)).
 pub const DEFAULT_SPEND_OWN_CHANGE: bool = true;
@@ -975,6 +978,44 @@ fn rule_hold(
     }
 }
 
+/// Why the gate holds the coin `outpoint` of `origin`: the creator's door
+/// ([`hold_reason`]), then the lineage rule, in the Lean's clause order
+/// (`WalletGate.clause`: the door, then `deadLineage`); a dead lineage
+/// outranks a header fault, which only says the gate could not look. A
+/// received coin's lineage is never read; `dead` is [`dead_lineages`]'
+/// answer. The reason, and the header service's error when the hold is its
+/// fault ([`HeldCoin::headers_fault`]).
+fn coin_hold(
+    reading: &CreatorReading,
+    dead: &HashMap<String, DeadAncestor>,
+    origin: Origin,
+    outpoint: (&str, u32),
+    opts: &GateOptions,
+) -> Option<(String, Option<String>)> {
+    let lineage = match origin {
+        Origin::Made => dead.get(outpoint.0),
+        Origin::Received => None,
+    };
+    match (hold_reason(reading, origin, outpoint, opts), lineage) {
+        (Some(_), Some(ancestor)) if reading.fault.is_some() => Some((ancestor.reason(), None)),
+        (None, Some(ancestor)) => Some((ancestor.reason(), None)),
+        (reason, _) => reason.map(|reason| (reason, headers_error(reading))),
+    }
+}
+
+/// The dead lineages, read only when some coin of ours is judged: a gate
+/// over received coins alone reads none.
+async fn lineage_of(
+    storage: &StorageSqlx,
+    any_made: bool,
+) -> Result<HashMap<String, DeadAncestor>> {
+    if any_made {
+        dead_lineages(storage.pool()).await
+    } else {
+        Ok(HashMap::new())
+    }
+}
+
 /// Every coin the toolbox could allocate: a change output of a default
 /// basket, unspent, its transaction `completed` or `unproven`. In the
 /// toolbox's preference: completed first, then the largest.
@@ -1114,6 +1155,12 @@ async fn assess_inner<V: WalletServices + ?Sized>(
     retry: bool,
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
+    let dead = lineage_of(
+        storage,
+        all.iter()
+            .any(|c| c.origin == Origin::Made && c.record_hold().is_none()),
+    )
+    .await?;
     let tick = opts.tick();
     // Only a coin its own record does not hold needs its creator read: a
     // creator whose coins are all frozen or lost is never fetched.
@@ -1192,17 +1239,17 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             out.unread.push(c.output_id);
             continue;
         };
-        match hold_reason(reading, c.origin, (&c.txid, c.vout as u32), opts) {
+        match coin_hold(reading, &dead, c.origin, (&c.txid, c.vout as u32), opts) {
             None if !covered => out.offered.push((c.output_id, c.satoshis)),
             None => out.unread.push(c.output_id),
-            Some(reason) => out.held.push(HeldCoin {
+            Some((reason, headers_fault)) => out.held.push(HeldCoin {
                 outpoint: format!("{}.{}", c.txid, c.vout),
                 satoshis: c.satoshis,
                 word: reading.word.to_string(),
                 origin: c.origin,
                 age_minutes: c.age_minutes,
                 reason,
-                headers_fault: headers_error(reading),
+                headers_fault,
                 output_id: c.output_id,
             }),
         }
@@ -1317,6 +1364,12 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             .await
             .map_err(GateError::Gate)?
     };
+    let any_made = coins.iter().any(|(t, _, r)| {
+        r.get::<i64, _>("is_outgoing") != 0 && creators.iter().any(|(c, _)| c == t)
+    });
+    let dead = lineage_of(storage, any_made)
+        .await
+        .map_err(GateError::Gate)?;
     let mut held = Vec::new();
     for (txid, vout, r) in coins {
         let origin = if r.get::<i64, _>("is_outgoing") != 0 {
@@ -1341,11 +1394,12 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         } else {
             match reading {
                 Some(reading) => {
-                    headers_fault = headers_error(reading);
-                    (
-                        reading.word.to_string(),
-                        hold_reason(reading, origin, (&txid, vout), opts),
-                    )
+                    let judged = coin_hold(reading, &dead, origin, (&txid, vout), opts);
+                    let reason = judged.map(|(reason, fault)| {
+                        headers_fault = fault;
+                        reason
+                    });
+                    (reading.word.to_string(), reason)
                 }
                 None => ("unknown".to_string(), Some("not read".to_string())),
             }
