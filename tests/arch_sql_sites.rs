@@ -74,7 +74,11 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         42,
         "the deliberate competitor's reads and writes",
     ),
-    ("src/retire_guard.rs", 12, "the retire guard's reads"),
+    (
+        "src/retire_guard.rs",
+        14,
+        "the retire guard's reads, including the proof lookup (#244)",
+    ),
     (
         "src/server/broadcast_follow_up.rs",
         2,
