@@ -540,7 +540,7 @@ impl TrackedRow {
     fn deactivated(&self) -> BTreeMap<Height, Header> {
         self.chain_events()
             .iter()
-            .flat_map(|event| deactivated_of(event).into_iter())
+            .flat_map(|event| deactivated_of(event, Some(self)).into_iter())
             .collect()
     }
 
@@ -2324,7 +2324,24 @@ pub fn event_kind(event: &ChainEvent) -> &'static str {
 
 /// The headers a reorg replaced, by height: the event's deactivated
 /// headers, lowercase.
-fn deactivated_of(event: &ChainEvent) -> BTreeMap<Height, Header> {
+fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Height, Header> {
+    if let ChainEvent::Invalidated { block_hash } = event {
+        return row
+            .and_then(TrackedRow::proof)
+            .and_then(Result::ok)
+            .and_then(|proof| {
+                proof.root().ok().map(|merkle_root| {
+                    BTreeMap::from([(
+                        proof.height(),
+                        Header {
+                            hash: block_hash.to_ascii_lowercase(),
+                            merkle_root,
+                        },
+                    )])
+                })
+            })
+            .unwrap_or_default();
+    }
     let ChainEvent::Reorg {
         deactivated_headers,
         ..
@@ -2499,7 +2516,13 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         // The stored proofs replay against the branch the event (and any
         // reorg a row keeps) took away; the event's recheck reads the new
         // branch, with no answer at a height the service has not moved.
-        let deactivated = deactivated_of(&event);
+        let deactivated = if matches!(event, ChainEvent::Invalidated { .. }) {
+            rows.iter()
+                .flat_map(|row| deactivated_of(&event, Some(row)))
+                .collect()
+        } else {
+            deactivated_of(&event, None)
+        };
         let mut gone = deactivated.clone();
         for row in &rows {
             gone.extend(row.deactivated());
@@ -2550,7 +2573,13 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             let Some(state) = tracker.get(&row.txid) else {
                 continue;
             };
-            if matches!(state.word(), Word::Mined(_)) {
+            if matches!(state.word(), Word::Mined(_))
+                && !(matches!(event, ChainEvent::Tip { .. })
+                    && row
+                        .chain_events()
+                        .iter()
+                        .any(|kept| matches!(kept, ChainEvent::Invalidated { .. })))
+            {
                 continue;
             }
             row.keep_chain(state, &event)?;
@@ -3450,6 +3479,181 @@ pub(crate) mod tests {
         assert_eq!(stored, open);
         let held = reading(&storage, &services, &txid).await;
         assert_eq!((held.suspect, held.offered()), (true, false));
+    }
+
+    async fn invalidated_at_900(txid: &str) -> (StorageSqlx, MockWalletServices, FixedClock) {
+        let (storage, services, clock) = mined_at_900(txid).await;
+        let gone = header_of(&header(900, txid, 0).to_binary()).unwrap().hash;
+        deliver(
+            &storage,
+            &services,
+            &clock,
+            1,
+            serde_json::json!({ "v": 1, "kind": "invalidated", "blockHash": gone }),
+        )
+        .await;
+        (storage, services, clock)
+    }
+
+    async fn tip_after_invalidation(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        clock: &FixedClock,
+        root: &str,
+    ) {
+        services.set_header_for_height(header(900, root, 1));
+        let tip = header_with_hash(906, &"0b".repeat(32), 1);
+        services.set_tip_header(tip.clone());
+        deliver(
+            storage,
+            services,
+            clock,
+            2,
+            serde_json::json!({
+                "v": 1, "kind": "tip", "height": 906, "hash": tip.hash,
+                "time": tip.time, "header": event_header(906, &tip.hash, &tip.merkle_root),
+            }),
+        )
+        .await;
+    }
+
+    async fn coin_of_tracked_creator(storage: &StorageSqlx, txid: &str) -> i64 {
+        let user: i64 = sqlx::query_scalar("SELECT user_id FROM transactions WHERE txid = ?")
+            .bind(txid)
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        let basket = storage
+            .find_or_create_default_basket(user)
+            .await
+            .unwrap()
+            .basket_id;
+        sqlx::query(
+            "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, \
+             txid, type, spendable, change, provided_by, purpose, output_description, created_at, updated_at) \
+             SELECT user_id, transaction_id, ?, 0, 1000, X'51', txid, 'P2PKH', 1, 1, 'storage', \
+             'change', 'invalidation test', created_at, updated_at FROM transactions WHERE txid = ?",
+        )
+        .bind(basket)
+        .bind(txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+        user
+    }
+
+    async fn assess_tracked_coin(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        user: i64,
+    ) -> crate::spend_gate::Assessment {
+        let gate = crate::spend_gate::GateOptions {
+            spend_depth: 1,
+            own_change: true,
+            allow_pending: crate::spend_gate::AllowPending::Off,
+            tracker: opts(),
+        };
+        crate::spend_gate::assess(
+            crate::spend_gate::UserCoins::new(storage, user),
+            services,
+            &gate,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// #206: the alert cannot re-prove a word with the header it invalidated.
+    /// Its mark survives storage, the guard and the gate's assessment; a new
+    /// header carrying the same root lets the next tip clear it.
+    #[tokio::test]
+    async fn an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it() {
+        let txid = "f1".repeat(32);
+        let (storage, services, clock) = invalidated_at_900(&txid).await;
+        let open = ("mined".to_string(), Some(900), Some("recheck".to_string()));
+        println!(
+            "invalidated with its header still served: {:?}",
+            word(&storage, &txid).await
+        );
+        assert_eq!(word(&storage, &txid).await, open);
+
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(row.chain.len(), 1);
+        let held = reading(&storage, &services, &txid).await;
+        println!("read_creators after invalidation: {held:?}");
+        assert!(
+            held.suspect && !held.offered(),
+            "the mark survives a reload"
+        );
+        assert_eq!(held.word, "mined");
+        assert!(held.fault.is_none());
+        assert_eq!(
+            guard_of(&storage, &services, &clock, &txid).await,
+            Ok(false)
+        );
+        assert_eq!(word(&storage, &txid).await, open);
+
+        let user = coin_of_tracked_creator(&storage, &txid).await;
+        let held = assess_tracked_coin(&storage, &services, user).await;
+        println!("assess after invalidation: {held:?}");
+        assert!(held.offered.is_empty());
+        assert_eq!(held.held.len(), 1);
+        assert!(held.held[0].reason.starts_with("suspect: "));
+        assert_eq!(word(&storage, &txid).await, open);
+
+        tip_after_invalidation(&storage, &services, &clock, &txid).await;
+        assert_eq!(
+            word(&storage, &txid).await,
+            ("mined".to_string(), Some(900), None)
+        );
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert!(row.chain.is_empty());
+        let recovered = reading(&storage, &services, &txid).await;
+        assert!(!recovered.suspect && recovered.offered());
+        let offered = assess_tracked_coin(&storage, &services, user).await;
+        println!("assess after the new header's tip: {offered:?}");
+        assert!(offered.held.is_empty());
+        assert_eq!(offered.offered_satoshis(), 1000);
+    }
+
+    #[tokio::test]
+    async fn an_invalidated_blocks_moved_root_reads_stale_after_the_next_tip() {
+        let txid = "f2".repeat(32);
+        let (storage, services, clock) = invalidated_at_900(&txid).await;
+        tip_after_invalidation(&storage, &services, &clock, &"ef".repeat(32)).await;
+        let stale = ("stale".to_string(), None, Some("reorg@900".to_string()));
+        println!(
+            "invalidated, then a moved root: {:?}",
+            word(&storage, &txid).await
+        );
+        assert_eq!(word(&storage, &txid).await, stale);
+        let read = reading(&storage, &services, &txid).await;
+        assert_eq!(
+            (read.word, read.suspect, read.offered(), read.fault),
+            ("stale", false, false, None)
+        );
+        assert_eq!(word(&storage, &txid).await, stale);
+    }
+
+    #[tokio::test]
+    async fn an_invalidated_hash_no_row_was_checked_against_changes_nothing() {
+        let txid = "f3".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        let before = load_row(&storage, &txid).await.unwrap().unwrap();
+        let before_word = word(&storage, &txid).await;
+        let event = ChainEvent::Invalidated {
+            block_hash: "ff".repeat(32),
+        };
+        let delivered = deliver_chain_event(&storage, &services, &clock, &opts(), 1, event)
+            .await
+            .unwrap();
+        println!("an unrelated invalidation: {delivered:?}");
+        assert!(delivered.moved.is_empty());
+        assert_eq!(feed_cursor(&storage).await.unwrap(), 1);
+        assert_eq!(load_row(&storage, &txid).await.unwrap().unwrap(), before);
+        assert_eq!(word(&storage, &txid).await, before_word);
+        let offered = reading(&storage, &services, &txid).await;
+        assert_eq!((offered.suspect, offered.offered()), (false, true));
     }
 
     /// Ruling 7a at the reading: a creator whose proof a reorg took reads
