@@ -267,9 +267,12 @@ the string form only.
 
 A coin whose transaction is `rejected`, `conflicted` or `abandoned` is never
 offered; nor, under any rule or word and mined included, is our own coin
-whose transaction's lineage is dead: an input of it, or of an ancestor of
-ours, was created by an action of ours that is `conflicted`, `rejected` or
-`failed` (the owner's lineage ruling of 2026-10-22; #163); a coin whose transaction is `stale` (its proof's block left the
+whose transaction's lineage is dead: an input of it, or of an ancestor on
+the walk, was created by an action of this wallet, made or received, whose
+stored word is `conflicted`, `rejected` or `abandoned` or whose status is
+`failed`, unless a proof held for that action checks against the headers,
+which reads it mined for the walk as at the door (the owner's lineage
+ruling of 2026-10-22; #163); a coin whose transaction is `stale` (its proof's block left the
 chain, the transaction confirming again) ranks as an unproven one, offered
 under the same rule (our own change under `SPEND_OWN_CHANGE`, a received
 coin under the action's word) and never with no rule (the owner's ruling 7a
