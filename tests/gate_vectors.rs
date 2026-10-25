@@ -246,7 +246,16 @@ async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
     for (tag, opts) in &words(checks.row, built) {
         // A coin the wallet does not hold is refused at the gate, the
         // caller's error (#166): the Lean's 'no coin', not offerable.
-        let held = match assess_named(&built.storage, &built.services, opts, &coin, &[], None).await
+        let held = match assess_named(
+            &built.storage,
+            &built.services,
+            opts,
+            &coin,
+            &[],
+            None,
+            false,
+        )
+        .await
         {
             Ok(held) => Some(held),
             Err(GateError::Scope(_)) if built.output_id.is_none() => None,
