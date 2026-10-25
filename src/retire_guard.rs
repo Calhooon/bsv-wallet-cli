@@ -23,8 +23,9 @@ use sqlx::SqlitePool;
 
 /// Request statuses the toolbox writes only once a broadcaster accepted the
 /// transaction or a status source held it (`unmined`; the legacy `callback`
-/// and `unconfirmed`), or a proof landed (`completed`).
-const TAKEN_REQ_STATUSES: [&str; 4] = ["unmined", "callback", "unconfirmed", "completed"];
+/// and `unconfirmed`), or a proof landed (`completed`, `unfail`).
+/// `unfail` labels the proof that wins over every earlier word.
+const TAKEN_REQ_STATUSES: [&str; 5] = ["unmined", "callback", "unconfirmed", "completed", "unfail"];
 
 /// Broadcast-memory rows that are an accepting word (`accepted`) or more
 /// (`seen`, `mined`), from any provider or the chain index.
@@ -45,13 +46,23 @@ const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 /// refusal there. The request keeps `unmined`: a refusal is a hint at the
 /// toolbox 0.7.4 and moves no request.
 pub async fn broadcaster_took(pool: &SqlitePool, txid: &str) -> Result<bool> {
-    let req: Option<String> =
-        sqlx::query_scalar("SELECT status FROM proven_tx_reqs WHERE txid = ? LIMIT 1")
+    let req: Option<(String, Option<i64>)> =
+        sqlx::query_as("SELECT status, proven_tx_id FROM proven_tx_reqs WHERE txid = ? LIMIT 1")
             .bind(txid)
             .fetch_optional(pool)
             .await?;
-    if req.is_some_and(|s| TAKEN_REQ_STATUSES.contains(&s.as_str())) {
+    if req.is_some_and(|(s, proof)| proof.is_some() || TAKEN_REQ_STATUSES.contains(&s.as_str())) {
         return Ok(true);
+    }
+    if table_exists(pool, "proven_txs").await? {
+        let proven: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM proven_txs WHERE txid = ? LIMIT 1")
+                .bind(txid)
+                .fetch_optional(pool)
+                .await?;
+        if proven.is_some() {
+            return Ok(true);
+        }
     }
     let completed: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM transactions WHERE txid = ? AND status = 'completed' LIMIT 1",
@@ -146,7 +157,11 @@ mod tests {
 
     async fn pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE proven_tx_reqs (txid TEXT, status TEXT)")
+        sqlx::query("CREATE TABLE proven_tx_reqs (txid TEXT, status TEXT, proven_tx_id INTEGER)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE proven_txs (txid TEXT)")
             .execute(&pool)
             .await
             .unwrap();
@@ -172,7 +187,7 @@ mod tests {
             (&c, "unsent", "unproven"),
             (&d, "sending", "sending"),
         ] {
-            sqlx::query("INSERT INTO proven_tx_reqs VALUES (?, ?)")
+            sqlx::query("INSERT INTO proven_tx_reqs (txid, status) VALUES (?, ?)")
                 .bind(txid)
                 .bind(req)
                 .execute(&pool)
@@ -221,5 +236,63 @@ mod tests {
             first_taken(&pool, [b.as_str(), d.as_str()]).await.unwrap(),
             Some(d.clone())
         );
+    }
+
+    async fn request_is_taken(status: &str, proof_id: Option<i64>, proof_row: bool) -> bool {
+        let pool = pool().await;
+        sqlx::query("INSERT INTO proven_tx_reqs VALUES ('subject', ?, ?)")
+            .bind(status)
+            .bind(proof_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO proven_txs VALUES (?)")
+            .bind(if proof_row { "subject" } else { "unrelated" })
+            .execute(&pool)
+            .await
+            .unwrap();
+        broadcaster_took(&pool, "subject").await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_unfail_request_is_taken() {
+        assert!(request_is_taken("unfail", None, false).await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_or_invalid_request_with_a_linked_proof_is_taken() {
+        let taken = [
+            ("failed", request_is_taken("failed", Some(1), false).await),
+            ("invalid", request_is_taken("invalid", Some(1), false).await),
+        ];
+        assert_eq!(taken, [("failed", true), ("invalid", true)]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_or_invalid_request_with_a_proven_tx_is_taken() {
+        let taken = [
+            ("failed", request_is_taken("failed", None, true).await),
+            ("invalid", request_is_taken("invalid", None, true).await),
+        ];
+        assert_eq!(taken, [("failed", true), ("invalid", true)]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_or_invalid_request_without_a_proof_is_not_taken() {
+        let taken = [
+            ("failed", request_is_taken("failed", None, false).await),
+            ("invalid", request_is_taken("invalid", None, false).await),
+        ];
+        assert_eq!(taken, [("failed", false), ("invalid", false)]);
+    }
+
+    #[tokio::test]
+    async fn a_missing_proven_txs_table_says_nothing() {
+        let pool = pool().await;
+        sqlx::query("DROP TABLE proven_txs")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!broadcaster_took(&pool, "no-record").await.unwrap());
     }
 }
