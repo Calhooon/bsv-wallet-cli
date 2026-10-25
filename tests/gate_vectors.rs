@@ -13,14 +13,17 @@
 //! keeps it (the toolbox's `proven_txs` path for `mined`; the tracker's row
 //! for `built`, the hints `heard` stores for `announced` and `seen`, a stored
 //! reorg for `stale`, a stored fork for the suspect mark, a stored verdict
-//! for `rejected` and `conflicted`), and the mock header service at the
-//! row's tip with the row's root at the creator's proof height. The gate is
-//! then asked through its public doors, nothing restated here:
+//! for `rejected` and `conflicted`), for a row whose creator's lineage is
+//! dead a conflicted parent of ours whose change the creator spent
+//! ([`dead_parent`]), and the mock header service at the row's tip with the
+//! row's root at the creator's proof height. The gate is then asked
+//! through its public doors, nothing restated here:
 //!
 //! - `read_creators`: the creator's reading. Its word must be the row's: a
 //!   difference is this test's construction failing, never a finding. Its
 //!   suspect mark is read after the guard (which never clears it, #164) and
 //!   is compared.
+//! - `dead_lineages`: the creator's lineage, against `dead_lineage` (#163).
 //! - `hold_reason` on that reading: the creator's door (`door_spendable`;
 //!   `guard_depth` where the reason names the depth).
 //! - `assess_named` (a named input) and `assess` (the allocation's offer):
@@ -40,7 +43,7 @@ use bsv_sdk::primitives::hash::{sha256, sha256d};
 use bsv_sdk::transaction::MerklePath;
 use bsv_tracker::{ChainEnvelope, ChainEvent, EventHeader, Hint, HintStatus};
 use bsv_wallet_cli::spend_gate::{
-    assess, assess_named, hold_reason, AllowPending, GateError, GateOptions, Origin,
+    assess, assess_named, dead_lineages, hold_reason, AllowPending, GateError, GateOptions, Origin,
 };
 use bsv_wallet_cli::tracker_host::{heard, read_creators, SystemClock, TickOptions};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
@@ -90,7 +93,6 @@ const COLUMNS_NOT_ANSWERED: &[(&str, &str)] = &[
     ("rule_for, rule_for_allows", "the gate names no rule per creator: the host's rule is SPEND_OWN_CHANGE (the made arm) and the action's word (allowPending), read inside hold_reason"),
     ("received_pending, door_word", "the gate's door reads the tracker's word itself; it computes no door word and no received-pending verdict apart from the hold"),
     ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word (or locked, frozen, lost), not the coin's word"),
-    ("dead_lineage", "the gate reads the creator only, never its ancestors (the finding no-lineage)"),
     ("host_answer, host_answer_data", "a row names its door (createAction, internalizeAction, ...) but carries none of its arguments (no BEEF, no outputs), so the host's answer at that door cannot be replayed from the row"),
 ];
 
@@ -306,6 +308,9 @@ async fn build(row: &Value) -> Built {
         )
         .await;
         evidence(row, &mut built, made).await;
+        if b(row, "dead_lineage") == Some(true) {
+            dead_parent(&built, creator, tx_row).await;
+        }
         built.output_id = Some(insert_coin(row, &built, tx_row).await);
         built.origin = Some(if made { Origin::Made } else { Origin::Received });
     }
@@ -460,6 +465,19 @@ async fn insert_coin(row: &Value, built: &Built, tx_row: i64) -> i64 {
         _ => None,
     };
     let satoshis = i64::try_from(n(row, "coin_satoshis").unwrap()).unwrap();
+    let coin = (built.txid.as_str(), built.vout, satoshis);
+    insert_output(built, tx_row, coin, lock == "free", spender).await
+}
+
+/// An output `(txid, vout, satoshis)` of the transaction row `tx_row`, a
+/// change output of the default basket.
+async fn insert_output(
+    built: &Built,
+    tx_row: i64,
+    (txid, vout, satoshis): (&str, u32, i64),
+    spendable: bool,
+    spent_by: Option<i64>,
+) -> i64 {
     sqlx::query(
         "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, spent_by) \
          VALUES (?, ?, ?, ?, ?, ?, ?, 'P2PKH', ?, 1, 'storage', 'change', 'c', ?)",
@@ -467,16 +485,36 @@ async fn insert_coin(row: &Value, built: &Built, tx_row: i64) -> i64 {
     .bind(built.user)
     .bind(tx_row)
     .bind(built.basket)
-    .bind(i64::from(built.vout))
+    .bind(i64::from(vout))
     .bind(satoshis)
     .bind(hex::decode(LOCK).unwrap())
-    .bind(&built.txid)
-    .bind(i64::from(lock == "free"))
-    .bind(spender)
+    .bind(txid)
+    .bind(i64::from(spendable))
+    .bind(spent_by)
     .execute(built.storage.writer())
     .await
     .unwrap()
     .last_insert_rowid()
+}
+
+/// A row whose creator's lineage is dead names no ancestor, so the replay
+/// builds the scenario's (2026-10-22-wallet-void-parent-descendants-stay-
+/// spendable): a parent P of ours, `conflicted` by a mined competitor R
+/// (the tracker's stored word and verdict), whose change the creator spent
+/// (`spent_by` the creator's row). The mirror's parent is a received
+/// coin's creator; the walk reads a parent's word whatever its origin.
+async fn dead_parent(built: &Built, creator: &str, tx_row: i64) {
+    let name = format!("lineage parent of {creator}");
+    let txid = hash_of(&name);
+    let parent = insert_action(built, &name, &txid, true, "unproven").await;
+    let verdict = serde_json::json!({"kind": "conflicted", "competitors": [hash_of("R")]});
+    sqlx::query("INSERT INTO tracker_states (txid, word, verdict) VALUES (?, 'conflicted', ?)")
+        .bind(&txid)
+        .bind(verdict.to_string())
+        .execute(built.storage.writer())
+        .await
+        .unwrap();
+    insert_output(built, parent, (&txid, 0, 1_000), false, Some(tx_row)).await;
 }
 
 /// A tracker row in the host's own record (`tracker_states`).
@@ -649,6 +687,13 @@ async fn replay(row: &Value, out: &mut Vec<Divergence>) {
     if let Some(origin) = built.origin {
         creator_checks(&mut checks, &built, origin).await;
     }
+    // The creator's lineage as the gate reads it (#163).
+    let dead = dead_lineages(built.storage.pool()).await.unwrap();
+    checks.field(
+        "dead_lineages",
+        "dead_lineage",
+        &dead.contains_key(&built.txid),
+    );
     coin_checks(&mut checks, &built).await;
 }
 
