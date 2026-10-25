@@ -3493,6 +3493,14 @@ pub(crate) mod tests {
         assert_eq!((held.suspect, held.offered()), (true, false));
     }
 
+    async fn mined_row_at_900(
+        txid: &str,
+    ) -> (StorageSqlx, MockWalletServices, FixedClock, TrackedRow) {
+        let (storage, services, clock) = mined_at_900(txid).await;
+        let row = load_row(&storage, txid).await.unwrap().unwrap();
+        (storage, services, clock, row)
+    }
+
     async fn invalidated_at_900(txid: &str) -> (StorageSqlx, MockWalletServices, FixedClock) {
         let (storage, services, clock) = mined_at_900(txid).await;
         let gone = header_of(&header(900, txid, 0).to_binary()).unwrap().hash;
@@ -3558,10 +3566,11 @@ pub(crate) mod tests {
         storage: &StorageSqlx,
         services: &MockWalletServices,
         user: i64,
+        own_change: bool,
     ) -> crate::spend_gate::Assessment {
         let gate = crate::spend_gate::GateOptions {
             spend_depth: 1,
-            own_change: true,
+            own_change,
             allow_pending: crate::spend_gate::AllowPending::Off,
             tracker: opts(),
         };
@@ -3573,6 +3582,18 @@ pub(crate) mod tests {
         )
         .await
         .unwrap()
+    }
+
+    async fn assert_stale_creator_reading(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        txid: &str,
+    ) {
+        let read = reading(storage, services, txid).await;
+        assert_eq!(
+            (read.word, read.suspect, read.offered(), read.fault),
+            ("stale", false, false, None)
+        );
     }
 
     /// #206: the alert cannot re-prove a word with the header it invalidated.
@@ -3606,7 +3627,7 @@ pub(crate) mod tests {
         assert_eq!(word(&storage, &txid).await, open);
 
         let user = coin_of_tracked_creator(&storage, &txid).await;
-        let held = assess_tracked_coin(&storage, &services, user).await;
+        let held = assess_tracked_coin(&storage, &services, user, true).await;
         println!("assess after invalidation: {held:?}");
         assert!(held.offered.is_empty());
         assert_eq!(held.held.len(), 1);
@@ -3622,7 +3643,7 @@ pub(crate) mod tests {
         assert!(row.chain.is_empty());
         let recovered = reading(&storage, &services, &txid).await;
         assert!(!recovered.suspect && recovered.offered());
-        let offered = assess_tracked_coin(&storage, &services, user).await;
+        let offered = assess_tracked_coin(&storage, &services, user, true).await;
         println!("assess after the new header's tip: {offered:?}");
         assert!(offered.held.is_empty());
         assert_eq!(offered.offered_satoshis(), 1000);
@@ -3639,19 +3660,75 @@ pub(crate) mod tests {
             word(&storage, &txid).await
         );
         assert_eq!(word(&storage, &txid).await, stale);
-        let read = reading(&storage, &services, &txid).await;
-        assert_eq!(
-            (read.word, read.suspect, read.offered(), read.fault),
-            ("stale", false, false, None)
-        );
+        assert_stale_creator_reading(&storage, &services, &txid).await;
         assert_eq!(word(&storage, &txid).await, stale);
     }
 
+    /// #206, the charter's reading: the service already carries another
+    /// root when the invalidation arrives. Delivery and the next tick keep
+    /// the word stale, its proof and event retained; #162's pending rule
+    /// decides whether its coin is offered.
+    #[tokio::test]
+    async fn an_invalidated_block_whose_root_already_moved_reads_stale_at_delivery() {
+        let txid = "f4".repeat(32);
+        let (storage, services, clock, before) = mined_row_at_900(&txid).await;
+        let gone = header_of(&header(900, &txid, 0).to_binary()).unwrap().hash;
+        let event = serde_json::json!({ "v": 1, "kind": "invalidated", "blockHash": gone });
+        services.set_header_for_height(header(900, &"ef".repeat(32), 1));
+        deliver(&storage, &services, &clock, 1, event.clone()).await;
+
+        let stored = word(&storage, &txid).await;
+        println!("invalidated after the root already moved: {stored:?}");
+        assert_eq!(
+            stored,
+            ("stale".to_string(), None, Some("reorg@900".to_string()))
+        );
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(row.bump, before.bump);
+        assert_eq!(
+            row.chain_events(),
+            vec![decode_envelope(event.to_string().as_bytes()).unwrap()]
+        );
+        assert_stale_creator_reading(&storage, &services, &txid).await;
+
+        tick(&storage, &services, &clock, &opts()).await.unwrap();
+        let stored = word(&storage, &txid).await;
+        println!("the next tick on the moved root: {stored:?}");
+        assert_eq!(
+            stored,
+            (
+                "stale".to_string(),
+                None,
+                Some("proof_failed@900".to_string())
+            )
+        );
+        let after = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(after.bump, row.bump);
+        assert_eq!(after.chain, row.chain);
+        assert_stale_creator_reading(&storage, &services, &txid).await;
+
+        let user = coin_of_tracked_creator(&storage, &txid).await;
+        let held = assess_tracked_coin(&storage, &services, user, false).await;
+        assert!(held.offered.is_empty());
+        assert_eq!(held.held.len(), 1);
+        assert_eq!(
+            held.held[0].reason,
+            "stale: its block left the chain; own change, SPEND_OWN_CHANGE=0"
+        );
+        let offered = assess_tracked_coin(&storage, &services, user, true).await;
+        println!("the stale coin under the own-change rule: {offered:?}");
+        assert!(offered.held.is_empty());
+        assert_eq!(offered.offered_satoshis(), 1000);
+    }
+
+    /// A guard of beta's behaviour, not evidence of the #206 fix: an
+    /// unmatched hash names no row, so delivery builds no deactivated set.
+    /// The row, proof and offered coin stay untouched. This passes with
+    /// the invalidation fix reverted too.
     #[tokio::test]
     async fn an_invalidated_hash_no_row_was_checked_against_changes_nothing() {
         let txid = "f3".repeat(32);
-        let (storage, services, clock) = mined_at_900(&txid).await;
-        let before = load_row(&storage, &txid).await.unwrap().unwrap();
+        let (storage, services, clock, before) = mined_row_at_900(&txid).await;
         let before_word = word(&storage, &txid).await;
         let event = ChainEvent::Invalidated {
             block_hash: "ff".repeat(32),
