@@ -628,23 +628,33 @@ async fn permission_audit() -> Json<serde_json::Value> {
 async fn chain_feed_status(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
 ) -> Response {
-    let storage = wallet.storage();
-    let status = crate::chain_feed::read_status(storage).await;
-    let cursor = crate::tracker_host::feed_cursor(storage).await;
-    let frozen = crate::tracker_host::frozen_count(storage).await;
-    match (status, cursor, frozen) {
-        (Ok(status), Ok(cursor), Ok(frozen)) => Json(json!({
+    async fn read_feed(storage: &StorageSqlx) -> anyhow::Result<serde_json::Value> {
+        let status = crate::chain_feed::read_status(storage).await?;
+        let cursor = crate::tracker_host::feed_cursor(storage).await?;
+        let frozen = crate::tracker_host::frozen_count(storage).await?;
+        Ok(json!({
             "status": status,
             "cursor": cursor.to_string(),
             "frozenCount": frozen,
         }))
-        .into_response(),
-        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "code": "ERR_CHAIN_FEED", "message": e.to_string() })),
-        )
-            .into_response(),
     }
+    match read_feed(wallet.storage()).await {
+        Ok(body) => Json(body).into_response(),
+        Err(e) => host_route_fault(&e, "ERR_CHAIN_FEED"),
+    }
+}
+
+/// Host-route store faults keep their code unless the store is busy by
+/// type (#203), including a bare sqlx error wrapped by the proof read.
+fn host_route_fault(e: &anyhow::Error, code: &str) -> Response {
+    if let Some(busy) = error::AppError::store_busy(e) {
+        return busy.into_response();
+    }
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "code": code, "message": e.to_string() })),
+    )
+        .into_response()
 }
 
 /// GET /tx/{txid} — the tracker's stored word for one transaction
@@ -661,6 +671,39 @@ async fn tx_word(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
     axum::extract::Path(txid): axum::extract::Path<String>,
 ) -> Response {
+    async fn read_word(
+        storage: &StorageSqlx,
+        txid: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let Some((word, height, reask)) = crate::tracker_host::stored_word(storage, txid).await?
+        else {
+            return Ok(None);
+        };
+        let evidence = if word == "mined" {
+            let row = sqlx::query_as::<_, (String, i64)>(
+                "SELECT merkle_root, height FROM proven_txs WHERE lower(txid) = ?",
+            )
+            .bind(txid)
+            .fetch_optional(storage.pool())
+            .await
+            .map_err(anyhow::Error::from)?;
+            row.map(|(root, height)| json!({ "root": root, "height": height }))
+        } else {
+            None
+        };
+        let tier = crate::tracker_host::stored_tier(storage, txid).await?;
+        let mut body = json!({
+            "txid": txid,
+            "word": word,
+            "height": height,
+            "reask": reask,
+            "evidence": evidence,
+        });
+        if let Some(tier) = tier {
+            body["tier"] = json!(tier);
+        }
+        Ok(Some(body))
+    }
     let txid = txid.trim().to_ascii_lowercase();
     if txid.len() != 64 || !txid.bytes().all(|b| b.is_ascii_hexdigit()) {
         return (
@@ -671,54 +714,15 @@ async fn tx_word(
         )
             .into_response();
     }
-    let storage = wallet.storage();
-    let fault = |e: anyhow::Error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "code": "ERR_TX_WORD", "message": e.to_string() })),
+    match read_word(wallet.storage(), &txid).await {
+        Ok(Some(body)) => Json(body).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "code": "NOT_FOUND", "message": format!("no word stored for {txid}") })),
         )
-            .into_response()
-    };
-    let (word, height, reask) =
-        match crate::tracker_host::stored_word(storage, &txid).await {
-            Ok(Some(view)) => view,
-            Ok(None) => return (
-                StatusCode::NOT_FOUND,
-                Json(
-                    json!({ "code": "NOT_FOUND", "message": format!("no word stored for {txid}") }),
-                ),
-            )
-                .into_response(),
-            Err(e) => return fault(e),
-        };
-    let evidence = if word == "mined" {
-        let row: Result<Option<(String, i64)>, sqlx::Error> =
-            sqlx::query_as("SELECT merkle_root, height FROM proven_txs WHERE lower(txid) = ?")
-                .bind(&txid)
-                .fetch_optional(storage.pool())
-                .await;
-        match row {
-            Ok(row) => row.map(|(root, height)| json!({ "root": root, "height": height })),
-            Err(e) => return fault(e.into()),
-        }
-    } else {
-        None
-    };
-    let tier = match crate::tracker_host::stored_tier(storage, &txid).await {
-        Ok(tier) => tier,
-        Err(e) => return fault(e),
-    };
-    let mut body = json!({
-        "txid": txid,
-        "word": word,
-        "height": height,
-        "reask": reask,
-        "evidence": evidence,
-    });
-    if let Some(tier) = tier {
-        body["tier"] = json!(tier);
+            .into_response(),
+        Err(e) => host_route_fault(&e, "ERR_TX_WORD"),
     }
-    Json(body).into_response()
 }
 
 /// POST /permission-audit/reset — call immediately before the flow you measure.

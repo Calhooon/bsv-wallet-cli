@@ -285,6 +285,46 @@ pub async fn response_answer(
     (status, retry, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// A wallet behind another connection's exclusive lock, sharing
+/// [`no_wait_file`] and [`busy_holder`] with the abort pre-check test.
+/// Dotfile locking keeps every reader out; every reader has no busy wait.
+pub async fn busy_read_wallet() -> (
+    tempfile::TempDir,
+    crate::server::handlers::WalletState,
+    sqlx::SqliteConnection,
+) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let file = dir.path().join("busy.db");
+    let options = no_wait_file(&file).vfs("unix-dotfile");
+    let mut holder = busy_holder(&options, "CREATE TABLE busy_fixture (id INTEGER)").await;
+    let storage = bsv_wallet_toolbox::StorageSqlx::new(&format!(
+        "sqlite:{}?vfs=unix-dotfile",
+        file.display()
+    ))
+    .await
+    .unwrap();
+    let key = bsv_sdk::primitives::PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+    let wallet = test_wallet(storage, "host-route", key).await;
+    let storage = wallet.storage();
+    storage.pool().set_connect_options(
+        storage
+            .pool()
+            .connect_options()
+            .as_ref()
+            .clone()
+            .busy_timeout(std::time::Duration::ZERO),
+    );
+    sqlx::query("PRAGMA busy_timeout = 0")
+        .execute(storage.pool())
+        .await
+        .unwrap();
+    sqlx::query("BEGIN EXCLUSIVE")
+        .execute(&mut holder)
+        .await
+        .unwrap();
+    (dir, wallet, holder)
+}
+
 /// A migrated wallet on the given store for router tests. Constructed
 /// before taking a lock so the test exercises only the served read.
 pub async fn test_wallet(
