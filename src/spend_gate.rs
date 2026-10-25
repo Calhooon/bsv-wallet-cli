@@ -1327,12 +1327,12 @@ async fn assess_inner<V: WalletServices + ?Sized>(
     let mut readings: HashMap<String, CreatorReading> = HashMap::new();
     let mut out = Assessment::default();
     let mut next = 0;
-    // The candidates holding a proof are read with the first batch of
-    // creators, one reading of each, retried with them: the walk and the
-    // door read one word per creator.
-    if !lineage.proofs().is_empty() {
+    // Bound the proofs by all eligible creators, including later lazy
+    // batches, so their ancestors still share this read and its one retry.
+    let proofs = lineage.proofs(&by_creator);
+    if !proofs.is_empty() {
         next = batch_end(0);
-        let mut first = lineage.proofs().to_vec();
+        let mut first = proofs;
         join_pairs(&mut first, by_creator[..next].iter().cloned());
         read_batch(
             storage,
@@ -1509,8 +1509,9 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     // One reading of the creators and the lineage's candidates holding a
     // proof, against one read of the headers and retried together: one
     // word per creator.
+    let proofs = lineage.proofs(&creators);
     let mut reads = creators;
-    join_pairs(&mut reads, lineage.proofs().iter().cloned());
+    join_pairs(&mut reads, proofs);
     let mut readings = HashMap::new();
     if !reads.is_empty() {
         read_batch(
