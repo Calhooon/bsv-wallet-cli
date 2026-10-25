@@ -3,8 +3,8 @@
 //! rule" and `docs/DECISIONS-2026-10-19.md` section 11 (a);
 //! `lean/Wallet.lean` `State.skel`, `lineageDead`, `deadLineage`,
 //! `offerableUnder`): an action of ours is dead for the door when an input
-//! of it was created by an action whose word is dead, or by one whose own
-//! lineage is dead. A coin of a dead lineage is never offered, by any rule
+//! of it was created by an action of this wallet, made or received, whose
+//! word is dead, or by one whose own lineage is dead. A coin of a dead lineage is never offered, by any rule
 //! or word and whatever its creator's own word (mined included), and a
 //! createAction naming one is refused (`dead_lineage_never_offered`,
 //! `dead_lineage_create_refused`). The gate reads it after the creator's
@@ -22,27 +22,51 @@
 //! **The dead words.** The Lean's three (`dead`: `abandoned`, `rejected`,
 //! `conflicted`) are read where this host keeps them: the tracker's stored
 //! word (`tracker_states.word`) `conflicted` or `rejected`, which the
-//! tracker writes only on evidence (a mined competitor's checked proof, the
-//! evaluator's verdict); and the toolbox's `failed` status for the abandon,
+//! tracker writes only on evidence (a node's verdict, stored beside the
+//! word so a replay reads it back; this host feeds no competitor proof);
+//! and the toolbox's `failed` status for the abandon,
 //! since the CLI's tracker row stores no abandon (an action the host gives
 //! up is the toolbox's `failed`; `tests/gate_vectors.rs` `ABANDONED`). A
-//! stored `abandoned` word is read as dead too, though no store writes one
-//! today. A `failed` transaction with a proof in `proven_txs` is not dead:
-//! the tracker reads that proof as `mined`, and the toolbox's own BEEF walk
-//! lets the proof outrank the status (`get_tx_with_proof`). The stored word
-//! is read as stored, never replayed against the headers: no chain event
-//! returns a dead word to live (`Tracker.dead_onChain`), and a reorg moves
-//! the lineage only with its creators' words (`reorg_lifts_dead_lineage`).
+//! stored `abandoned` word is read too, though no store writes one today.
+//! Each is a candidate, whether the action was made or received (the
+//! Lean's `w.actions` holds received actions, and `skel` reads a parent's
+//! word whatever its origin).
 //!
-//! **The walk.** One query for the whole wallet, forward from the dead
-//! actions to their descendants: the actions spending an output of a dead
-//! action, then those spending an output of one of them, and so on. That set
-//! is exactly the actions whose `lineageDead` holds, read from the dead end,
-//! so a wallet with no dead action pays one indexed read and no walk. Each
-//! (descendant, dead ancestor) pair is visited once (SQL's `UNION`), so a
-//! cycle planted in `spent_by` ends the walk instead of hanging the door,
-//! and adds nothing a dead word does not reach. The rule is a view: nothing
-//! is written, no lock moves (`dead_lineage_releases_only_on_evidence`).
+//! **One word per creator.** The Lean keeps one word per action, and the
+//! lineage rule reads the word the door reads (`lean/Wallet.lean`
+//! `State.skel` reads `dead a.tracker.word`, as `doorCloses` and
+//! `offerableUnder` do); a proof whose root checks outranks every other
+//! word (`lean/Tracker.lean` `onProof_of_rootChecks`, the charter's row).
+//! So a candidate that holds a proof (its tracker row's bump, or the
+//! toolbox's `proven_txs` row) is read as the door reads it
+//! ([`read_creators`], the same (txid, stored path) pair and options): a
+//! proof that checks makes it `mined` for the walk as for the door, and it
+//! is not dead; a proof the headers could not check (the header service
+//! silent) or whose root does not match leaves the stored word, dead for
+//! both, the door holding that creator closed. The header service is read
+//! only when a candidate holds a proof, and its fault there is the stored
+//! word, never the gate's fault. A candidate with no proof is dead as
+//! stored: a replay reads nothing else from a stored verdict, and a stored
+//! `abandoned` stays dead as stored. No chain event returns a dead word to
+//! live (`Tracker.dead_onChain`; a proof is not a chain event), and a reorg
+//! moves the lineage only with its creators' words
+//! (`reorg_lifts_dead_lineage`).
+//!
+//! **The walk.** One query for the whole wallet, forward from the
+//! candidates to their descendants: the actions spending an output of a
+//! candidate, then those spending an output of one of them, and so on. A
+//! wallet with no candidate pays one indexed read, no walk and no header
+//! read. The query returns each (descendant, candidate) pair once (SQL's
+//! `UNION`), not the nearest candidate per descendant, since which
+//! candidates stay dead is known only once their proofs are read: the pairs
+//! of a candidate the reading clears are dropped, and each descendant keeps
+//! the earliest pair left in the order [`dead_lineages`] names. What remains is
+//! exactly the actions whose `lineageDead` holds: a descendant reached only
+//! through a cleared candidate is reached by no dead one. The rows are
+//! bounded by the (descendant, candidate) pairs, so a cycle planted in
+//! `spent_by` ends the walk instead of hanging the door, and adds nothing a
+//! dead word does not reach. The rule is a view: nothing is written, no
+//! lock moves (`dead_lineage_releases_only_on_evidence`).
 
 use std::collections::HashMap;
 
