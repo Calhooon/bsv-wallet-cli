@@ -28,7 +28,10 @@ class PinnedCitations(unittest.TestCase):
         shutil.copy(TOOL, self.root / "tools/check-cites")
         self.git("init", "-q")
         self.write("src/lib.rs", SOURCE)
-        self.git("add", "src")
+        self.write("src/main.rs", SOURCE)
+        self.write("tests/integration.rs", SOURCE)
+        self.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n")
+        self.git("add", "src", "tests", "mcp")
         self.git("commit", "-qm", "pin")
         self.pin = self.git("rev-parse", "--short=12", "HEAD").strip()
         self.write("src/lib.rs", "// moved at HEAD\n" + SOURCE + "\n")
@@ -77,6 +80,16 @@ class PinnedCitations(unittest.TestCase):
 
     def test_wrong_line_fails_the_process(self):
         self.fails("identifier `alpha` is absent", body="`alpha` (`src/lib.rs:3`).")
+
+    def test_wrong_tests_citation_fails_the_process(self):
+        self.passes(body="`alpha` (`tests/integration.rs:1`).")
+        self.fails("tests/integration.rs:3: identifier `alpha` is absent",
+                   body="`alpha` (`tests/integration.rs:3`).")
+
+    def test_mcp_src_citation_uses_the_full_repository_path(self):
+        self.passes(body="`nested_alpha` (`mcp/src/main.rs:1`).")
+        self.fails("mcp/src/main.rs:1: identifier `alpha` is absent",
+                   body="`alpha` (`mcp/src/main.rs:1`).")
 
     def test_count_off_by_one_fails_the_process(self):
         self.fails("line count 4, but pin", count="4")
