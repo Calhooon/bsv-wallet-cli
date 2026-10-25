@@ -276,7 +276,14 @@ above a fork, reorg or split height; marked rows for a tip; the rows on an
 invalidated block's hash; `src/tracker_host.rs:2361-2394`) are replayed
 against the new branch's headers, read before the write lock
 (`src/tracker_host.rs:2403-2408`), and `Tracker::on_chain` rechecks each by
-its stored root: the same root, the word stands
+its stored root. The deactivated set holds a reorg's supplied headers and
+an invalidated block at each named row's stored proof height, with the
+hash matched by `header_hash` and the root computed from `bump`. If the
+service still answers that hash, the new branch has no answer there, so
+the word stays suspect with `recheck` until the next tip. The stored event
+reconstructs that deactivation on reload; the stored proof checks against
+the old header and the event rechecks against the new branch. On a new
+header: the same root, the word stands
 (`a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing`,
 `src/chain_feed_tests.rs:716`); the root gone, `stale` with the re-ask
 `reorg@<forkHeight>` (`a_reorg_on_the_feed_stales_the_word_and_the_new_proof_mines_it`,
