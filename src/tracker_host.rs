@@ -453,6 +453,9 @@ struct TrackedRow {
     hints: Vec<StoredHint>,
     /// The raw merkle path, hex. Checked again on every load.
     bump: Option<String>,
+    /// The hash of the header the stored word was checked against, as the
+    /// row last stored it (none unless the word was `mined`).
+    header_hash: Option<String>,
     asks: u32,
     next_ask_at: Option<Timestamp>,
     /// The BEEF to hand to the broadcasters again, and when.
@@ -527,6 +530,7 @@ impl TrackedRow {
             built: true,
             hints: vec![],
             bump: None,
+            header_hash: None,
             asks: 0,
             next_ask_at: None,
             reannounce_beef: None,
@@ -538,13 +542,15 @@ impl TrackedRow {
         }
     }
 
-    /// The headers the stored reorgs or invalidations deactivated, by height
-    /// (the latest event's header at a height it shares with an earlier one).
-    fn deactivated(&self) -> BTreeMap<Height, Header> {
-        self.chain_events()
-            .iter()
-            .flat_map(|event| deactivated_of(event, Some(self)).into_iter())
-            .collect()
+    /// The headers the stored reorgs or invalidations deactivated, by height,
+    /// oldest event first: every deactivated hash at a height it shares with
+    /// another is kept.
+    fn deactivated(&self) -> Deactivated {
+        merged(
+            self.chain_events()
+                .iter()
+                .map(|event| deactivated_of(event, Some(self))),
+        )
     }
 
     /// The word the hints alone give (`built`, `announced`, `seen`, ...):
@@ -602,6 +608,25 @@ impl TrackedRow {
         Ok(())
     }
 
+    /// The old and new branch over `headers` with `gone` deactivated; the old
+    /// one answers this row's checked header (`header_hash`).
+    fn branches<'a, H: Headers>(
+        &'a self,
+        headers: &'a H,
+        gone: &'a Deactivated,
+    ) -> (OldBranch<'a, H>, NewBranch<'a, H>) {
+        let old = OldBranch {
+            live: headers,
+            deactivated: gone,
+            checked: self.header_hash.as_deref(),
+        };
+        let new = NewBranch {
+            live: headers,
+            deactivated: gone,
+        };
+        (old, new)
+    }
+
     /// Feed the stored inputs to `tracker`, as [`TrackedRow::replay`] feeds
     /// them to one state; `deactivated` adds the headers the event being
     /// delivered takes away.
@@ -609,18 +634,10 @@ impl TrackedRow {
         &self,
         tracker: &mut Tracker,
         headers: &H,
-        deactivated: &BTreeMap<Height, Header>,
+        deactivated: &Deactivated,
     ) {
-        let mut gone = self.deactivated();
-        gone.extend(deactivated.iter().map(|(h, header)| (*h, header.clone())));
-        let old = OldBranch {
-            live: headers,
-            deactivated: &gone,
-        };
-        let new = NewBranch {
-            live: headers,
-            deactivated: &gone,
-        };
+        let gone = merged([self.deactivated(), deactivated.clone()]);
+        let (old, new) = self.branches(headers, &gone);
         tracker.track(self.txid.clone());
         if self.built {
             let _ = tracker.apply(&self.txid, &new, Input::Host(HostAction::Build));
@@ -665,14 +682,7 @@ impl TrackedRow {
     /// and is returned as the fault.
     fn replay<H: Headers>(&self, params: &Params, headers: &H) -> (State, Option<CheckError>) {
         let gone = self.deactivated();
-        let old = OldBranch {
-            live: headers,
-            deactivated: &gone,
-        };
-        let new = NewBranch {
-            live: headers,
-            deactivated: &gone,
-        };
+        let (old, new) = self.branches(headers, &gone);
         let mut state = State::new(self.txid.clone());
         if self.built {
             let _ = state.step(params, &new, Input::Host(HostAction::Build));
@@ -799,8 +809,8 @@ pub(crate) async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     Ok(())
 }
 
-const ROW_COLUMNS: &str = "txid, built, hints, bump, asks, next_ask_at, reannounce_beef, \
-     reannounce_at, on_accept, chain, verdict, follow_up";
+const ROW_COLUMNS: &str = "txid, built, hints, bump, header_hash, asks, next_ask_at, \
+     reannounce_beef, reannounce_at, on_accept, chain, verdict, follow_up";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     let hints: String = row.get("hints");
@@ -810,6 +820,7 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
         built: row.get::<i64, _>("built") != 0,
         hints: serde_json::from_str(&hints).unwrap_or_default(),
         bump: row.get("bump"),
+        header_hash: row.get("header_hash"),
         asks: row.get::<i64, _>("asks").max(0) as u32,
         next_ask_at: row
             .get::<Option<i64>, _>("next_ask_at")
@@ -2371,23 +2382,45 @@ fn lowercase_chain_event(mut event: ChainEvent) -> ChainEvent {
     event
 }
 
+/// Every header a reorg or invalidation deactivated, by height, in the
+/// order the events and their headers came: two deactivated hashes at one
+/// height are both kept, never one in place of the other.
+type Deactivated = BTreeMap<Height, Vec<Header>>;
+
+/// The deactivated sets merged in order: a header joins its height's list
+/// unless the list holds it already.
+fn merged(sets: impl IntoIterator<Item = Deactivated>) -> Deactivated {
+    let mut all = Deactivated::new();
+    for (height, header) in sets
+        .into_iter()
+        .flatten()
+        .flat_map(|(height, headers)| headers.into_iter().map(move |h| (height, h)))
+    {
+        let at = all.entry(height).or_default();
+        if !at.contains(&header) {
+            at.push(header);
+        }
+    }
+    all
+}
+
 /// The headers an event deactivated, by height, lowercase: a reorg's
 /// supplied headers, or an invalidation's matched hash with the named
 /// row's height and root from its stored proof (`bump`). The same inputs
 /// reconstruct the old header when the stored invalidation is replayed.
-fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Height, Header> {
+fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> Deactivated {
     if let ChainEvent::Invalidated { block_hash } = event {
         return row
             .and_then(TrackedRow::proof)
             .and_then(Result::ok)
             .and_then(|proof| {
                 proof.root().ok().map(|merkle_root| {
-                    BTreeMap::from([(
+                    Deactivated::from([(
                         proof.height(),
-                        Header {
+                        vec![Header {
                             hash: block_hash.clone(),
                             merkle_root,
-                        },
+                        }],
                     )])
                 })
             })
@@ -2398,20 +2431,34 @@ fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Heig
         ..
     } = event
     else {
-        return BTreeMap::new();
+        return Deactivated::new();
     };
-    deactivated_headers
-        .iter()
-        .map(|h| {
-            (
-                h.height,
-                Header {
-                    hash: h.hash.clone(),
-                    merkle_root: h.merkle_root.clone(),
-                },
-            )
-        })
-        .collect()
+    merged(deactivated_headers.iter().map(|h| {
+        Deactivated::from([(
+            h.height,
+            vec![Header {
+                hash: h.hash.clone(),
+                merkle_root: h.merkle_root.clone(),
+            }],
+        )])
+    }))
+}
+
+/// What one delivery deactivates: the event's own headers (an invalidation's
+/// for each named row, from its stored proof), and every header the named
+/// rows keep with the event's joined after them, the set the new branch reads.
+fn delivery_deactivated(event: &ChainEvent, rows: &[TrackedRow]) -> (Deactivated, Deactivated) {
+    let own = if matches!(event, ChainEvent::Invalidated { .. }) {
+        merged(rows.iter().map(|row| deactivated_of(event, Some(row))))
+    } else {
+        deactivated_of(event, None)
+    };
+    let gone = merged(
+        rows.iter()
+            .map(TrackedRow::deactivated)
+            .chain([own.clone()]),
+    );
+    (own, gone)
 }
 
 /// The branch a reorg or invalidation took away, over the host's headers:
@@ -2419,17 +2466,33 @@ fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Heig
 /// header at its height; the tip no lower than the highest of them), so
 /// the tracker holds the `mined` word the event names. Only proofs are
 /// stepped through this view; it writes no `mined` word on the new branch.
+///
+/// The invariant: a stored proof replays against the header it was checked
+/// against, never against another deactivated header at the same height.
+/// Where several deactivated headers share the proof's height (a kept
+/// invalidation of one block and a reorg naming another), the answer is the
+/// one whose hash is the row's stored `header_hash`, so a kept invalidation
+/// still names the replayed word's checked block and re-marks it; a row whose
+/// `header_hash` is none of them (a `stale` row stores none) gets the latest
+/// event's header at that height, the one it was checked against when that
+/// event was delivered.
 struct OldBranch<'a, H: Headers + ?Sized> {
     live: &'a H,
-    deactivated: &'a BTreeMap<Height, Header>,
+    deactivated: &'a Deactivated,
+    /// The row's stored `header_hash`.
+    checked: Option<&'a str>,
 }
 
 impl<H: Headers + ?Sized> Headers for OldBranch<'_, H> {
     fn header_at(&self, height: Height) -> std::result::Result<Option<Header>, HeaderError> {
-        match self.deactivated.get(&height) {
-            Some(header) => Ok(Some(header.clone())),
-            None => self.live.header_at(height),
-        }
+        let Some(gone) = self.deactivated.get(&height) else {
+            return self.live.header_at(height);
+        };
+        Ok(gone
+            .iter()
+            .find(|h| Some(h.hash.as_str()) == self.checked)
+            .or_else(|| gone.last())
+            .cloned())
     }
 
     fn tip_height(&self) -> std::result::Result<Height, HeaderError> {
@@ -2445,13 +2508,15 @@ impl<H: Headers + ?Sized> Headers for OldBranch<'_, H> {
 /// The new branch, as the crate's recheck must see it (ruling (5) of
 /// 2026-10-20 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`; the
 /// bsv-tracker 0.7.0 migration note): the host's headers, except that a
-/// height where the header service still answers a header a reorg or
-/// invalidation deactivated has no answer. A service that has not moved yet leaves the
+/// height where the header service still answers any header a reorg or
+/// invalidation deactivated at that height has no answer (every deactivated
+/// hash at a height counts, so a later event's header never lifts a kept
+/// one). A service that has not moved yet leaves the
 /// word suspect with `Reask::Recheck` until the next tip, never `mined` on
 /// the old branch's header.
 struct NewBranch<'a, H: Headers + ?Sized> {
     live: &'a H,
-    deactivated: &'a BTreeMap<Height, Header>,
+    deactivated: &'a Deactivated,
 }
 
 impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
@@ -2460,7 +2525,7 @@ impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
         Ok(header.filter(|h| {
             self.deactivated
                 .get(&height)
-                .is_none_or(|gone| gone.hash != h.hash)
+                .is_none_or(|gone| gone.iter().all(|g| g.hash != h.hash))
         }))
     }
 
@@ -2572,15 +2637,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         // The stored proofs replay against the branch the event (and any
         // reorg or invalidation a row keeps) took away; the event's recheck
         // reads the new branch, with no answer at a height the service has not moved.
-        let deactivated = if matches!(event, ChainEvent::Invalidated { .. }) {
-            rows.iter()
-                .flat_map(|row| deactivated_of(&event, Some(row)))
-                .collect()
-        } else {
-            deactivated_of(&event, None)
-        };
-        let mut gone: BTreeMap<_, _> = rows.iter().flat_map(TrackedRow::deactivated).collect();
-        gone.extend(deactivated.iter().map(|(h, header)| (*h, header.clone())));
+        let (deactivated, gone) = delivery_deactivated(&event, &rows);
         let new_branch = NewBranch {
             live: &snapshot,
             deactivated: &gone,
@@ -3787,6 +3844,162 @@ pub(crate) mod tests {
         assert_eq!(word(&storage, &txid).await, before_word);
         let offered = reading(&storage, &services, &txid).await;
         assert_eq!((offered.suspect, offered.offered()), (false, true));
+    }
+
+    /// A reorg at 900 whose deactivated header is `hash` with root `root`.
+    fn reorg_at_900(hash: &str, root: &str) -> serde_json::Value {
+        serde_json::json!({
+            "v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
+            "deactivatedHeaders": [event_header(900, hash, root)],
+            "newTip": event_header(901, &"b3".repeat(32), &"ee".repeat(32)),
+        })
+    }
+
+    /// The stored word open, the row's checked header `checked` and its kept
+    /// events of `kinds`, and the coin held on `read_creators` and by the
+    /// gate's assessment.
+    async fn assert_held_with_kept(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        txid: &str,
+        checked: &str,
+        kinds: &[&str],
+    ) {
+        let open = ("mined".to_string(), Some(900), Some("recheck".to_string()));
+        assert_eq!(word(storage, txid).await, open);
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT header_hash FROM tracker_states WHERE txid = ?")
+                .bind(txid)
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(stored.as_deref(), Some(checked));
+        let row = load_row(storage, txid).await.unwrap().unwrap();
+        let kept: Vec<_> = row.chain_events().iter().map(event_kind).collect();
+        assert_eq!(kept, kinds);
+        let held = reading(storage, services, txid).await;
+        println!("read_creators with both deactivated hashes kept: {held:?}");
+        assert_eq!(
+            (held.word, held.suspect, held.offered(), held.fault),
+            ("mined", true, false, None)
+        );
+        let user = coin_of_tracked_creator(storage, txid).await;
+        let assessed = assess_tracked_coin(storage, services, user, true).await;
+        assert!(assessed.offered.is_empty());
+        assert_eq!(assessed.held.len(), 1);
+        assert!(assessed.held[0].reason.starts_with("suspect: "));
+        assert_eq!(word(storage, txid).await, open);
+    }
+
+    /// #233, the probe: a kept invalidation of the header Y the proof was
+    /// checked against, the service still answering Y, then a reorg that
+    /// deactivates another header X at 900 (a sibling carrying the same
+    /// root). X joins Y at 900 instead of taking its place: the replay checks
+    /// the proof against Y, the kept invalidation re-marks the word, Y on the
+    /// new branch has no answer, and the coin stays held on delivery, on
+    /// `read_creators` and in the gate's assessment.
+    #[tokio::test]
+    async fn a_reorg_at_a_kept_invalidations_height_keeps_the_invalidation() {
+        let txid = "f5".repeat(32);
+        let (storage, services, clock) = invalidated_at_900(&txid).await;
+        let invalidated = header_with_hash(900, &txid, 0).hash;
+        let sibling = header_with_hash(900, &txid, 7).hash;
+        deliver(
+            &storage,
+            &services,
+            &clock,
+            2,
+            reorg_at_900(&sibling, &txid),
+        )
+        .await;
+        println!(
+            "a reorg of X at the kept invalidation's height: {:?}",
+            word(&storage, &txid).await
+        );
+        assert_held_with_kept(
+            &storage,
+            &services,
+            &txid,
+            &invalidated,
+            &["invalidated", "reorg"],
+        )
+        .await;
+    }
+
+    /// #233, the mirror: a row checked against Y keeps a reorg of X at 900
+    /// and the service answers X; an invalidation of Y then arrives. Y joins
+    /// X: X on the new branch still has no answer, so the kept reorg is not
+    /// lifted by the later event's header. The row is seeded as stored (a
+    /// delivered reorg of X would store X as its checked header, #228's path).
+    #[tokio::test]
+    async fn an_invalidation_at_a_kept_reorgs_height_keeps_the_reorg() {
+        let txid = "f6".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        let checked = header_with_hash(900, &txid, 0).hash;
+        let sibling = header_with_hash(900, &txid, 7).hash;
+        sqlx::query("UPDATE tracker_states SET chain = ?, reask = 'recheck' WHERE txid = ?")
+            .bind(serde_json::json!([reorg_at_900(&sibling, &txid).to_string()]).to_string())
+            .bind(&txid)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        services.set_header_for_height(header(900, &txid, 7));
+        deliver(
+            &storage,
+            &services,
+            &clock,
+            1,
+            serde_json::json!({ "v": 1, "kind": "invalidated", "blockHash": checked }),
+        )
+        .await;
+        println!(
+            "an invalidation of Y at the kept reorg's height: {:?}",
+            word(&storage, &txid).await
+        );
+        assert_held_with_kept(
+            &storage,
+            &services,
+            &txid,
+            &checked,
+            &["reorg", "invalidated"],
+        )
+        .await;
+    }
+
+    /// #233, `OldBranch`'s invariant: a row whose two kept events deactivate
+    /// two hashes at 900 (an invalidation of its own header Y, a reorg of X
+    /// carrying another root) replays its stored proof against Y, its stored
+    /// `header_hash`, never against X: no root mismatch, the checked header
+    /// Y, and the word held by the kept invalidation.
+    #[tokio::test]
+    async fn two_kept_events_at_one_height_replay_the_proof_against_its_own_header() {
+        let txid = "f7".repeat(32);
+        let (storage, services, clock) = invalidated_at_900(&txid).await;
+        let own = header_with_hash(900, &txid, 0).hash;
+        let other = "e7".repeat(32);
+        deliver(
+            &storage,
+            &services,
+            &clock,
+            2,
+            reorg_at_900(&other, &"ee".repeat(32)),
+        )
+        .await;
+        let snapshot = HeaderSnapshot::take(&services, [900]).await;
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(row.deactivated()[&900].len(), 2);
+        let (state, fault) = row.replay(&opts().params(), &snapshot);
+        println!("the replay of two deactivated hashes at 900: {fault:?}, {state:?}");
+        assert_eq!(fault, None);
+        let Word::Mined(mined) = state.word() else {
+            panic!("the stored proof no longer replays: {:?}", state.word());
+        };
+        assert_eq!(mined.checked().header().hash, own);
+        assert_eq!(
+            (state.suspect(), state.reask()),
+            (true, Some(&Reask::Recheck))
+        );
+        assert_held_with_kept(&storage, &services, &txid, &own, &["invalidated", "reorg"]).await;
     }
 
     /// Two independent stores with identical inputs, including hint timestamps.
