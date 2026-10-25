@@ -32,13 +32,24 @@ pub(crate) async fn record_host_routes(r: &mut Recorder) {
     r.case("tx.notHex", "tracked", get("/tx/nothex")).await;
 }
 
-/// Host reads under the exclusive store lock (#203). Appended to the
+/// Host routes under the exclusive store lock (#203, #226). Appended to the
 /// corpus so every existing fixture keeps its name and bytes.
 pub(crate) async fn record_host_store_busy(r: &mut Recorder) {
     r.case("chain-feed.storeBusy", "busy-read", get("/chain-feed"))
         .await;
     r.case("tx.storeBusy", "busy-read", get(&format!("/tx/{MINED}")))
         .await;
+    r.case(
+        "arc-callback.storeBusy",
+        "busy-read",
+        post(
+            "/arc-callback",
+            serde_json::json!({"txid": MINED, "txStatus": "REJECTED", "competingTxs": [UNKNOWN]}),
+        )
+        .without("origin")
+        .header("x-callbacktoken", WIRE_CALLBACK),
+    )
+    .await;
 }
 
 /// The ARC callback: disabled, refused, and taken.
