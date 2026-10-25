@@ -13,6 +13,9 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 
+mod chain_tracker;
+pub use chain_tracker::TestChainTracker;
+
 type Routes = Arc<HashMap<String, (u16, String, Vec<(String, String)>)>>;
 type Hits = Arc<Mutex<Vec<String>>>;
 type Sent = Arc<Mutex<Vec<HashMap<String, String>>>>;
@@ -353,6 +356,45 @@ pub async fn test_wallet(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_tracker_keeps_root_and_height_answers_and_supplies_mining_context() {
+        use bsv_sdk::transaction::{ChainTracker, MockChainTracker};
+
+        let root = "ab".repeat(32);
+        let mut original = MockChainTracker::new(900_001);
+        original.add_root(900_000, root.clone());
+        let mut rooted = TestChainTracker::new(900_001);
+        rooted.add_root(900_000, root.clone());
+        for (candidate, height) in [(&root[..], 900_000), ("other", 900_000), (&root, 899_999)] {
+            assert_eq!(
+                rooted.is_valid_root_for_height(candidate, height).await,
+                original.is_valid_root_for_height(candidate, height).await
+            );
+        }
+        let permissive = TestChainTracker::always_valid(900_001);
+        assert!(permissive
+            .is_valid_root_for_height("other", 0)
+            .await
+            .unwrap());
+        for tracker in [&rooted as &dyn ChainTracker, &permissive] {
+            assert_eq!(
+                tracker.current_height().await,
+                original.current_height().await
+            );
+            let tip = tracker.mining_tip().await.unwrap().expect("mining context");
+            assert_eq!(
+                (
+                    tip.height,
+                    tip.median_time_past,
+                    tip.genesis_height,
+                    tip.csv_height,
+                    tip.next_block_time
+                ),
+                (900_001, 1_700_000_000, 620_538, 419_328, None)
+            );
+        }
+    }
 
     /// L5 of the #50 review: a fixture's port stays bound after its test's
     /// runtime is gone, so no later fixture (and no gate the toolbox keys by

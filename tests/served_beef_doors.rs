@@ -3,12 +3,16 @@
 //! is never refused for its size, and a refusal names the invalid byte.
 //!
 //! All vectors are synthetic: a random throwaway key, a coinbase-style BUMP
-//! validated against a MockChainTracker. No header service and no broadcaster
+//! validated against a TestChainTracker. No header service and no broadcaster
 //! is asked: the proven transaction is never broadcast, and the default
 //! services name no header service.
 
+#[path = "../src/test_support/chain_tracker.rs"]
+mod chain_tracker;
+use chain_tracker::TestChainTracker;
+
 use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::transaction::{Beef, MerklePath, MockChainTracker, Transaction};
+use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{
     Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
@@ -40,7 +44,7 @@ async fn setup(root: Option<String>, auth_token: Option<&str>) -> (String, TempD
     bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
         .await
         .expect("open the proof gate");
-    let mut tracker = MockChainTracker::new(HEIGHT + 1);
+    let mut tracker = TestChainTracker::new(HEIGHT + 1);
     if let Some(root) = root {
         tracker.add_root(HEIGHT, root);
     }

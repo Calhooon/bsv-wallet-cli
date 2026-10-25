@@ -3,11 +3,14 @@
 
 mod world;
 
+#[path = "../../src/test_support/chain_tracker.rs"]
+mod chain_tracker;
+
 use std::sync::Arc;
 
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::script::LockingScript;
-use bsv_sdk::transaction::{Beef, MockChainTracker, Transaction};
+use bsv_sdk::transaction::{Beef, Transaction};
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput, WalletInterface};
 use bsv_wallet_cli::respend::settle_proven;
 use bsv_wallet_cli::spend_gate::GateOptions;
@@ -16,6 +19,7 @@ use bsv_wallet_toolbox::{
     BroadcastStatus, GetMerklePathResult, GetRawTxResult, GetStatusForTxidsResult, MonitorStorage,
     StorageSqlx, TxStatusDetail, WalletServices, WalletStorageProvider, WalletStorageWriter,
 };
+use chain_tracker::TestChainTracker;
 
 use world::{
     capture_markers, coin_state, fixture, headed, proof, status_answer, status_source, words,
@@ -125,13 +129,13 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     WalletStorageProvider::set_services(s, proof_services.clone() as Arc<dyn WalletServices>);
     s.set_max_acceptable_proof_height(1000).await.unwrap();
     // Wrong active root: the same bytes and proof are no evidence yet.
-    s.set_chain_tracker(Arc::new(MockChainTracker::new(1000)))
+    s.set_chain_tracker(Arc::new(TestChainTracker::new(1000)))
         .await;
     s.synchronize_transaction_statuses().await.unwrap();
     settle_proven(s, proof_services.as_ref()).await.unwrap();
     assert_eq!(words(&f).await, before);
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
-    let mut tracker = MockChainTracker::new(1000);
+    let mut tracker = TestChainTracker::new(1000);
     tracker.add_root(900, replacement.clone());
     s.set_chain_tracker(Arc::new(tracker)).await;
     s.synchronize_transaction_statuses().await.unwrap();
