@@ -564,14 +564,14 @@ impl TrackedRow {
         word_label(state.word())
     }
 
-    /// The stored chain events, decoded. They were decoded once before
-    /// they were stored; one that no longer decodes is reported and not
-    /// replayed.
+    /// The stored chain events, decoded with lowercase hashes, including
+    /// events kept before delivery normalized them. One that no longer
+    /// decodes is reported and not replayed.
     fn chain_events(&self) -> Vec<ChainEvent> {
         self.chain
             .iter()
             .filter_map(|json| match decode_envelope(json.as_bytes()) {
-                Ok(event) => Some(event),
+                Ok(event) => Some(lowercase_chain_event(event)),
                 Err(fault) => {
                     tracing::warn!(txid = %self.txid, %fault, "a stored chain event does not decode");
                     None
@@ -2326,6 +2326,51 @@ pub fn event_kind(event: &ChainEvent) -> &'static str {
     }
 }
 
+/// Lowercase the hash, root and txid fields to match the host's stored values.
+/// `Tip` has its hash and header; `Fork` its competing headers; `Reorg` its
+/// deactivated headers and new tip; `TipAge` its tip header. Every header has
+/// a hash, merkle root and previous hash. `Invalidated` has its block hash,
+/// `Frozen` its outpoint txid, and `Split` its tips' hashes. `SplitResolved` has
+/// none. Split keys are identifiers; chain work and rung names also stay as sent.
+fn lowercase_chain_event(mut event: ChainEvent) -> ChainEvent {
+    let lowercase_header = |header: &mut bsv_tracker::EventHeader| {
+        header.hash.make_ascii_lowercase();
+        header.merkle_root.make_ascii_lowercase();
+        header.previous_hash.make_ascii_lowercase();
+    };
+    match &mut event {
+        ChainEvent::Tip { hash, header, .. } => {
+            hash.make_ascii_lowercase();
+            lowercase_header(header);
+        }
+        ChainEvent::Fork { competing_tips, .. } => {
+            for header in competing_tips {
+                lowercase_header(header);
+            }
+        }
+        ChainEvent::Reorg {
+            deactivated_headers,
+            new_tip,
+            ..
+        } => {
+            for header in deactivated_headers {
+                lowercase_header(header);
+            }
+            lowercase_header(new_tip);
+        }
+        ChainEvent::Invalidated { block_hash } => block_hash.make_ascii_lowercase(),
+        ChainEvent::Frozen { outpoint } => outpoint.txid.make_ascii_lowercase(),
+        ChainEvent::TipAge { tip, .. } => lowercase_header(tip),
+        ChainEvent::Split { tips, .. } => {
+            for tip in tips {
+                tip.hash.make_ascii_lowercase();
+            }
+        }
+        ChainEvent::SplitResolved { .. } => {}
+    }
+    event
+}
+
 /// The headers an event deactivated, by height, lowercase: a reorg's
 /// supplied headers, or an invalidation's matched hash with the named
 /// row's height and root from its stored proof (`bump`). The same inputs
@@ -2340,7 +2385,7 @@ fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Heig
                     BTreeMap::from([(
                         proof.height(),
                         Header {
-                            hash: block_hash.to_ascii_lowercase(),
+                            hash: block_hash.clone(),
                             merkle_root,
                         },
                     )])
@@ -2361,8 +2406,8 @@ fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Heig
             (
                 h.height,
                 Header {
-                    hash: h.hash.to_ascii_lowercase(),
-                    merkle_root: h.merkle_root.to_ascii_lowercase(),
+                    hash: h.hash.clone(),
+                    merkle_root: h.merkle_root.clone(),
                 },
             )
         })
@@ -2453,6 +2498,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
     cursor: u64,
     event: ChainEvent,
 ) -> Result<ChainDelivery> {
+    let event = lowercase_chain_event(event);
     let kind = event_kind(&event);
     if cursor <= feed_cursor(storage).await? {
         return Ok(ChainDelivery {
@@ -2489,7 +2535,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         ),
         ChainEvent::Invalidated { block_hash } => Some(
             sqlx::query(&format!("{named} WHERE header_hash = ? ORDER BY txid"))
-                .bind(block_hash.to_ascii_lowercase())
+                .bind(block_hash)
                 .fetch_all(storage.pool())
                 .await?,
         ),
@@ -2515,7 +2561,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             "INSERT INTO frozen_outpoints (txid, vout, cursor, frozen_at) VALUES (?, ?, ?, ?) \
              ON CONFLICT(txid, vout) DO NOTHING",
         )
-        .bind(outpoint.txid.to_ascii_lowercase())
+        .bind(&outpoint.txid)
         .bind(i64::from(outpoint.vout))
         .bind(cursor as i64)
         .bind(now as i64)
@@ -2533,10 +2579,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         } else {
             deactivated_of(&event, None)
         };
-        let mut gone = deactivated.clone();
-        for row in &rows {
-            gone.extend(row.deactivated());
-        }
+        let mut gone: BTreeMap<_, _> = rows.iter().flat_map(TrackedRow::deactivated).collect();
         gone.extend(deactivated.iter().map(|(h, header)| (*h, header.clone())));
         let new_branch = NewBranch {
             live: &snapshot,
@@ -3744,6 +3787,215 @@ pub(crate) mod tests {
         assert_eq!(word(&storage, &txid).await, before_word);
         let offered = reading(&storage, &services, &txid).await;
         assert_eq!((offered.suspect, offered.offered()), (false, true));
+    }
+
+    /// Two independent stores with identical inputs, including hint timestamps.
+    async fn twin_mined_rows_at_900(
+        txid: &str,
+    ) -> [(StorageSqlx, MockWalletServices, FixedClock); 2] {
+        let (storage, services, clock, row) = mined_row_at_900(txid).await;
+        let (twin, twin_services, _, _) = mined_row_at_900(txid).await;
+        let snapshot = HeaderSnapshot::take(&services, [900]).await;
+        let (state, fault) = row.replay(&opts().params(), &snapshot);
+        assert_eq!(fault, None);
+        store_row(&twin, &row, &state, clock.now()).await.unwrap();
+        [
+            (storage, services, FixedClock(clock.now())),
+            (twin, twin_services, clock),
+        ]
+    }
+
+    async fn assert_hash_case_pair<T: std::fmt::Debug + PartialEq>(
+        txid: &str,
+        mut run: impl std::ops::AsyncFnMut(StorageSqlx, MockWalletServices, FixedClock, bool) -> T,
+    ) {
+        let [(lower, services, clock), (upper, upper_services, upper_clock)] =
+            twin_mined_rows_at_900(txid).await;
+        let expected = run(lower, services, clock, false).await;
+        let actual = run(upper, upper_services, upper_clock, true).await;
+        assert_eq!(actual, expected);
+    }
+
+    /// #229: an accepted uppercase alert names the same lowercase stored
+    /// header as a lowercase alert, keeps its recheck and holds its coin.
+    #[tokio::test]
+    async fn an_uppercase_invalidated_alert_matches_the_lowercase_alert() {
+        let txid = "fa".repeat(32);
+        assert_hash_case_pair(&txid, async |storage, services, clock, uppercase| {
+            let gone = header_with_hash(900, &txid, 0).hash;
+            let hash = if uppercase {
+                gone.to_ascii_uppercase()
+            } else {
+                gone.clone()
+            };
+            deliver(
+                &storage,
+                &services,
+                &clock,
+                1,
+                serde_json::json!({ "v": 1, "kind": "invalidated", "blockHash": hash }),
+            )
+            .await;
+            let stored = word(&storage, &txid).await;
+            let row = load_row(&storage, &txid).await.unwrap().unwrap();
+            let read = reading(&storage, &services, &txid).await;
+            println!(
+                "uppercase={uppercase}: {stored:?}, chain {:?}, reading {read:?}",
+                row.chain
+            );
+            assert_eq!(stored, ("mined".into(), Some(900), Some("recheck".into())));
+            assert_eq!(
+                row.chain_events(),
+                vec![ChainEvent::Invalidated { block_hash: gone }]
+            );
+            assert_eq!(
+                (read.suspect, read.offered(), &read.fault),
+                (true, false, &None)
+            );
+            (row, read)
+        })
+        .await;
+    }
+
+    /// #229: a pre-fix row can keep the alert's case. Read-only replay and
+    /// a later tip must read that row exactly as they read a lowercase one.
+    #[tokio::test]
+    async fn an_uppercase_kept_invalidation_matches_lowercase_on_read_and_tip() {
+        let txid = "fb".repeat(32);
+        assert_hash_case_pair(&txid, async |storage, services, clock, uppercase| {
+            let mut hash = header_with_hash(900, &txid, 0).hash;
+            if uppercase {
+                hash.make_ascii_uppercase();
+            }
+            let kept = serde_json::json!({ "v": 1, "kind": "invalidated", "blockHash": hash });
+            sqlx::query("UPDATE tracker_states SET chain = ?, reask = 'recheck' WHERE txid = ?")
+                .bind(serde_json::json!([kept.to_string()]).to_string())
+                .bind(&txid)
+                .execute(storage.writer())
+                .await
+                .unwrap();
+            let before = load_row(&storage, &txid).await.unwrap().unwrap();
+            let held = reading(&storage, &services, &txid).await;
+            assert_eq!((held.suspect, held.offered()), (true, false));
+            assert_eq!(load_row(&storage, &txid).await.unwrap().unwrap(), before);
+            let tip = header_with_hash(905, &"0a".repeat(32), 0);
+            deliver(
+                &storage,
+                &services,
+                &clock,
+                1,
+                serde_json::json!({
+                    "v": 1, "kind": "tip", "height": 905, "hash": tip.hash,
+                    "time": tip.time, "header": event_header(905, &tip.hash, &tip.merkle_root),
+                }),
+            )
+            .await;
+            let pending = load_row(&storage, &txid)
+                .await
+                .unwrap()
+                .unwrap()
+                .chain_events();
+            assert_eq!(pending.len(), 2, "the invalidation and the tip stay kept");
+            assert_eq!(reading(&storage, &services, &txid).await, held);
+            tip_after_invalidation(&storage, &services, &clock, &txid).await;
+            let read = reading(&storage, &services, &txid).await;
+            let row = load_row(&storage, &txid).await.unwrap().unwrap();
+            assert_eq!(
+                word(&storage, &txid).await,
+                ("mined".into(), Some(900), None)
+            );
+            assert!(row.chain.is_empty());
+            assert_eq!((read.suspect, read.offered()), (false, true));
+            (held, pending, row, read)
+        })
+        .await;
+    }
+
+    /// Every kept event accepts either hash case. Identifier strings,
+    /// chain work and rung names retain their original spelling.
+    #[test]
+    fn kept_events_normalize_hash_fields_in_every_arm() {
+        let hashes = ["ab".repeat(32), "cd".repeat(32), "ef".repeat(32)];
+        let [hash, root, previous] = &hashes;
+        let mut header = event_header(900, hash, root);
+        header["previousHash"] = previous.clone().into();
+        header["chainWork"] = "AF".repeat(32).into();
+        let mut other = header.clone();
+        other["hash"] = root.clone().into();
+        let key = format!("split:{}", "AB".repeat(32));
+        let envelopes = [
+            serde_json::json!({"v": 1, "kind": "tip", "height": 900, "hash": hash,
+                "time": 1_700_000_000u32, "header": header}),
+            serde_json::json!({"v": 1, "kind": "fork", "height": 900, "depth": 1,
+                "competingTips": [header, other]}),
+            serde_json::json!({"v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
+                "deactivatedHeaders": [header], "newTip": other}),
+            serde_json::json!({"v": 1, "kind": "invalidated", "blockHash": hash}),
+            serde_json::json!({"v": 1, "kind": "frozen", "outpoint": {"txid": root, "vout": 2}}),
+            serde_json::json!({"v": 1, "kind": "tipAge", "seconds": 600, "tip": header}),
+            serde_json::json!({"v": 2, "kind": "split", "key": key, "forkHeight": 900,
+            "tips": [
+                {"hash": hash, "height": 900, "chainWork": "AF".repeat(32), "rungs": ["Rung-A"]},
+                {"hash": root, "height": 901, "chainWork": "AF".repeat(32), "rungs": ["Rung-B"]}
+            ]}),
+            serde_json::json!({"v": 2, "kind": "splitResolved", "key": key, "forkHeight": 900}),
+        ];
+        for envelope in envelopes {
+            let json = envelope.to_string();
+            let expected = decode_envelope(json.as_bytes()).unwrap();
+            let uppercase = hashes.iter().fold(json, |json, hash| {
+                json.replace(hash, &hash.to_ascii_uppercase())
+            });
+            let row = TrackedRow {
+                chain: vec![uppercase],
+                ..TrackedRow::new(hash)
+            };
+            assert_eq!(row.chain_events(), vec![expected]);
+        }
+    }
+
+    /// #229: the crate's reorg arm selects by height, not by hash. The
+    /// host still uses the deactivated hashes and roots for proof replay;
+    /// their case must change neither the stored row nor its reading.
+    #[tokio::test]
+    async fn an_uppercase_reorg_matches_the_lowercase_reorg() {
+        let txid = "fc".repeat(32);
+        assert_hash_case_pair(&txid, async |storage, services, clock, uppercase| {
+            let gone = header_with_hash(900, &txid, 0).hash;
+            let case = |s: &str| {
+                if uppercase {
+                    s.to_ascii_uppercase()
+                } else {
+                    s.to_string()
+                }
+            };
+            let mut old = event_header(900, &case(&gone), &case(&txid));
+            old["previousHash"] = case(&"ab".repeat(32)).into();
+            let mut tip = event_header(901, &case(&"b3".repeat(32)), &case(&"ee".repeat(32)));
+            tip["previousHash"] = case(&"cd".repeat(32)).into();
+            deliver(
+                &storage,
+                &services,
+                &clock,
+                1,
+                serde_json::json!({
+                    "v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
+                    "deactivatedHeaders": [old], "newTip": tip,
+                }),
+            )
+            .await;
+            let row = load_row(&storage, &txid).await.unwrap().unwrap();
+            let read = reading(&storage, &services, &txid).await;
+            assert_eq!(
+                word(&storage, &txid).await,
+                ("mined".into(), Some(900), Some("recheck".into()))
+            );
+            assert_eq!(row.chain.len(), 1);
+            assert!(read.suspect && !read.offered());
+            assert!(read.fault.is_none());
+            (row, read)
+        })
+        .await;
     }
 
     /// Ruling 7a at the reading: a creator whose proof a reorg took reads
