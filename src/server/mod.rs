@@ -636,10 +636,9 @@ async fn chain_feed_status(
 }
 
 /// Host-route store faults keep their code unless the store is busy by
-/// type (#203). The position tests feed a real busy error at each read
+/// type (#203, #227). The position tests feed a real busy error at each read
 /// and require 503 with the shared body and retry header. Helper tests
 /// check that store reads preserve its type, including the proof query.
-/// Errors suppressed inside `read_status` remain its concern.
 fn host_route_fault(e: &anyhow::Error, code: &str) -> Response {
     if let Some(busy) = error::AppError::store_busy(e) {
         return busy.into_response();
