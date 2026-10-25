@@ -955,11 +955,7 @@ pub async fn abort_action(
 /// ([`crate::store::is_store_busy`]) is 503 `STORE_BUSY` with
 /// `Retry-After: 1`, as at every door (#168); any other keeps its word.
 fn abort_pre_check_fault(e: anyhow::Error) -> AppError {
-    if crate::store::is_store_busy(&e) {
-        AppError::new(Kind::StoreBusy, e.to_string())
-    } else {
-        AppError::from(e)
-    }
+    AppError::store_busy(&e).unwrap_or_else(|| AppError::from(e))
 }
 
 /// POST /listActions

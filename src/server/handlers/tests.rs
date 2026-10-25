@@ -723,3 +723,66 @@ async fn the_abort_pre_check_under_a_busy_store_is_503_store_busy() {
     assert!(retry.is_none());
     assert_eq!(body, json!({"code": "ERROR", "message": message}));
 }
+
+/// Both host routes share the abort's real-file busy fixture. Dotfile
+/// locking keeps readers out even though the toolbox requests WAL.
+async fn host_route_store_faults(path: &str, code: &str) {
+    use sqlx::Connection;
+    use tower::ServiceExt;
+
+    let (_dir, wallet, holder) = crate::test_support::busy_read_wallet().await;
+    let storage = wallet.storage();
+    let app = crate::server::make_router(wallet.clone(), crate::server::ServerConfig::default());
+    let request = || {
+        axum::http::Request::get(path)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+    let read = || {
+        sqlx::query_scalar::<_, String>("SELECT name FROM sqlite_master")
+            .fetch_optional(storage.pool())
+    };
+    let busy = read().await.expect_err("another connection holds the lock");
+    assert!(crate::store::sqlx_is_busy(&busy), "{busy}");
+    assert_eq!(
+        response_answer(app.clone().oneshot(request()).await.unwrap()).await,
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("1".to_string()),
+            json!({"code": "STORE_BUSY", "message": busy.to_string()}),
+        )
+    );
+    holder.close().await.unwrap();
+
+    storage.pool().close().await;
+    let plain = read().await.expect_err("the reader pool is closed");
+    assert!(!crate::store::sqlx_is_busy(&plain));
+    // Words alone are no signal, including the words of a real busy.
+    let untyped = anyhow::anyhow!(busy.to_string());
+    for (response, message) in [
+        (app.oneshot(request()).await.unwrap(), plain.to_string()),
+        (
+            crate::server::host_route_fault(&untyped, code),
+            untyped.to_string(),
+        ),
+    ] {
+        assert_eq!(
+            response_answer(response).await,
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                None,
+                json!({"code": code, "message": message})
+            )
+        );
+    }
+}
+
+#[tokio::test]
+async fn chain_feed_under_a_busy_store_is_503_store_busy() {
+    host_route_store_faults("/chain-feed", "ERR_CHAIN_FEED").await;
+}
+
+#[tokio::test]
+async fn tx_word_under_a_busy_store_is_503_store_busy() {
+    host_route_store_faults(&format!("/tx/{}", "11".repeat(32)), "ERR_TX_WORD").await;
+}

@@ -148,6 +148,12 @@ impl AppError {
         }
     }
 
+    /// A store busy by its type, preserving its Display at the host routes
+    /// and the abort pre-check. Any other fault keeps the caller's mapping.
+    pub(crate) fn store_busy(e: &anyhow::Error) -> Option<Self> {
+        crate::store::is_store_busy(e).then(|| Self::new(Kind::StoreBusy, e.to_string()))
+    }
+
     /// A pre-door fault of the spend gate or the spend guard: the store
     /// busy by its type ([`crate::store::is_store_busy`]: SQLite's busy or
     /// the writer's acquire ceiling), else a 500 in the gate's words.
