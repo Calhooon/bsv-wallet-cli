@@ -268,14 +268,11 @@ async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reach
     spends(&store.0, &a, b0).await;
     second_output(&store, &b, 1).await;
     let walk = || async {
-        let (services, tick) = (quiet_headers(), opts(1, true).tick());
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            dead_lineages(&store.0, &services, &tick),
-        )
-        .await
-        .expect("the walk hung")
-        .unwrap()
+        tokio::time::timeout(Duration::from_secs(5), lineage_candidates(&store.0))
+            .await
+            .expect("the walk hung")
+            .unwrap()
+            .dead(&HashMap::new())
     };
     assert!(walk().await.is_empty());
     let a1 = assess(&store.0, &quiet_headers(), &opts(1, true), None)
@@ -363,34 +360,43 @@ async fn dead_parent_with_proof(store: &Store, death: Death) -> (String, String)
     change(store, &d).await;
     spends(&store.0, &d, p0).await;
     match death {
-        Death::Word(word) => {
-            let verdict = serde_json::json!({"kind": word, "competitors": ["fd".repeat(32)]});
-            sqlx::query("INSERT INTO tracker_states (txid, word, verdict) VALUES (?, ?, ?)")
-                .bind(&p)
-                .bind(word)
-                .bind(verdict.to_string())
-                .execute(store.0.writer())
-                .await
-                .unwrap();
-        }
+        Death::Word(word) => node_verdict(&store.0, &p, word).await,
         Death::Failed => kill(&store.0, &p, death).await,
     }
     (p, d)
 }
 
+/// A fresh wallet with [`dead_parent_with_proof`]'s P `conflicted`, and
+/// headers under which P's proof checks at 800, 101 deep.
+async fn conflicted_with_proof() -> (Store, (String, String), MockWalletServices) {
+    let store = wallet_store().await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+    let services = headers_with(&p, 800, 900);
+    (store, (p, d), services)
+}
+
+/// The tracker's dead `word` for `txid`, stored as `node_verdict` stores
+/// it: beside its verdict, so a replay reads it back.
+async fn node_verdict(storage: &StorageSqlx, txid: &str, word: &str) {
+    let verdict = serde_json::json!({"kind": word, "competitors": ["fd".repeat(32)]});
+    sqlx::query("INSERT INTO tracker_states (txid, word, verdict) VALUES (?, ?, ?)")
+        .bind(txid)
+        .bind(word)
+        .bind(verdict.to_string())
+        .execute(storage.writer())
+        .await
+        .unwrap();
+}
+
+/// P1's reasons and D's, each (the allocation's, the named input's).
+type Reasons = (
+    (Option<String>, Option<String>),
+    (Option<String>, Option<String>),
+);
+
 /// One creator, one word: through each door, P's free coin P1 is held
-/// exactly when D's coin is held by P's lineage. (P1's reasons, D's.)
-async fn agreeing(
-    store: &Store,
-    services: &MockWalletServices,
-    opts: &GateOptions,
-    (p, d): (&str, &str),
-) -> (
-    (Option<String>, Option<String>),
-    (Option<String>, Option<String>),
-) {
-    let parent = doors_at(&store.0, services, opts, (p, 1)).await;
-    let child = both_doors(&store.0, services, opts, d).await;
+/// exactly when D's coin is held by P's lineage.
+fn agree((parent, child): &Reasons) {
     let by_lineage = |r: &Option<String>| r.as_deref().is_some_and(|r| r.starts_with(DEAD_LINEAGE));
     assert_eq!(
         parent.0.is_some(),
@@ -402,7 +408,61 @@ async fn agreeing(
         by_lineage(&child.1),
         "the named input: {parent:?} {child:?}"
     );
-    (parent, child)
+}
+
+/// The named door over P1 and D in one call: (P1's reason, D's).
+async fn named_pair(
+    store: &Store,
+    services: &MockWalletServices,
+    opts: &GateOptions,
+    (p, d): (&str, &str),
+) -> (Option<String>, Option<String>) {
+    let named = assess_named(
+        &store.0,
+        services,
+        opts,
+        &[(p.to_string(), 1), (d.to_string(), 0)],
+        &[],
+        None,
+    )
+    .await
+    .unwrap();
+    let reason = |t: &str| {
+        named
+            .iter()
+            .find(|c| c.outpoint.starts_with(t))
+            .map(|c| c.reason.clone())
+    };
+    (reason(p), reason(d))
+}
+
+/// P1 and D through each door, both coins in one call (the allocation
+/// with the door's retry when `retry`), [`agree`]d. (The reasons, whether
+/// the allocation read the header service once more.)
+async fn agreeing_with(
+    store: &Store,
+    services: &MockWalletServices,
+    opts: &GateOptions,
+    (p, d): (&str, &str),
+    retry: bool,
+) -> (Reasons, bool) {
+    let a = assess_retrying(&store.0, services, opts, None, retry)
+        .await
+        .unwrap();
+    let named = named_pair(store, services, opts, (p, d)).await;
+    let read = ((reason_of(&a, p), named.0), (reason_of(&a, d), named.1));
+    agree(&read);
+    (read, a.headers_retried)
+}
+
+/// [`agreeing_with`] without the retry.
+async fn agreeing(
+    store: &Store,
+    services: &MockWalletServices,
+    opts: &GateOptions,
+    (p, d): (&str, &str),
+) -> Reasons {
+    agreeing_with(store, services, opts, (p, d), false).await.0
 }
 
 /// A checked proof outranks a stored dead word (`Tracker.lean`
@@ -412,9 +472,7 @@ async fn agreeing(
 /// both doors, under every word.
 #[tokio::test]
 async fn a_checked_proof_outranks_a_stored_dead_word_for_the_walk_as_for_the_door() {
-    let store = wallet_store().await;
-    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
-    let services = headers_with(&p, 800, 900);
+    let (store, (p, d), services) = conflicted_with_proof().await;
     for o in every_word(&d) {
         let read = agreeing(&store, &services, &o, (&p, &d)).await;
         assert_eq!(read, ((None, None), (None, None)), "under {o:?}");
@@ -423,16 +481,15 @@ async fn a_checked_proof_outranks_a_stored_dead_word_for_the_walk_as_for_the_doo
 
 /// P conflicted beside a proof `services` does not clear: both readings
 /// keep the stored word, the door holding P1 `held` and D held by P's
-/// lineage.
-async fn the_stored_word_stands(services: &MockWalletServices, held: &str) {
-    let store = wallet_store().await;
-    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+/// lineage, the allocation with the door's retry when `retry`. Whether it
+/// read the header service once more.
+async fn the_stored_word_stands(services: &MockWalletServices, held: &str, retry: bool) -> bool {
+    let (store, (p, d), _) = conflicted_with_proof().await;
     let held = Some(held.to_string());
     let lineage = Some(format!("dead lineage: ancestor {p} conflicted"));
-    assert_eq!(
-        agreeing(&store, services, &opts(1, true), (&p, &d)).await,
-        ((held.clone(), held), (lineage.clone(), lineage))
-    );
+    let (read, retried) = agreeing_with(&store, services, &opts(1, true), (&p, &d), retry).await;
+    assert_eq!(read, ((held.clone(), held), (lineage.clone(), lineage)));
+    retried
 }
 
 /// The header service silent: P's proof is not checked, so P keeps its
@@ -440,10 +497,20 @@ async fn the_stored_word_stands(services: &MockWalletServices, held: &str) {
 /// and D is held by P's lineage, never "could not verify now".
 #[tokio::test]
 async fn a_proof_the_headers_could_not_check_leaves_the_stored_word() {
+    assert!(!the_stored_word_stands(&silent_tip(), &tip_fault(), false).await);
+}
+
+/// The planted proof's headers with the tip unreadable.
+fn silent_tip() -> MockWalletServices {
     let services = headers_with(&"f3".repeat(32), 800, 900);
     services.set_tip_unavailable();
+    services
+}
+
+/// The hold of a creator the silent tip left unchecked.
+fn tip_fault() -> String {
     let fault = "Service error: mock: the chain tip header is unavailable";
-    the_stored_word_stands(&services, &format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}")).await;
+    format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}")
 }
 
 /// A proof whose root does not match the header at its height: P keeps
@@ -452,7 +519,7 @@ async fn a_proof_the_headers_could_not_check_leaves_the_stored_word() {
 #[tokio::test]
 async fn a_proof_whose_root_does_not_match_leaves_the_stored_word() {
     let services = headers_with(&"0d".repeat(32), 800, 900);
-    the_stored_word_stands(&services, "conflicted: never offered").await;
+    the_stored_word_stands(&services, "conflicted: never offered", false).await;
 }
 
 /// A `failed` parent whose proof checks reads mined, and its child is
@@ -503,4 +570,88 @@ async fn an_uppercase_parent_txid_is_walked() {
 #[tokio::test]
 async fn a_received_dead_parent_kills_our_child() {
     a_conflicted_parent_holds_our_child(&"f1".repeat(32), false).await;
+}
+
+/// The door's retry (#59), round three's finding: the tip silent on the
+/// first read and back before the re-read. P, a candidate holding a proof
+/// and P1's creator, is read once with the creators and re-read with them,
+/// so the walk and the door take the re-read's word: P1 offered, and D
+/// with it, through both doors.
+#[tokio::test]
+async fn the_retry_re_reads_a_candidate_with_the_creators() {
+    let (store, (p, d), _) = conflicted_with_proof().await;
+    let services = silent_tip();
+    let recover = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        services.set_tip_header(header_with_hash(900, &"0c".repeat(32), 0));
+    };
+    let gate = opts(1, true);
+    let ((read, retried), ()) = tokio::join!(
+        agreeing_with(&store, &services, &gate, (&p, &d), true),
+        recover
+    );
+    assert!(retried, "the header service was not read once more");
+    assert_eq!(read, ((None, None), (None, None)));
+}
+
+/// The tip silent on the read and on the re-read: P keeps its stored word
+/// for both readings, held on the fault at the door, and D is held by P's
+/// lineage, through both doors.
+#[tokio::test]
+async fn a_tip_silent_on_the_retry_leaves_the_stored_word() {
+    assert!(the_stored_word_stands(&silent_tip(), &tip_fault(), true).await);
+}
+
+/// The named door takes one read of the headers for the creators and the
+/// candidates: a tip that answers once and fails after splits nothing. P1
+/// and D agree, whichever read answered, and the tip is asked once.
+#[tokio::test]
+async fn the_named_door_reads_the_creators_and_the_candidates_once() {
+    let (store, (p, d), services) = conflicted_with_proof().await;
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let fail_after_one = async {
+        let tip = || services.call_count("get_chain_tip_header");
+        while tip() == 0 && !done.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        services.set_tip_unavailable();
+    };
+    let named = async {
+        let named = named_pair(&store, &services, &opts(1, true), (&p, &d)).await;
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        named
+    };
+    let ((parent, child), ()) = tokio::join!(named, fail_after_one);
+    agree(&((None, parent), (None, child)));
+    assert_eq!(services.call_count("get_chain_tip_header"), 1);
+}
+
+/// The header service's calls for one read through each door.
+async fn header_calls(store: &Store, services: &MockWalletServices, (p, d): (&str, &str)) -> usize {
+    services.reset_history();
+    agreeing(store, services, &opts(1, true), (p, d)).await;
+    services.call_count("get_chain_tip_header") + services.call_count("get_header_for_height")
+}
+
+/// The walk asks the header service nothing of its own: a candidate with
+/// no proof costs no call, and a candidate holding a proof that is also
+/// the creator of a judged coin (P1) is read once, as that creator alone.
+#[tokio::test]
+async fn a_candidate_is_read_no_more_than_a_creator() {
+    let store = wallet_store().await;
+    let (p, d, _) = parent_and_child(&store, None).await;
+    second_output(&store, &p, 1).await;
+    let services = quiet_headers();
+    let live = header_calls(&store, &services, (&p, &d)).await;
+    node_verdict(&store.0, &p, "conflicted").await;
+    assert_eq!(header_calls(&store, &services, (&p, &d)).await, live);
+
+    let (store, (p, d), services) = conflicted_with_proof().await;
+    let candidate = header_calls(&store, &services, (&p, &d)).await;
+    sqlx::query("DELETE FROM tracker_states WHERE txid = ?")
+        .bind(&p)
+        .execute(store.0.writer())
+        .await
+        .unwrap();
+    assert_eq!(header_calls(&store, &services, (&p, &d)).await, candidate);
 }
