@@ -78,7 +78,7 @@ pub async fn ingest_arc_payload(
     let reask = AtomicBool::new(false);
     let updated = ArcadeEventsTask::<StorageSqlx>::apply_event(storage, &ev, &reask)
         .await
-        .map_err(|e| anyhow!("apply_event: {}", e))?;
+        .map_err(apply_event_fault)?;
     let reask = reask.load(Ordering::SeqCst);
 
     // Name what the toolbox did, by the toolbox's own reading of the body.
@@ -128,4 +128,10 @@ pub async fn ingest_arc_payload(
         ),
     }
     Ok(action)
+}
+
+/// Keep the store error's type and its existing Display at both push doors.
+fn apply_event_fault(e: bsv_wallet_toolbox::Error) -> anyhow::Error {
+    let message = format!("apply_event: {e}");
+    anyhow::Error::new(e).context(message)
 }

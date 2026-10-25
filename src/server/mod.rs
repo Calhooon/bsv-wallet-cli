@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod arc_callback_tests;
 pub mod audit;
 pub mod broadcast_follow_up;
 pub mod error;
@@ -422,11 +424,16 @@ async fn arc_callback(
             Json(json!({"ok": true, "action": format!("{:?}", action)})),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"code": "BAD_PAYLOAD", "message": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => {
+            if let Some(busy) = error::AppError::store_busy(&e) {
+                return busy.into_response();
+            }
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"code": "BAD_PAYLOAD", "message": e.to_string()})),
+            )
+                .into_response()
+        }
     }
 }
 
