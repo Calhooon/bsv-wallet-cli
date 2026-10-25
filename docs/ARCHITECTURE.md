@@ -276,14 +276,23 @@ above a fork, reorg or split height; marked rows for a tip; the rows on an
 invalidated block's hash; `src/tracker_host.rs:2361-2394`) are replayed
 against the new branch's headers, read before the write lock
 (`src/tracker_host.rs:2403-2408`), and `Tracker::on_chain` rechecks each by
-its stored root. The deactivated set holds a reorg's supplied headers and
-an invalidated block at each named row's stored proof height, with the
-hash matched by `header_hash` and the root computed from `bump`. If the
-service still answers that hash, the new branch has no answer there, so
-the word stays suspect with `recheck` until the next tip. The stored event
-reconstructs that deactivation on reload; the stored proof checks against
-the old header and the event rechecks against the new branch. On a new
-header: the same root, the word stands
+its stored root. The deactivated set in `deliver_chain_event` holds a
+reorg's supplied headers and an invalidated block at each named row's stored proof height,
+with the hash matched by `header_hash` and the root computed from `bump`.
+`an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it` checks that
+when the service still answers that hash, the new branch has no answer
+there: the word stays suspect with `recheck`, and the stored event
+reconstructs that deactivation on reload. The stored proof checks against
+the old header and the event rechecks against the new branch.
+`an_invalidated_blocks_moved_root_reads_stale_after_the_next_tip` checks
+that a later tip on a moved root stores `stale` with `reorg@<height>`.
+`an_invalidated_block_whose_root_already_moved_reads_stale_at_delivery`
+checks the same stale word when the service already answers another root
+at delivery, its retained proof and event after a tick, and its coin under
+the pending tier's rule.
+`an_invalidated_hash_no_row_was_checked_against_changes_nothing` guards
+beta's unchanged behaviour for an unrelated hash; it is not evidence of
+the invalidation fix. On a new header: the same root, the word stands
 (`a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing`,
 `src/chain_feed_tests.rs:716`); the root gone, `stale` with the re-ask
 `reorg@<forkHeight>` (`a_reorg_on_the_feed_stales_the_word_and_the_new_proof_mines_it`,
