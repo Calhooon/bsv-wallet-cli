@@ -56,7 +56,14 @@
 //! rule 2 or 3 as a `pending` creator's coin is and never with no rule (the
 //! owner's ruling 7a of 2026-10-20, `lean/Wallet.lean` `doorWord`,
 //! `stale_ranks_as_seen`). A coin whose creator is `rejected`, `conflicted`
-//! or `abandoned` is never offered; a coin an action of ours holds is the toolbox's lock
+//! or `abandoned` is never offered. Nor is our own coin whose creator's
+//! lineage is dead, by any rule or word and whatever the creator's own word,
+//! mined included: an input of the creator, or of an ancestor of ours on the
+//! walk, was created by an action of ours whose word is dead (the owner's
+//! lineage ruling of 2026-10-22, `lean/Wallet.lean` `deadLineage`; held
+//! `dead lineage: ancestor <txid> <word>` after the door, in the Lean's
+//! clause order; [`dead_lineages`], one read of the store per call, the
+//! CLI's walk until the toolbox's lands, toolbox #42). A coin an action of ours holds is the toolbox's lock
 //! (`spent_by`) and is never a candidate. A frozen coin (the feed's
 //! `frozen` event, recorded in `frozen_outpoints` by
 //! [`crate::tracker_host::deliver_chain_event`]) is never offered, rule or

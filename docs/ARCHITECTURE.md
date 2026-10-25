@@ -133,7 +133,11 @@ depth and not suspect, offered; our own `made` change under
 `SPEND_OWN_CHANGE`; a received pending coin under this action's word and
 within its scope; a stale creator's coin under the same rules, as a pending
 one's (ruling 7a, #162); frozen, rejected, conflicted, abandoned or under an
-open split, held with its reason. The offer is capped at the largest
+open split, held with its reason. After the door, the lineage
+(`dead_lineages`, one read of the store for the whole call, #163): our own
+coin whose creator spent an output of a dead action of ours, or of one of
+its dead lineage, is held `dead lineage: ancestor <txid> <word>` under every
+rule and word, mined included. The offer is capped at the largest
 `OFFER_CAP` coins (`src/spend_gate.rs:146`, `cap_offer`).
 
 **Hop 5, the creators' reading.** The gate reads no explorer and decides
