@@ -279,6 +279,12 @@ against the new branch's headers, read before the write lock
 its stored root. The deactivated set in `deliver_chain_event` holds a
 reorg's supplied headers and an invalidated block at each named row's stored proof height,
 with the hash matched by `header_hash` and the root computed from `bump`.
+`lowercase_chain_event` normalizes hash, root and txid fields before delivery
+and when kept events decode for replay, as checked by
+`an_uppercase_invalidated_alert_matches_the_lowercase_alert`,
+`an_uppercase_kept_invalidation_matches_lowercase_on_read_and_tip`,
+`an_uppercase_reorg_matches_the_lowercase_reorg` and
+`kept_events_normalize_hash_fields_in_every_arm`.
 `an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it` checks that
 when the service still answers that hash, the new branch has no answer
 there: the word stays suspect with `recheck`, and the stored event
