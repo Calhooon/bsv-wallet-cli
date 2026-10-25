@@ -19,28 +19,28 @@ function names stay.
 
 ## 0. The shape, in one paragraph
 
-One binary, two doors. A CLI command (`src/main.rs:68-229`, one arm per
+One binary, two doors. A CLI command (`Commands`, `src/main.rs:68-229`, one arm per
 `Commands` variant of `src/cli.rs`) loads a `WalletContext`
-(`src/context.rs:19`) and calls one `run` in `src/commands/`. An HTTP server
-(`src/server/mod.rs:202`, `make_router_owing`) serves the 28 BRC-100
+(`src/context.rs:8`) and calls one `run` in `src/commands/`. An HTTP server
+(`make_router_owing`, `src/server/mod.rs:202`) serves the 28 BRC-100
 endpoints of `src/server/handlers.rs` in the MetaNet Client's JSON
 (`src/server/types.rs`), plus five routes that are not BRC-100
 (`/permission-audit`, `/permission-audit/reset`, `/chain-feed`,
-`/tx/{txid}`, `/arc-callback`, `src/server/mod.rs:225-304`). Both doors stand on the same engine, the
+`/tx/{txid}`, `/arc-callback`; `permission_audit`, `src/server/mod.rs:225-304`). Both doors stand on the same engine, the
 toolbox `bsv-wallet-toolbox-rs` (`Wallet<StorageSqlx, Services>`: the
 coins, the locks, the signing, the posting, the monitor), and the toolbox on
 `bsv-rs`. Around the toolbox's doors this crate adds the hosts of two stack
 machines: the spend gate (`src/spend_gate.rs`, the wallet charter's section
 2 applied to coin selection) and the tracker host (`src/tracker_host.rs`,
 the tracker charter's sections 0 and 2: one word per transaction, written only from
-headers and proofs). `daemon` (`src/commands/daemon.rs:10` through
-`src/commands/daemon_tenant.rs:39`) runs the toolbox's monitor, the header
-service's chain-event feed (`src/chain_feed.rs:167`), the served pass
-(`src/broadcast_reconcile.rs:693`) and the server; `serve`
-(`src/commands/serve.rs:6`) runs the server and the served pass only. The
+headers and proofs). `daemon` (`run`, `src/commands/daemon.rs:10`, through
+`start`, `src/commands/daemon_tenant.rs:39`) runs the toolbox's monitor, the header
+service's chain-event feed (`chain_feed::run`, `src/chain_feed.rs:167`), the served pass
+(`spawn_served_loop`, `src/broadcast_reconcile.rs:693`) and the server; `serve`
+(`run`, `src/commands/serve.rs:6`) runs the server and the served pass only. The
 one headers machine is the header service at `CHAINTRACKS_URL`
 (read at start by `src/config.rs`, required where services are built,
-no default: `src/services_env.rs:47`); explorers are asked only
+no default: `chaintracks_url_for`, `src/services_env.rs:48`); explorers are asked only
 at the break-glass sites `tests/rule_28_sites.rs` lists.
 
 ## 1. One spend
@@ -67,34 +67,33 @@ flowchart TD
     K -. "next spend reads the row" .-> F
 ```
 
-**Hop 1, the door.** Over HTTP the request passes the layers of
-`src/server/mod.rs:308-317` in the order a layer added later runs earlier: the
-body cap (none on the two BEEF doors, `src/server/mod.rs:238-245`),
+**Hop 1, the door.** Over HTTP the request passes the layers including
+`DefaultBodyLimit` (`src/server/mod.rs:308-317`) in the order a layer added later runs earlier: the
+body cap (none on the two BEEF doors, `DefaultBodyLimit`, `src/server/mod.rs:238-245`),
 tracing, the extensions (`ServerConfig`, the `SpendingLock`, the
 `BroadcastVerifier`), the bearer auth (`auth_middleware`,
 `src/server/mod.rs:110`) before any body is read, then the lenient JSON body,
 CORS, and `heal_owed` (`src/server/mod.rs:308`), which retries the start's
-heal before any handler runs. `create_action` (`src/server/handlers.rs:220`) reads the
+heal before any handler runs. `create_action` (`src/server/handlers.rs:473`) reads the
 originator from `Origin` or `Originator` (`extract_originator`,
-`src/server/handlers.rs:103`), reads the action's word for R1 (d) from the
+`src/server/handlers.rs:102`), reads the action's word for R1 (d) from the
 body's `allowPending` and nowhere else
-(`AllowPending::from_json`, `src/server/handlers.rs:230`,
+(`AllowPending::from_json`, `src/server/handlers.rs:483`,
 `src/spend_gate.rs:251`), maps the MetaNet shapes to the SDK's
 `CreateActionArgs` (outputs with `basket`, `customInstructions`, `tags`;
-caller-named inputs; `src/server/handlers.rs:246-308`) and records the
-permission audit entry (`src/server/audit.rs:118`). A command does the same
-without HTTP: `send` (`src/commands/send.rs:9`), `drain`
-(`src/commands/drain.rs:12`), `split` (`src/commands/split.rs:17`) and
-`gift-send` (`src/commands/gift_send.rs:71`) each build their args, read the
+caller-named inputs; `src/server/handlers.rs:499-564`) and records the
+permission audit entry (`spend_entry`, `src/server/audit.rs:118`). A command does the same
+without HTTP: `send` (`run`, `src/commands/send.rs:9`), `drain`
+(`run`, `src/commands/drain.rs:12`), `split` (`run`, `src/commands/split.rs:17`) and
+`gift-send` (`run`, `src/commands/gift_send.rs:71`) each build their args, read the
 word from `--allow-pending` and `--coin` before the wallet is opened
 (`word`, `src/main.rs:233`), and heal any hold a 0.15 process left
 (`heal_before_spend`, `src/spend_gate.rs:1328`); the four copies of this
 sequence are what #78 folds into one.
 
 **Hop 2, the lock.** The served door takes the process-wide FIFO mutex
-(`src/server/handlers.rs:332`) and holds it through the guard, the gate, the
-toolbox's allocation, signing and immediate post, releasing it at
-`src/server/handlers.rs:351` before the answer is built. The commands take
+(`spending_lock`, `src/server/handlers.rs:585`) and holds it through the guard, the gate, the
+toolbox's allocation, signing and immediate post, releasing `_guard` (`src/server/handlers.rs:604`) before the answer is built. The commands take
 no lock: a command is one process. This is the hold #86 shortens to the
 allocation alone.
 
@@ -104,10 +103,10 @@ reserving a respend's inputs (`respend::reserve_inputs`,
 source now holds and holds every spendable coin of a transaction whose last
 word is the toolbox's immediate-refusal note (`immediateBroadcastHint`,
 `src/server/post_word.rs:25`) with no status source holding it since
-(`src/spend_guard.rs:78-151`). It writes `spendable` and its own
+(`IMMEDIATE_HINT`, `src/spend_guard.rs:78-151`). It writes `spendable` and its own
 `spend_guard_holds` table only, never a transaction or request word
-(`src/spend_guard.rs:20-22`). Over HTTP a fault here is answered by its type
-(`AppError::from_pre_door`, `src/server/error.rs:147`: the store busy is
+(`src/spend_guard.rs:14-22`). Over HTTP a fault here is answered by its type
+(`AppError::from_pre_door`, `src/server/handlers.rs:196`: the store busy is
 503 `STORE_BUSY`, anything else 500).
 
 **Hop 4, the gate's offer.** `spend_gate::create_action`
@@ -117,7 +116,7 @@ wallet could not spend under it before anything else is read
 400); judges every caller-named input coin by coin (`assess_named`,
 `src/spend_gate.rs:1185`; one held is `INPUT_NOT_OFFERED`, 403); strips any
 caller's copy of the rule label and appends the gate's own when the word is
-on (`src/spend_gate.rs:1437-1443`, `RECEIVED_PENDING_LABEL`), so the toolbox
+on (`RECEIVED_PENDING_LABEL`, `src/spend_gate.rs:1437-1443`), so the toolbox
 writes the word inside the action's own transaction. `run_gated`
 (`src/spend_gate.rs:1509`) then reads the candidates (`candidates`,
 `src/spend_gate.rs:922`: change coins of the default basket, unspent, their
@@ -153,7 +152,7 @@ a proof that checks reads it mined, so it is not dead (`Lineage::dead`;
 from the wallet's own rows and one read of the header service:
 `read_creators` (`src/tracker_host.rs:2029`) loads each creator's tracker
 row or, failing one, the toolbox's stored merkle path (`proven_txs`) as a
-row's input, takes one `HeaderSnapshot` (`src/tracker_host.rs:150`: the tip
+row's input, takes one `HeaderSnapshot` (`HeaderSnapshot::take`, `src/tracker_host.rs:150`: the tip
 once, one header per height a stored path names), replays each row against
 it (`TrackedRow::replay`, `src/tracker_host.rs:658`: a stored path is
 checked again, never trusted by age), runs the charter's spend guard
@@ -161,7 +160,7 @@ checked again, never trusted by age), runs the charter's spend guard
 recheck), and reads the depth (`deep_enough`, `src/tracker_host.rs:2101`,
 the tip is 1, `SPEND_DEPTH` the floor of 1) and the open-split floor
 (`open_split_floor`, `src/tracker_host.rs:2139`). Nothing is written here:
-the rows are not stored back (`src/tracker_host.rs:2027-2028`). A header
+the rows are not stored back (`read_creators`, `src/tracker_host.rs:2027-2029`). A header
 service fault is a `CreatorReading` with `headers_fault` set
 (`src/tracker_host.rs:1985-2010`), which the gate reads as "could not look",
 never as a hold on the coin.
@@ -172,10 +171,10 @@ never as a hold on the coin.
 allocates within the offer and locks within it in its one write transaction
 (held by the test `the_offer_allocates_only_the_offered_coins_and_writes_no_hold`,
 `src/spend_gate/tests.rs:845`), signs, and posts to the broadcasters it is
-configured with (`src/services_env.rs:296`, the one settings-to-services
-resolver, over the `Config` read once at start) `[D]` the toolbox's internals beyond what the tests drive. When
+configured with (`services_options_from_env`, `src/services_env.rs:228`, the pinned
+environment-to-services resolver; the later `Config` is read once at start) `[D]` the toolbox's internals beyond what the tests drive. When
 it answers `Insufficient funds` or `Unspendable coin:` on a lazy offer, every
-coin is read and the call made once more (`src/spend_gate.rs:1525-1554`; the
+coin is read and the call made once more (`assess_inner`, `src/spend_gate.rs:1525-1554`; the
 unspendable case held by
 `an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin`,
 `src/spend_gate/tests.rs:898`); when that fails for
@@ -183,7 +182,7 @@ funds the refusal lists every coin held back with its reason and the coins
 live actions hold (`refusal`, `src/spend_gate.rs:1557`; `locked`,
 `src/spend_gate.rs:981`), and when the coins held on the header service's
 fault could have covered the action the refusal is `HEADERS_UNAVAILABLE`
-instead (`src/spend_gate.rs:1573-1578`).
+instead (`headers_fault`, `src/spend_gate.rs:1573-1578`).
 
 **Hop 7, the broadcast's word.** The toolbox's answer carries
 `sendWithResults`: `unproven` is a broadcaster's acceptance, `sending` is no
@@ -192,7 +191,7 @@ accepting word (a refusal, a transient fault, no broadcaster reached), and
 `Accepted`, `Ambiguous` or `NotBroadcast` (`noSend`,
 `acceptDelayedBroadcast`, a deferred-signing template). For a `sending`
 result the answer carries the request's own word, read from its history
-(`post_word`, `src/server/post_word.rs:62`; `src/server/handlers.rs:432-437`):
+(`post_word`, `src/server/post_word.rs:62`; `src/server/handlers.rs:685-690`):
 the refusal is a hint on the record, the inputs stay locked, nothing is
 released.
 
@@ -203,7 +202,7 @@ runs it inline for an ambiguous one. The probe
 broadcaster the wallet submitted through, then the chain indexes as
 one question (`ask_chain_indexes`, `src/broadcast_verify.rs:948`: WoC,
 Bitails, BananaBlocks with a rotating start), over a schedule of rounds
-(`src/broadcast_verify.rs:709`). A chain-index hit ends it as `Confirmed`
+(`delay_before_round`, `src/broadcast_verify.rs:709`). A chain-index hit ends it as `Confirmed`
 with chain evidence; a store holding the bytes ends it as `Confirmed`;
 `Rejected` needs the broadcaster's and the chain indexes' clean absences
 both (`AbsenceAuthority`, `src/broadcast_verify.rs:294`; `is_definitive`,
@@ -216,31 +215,32 @@ the wallet's own request, memory and tracker rows) before
 `retire_rejected_broadcast` (`src/server/broadcast_follow_up.rs:296`), the
 toolbox's release-rule path; a transaction a broadcaster took is kept. An
 inline `Rejected` that retired the transaction answers 502
-`BROADCAST_REJECTED` (`src/server/handlers.rs:425-430`,
-`AppError::broadcast_rejected`, `src/server/error.rs:197`). A store fault
+`BROADCAST_REJECTED` (`AppError::broadcast_rejected`, `src/server/handlers.rs:678-683`;
+`AppError::broadcast_rejected`, `src/server/handlers.rs:281`). A store fault
 after the post is logged with its marker and never the call's error
 (`post_broadcast_follow_up_write_failed`,
 `src/server/broadcast_follow_up.rs:203-240`). The commands run the same
-verifier inline (`src/commands/send.rs:67-70`, `into_send_result`,
+verifier inline (`into_send_result`, `src/commands/send.rs:73-77`; `into_send_result`,
 `src/broadcast_verify.rs:160`).
 
 **Hop 9, the answer.** The BEEF the toolbox returns is converted to
-AtomicBEEF for the `tx` field (`src/server/handlers.rs:363-381`); the
+AtomicBEEF for the `tx` field (`atomic_beef`, `src/server/handlers.rs:616-634`); the
 deferred-signing reference is decoded back to the string the toolbox keys
 its cache by (`reference_string`, `src/spend_gate.rs:699`); the body is
-`McCreateActionRes` (`src/server/types.rs`). A refusal is `AppError`
-(`src/server/error.rs:124`), its status and code its `Kind`'s
-(`Kind::answer`, `src/server/error.rs:63`), every kind reached by a typed
-error's variant (#81): the gate's errors (`from_gate_error`,
-`src/server/error.rs:161`: 503 `HEADERS_UNAVAILABLE`, 400
-`VALIDATION_ERROR`, 403 `INPUT_NOT_OFFERED`, 402 `INSUFFICIENT_FUNDS` with
-`offeredSatoshis` and `held`), the store busy by its type alone (bsv-rs's
-`WalletBusy`, `of_sdk`, `src/server/error.rs:212`; `store::is_store_busy`,
-`src/store.rs:75`), the toolbox's variants (`of_toolbox`,
-`src/server/error.rs:235`). The toolbox erases every variant but
-`StoreBusy` to a `WalletError`'s text at the `WalletInterface` boundary, so
-those words are read back in one place (`toolbox_words::class`,
-`src/toolbox_words.rs:87`, with the upstream issues that would type them).
+`McCreateActionRes` (`src/server/types.rs`). At the pin a refusal is
+`AppError` (`src/server/handlers.rs:122`), with the text-to-status mapping in
+`AppError::classify` (`src/server/handlers.rs:132`). The gate's typed errors
+reach `from_gate_error` (`src/server/handlers.rs:234`: 503
+`HEADERS_UNAVAILABLE`, 400 `VALIDATION_ERROR`, 403 `INPUT_NOT_OFFERED`, 402
+`INSUFFICIENT_FUNDS` with `offeredSatoshis` and `held`); a wallet error's
+busy variant reaches `from_wallet_error` (`src/server/handlers.rs:213`),
+and a pre-door store busy is read by `store::is_store_busy`
+(`src/store.rs:75`). The later #81 extraction into `src/server/error.rs`
+and `src/toolbox_words.rs` replaces the prefix mapping with `Kind::answer`
+and isolates the toolbox's erased error words in `toolbox_words::class`.
+Those modules did not exist at the pin; their mapping is held by the named
+tests `the_typed_mapping_serves_what_the_prefix_table_served` and
+`the_typed_wallet_busy_from_the_door_is_503_retry_after_one`.
 Under `--json` the
 commands print the same body and exit 1 (`refused_as_json`,
 `src/spend_gate.rs:570`; `busy_as_json`, `src/spend_gate.rs:598`).
@@ -263,7 +263,7 @@ webhook (`arc_callback`, `src/server/mod.rs:328`; `ingest_arc_payload`,
 `src/arc_ingest.rs:61`, the toolbox's one judgment for the SSE frame and the
 webhook) and, under `daemon`, the monitor's own backstop (`[D]` the
 toolbox's `check_for_proofs`; its provider logged by
-`src/backstop_log.rs:86`). The word is served at `GET /tx/{txid}`
+`log`, `src/backstop_log.rs:86`). The word is served at `GET /tx/{txid}`
 (`tx_word`, `src/server/mod.rs:629`; `stored_word`,
 `src/tracker_host.rs:901`) as a view; nothing is decided from it.
 
@@ -274,9 +274,9 @@ journal from the stored cursor and then holds its stream
 `src/chain_feed.rs:376`). Each envelope goes to `deliver_chain_event`
 (`src/tracker_host.rs:2344`): the rows the event names by index (mined at or
 above a fork, reorg or split height; marked rows for a tip; the rows on an
-invalidated block's hash; `src/tracker_host.rs:2361-2394`) are replayed
+invalidated block's hash; `ChainEvent`, `src/tracker_host.rs:2361-2394`) are replayed
 against the new branch's headers, read before the write lock
-(`src/tracker_host.rs:2403-2408`), and `Tracker::on_chain` rechecks each by
+(`HeaderSnapshot::take`, `src/tracker_host.rs:2403-2408`), and `Tracker::on_chain` rechecks each by
 its stored root. The deactivated set in `deliver_chain_event` holds a
 reorg's supplied headers and an invalidated block at each named row's stored proof height,
 with the hash matched by `header_hash` and the root computed from `bump`.
@@ -334,14 +334,14 @@ flowchart TD
     O -. "next spend" .-> G["Spend gate<br/>spend_gate.rs hold_reason<br/>received + no proof: held unless this action's word names it"]
 ```
 
-**Hop 1, the door.** `internalize_action` (`src/server/handlers.rs:463`)
+**Hop 1, the door.** `internalize_action` (`src/server/handlers.rs:716`)
 reads the originator, maps the MetaNet body to `InternalizeActionArgs`
-(`internalize_args`, `src/server/handlers.rs:499`: `paymentRemittance` and
+(`internalize_args`, `src/server/handlers.rs:752`: `paymentRemittance` and
 `insertionRemittance` passed through, `basket` and `tags` kept) and strips
 the gate's rule label from the caller's labels
-(`src/server/handlers.rs:524-527`, `strip_rule_label`,
+(`strip_rule_label`, `src/server/handlers.rs:777-780`; `strip_rule_label`,
 `src/spend_gate.rs:746`), so a forged label grants nothing. The body cap is
-off on this door (`src/server/mod.rs:242-245`): a valid BEEF is never
+off on this door (`DefaultBodyLimit`, `src/server/mod.rs:242-245`): a valid BEEF is never
 refused for its size, invalid bytes are refused at their offset
 (`served_beef_doors.rs`, `an_invalid_beef_over_the_old_body_cap_is_refused_at_its_byte`).
 
@@ -357,7 +357,7 @@ its root met the header service (`bananablocks_courier`,
 (`second_courier`, `src/commands/receive.rs:171`). A fault at a rung (a 429,
 a closed rung, bytes that do not hash, no checked proof) moves to the next
 at once; no courier delivering is "could not look" with every reason
-(`src/commands/receive.rs:110-127`; the test
+(`second`, `src/commands/receive.rs:110-127`; the test
 `no_courier_delivering_is_could_not_look_with_both_reasons`,
 `src/commands/receive.rs:535`). The paying output is read from the
 delivered transaction's own bytes, never from an explorer's decode
@@ -367,7 +367,8 @@ as an argument and goes to hop 2 directly (`internalize_beef`,
 `src/commands/fund.rs:23`), after `ensure_atomic` (`src/atomic_beef.rs:16`)
 refuses invalid bytes and prepends the AtomicBEEF header. The sender's
 identity for a bare-address payment is the BRC-29 "anyone" key
-(`src/commands/fund.rs:30-31`; `src/brc29.rs:17`).
+(`KeyDeriver::anyone_key`, `src/commands/fund.rs:30-31`;
+`KeyDeriver::anyone_key`, `src/brc29.rs:19`).
 
 **Hop 2, the toolbox's check.** `Wallet::internalize_action` refuses an
 incomplete ancestry and checks every merkle root the BEEF carries against
@@ -381,22 +382,23 @@ request for the transaction's own post.
 
 **Hop 3, the answer and the word.** The answer is `accepted` with, when the
 toolbox's post of the internalized transaction drew no accepting word, the
-request's hint (`src/server/handlers.rs:484-489`; `post_word`,
+request's hint (`post_word`, `src/server/handlers.rs:739-747`; `post_word`,
 `src/server/post_word.rs:62`). The tracker's pass adopts the transaction
 while it is `unproven` (`src/tracker_host.rs:1317-1325`), so `GET
 /tx/{txid}` answers for it, and the monitor's or the couriers' proof moves
 its word to `mined`.
 
 **Hop 4, the coin at the next door.** At the next spend's hop 4 the coin is
-a candidate with origin `received` (`src/spend_gate.rs:922-979`,
+a candidate with origin `received` (`candidates`, `src/spend_gate.rs:922-979`,
 `is_outgoing`), and `hold_reason` (`src/spend_gate.rs:878`) offers it with
 no rule only once its creator is `mined` at depth; while its creator's word
 claims nothing about the chain it is offered only under this one action's
 `allowPending: received` (or the scoped form naming it) and held otherwise
-with the reason `received, no proof; ...` (`src/spend_gate.rs:157-160`),
+with the reason `received, no proof; ...` and its rule hint
+(`ALLOW_PENDING_HINT`, `src/spend_gate.rs:157-160`),
 whatever `SPEND_OWN_CHANGE` says. The action that spends it carries the
 label `spend-gate:received-pending`, shown as `underRule` by `/listActions`
-(`with_rules`, `src/server/handlers.rs:885`).
+(`with_rules`, `src/server/handlers.rs:1134`).
 
 ## 3. One repair pass: the abandoned-transaction reconcile
 
@@ -431,12 +433,12 @@ flowchart TD
 ```
 
 **Hop 1, the trigger.** `daemon_tenant::start` spawns the ticker
-(`src/commands/daemon_tenant.rs:189-307`): every 300 s, when
+(`cleanup_abandoned::reconcile`, `src/commands/daemon_tenant.rs:228-307`): every 300 s, when
 `RECONCILE_ABANDONED` is not off, `cleanup_abandoned::reconcile`
 (`src/commands/cleanup_abandoned.rs:187`) runs with `execute` true and the
 minimum age `RECONCILE_ABANDONED_MIN_AGE_SECS`, followed by the poisoned
 chain sweep (`run_sweep`, `src/broadcast_reconcile.rs:490`). By hand the
-same pass is `cleanup-abandoned` (`src/commands/cleanup_abandoned.rs:834`),
+same pass is `cleanup-abandoned` (`run`, `src/commands/cleanup_abandoned.rs:834`),
 a dry run unless `--execute`.
 
 **Hop 2, the candidates.** `reconcile_with`
@@ -453,14 +455,14 @@ from the wallet's graph.
 the rotating rungs (`Explorers::spender_rungs`, `src/explorers.rs:222`;
 `Explorers::spender`, `src/explorers.rs:245`: WhatsOnChain's `/spent`,
 BananaBlocks' `/txo` whose `script_pubkey` must hash to the asked script);
-a fault at a rung moves to the next (`src/commands/cleanup_abandoned.rs:306-317`).
+a fault at a rung moves to the next (`spender`, `src/commands/cleanup_abandoned.rs:306-317`).
 A name is a claim: the named transaction's own bytes must hash to the name
 and hold the outpoint among their inputs (`spender_binds`,
 `src/commands/cleanup_abandoned.rs:375`), and `confirmed` is true only with
 a merkle path the wallet's services returned after its root met the header
 service (`proven_mined`, `src/commands/cleanup_abandoned.rs:397`). With no
 bound spender the toolbox's `is_utxo` is asked (`[D]` its "two of three
-agree" rule, cited at `src/commands/cleanup_abandoned.rs:276-287`); one
+agree" rule, cited at `src/commands/cleanup_abandoned.rs:275-287`); one
 explorer's "no spend known" is never `Unspent`
 (`one_explorers_no_spend_known_is_not_unspent`,
 `src/commands/cleanup_abandoned.rs:2477`). The outpoint's locking script
@@ -508,20 +510,20 @@ The tests are named by their function; `cargo test <name>` runs each.
 
 | # | invariant | refines | where | held by |
 |---|---|---|---|---|
-| I1 | **The gate writes nothing around the door.** The gate names an offer and the toolbox allocates within it inside its own transaction; no hold is written before the call and nothing after it. | wallet charter section 1 ("the wallet writes only `locked`") and section 6 (the busy answer: nothing written) | `src/spend_gate.rs:1355` (`run_offered`), `src/spend_gate.rs:66-78` | `the_offer_allocates_only_the_offered_coins_and_writes_no_hold` (`src/spend_gate/tests.rs:845`), `the_gate_writes_nothing_after_the_door` (`src/spend_gate/tests.rs:1480`, counts the writer's row changes and commits at the door and at the return), `a_busy_before_the_door_answers_503_with_nothing_posted_and_the_coins_unchanged` (`src/spend_gate/tests.rs:1919`) |
-| I2 | **An external fault is never a verdict.** A header service that does not answer, an explorer's 429, timeout, 5xx or malformed body, a courier that does not deliver, is "could not look" and moves no word, holds no coin as a judgment, releases nothing. | tracker charter section 2 (headers fail closed); wallet charter section 2 ("what it never believes") | `src/tracker_host.rs:1985-2010` (`CreatorReading::headers_fault`), `read_batch` in `src/spend_gate.rs`, `src/spend_gate.rs:1557`, `src/broadcast_verify.rs:294-400`, `src/commands/cleanup_abandoned.rs:306-317`, `src/commands/receive.rs:110-127` | `a_header_service_fault_is_read_once_more_and_is_could_not_verify_now` (`src/spend_gate/tests.rs:2290`), `the_readme_spend_guard_runs_as_the_host` (`src/tracker_host.rs:3058`, step 2: no tip changes no word), `the_false_negative_that_motivated_this_fix_is_now_inconclusive` (`src/broadcast_verify.rs:1646`), `a_lone_index_miss_is_inconclusive_and_releases_nothing` (`src/commands/cleanup_abandoned.rs:1587`), `a_fault_at_the_spender_lookup_falls_through_to_the_unspent_set` (`src/commands/cleanup_abandoned.rs:2543`), `every_explorer_faulting_is_could_not_look_never_an_empty_sync` (`src/commands/sync.rs:590`), `no_courier_delivering_is_could_not_look_with_both_reasons` (`src/commands/receive.rs:535`), `the_header_services_fault_is_503_headers_unavailable_with_retry_after` (`src/server/handlers/tests.rs:587`) |
-| I3 | **A negative needs two clean answers.** "Absent", "unspent" and "not listed" are acted on only when two independent providers answered cleanly and agree; one answer with the others faulting is "could not look". | wallet charter section 2 (an explorer's positive is a hint; a stranger's spend becomes fact only by a checked proof); broadcaster charter B3 (instances never vote) | `src/broadcast_verify.rs:398` (`is_definitive`), `src/broadcast_verify.rs:948` (`ask_chain_indexes`), `src/commands/cleanup_abandoned.rs:276-287` and `:350-365`, `src/explorers.rs:12-25` | `absence_is_definitive_only_when_broadcaster_and_chain_index_agree` (`src/broadcast_verify.rs:1438`), `chain_index_absence_alone_never_rejects` (`src/broadcast_verify.rs:1705`), `broadcaster_absence_alone_never_rejects` (`src/broadcast_verify.rs:1685`), `one_explorers_no_spend_known_is_not_unspent` (`src/commands/cleanup_abandoned.rs:2477`), `one_negative_and_faults_is_could_not_decide` (`src/commands/cleanup_abandoned.rs:2773`), `missing_from_one_explorers_set_is_could_not_decide_never_spent` (`src/commands/sync.rs:836`) |
-| I4 | **The wallet reads its own records at the moment of decision.** A stored proof is replayed against the headers of the moment every time it is read; the gate, the tracker and the repair passes decide from the wallet's rows and the header service, never from an explorer's word or a proof's age. | wallet charter section 2 ("from its own earlier assembly", `stillConfirmed`) and section 4 (the spend attempt's recheck); tracker charter section 2 | `src/tracker_host.rs:658` (`replay`), `src/tracker_host.rs:2029` (`read_creators`), `src/tracker_host.rs:24-31`, `src/broadcast_reconcile.rs:637-652`, `src/commands/cleanup_abandoned.rs:221` | `the_readme_spend_guard_runs_as_the_host` (`src/tracker_host.rs:3058`, step 3: the header moved, not mined), `the_spend_depth_holds_a_coin_until_its_block_is_deep_enough` (`src/tracker_host.rs:3002`), `the_served_pass_adopts_an_unproven_creator_and_a_proven_completed_one` (`src/tracker_host.rs:3142`), `the_served_pass_asks_for_a_proof_and_never_a_chain_index` (`src/broadcast_reconcile.rs:1470`), `execute_reads_the_header_again_demotes_a_moved_root_and_keeps_a_kept_one` (`src/commands/reproof.rs:611`), `the_locking_script_of_an_outpoint_comes_from_our_own_rows` (`src/commands/cleanup_abandoned.rs:2849`), `a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing` (`src/chain_feed_tests.rs:716`) |
-| I5 | **A coin a live action consumed is spent, never a hold.** An input of an action of ours is `spent by <txid>` for as long as that action lives; it is never a candidate, never a hold that clears, and is released only on evidence that the action is dead. | wallet charter section 1 (`locked(t)`, "held until `t` is mined or dead"), section 2 (the lock is the one word the wallet writes), section 4 (#72's release only on evidence) | `src/spend_gate.rs:981` (`locked`), `src/spend_gate.rs:922` (`candidates`: `spent_by IS NULL`), `src/spend_gate.rs:52-54`, `src/respend.rs:455` | `a_consumed_coin_is_listed_as_spent_by_its_spender` (`src/spend_gate/tests.rs:313`), `the_spent_by_reason_names_the_spenders_state` (`src/spend_gate/tests.rs:2019`), `accepted_phantom_exits_only_when_its_deliberate_competitor_proves` (`tests/respend_witness/main.rs:23`), `a_definitive_absence_keeps_an_unknown_input_locked` (`src/commands/cleanup_abandoned.rs:1790`), `retire_keeps_an_input_the_chain_cannot_vouch_for` (`src/server/broadcast_follow_up.rs:873`) |
-| I6 | **The word is per action and never a setting.** A received unmined coin is offered only under `allowPending: received` named on that one action, recorded as its label by the toolbox in the action's own transaction; no environment variable names it and a caller's copy of the label grants nothing. | wallet charter section 2 (R1 (d)) and section 8 (the R1 (d) row) | `src/server/handlers.rs:230`, `src/main.rs:233`, `src/spend_gate.rs:1437-1443`, `src/spend_gate.rs:746` (`strip_rule_label`), `src/spend_gate.rs:878` | `a_received_pending_coin_is_held_under_both_settings` (`src/spend_gate/tests.rs:192`), `the_door_word_offers_a_received_pending_coin_and_nothing_else` (`:564`), `only_the_word_received_opens_the_door` (`:617`), `the_word_is_parsed_from_the_route_and_the_flags` (`:2196`), `a_forged_rule_label_is_stripped_and_grants_nothing` (`:1265`), `the_scoped_word_offers_only_the_named_received_coins` (`:2051`), `a_template_under_the_word_carries_its_label_and_keeps_it_aborted` (`:1149`) |
-| I7 | **The served shape is MetaNet's.** Every endpoint takes and answers the MetaNet Client's JSON (`protocolID`, `keyID`, number arrays for bytes, AtomicBEEF in `tx`), and a refusal is `{code, message}` with the status by the error's class, the busy answer by its type. | wallet charter section 3 (the doors are BRC-100's) and section 6 (the busy answer's shape, R8) | `src/server/types.rs`, `src/server/error.rs` (`Kind`, `AppError`), `src/server/handlers.rs:295-312` | **held in part.** `tests/integration/` (57 tests, every endpoint with the MetaNet request shape, e.g. `test_create_verify_signature_roundtrip`, `test_get_public_key_identity`, `test_create_action_insufficient_funds`); `no_message_is_store_busy_by_its_words_and_no_4xx_says_it`, `the_typed_mapping_serves_what_the_prefix_table_served` and `the_typed_wallet_busy_from_the_door_is_503_retry_after_one` (`src/server/handlers/tests.rs:28`, `:256`, `:300`); `the_refusal_as_json_is_the_routes_body` (`src/spend_gate/tests.rs:1551`); `cors_exposes_retry_after` (`src/server/handlers/tests.rs:415`). No test compares a served body byte for byte with a recorded body of the MetaNet Client's own; that fixture is #69 (the oracle's wire fixtures, wave 1), not a new issue |
+| I1 | **The gate writes nothing around the door.** The gate names an offer and the toolbox allocates within it inside its own transaction; no hold is written before the call and nothing after it. | wallet charter section 1 ("the wallet writes only `locked`") and section 6 (the busy answer: nothing written) | `run_offered` (`src/spend_gate.rs:1355`), `Wallet::create_action_offering` (`src/spend_gate.rs:66-78`) | `the_offer_allocates_only_the_offered_coins_and_writes_no_hold` (`src/spend_gate/tests.rs:845`), `the_gate_writes_nothing_after_the_door` (`src/spend_gate/tests.rs:1480`, counts the writer's row changes and commits at the door and at the return), `a_busy_before_the_door_answers_503_with_nothing_posted_and_the_coins_unchanged` (`src/spend_gate/tests.rs:1919`) |
+| I2 | **An external fault is never a verdict.** A header service that does not answer, an explorer's 429, timeout, 5xx or malformed body, a courier that does not deliver, is "could not look" and moves no word, holds no coin as a judgment, releases nothing. | tracker charter section 2 (headers fail closed); wallet charter section 2 ("what it never believes") | `CreatorReading::headers_fault` (`src/tracker_host.rs:1985-2010`), `read_batch` in `src/spend_gate.rs`, `refusal` (`src/spend_gate.rs:1557`), `AbsenceAuthority` (`src/broadcast_verify.rs:294-400`), `spender` (`src/commands/cleanup_abandoned.rs:306-317`), `second` (`src/commands/receive.rs:110-127`) | `a_header_service_fault_is_read_once_more_and_is_could_not_verify_now` (`src/spend_gate/tests.rs:2290`), `the_readme_spend_guard_runs_as_the_host` (`src/tracker_host.rs:3058`, step 2: no tip changes no word), `the_false_negative_that_motivated_this_fix_is_now_inconclusive` (`src/broadcast_verify.rs:1646`), `a_lone_index_miss_is_inconclusive_and_releases_nothing` (`src/commands/cleanup_abandoned.rs:1587`), `a_fault_at_the_spender_lookup_falls_through_to_the_unspent_set` (`src/commands/cleanup_abandoned.rs:2543`), `every_explorer_faulting_is_could_not_look_never_an_empty_sync` (`src/commands/sync.rs:590`), `no_courier_delivering_is_could_not_look_with_both_reasons` (`src/commands/receive.rs:535`), `the_header_services_fault_is_503_headers_unavailable_with_retry_after` (`src/server/handlers/tests.rs:249`) |
+| I3 | **A negative needs two clean answers.** "Absent", "unspent" and "not listed" are acted on only when two independent providers answered cleanly and agree; one answer with the others faulting is "could not look". | wallet charter section 2 (an explorer's positive is a hint; a stranger's spend becomes fact only by a checked proof); broadcaster charter B3 (instances never vote) | `is_definitive` (`src/broadcast_verify.rs:398`), `ask_chain_indexes` (`src/broadcast_verify.rs:948`), `is_utxo` (`src/commands/cleanup_abandoned.rs:275-287`) and `is_utxo` (`:350-365`), `RateGate` (`src/explorers.rs:12-25`) | `absence_is_definitive_only_when_broadcaster_and_chain_index_agree` (`src/broadcast_verify.rs:1438`), `chain_index_absence_alone_never_rejects` (`src/broadcast_verify.rs:1705`), `broadcaster_absence_alone_never_rejects` (`src/broadcast_verify.rs:1685`), `one_explorers_no_spend_known_is_not_unspent` (`src/commands/cleanup_abandoned.rs:2477`), `one_negative_and_faults_is_could_not_decide` (`src/commands/cleanup_abandoned.rs:2773`), `missing_from_one_explorers_set_is_could_not_decide_never_spent` (`src/commands/sync.rs:836`) |
+| I4 | **The wallet reads its own records at the moment of decision.** A stored proof is replayed against the headers of the moment every time it is read; the gate, the tracker and the repair passes decide from the wallet's rows and the header service, never from an explorer's word or a proof's age. | wallet charter section 2 ("from its own earlier assembly", `stillConfirmed`) and section 4 (the spend attempt's recheck); tracker charter section 2 | `replay` (`src/tracker_host.rs:658`), `read_creators` (`src/tracker_host.rs:2029`), `tracker_states` (`src/tracker_host.rs:24-31`), `run_pass` (`src/broadcast_reconcile.rs:637-652`), `stored_locking_script` (`src/commands/cleanup_abandoned.rs:221`) | `the_readme_spend_guard_runs_as_the_host` (`src/tracker_host.rs:3058`, step 3: the header moved, not mined), `the_spend_depth_holds_a_coin_until_its_block_is_deep_enough` (`src/tracker_host.rs:3002`), `the_served_pass_adopts_an_unproven_creator_and_a_proven_completed_one` (`src/tracker_host.rs:3142`), `the_served_pass_asks_for_a_proof_and_never_a_chain_index` (`src/broadcast_reconcile.rs:1470`), `execute_reads_the_header_again_demotes_a_moved_root_and_keeps_a_kept_one` (`src/commands/reproof.rs:611`), `the_locking_script_of_an_outpoint_comes_from_our_own_rows` (`src/commands/cleanup_abandoned.rs:2849`), `a_reorg_whose_new_block_carries_the_root_moves_nothing_and_fetches_nothing` (`src/chain_feed_tests.rs:716`) |
+| I5 | **A coin a live action consumed is spent, never a hold.** An input of an action of ours is `spent by <txid>` for as long as that action lives; it is never a candidate, never a hold that clears, and is released only on evidence that the action is dead. | wallet charter section 1 (`locked(t)`, "held until `t` is mined or dead"), section 2 (the lock is the one word the wallet writes), section 4 (#72's release only on evidence) | `locked` (`src/spend_gate.rs:981`), `candidates` (`src/spend_gate.rs:922`: `spent_by IS NULL`), `spent_by` (`src/spend_gate.rs:52-54`), `reserve_inputs` (`src/respend.rs:455`) | `a_consumed_coin_is_listed_as_spent_by_its_spender` (`src/spend_gate/tests.rs:313`), `the_spent_by_reason_names_the_spenders_state` (`src/spend_gate/tests.rs:2019`), `accepted_phantom_exits_only_when_its_deliberate_competitor_proves` (`tests/respend_witness/main.rs:23`), `a_definitive_absence_keeps_an_unknown_input_locked` (`src/commands/cleanup_abandoned.rs:1790`), `retire_keeps_an_input_the_chain_cannot_vouch_for` (`src/server/broadcast_follow_up.rs:873`) |
+| I6 | **The word is per action and never a setting.** A received unmined coin is offered only under `allowPending: received` named on that one action, recorded as its label by the toolbox in the action's own transaction; no environment variable names it and a caller's copy of the label grants nothing. | wallet charter section 2 (R1 (d)) and section 8 (the R1 (d) row) | `AllowPending::from_json` (`src/server/handlers.rs:483`), `word` (`src/main.rs:233`), `RECEIVED_PENDING_LABEL` (`src/spend_gate.rs:1437-1443`), `strip_rule_label` (`src/spend_gate.rs:746`), `hold_reason` (`src/spend_gate.rs:878`) | `a_received_pending_coin_is_held_under_both_settings` (`src/spend_gate/tests.rs:192`), `the_door_word_offers_a_received_pending_coin_and_nothing_else` (`:564`), `only_the_word_received_opens_the_door` (`:617`), `the_word_is_parsed_from_the_route_and_the_flags` (`:2196`), `a_forged_rule_label_is_stripped_and_grants_nothing` (`:1265`), `the_scoped_word_offers_only_the_named_received_coins` (`:2051`), `a_template_under_the_word_carries_its_label_and_keeps_it_aborted` (`:1149`) |
+| I7 | **The served shape is MetaNet's.** Every endpoint takes and answers the MetaNet Client's JSON (`protocolID`, `keyID`, number arrays for bytes, AtomicBEEF in `tx`), and a refusal is `{code, message}` with the status by the error's class, the busy answer by its type. | wallet charter section 3 (the doors are BRC-100's) and section 6 (the busy answer's shape, R8) | `src/server/types.rs`, `src/server/error.rs` (`Kind`, `AppError`), `CreateActionArgs` (`src/server/handlers.rs:499-564`) | **held in part.** `tests/integration/` (57 tests, every endpoint with the MetaNet request shape, e.g. `test_create_verify_signature_roundtrip`, `test_get_public_key_identity`, `test_create_action_insufficient_funds`); `no_message_is_store_busy_by_its_words_and_no_4xx_says_it` (`src/server/handlers/tests.rs:25`) and `the_typed_wallet_busy_from_the_door_is_503_retry_after_one` (`:88`); the later `the_typed_mapping_serves_what_the_prefix_table_served` is cited by name; `the_refusal_as_json_is_the_routes_body` (`src/spend_gate/tests.rs:1551`); `cors_exposes_retry_after` (`src/server/handlers/tests.rs:190`). No test compares a served body byte for byte with a recorded body of the MetaNet Client's own; that fixture is #69 (the oracle's wire fixtures, wave 1), not a new issue |
 
 Two more the code keeps, beside the seven asked: **a retire is the host's
-act on `built` alone** (tracker charter sections 1 and 5; `src/retire_guard.rs:47`;
+act on `built` alone** (tracker charter sections 1 and 5; `broadcaster_took`, `src/retire_guard.rs:47`;
 `the_served_sweep_keeps_an_announced_transaction_a_broadcaster_refused_later`,
 `src/tracker_words_witnesses.rs:295`) and **a broadcaster's word is a hint**
-(broadcaster charter B1; `src/server/post_word.rs:1-12`,
-`src/arc_ingest.rs:12-21`;
+(broadcaster charter B1; `immediateBroadcastHint`, `src/server/post_word.rs:1-12`;
+`ArcadeEventsTask::apply_event`, `src/arc_ingest.rs:11-21`;
 `a_broadcasters_mined_is_a_hint_that_asks_for_the_proof`,
 `src/tracker_host.rs:2738`;
 `a_broadcaster_status_refreshed_every_pass_never_becomes_chain_evidence`,
@@ -529,23 +531,23 @@ act on `built` alone** (tracker charter sections 1 and 5; `src/retire_guard.rs:4
 
 ## 5. The module map
 
-Every file under `src/`, its one-line purpose, and the machine of the stack
-it serves: **wallet host** (the doors over the toolbox, the coins), **tracker
+Every file under `src/` at `08f1f05`, its one-line purpose, and the machine
+of the stack it serves: **wallet host** (the doors over the toolbox, the coins), **tracker
 host** (the word, the headers, the feed), **broadcaster client** (what a
 broadcaster said, as a hint), **explorers** (the break-glass reads),
 **repair** (the passes that write the store outside a door). Plumbing with
-no machine of its own is marked as such. Lines are at `08f1f05`.
+no machine of its own is marked as such. Lines count physical newlines at
+`08f1f05`, including blank lines. The later configuration and typed-error
+modules of #80 and #81 are described above and in section 6; they are not
+files of this pinned map.
 
 | file | lines | purpose | machine |
 |---|---|---|---|
 | `src/main.rs` | 236 | The binary: tracing, clap, one arm per command; the `--allow-pending` word parsed before the wallet opens | wallet host (plumbing) |
 | `src/lib.rs` | 20 | The library surface the binary, the tests and the MCP companion share | plumbing |
 | `src/cli.rs` | 352 | Clap definitions: the global flags and the 30 commands with their `--help` text | plumbing |
-| `src/context.rs` | 88 | `WalletContext`: the `Config`, `ROOT_KEY`, the store, the services, the chain tracker set on the store, one `Wallet`; the gate's settings and the verifier from the `Config` | wallet host |
-| `src/config.rs` | 770 | The configuration (#80): every variable and the global flags read once at start, typed and checked (a malformed value refused naming the variable and its shape), secrets redacted; the crate's one reader of the environment (A7); the relay's own settings | plumbing |
-| `src/config/knobs.rs` | 184 | Every setting with its effective value and its source, for `bsv-wallet config` and the start line of `daemon` and `serve` | plumbing |
-| `src/config/tests.rs` | 261 | The configuration's tests: the defaults (both chains), each switch's words, the refusals, the bases' trimming, the redaction, the sources, the `--json` shape | plumbing |
-| `src/services_env.rs` | 430 | The one settings-to-`ServicesOptions` resolver, over typed settings (#172: it parses none): `CHAINTRACKS_URL` required, break-glass headers, explorer keys and bases (`GorillaPool`'s one base, the knob's and the toolbox's), Arcade runtime, the callback token | wallet host (plumbing) |
+| `src/context.rs` | 65 | `WalletContext`: `ROOT_KEY`, the store, the services, the chain tracker set on the store, one `Wallet` | wallet host |
+| `src/services_env.rs` | 430 | The environment-to-`ServicesOptions` resolver: `CHAINTRACKS_URL` required, break-glass headers, explorer keys and bases, Arcade runtime, the callback token | wallet host (plumbing) |
 | `src/store.rs` | 320 | The store's two doors (reader pool, one writer), `open_shared` (one store per file per process), the busy told by its type | wallet host |
 | `src/spend_gate.rs` | 1593 | The spend gate: the offer, the word and its scope, the refusal, the header-fault retry, the holds' heal | wallet host |
 | `src/spend_gate/tests.rs` | 2439 | The gate's tests (36: 30 tokio, 6 plain), with the write counter at the door | wallet host |
@@ -566,10 +568,8 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/brc29.rs` | 96 | The BRC-29 deposit key, address and script | wallet host |
 | `src/backstop_log.rs` | 240 | A tracing layer that names the provider behind each proof the monitor's backstop stored | tracker host |
 | `src/server/mod.rs` | 763 | The router, the layers (auth before the body), the FIFO lock, the bind guard, `/arc-callback`, `/chain-feed`, `/tx/{txid}`, graceful shutdown | wallet host |
-| `src/server/handlers.rs` | 1120 | The 28 handlers | wallet host |
-| `src/server/error.rs` | 325 | `Kind` (a status and a code per refusal) and `AppError`, every typed error mapped by its variant (#81) | wallet host |
-| `src/toolbox_words.rs` | 152 | The toolbox refusals the `WalletInterface` boundary erases to words, read back in one place (#81) | wallet host |
-| `src/server/handlers/tests.rs` | 8 tests | The answer's rule: 503 by type only, 409 names the coin, 503 `HEADERS_UNAVAILABLE`, the scope's 400 | wallet host |
+| `src/server/handlers.rs` | 1337 | The 28 handlers | wallet host |
+| `src/server/handlers/tests.rs` | 315 | The answer's rule: 503 by type only, 409 names the coin, 503 `HEADERS_UNAVAILABLE`, the scope's 400 | wallet host |
 | `src/server/types.rs` | 348 | The MetaNet Client's JSON shapes (`protocolID`, `keyID`, byte arrays) | wallet host |
 | `src/server/post_word.rs` | 121 | The post's word for a transaction whose immediate post drew no accepting word, read from the request's history | broadcaster client |
 | `src/server/broadcast_follow_up.rs` | 903 | What `/createAction` does after the toolbox returns: disposition, the background or inline probe, the broadcast memory, the retire through the guard | broadcaster client |
@@ -606,7 +606,6 @@ no machine of its own is marked as such. Lines are at `08f1f05`.
 | `src/commands/export_beefs.rs` | 360 | One BEEF file per transaction holding a coin of ours, from the store alone (C10) | wallet host |
 | `src/commands/backup.rs` | 58 | Copy `.env` and the store, with a digest | plumbing |
 | `src/commands/services.rs` | 57 | The services' health (chain, height) | plumbing |
-| `src/commands/config.rs` | 70 | `bsv-wallet config`: every setting, its effective value and its source (env, flag, default), as a table or `--json` (`null` for no value, booleans for the switches); secrets `<set>` | plumbing |
 | `src/commands/ui.rs` | 479 | The read-only database inspector (its own Axum server, SELECT only) | plumbing |
 | `src/ui/index.html` | | The inspector's page, embedded by `ui.rs` | plumbing |
 | `src/gift/mod.rs` | 16 | The TimeLockedGift covenant module | wallet host |
@@ -623,10 +622,12 @@ The programme's Phase 1 and Phase 2 issues each move one locus named
 above; this is the map of what is about to move.
 
 - **#78, one spend function.** The sequence of section 1 hops 1 to 9 as
-  the four commands run it (`src/commands/send.rs:46-70`,
-  `drain.rs:65-93`, `split.rs:169-190`, `gift_send.rs:165-192`: heal,
+  the four commands run it (`heal_before_spend`, `src/commands/send.rs:46-77`;
+  `heal_before_spend`, `src/commands/drain.rs:65-93`; `heal_before_spend`,
+  `src/commands/split.rs:169-190`; `heal_before_spend`,
+  `src/commands/gift_send.rs:165-192`: heal,
   guard, gate, verify, print) becomes one `spend()`; the served door's copy
-  (`src/server/handlers.rs:332-352`) is the fifth caller to align.
+  (`spending_lock`, `src/server/handlers.rs:585-604`) is the fifth caller to align.
 - **#79, one evidence layer.** The spend probe (`probe_input_spend`,
   `src/commands/cleanup_abandoned.rs:290`), the presence report
   (`PresenceReport`, `src/broadcast_verify.rs:222`), the three verdict
@@ -648,11 +649,11 @@ above; this is the map of what is about to move.
   (`src/toolbox_words.rs`) until bsv-rs carries a refusal's class and the
   toolbox maps its variants to it.
 - **#86, the lock covers allocation only.** The FIFO lock's span
-  (`src/server/handlers.rs:332-352`) shrinks to the offer and the
+  (`spending_lock`, `src/server/handlers.rs:585-604`) shrinks to the offer and the
   allocation; the post of hop 6 and the probe of hop 8 run outside it.
 - **#87, a local header chain.** `HeaderSnapshot::take`
   (`src/tracker_host.rs:150`) stops asking the header service per spend and
-  reads a window the feed (`src/chain_feed.rs:167`,
+  reads a window the feed (`chain_feed::run`, `src/chain_feed.rs:167`,
   `deliver_chain_event`) maintains; #59's class
   (`read_batch` in `src/spend_gate.rs`) disappears at the root.
 - **#88, the verdict as a maintained column.** `hold_reason`
@@ -662,6 +663,6 @@ above; this is the map of what is about to move.
   becomes one indexed query.
 - **#89, the gate's reads behind the toolbox.** The raw SQL of
   `candidates` (`src/spend_gate.rs:922`), `locked` (`:981`), `check_scope`
-  (`:1463`), `action_rules` (`:778`), the heal (`:1288`) and the tracker's
-  rows (`src/tracker_host.rs:821-860`, `ROW_COLUMNS`) move behind a toolbox
+  (`:1463`), `action_rules` (`:778`), the heal (`heal_holds`, `:1288`) and the tracker's
+  rows (`ROW_COLUMNS`, `src/tracker_host.rs:821-860`) move behind a toolbox
   API or versioned views, so the CLI names no column.
