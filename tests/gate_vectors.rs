@@ -115,7 +115,11 @@ fn clause_of(reason: Option<&str>) -> String {
     };
     let clause = if reason.starts_with("frozen") {
         "frozen"
-    } else if reason.starts_with("spent by") || reason.starts_with("lost:") {
+    } else if reason.starts_with("spent by")
+        || reason.starts_with("lost:")
+        || (reason.starts_with("its transaction is ")
+            && reason.ends_with(": not spendable until it is sent"))
+    {
         "held by a lock"
     } else if reason.starts_with("suspect:") {
         "creator suspect (fork in progress)"
@@ -137,12 +141,8 @@ fn clause_of(reason: Option<&str>) -> String {
     clause.to_string()
 }
 
-/// A real failed transaction's held listing must reach the existing
-/// chain-word mapping. Removing the named status hold offers this received
-/// coin under the word, so this checks the fix as well as `clause_of`.
-#[tokio::test]
-async fn a_failed_named_inputs_held_reason_maps_to_the_creators_chain_word_clause() {
-    use bsv_wallet_toolbox::WalletStorageWriter;
+/// A free received coin whose creator is unknown in the pinned vectors.
+async fn free_received_coin() -> (Built, u32) {
     let rows: Value = serde_json::from_slice(VECTORS).unwrap();
     let row = rows["rows"]
         .as_array()
@@ -156,40 +156,62 @@ async fn a_failed_named_inputs_held_reason_maps_to_the_creators_chain_word_claus
                 && s(row, "creator_word") == Some("unknown")
         })
         .expect("a free received coin with an unknown creator");
-    let built = build(row).await;
-    built
-        .storage
-        .mark_internalized_tx_failed(&built.txid)
-        .await
-        .unwrap();
+    (build(row).await, height(row, "spend_depth").unwrap())
+}
+
+/// An unspendable not-yet-sent record maps to the lock clause; a failed
+/// transaction maps to the creator's chain word. Removing the status/flag
+/// hold offers these received coins under the word, so both mappings bite.
+#[tokio::test]
+async fn a_named_inputs_status_hold_maps_to_its_record_or_creator_clause() {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    let (built, spend_depth) = free_received_coin().await;
     let gate = GateOptions {
-        spend_depth: height(row, "spend_depth").unwrap(),
+        spend_depth,
         own_change: true,
         allow_pending: AllowPending::Received,
         tracker: TickOptions::default(),
     };
-    let held = assess_named(
-        UserCoins::new(&built.storage, built.user),
-        &built.services,
-        &gate,
-        &[(built.txid.clone(), built.vout)],
-        &[],
-        None,
-        false,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        held.len(),
-        1,
-        "failed was offered under allowPending: received"
-    );
-    assert_eq!(held[0].word, "failed");
-    assert_eq!(held[0].reason, "its transaction is failed: never offered");
-    assert_eq!(
-        clause_of(Some(&held[0].reason)),
-        "door: a chain word against the creator"
-    );
+    for status in ["nosend", "unsigned", "sending", "failed"] {
+        built
+            .storage
+            .mark_internalized_tx_failed(&built.txid)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE transactions SET status = ? WHERE txid = ?")
+            .bind(status)
+            .bind(&built.txid)
+            .execute(built.storage.writer())
+            .await
+            .unwrap();
+        let held = assess_named(
+            UserCoins::new(&built.storage, built.user),
+            &built.services,
+            &gate,
+            &[(built.txid.clone(), built.vout)],
+            &[],
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            held.len(),
+            1,
+            "{status} was offered under allowPending: received"
+        );
+        assert_eq!(held[0].word, status);
+        let (ending, clause) = if status == "failed" {
+            ("never offered", "door: a chain word against the creator")
+        } else {
+            ("not spendable until it is sent", "held by a lock")
+        };
+        assert_eq!(
+            held[0].reason,
+            format!("its transaction is {status}: {ending}")
+        );
+        assert_eq!(clause_of(Some(&held[0].reason)), clause);
+    }
 }
 
 /// The guard's depth a reason names (`depth N: ...`).
