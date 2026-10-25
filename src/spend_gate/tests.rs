@@ -1251,7 +1251,18 @@ async fn mined_coin(
     satoshis: u64,
     height: u32,
 ) -> (String, i64) {
-    let lock = bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap();
+    mined_coin_with_lock(storage, (user, basket), seed, satoshis, height, LOCK).await
+}
+
+async fn mined_coin_with_lock(
+    storage: &StorageSqlx,
+    (user, basket): (i64, i64),
+    seed: u8,
+    satoshis: u64,
+    height: u32,
+    locking_script: &str,
+) -> (String, i64) {
+    let lock = bsv_sdk::script::LockingScript::from_hex(locking_script).unwrap();
     let mut parent = bsv_sdk::transaction::Transaction::new();
     parent
         .add_input(bsv_sdk::transaction::TransactionInput::new(
@@ -1273,6 +1284,12 @@ async fn mined_coin(
         9,
     )
     .await;
+    sqlx::query("UPDATE outputs SET locking_script = ? WHERE output_id = ?")
+        .bind(hex::decode(locking_script).unwrap())
+        .bind(id)
+        .execute(storage.writer())
+        .await
+        .unwrap();
     for table in ["transactions", "proven_txs"] {
         sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
             .bind(parent.to_binary())
@@ -2636,13 +2653,15 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// a failed and frozen one (`ca`), a spent coin of a failed transaction
 /// (`cb`), a nosend the store marks `spendable = 0` (`cc`), frozen own
 /// change (`d1`), a spent coin of a completed transaction (`d2`) and a
-/// spent and frozen coin (`d3`). The latter two have `spendable = 0`.
-async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 14] {
+/// spent and frozen coin (`d3`), unsigned (`d4`), sending (`d5`), and a
+/// non-default basket (`d6`). `d2` and `d3` have `spendable = 0`.
+async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 17] {
     let coins = [
-        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca", "cb", "cc", "d1", "d2", "d3",
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca", "cb", "cc", "d1", "d2", "d3", "d4",
+        "d5", "d6",
     ]
     .map(|b| b.repeat(32));
-    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost, made_frozen, spent_lost, spent_frozen] =
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost, made_frozen, spent_lost, spent_frozen, unsigned, sending, other_basket] =
         &coins;
     for (txid, made, mined_at) in [
         (received, false, None),
@@ -2659,6 +2678,9 @@ async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 14] {
         (made_frozen, true, None),
         (spent_lost, false, Some(900)),
         (spent_frozen, false, None),
+        (unsigned, false, None),
+        (sending, false, None),
+        (other_basket, false, None),
     ] {
         let id = coin(storage, owner, txid, made, mined_at, 8_000, 5).await;
         if [lost, lost_unproven, nosend_lost, spent_lost, spent_frozen].contains(&txid) {
@@ -2671,6 +2693,9 @@ async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 14] {
     for txid in [nosend, nosend_lost] {
         set_status(storage, txid, "nosend").await;
     }
+    set_status(storage, unsigned, "unsigned").await;
+    set_status(storage, sending, "sending").await;
+    in_other_basket(storage, other_basket, owner.1).await;
     for txid in [spent, failed_spent, spent_lost, spent_frozen] {
         sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
             .bind(txid)
@@ -2689,8 +2714,28 @@ async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 14] {
     coins
 }
 
+/// Give one scope fixture a basket outside the scoped word's domain.
+async fn in_other_basket(storage: &StorageSqlx, txid: &str, basket: i64) {
+    let other = sqlx::query(
+        "INSERT INTO output_baskets (user_id, name, number_of_desired_utxos, minimum_desired_utxo_value, created_at, updated_at) \
+         SELECT user_id, 'other', number_of_desired_utxos, minimum_desired_utxo_value, created_at, updated_at \
+         FROM output_baskets WHERE basket_id = ?",
+    )
+    .bind(basket)
+    .execute(storage.writer())
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query("UPDATE outputs SET basket_id = ? WHERE txid = ?")
+        .bind(other)
+        .bind(txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+}
+
 /// The scope table in an authenticated wallet for either door.
-async fn scope_wallet() -> (Wallet<StorageSqlx, MockWalletServices>, [String; 14]) {
+async fn scope_wallet() -> (Wallet<StorageSqlx, MockWalletServices>, [String; 17]) {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
     let coins = scope_table(&storage, (user, basket)).await;
@@ -2701,40 +2746,53 @@ async fn scope_wallet() -> (Wallet<StorageSqlx, MockWalletServices>, [String; 14
     )
 }
 
-/// Expected readings in `scope_table` order: the scoped refusal and the
-/// named door's (word, reason prefix) under the received word. The domain
-/// refusal for own change precedes its coin reading only at the scoped door.
-type ScopeReading = (Option<&'static str>, Option<(&'static str, &'static str)>);
-const SCOPE_READINGS: [ScopeReading; 14] = [
-    (None, None),
+/// A scoped refusal and the named door's (word, reason prefix) under the
+/// received word, keyed by the coin's index in `scope_table`.
+type ScopeReading = (
+    usize,
+    Option<&'static str>,
+    Option<(&'static str, &'static str)>,
+);
+
+/// The Lean's segment: received, frozen, spent by, lost on completed or
+/// unproven, failed, failed and frozen, and spent of failed. Both doors hold
+/// the same coins, with the scoped word's own refusal text.
+const LEAN_SEGMENT_READINGS: [ScopeReading; 10] = [
+    (0, None, None),
+    (2, Some("spent by "), Some(("locked", "spent by "))),
+    (4, Some(LOST), Some(("lost", LOST))),
+    (5, Some(FROZEN), Some(("frozen", FROZEN))),
     (
-        Some("own change of an action of this wallet, not a received coin"),
-        None,
-    ),
-    (Some("spent by "), Some(("locked", "spent by "))),
-    (
-        Some("its transaction is nosend"),
-        Some(("nosend", "its transaction is nosend: never offered")),
-    ),
-    (Some(LOST), Some(("lost", LOST))),
-    (Some(FROZEN), Some(("frozen", FROZEN))),
-    (
+        6,
         Some("its transaction is failed"),
         Some(("failed", "its transaction is failed: never offered")),
     ),
-    (Some(LOST), Some(("lost", LOST))),
-    (Some(FROZEN), Some(("frozen", FROZEN))),
-    (Some("spent by "), Some(("locked", "spent by "))),
+    (7, Some(LOST), Some(("lost", LOST))),
+    (8, Some(FROZEN), Some(("frozen", FROZEN))),
+    (9, Some("spent by "), Some(("locked", "spent by "))),
+    (12, Some("spent by "), Some(("locked", "spent by "))),
+    (13, Some(FROZEN), Some(("frozen", FROZEN))),
+];
+
+/// The scoped word's domain: own change, live pre-broadcast statuses and a
+/// non-default basket. These are 400s at the scoped door, while the named
+/// door reads the creator (or the frozen record for frozen own change).
+const SCOPED_WORD_DOMAIN_READINGS: [ScopeReading; 7] = [
     (
-        Some("its transaction is nosend"),
-        Some(("nosend", "its transaction is nosend: never offered")),
+        1,
+        Some("own change of an action of this wallet, not a received coin"),
+        None,
     ),
+    (3, Some("its transaction is nosend"), None),
+    (10, Some("its transaction is nosend"), None),
     (
+        11,
         Some("own change of an action of this wallet, not a received coin"),
         Some(("frozen", FROZEN)),
     ),
-    (Some("spent by "), Some(("locked", "spent by "))),
-    (Some(FROZEN), Some(("frozen", FROZEN))),
+    (14, Some("its transaction is unsigned"), None),
+    (15, Some("its transaction is sending"), None),
+    (16, Some("not a change coin of the default basket"), None),
 ];
 
 /// A scoped word naming a coin that is not a received coin this wallet
@@ -2758,11 +2816,10 @@ const SCOPE_READINGS: [ScopeReading; 14] = [
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let (wallet, coins) = scope_wallet().await;
     let before = stored_rows(wallet.storage()).await;
-    let cases = coins
-        .iter()
-        .cloned()
-        .zip(SCOPE_READINGS)
-        .filter_map(|(txid, (why, _))| why.map(|why| (txid, why)))
+    let cases = LEAN_SEGMENT_READINGS
+        .into_iter()
+        .chain(SCOPED_WORD_DOMAIN_READINGS)
+        .filter_map(|(i, why, _)| why.map(|why| (coins[i].clone(), why)))
         .chain(std::iter::once(("c9".repeat(32), NOT_HELD)));
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
@@ -2790,13 +2847,24 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
     assert_eq!(spent_count, 4, "nothing allocated");
 }
 
-/// Both doors read every planted coin in the ruled order. Own change is
-/// outside the scoped word's domain; its coin still has a named reading.
+/// The two doors agree on the Lean's segment, in `coinWord` order.
 #[tokio::test]
-async fn the_scoped_and_named_doors_agree_on_the_scope_table() {
+async fn the_scoped_and_named_doors_agree_on_the_lean_segment() {
+    assert_door_table(&LEAN_SEGMENT_READINGS).await;
+}
+
+/// A scoped word's domain refuses own change, pre-broadcast statuses and
+/// other baskets with 400; the named door retains the creator's reading.
+#[tokio::test]
+async fn the_scoped_and_named_doors_differ_on_the_scoped_words_domain() {
+    assert_door_table(&SCOPED_WORD_DOMAIN_READINGS).await;
+}
+
+async fn assert_door_table(table: &[ScopeReading]) {
     let (wallet, coins) = scope_wallet().await;
     let owned = UserCoins::from_wallet(&wallet).await.unwrap();
-    for (txid, (scoped, named)) in coins.iter().zip(SCOPE_READINGS) {
+    for &(i, scoped, named) in table {
+        let txid = &coins[i];
         let outpoint = [(txid.clone(), 0)];
         let scope = check_scope(owned, &outpoint).await.unwrap();
         assert_eq!(scope.is_some(), scoped.is_some(), "{txid}");
@@ -2890,21 +2958,129 @@ async fn a_failed_named_input_is_held_on_its_status_under_every_word() {
     assert_eq!(stored_rows(wallet.storage()).await, before);
 }
 
+/// A received nosend, unsigned or sending coin reads its live creator as
+/// before: held without a received word, offered with it. The scoped word
+/// refuses each status with its own 400 before reading the creator.
 #[tokio::test]
-async fn a_nosend_named_input_is_held_on_its_status_under_every_word() {
+async fn live_statuses_at_the_named_door_read_the_received_creator() {
     let (wallet, coins) = scope_wallet().await;
-    for txid in [&coins[3], &coins[10]] {
-        assert_status_door(&wallet, txid, "nosend").await;
+    for (i, status) in [
+        (3, "nosend"),
+        (10, "nosend"),
+        (14, "unsigned"),
+        (15, "sending"),
+    ] {
+        let txid = &coins[i];
+        let held = named_under_word(&wallet, txid, &opts(1, true)).await;
+        assert_eq!(held.len(), 1, "{status}: {held:?}");
+        assert_eq!(held[0].word, "unknown", "{status}");
+        assert_eq!(
+            held[0].reason,
+            "depth 1: 0 blocks; received, no proof; offered under allowPending: received"
+        );
+        for gate in every_word(txid)
+            .into_iter()
+            .filter(|gate| gate.allow_pending.is_on())
+        {
+            assert!(
+                named_under_word(&wallet, txid, &gate).await.is_empty(),
+                "{status}"
+            );
+        }
+        let gate =
+            opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(txid.clone(), 0)]));
+        let err = create_action(&wallet, pay(1_000), "gate.local", &gate)
+            .await
+            .unwrap_err();
+        let GateError::Scope(message) = err else {
+            panic!("not a scoped refusal: {err:?}")
+        };
+        assert!(
+            message.ends_with(&format!("its transaction is {status}")),
+            "{message}"
+        );
     }
 }
 
+/// A real `noSend` action's made output reaches the toolbox as a named input
+/// of another `noSend` action under `SPEND_OWN_CHANGE=1`. Under 0 the gate holds
+/// it as own change. Toolbox 0.13.0 answers `wallet error: Validation error:
+/// inputs[0]: output <txid>:<vout> is not spendable`, its refusal after the gate.
 #[tokio::test]
-async fn other_unoffered_statuses_do_not_reach_the_creators_rule() {
-    let (wallet, coins) = scope_wallet().await;
-    for status in ["unsigned", "sending", "unprocessed"] {
-        set_status(wallet.storage(), &coins[0], status).await;
-        assert_status_door(&wallet, &coins[0], status).await;
-    }
+async fn a_made_nosend_input_reaches_the_toolbox_under_the_own_change_rule() {
+    let wallet = wallet_with_signable_funding().await;
+    let mut args = pay(1_000);
+    args.options.as_mut().unwrap().no_send = Some(true);
+    let parent = create_action(&wallet, args.clone(), "gate.local", &opts(1, true))
+        .await
+        .unwrap();
+    let txid = hex::encode(parent.txid.unwrap());
+    let change = parent.no_send_change.unwrap().into_iter().next().unwrap();
+    let outpoint = format!("{txid}:{}", change.vout);
+    let status: String = sqlx::query_scalar("SELECT status FROM transactions WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "nosend");
+    let mut input = named_input(&txid);
+    input.outpoint = change;
+    args.inputs = Some(vec![input]);
+    let (held, asked) = at_the_door(create_action(
+        &wallet,
+        args.clone(),
+        "gate.local",
+        &opts(1, false),
+    ))
+    .await;
+    assert!(!asked, "the disabled own-change rule reached the toolbox");
+    let Err(GateError::Refused(refusal)) = held else {
+        panic!("not held: {held:?}")
+    };
+    assert_eq!(refusal.held[0].origin, Origin::Made);
+    assert!(refusal.held[0]
+        .reason
+        .ends_with("own change, SPEND_OWN_CHANGE=0"));
+    let (answer, asked) =
+        at_the_door(create_action(&wallet, args, "gate.local", &opts(1, true))).await;
+    assert!(asked, "the made nosend input was held: {answer:?}");
+    let Err(GateError::Wallet(error)) = answer else {
+        panic!("the toolbox's answer changed: {answer:?}")
+    };
+    let expected =
+        format!("wallet error: Validation error: inputs[0]: output {outpoint} is not spendable");
+    assert_eq!(error.to_string(), expected);
+    println!("chained noSend toolbox answer: {error}");
+}
+
+/// A mined P2PKH coin with the derivation the toolbox needs to sign it.
+async fn wallet_with_signable_funding() -> Wallet<StorageSqlx, MockWalletServices> {
+    use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (prefix, suffix) = ("dGVzdC1wcmVmaXg=", "dGVzdC1zdWZmaXg=");
+    let key = KeyDeriver::new(Some(root.clone()))
+        .derive_private_key(
+            &Protocol::new(SecurityLevel::Counterparty, "3241645161d8"),
+            &format!("{prefix} {suffix}"),
+            &Counterparty::Self_,
+        )
+        .unwrap();
+    let lock = bsv_sdk::script::templates::P2PKH::lock_from_address(&key.public_key().to_address())
+        .unwrap();
+    let (funding, id) =
+        mined_coin_with_lock(&storage, (user, basket), 0xba, 50_000, 900, &lock.to_hex()).await;
+    sqlx::query(
+        "UPDATE outputs SET derivation_prefix = ?, derivation_suffix = ? WHERE output_id = ?",
+    )
+    .bind(prefix)
+    .bind(suffix)
+    .bind(id)
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    let services = headers_with(&funding, 900, 900);
+    Wallet::new(Some(root), storage, services).await.unwrap()
 }
 
 /// The served `allowPending` and the commands' flags, parsed: the string

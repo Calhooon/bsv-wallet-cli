@@ -1543,6 +1543,10 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
 
 /// A named coin's own record, before its creator is read: the same order
 /// as the received coin in `check_scope`, with respend's own lock allowed.
+/// The status hold is `failed` only; other statuses read through the creator.
+/// `check_scope` keeps its own reads because its wire text is `spent by
+/// <holder>`, while this door adds `(unproven)` or `(failed)`. Its broader
+/// status refusal belongs to the scoped word's domain (#63, #197).
 fn named_record_hold(
     row: &SqliteRow,
     frozen: bool,
@@ -1565,7 +1569,7 @@ fn named_record_hold(
     if offered_status(&status) && row.get::<i64, _>("spendable") == 0 && spent_by.is_none() {
         return Some(("lost".to_string(), LOST.to_string()));
     }
-    if !offered_status(&status) {
+    if status == "failed" {
         let reason = format!("its transaction is {status}: never offered");
         return Some((status, reason));
     }
