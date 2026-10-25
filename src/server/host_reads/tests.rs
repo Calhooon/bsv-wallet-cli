@@ -97,6 +97,7 @@ impl Route {
 /// Read a helper under the shared fixture's lock; never manufacture busy.
 async fn helper_fault(reads: &StoreReads<'_>, position: &str) -> anyhow::Error {
     let result = match position {
+        "status" => reads.status().await.map(|_| ()),
         "word" => reads.word(TXID).await.map(|_| ()),
         "proof" => reads.proof(TXID).await.map(|_| ()),
         "tier" => reads.tier(TXID).await.map(|_| ()),
@@ -149,15 +150,8 @@ async fn assert_position_answers(route: Route) {
     };
     let mut busy_message = String::new();
     for (index, position) in route.positions().iter().enumerate() {
-        // read_status suppresses its own SQLx faults. Feed a cursor fault
-        // into the status position to test the body's error mapping.
-        let helper = if *position == "status" {
-            "cursor"
-        } else {
-            position
-        };
-        let busy = helper_fault(&reads, helper).await;
-        assert!(crate::store::is_store_busy(&busy), "{helper}: {busy}");
+        let busy = helper_fault(&reads, position).await;
+        assert!(crate::store::is_store_busy(&busy), "{position}: {busy}");
         busy_message = busy.to_string();
         assert_fault_answer(route, index, busy, true).await;
     }
@@ -194,6 +188,11 @@ async fn assert_helper_busy(position: &str) {
     .await;
     assert!(crate::store::is_store_busy(&busy), "{position}: {busy}");
     holder.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn read_status_preserves_busy_type() {
+    assert_helper_busy("status").await;
 }
 
 #[tokio::test]

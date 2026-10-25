@@ -728,7 +728,8 @@ fn reask_label(reask: &Reask) -> String {
     }
 }
 
-async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
+/// Ensure the tracker tables used by its reads and the feed's status read.
+pub(crate) async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     // Read first: a store that has every table and column sends nothing to
     // the writer (the read paths call this too).
     let reader = storage.pool();

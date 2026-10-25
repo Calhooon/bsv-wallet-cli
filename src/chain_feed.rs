@@ -113,11 +113,11 @@ pub struct FeedStatus {
 
 /// The status the feed stored last, if it ever ran here.
 pub async fn read_status(storage: &StorageSqlx) -> Result<Option<FeedStatus>> {
+    tracker_host::ensure_tables(storage).await?;
     let value: Option<String> =
         sqlx::query_scalar("SELECT value FROM tracker_meta WHERE key = 'feed_status'")
             .fetch_optional(storage.pool())
-            .await
-            .unwrap_or(None);
+            .await?;
     Ok(match value {
         Some(v) => Some(serde_json::from_str(&v)?),
         None => None,

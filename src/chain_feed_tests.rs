@@ -24,6 +24,25 @@ use crate::tracker_host::tests::{
 };
 use crate::tracker_host::{feed_cursor, stored_word, tick};
 
+#[tokio::test]
+async fn read_status_preserves_query_fault_type() {
+    let (storage, _) = wallet_storage().await;
+    tracker_host::ensure_tables(&storage).await.unwrap();
+    // Keep the value column the schema check reads, but spoil the query's key.
+    for sql in [
+        "DROP TABLE tracker_meta",
+        "CREATE TABLE tracker_meta (value TEXT NOT NULL)",
+    ] {
+        sqlx::query(sql).execute(storage.writer()).await.unwrap();
+    }
+    let fault = read_status(&storage).await.unwrap_err();
+    assert!(matches!(
+        fault.downcast_ref::<sqlx::Error>(),
+        Some(sqlx::Error::Database(_))
+    ));
+    assert!(!crate::store::is_store_busy(&fault));
+}
+
 /// What the stub serves, in order, and what it was asked.
 #[derive(Default)]
 struct Script {
