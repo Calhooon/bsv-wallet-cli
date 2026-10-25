@@ -157,7 +157,7 @@ use crate::toolbox_words;
 use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
 
 mod lineage;
-pub use lineage::{dead_lineages, DeadAncestor, DEAD_LINEAGE};
+pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, DEAD_LINEAGE};
 
 /// `SPEND_OWN_CHANGE` when unset: this host chains payments, so its own
 /// change is offered before it is mined (R1 (b)).
@@ -991,9 +991,9 @@ fn rule_hold(
 /// ([`hold_reason`]), then the lineage rule, in the Lean's clause order
 /// (`WalletGate.clause`: the door, then `deadLineage`); a dead lineage
 /// outranks a header fault, which only says the gate could not look. A
-/// received coin's lineage is never read; `dead` is [`dead_lineages`]'
-/// answer. The reason, and the header service's error when the hold is its
-/// fault ([`HeldCoin::headers_fault`]).
+/// received coin's lineage is never read; `dead` is [`Lineage::dead`]'s
+/// answer over the gate's own readings. The reason, and the header
+/// service's error when the hold is its fault ([`HeldCoin::headers_fault`]).
 fn coin_hold(
     reading: &CreatorReading,
     dead: &HashMap<String, DeadAncestor>,
@@ -1012,20 +1012,61 @@ fn coin_hold(
     }
 }
 
-/// The dead lineages, read only when some coin of ours is judged: a gate
-/// over received coins alone reads none. `tick` is the options the door
-/// reads its creators with, so a dead candidate's proof is read alike.
-async fn lineage_of<V: WalletServices + ?Sized>(
+/// The lineage's candidates, read only when some coin of ours is judged: a
+/// gate over received coins alone reads none.
+async fn lineage_of(storage: &StorageSqlx, any_made: bool) -> Result<Lineage> {
+    if any_made {
+        lineage_candidates(storage).await
+    } else {
+        Ok(Lineage::default())
+    }
+}
+
+/// Read `batch` into `readings` against one read of the headers. When
+/// `retry` and the assessment has not retried yet, the readings the header
+/// service did not answer for are read once more after
+/// [`HEADER_RETRY_PAUSE`] (#59), and the assessment says so.
+async fn read_batch<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
     tick: &TickOptions,
-    any_made: bool,
-) -> Result<HashMap<String, DeadAncestor>> {
-    if any_made {
-        dead_lineages(storage, services, tick).await
-    } else {
-        Ok(HashMap::new())
+    (batch, retry): (&[Pair], bool),
+    readings: &mut HashMap<String, CreatorReading>,
+    out: &mut Assessment,
+) -> Result<()> {
+    readings.extend(read_creators(storage, services, tick, batch).await?);
+    if !retry || out.headers_retried {
+        return Ok(());
     }
+    let faulted: Vec<_> = batch
+        .iter()
+        .filter(|(t, _)| readings.get(t).is_some_and(|r| r.headers_fault))
+        .cloned()
+        .collect();
+    if faulted.is_empty() {
+        return Ok(());
+    }
+    out.headers_retried = true;
+    let fault = readings
+        .get(&faulted[0].0)
+        .and_then(|r| r.fault.clone())
+        .unwrap_or_default();
+    tracing::warn!(
+        creators = faulted.len(),
+        pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
+        fault = %fault,
+        "spend gate: the header service did not answer; reading it once more"
+    );
+    tokio::time::sleep(HEADER_RETRY_PAUSE).await;
+    let again = read_creators(storage, services, tick, &faulted).await?;
+    let answered = again.values().filter(|r| !r.headers_fault).count();
+    tracing::info!(
+        creators = faulted.len(),
+        answered,
+        "spend gate: the header service read once more"
+    );
+    readings.extend(again);
+    Ok(())
 }
 
 /// Every coin the toolbox could allocate: a change output of a default
@@ -1168,25 +1209,46 @@ async fn assess_inner<V: WalletServices + ?Sized>(
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
     let tick = opts.tick();
-    let dead = lineage_of(
+    let lineage = lineage_of(
         storage,
-        services,
-        &tick,
         all.iter()
             .any(|c| c.origin == Origin::Made && c.record_hold().is_none()),
     )
     .await?;
     // Only a coin its own record does not hold needs its creator read: a
     // creator whose coins are all frozen or lost is never fetched.
-    let mut by_creator: Vec<(String, Option<Vec<u8>>)> = Vec::new();
-    for c in all.iter().filter(|c| c.record_hold().is_none()) {
-        if !by_creator.iter().any(|(t, _)| t == &c.txid) {
-            by_creator.push((c.txid.clone(), c.proof.clone()));
-        }
-    }
+    let mut by_creator: Vec<Pair> = Vec::new();
+    join_pairs(
+        &mut by_creator,
+        all.iter()
+            .filter(|c| c.record_hold().is_none())
+            .map(|c| (c.txid.clone(), c.proof.clone())),
+    );
+    let batch_end = |next: usize| match need {
+        Some(_) => (next + BATCH).min(by_creator.len()),
+        None => by_creator.len(),
+    };
     let mut readings: HashMap<String, CreatorReading> = HashMap::new();
     let mut out = Assessment::default();
     let mut next = 0;
+    // The candidates holding a proof are read with the first batch of
+    // creators, one reading of each, retried with them: the walk and the
+    // door read one word per creator.
+    if !lineage.proofs().is_empty() {
+        next = batch_end(0);
+        let mut first = lineage.proofs().to_vec();
+        join_pairs(&mut first, by_creator[..next].iter().cloned());
+        read_batch(
+            storage,
+            services,
+            &tick,
+            (&first, retry),
+            &mut readings,
+            &mut out,
+        )
+        .await?;
+    }
+    let dead = lineage.dead(&readings);
     for c in &all {
         let covered = need.is_some_and(|need| out.offered_satoshis() >= need);
         if let Some((word, reason)) = c.record_hold() {
@@ -1207,47 +1269,22 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 out.unread.push(c.output_id);
                 continue;
             }
-            let end = if need.is_some() {
-                (next + BATCH).min(by_creator.len())
-            } else {
-                by_creator.len()
-            };
+            let end = batch_end(next);
             let batch: Vec<_> = by_creator[next..end]
                 .iter()
                 .filter(|(t, _)| !readings.contains_key(t))
                 .cloned()
                 .collect();
             next = end;
-            readings.extend(read_creators(storage, services, &tick, &batch).await?);
-            if retry && !out.headers_retried {
-                let faulted: Vec<_> = batch
-                    .iter()
-                    .filter(|(t, _)| readings.get(t).is_some_and(|r| r.headers_fault))
-                    .cloned()
-                    .collect();
-                if !faulted.is_empty() {
-                    out.headers_retried = true;
-                    let fault = readings
-                        .get(&faulted[0].0)
-                        .and_then(|r| r.fault.clone())
-                        .unwrap_or_default();
-                    tracing::warn!(
-                        creators = faulted.len(),
-                        pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
-                        fault = %fault,
-                        "spend gate: the header service did not answer; reading it once more"
-                    );
-                    tokio::time::sleep(HEADER_RETRY_PAUSE).await;
-                    let again = read_creators(storage, services, &tick, &faulted).await?;
-                    let answered = again.values().filter(|r| !r.headers_fault).count();
-                    tracing::info!(
-                        creators = faulted.len(),
-                        answered,
-                        "spend gate: the header service read once more"
-                    );
-                    readings.extend(again);
-                }
-            }
+            read_batch(
+                storage,
+                services,
+                &tick,
+                (&batch, retry),
+                &mut readings,
+                &mut out,
+            )
+            .await?;
         }
         let Some(reading) = readings.get(&c.txid) else {
             out.unread.push(c.output_id);
@@ -1366,24 +1403,29 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         r.get::<i64, _>("spendable") == 0 && r.get::<Option<i64>, _>("spent_by").is_none()
     };
     // Only a coin neither frozen, locked nor lost needs its creator read.
-    let creators: Vec<(String, Option<Vec<u8>>)> = coins
+    let creators: Vec<Pair> = coins
         .iter()
         .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r) && !is_lost(r))
         .map(|(t, _, r)| (t.clone(), r.get("merkle_path")))
         .collect();
-    let readings = if creators.is_empty() {
-        HashMap::new()
-    } else {
-        read_creators(storage, services, &opts.tick(), &creators)
-            .await
-            .map_err(GateError::Gate)?
-    };
     let any_made = coins.iter().any(|(t, _, r)| {
         r.get::<i64, _>("is_outgoing") != 0 && creators.iter().any(|(c, _)| c == t)
     });
-    let dead = lineage_of(storage, services, &opts.tick(), any_made)
+    let lineage = lineage_of(storage, any_made)
         .await
         .map_err(GateError::Gate)?;
+    // One reading of the creators and the lineage's candidates holding a
+    // proof, against one read of the headers: one word per creator.
+    let mut reads = creators;
+    join_pairs(&mut reads, lineage.proofs().iter().cloned());
+    let readings = if reads.is_empty() {
+        HashMap::new()
+    } else {
+        read_creators(storage, services, &opts.tick(), &reads)
+            .await
+            .map_err(GateError::Gate)?
+    };
+    let dead = lineage.dead(&readings);
     let mut held = Vec::new();
     for (txid, vout, r) in coins {
         let origin = if r.get::<i64, _>("is_outgoing") != 0 {

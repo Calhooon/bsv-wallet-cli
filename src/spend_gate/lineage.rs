@@ -39,8 +39,8 @@
 //! word (`lean/Tracker.lean` `onProof_of_rootChecks`, the charter's row).
 //! So a candidate that holds a proof (its tracker row's bump, or the
 //! toolbox's `proven_txs` row) is read as the door reads it
-//! ([`read_creators`], the same (txid, stored path) pair and options): a
-//! proof that checks makes it `mined` for the walk as for the door, and it
+//! ([`crate::tracker_host::read_creators`], the same (txid, stored path)
+//! pair and options): a proof that checks makes it `mined` for the walk as for the door, and it
 //! is not dead; a proof the headers could not check (the header service
 //! silent) or whose root does not match leaves the stored word, dead for
 //! both, the door holding that creator closed. The header service is read
@@ -60,7 +60,8 @@
 //! `UNION`), not the nearest candidate per descendant, since which
 //! candidates stay dead is known only once their proofs are read: the pairs
 //! of a candidate the reading clears are dropped, and each descendant keeps
-//! the earliest pair left in the order [`dead_lineages`] names. What remains is
+//! the earliest pair left in the order [`Lineage::dead`] names. What
+//! remains is
 //! exactly the actions whose `lineageDead` holds: a descendant reached only
 //! through a cleared candidate is reached by no dead one. The rows are
 //! bounded by the (descendant, candidate) pairs, so a cycle planted in
@@ -71,9 +72,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bsv_wallet_toolbox::{StorageSqlx, WalletServices};
+use bsv_wallet_toolbox::StorageSqlx;
 
-use crate::tracker_host::{read_creators, TickOptions};
+use crate::store::LineageRow;
+use crate::tracker_host::CreatorReading;
 
 /// The reason a dead lineage's hold opens with.
 pub const DEAD_LINEAGE: &str = "dead lineage";
@@ -97,47 +99,75 @@ impl DeadAncestor {
     }
 }
 
-/// Every action whose lineage is dead, by lowercase txid, with the dead
-/// ancestor its reason names: of several, the latest created (the nearest
-/// in the creation order), a tracker word before a `failed` status. Read
-/// in one pass ([`crate::store::dead_lineage_rows`]); a candidate that
-/// holds a proof is read as the door reads it ([`read_creators`], the same
-/// (txid, stored path) pair and `opts`) and counts only when that reading's
-/// word is not `mined`. The header service is read only when such a
-/// candidate exists; its fault there leaves the candidate dead as stored,
-/// never a fault of the gate's. Nothing is written.
+/// A (txid, stored path) pair as [`crate::tracker_host::read_creators`]
+/// takes it.
+pub type Pair = (String, Option<Vec<u8>>);
+
+/// The store's half of the lineage rule: every (heir, dead candidate) pair
+/// of the walk ([`crate::store::dead_lineage_rows`]), and the candidates
+/// that hold a proof, each once, as the gate reads them. No header is read
+/// here: the gate reads those candidates with its own creators, in one
+/// reading per call, and [`Lineage::dead`] derives the dead set from it.
+#[derive(Debug, Default)]
+pub struct Lineage {
+    rows: Vec<LineageRow>,
+    proofs: Vec<Pair>,
+}
+
+/// Read the lineage's candidates in one pass on the reader: no service, no
+/// header. Nothing is written.
 ///
 /// # Errors
 ///
-/// The store's error when a read fails.
-pub async fn dead_lineages<V: WalletServices + ?Sized>(
-    storage: &StorageSqlx,
-    services: &V,
-    opts: &TickOptions,
-) -> Result<HashMap<String, DeadAncestor>> {
+/// The store's error when the read fails.
+pub async fn lineage_candidates(storage: &StorageSqlx) -> Result<Lineage> {
     let rows = crate::store::dead_lineage_rows(storage.pool()).await?;
-    let mut proofs: Vec<(String, Option<Vec<u8>>)> = Vec::new();
-    for proof in rows.iter().filter_map(|r| r.proof.as_ref()) {
-        if !proofs.iter().any(|(t, _)| t == &proof.0) {
-            proofs.push(proof.clone());
+    let mut proofs = Vec::new();
+    join_pairs(&mut proofs, rows.iter().filter_map(|r| r.proof.clone()));
+    Ok(Lineage { rows, proofs })
+}
+
+impl Lineage {
+    /// The (txid, stored path) pairs of the candidates that hold a proof,
+    /// each once: what the gate reads beside its creators before it judges.
+    #[must_use]
+    pub fn proofs(&self) -> &[Pair] {
+        &self.proofs
+    }
+
+    /// Every action whose lineage is dead, by lowercase txid, with the dead
+    /// ancestor its reason names: of several, the latest created (the
+    /// nearest in the creation order), a tracker word before a `failed`
+    /// status. A candidate that holds a proof is cleared exactly when the
+    /// gate's reading of it (`readings`, the door's own) says `mined`; one
+    /// with no proof, or one `readings` does not hold, is dead as stored.
+    #[must_use]
+    pub fn dead(
+        &self,
+        readings: &HashMap<String, CreatorReading>,
+    ) -> HashMap<String, DeadAncestor> {
+        let mined = |txid: &str| readings.get(txid).is_some_and(|r| r.word == "mined");
+        let mut out = HashMap::new();
+        for row in &self.rows {
+            if row.proof.as_ref().is_some_and(|(txid, _)| mined(txid)) {
+                continue;
+            }
+            out.entry(row.heir.to_ascii_lowercase())
+                .or_insert_with(|| DeadAncestor {
+                    txid: row.ancestor.clone(),
+                    word: row.word.clone(),
+                });
+        }
+        out
+    }
+}
+
+/// Add each of `more` to `pairs` unless a pair of its txid is there: one
+/// reading per creator.
+pub fn join_pairs(pairs: &mut Vec<Pair>, more: impl IntoIterator<Item = Pair>) {
+    for pair in more {
+        if !pairs.iter().any(|(t, _)| t == &pair.0) {
+            pairs.push(pair);
         }
     }
-    let readings = if proofs.is_empty() {
-        HashMap::new()
-    } else {
-        read_creators(storage, services, opts, &proofs).await?
-    };
-    let mined = |txid: &str| readings.get(txid).is_some_and(|r| r.word == "mined");
-    let mut out = HashMap::new();
-    for row in rows {
-        if row.proof.as_ref().is_some_and(|(txid, _)| mined(txid)) {
-            continue;
-        }
-        out.entry(row.heir.to_ascii_lowercase())
-            .or_insert(DeadAncestor {
-                txid: row.ancestor,
-                word: row.word,
-            });
-    }
-    Ok(out)
 }

@@ -48,8 +48,8 @@ pub struct LineageRow {
     pub proof: Option<(String, Option<Vec<u8>>)>,
 }
 
-/// The lineage walk of the spend gate ([`crate::spend_gate::dead_lineages`],
-/// #163), one statement on the reader: each action a dead candidate's
+/// The lineage walk of the spend gate
+/// ([`crate::spend_gate::lineage_candidates`], #163), one statement on the reader: each action a dead candidate's
 /// output reaches through `outputs.spent_by`, directly or through other
 /// such actions, with that candidate, by the heir's row, then the
 /// latest-created ancestor, then a tracker word before a `failed` status.

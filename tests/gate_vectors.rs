@@ -23,7 +23,8 @@
 //!   difference is this test's construction failing, never a finding. Its
 //!   suspect mark is read after the guard (which never clears it, #164) and
 //!   is compared.
-//! - `dead_lineages`: the creator's lineage, against `dead_lineage` (#163).
+//! - `lineage_candidates` and `Lineage::dead`: the creator's lineage, against
+//!   `dead_lineage` (#163), a candidate's proof read as the gate reads it.
 //! - `hold_reason` on that reading: the creator's door (`door_spendable`;
 //!   `guard_depth` where the reason names the depth).
 //! - `assess_named` (a named input) and `assess` (the allocation's offer):
@@ -43,7 +44,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bsv_sdk::primitives::hash::sha256;
 use bsv_wallet_cli::spend_gate::{
-    assess, assess_named, dead_lineages, hold_reason, AllowPending, GateError, GateOptions, Origin,
+    assess, assess_named, hold_reason, lineage_candidates, AllowPending, GateError, GateOptions,
+    Origin,
 };
 use bsv_wallet_cli::tracker_host::{read_creators, TickOptions};
 use gate_vectors_store::{b, build, height, key_of, n, s, Built};
@@ -300,11 +302,16 @@ async fn replay(row: &Value, out: &mut Vec<Divergence>) {
         ..TickOptions::default()
     }
     .floored();
-    let dead = dead_lineages(&built.storage, &built.services, &tick)
-        .await
-        .unwrap();
+    let lineage = lineage_candidates(&built.storage).await.unwrap();
+    let readings = match lineage.proofs() {
+        [] => std::collections::HashMap::new(),
+        proofs => read_creators(&built.storage, &built.services, &tick, proofs)
+            .await
+            .unwrap(),
+    };
+    let dead = lineage.dead(&readings);
     checks.field(
-        "dead_lineages",
+        "Lineage::dead",
         "dead_lineage",
         &dead.contains_key(&built.txid),
     );
