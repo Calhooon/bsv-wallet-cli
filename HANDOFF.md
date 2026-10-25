@@ -923,3 +923,102 @@ the queue in docs/NORTH-STAR.md: #78 one spend function (the differential
 line holds its proof), #79 the evidence layer, #80 typed config, #81 typed
 errors, #84 observability; #130 the stack's gate vectors; #133 the harness
 files; #145 to #149 the BRC-100 gaps (hot path: #145 first).
+
+2026-10-24 (the day after the oracle wave): PHASE 1 UNDER WAY ON BETA, the
+first full night measured, the gate's first two money findings closed. From
+midnight UTC beta took the oracle wave's last landings and then, by the queue
+in docs/NORTH-STAR.md, one PR per concern, each through a cold review on
+another model, a fix lane for its findings and a re-check:
+- #81 typed errors (PR 167; src/server/error.rs Kind, one status and code per
+  refusal by variant; A8 keeps error words out of the served layer);
+- #80 typed config (PR 169, three reviews: credentials redacted in URLs, an
+  empty secret shown as empty, a malformed knob no longer blocking `config`),
+  and its loose ends #172 (PR 188: --json nulls and booleans, services_env.rs
+  parses nothing, CHAINTRACKS_URL=off stays the string off by the captain's
+  word, the webhook token the one effective value that moved and why it is
+  safe);
+- #133 the harness files split into directory modules (PR 160, rebased twice
+  as beta moved under it; a split is a move, a module prefix is a path);
+- #130 the stack's 490 wallet-gate vectors replayed on every PR (PR 161; the
+  divergences file exact, 302 over 64 rows in five clusters; the keeper read
+  each: four ours, one the replay's label);
+- #165 the gate reads the store's coin word (PR 189: a coin the store marks
+  not spendable is held as `lost` before the creator is read and before the
+  toolbox's allocation; the money finding: under acceptDelayedBroadcast the
+  toolbox did not check spendable, so a lost coin the gate offered could be
+  spent; now tested at the door; 24 rows left);
+- #166 a named coin the wallet does not hold refused at the gate on every
+  path (PR 200; the keeper's reading: a caller-carried inputBEEF input is not
+  the gate's question, the exception holds only when the carried transaction
+  verifies and the input is the caller's to sign; 14 rows left);
+- #164 the spend guard no longer clears a fork's suspect mark (PR 205, three
+  rounds: the guard refuses a suspect creator as it stands and feeds the
+  tracker nothing, the keeper's reading; the fix uncovered three door rows the
+  replay had read from the gate's whole hold, mark included, where the Lean
+  checks the mark apart from the door: the captain's word made it the
+  replay's projection, not a finding, and CreatorReading carries the door
+  with the mark set aside; the ratchet's pedantic lint then made the gate's
+  answer a method; 129 over 24 rows remain for #162 and #163; the re-check's
+  hazard on the invalidated-block path is #206);
+- #145 privileged read on the nine key, crypto and key-linkage calls and
+  refused with 501 PRIVILEGED_NOT_SUPPORTED until a privileged key exists
+  (PR 190, two reviews and two re-checks: refused before the audit, a
+  non-boolean 422, the array bodies beta accepted still 200; the certificate
+  calls' silent downgrade is the toolbox's: toolbox #142, CLI #194);
+- hardening: #170 RELAY_POLL_SECS=0 refused at load (PR 180), #120 the daemon
+  observes its server task (PR 181, three reviews), #182 the fleet's monitors
+  stop under the grace (PR 185), #168 abortAction's busy answer (PR 202, one arm and
+  a busy-read fixture; its rebase after PR 200 raised duplicated_tokens with
+  no conflict, a fix lane shared the shape; its review found the two host routes serving a busy
+  store as 500, #203, and that no hermetic busy scenario exists, #204), the
+  version line beta was missing (PR 183);
+- the ratchet record follows the day (PR 207, merged 6cac3be past midnight
+  UTC: duplicated_tokens 32786 to 32759, missing_docs 154 to 150, the six
+  others equal; its first record, taken at 150a8d5, read 42 under the tree
+  once PR 205 landed under it, so the record was measured again on 45e0e48
+  by a fix lane and re-checked number for number: a re-record PR is measured
+  on the head it lands on, last in its queue);
+- the nightly: the first full night (run 40074725488) measured spend_gate
+  87.1, explorers 74.2, broadcast_verify 75.5, handlers 74.2, tracker_host
+  72.6; the floors moved to the measured values (PR 176, six reviews: a floor
+  only rises, only in the commit whose tests earn it, its score must equal
+  the formula from its counts; #178 ties the record to the run); the matrix
+  capped at six shards in one group on beta and on main (PR 179; the schedule
+  runs main's file); the raises are #173 #174 #175.
+
+The differential floor: against toolbox 0.13.0 the same binary twice read 0,
+0, 13 and 34 over the day, every nonzero run starting at scenario 22's coin
+tie; against the toolbox's beta tip 40cabb9 (toolbox #105, the change pick
+ending on output_id) two pairs read 0 over 335 calls and 35 commands, and again two pairs of
+0 at the toolbox's later tip 00c2e94 (every toolbox oracle PR landed; asked by
+its captain, evidence under /Volumes/Lanes/out/bsv-wallet-cli/diff-00c2e94). The
+`refactor` label's hard fail turns on in the patch that pins the release
+carrying it (#196, with toolbox #96's probe move and #157's CLI half).
+
+The keeper's words today, recorded on the issues: the vectors move only with
+a scenario draft and a landing sha, a newly differing row is a finding on its
+own side; the BRC pin of record moves ed1b015 to 5119a9b (#199, next
+release, never ahead of the line); bsv-rs #149's varints never cross the
+CLI's JSON wire, the bound does (#198); and, relayed by the toolbox captain,
+the bsv-rs pin's one word is 0.9.0-beta.1 on the index, not a 0.8.3 tag (#198
+and #199 are reread against that when John tags).
+
+The landing lessons of the day (memory lane-landing-lessons): a landing
+script must test the rebase itself, not a pipeline ending in tail (PR 160
+sat two hours in a stuck checkout); a rebase without conflicts can still not
+compile (PR 161 after the config merge: grep the open branches for a moved
+name); the scheduled nightly runs main's workflow file; every pair of
+landings conflicts on CHANGELOG's Unreleased top (#195, fragments); a merge
+into beta never closes its issue (hand close, every time).
+
+Issues filed from the reviews: #178 #184 #186 #187 #191 #192 #193 #194 #195
+#196 #197 #198 #199 #201 #203 #204 #206 (an invalidated block's own recheck reads
+the invalidated header: the mark can clear at delivery); toolbox #141 (the BEEF dump writer) and #142.
+Closed: #75 #120 #130 #133 #144 #145 #164 #165 #166 #168 #170 #172 #182.
+
+Open after the day: John's words (v0.18.1; the toolbox 0.13.1 and bsv-rs
+0.8.3 tags; toolbox #106's constructor shape; toolbox #66 Q5-Q9; the model
+rule to the two captains directly); #162 (its lane running at the close,
+the keeper's reading already on the issue: a stale creator ranks as seen at
+the door) then #163 by the sequence; #79 the evidence layer and #84 observability next by the queue;
+#78 one spend function once toolbox #105 is pinned.
