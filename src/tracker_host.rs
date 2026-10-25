@@ -3857,6 +3857,55 @@ pub(crate) mod tests {
         .await;
     }
 
+    /// #229: delivery normalizes a frozen outpoint before recording it,
+    /// so the gate holds the lowercase coin just as for a lowercase event.
+    #[tokio::test]
+    async fn an_uppercase_frozen_outpoint_is_recorded_lowercase_and_held() {
+        let txid = "ab".repeat(32);
+        assert_hash_case_pair(&txid, async |storage, services, clock, uppercase| {
+            let user = coin_of_tracked_creator(&storage, &txid).await;
+            let before = load_row(&storage, &txid).await.unwrap().unwrap();
+            let offered = assess_tracked_coin(&storage, &services, user, true).await;
+            assert_eq!(offered.offered.len(), 1);
+            assert!(offered.held.is_empty());
+            let event_txid = if uppercase {
+                txid.to_ascii_uppercase()
+            } else {
+                txid.clone()
+            };
+            deliver(
+                &storage,
+                &services,
+                &clock,
+                1,
+                serde_json::json!({
+                    "v": 1, "kind": "frozen", "outpoint": {"txid": event_txid, "vout": 0},
+                }),
+            )
+            .await;
+            let frozen = frozen_outpoints(&storage).await.unwrap();
+            let gate = assess_tracked_coin(&storage, &services, user, true).await;
+            println!(
+                "uppercase={uppercase}: frozen {frozen:?}, held {:?}",
+                gate.held
+            );
+            assert_eq!(frozen, std::collections::HashSet::from([(txid.clone(), 0)]));
+            assert!(gate.offered.is_empty());
+            assert_eq!(gate.held.len(), 1);
+            let held = &gate.held[0];
+            assert_eq!(held.outpoint, format!("{txid}.0"));
+            assert_eq!(
+                (held.word.as_str(), held.reason.as_str()),
+                ("frozen", "frozen: never offered")
+            );
+            let row = load_row(&storage, &txid).await.unwrap().unwrap();
+            assert_eq!(row, before);
+            assert_eq!(feed_cursor(&storage).await.unwrap(), 1);
+            (frozen, row, gate.held)
+        })
+        .await;
+    }
+
     /// #229: a pre-fix row can keep the alert's case. Read-only replay and
     /// a later tip must read that row exactly as they read a lowercase one.
     #[tokio::test]
