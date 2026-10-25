@@ -74,14 +74,22 @@
 //! no rule (R6: never cleared here). A coin the store marks not spendable
 //! with no action of ours spending it (`spendable = 0`, `spent_by` empty:
 //! the relinquished record `reconcile-outputs` writes, the charter's
-//! `lost(c)`) is held `lost` before its creator is read, as the frozen coin
-//! is (#165): the toolbox's allocation would refuse it, and the gate's word
-//! names why.
+//! `lost(c)`) on a `completed` or `unproven` transaction is held `lost`
+//! before its creator is read, as the frozen coin is (#165): the toolbox's
+//! allocation would refuse it, and the gate's word names why.
 //!
 //! Coins a caller names (`createAction`'s `inputs`, `respend`'s exact
 //! inputs) pass the same per-coin judgment ([`assess_named`]); a named coin
 //! the gate would hold refuses the action with the same `held[]` listing
-//! (the charter's `onCreate`: every input offerable). A named outpoint that
+//! (the charter's `onCreate`: every input offerable). Its record is read in
+//! the scoped word's ruled order (#197, #219): frozen, spent by, lost only
+//! on a `completed` or `unproven` transaction, then the transaction's status.
+//! Any other status (`failed`, `nosend`, `unsigned`, `sending`, ...) holds
+//! the coin with that status as its word and `its transaction is <status>:
+//! never offered`, before its creator is read. The toolbox's failure writes
+//! `spendable = 0`; that is a failed transaction's status, never lost, and
+//! never a pending creator's coin a rule could offer. The scoped word's
+//! earlier domain check still answers its own 400. A named outpoint that
 //! is not a coin of this wallet is refused at the gate too, the caller's
 //! 400 ([`GateError::Scope`], [`NOT_HELD`]), before anything is stored or
 //! the toolbox asked (#166; the charter: a coin is an output of ours, and
@@ -493,6 +501,8 @@ pub struct HeldCoin {
     pub outpoint: String,
     pub satoshis: u64,
     /// The creator's tracker word (`mined`, `unknown`, `built`, ...), or
+    /// a named input's excluded transaction status (`failed`, `nosend`,
+    /// `unsigned`, `sending`, ...),
     /// `locked` for a coin a live action of ours consumed as an input,
     /// `frozen` or `lost` for the coin's own record.
     pub word: String,
@@ -502,7 +512,8 @@ pub struct HeldCoin {
     /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
     /// no proof; offered under allowPending: received`, `own change,
     /// SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never
-    /// offered`, `lost: the store marks it not spendable`. `spent by` is
+    /// offered`, `lost: the store marks it not spendable`, `its transaction
+    /// is <status>: never offered`. `spent by` is
     /// never a hold: the coin is an input a live action of ours consumed,
     /// spent for good; it leaves the listing when that spender is completed
     /// (its proof lands) or failed (#53).
@@ -1193,7 +1204,7 @@ const FROZEN: &str = "frozen: never offered";
 /// The lost record's hold: the store marks the coin not spendable
 /// (`spendable = 0`) and no action of ours spends it (`spent_by` empty), as
 /// `reconcile-outputs` and a relinquish write it (#165; the charter's
-/// `lost(c)`, `Wallet.coinWord`).
+/// `lost(c)`, `Wallet.coinWord`), on a `completed` or `unproven` transaction.
 const LOST: &str = "lost: the store marks it not spendable";
 
 /// The coins a live action of ours consumed (`spent_by` an action not yet
@@ -1405,8 +1416,10 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
 /// inputs), judged coin by coin as the toolbox's own allocation is: frozen,
 /// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
-/// replaces), lost (`spendable = 0` with no spender), or a creator the gate
-/// would not offer. Returns every named coin it holds. An outpoint that is
+/// replaces), lost (`spendable = 0` with no spender on a `completed` or
+/// `unproven` transaction), any other transaction status (held on that
+/// status before the creator is read), or a creator the gate would not
+/// offer. Returns every named coin it holds. An outpoint that is
 /// not one of this wallet's outputs is not a coin of ours: the caller's
 /// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
 /// (#166), unless `carried` (the transactions the caller's `inputBEEF`
