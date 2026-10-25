@@ -935,21 +935,39 @@ pub fn hold_reason(
             Some("suspect: a fork or an unresolved split at or below its height".to_string())
         }
         "mined" => Some(depth),
-        "stale" | "rejected" | "conflicted" | "abandoned" => {
-            Some(format!("{}: never offered", reading.word))
+        "rejected" | "conflicted" | "abandoned" => Some(format!("{}: never offered", reading.word)),
+        // `stale` ranks as `seen` at the door (the owner's ruling 7a of
+        // 2026-10-20, `lean/Wallet.lean` `doorWord`): its proof's block left
+        // the chain and the transaction is confirming again, offered under
+        // the rule a pending creator's coin is and never with no rule.
+        "stale" => rule_hold(origin, outpoint, opts, STALE, "received, confirming again"),
+        // `pending`: the word claims nothing about the chain.
+        _ => rule_hold(origin, outpoint, opts, &depth, "received, no proof"),
+    }
+}
+
+/// The word a held `stale` creator's reason opens with.
+const STALE: &str = "stale: its block left the chain";
+
+/// The door of a creator whose word claims nothing about the chain (or
+/// ranks as such): only R1's rule for our own change (b), or the action's
+/// word for a received coin (d), offers it. `word` opens the reason and
+/// `received` says what the received creator is.
+fn rule_hold(
+    origin: Origin,
+    outpoint: (&str, u32),
+    opts: &GateOptions,
+    word: &str,
+    received: &str,
+) -> Option<String> {
+    match origin {
+        Origin::Received if opts.allow_pending.reaches(outpoint.0, outpoint.1) => None,
+        Origin::Received if opts.allow_pending.is_on() => {
+            Some(format!("{word}; {received}; {NOT_NAMED_HINT}"))
         }
-        // `pending`: the word claims nothing about the chain; only R1's
-        // rule for our own change (b), or the action's word for a received
-        // coin (d), offers it.
-        _ => match origin {
-            Origin::Received if opts.allow_pending.reaches(outpoint.0, outpoint.1) => None,
-            Origin::Received if opts.allow_pending.is_on() => {
-                Some(format!("{depth}; received, no proof; {NOT_NAMED_HINT}"))
-            }
-            Origin::Received => Some(format!("{depth}; received, no proof; {ALLOW_PENDING_HINT}")),
-            Origin::Made if opts.own_change => None,
-            Origin::Made => Some(format!("{depth}; own change, SPEND_OWN_CHANGE=0")),
-        },
+        Origin::Received => Some(format!("{word}; {received}; {ALLOW_PENDING_HINT}")),
+        Origin::Made if opts.own_change => None,
+        Origin::Made => Some(format!("{word}; own change, SPEND_OWN_CHANGE=0")),
     }
 }
 
