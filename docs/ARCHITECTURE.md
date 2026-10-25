@@ -283,7 +283,8 @@ with the hash matched by `header_hash` and the root computed from `bump`.
 and when kept events decode for replay, as checked by
 `an_uppercase_invalidated_alert_matches_the_lowercase_alert`,
 `an_uppercase_kept_invalidation_matches_lowercase_on_read_and_tip`,
-`an_uppercase_reorg_matches_the_lowercase_reorg` and
+`an_uppercase_reorg_matches_the_lowercase_reorg`,
+`an_uppercase_frozen_outpoint_is_recorded_lowercase_and_held` and
 `kept_events_normalize_hash_fields_in_every_arm`.
 `an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it` checks that
 when the service still answers that hash, the new branch has no answer
