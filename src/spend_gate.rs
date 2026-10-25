@@ -1702,10 +1702,12 @@ fn offered_status(status: &str) -> bool {
 /// mined is offered as any mined coin is: the word is moot for it, not
 /// wrong.
 ///
-/// The order, after not ours, is the Lean's `coinWord` (`lean/Wallet.lean`):
-/// frozen, then the lock (spent by, then lost), then the creator's word (the
-/// transaction's status), then the basket and change (#197, the owner's
-/// ruling). Lost carries the qualifier the offer path has ([`candidates`]
+/// Not ours and own change are read before the coin's word begins: the
+/// scoped word names received coins only, so both are its domain (#197, the
+/// owner's ruling). For the received coin left, the order is the Lean's
+/// `coinWord` (`lean/Wallet.lean`): frozen, then the lock (spent by, then
+/// lost), then the creator's word (the transaction's status), then the
+/// basket and change. Lost carries the qualifier the offer path has ([`candidates`]
 /// keeps only a `completed` or `unproven` transaction before it reads
 /// spendable): it is the store's `spendable = 0` with no spender on such a
 /// transaction. A `failed` transaction's `spendable = 0` is the toolbox's own
