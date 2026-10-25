@@ -1188,7 +1188,7 @@ mod tests {
             "CREATE TABLE proven_tx_reqs (
                 proven_tx_req_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 status TEXT NOT NULL DEFAULT 'unknown', attempts INTEGER NOT NULL DEFAULT 0,
-                txid TEXT NOT NULL UNIQUE, updated_at TEXT)",
+                txid TEXT NOT NULL UNIQUE, proven_tx_id INTEGER, updated_at TEXT)",
         )
         .execute(&pool)
         .await
