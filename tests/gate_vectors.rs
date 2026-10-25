@@ -189,6 +189,7 @@ fn clause_of(reason: Option<&str>) -> String {
     } else if reason.ends_with(": never offered") {
         "door: a chain word against the creator"
     } else if reason.contains("; received, no proof;")
+        || reason.contains("; received, confirming again;")
         || reason.ends_with("; own change, SPEND_OWN_CHANGE=0")
     {
         "door: no rule for the creator's origin"

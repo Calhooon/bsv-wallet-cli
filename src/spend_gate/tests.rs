@@ -2842,3 +2842,127 @@ async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
     assert_eq!(refusal.code(), "INPUT_NOT_OFFERED");
     assert_eq!(refusal.held.len(), 2);
 }
+
+/// A coin of `txid` whose creator a reorg took: the toolbox's record as the
+/// daemon's demotion leaves it (`unproven`, no stored proof) and the host's
+/// tracker row, which replays `stale` against the header service here (its
+/// header at 900 carries another root).
+async fn stale_coin(storage: &StorageSqlx, ub: (i64, i64), txid: &str, made: bool) -> i64 {
+    let id = coin(storage, ub, txid, made, None, 6_000, 5).await;
+    crate::tracker_host::tests::stale_row(storage, txid, 900).await;
+    id
+}
+
+/// Ruling 7a (`lean/Wallet.lean` `doorWord`, `stale_ranks_as_seen`): a
+/// `stale` creator ranks as `seen` at the door. Our own change is offered
+/// under `SPEND_OWN_CHANGE=1` and held without it; a received coin is held
+/// with no word, offered under the plain word and under a scoped word that
+/// names it, and held "not named" under one that does not. The reasons say
+/// the word: the block left the chain and the transaction is confirming.
+#[tokio::test]
+async fn a_stale_creator_is_offered_under_the_rule_a_pending_one_is() {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let (made, named, other) = ("f1".repeat(32), "f2".repeat(32), "f3".repeat(32));
+    let m = stale_coin(&storage, (user, basket), &made, true).await;
+    let n = stale_coin(&storage, (user, basket), &named, false).await;
+    let o = stale_coin(&storage, (user, basket), &other, false).await;
+    let services = headers_with(&"0c".repeat(32), 900, 900);
+    let held = |hint: &str| format!("{STALE}; received, confirming again; {hint}");
+    let scoped = AllowPending::ReceivedOnly(vec![(named.clone(), 0)]);
+    let cases = [
+        (
+            opts(1, true),
+            vec![m],
+            vec![(&named, held(ALLOW_PENDING_HINT))],
+        ),
+        (
+            opts(1, false),
+            vec![],
+            vec![(&made, format!("{STALE}; own change, SPEND_OWN_CHANGE=0"))],
+        ),
+        (
+            opts(1, true).with_allow_received(true),
+            vec![m, n, o],
+            vec![],
+        ),
+        (
+            opts(1, true).with_allow_pending(scoped),
+            vec![m, n],
+            vec![(&other, held(NOT_NAMED_HINT))],
+        ),
+    ];
+    for (gate, offered, reasons) in cases {
+        let a = assess(&storage, &services, &gate, None).await.unwrap();
+        println!("{gate:?}: offered {:?}, held {:?}", a.offered, a.held);
+        let mut ids = a.offer();
+        ids.sort_unstable();
+        assert_eq!(ids, offered, "{gate:?}");
+        for (txid, reason) in reasons {
+            assert_eq!(reason_of(&a, txid), Some(reason), "{gate:?}");
+        }
+        assert!(a.held.iter().all(|c| c.word == "stale"), "{gate:?}");
+    }
+}
+
+/// The door closes on `rejected`, `conflicted` and `abandoned` only (ruling
+/// 7a; `dead_creator_never_offered`): never offered under any rule or word,
+/// for either origin, the reason byte for byte as before.
+#[test]
+fn a_dead_creator_is_never_offered_under_any_rule() {
+    let txid = "f4".repeat(32);
+    let gates = [
+        opts(1, true),
+        opts(1, true).with_allow_received(true),
+        opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(txid.clone(), 0)])),
+    ];
+    for word in ["rejected", "conflicted", "abandoned"] {
+        let reading = CreatorReading {
+            word,
+            depth: 0,
+            suspect: false,
+            door: false,
+            fault: None,
+            headers_fault: false,
+        };
+        for (gate, origin) in gates
+            .iter()
+            .flat_map(|g| [(g, Origin::Made), (g, Origin::Received)])
+        {
+            assert_eq!(
+                hold_reason(&reading, origin, (&txid, 0), gate),
+                Some(format!("{word}: never offered")),
+                "{word}, {origin:?}, {gate:?}"
+            );
+        }
+    }
+}
+
+/// The toolbox allocates a stale creator's coin the gate offers (#165's
+/// lesson: under `acceptDelayedBroadcast` the toolbox reads the store, not
+/// the word). The `serve` shape,
+/// where no monitor demotes the action: still `completed` with its stored
+/// proof, which our header at 900 no longer carries; the tracker reads it
+/// `stale`, and the action's word offers the received coin and funds it.
+#[tokio::test]
+async fn the_toolbox_allocates_a_stale_coin_the_gate_offers() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let (txid, id) = mined_coin(&storage, (user, basket), 0xf5, 50_000, 900).await;
+    crate::tracker_host::tests::stale_row(&storage, &txid, 900).await;
+    let services = headers_with(&"0c".repeat(32), 900, 905);
+    let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
+    let gate = opts(1, true).with_allow_received(true);
+    let a = assess(wallet.storage(), wallet.services(), &gate, None)
+        .await
+        .unwrap();
+    assert_eq!(a.offer(), vec![id]);
+
+    let result = create_action(&wallet, delayed(), "gate.local", &gate)
+        .await
+        .unwrap();
+    assert!(result.signable_transaction.is_some());
+    assert!(
+        spent_by(wallet.storage(), id).await.is_some(),
+        "the stale creator's coin funds the action"
+    );
+}

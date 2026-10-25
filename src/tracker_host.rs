@@ -3237,6 +3237,30 @@ pub(crate) mod tests {
         })
     }
 
+    /// A creator whose proof a reorg took, as the host stores it: the
+    /// tracker row with the path at `height` (its root the txid) and the
+    /// stored reorg that deactivated the header the path was checked in.
+    /// The caller's header service answers another root at `height`, so the
+    /// row replays `stale` (the recheck on the new branch).
+    pub(crate) async fn stale_row(storage: &StorageSqlx, txid: &str, height: u32) {
+        ensure_tables(storage).await.unwrap();
+        let gone = header_with_hash(height, txid, 0).hash;
+        let reorg = serde_json::json!({
+            "v": 1, "kind": "reorg", "forkHeight": height, "depth": 1,
+            "deactivatedHeaders": [event_header(height, &gone, txid)],
+            "newTip": event_header(height + 1, &"b3".repeat(32), &"ee".repeat(32)),
+        });
+        sqlx::query(
+            "INSERT INTO tracker_states (txid, bump, word, chain) VALUES (?, ?, 'stale', ?)",
+        )
+        .bind(txid)
+        .bind(path_of(txid, height))
+        .bind(serde_json::json!([reorg.to_string()]).to_string())
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    }
+
     async fn deliver(
         storage: &StorageSqlx,
         services: &MockWalletServices,
@@ -3424,6 +3448,54 @@ pub(crate) mod tests {
         assert_eq!(stored, open);
         let held = reading(&storage, &services, &txid).await;
         assert_eq!((held.suspect, held.offered()), (true, false));
+    }
+
+    /// Ruling 7a at the reading: a creator whose proof a reorg took reads
+    /// `stale` with no fault (its stored path checks against the header the
+    /// reorg deactivated, and the recheck on the new branch is the word, not
+    /// a fault; never the header service's), not suspect, its door closed
+    /// as for every word but a deep checked `mined`. The door is the rule's:
+    /// `hold_reason` offers our own change under `SPEND_OWN_CHANGE=1`.
+    #[tokio::test]
+    async fn a_stale_creators_reading_has_no_fault_and_its_door_is_the_rules() {
+        let txid = "ee".repeat(32);
+        let (storage, _user) = wallet_storage().await;
+        stale_row(&storage, &txid, 900).await;
+        let services = MockWalletServices::builder().build();
+        services.set_header_for_height(header(900, &"0c".repeat(32), 0));
+        services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+        let stale = reading(&storage, &services, &txid).await;
+        println!("a stale creator's reading: {stale:?}");
+        assert_eq!(
+            stale,
+            CreatorReading {
+                word: "stale",
+                depth: 0,
+                suspect: false,
+                door: false,
+                fault: None,
+                headers_fault: false,
+            }
+        );
+        let gate = |own_change| crate::spend_gate::GateOptions {
+            spend_depth: 1,
+            own_change,
+            allow_pending: crate::spend_gate::AllowPending::Off,
+            tracker: opts(),
+        };
+        let hold = |own_change| {
+            crate::spend_gate::hold_reason(
+                &stale,
+                crate::spend_gate::Origin::Made,
+                (&txid, 0),
+                &gate(own_change),
+            )
+        };
+        assert_eq!(hold(true), None);
+        assert_eq!(
+            hold(false).as_deref(),
+            Some("stale: its block left the chain; own change, SPEND_OWN_CHANGE=0")
+        );
     }
 
     /// `CreatorReading::offered` is the answer `read_creators` stored as a
