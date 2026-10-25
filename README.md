@@ -288,8 +288,11 @@ written in the delivery's transaction; the scenario
 `suspect: a fork or an unresolved split at or below its height`; a frozen coin is never offered, and a coin a live action of ours
 consumed is spent: an input of that action, never a hold that clears. Coins a caller names (`createAction`'s `inputs`,
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
-hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
-outpoint that is not one of the wallet's coins is left to the toolbox).
+hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list.
+The gate refuses an outpoint the wallet does not hold with `400 NOT_HELD`
+([#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166)). If the caller
+supplies its whole transaction in `inputBEEF` and signs the input, the
+toolbox's BEEF verification judges it.
 The named coin is read frozen, spent by, then its unspendable record
 (`spendable = 0` with no spender), before its creator. That record is held
 whatever its transaction's status: `lost` on `completed` or `unproven`, with
@@ -300,7 +303,7 @@ A failed coin is held even with flag 1. A live coin with flag 1 reads its
 creator under the existing own-change and received rules.
 Toolbox 0.13.0 keeps a noSend action's outputs not spendable until the action
 is sent. This wallet does not read `sendWith` yet (#147), so a noSend output
-named as an input is held `nosend` today. Every named hold remains
+named as an input is held `nosend` today. Every named hold is served as
 `403 INPUT_NOT_OFFERED`. The scoped word's domain still refuses statuses
 outside `completed` and `unproven` with `400 VALIDATION_ERROR`.
 The test tables `LEAN_SEGMENT_READINGS` and `SCOPED_WORD_DOMAIN_READINGS`
