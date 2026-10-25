@@ -902,6 +902,24 @@ async fn lose(storage: &StorageSqlx, id: i64) {
         .unwrap();
 }
 
+/// A received coin whose transaction the toolbox marked failed (0.13.0
+/// `mark_internalized_tx_failed`): the transaction `failed`, the coin
+/// `spendable = 0`, no spender.
+async fn fail(storage: &StorageSqlx, txid: &str, id: i64) {
+    set_status(storage, txid, "failed").await;
+    lose(storage, id).await;
+}
+
+/// A transaction's stored status.
+async fn set_status(storage: &StorageSqlx, txid: &str, status: &str) {
+    sqlx::query("UPDATE transactions SET status = ? WHERE txid = ?")
+        .bind(status)
+        .bind(txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+}
+
 /// The coin's `spent_by`.
 async fn spent_by(storage: &StorageSqlx, id: i64) -> Option<i64> {
     sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
@@ -2543,15 +2561,19 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// could spend under it is the caller's error before the door, naming the
 /// coin and why: not ours, own change, consumed by another action, a
 /// nosend, and a coin its own record holds as a consumed one is (#165): a
-/// lost coin (the store's `spendable = 0`, no spender) and a frozen one.
-/// Nothing is read for the action, the toolbox is not asked, nothing is
-/// stored and nothing allocated.
+/// lost coin of a completed transaction (the store's `spendable = 0`, no
+/// spender) and a frozen one. A received coin whose transaction failed (the
+/// toolbox's `mark_internalized_tx_failed`: `spendable = 0`, no spender) is
+/// refused with its transaction's word, not lost (#197). Nothing is read for
+/// the action, the toolbox is not asked, nothing is stored and nothing
+/// allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
-    let [received, made, spent, nosend, lost, frozen] =
-        ["c1", "c2", "c3", "c4", "c5", "c6"].map(|b| b.repeat(32));
+    let [received, made, spent, nosend, lost, frozen, failed] =
+        ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].map(|b| b.repeat(32));
+    let services = headers_with(&"0c".repeat(32), 900, 900);
     coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
     coin(&storage, (user, basket), &made, true, None, 8_000, 5).await;
     coin(&storage, (user, basket), &spent, false, None, 8_000, 5).await;
@@ -2560,17 +2582,14 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         .execute(storage.writer())
         .await
         .unwrap();
-    let lost_id = coin(&storage, (user, basket), &lost, false, None, 8_000, 5).await;
+    let lost_id = coin(&storage, (user, basket), &lost, false, Some(900), 8_000, 5).await;
     lose(&storage, lost_id).await;
+    let failed_id = coin(&storage, (user, basket), &failed, false, None, 8_000, 5).await;
+    fail(&storage, &failed, failed_id).await;
     coin(&storage, (user, basket), &frozen, false, None, 8_000, 5).await;
     freeze(&storage, &frozen, 9).await;
     coin(&storage, (user, basket), &nosend, false, None, 8_000, 5).await;
-    sqlx::query("UPDATE transactions SET status = 'nosend' WHERE txid = ?")
-        .bind(&nosend)
-        .execute(storage.writer())
-        .await
-        .unwrap();
-    let services = headers_with(&"0c".repeat(32), 900, 900);
+    set_status(&storage, &nosend, "nosend").await;
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let before = stored_rows(wallet.storage()).await;
 
@@ -2584,6 +2603,7 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
         (nosend.clone(), "its transaction is nosend"),
         (lost.clone(), "lost: the store marks it not spendable"),
         (frozen.clone(), "frozen: never offered"),
+        (failed.clone(), "its transaction is failed"),
     ];
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
