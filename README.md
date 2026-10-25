@@ -254,10 +254,12 @@ the seat received from elsewhere): `allowPending: {"received": ["txid:vout",
 (repeatable; `txid.vout` as the listings print it is taken too) on the
 commands. Only the named received coins are offered under the word; every
 other received unproven coin is held as without it, with the reason
-`received, no proof; not named under allowPending: received`; the action
-carries the same label. A named coin that is not a received coin this wallet
-could spend under the word (not one of its coins, its own change, a coin
-another action consumed, a `nosend`) refuses the call before anything is
+`received, no proof; not named under allowPending: received`, or
+`stale: its block left the chain; received, confirming again; not named under allowPending: received`
+for a stale received coin; the action carries the same label. A named coin
+that is not a received coin this wallet could spend under the word (not
+one of its coins, its own change, a coin another action consumed, a
+`nosend`) refuses the call before anything is
 read, `400 VALIDATION_ERROR` naming the coin and why; a named coin already
 mined is offered as any mined coin (the word is moot for it, not wrong). An
 empty list is off; an object of another shape is the caller's 400; the
@@ -271,9 +273,10 @@ whose transaction's lineage is dead: an input of it, or of an ancestor on
 the walk, was created by an action of this wallet, made or received, whose
 stored word is `conflicted`, `rejected` or `abandoned` or whose status is
 `failed`, unless a proof held for that action checks against the headers,
-which reads it mined for the walk as at the door: each door, the
-allocation's and a named input's, reads such an action once per call with
-the creators it judges and re-reads once what faulted, the dead set after
+which reads it mined for the walk as at the door: such an action is read
+once per call with the creators judged; the allocation's door and
+`createAction`'s named inputs re-read once what faulted; `respend`'s exact
+inputs read once. The dead set is derived after each door's reading
 (the owner's lineage ruling of 2026-10-22; `lean/Wallet.lean` `State.skel`
 reads the word the door reads, `lean/Tracker.lean` `onProof_of_rootChecks`
 puts a checked proof above every word; #163); a coin whose transaction is `stale` (its proof's block left the
@@ -290,11 +293,14 @@ consumed is spent: an input of that action, never a hold that clears. Coins a ca
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list.
 The gate refuses an outpoint the wallet does not hold with
-`400 VALIDATION_ERROR`, "inputs names `<txid>.<vout>`, which is not a coin
-this wallet could spend: not a coin of this wallet"
-([#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166)). If the caller
-supplies its whole transaction in `inputBEEF`, the toolbox's BEEF
-verification judges it.
+`400 VALIDATION_ERROR` (`not a coin of this wallet`), before a creator is
+read or anything is stored. The one exception is an input whose whole
+transaction the caller carries in `inputBEEF` and signs: the toolbox's
+BEEF verification judges it, and the exception requires that transaction
+to verify and the input to be the caller's to sign (the keeper's reading
+on [#166](https://github.com/Calhooon/bsv-wallet-cli/issues/166), recorded in
+[the gate vectors](docs/GATE-VECTORS.md#the-divergences)). Named without
+its transaction, or for the wallet to sign, it is the gate's 400.
 The named coin is read frozen, spent by, then its unspendable record
 (`spendable = 0` with no spender), before its creator. That record is held
 whatever its transaction's status: `lost` on `completed` or `unproven`, with

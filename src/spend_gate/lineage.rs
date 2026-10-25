@@ -47,10 +47,11 @@
 //! and the named input's, re-reads once what faulted in that call,
 //! candidates and creators together (`read_batch`), and [`Lineage::dead`]
 //! derives the dead set after it. A proof that checks makes it `mined` for
-//! the walk as for the door, and it is not dead; a proof the headers could not check (the header service
-//! silent) or whose root does not match leaves the stored word, dead for
-//! both, the door holding that creator closed. The lineage adds a header
-//! read only when a candidate holds a proof and no judged creator brings
+//! the walk as for the door, and it is not dead; a proof the headers could
+//! not check (the header service silent) or whose root does not match
+//! leaves the stored word, dead for both, the door holding that creator
+//! closed. The lineage adds a header read only when a candidate holds a
+//! proof and no judged creator brings
 //! the gate to the headers already, and its fault there is the stored
 //! word, never the gate's fault. A candidate with no proof is dead as
 //! stored: a replay reads nothing else from a stored verdict, and a stored
