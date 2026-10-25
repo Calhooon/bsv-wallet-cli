@@ -11,6 +11,7 @@ use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
 mod lineage;
+mod user_scope;
 
 const LOCK: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
@@ -134,9 +135,14 @@ async fn at_depth_one_the_tip_is_offered_and_no_block_is_not() {
     coin(&storage, (user, basket), &none, false, None, 5_000, 4).await;
     let services = headers_with(&tip, 900, 900);
 
-    let a = assess(&storage, &services, &opts(1, true), None)
-        .await
-        .unwrap();
+    let a = assess(
+        UserCoins::new(&storage, user),
+        &services,
+        &opts(1, true),
+        None,
+    )
+    .await
+    .unwrap();
     println!("depth 1: offered {:?}, held {:?}", a.offered, a.held);
     assert_eq!(a.offered, vec![(at_tip, 5_000)]);
     assert_eq!(
@@ -151,15 +157,25 @@ async fn at_depth_one_the_tip_is_offered_and_no_block_is_not() {
     assert!((3..=5).contains(&held.age_minutes), "{}", held.age_minutes);
 
     // At depth 2 the tip's coin waits one block, and is named so.
-    let a = assess(&storage, &services, &opts(2, true), None)
-        .await
-        .unwrap();
+    let a = assess(
+        UserCoins::new(&storage, user),
+        &services,
+        &opts(2, true),
+        None,
+    )
+    .await
+    .unwrap();
     assert!(a.offered.is_empty());
     assert_eq!(reason_of(&a, &tip).as_deref(), Some("depth 2: 1 block"));
     // A depth of 0 reads as 1 (the floor).
-    let a = assess(&storage, &services, &opts(0, true), None)
-        .await
-        .unwrap();
+    let a = assess(
+        UserCoins::new(&storage, user),
+        &services,
+        &opts(0, true),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(a.offered, vec![(at_tip, 5_000)]);
 }
 
@@ -172,15 +188,25 @@ async fn own_change_is_offered_under_the_rule_and_held_without_it() {
     let id = coin(&storage, (user, basket), &made, true, None, 7_000, 2).await;
     let services = headers_with(&"0c".repeat(32), 900, 900);
 
-    let on = assess(&storage, &services, &opts(1, true), None)
-        .await
-        .unwrap();
+    let on = assess(
+        UserCoins::new(&storage, user),
+        &services,
+        &opts(1, true),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(on.offered, vec![(id, 7_000)]);
     assert!(on.held.is_empty());
 
-    let off = assess(&storage, &services, &opts(1, false), None)
-        .await
-        .unwrap();
+    let off = assess(
+        UserCoins::new(&storage, user),
+        &services,
+        &opts(1, false),
+        None,
+    )
+    .await
+    .unwrap();
     assert!(off.offered.is_empty());
     assert_eq!(
         reason_of(&off, &made).as_deref(),
@@ -198,9 +224,14 @@ async fn a_received_pending_coin_is_held_under_both_settings() {
     coin(&storage, (user, basket), &received, false, None, 9_000, 1).await;
     let services = headers_with(&"0c".repeat(32), 900, 900);
     for own_change in [true, false] {
-        let a = assess(&storage, &services, &opts(1, own_change), None)
-            .await
-            .unwrap();
+        let a = assess(
+            UserCoins::new(&storage, user),
+            &services,
+            &opts(1, own_change),
+            None,
+        )
+        .await
+        .unwrap();
         assert!(a.offered.is_empty(), "SPEND_OWN_CHANGE={own_change}");
         assert_eq!(
             reason_of(&a, &received).as_deref(),
@@ -331,7 +362,7 @@ async fn a_consumed_coin_is_listed_as_spent_by_its_spender() {
         .execute(storage.writer())
         .await
         .unwrap();
-    let held = locked(storage.pool()).await.unwrap();
+    let held = locked(UserCoins::new(&storage, user)).await.unwrap();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].reason, format!("spent by {spender} (unproven)"));
     assert_eq!(held[0].word, "locked");
@@ -591,7 +622,9 @@ async fn the_door_word_offers_a_received_pending_coin_and_nothing_else() {
     for depth in [0, 1] {
         for allow in [false, true] {
             let gate = opts(depth, true).with_allow_received(allow);
-            let mut a = assess(&storage, &services, &gate, None).await.unwrap();
+            let mut a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+                .await
+                .unwrap();
             a.offered.sort();
             let mut want = vec![(m, 3_000), (t, 2_000)];
             if allow {
@@ -723,7 +756,7 @@ async fn a_frozen_outpoint_is_held_under_every_rule() {
     );
     let services = headers_with(&mined, 900, 900);
     let a = assess(
-        &storage,
+        UserCoins::new(&storage, user),
         &services,
         &opts(1, true).with_allow_received(true),
         None,
@@ -744,6 +777,7 @@ async fn a_frozen_outpoint_is_held_under_every_rule() {
 /// record), one a live action of ours consumed, and a spendable one.
 struct LostCoins {
     storage: StorageSqlx,
+    user: i64,
     services: MockWalletServices,
     spender: String,
     /// (txid, output id) of the lost, the consumed and the spendable coin.
@@ -798,6 +832,7 @@ async fn lost_coins() -> LostCoins {
     services.set_header_for_height(header(902, &spendable, 0));
     LostCoins {
         storage,
+        user,
         services,
         spender,
         lost: (lost, lost_id),
@@ -814,9 +849,14 @@ async fn lost_coins() -> LostCoins {
 #[tokio::test]
 async fn the_offer_holds_a_lost_coin_by_its_record() {
     let w = lost_coins().await;
-    let a = assess(&w.storage, &w.services, &opts(1, false), None)
-        .await
-        .unwrap();
+    let a = assess(
+        UserCoins::new(&w.storage, w.user),
+        &w.services,
+        &opts(1, false),
+        None,
+    )
+    .await
+    .unwrap();
     let offered = |id: i64| a.offered.iter().any(|(o, _)| *o == id);
     let held = a.held.iter().find(|c| c.output_id == w.lost.1).unwrap();
     assert_eq!(
@@ -855,7 +895,7 @@ async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
         let (storage, services) = (&w.storage, &w.services);
         async move {
             assess_named(
-                storage,
+                UserCoins::new(storage, w.user),
                 services,
                 &opts(1, false),
                 &coins,
@@ -1029,7 +1069,9 @@ async fn the_scoped_word_does_not_offer_a_named_lost_coin() {
     let services = headers_with(&"0c".repeat(32), 900, 900);
     let gate =
         opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(lost.clone(), 0)]));
-    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    let a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+        .await
+        .unwrap();
     assert!(a.offered.is_empty(), "{a:?}");
     assert_eq!(
         reason_of(&a, &lost).as_deref(),
@@ -1081,7 +1123,7 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
     );
 
     let held = assess_named(
-        wallet.storage(),
+        UserCoins::from_wallet(&wallet).await.unwrap(),
         wallet.services(),
         &opts(1, true).with_allow_received(true),
         &[(received.clone(), 0)],
@@ -1164,7 +1206,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
     assert!(carried_txids(Some(&only_txid.to_binary())).is_empty());
     assert!(carried_txids(Some(&[0, 1, 2])).is_empty());
     let held = assess_named(
-        wallet.storage(),
+        UserCoins::from_wallet(&wallet).await.unwrap(),
         wallet.services(),
         &opts(1, true),
         &[(carried_txid.clone(), 0)],
@@ -1177,7 +1219,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
     assert!(held.is_empty(), "{held:?}");
     assert!(matches!(
         assess_named(
-            wallet.storage(),
+            UserCoins::from_wallet(&wallet).await.unwrap(),
             wallet.services(),
             &opts(1, true),
             &[(carried_txid, 0)],
@@ -1249,9 +1291,14 @@ async fn the_offer_allocates_only_the_offered_coins_and_writes_no_hold() {
     services.set_tip_header(header_with_hash(900, &tip, 0));
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let gate = opts(2, true);
-    let a = assess(wallet.storage(), wallet.services(), &gate, None)
-        .await
-        .unwrap();
+    let a = assess(
+        UserCoins::from_wallet(&wallet).await.unwrap(),
+        wallet.services(),
+        &gate,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(a.offer(), vec![deep_id]);
     assert_eq!(reason_of(&a, &tip).as_deref(), Some("depth 2: 1 block"));
 
@@ -1337,9 +1384,14 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
     let services = headers_with(&parent, 800, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let gate = opts(1, true);
-    let lazy = assess(wallet.storage(), wallet.services(), &gate, Some(11_000))
-        .await
-        .unwrap();
+    let lazy = assess(
+        UserCoins::from_wallet(&wallet).await.unwrap(),
+        wallet.services(),
+        &gate,
+        Some(11_000),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         lazy.offer(),
         vec![big_id],
@@ -1430,10 +1482,12 @@ async fn a_refusal_names_the_coins_past_the_offers_cap() {
         })
     );
 
-    let (storage, _, _) = storage_for(&PrivateKey::random().public_key().to_hex()).await;
+    let (storage, user, _) = storage_for(&PrivateKey::random().public_key().to_hex()).await;
     let toolbox =
         bsv_sdk::Error::WalletError("Insufficient funds: need 5000, have 1600".to_string());
-    let GateError::Refused(refused) = refusal(&storage, &assessment, &toolbox, 5_000).await else {
+    let GateError::Refused(refused) =
+        refusal(UserCoins::new(&storage, user), &assessment, &toolbox, 5_000).await
+    else {
         panic!("a shortfall is the refusal");
     };
     assert_eq!(refused.capped, assessment.capped);
@@ -1452,7 +1506,9 @@ async fn a_refusal_names_the_coins_past_the_offers_cap() {
     };
     cap_offer(&mut under, 2);
     assert_eq!(under.capped, None);
-    let GateError::Refused(plain) = refusal(&storage, &under, &toolbox, 5_000).await else {
+    let GateError::Refused(plain) =
+        refusal(UserCoins::new(&storage, user), &under, &toolbox, 5_000).await
+    else {
         panic!("a shortfall is the refusal");
     };
     assert!(plain
@@ -2498,7 +2554,9 @@ async fn the_scoped_word_offers_only_the_named_received_coins() {
     let scoped = AllowPending::ReceivedOnly(vec![(named.clone(), 0)]);
 
     let gate = opts(1, true).with_allow_pending(scoped.clone());
-    let mut a = assess(&storage, &services, &gate, None).await.unwrap();
+    let mut a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+        .await
+        .unwrap();
     a.offered.sort();
     assert_eq!(a.offered, vec![(n, 4_000), (m, 3_000)]);
     assert_eq!(
@@ -2510,7 +2568,9 @@ async fn the_scoped_word_offers_only_the_named_received_coins() {
     // Own change under SPEND_OWN_CHANGE=0 keeps its reason; the scope says
     // nothing about it.
     let gate = opts(1, false).with_allow_pending(scoped.clone());
-    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    let a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+        .await
+        .unwrap();
     assert_eq!(a.offered, vec![(n, 4_000)]);
     assert_eq!(
         reason_of(&a, &made).as_deref(),
@@ -2521,7 +2581,9 @@ async fn the_scoped_word_offers_only_the_named_received_coins() {
     // not named.
     let gate =
         opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(named.clone(), 1)]));
-    let a = assess(&storage, &services, &gate, None).await.unwrap();
+    let a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+        .await
+        .unwrap();
     assert_eq!(
         reason_of(&a, &named).as_deref(),
         Some("depth 1: 0 blocks; received, no proof; not named under allowPending: received")
@@ -2859,9 +2921,14 @@ async fn a_shortfall_the_faulted_coins_could_not_cover_stays_insufficient_funds(
 async fn the_re_read_offers_the_coin_when_the_service_answers_again() {
     let (wallet, mined) = a_coin_under_an_outage(50_000).await;
     let gate = opts(1, true);
-    let once = assess(wallet.storage(), wallet.services(), &gate, None)
-        .await
-        .unwrap();
+    let once = assess(
+        UserCoins::from_wallet(&wallet).await.unwrap(),
+        wallet.services(),
+        &gate,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(!once.headers_retried);
     assert!(once.offered.is_empty());
     assert!(once.held[0].headers_fault.is_some());
@@ -2874,7 +2941,13 @@ async fn the_re_read_offers_the_coin_when_the_service_answers_again() {
             .set_tip_header(header_with_hash(900, &mined, 0));
     };
     let (twice, ()) = tokio::join!(
-        assess_retrying(wallet.storage(), wallet.services(), &gate, None, true),
+        assess_retrying(
+            UserCoins::from_wallet(&wallet).await.unwrap(),
+            wallet.services(),
+            &gate,
+            None,
+            true
+        ),
         recover
     );
     let twice = twice.unwrap();
@@ -2986,7 +3059,9 @@ async fn a_stale_creator_is_offered_under_the_rule_a_pending_one_is() {
         ),
     ];
     for (gate, offered, reasons) in cases {
-        let a = assess(&storage, &services, &gate, None).await.unwrap();
+        let a = assess(UserCoins::new(&storage, user), &services, &gate, None)
+            .await
+            .unwrap();
         println!("{gate:?}: offered {:?}, held {:?}", a.offered, a.held);
         let mut ids = a.offer();
         ids.sort_unstable();

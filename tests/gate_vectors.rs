@@ -45,7 +45,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bsv_sdk::primitives::hash::sha256;
 use bsv_wallet_cli::spend_gate::{
     assess, assess_named, hold_reason, lineage_candidates, AllowPending, GateError, GateOptions,
-    Origin,
+    Origin, UserCoins,
 };
 use bsv_wallet_cli::tracker_host::{read_creators, TickOptions};
 use gate_vectors_store::{b, build, height, key_of, n, s, Built};
@@ -247,7 +247,7 @@ async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
         // A coin the wallet does not hold is refused at the gate, the
         // caller's error (#166): the Lean's 'no coin', not offerable.
         let held = match assess_named(
-            &built.storage,
+            UserCoins::new(&built.storage, built.user),
             &built.services,
             opts,
             &coin,
@@ -273,9 +273,14 @@ async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
             checks.field(&door, "offerable_clause", &clause_of(reason));
         }
 
-        let a = assess(&built.storage, &built.services, opts, None)
-            .await
-            .unwrap();
+        let a = assess(
+            UserCoins::new(&built.storage, built.user),
+            &built.services,
+            opts,
+            None,
+        )
+        .await
+        .unwrap();
         let door = format!("assess{tag}");
         let offered = built
             .output_id

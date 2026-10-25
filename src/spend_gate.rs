@@ -147,16 +147,82 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult};
 use bsv_tracker::Height;
 use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletServices};
 use serde::Serialize;
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
 
 use crate::server::error::Kind;
 use crate::toolbox_words;
 use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
+
+/// The outputs of one authenticated user. A gate read requires this scope;
+/// an outpoint belonging only to another user is absent from it.
+#[derive(Clone, Copy)]
+pub struct UserCoins<'a> {
+    storage: &'a StorageSqlx,
+    user_id: i64,
+}
+
+impl<'a> UserCoins<'a> {
+    /// Bind the store to its authenticated user's id (as respend does).
+    #[must_use]
+    pub fn new(storage: &'a StorageSqlx, user_id: i64) -> Self {
+        Self { storage, user_id }
+    }
+
+    /// Resolve the same user that `Wallet::new` puts in its storage auth.
+    /// The toolbox keeps that id private, but exposes the identity key.
+    ///
+    /// # Errors
+    /// Returns an error if the user cannot be read or is absent.
+    pub async fn from_wallet<V: WalletServices + Send + Sync + 'static>(
+        wallet: &'a Wallet<StorageSqlx, V>,
+    ) -> Result<Self> {
+        let storage = wallet.storage();
+        let user = storage
+            .find_user(wallet.identity_key())
+            .await?
+            .context("spend gate: wallet user is absent from storage")?;
+        Ok(Self::new(storage, user.user_id))
+    }
+
+    /// The shared read for named inputs, scope, offers, locks and respend.
+    /// Every caller adds its selection after the mandatory owner filter.
+    fn query(self) -> QueryBuilder<'static, Sqlite> {
+        let mut query = QueryBuilder::new(
+            "SELECT o.output_id, t.txid, o.vout, o.satoshis, o.spent_by, o.spendable, \
+                    o.change, t.is_outgoing, t.status, b.name AS basket, \
+                    CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
+                    COALESCE(s.txid, s.reference) AS holder, s.status AS spender_status, \
+                    p.merkle_path, o.locking_script, o.derivation_prefix, \
+                    o.derivation_suffix, o.sender_identity_key \
+             FROM outputs o \
+             JOIN transactions t ON o.transaction_id = t.transaction_id \
+             LEFT JOIN output_baskets b ON o.basket_id = b.basket_id \
+             LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
+             LEFT JOIN proven_txs p ON p.txid = t.txid \
+             WHERE o.user_id = ",
+        );
+        query.push_bind(self.user_id);
+        query
+    }
+
+    /// Look up an outpoint only among this user's outputs.
+    pub(crate) async fn outpoint(self, txid: &str, vout: u32) -> Result<Option<SqliteRow>> {
+        Ok(self
+            .query()
+            .push(" AND lower(t.txid) = ")
+            .push_bind(txid.to_ascii_lowercase())
+            .push(" AND o.vout = ")
+            .push_bind(i64::from(vout))
+            .build()
+            .fetch_optional(self.storage.pool())
+            .await?)
+    }
+}
 
 mod lineage;
 pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, DEAD_LINEAGE};
@@ -1074,23 +1140,19 @@ async fn read_batch<V: WalletServices + ?Sized>(
 /// Every coin the toolbox could allocate: a change output of a default
 /// basket, unspent, its transaction `completed` or `unproven`. In the
 /// toolbox's preference: completed first, then the largest.
-async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
+async fn candidates(coins: UserCoins<'_>) -> Result<Vec<Candidate>> {
+    let storage = coins.storage;
     let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
-    let pool = storage.pool();
-    let rows = sqlx::query(
-        "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
-                CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                p.merkle_path, o.spendable \
-         FROM outputs o \
-         JOIN transactions t ON o.transaction_id = t.transaction_id \
-         JOIN output_baskets b ON o.basket_id = b.basket_id AND b.name = 'default' \
-         LEFT JOIN proven_txs p ON p.txid = t.txid \
-         WHERE o.change = 1 AND o.spent_by IS NULL AND t.txid IS NOT NULL \
-           AND t.status IN ('completed', 'unproven') \
-         ORDER BY CASE WHEN t.status = 'completed' THEN 0 ELSE 1 END, o.satoshis DESC",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = coins
+        .query()
+        .push(
+            " AND b.name = 'default' AND o.change = 1 AND o.spent_by IS NULL \
+              AND t.txid IS NOT NULL AND t.status IN ('completed', 'unproven') \
+              ORDER BY CASE WHEN t.status = 'completed' THEN 0 ELSE 1 END, o.satoshis DESC",
+        )
+        .build()
+        .fetch_all(storage.pool())
+        .await?;
     Ok(rows
         .iter()
         .map(|r| Candidate {
@@ -1139,20 +1201,17 @@ const LOST: &str = "lost: the store marks it not spendable";
 /// (unproven)`, never offered. Not a hold that clears: each is an input that
 /// action spent for good, and it leaves the listing when the spender is
 /// completed (its proof lands) or failed (#53).
-async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
-    let rows = sqlx::query(
-        "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
-                CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                COALESCE(s.txid, s.reference) AS holder \
-         FROM outputs o \
-         JOIN transactions t ON o.transaction_id = t.transaction_id \
-         JOIN transactions s ON o.spent_by = s.transaction_id \
-         JOIN output_baskets b ON o.basket_id = b.basket_id AND b.name = 'default' \
-         WHERE o.change = 1 AND s.status NOT IN ('completed', 'failed') \
-           AND t.status IN ('completed', 'unproven')",
-    )
-    .fetch_all(pool)
-    .await?;
+async fn locked(coins: UserCoins<'_>) -> Result<Vec<HeldCoin>> {
+    let rows = coins
+        .query()
+        .push(
+            " AND b.name = 'default' AND o.change = 1 \
+              AND s.status NOT IN ('completed', 'failed') \
+              AND t.status IN ('completed', 'unproven')",
+        )
+        .build()
+        .fetch_all(coins.storage.pool())
+        .await?;
     Ok(rows
         .iter()
         .map(|r| HeldCoin {
@@ -1180,12 +1239,12 @@ async fn locked(pool: &SqlitePool) -> Result<Vec<HeldCoin>> {
 /// The header service is read once; [`assess_retrying`] is the door's
 /// read.
 pub async fn assess<V: WalletServices + ?Sized>(
-    storage: &StorageSqlx,
+    coins: UserCoins<'_>,
     services: &V,
     opts: &GateOptions,
     need: Option<u64>,
 ) -> Result<Assessment> {
-    assess_inner(storage, services, opts, need, false).await
+    assess_inner(coins, services, opts, need, false).await
 }
 
 /// [`assess`], and when the header service did not answer for a batch's
@@ -1193,23 +1252,24 @@ pub async fn assess<V: WalletServices + ?Sized>(
 /// (#59): once per assessment, and only when `retry` (the door's first
 /// read; its full read retries only if the first did not).
 pub async fn assess_retrying<V: WalletServices + ?Sized>(
-    storage: &StorageSqlx,
+    coins: UserCoins<'_>,
     services: &V,
     opts: &GateOptions,
     need: Option<u64>,
     retry: bool,
 ) -> Result<Assessment> {
-    assess_inner(storage, services, opts, need, retry).await
+    assess_inner(coins, services, opts, need, retry).await
 }
 
 async fn assess_inner<V: WalletServices + ?Sized>(
-    storage: &StorageSqlx,
+    coins: UserCoins<'_>,
     services: &V,
     opts: &GateOptions,
     need: Option<u64>,
     retry: bool,
 ) -> Result<Assessment> {
-    let all = candidates(storage).await?;
+    let storage = coins.storage;
+    let all = candidates(coins).await?;
     let tick = opts.tick();
     let lineage = lineage_of(
         storage,
@@ -1358,7 +1418,7 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// [`read_batch`] as the allocation's are, and the dead set is derived
 /// after; without it the header service is read once.
 pub async fn assess_named<V: WalletServices + ?Sized>(
-    storage: &StorageSqlx,
+    coins: UserCoins<'_>,
     services: &V,
     opts: &GateOptions,
     named: &[(String, u32)],
@@ -1366,31 +1426,19 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     reserved_to: Option<i64>,
     retry: bool,
 ) -> std::result::Result<Vec<HeldCoin>, GateError> {
+    let storage = coins.storage;
     let frozen = crate::tracker_host::frozen_outpoints(storage)
         .await
         .map_err(GateError::Gate)?;
-    let pool = storage.pool();
-    let mut coins = Vec::new();
+    let mut named_coins = Vec::new();
     for (txid, vout) in named {
         let txid = txid.to_ascii_lowercase();
-        let row = sqlx::query(
-            "SELECT o.output_id, o.satoshis, o.spent_by, o.spendable, t.is_outgoing, \
-                    CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                    COALESCE(s.txid, s.reference) AS holder, s.status AS spender_status, \
-                    p.merkle_path \
-             FROM outputs o \
-             JOIN transactions t ON o.transaction_id = t.transaction_id \
-             LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
-             LEFT JOIN proven_txs p ON p.txid = t.txid \
-             WHERE lower(t.txid) = ? AND o.vout = ?",
-        )
-        .bind(&txid)
-        .bind(i64::from(*vout))
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| GateError::Gate(e.into()))?;
+        let row = coins
+            .outpoint(&txid, *vout)
+            .await
+            .map_err(GateError::Gate)?;
         match row {
-            Some(r) => coins.push((txid, *vout, r)),
+            Some(r) => named_coins.push((txid, *vout, r)),
             None if carried.contains(&txid) => {}
             None => {
                 return Err(GateError::Scope(named_refusal(
@@ -1411,12 +1459,12 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         r.get::<i64, _>("spendable") == 0 && r.get::<Option<i64>, _>("spent_by").is_none()
     };
     // Only a coin neither frozen, locked nor lost needs its creator read.
-    let creators: Vec<Pair> = coins
+    let creators: Vec<Pair> = named_coins
         .iter()
         .filter(|(t, v, r)| !is_frozen(t, *v) && !is_locked(r) && !is_lost(r))
         .map(|(t, _, r)| (t.clone(), r.get("merkle_path")))
         .collect();
-    let any_made = coins.iter().any(|(t, _, r)| {
+    let any_made = named_coins.iter().any(|(t, _, r)| {
         r.get::<i64, _>("is_outgoing") != 0 && creators.iter().any(|(c, _)| c == t)
     });
     let lineage = lineage_of(storage, any_made)
@@ -1442,7 +1490,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     }
     let dead = lineage.dead(&readings);
     let mut held = Vec::new();
-    for (txid, vout, r) in coins {
+    for (txid, vout, r) in named_coins {
         let origin = if r.get::<i64, _>("is_outgoing") != 0 {
             Origin::Made
         } else {
@@ -1578,10 +1626,12 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     originator: &str,
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
-    let storage = wallet.storage();
+    let coins = UserCoins::from_wallet(wallet)
+        .await
+        .map_err(GateError::Gate)?;
     // A scoped word names coins this wallet could spend under it, or it is
     // the caller's error (#63), before anything is read for the action.
-    if let Some(error) = check_scope(storage, opts.allow_pending.named())
+    if let Some(error) = check_scope(coins, opts.allow_pending.named())
         .await
         .map_err(GateError::Gate)?
     {
@@ -1603,16 +1653,8 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         // A reading the header service did not answer for, a named coin's
         // creator or a lineage candidate, is read once more (#59), as the
         // allocation's are.
-        let held = assess_named(
-            storage,
-            wallet.services(),
-            opts,
-            &named,
-            &carried,
-            None,
-            true,
-        )
-        .await?;
+        let held =
+            assess_named(coins, wallet.services(), opts, &named, &carried, None, true).await?;
         if !held.is_empty() {
             // Every named input must be offerable: one held by a rule is
             // the refusal; held on the service's fault alone, it is "could
@@ -1643,7 +1685,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
             .get_or_insert_with(Vec::new)
             .push(RECEIVED_PENDING_LABEL.to_string());
     }
-    run_gated(wallet, args, originator, opts).await
+    run_gated(coins, wallet, args, originator, opts).await
 }
 
 /// The transactions a caller's `inputBEEF` carries whole (not a txid-only
@@ -1714,27 +1756,14 @@ fn offered_status(status: &str) -> bool {
 /// write at the failure (0.13.0 `mark_internalized_tx_failed`), so a failed
 /// coin reads its status, never lost; a failed and frozen coin reads frozen,
 /// and a spent coin of any status reads spent by.
-async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<Option<String>> {
+async fn check_scope(coins: UserCoins<'_>, named: &[(String, u32)]) -> Result<Option<String>> {
     if named.is_empty() {
         return Ok(None);
     }
-    let pool = storage.pool();
+    let storage = coins.storage;
     let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
     for (txid, vout) in named {
-        let row = sqlx::query(
-            "SELECT o.change, o.spent_by, o.spendable, t.is_outgoing, t.status, \
-                    b.name AS basket, \
-                    COALESCE(s.txid, s.reference) AS holder \
-             FROM outputs o \
-             JOIN transactions t ON o.transaction_id = t.transaction_id \
-             LEFT JOIN output_baskets b ON o.basket_id = b.basket_id \
-             LEFT JOIN transactions s ON o.spent_by = s.transaction_id \
-             WHERE lower(t.txid) = ? AND o.vout = ?",
-        )
-        .bind(txid)
-        .bind(i64::from(*vout))
-        .fetch_optional(pool)
-        .await?;
+        let row = coins.outpoint(txid, *vout).await?;
         let why = match row {
             None => NOT_HELD.to_string(),
             Some(r) => {
@@ -1773,19 +1802,19 @@ async fn check_scope(storage: &StorageSqlx, named: &[(String, u32)]) -> Result<O
 }
 
 async fn run_gated<V: WalletServices + Send + Sync + 'static>(
+    coins: UserCoins<'_>,
     wallet: &Wallet<StorageSqlx, V>,
     args: CreateActionArgs,
     originator: &str,
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
-    let storage = wallet.storage();
     let outputs = args
         .outputs
         .as_ref()
         .map(|o| o.iter().map(|x| x.satoshis).sum::<u64>())
         .unwrap_or(0);
     let need = outputs.saturating_add(FEE_MARGIN);
-    let first = assess_inner(storage, wallet.services(), opts, Some(need), true)
+    let first = assess_inner(coins, wallet.services(), opts, Some(need), true)
         .await
         .map_err(GateError::Gate)?;
     let lazy = !first.unread.is_empty();
@@ -1795,24 +1824,18 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         // cover without it (F7 of the #44 CLI review).
         Err(e) if lazy && toolbox_words::is_unspendable(&e) => {}
         Err(e) if !toolbox_words::is_insufficient(&e) => return Err(GateError::Wallet(e)),
-        Err(e) if !lazy => return Err(refusal(storage, &first, &e, outputs).await),
+        Err(e) if !lazy => return Err(refusal(coins, &first, &e, outputs).await),
         Err(_) => {}
     }
     // The lazy read left coins unread: read every coin and try once more
     // (the header service read once more only if the first read did not).
-    let full = assess_inner(
-        storage,
-        wallet.services(),
-        opts,
-        None,
-        !first.headers_retried,
-    )
-    .await
-    .map_err(GateError::Gate)?;
+    let full = assess_inner(coins, wallet.services(), opts, None, !first.headers_retried)
+        .await
+        .map_err(GateError::Gate)?;
     match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
         Err(e) if toolbox_words::is_insufficient(&e) => {
-            Err(refusal(storage, &full, &e, outputs).await)
+            Err(refusal(coins, &full, &e, outputs).await)
         }
         Err(e) => Err(GateError::Wallet(e)),
     }
@@ -1823,13 +1846,13 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
 /// (the outputs' sum, the floor of what the action needs: a shortfall they
 /// could not have covered is the funds' refusal whatever the service said).
 async fn refusal(
-    storage: &StorageSqlx,
+    coins: UserCoins<'_>,
     assessment: &Assessment,
     e: &bsv_sdk::Error,
     outputs: u64,
 ) -> GateError {
     let mut held = assessment.held.clone();
-    match locked(storage.pool()).await {
+    match locked(coins).await {
         Ok(mut l) => held.append(&mut l),
         Err(fault) => return GateError::Gate(fault),
     }

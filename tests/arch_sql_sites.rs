@@ -71,7 +71,7 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/respend.rs",
-        44,
+        42,
         "the deliberate competitor's reads and writes",
     ),
     ("src/retire_guard.rs", 12, "the retire guard's reads"),
@@ -88,7 +88,7 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/spend_gate.rs",
-        28,
+        21,
         "the spend gate's reads of its own proof records (#89 moves them)",
     ),
     ("src/spend_guard.rs", 17, "the spend guard's reads"),

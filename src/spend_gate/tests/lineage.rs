@@ -88,24 +88,26 @@ fn quiet_headers() -> MockWalletServices {
 /// The gate's reason for `txid`'s coin through both doors, under `opts`:
 /// (the allocation's, the named input's); `None` when offered.
 async fn both_doors(
-    storage: &StorageSqlx,
+    store: &Store,
     services: &MockWalletServices,
     opts: &GateOptions,
     txid: &str,
 ) -> (Option<String>, Option<String>) {
-    doors_at(storage, services, opts, (txid, 0)).await
+    doors_at(store, services, opts, (txid, 0)).await
 }
 
 /// [`both_doors`] for the coin at `vout`.
 async fn doors_at(
-    storage: &StorageSqlx,
+    store: &Store,
     services: &MockWalletServices,
     opts: &GateOptions,
     (txid, vout): (&str, u32),
 ) -> (Option<String>, Option<String>) {
-    let a = assess(storage, services, opts, None).await.unwrap();
+    let a = assess(UserCoins::new(&store.0, store.1 .0), services, opts, None)
+        .await
+        .unwrap();
     let named = assess_named(
-        storage,
+        UserCoins::new(&store.0, store.1 .0),
         services,
         opts,
         &[(txid.to_string(), vout)],
@@ -121,7 +123,7 @@ async fn doors_at(
 /// Both doors hold `txid`'s coin under `opts`, naming `ancestor` dead by
 /// `word`.
 async fn held_naming(
-    storage: &StorageSqlx,
+    store: &Store,
     services: &MockWalletServices,
     opts: &GateOptions,
     txid: &str,
@@ -129,7 +131,7 @@ async fn held_naming(
 ) {
     let want = Some(format!("dead lineage: ancestor {ancestor} {word}"));
     assert_eq!(
-        both_doors(storage, services, opts, txid).await,
+        both_doors(store, services, opts, txid).await,
         (want.clone(), want)
     );
 }
@@ -155,7 +157,7 @@ async fn a_child_of_a_conflicted_parent_is_held_under_every_rule_and_word() {
     let services = quiet_headers();
     let before = stored_rows(&store.0).await;
     for o in every_word(&d) {
-        held_naming(&store.0, &services, &o, &d, (&p, "conflicted")).await;
+        held_naming(&store, &services, &o, &d, (&p, "conflicted")).await;
     }
     assert_eq!(stored_rows(&store.0).await, before, "the view wrote a row");
 
@@ -166,7 +168,7 @@ async fn a_child_of_a_conflicted_parent_is_held_under_every_rule_and_word() {
     spends(&store.0, &m, q0).await;
     kill(&store.0, &q, Death::Word("conflicted")).await;
     let services = headers_with(&m, 800, 900);
-    held_naming(&store.0, &services, &opts(1, true), &m, (&q, "conflicted")).await;
+    held_naming(&store, &services, &opts(1, true), &m, (&q, "conflicted")).await;
 }
 
 /// D's child E (spending D0) is held through two steps, naming P.
@@ -178,7 +180,7 @@ async fn a_grandchild_is_held_through_two_steps() {
     change(&store, &e).await;
     spends(&store.0, &e, d0).await;
     let services = quiet_headers();
-    held_naming(&store.0, &services, &opts(1, true), &e, (&p, "conflicted")).await;
+    held_naming(&store, &services, &opts(1, true), &e, (&p, "conflicted")).await;
 }
 
 /// The other dead words: a parent `rejected` by the tracker, a parent the
@@ -191,7 +193,7 @@ async fn a_child_of_a_rejected_or_failed_parent_is_held() {
     ] {
         let store = wallet_store().await;
         let (p, d, _) = parent_and_child(&store, Some(death)).await;
-        held_naming(&store.0, &quiet_headers(), &opts(1, true), &d, (&p, word)).await;
+        held_naming(&store, &quiet_headers(), &opts(1, true), &d, (&p, word)).await;
     }
 }
 
@@ -203,12 +205,12 @@ async fn a_child_of_a_live_parent_is_offered_as_before() {
     let (_, d, _) = parent_and_child(&store, None).await;
     let services = quiet_headers();
     assert_eq!(
-        both_doors(&store.0, &services, &opts(1, true), &d).await,
+        both_doors(&store, &services, &opts(1, true), &d).await,
         (None, None)
     );
     let off = Some("depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0".to_string());
     assert_eq!(
-        both_doors(&store.0, &services, &opts(1, false), &d).await,
+        both_doors(&store, &services, &opts(1, false), &d).await,
         (off.clone(), off)
     );
 }
@@ -229,14 +231,11 @@ async fn a_received_coin_is_never_walked() {
         "depth 1: 0 blocks; received, no proof; offered under allowPending: received".to_string(),
     );
     assert_eq!(
-        both_doors(&store.0, &services, &opts(1, true), &r).await,
+        both_doors(&store, &services, &opts(1, true), &r).await,
         (held.clone(), held)
     );
     let word = opts(1, true).with_allow_received(true);
-    assert_eq!(
-        both_doors(&store.0, &services, &word, &r).await,
-        (None, None)
-    );
+    assert_eq!(both_doors(&store, &services, &word, &r).await, (None, None));
 }
 
 /// Another output of the transaction row `txid` at `vout`, free.
@@ -262,6 +261,7 @@ async fn second_output(store: &Store, txid: &str, vout: i64) -> i64 {
 #[tokio::test]
 async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reaches() {
     let store = wallet_store().await;
+    let coins = UserCoins::new(&store.0, store.1 .0);
     let (a, b) = ("ea".repeat(32), "eb".repeat(32));
     let a0 = change(&store, &a).await;
     let b0 = change(&store, &b).await;
@@ -276,7 +276,7 @@ async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reach
             .dead(&HashMap::new())
     };
     assert!(walk().await.is_empty());
-    let a1 = assess(&store.0, &quiet_headers(), &opts(1, true), None)
+    let a1 = assess(coins, &quiet_headers(), &opts(1, true), None)
         .await
         .unwrap();
     assert_eq!(a1.offered.len(), 1, "B's free coin: {a1:?}");
@@ -294,7 +294,7 @@ async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reach
             .collect::<std::collections::BTreeSet<_>>(),
         [a.clone(), b.clone()].into_iter().collect()
     );
-    let held = assess(&store.0, &quiet_headers(), &opts(1, true), None)
+    let held = assess(coins, &quiet_headers(), &opts(1, true), None)
         .await
         .unwrap();
     assert!(held.offered.is_empty(), "{held:?}");
@@ -333,7 +333,7 @@ async fn a_named_coin_of_a_dead_lineage_refuses_the_action_and_stores_nothing() 
 
     wallet.services().set_tip_unavailable();
     let held = assess_named(
-        wallet.storage(),
+        UserCoins::from_wallet(&wallet).await.unwrap(),
         wallet.services(),
         &opts(1, true),
         &[(d, 0)],
@@ -420,7 +420,7 @@ async fn named_pair(
     (p, d): (&str, &str),
 ) -> (Option<String>, Option<String>) {
     let named = assess_named(
-        &store.0,
+        UserCoins::new(&store.0, store.1 .0),
         services,
         opts,
         &[(p.to_string(), 1), (d.to_string(), 0)],
@@ -449,9 +449,15 @@ async fn agreeing_with(
     (p, d): (&str, &str),
     retry: bool,
 ) -> (Reasons, bool) {
-    let a = assess_retrying(&store.0, services, opts, None, retry)
-        .await
-        .unwrap();
+    let a = assess_retrying(
+        UserCoins::new(&store.0, store.1 .0),
+        services,
+        opts,
+        None,
+        retry,
+    )
+    .await
+    .unwrap();
     let named = named_pair(store, services, opts, (p, d)).await;
     let read = ((reason_of(&a, p), named.0), (reason_of(&a, d), named.1));
     agree(&read);
@@ -543,7 +549,7 @@ async fn a_failed_parent_whose_proof_checks_leaves_its_child_offered() {
     assert_eq!(read, ((None, None), (None, None)));
     // The same proof against a header it does not match: D held.
     let services = headers_with(&"0d".repeat(32), 800, 900);
-    held_naming(&store.0, &services, &opts(1, true), &d, (&p, "failed")).await;
+    held_naming(&store, &services, &opts(1, true), &d, (&p, "failed")).await;
 }
 
 /// A parent `p` (made, or received) whose tracker row, keyed by the
@@ -557,7 +563,7 @@ async fn a_conflicted_parent_holds_our_child(p: &str, made: bool) {
     spends(&store.0, &d, p0).await;
     kill(&store.0, &p.to_ascii_lowercase(), Death::Word("conflicted")).await;
     let services = quiet_headers();
-    held_naming(&store.0, &services, &opts(1, true), &d, (p, "conflicted")).await;
+    held_naming(&store, &services, &opts(1, true), &d, (p, "conflicted")).await;
 }
 
 /// The toolbox's txid in upper case beside the tracker's lowercase row
@@ -742,15 +748,29 @@ async fn the_named_door_retries_with_the_allocations_header_calls() {
     };
     let gate = opts(1, true);
     services.reset_history();
-    let a = assess_retrying(&store.0, &services, &gate, None, true)
-        .await
-        .unwrap();
+    let a = assess_retrying(
+        UserCoins::new(&store.0, store.1 .0),
+        &services,
+        &gate,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
     assert!(a.headers_retried);
     let allocation = calls();
     services.reset_history();
-    let held = assess_named(&store.0, &services, &gate, &[(d, 0)], &[], None, true)
-        .await
-        .unwrap();
+    let held = assess_named(
+        UserCoins::new(&store.0, store.1 .0),
+        &services,
+        &gate,
+        &[(d, 0)],
+        &[],
+        None,
+        true,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         held[0].reason,
         format!("dead lineage: ancestor {p} conflicted")

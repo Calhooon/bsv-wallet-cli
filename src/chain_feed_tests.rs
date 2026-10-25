@@ -358,8 +358,9 @@ async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
         allow_pending: crate::spend_gate::AllowPending::Off,
         tracker: crate::tracker_host::TickOptions::default(),
     };
+    let coins = crate::spend_gate::UserCoins::new(&storage, user);
     let offered = |a: &crate::spend_gate::Assessment| a.offered_satoshis();
-    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+    let a = crate::spend_gate::assess(coins, &services, &gate, None)
         .await
         .unwrap();
     println!("[before] offered {} held {:?}", offered(&a), a.held);
@@ -385,7 +386,7 @@ async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
         word(&storage, &txid).await,
         ("mined".to_string(), Some(900), Some("fork@900".to_string()))
     );
-    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+    let a = crate::spend_gate::assess(coins, &services, &gate, None)
         .await
         .unwrap();
     println!(
@@ -419,7 +420,7 @@ async fn a_split_at_an_adopted_creators_height_holds_its_coin_until_resolved() {
         word(&storage, &txid).await,
         ("mined".to_string(), Some(900), None)
     );
-    let a = crate::spend_gate::assess(&storage, &services, &gate, None)
+    let a = crate::spend_gate::assess(coins, &services, &gate, None)
         .await
         .unwrap();
     println!(
