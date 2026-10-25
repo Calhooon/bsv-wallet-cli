@@ -1,0 +1,31 @@
+{
+  "world": "busy-read",
+  "request": {
+    "method": "POST",
+    "path": "/arc-callback",
+    "headers": {
+      "x-callbacktoken": "wire-callback"
+    },
+    "json": {
+      "competingTxs": [
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "txStatus": "REJECTED",
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "retry-after": "1",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "STORE_BUSY",
+      "message": "apply_event: Store busy: sqlite code 5"
+    }
+  }
+}

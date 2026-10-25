@@ -571,7 +571,7 @@ impl World {
         };
         match name {
             "auth" => config.auth_token = Some(WIRE_BEARER.to_string()),
-            "callback" => config.callback_token = Some(WIRE_CALLBACK.to_string()),
+            "callback" | "busy-read" => config.callback_token = Some(WIRE_CALLBACK.to_string()),
             _ => {}
         }
         let router = server::make_router(server::make_wallet_state(wallet), config);

@@ -117,6 +117,7 @@
     "115-revealSpecificKeyLinkage.privileged.json",
     "116-abortAction.storeBusy.json",
     "117-chain-feed.storeBusy.json",
-    "118-tx.storeBusy.json"
+    "118-tx.storeBusy.json",
+    "119-arc-callback.storeBusy.json"
   ]
 }
