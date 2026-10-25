@@ -8,8 +8,7 @@ use std::sync::Arc;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::script::{templates::P2PKH, LockingScript, UnlockingScript};
 use bsv_sdk::transaction::{
-    Beef, MerklePath, MerklePathLeaf, Transaction, TransactionInput,
-    TransactionOutput,
+    Beef, MerklePath, MerklePathLeaf, Transaction, TransactionInput, TransactionOutput,
 };
 use bsv_sdk::wallet::{
     Counterparty, CreateActionArgs, CreateActionOptions, CreateActionOutput, KeyDeriver, Protocol,
