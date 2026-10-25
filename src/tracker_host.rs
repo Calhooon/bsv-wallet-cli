@@ -60,11 +60,14 @@
 //! word whose root is still the active header's at its height stands, its
 //! marks cleared, and nothing is fetched; a word whose root is gone is
 //! `stale` with `Reask::Reorg`, the only one the pass asks a proof for; a
-//! height where the service still answers a header the reorg deactivated
-//! has no answer, so the word stands suspect with `Reask::Recheck` until
-//! the next tip. An event that left a row anything but a plain checked
-//! `mined` is kept on the row as one more input to replay (the `chain`
-//! column), and the stored proof is replayed against the header the reorg
+//! height where the service still answers a header a reorg deactivated or
+//! an invalidation named has no answer, so the word stands suspect with
+//! `Reask::Recheck` until the next tip. An invalidation deactivates each
+//! named row's checked block: its hash matched the stored `header_hash`,
+//! and its height and root come from the stored proof (`bump`). An event
+//! that left a row anything but a plain checked `mined` is kept on the row
+//! as one more input to replay (the `chain`
+//! column), and the stored proof is replayed against the header the event
 //! took away, so a `stale` or a suspect mark survives the next load; a new
 //! proof, or a stored path dropped because it no longer checks, clears it.
 //! The cursor is stored in the same transaction.
@@ -535,8 +538,8 @@ impl TrackedRow {
         }
     }
 
-    /// The headers the stored reorgs deactivated, by height (the latest
-    /// event's header at a height it shares with an earlier one).
+    /// The headers the stored reorgs or invalidations deactivated, by height
+    /// (the latest event's header at a height it shares with an earlier one).
     fn deactivated(&self) -> BTreeMap<Height, Header> {
         self.chain_events()
             .iter()
@@ -654,9 +657,9 @@ impl TrackedRow {
     }
 
     /// Replay the stored inputs. The stored path is checked against
-    /// `headers` like any other proof, except at a height a stored reorg
+    /// `headers` like any other proof, except at a height a stored event
     /// deactivated, where it is checked against the header it was checked
-    /// against then, so the reorg's recheck runs again on the new branch
+    /// against then, so the event's recheck runs again on the new branch
     /// and a `stale` word stands with its `Reask::Reorg` until a new proof.
     /// A path that no longer checks leaves the hint-tier word and a re-ask,
     /// and is returned as the fault.
@@ -2322,8 +2325,10 @@ pub fn event_kind(event: &ChainEvent) -> &'static str {
     }
 }
 
-/// The headers a reorg replaced, by height: the event's deactivated
-/// headers, lowercase.
+/// The headers an event deactivated, by height, lowercase: a reorg's
+/// supplied headers, or an invalidation's matched hash with the named
+/// row's height and root from its stored proof (`bump`). The same inputs
+/// reconstruct the old header when the stored invalidation is replayed.
 fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Height, Header> {
     if let ChainEvent::Invalidated { block_hash } = event {
         return row
@@ -2363,10 +2368,10 @@ fn deactivated_of(event: &ChainEvent, row: Option<&TrackedRow>) -> BTreeMap<Heig
         .collect()
 }
 
-/// The branch a reorg took away, over the host's headers: a stored proof
-/// is replayed against the header it was checked against (a deactivated
+/// The branch a reorg or invalidation took away, over the host's headers:
+/// a stored proof is replayed against the header it was checked against (a deactivated
 /// header at its height; the tip no lower than the highest of them), so
-/// the tracker holds the `mined` word the reorg names. Only proofs are
+/// the tracker holds the `mined` word the event names. Only proofs are
 /// stepped through this view; it writes no `mined` word on the new branch.
 struct OldBranch<'a, H: Headers + ?Sized> {
     live: &'a H,
@@ -2394,8 +2399,8 @@ impl<H: Headers + ?Sized> Headers for OldBranch<'_, H> {
 /// The new branch, as the crate's recheck must see it (ruling (5) of
 /// 2026-10-20 19:4xZ, bsv-stack-lean `docs/RULINGS-2026-10-12.md`; the
 /// bsv-tracker 0.7.0 migration note): the host's headers, except that a
-/// height where the header service still answers a header the reorg
-/// deactivated has no answer. A service that has not moved yet leaves the
+/// height where the header service still answers a header a reorg or
+/// invalidation deactivated has no answer. A service that has not moved yet leaves the
 /// word suspect with `Reask::Recheck` until the next tip, never `mined` on
 /// the old branch's header.
 struct NewBranch<'a, H: Headers + ?Sized> {
@@ -2422,8 +2427,12 @@ impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
 /// tracked transactions it names, through `Tracker::on_chain` with the new
 /// branch's headers (`NewBranch`: a height where the service still
 /// answers a deactivated header has no answer), and store the moved rows
-/// and the cursor in one transaction. The crate rechecks each named word
-/// by its stored root (bsv-tracker 0.7.0): the same root, it stands; a
+/// and the cursor in one transaction. A reorg deactivates its supplied
+/// headers; an invalidation deactivates the block whose hash matched each
+/// named row's `header_hash`, at the stored proof's height. Its root is
+/// computed from that stored proof (`bump`), never from the live snapshot.
+/// The crate rechecks each named word by its stored root (bsv-tracker
+/// 0.7.0): the same root, it stands; a
 /// moved root, `stale` with `Reask::Reorg`; no header, suspect with
 /// `Reask::Recheck` until the next tip. A cursor at or below the stored one was delivered before
 /// (delivery is at least once) and changes nothing.
@@ -2514,8 +2523,8 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
     }
     if let Some(snapshot) = snapshot {
         // The stored proofs replay against the branch the event (and any
-        // reorg a row keeps) took away; the event's recheck reads the new
-        // branch, with no answer at a height the service has not moved.
+        // reorg or invalidation a row keeps) took away; the event's recheck
+        // reads the new branch, with no answer at a height the service has not moved.
         let deactivated = if matches!(event, ChainEvent::Invalidated { .. }) {
             rows.iter()
                 .flat_map(|row| deactivated_of(&event, Some(row)))
@@ -2566,6 +2575,9 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         // words) whose replay moved it: the stored reorg it keeps was
         // rechecked against the new branch in the replay, the crate's own
         // step. Its `mined` word on a moved root is `stale` now.
+        // An invalidation whose replay found the same root on a new header
+        // already cleared its mark, so the tip selects nothing. Store that
+        // completed recheck too, clearing its kept event and re-ask.
         for row in rows.iter_mut() {
             if moved.iter().any(|m| m.txid == row.txid) {
                 continue;
