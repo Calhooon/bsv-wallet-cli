@@ -43,10 +43,11 @@
 //! gate those candidates' (txid, stored path) pairs; the gate reads them in
 //! one [`crate::tracker_host::read_creators`] call with the creators it
 //! judges (one read of the headers, so a candidate that is also a judged
-//! coin's creator is read once), the door's retry (#59) re-reads them with
-//! the creators, and [`Lineage::dead`] derives the dead set after it. A
-//! proof that checks makes it `mined` for the walk as for the door, and it
-//! is not dead; a proof the headers could not check (the header service
+//! coin's creator is read once), each door's retry (#59), the allocation's
+//! and the named input's, re-reads once what faulted in that call,
+//! candidates and creators together (`read_batch`), and [`Lineage::dead`]
+//! derives the dead set after it. A proof that checks makes it `mined` for
+//! the walk as for the door, and it is not dead; a proof the headers could not check (the header service
 //! silent) or whose root does not match leaves the stored word, dead for
 //! both, the door holding that creator closed. The lineage adds a header
 //! read only when a candidate holds a proof and no judged creator brings
