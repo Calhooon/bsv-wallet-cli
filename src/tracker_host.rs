@@ -2542,6 +2542,9 @@ impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
 /// headers; an invalidation deactivates the block whose hash matched each
 /// named row's `header_hash`, at the stored proof's height. Its root is
 /// computed from that stored proof (`bump`), never from the live snapshot.
+/// The deactivated set keeps every hash at a height: the event's headers join
+/// the ones the named rows keep, never replacing one, so a kept invalidation
+/// survives a reorg's header at its height and the reverse (#233).
 /// The crate rechecks each named word by its stored root (bsv-tracker
 /// 0.7.0): the same root, it stands; a
 /// moved root, `stale` with `Reask::Reorg`; no header, suspect with
