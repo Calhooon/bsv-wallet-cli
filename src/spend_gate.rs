@@ -1351,7 +1351,12 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
 /// (#166), unless `carried` (the transactions the caller's `inputBEEF`
 /// carries whole, [`carried_txids`]) holds its transaction: the caller's own
-/// input (a covenant, a puzzle), left to the toolbox.
+/// input (a covenant, a puzzle), left to the toolbox. When `retry` (the
+/// named door's read) and the header service did not answer for a reading
+/// of the call (a creator's or a lineage candidate's), those readings are
+/// read once more after [`HEADER_RETRY_PAUSE`] (#59), through
+/// [`read_batch`] as the allocation's are, and the dead set is derived
+/// after; without it the header service is read once.
 pub async fn assess_named<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
@@ -1359,6 +1364,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     named: &[(String, u32)],
     carried: &[String],
     reserved_to: Option<i64>,
+    retry: bool,
 ) -> std::result::Result<Vec<HeldCoin>, GateError> {
     let frozen = crate::tracker_host::frozen_outpoints(storage)
         .await
@@ -1417,16 +1423,23 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         .await
         .map_err(GateError::Gate)?;
     // One reading of the creators and the lineage's candidates holding a
-    // proof, against one read of the headers: one word per creator.
+    // proof, against one read of the headers and retried together: one
+    // word per creator.
     let mut reads = creators;
     join_pairs(&mut reads, lineage.proofs().iter().cloned());
-    let readings = if reads.is_empty() {
-        HashMap::new()
-    } else {
-        read_creators(storage, services, &opts.tick(), &reads)
-            .await
-            .map_err(GateError::Gate)?
-    };
+    let mut readings = HashMap::new();
+    if !reads.is_empty() {
+        read_batch(
+            storage,
+            services,
+            &opts.tick(),
+            (&reads, retry),
+            &mut readings,
+            &mut Assessment::default(),
+        )
+        .await
+        .map_err(GateError::Gate)?;
+    }
     let dead = lineage.dead(&readings);
     let mut held = Vec::new();
     for (txid, vout, r) in coins {
@@ -1587,19 +1600,19 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         .collect();
     if !named.is_empty() {
         let carried = carried_txids(args.input_beef.as_deref());
-        let mut held =
-            assess_named(storage, wallet.services(), opts, &named, &carried, None).await?;
-        // A named coin held on the header service's fault is read once
-        // more (#59), as the allocation's coins are.
-        if held.iter().any(|c| c.headers_fault.is_some()) {
-            tracing::warn!(
-                coins = held.iter().filter(|c| c.headers_fault.is_some()).count(),
-                pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
-                "spend gate: the header service did not answer for a named input; reading it once more"
-            );
-            tokio::time::sleep(HEADER_RETRY_PAUSE).await;
-            held = assess_named(storage, wallet.services(), opts, &named, &carried, None).await?;
-        }
+        // A reading the header service did not answer for, a named coin's
+        // creator or a lineage candidate, is read once more (#59), as the
+        // allocation's are.
+        let held = assess_named(
+            storage,
+            wallet.services(),
+            opts,
+            &named,
+            &carried,
+            None,
+            true,
+        )
+        .await?;
         if !held.is_empty() {
             // Every named input must be offerable: one held by a rule is
             // the refusal; held on the service's fault alone, it is "could

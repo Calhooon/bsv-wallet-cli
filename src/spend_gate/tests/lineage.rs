@@ -111,6 +111,7 @@ async fn doors_at(
         &[(txid.to_string(), vout)],
         &[],
         None,
+        false,
     )
     .await
     .unwrap();
@@ -338,6 +339,7 @@ async fn a_named_coin_of_a_dead_lineage_refuses_the_action_and_stores_nothing() 
         &[(d, 0)],
         &[],
         None,
+        false,
     )
     .await
     .unwrap();
@@ -424,6 +426,7 @@ async fn named_pair(
         &[(p.to_string(), 1), (d.to_string(), 0)],
         &[],
         None,
+        false,
     )
     .await
     .unwrap();
@@ -581,17 +584,20 @@ async fn a_received_dead_parent_kills_our_child() {
 async fn the_retry_re_reads_a_candidate_with_the_creators() {
     let (store, (p, d), _) = conflicted_with_proof().await;
     let services = silent_tip();
-    let recover = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        services.set_tip_header(header_with_hash(900, &"0c".repeat(32), 0));
-    };
     let gate = opts(1, true);
     let ((read, retried), ()) = tokio::join!(
         agreeing_with(&store, &services, &gate, (&p, &d), true),
-        recover
+        recover_after_300_ms(&services)
     );
     assert!(retried, "the header service was not read once more");
     assert_eq!(read, ((None, None), (None, None)));
+}
+
+/// The tip back 300 ms after the first read, before the retry's pause
+/// ends.
+async fn recover_after_300_ms(services: &MockWalletServices) {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    services.set_tip_header(header_with_hash(900, &"0c".repeat(32), 0));
 }
 
 /// The tip silent on the read and on the re-read: P keeps its stored word
@@ -654,4 +660,100 @@ async fn a_candidate_is_read_no_more_than_a_creator() {
         .await
         .unwrap();
     assert_eq!(header_calls(&store, &services, (&p, &d)).await, candidate);
+}
+
+/// A wallet over [`conflicted_with_proof`]'s plant with the tip silent,
+/// and a createAction naming D's coin alone, P only its lineage's
+/// candidate: the gate's answer, and whether the toolbox was asked. The
+/// tip comes back 300 ms in when `recovers`.
+async fn named_through_create_action(
+    recovers: bool,
+) -> (
+    std::result::Result<CreateActionResult, GateError>,
+    bool,
+    String,
+) {
+    let root = PrivateKey::random();
+    let store = store_for(&root.public_key().to_hex()).await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+    let wallet = Wallet::new(Some(root), store.0, silent_tip())
+        .await
+        .unwrap();
+    let mut args = pay(1_000);
+    args.inputs = Some(vec![named_input(&d)]);
+    let gate = opts(1, true);
+    let door = at_the_door(create_action(&wallet, args, "gate.local", &gate));
+    let (result, asked) = if recovers {
+        tokio::join!(door, recover_after_300_ms(wallet.services())).0
+    } else {
+        door.await
+    };
+    (result, asked, p)
+}
+
+/// Round four's finding: the named door's retry re-reads a lineage
+/// candidate as the allocation's does. The tip silent at first and back
+/// before the retry: P's proof checks on the re-read, so D named alone
+/// passes the gate to the toolbox, as the allocation offers it
+/// ([`the_retry_re_reads_a_candidate_with_the_creators`]).
+#[tokio::test]
+async fn the_named_door_retries_a_candidate_as_the_allocation_does() {
+    let (result, asked, _) = named_through_create_action(true).await;
+    if let Err(GateError::Refused(refusal)) = &result {
+        panic!(
+            "the named door refused D after the retry: {:?}",
+            refusal.held
+        );
+    }
+    assert!(asked, "the toolbox was not asked: {result:?}");
+}
+
+/// The tip silent throughout: P keeps its stored word after the retry, and
+/// D named alone is refused 403 naming P, never "could not verify now".
+#[tokio::test]
+async fn the_named_door_silent_throughout_refuses_naming_the_ancestor() {
+    let (result, asked, p) = named_through_create_action(false).await;
+    let Err(GateError::Refused(refusal)) = result else {
+        panic!("D passed the gate with P unread: {result:?}");
+    };
+    assert_eq!(refusal.code(), "INPUT_NOT_OFFERED");
+    assert_eq!(refusal.headers_fault, None);
+    assert_eq!(
+        refusal
+            .held
+            .iter()
+            .map(|c| c.reason.clone())
+            .collect::<Vec<_>>(),
+        vec![format!("dead lineage: ancestor {p} conflicted")]
+    );
+    assert!(!asked, "the toolbox was asked");
+}
+
+/// The header service's calls for one read through each door with the
+/// retry, the tip silent throughout: the allocation over P1 and D, the
+/// named door over D alone (P its candidate). Both read P and D, and
+/// re-read them once: the same calls.
+#[tokio::test]
+async fn the_named_door_retries_with_the_allocations_header_calls() {
+    let (store, (p, d), _) = conflicted_with_proof().await;
+    let services = silent_tip();
+    let calls = || {
+        services.call_count("get_chain_tip_header") + services.call_count("get_header_for_height")
+    };
+    let gate = opts(1, true);
+    services.reset_history();
+    let a = assess_retrying(&store.0, &services, &gate, None, true)
+        .await
+        .unwrap();
+    assert!(a.headers_retried);
+    let allocation = calls();
+    services.reset_history();
+    let held = assess_named(&store.0, &services, &gate, &[(d, 0)], &[], None, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        held[0].reason,
+        format!("dead lineage: ancestor {p} conflicted")
+    );
+    assert_eq!(calls(), allocation);
 }

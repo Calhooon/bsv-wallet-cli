@@ -854,12 +854,20 @@ async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
         let coins = [(coin.0.clone(), 0u32)];
         let (storage, services) = (&w.storage, &w.services);
         async move {
-            assess_named(storage, services, &opts(1, false), &coins, &[], reserved_to)
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|c| (c.word, c.reason))
-                .collect::<Vec<_>>()
+            assess_named(
+                storage,
+                services,
+                &opts(1, false),
+                &coins,
+                &[],
+                reserved_to,
+                false,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.word, c.reason))
+            .collect::<Vec<_>>()
         }
     };
     assert_eq!(
@@ -1061,6 +1069,7 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
         &[(received.clone(), 0)],
         &[],
         None,
+        false,
     )
     .await
     .unwrap();
@@ -1143,6 +1152,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
         &[(carried_txid.clone(), 0)],
         &carried,
         None,
+        false,
     )
     .await
     .unwrap();
@@ -1155,6 +1165,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
             &[(carried_txid, 0)],
             &[],
             None,
+            false
         )
         .await,
         Err(GateError::Scope(_))
