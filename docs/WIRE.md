@@ -38,7 +38,7 @@ The field names each shape must keep are BRC-100's (`wallet/0100.md` of bsv-bloc
   | `broken` | `fresh` with the `outputs` table dropped (a store fault) |
   | `broken-host` | `fresh` with the tracker's rows unreadable: a feed status that is not JSON, a states table without its columns |
   | `busy` | a file store whose write lock another connection holds |
-  | `busy-read` | a file store no reader can open: opened on SQLite's dotfile locking (no shared memory, so no WAL), its one lock held by another connection; covers `abortAction`, `GET /chain-feed` and `GET /tx/{txid}` answering 503 `STORE_BUSY` with `Retry-After: 1` |
+  | `busy-read` | a file store no reader can open: opened on SQLite's dotfile locking (no shared memory, so no WAL), its one lock held by another connection; carries the callback token and covers `abortAction`, `GET /chain-feed`, `GET /tx/{txid}` and `POST /arc-callback` answering 503 `STORE_BUSY` with `Retry-After: 1` |
   | `funded` | four mined coins the wallet can sign for (50,000, 40,000, 30,000, 20,000 sats, each a one-leaf block of its own that the header stub answers); the mined parents of three payments from a fixed stranger key and of a puzzle coin (`OP_1 OP_EQUAL`), whose blocks the header stub answers too; and a local ARC that takes every post |
 
 - **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
@@ -70,6 +70,13 @@ Three `AppError` codes no in-process world produces, so they are not judged (`UN
 | 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
 
 The corpus also records the framework's 400 and 422 text bodies.
+
+`119-arc-callback.storeBusy.json` records the callback's typed store busy
+(#226), through the same `AppError::store_busy` arm as the host reads and
+abort pre-check. Only this busy answer moves from beta's 400 `BAD_PAYLOAD`
+to 503 `STORE_BUSY` with `Retry-After: 1`; other callback failures keep their
+codes and messages. Fixtures 064 to 069 and 080, and all 118 older fixtures,
+remain byte-identical.
 
 ## Known server defects, recorded as served
 
