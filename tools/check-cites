@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Hold architecture citations and file lengths at the document's pin (#184, #210).
+
+    tools/check-cites          check docs/ARCHITECTURE.md
+    tools/check-cites FILE...  check the named documents; exit 1 naming each finding
+
+Read the header's `Line numbers are those of `<sha>`` or `at ... (`<sha>`)`
+declaration. All declarations must resolve to the same commit, an ancestor of
+HEAD. No network is used. Outside fenced code, every src/path:N or src/path:N-M
+citation must exist there and contain the nearest preceding backticked Rust
+identifier in its sentence or table cell (the last :: segment, as a whole
+identifier). Paragraphs also end the search. A backticked :N or :N-M inherits
+the preceding citation's path in that same sentence or cell; it needs its own
+preceding identifier. An unnamed citation is a finding, even if its lines exist.
+
+The module map's `file | lines` table counts physical newline characters,
+including blank lines, exactly `git show <sha>:<path> | wc -l`, not non-blank
+lines or tests. Every Rust row must carry a count; other assets may leave it
+empty. Counts and citations read git blobs at the pin, never the working tree.
+This is a Python script with the standard library and git only, like check-links.
+"""
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SHA = r"[0-9a-fA-F]{7,40}"
+PINS = re.compile(r"Line numbers are those of\s+`(" + SHA + r")`|"
+                  r"\bat\s+[^()]*\(\s*`(" + SHA + r")`\s*\)", re.I)
+SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*")
+CITE = re.compile(r"\bsrc/[A-Za-z_0-9./-]+:(\d+)(?:-(\d+))?\b")
+SHORT = re.compile(r":(\d+)(?:-(\d+))?")
+
+
+def git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
+
+
+def outside_fences(text):
+    """Mask fences without moving any character or document line."""
+    fence = None
+    lines = []
+    for line in text.splitlines(keepends=True):
+        mark = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)", line)
+        hidden = fence is not None
+        if mark:
+            run, tail = mark.groups()
+            if fence is None and not (run[0] == "`" and "`" in tail):
+                fence = run
+                hidden = True
+            elif fence and run[0] == fence[0] and len(run) >= len(fence) and not tail.strip():
+                fence = None
+        lines.append(re.sub(r"[^\n]", " ", line) if hidden else line)
+    return "".join(lines)
+
+
+def contexts(text):
+    """Sentences/cells with their original offsets; code spans keep punctuation."""
+    plain = list(text)
+    for m in SPAN.finditer(text):
+        plain[m.start():m.end()] = " " * len(m.group())
+    plain = "".join(plain)
+    boundary = re.compile(r"[.!?](?=\s|$)|\||\n[ \t]*\n|(?m:^ {0,3}(?:#{1,6} |[-+*] ))")
+    start = 0
+    for m in boundary.finditer(plain):
+        yield start, text[start:m.start()]
+        start = m.end()
+    yield start, text[start:]
+
+
+def citations(text):
+    for offset, context in contexts(text):
+        spans = list(SPAN.finditer(context))
+        names = [(m.start(), m.group(2).split("::")[-1]) for m in spans
+                 if IDENTIFIER.fullmatch(m.group(2))]
+        found = [(m.start(), m.group(), m.group().split(":", 1)[0],
+                  int(m[1]), int(m[2] or m[1])) for m in CITE.finditer(context)]
+        for m in spans:
+            short = SHORT.fullmatch(m.group(2))
+            if short:
+                found.append((m.start(), m.group(2), None,
+                              int(short[1]), int(short[2] or short[1])))
+        path = None
+        for pos, label, explicit, start, end in sorted(found):
+            if explicit:
+                path = explicit
+            preceding = [name for at, name in names if at < pos]
+            yield offset + pos, label, path, start, end, preceding[-1] if preceding else None
+
+
+def count_rows(text):
+    in_table = False
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.lstrip().startswith("|"):
+            in_table = False
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells[:2] == ["file", "lines"]:
+            in_table = True
+            continue
+        if not in_table or re.fullmatch(r"[: -]+", cells[0]):
+            continue
+        paths = re.findall(r"`(src/[^`]+)`", cells[0])
+        count = cells[1] if len(cells) > 1 else ""
+        if count or any(p.endswith(".rs") for p in paths):
+            yield n, paths, count
+
+
+def check(doc, text, blobs):
+    problems = []
+
+    def fail(line, why):
+        problems.append(f"{doc}:{line}: {why}")
+
+    visible = outside_fences(text)
+    header = re.split(r"(?m)^##\s", visible, maxsplit=1)[0]
+    pins = list(PINS.finditer(header))
+    if not pins:
+        fail(1, "no commit pin in the document header")
+        return problems, 0, 0
+    resolved = []
+    for m in pins:
+        sha = m[1] or m[2]
+        n = text.count("\n", 0, m.start()) + 1
+        result = git("rev-parse", "--verify", f"{sha}^{{commit}}")
+        if result.returncode:
+            fail(n, f"pin {sha} does not resolve to a commit")
+        else:
+            resolved.append((result.stdout.decode().strip(), n, sha))
+    if problems:
+        return problems, 0, 0
+    pin, pin_line, short = resolved[0]
+    if any(other != pin for other, _, _ in resolved):
+        for other, n, sha in resolved[1:]:
+            if other != pin:
+                fail(n, f"header pins disagree: {short} and {sha}")
+        return problems, 0, 0
+    ancestor = git("merge-base", "--is-ancestor", pin, "HEAD")
+    if ancestor.returncode:
+        fail(pin_line, f"pin {short} is not an ancestor of HEAD (git exit {ancestor.returncode})")
+
+    def blob(path, line):
+        key = pin, path
+        if key not in blobs:
+            result = git("show", f"{pin}:{path}")
+            blobs[key] = result.stdout if result.returncode == 0 else None
+        data = blobs[key]
+        if data is None:
+            fail(line, f"{path} does not exist at pin {short}")
+        return data
+
+    ncites = 0
+    for pos, label, path, start, end, name in citations(visible):
+        ncites += 1
+        n = text.count("\n", 0, pos) + 1
+        if name is None:
+            fail(n, f"{label}: no preceding backticked Rust identifier in this sentence or cell")
+        if path is None:
+            fail(n, f"{label}: no preceding source path in this sentence or cell")
+            continue
+        data = blob(path, n)
+        if data is None:
+            continue
+        lines = data.decode("utf-8").splitlines()
+        if start < 1 or end < start or end > len(lines):
+            fail(n, f"{label}: invalid range {start}-{end}; {path} has {len(lines)} lines at pin {short}")
+        elif name and not re.search(r"(?<![A-Za-z_0-9])" + re.escape(name) + r"(?![A-Za-z_0-9])",
+                                    "\n".join(lines[start - 1:end])):
+            fail(n, f"{label}: identifier `{name}` is absent at pin {short}")
+
+    nrows = 0
+    for n, paths, count in count_rows(visible):
+        nrows += 1
+        if len(paths) != 1:
+            fail(n, "line-count row must name exactly one backticked src/ path")
+            continue
+        path = paths[0]
+        data = blob(path, n)
+        if not re.fullmatch(r"\d+", count):
+            fail(n, f"{path}: line count must be an integer, got {count!r}")
+        elif data is not None:
+            actual = data.count(b"\n")
+            if int(count) != actual:
+                fail(n, f"{path}: line count {count}, but pin {short} has {actual} lines (wc -l)")
+    return problems, ncites, nrows
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("files", nargs="*", help="documents (default: docs/ARCHITECTURE.md)")
+    args = parser.parse_args()
+    docs = args.files or ["docs/ARCHITECTURE.md"]
+    blobs = {}
+    failures = ncites = nrows = 0
+    for doc in docs:
+        try:
+            text = (ROOT / doc).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as e:
+            problems, cites, rows = [f"{doc}:1: cannot read document: {e}"], 0, 0
+        else:
+            problems, cites, rows = check(doc, text, blobs)
+        for problem in problems:
+            print(problem)
+        failures += len(problems)
+        ncites += cites
+        nrows += rows
+    print(f"check-cites: {len(docs)} files, {ncites} citations, "
+          f"{nrows} line-count rows checked, {failures} findings")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
