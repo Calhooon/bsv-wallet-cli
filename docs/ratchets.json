@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "commit": "45e0e48e847d456579fd4698bcd05bccffef02bd",
+  "commit": "c462da43a568d2ca3436d52341c76362a71f9446",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -11,15 +11,15 @@
     "files_over_800_lines": 10,
     "tests_files_over_800_lines": 3,
     "functions_over_60_lines": 89,
-    "cognitive_complexity_over_25": 20,
-    "duplicated_tokens": 32759,
+    "cognitive_complexity_over_25": 19,
+    "duplicated_tokens": 32643,
     "missing_docs": 150
   },
   "detail": {
     "sources": {
       "benches": {
         "files": 5,
-        "lines": 808
+        "lines": 805
       },
       "fuzz": {
         "files": 7,
@@ -30,19 +30,19 @@
         "lines": 1106
       },
       "src": {
-        "files": 77,
-        "lines": 38599
+        "files": 80,
+        "lines": 40398
       },
       "tests": {
-        "files": 52,
-        "lines": 13399
+        "files": 53,
+        "lines": 13496
       }
     },
-    "test_files": 72,
+    "test_files": 75,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
-        "lines": 3606
+        "lines": 3680
       },
       {
         "path": "src/commands/cleanup_abandoned.rs",
@@ -53,12 +53,12 @@
         "lines": 2501
       },
       {
-        "path": "src/broadcast_reconcile.rs",
-        "lines": 1802
+        "path": "src/spend_gate.rs",
+        "lines": 1886
       },
       {
-        "path": "src/spend_gate.rs",
-        "lines": 1697
+        "path": "src/broadcast_reconcile.rs",
+        "lines": 1802
       },
       {
         "path": "src/server/handlers.rs",
@@ -84,7 +84,7 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 2844
+        "lines": 3133
       },
       {
         "path": "src/tracker_words_witnesses.rs",
@@ -92,7 +92,7 @@
       },
       {
         "path": "src/chain_feed_tests.rs",
-        "lines": 936
+        "lines": 937
       }
     ],
     "unwrap_expect_by_file": {
@@ -102,21 +102,21 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 507,
+    "duplicated_blocks": 505,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 239,
       "clippy::uninlined_format_args": 168,
       "clippy::missing_errors_doc": 83,
       "clippy::must_use_candidate": 67,
-      "clippy::cast_possible_truncation": 43,
+      "clippy::cast_possible_truncation": 42,
       "clippy::cast_sign_loss": 39,
       "clippy::cast_possible_wrap": 34,
-      "clippy::cast_lossless": 30,
+      "clippy::cast_lossless": 29,
       "clippy::redundant_closure_for_method_calls": 26,
       "clippy::map_unwrap_or": 18,
+      "clippy::similar_names": 10,
       "clippy::needless_raw_string_hashes": 9,
       "clippy::unreadable_literal": 9,
-      "clippy::similar_names": 8,
       "clippy::semicolon_if_nothing_returned": 7,
       "clippy::items_after_statements": 6,
       "clippy::format_push_string": 5,
