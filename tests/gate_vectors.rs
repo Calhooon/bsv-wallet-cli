@@ -91,7 +91,7 @@ const ABOVE_TIP: &str = "the creator is mined at a height above the headers' tip
 const COLUMNS_NOT_ANSWERED: &[(&str, &str)] = &[
     ("rule_for, rule_for_allows", "the gate names no rule per creator: the host's rule is SPEND_OWN_CHANGE (the made arm) and the action's word (allowPending), read inside hold_reason"),
     ("received_pending, door_word", "the gate's door reads the tracker's word itself; it computes no door word and no received-pending verdict apart from the hold"),
-    ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word, a named input's excluded transaction status, or locked, frozen, lost, not the coin's word"),
+    ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word, a named input's failed transaction status, or locked, frozen, lost, not the coin's word"),
     ("host_answer, host_answer_data", "a row names its door (createAction, internalizeAction, ...) but carries none of its arguments (no BEEF, no outputs), so the host's answer at that door cannot be replayed from the row"),
 ];
 
@@ -122,7 +122,7 @@ fn clause_of(reason: Option<&str>) -> String {
     } else if reason.starts_with("dead lineage:") {
         "dead lineage"
     } else if reason.ends_with(": never offered") {
-        // Both `<word>` and the named door's `its transaction is <status>`.
+        // Both `<word>` and the named door's `its transaction is failed`.
         "door: a chain word against the creator"
     } else if reason.contains("; received, no proof;")
         || reason.contains("; received, confirming again;")

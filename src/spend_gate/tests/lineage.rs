@@ -521,6 +521,10 @@ async fn a_proof_whose_root_does_not_match_leaves_the_stored_word() {
 /// `failed` creator's coin (the toolbox's candidates are `completed` or
 /// `unproven`), so P1 is absent there. The named door holds P1 on its failed
 /// transaction's status before reading the proof; D still reads the proof.
+/// This PR 213 agreement test moves for P: beta offered its named coin,
+/// which the toolbox's `FailedAncestor` would refuse anyway. `kill` now uses
+/// the toolbox's failure write, including `spendable = 0`, instead of a raw
+/// transaction-status UPDATE.
 #[tokio::test]
 async fn a_failed_parent_whose_proof_checks_leaves_its_child_offered() {
     let store = wallet_store().await;
