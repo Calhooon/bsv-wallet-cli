@@ -289,6 +289,16 @@ against the new branch's headers, read before the write lock
 its stored root. The deactivated set in `deliver_chain_event` holds a
 reorg's supplied headers and an invalidated block at each named row's stored proof height,
 with the hash matched by `header_hash` and the root computed from `bump`.
+It keeps every deactivated hash at a height, never one in place of
+another, so a kept invalidation survives a later reorg's header at its
+height and a kept reorg survives a later invalidation's: the new branch
+has no answer where the service answers any of them, and the stored proof
+replays against the deactivated header whose hash is the row's
+`header_hash` (else the latest event's at that height), the header it was
+checked against, as checked by
+`a_reorg_at_a_kept_invalidations_height_keeps_the_invalidation`,
+`an_invalidation_at_a_kept_reorgs_height_keeps_the_reorg` and
+`two_kept_events_at_one_height_replay_the_proof_against_its_own_header`.
 `lowercase_chain_event` normalizes hash, root and txid fields before delivery
 and when kept events decode for replay, as checked by
 `an_uppercase_invalidated_alert_matches_the_lowercase_alert`,
