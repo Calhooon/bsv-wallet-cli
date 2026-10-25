@@ -906,6 +906,9 @@ pub async fn sign_action(
 }
 
 /// POST /abortAction
+///
+/// Refuses a transaction a broadcaster took, including an `unfail` request
+/// or any request holding a proof, whatever its status says.
 pub async fn abort_action(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
