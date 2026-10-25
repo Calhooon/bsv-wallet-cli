@@ -270,6 +270,46 @@ pub async fn busy_holder(
     holder
 }
 
+/// Read a served JSON error, keeping its status and retry header.
+pub async fn response_answer(
+    response: axum::response::Response,
+) -> (StatusCode, Option<String>, serde_json::Value) {
+    let status = response.status();
+    let retry = response
+        .headers()
+        .get(axum::http::header::RETRY_AFTER)
+        .map(|v| v.to_str().unwrap().to_string());
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, retry, serde_json::from_slice(&bytes).unwrap())
+}
+
+/// A migrated wallet on the given store for router tests. Constructed
+/// before taking a lock so the test exercises only the served read.
+pub async fn test_wallet(
+    store: bsv_wallet_toolbox::StorageSqlx,
+    name: &str,
+    key: bsv_sdk::primitives::PrivateKey,
+) -> crate::server::handlers::WalletState {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    store
+        .migrate(name, &key.public_key().to_hex())
+        .await
+        .unwrap();
+    store.make_available().await.unwrap();
+    let services = bsv_wallet_toolbox::Services::with_options(
+        bsv_wallet_toolbox::Chain::Main,
+        bsv_wallet_toolbox::ServicesOptions::mainnet(),
+    )
+    .unwrap();
+    crate::server::make_wallet_state(
+        bsv_wallet_toolbox::Wallet::new(Some(key), store, services)
+            .await
+            .unwrap(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

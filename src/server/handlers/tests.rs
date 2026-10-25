@@ -3,21 +3,12 @@
 //! and status.
 
 use super::*;
+use crate::test_support::response_answer;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use bsv_wallet_toolbox::WalletStorageWriter;
 
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {
-    let response = e.into_response();
-    let status = response.status();
-    let retry = response
-        .headers()
-        .get(axum::http::header::RETRY_AFTER)
-        .map(|v| v.to_str().unwrap().to_string());
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, retry, serde_json::from_slice(&bytes).unwrap())
+    response_answer(e.into_response()).await
 }
 
 /// Every word the old classifier read, the old belt's busy words among
@@ -416,21 +407,8 @@ async fn cors_exposes_retry_after() {
     use tower::ServiceExt;
     let storage = StorageSqlx::in_memory().await.unwrap();
     let key = bsv_sdk::primitives::PrivateKey::random();
-    storage
-        .migrate("cors", &key.public_key().to_hex())
-        .await
-        .unwrap();
-    storage.make_available().await.unwrap();
-    let services = bsv_wallet_toolbox::Services::with_options(
-        bsv_wallet_toolbox::Chain::Main,
-        bsv_wallet_toolbox::ServicesOptions::mainnet(),
-    )
-    .unwrap();
-    let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
-    let app = crate::server::make_router(
-        crate::server::make_wallet_state(wallet),
-        crate::server::ServerConfig::default(),
-    );
+    let wallet = crate::test_support::test_wallet(storage, "cors", key).await;
+    let app = crate::server::make_router(wallet, crate::server::ServerConfig::default());
     let response = app
         .oneshot(
             axum::http::Request::get("/isAuthenticated")
