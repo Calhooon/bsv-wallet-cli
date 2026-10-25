@@ -81,19 +81,22 @@
 //! Coins a caller names (`createAction`'s `inputs`, `respend`'s exact
 //! inputs) pass the same per-coin judgment ([`assess_named`]); a named coin
 //! the gate would hold refuses the action with the same `held[]` listing
-//! (the charter's `onCreate`: every input offerable). Its record is read in
-//! the Lean's order (#197, #219): frozen, spent by, lost only on a
-//! `completed` or `unproven` transaction, then `failed`. A failed transaction
-//! holds its coin with word `failed` and `its transaction is failed: never
-//! offered`, before its creator is read. The toolbox's failure writes
-//! `spendable = 0`; that is failed, never lost or a pending coin a rule could
-//! offer. Every other status (`nosend`, `unsigned`, `sending`, ...) reads
-//! through the creator as before: a live creator is pending, offered for
-//! made change under `SPEND_OWN_CHANGE=1`, or for a received coin under
-//! `allowPending: received`. The tests separate the Lean's segment, where
-//! both doors agree, from the scoped word's domain. The scoped word's
-//! earlier domain check still answers its own 400 for statuses outside
-//! `completed` and `unproven`. A named outpoint that
+//! (the charter's `onCreate`: every input offerable). Its record is read
+//! before its creator (#197, #219): frozen, spent by, then the unspendable
+//! record (`spendable = 0`, no spender). That record is held whatever its
+//! transaction's status: `lost` with `lost: the store marks it not spendable`
+//! on `completed` or `unproven`; `failed` with `its transaction is failed:
+//! never offered` on failure; otherwise the status
+//! with `its transaction is <status>: not spendable until it is sent`.
+//! A failed coin is held even when its flag is 1. A live coin whose flag
+//! is 1 reads its creator: made change under `SPEND_OWN_CHANGE`, a received
+//! coin under the action's `allowPending: received` word. Toolbox 0.13.0
+//! keeps a `noSend` action's outputs not spendable until the action is sent;
+//! this wallet does not read `sendWith` yet (#147), so a `noSend` output named
+//! as an input is held `nosend` today. Every named hold is served as
+//! `403 INPUT_NOT_OFFERED`; the scoped word keeps its earlier domain check
+//! and its own 400. The tests separate the Lean's segment, where both
+//! doors agree, from that scoped domain. A named outpoint that
 //! is not a coin of this wallet is refused at the gate too, the caller's
 //! 400 ([`GateError::Scope`], [`NOT_HELD`]), before anything is stored or
 //! the toolbox asked (#166; the charter: a coin is an output of ours, and
@@ -505,23 +508,24 @@ pub struct HeldCoin {
     pub outpoint: String,
     pub satoshis: u64,
     /// The creator's tracker word (`mined`, `unknown`, `built`, ...), or
-    /// `failed` for a named input whose transaction failed (every other
-    /// status reads through the creator as before),
-    /// `locked` for a coin a live action of ours consumed as an input,
-    /// `frozen` or `lost` for the coin's own record.
+    /// the transaction's status for a named unspendable record (`nosend`,
+    /// `unsigned`, `sending`, ...). A failed named coin reads `failed`
+    /// whatever its flag; a live coin reads its creator only with flag 1.
+    /// `locked` names a coin an action of ours consumed as an input;
+    /// `frozen` and `lost` name the coin's own record.
     pub word: String,
     pub origin: Origin,
     /// Minutes since the wallet learned of the coin.
     pub age_minutes: i64,
-    /// The setting or rule that holds it: `depth 1: 0 blocks`, `received,
+    /// The setting or record that holds it: `depth 1: 0 blocks`, `received,
     /// no proof; offered under allowPending: received`, `own change,
     /// SPEND_OWN_CHANGE=0`, `spent by <txid> (unproven)`, `frozen: never
     /// offered`, `lost: the store marks it not spendable`, `its transaction
-    /// is failed: never offered`. Other transaction statuses read through
-    /// the creator as before. `spent by` is
-    /// never a hold: the coin is an input a live action of ours consumed,
-    /// spent for good; it leaves the listing when that spender is completed
-    /// (its proof lands) or failed (#53).
+    /// is failed: never offered`, or `its transaction is <status>: not
+    /// spendable until it is sent` for another unspendable named record.
+    /// `spent by` is never a hold: the coin is an input an action of ours
+    /// consumed, spent for good; it leaves the listing when that spender
+    /// is completed (its proof lands) or failed (#53).
     pub reason: String,
     /// The hold is the header service's fault (the reason `headers
     /// unavailable: <its error>`): its error, no verdict on the coin; a
@@ -1212,8 +1216,10 @@ const FROZEN: &str = "frozen: never offered";
 /// `lost(c)`, `Wallet.coinWord`), on a `completed` or `unproven` transaction.
 const LOST: &str = "lost: the store marks it not spendable";
 
+/// The named record of a failed transaction, whatever its spendable flag.
 const FAILED: &str = "its transaction is failed: never offered";
 
+/// An unspendable named record whose live transaction has not been sent.
 fn not_sent_reason(status: &str) -> String {
     format!("its transaction is {status}: not spendable until it is sent")
 }
@@ -1425,13 +1431,13 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 }
 
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
-/// inputs), judged coin by coin in record order: frozen,
-/// locked (`spent_by`, unless it is `reserved_to`, the phantom a respend
-/// replaces), lost (`spendable = 0` with no spender on a `completed` or
-/// `unproven` transaction), a `failed` transaction (held on that status
-/// before the creator is read), or a creator the gate would not offer.
-/// Other statuses read through the creator as before. Returns every named
-/// coin it holds. An outpoint that is
+/// inputs), judged coin by coin in record order: frozen, locked (`spent_by`,
+/// unless it is `reserved_to`, the phantom a respend replaces), then an
+/// unspendable record with no spender. Its transaction's status names that
+/// hold: lost on `completed` or `unproven`, failed on `failed`, otherwise
+/// not spendable until sent. A failed transaction holds even with flag 1;
+/// a live coin with flag 1 reads its creator. Returns every named coin it
+/// holds. An outpoint that is
 /// not one of this wallet's outputs is not a coin of ours: the caller's
 /// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
 /// (#166), unless `carried` (the transactions the caller's `inputBEEF`
@@ -1554,14 +1560,13 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
 }
 
 /// A named coin's record before its creator: frozen, spent by (with
-/// respend's own lock allowed), lost only on `completed` or `unproven`, then
-/// `failed`. The status hold is `failed` only; every other status reads
-/// through the creator as before. A live creator is pending, so the made
-/// rule can offer a `nosend` output under `SPEND_OWN_CHANGE=1`, while a
-/// received coin needs `allowPending: received`.
-/// `check_scope` keeps its own reads because its wire text is `spent by
-/// <holder>`, while this door adds `(unproven)` or `(failed)`. Its broader
-/// status refusal belongs to the scoped word's domain (#63, #197).
+/// respend's own lock allowed), then `spendable = 0` with no spender.
+/// That record always holds: lost on `completed` or `unproven`, failed on
+/// `failed`, otherwise its status with `not spendable until it is sent`.
+/// A failed coin is held whatever its flag; only a live coin with flag 1
+/// proceeds to its creator. `check_scope` keeps its own reads and 400 text:
+/// `spent by <holder>`, while this door adds `(unproven)` or `(failed)`.
+/// Its broader status refusal belongs to the scoped domain (#63, #197).
 fn named_record_hold(
     row: &SqliteRow,
     frozen: bool,

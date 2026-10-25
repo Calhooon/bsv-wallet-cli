@@ -290,27 +290,31 @@ consumed is spent: an input of that action, never a hold that clears. Coins a ca
 `respend`'s exact inputs) pass the same judgment; a named coin the guard would
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list (an
 outpoint that is not one of the wallet's coins is left to the toolbox).
-The named coin is read frozen, spent by, lost only on a `completed` or
-`unproven` transaction, then `failed`. A failed transaction holds its coin
-before the creator is read, with word `failed` and reason
-`its transaction is failed: never offered`, under every pending word.
-The toolbox's failure sets `spendable = 0`; it reads `failed`, never `lost`.
-Every other status (`nosend`, `unsigned`, `sending`, ...) reads through the
-creator as before: a live creator is pending, offered for made change under
-`SPEND_OWN_CHANGE=1` (including a `noSend` output named by the next action),
-or for a received coin under `allowPending: received`. The scoped word's
-domain still refuses statuses outside `completed` and `unproven` with its
-earlier `400 VALIDATION_ERROR`. The test tables `LEAN_SEGMENT_READINGS` and
-`SCOPED_WORD_DOMAIN_READINGS` separate the Lean's segment, where both doors
-agree, from the scoped word's domain (own change, live pre-broadcast statuses
-and a non-default basket), where they differ. The allocation's candidate
-filter and listing are unchanged; respend's exact inputs gain the named reading.
+The named coin is read frozen, spent by, then its unspendable record
+(`spendable = 0` with no spender), before its creator. That record is held
+whatever its transaction's status: `lost` on `completed` or `unproven`, with
+`lost: the store marks it not spendable`; `failed` on a failed transaction,
+with `its transaction is failed: never offered`; otherwise the status,
+with `its transaction is <status>: not spendable until it is sent`.
+A failed coin is held even with flag 1. A live coin with flag 1 reads its
+creator under the existing own-change and received rules.
+Toolbox 0.13.0 keeps a noSend action's outputs not spendable until the action
+is sent. This wallet does not read `sendWith` yet (#147), so a noSend output
+named as an input is held `nosend` today. Every named hold remains
+`403 INPUT_NOT_OFFERED`. The scoped word's domain still refuses statuses
+outside `completed` and `unproven` with `400 VALIDATION_ERROR`.
+The test tables `LEAN_SEGMENT_READINGS` and `SCOPED_WORD_DOMAIN_READINGS`
+separate the Lean's segment, where both doors agree, from the scoped word's
+domain (own change, live pre-broadcast statuses and a non-default basket),
+where their readings differ. The allocation's candidate filter and listing
+are unchanged; respend's exact inputs share the named reading.
 When no offered coin covers the action, the refusal lists every coin held
 back: its outpoint, the word, the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
 `own change, SPEND_OWN_CHANGE=0`,
-`stale: its block left the chain; received, confirming again; offered under allowPending: received`, `dead lineage: ancestor <txid> conflicted`, `spent by <txid> (unproven)`, `frozen: never offered`, `its transaction is failed: never offered`).
+`stale: its block left the chain; received, confirming again; offered under allowPending: received`, `dead lineage: ancestor <txid> conflicted`, `spent by <txid> (unproven)`, `frozen: never offered`, `its transaction is failed: never offered`,
+`its transaction is nosend: not spendable until it is sent`).
 `spent by <txid> (unproven)` names an input the live action `<txid>` consumed,
 spent for good; the coin leaves the listing when that spender is completed (its
 proof lands) or failed.
