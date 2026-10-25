@@ -645,7 +645,9 @@ async fn chain_feed_status(
 }
 
 /// Host-route store faults keep their code unless the store is busy by
-/// type (#203), including a bare sqlx error wrapped by the proof read.
+/// type (#203). Each route has one fault site, so the busy tests cover
+/// every read by construction, including the proof read's wrapped bare
+/// sqlx error. Errors suppressed inside `read_status` remain its concern.
 fn host_route_fault(e: &anyhow::Error, code: &str) -> Response {
     if let Some(busy) = error::AppError::store_busy(e) {
         return busy.into_response();
