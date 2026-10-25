@@ -902,12 +902,12 @@ async fn lose(storage: &StorageSqlx, id: i64) {
         .unwrap();
 }
 
-/// A received coin whose transaction the toolbox marked failed (0.13.0
-/// `mark_internalized_tx_failed`): the transaction `failed`, the coin
-/// `spendable = 0`, no spender.
-async fn fail(storage: &StorageSqlx, txid: &str, id: i64) {
-    set_status(storage, txid, "failed").await;
-    lose(storage, id).await;
+/// A received coin whose transaction the toolbox marks failed, through its
+/// own `mark_internalized_tx_failed` (0.13.0: the transaction `failed`, its
+/// outputs `spendable = 0`, no spender), so a change in what the toolbox
+/// writes at the failure shows here.
+async fn fail(storage: &StorageSqlx, txid: &str) {
+    storage.mark_internalized_tx_failed(txid).await.unwrap();
 }
 
 /// A transaction's stored status.
@@ -2560,33 +2560,44 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
 /// The scope table's coins, each received unless named: a received coin
 /// (`c1`), own change (`c2`), a coin another action spent (`c3`), a nosend
 /// (`c4`), a lost coin of a completed transaction (`c5`), a frozen coin
-/// (`c6`), a failed one (`c7`), a lost coin of an unproven transaction (`c8`)
-/// and a failed and frozen one (`ca`).
-async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 9] {
-    let coins = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca"].map(|b| b.repeat(32));
-    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen] =
+/// (`c6`), a failed one (`c7`), a lost coin of an unproven transaction (`c8`),
+/// a failed and frozen one (`ca`), a spent coin of a failed transaction
+/// (`cb`) and a nosend the store marks `spendable = 0` (`cc`).
+async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 11] {
+    let coins = [
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "ca", "cb", "cc",
+    ]
+    .map(|b| b.repeat(32));
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost] =
         &coins;
     coin(storage, owner, received, false, None, 8_000, 5).await;
     coin(storage, owner, made, true, None, 8_000, 5).await;
     coin(storage, owner, spent, false, None, 8_000, 5).await;
-    sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
-        .bind(spent)
-        .execute(storage.writer())
-        .await
-        .unwrap();
+    coin(storage, owner, failed_spent, false, None, 8_000, 5).await;
+    fail(storage, failed_spent).await;
+    for txid in [spent, failed_spent] {
+        sqlx::query("UPDATE outputs SET spent_by = transaction_id WHERE txid = ?")
+            .bind(txid)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+    }
     let id = coin(storage, owner, lost, false, Some(900), 8_000, 5).await;
     lose(storage, id).await;
-    let id = coin(storage, owner, failed, false, None, 8_000, 5).await;
-    fail(storage, failed, id).await;
+    coin(storage, owner, failed, false, None, 8_000, 5).await;
+    fail(storage, failed).await;
     let id = coin(storage, owner, lost_unproven, false, None, 8_000, 5).await;
     lose(storage, id).await;
     coin(storage, owner, frozen, false, None, 8_000, 5).await;
     freeze(storage, frozen, 9).await;
-    let id = coin(storage, owner, failed_frozen, false, None, 8_000, 5).await;
-    fail(storage, failed_frozen, id).await;
+    coin(storage, owner, failed_frozen, false, None, 8_000, 5).await;
+    fail(storage, failed_frozen).await;
     freeze(storage, failed_frozen, 10).await;
     coin(storage, owner, nosend, false, None, 8_000, 5).await;
     set_status(storage, nosend, "nosend").await;
+    let id = coin(storage, owner, nosend_lost, false, None, 8_000, 5).await;
+    set_status(storage, nosend_lost, "nosend").await;
+    lose(storage, id).await;
     coins
 }
 
@@ -2599,15 +2610,16 @@ async fn scope_table(storage: &StorageSqlx, owner: (i64, i64)) -> [String; 9] {
 /// `coinWord` (#197): frozen, spent by, lost, the transaction's status; a
 /// received coin whose transaction failed (the toolbox's
 /// `mark_internalized_tx_failed`: `spendable = 0`, no spender) is refused
-/// with its transaction's word, not lost, and a failed and frozen one reads
-/// frozen. Nothing is read for the action, the toolbox is not asked, nothing
+/// with its transaction's word, not lost, a failed and frozen one reads
+/// frozen, a spent one of a failed transaction reads spent by, and a nosend
+/// the store marks `spendable = 0` reads its transaction's word. Nothing is read for the action, the toolbox is not asked, nothing
 /// is stored and nothing allocated.
 #[tokio::test]
 async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_the_door() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
     let services = headers_with(&"0c".repeat(32), 900, 900);
-    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen] =
+    let [received, made, spent, nosend, lost, frozen, failed, lost_unproven, failed_frozen, failed_spent, nosend_lost] =
         scope_table(&storage, (user, basket)).await;
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let before = stored_rows(wallet.storage()).await;
@@ -2628,6 +2640,8 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
             "lost: the store marks it not spendable",
         ),
         (failed_frozen.clone(), "frozen: never offered"),
+        (failed_spent.clone(), "spent by "),
+        (nosend_lost.clone(), "its transaction is nosend"),
     ];
     for (txid, why) in cases {
         let gate = opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![
@@ -2652,7 +2666,7 @@ async fn a_named_coin_that_is_not_a_received_spendable_coin_is_refused_before_th
             .fetch_one(wallet.storage().pool())
             .await
             .unwrap();
-    assert_eq!(spent_count, 1, "nothing allocated");
+    assert_eq!(spent_count, 2, "nothing allocated");
 }
 
 /// The served `allowPending` and the commands' flags, parsed: the string
