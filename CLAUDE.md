@@ -102,7 +102,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 21 | MCP server parity | The 34 MCP tools vs HTTP API: 29 wallet tools and the five host-route tools (which `mcp/src/tests.rs` drives against a stub) | 0 sats |
 | 22 | Rapid internalize + spend | 10 cycles A→B, B internalizes and returns; no phantom UTXOs (needs 50,000 in A at its start) | fees only |
 | 23 | Scoped allowPending | A third wallet C (:3372) with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
-| 24 | Busy store | External sqlite3 WAL writer: createAction and abortAction return 503 STORE_BUSY with Retry-After: 1; listOutputs and the two host reads stay 200; all five are 200 after release, balance unchanged (#204) | 0 sats |
+| 24 | Busy store | External sqlite3 WAL writer: createAction and the toolbox's abortAction write return 503 STORE_BUSY with Retry-After: 1; listOutputs and the two host reads stay 200; exit and a SQLite write probe confirm release, then all five are 200, balance unchanged (#204); #168's read pre-check stays covered by its unit test and fixture 116 | 0 sats |
 
 ### Dependencies
 

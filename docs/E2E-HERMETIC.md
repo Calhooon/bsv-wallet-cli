@@ -251,13 +251,15 @@ writer](https://www.sqlite.org/wal.html#concurrency).
 |---|---|---|
 | `listOutputs` | 200 | 200 |
 | `createAction`, unsigned | 503 `STORE_BUSY`, `Retry-After: 1` | 200, new template aborted |
-| `abortAction`, kept reference | 503 `STORE_BUSY`, `Retry-After: 1` | 200, `aborted: true` |
+| `abortAction`, kept reference | 503 `STORE_BUSY`, `Retry-After: 1` from the toolbox's abort write | 200, `aborted: true` |
 | `GET /chain-feed` | 200 | 200 |
 | `GET /tx/{txid}` | 200 | 200 |
 
 The read doors' 503 is reachable in the unit and wire tests' `unix-dotfile`
 VFS world, which opens the served store itself with different locking; this
 scenario does not claim to reach it from outside an already-open WAL store.
+The abort's #168 pre-check is a read and passes under this WAL writer; its
+end-to-end busy refusal remains covered by the unit test and wire fixture 116.
 The two busy answers each take about the toolbox's five-second busy ceiling.
 The scenario adds about 12 seconds to `e2e-hermetic`, including the exclusive
 attempt, rather than the roughly 25 seconds five blocked doors would need.
@@ -265,7 +267,9 @@ attempt, rather than the roughly 25 seconds five blocked doors would need.
 Before the lock, A builds an unsigned template paying its own address, with
 an external input from the funder's existing change and its BEEF. It is never
 signed or broadcast. Using an external input leaves A's sole coin available
-for the spend-door check when scenario 24 runs alone. A temporary local
+for the spend-door check when scenario 24 runs alone. In a live run, the
+funder read lists at most 50 coins and requests the BEEF for only the chosen
+coin of at least 2,000 sats. The hermetic read is unchanged. A temporary local
 `unknown` tracker row, only if absent, lets the transaction view read an
 existing txid; the row is removed afterward without asserting a proof or a
 mined word. Under the hermetic flag the stub mines that existing transaction;
@@ -274,10 +278,15 @@ aborted and A's balance is unchanged: 0 sats.
 
 The log names the holder's PID, file, SQL, acquisition time, held duration and
 every answer's status, retry header and elapsed time. A `finally` rolls back,
-closes stdin, awaits the child and asserts exit 0. A `listOutputs` probe must
-then return 200 within five seconds or fail naming the lock that outlived its
-holder. The table and its row roll back with the transaction. The client
-retains each response status and exposes `retryAfter` on POST and GET errors;
+closes stdin, awaits the child and asserts exit 0. A second `sqlite3` process
+then probes the write side with `PRAGMA busy_timeout=2000; BEGIN IMMEDIATE;
+ROLLBACK;`, bounded by five seconds. The two-second busy timeout tolerates
+the server's own brief writes. A missing exit or failed probe fails the
+scenario naming the outlived lock and holder PID, and kills a lingering
+holder before cleanup or any later door. The log says "released" only after
+the holder has exited and the write probe has succeeded. The table and its
+row roll back with the transaction. The client retains each response status
+and exposes `retryAfter` on POST and GET errors;
 other scenarios and the response bodies are unchanged.
 
 ## The six tests
