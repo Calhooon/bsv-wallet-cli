@@ -2208,8 +2208,12 @@ fn deep_enough<H: Headers>(
 // ---------------------------------------------------------------------------
 
 /// The decoder requires `split:` followed by 64 ASCII hex digits.
+/// A stored key without that prefix is read as it is and holds the floor as
+/// beta did; the crate refuses malformed keys before delivery.
 fn lowercase_split_key(key: &mut str) {
-    key["split:".len()..].make_ascii_lowercase();
+    if key.strip_prefix("split:").is_some() {
+        key["split:".len()..].make_ascii_lowercase();
+    }
 }
 
 /// The splits the feed has delivered and not yet seen resolved: each
@@ -4533,6 +4537,35 @@ pub(crate) mod tests {
         let upper = format!("split:{}", "AB".repeat(32));
         let lower = upper.to_ascii_lowercase();
         assert_split_resolution(&[(&upper, 900), (&lower, 901)], &lower, true).await;
+    }
+
+    #[tokio::test]
+    async fn malformed_stored_split_keys_hold_the_open_floor_without_panicking() {
+        let txid = "ad".repeat(32);
+        for key in ["bad", "splité-x"] {
+            let (storage, services, clock) = mined_at_900(&txid).await;
+            let user = coin_of_tracked_creator(&storage, &txid).await;
+            store_open_splits(&storage, &serde_json::json!({ key: 900 })).await;
+            println!("reading stored split key {key:?}");
+            let floor = open_split_floor(&storage).await.unwrap();
+            assert_eq!(floor, Some(900));
+            assert_eq!(
+                read_open_splits(storage.pool()).await.unwrap(),
+                BTreeMap::from([(key.to_string(), 900)])
+            );
+            let held = assess_tracked_coin(&storage, &services, user, true).await;
+            let spendable = spend_guard(&storage, &services, &clock, &opts(), &txid)
+                .await
+                .unwrap()
+                .unwrap();
+            println!(
+                "key={key:?}: floor={floor:?}, offered={}, held={}, spendable={spendable}",
+                held.offered.len(),
+                held.held.len()
+            );
+            assert_eq!((held.offered.len(), held.held.len()), (0, 1));
+            assert!(!spendable);
+        }
     }
 
     /// Ruling 7a at the reading: a creator whose proof a reorg took reads
