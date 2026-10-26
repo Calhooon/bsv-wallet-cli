@@ -109,7 +109,10 @@ impl World {
     }
 
     async fn signed(&self, options: Value) -> (StatusCode, Value) {
-        let (status, unsigned) = self.create(json!({"signAndProcess": false})).await;
+        let mut request = self.request(&json!({"signAndProcess": false}));
+        request["inputs"][0] =
+            json!({"outpoint": format!("{}.0", self.funding), "unlockingScriptLength": 1});
+        let (status, unsigned) = self.serve("/createAction", request).await;
         assert_eq!(status, StatusCode::OK, "{unsigned}");
         self.serve(
             "/signAction",
@@ -317,8 +320,12 @@ async fn create_sending_guard_true_and_false_mutants() {
     sending_guard(false, true).await;
 }
 
+/// BRC-100 defers this held caller input's script by length at createAction,
+/// then supplies it at signAction. Toolbox #211 follows the reference's
+/// completeSignedTransaction.ts:19 at edf6e03: allocated or already-scripted
+/// inputs cannot take a caller spend. The sending guard's claim is unchanged.
 #[tokio::test]
-async fn sign_sending_guard_true_and_false_mutants() {
+async fn sign_sending_guard_deferred_caller_input_true_and_false_mutants() {
     sending_guard(true, false).await;
     sending_guard(true, true).await;
 }
