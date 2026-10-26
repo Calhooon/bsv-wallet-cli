@@ -11,14 +11,8 @@ yanked = "deny"
 unmaintained = "all"
 # unsound: fail across the graph, including dependencies below bsv-rs.
 unsound = "all"
-# ignore: RUSTSEC-2026-0387 (crypto-bigint 0.5.5, timing variability in operations
-# meant to be constant-time; the fix is crypto-bigint >= 0.7.6, reached only by
-# k256's 0.14 line, a major move of bsv-rs's dependency line tracked by bsv-rs's
-# issue; the stack's ruling of 2026-10-24 03:5xZ, docs/RULINGS-2026-10-12.md).
-# The entry leaves the day bsv-rs ships the move.
-ignore = [
-    { id = "RUSTSEC-2026-0387", reason = "k256 0.13 pins crypto-bigint 0.5; the fix is k256 0.14 in bsv-rs, tracked there; the entry leaves when it ships" },
-]
+# ignore: no fleet-wide security exemptions or severity cutoff.
+ignore = []
 
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
