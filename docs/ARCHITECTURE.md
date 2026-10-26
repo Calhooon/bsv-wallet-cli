@@ -275,13 +275,26 @@ toolbox's `check_for_proofs`; its provider logged by
 `log`, `src/backstop_log.rs:86`). The word is served at `GET /tx/{txid}`
 (`tx_word`, `src/server/mod.rs:629`; `stored_word`,
 `src/tracker_host.rs:901`) as a view; nothing is decided from it.
+The webhook's ingestion has an eight-second deadline
+(`ARC_CALLBACK_DEADLINE`, `ingest_arc_before_deadline`, added after this map's
+pin), below [Arcade's ten-second POST timeout at `1ae1208e64b77b64818044d606638939d9f1834a`,
+`config/config.go:1291`](https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291).
+Expiration drops the ingest future and serves `Kind::StoreBusy`: 503
+`STORE_BUSY` with `Retry-After: 1`. A typed busy that arrives sooner keeps its
+existing message. The one-second cases `arc_callback_deadline_seen`,
+`arc_callback_deadline_in_block` and `arc_callback_deadline_mined`, and the
+eight-second `arc_callback_deadline_served_default_is_eight_seconds`, time the
+answer under a held store lock; `arc_callback_deadline_retries_are_idempotent`
+checks unchanged rows after cancellation and repeated status/proof delivery
+after release. The toolbox's repeated waits remain toolbox #205.
 The daemon's relay poller (`ingest_relay_items` in
 `src/commands/daemon_tenant.rs`, tested by
 `relay_busy_cursor_retries_after_release_in_order`) holds its acknowledgement
 cursor below an item that meets a typed busy store and stops that batch,
 waiting one extra poll tick before retrying it and the later items, while
 successful ingests, refused proofs and malformed payloads still advance the
-cursor (#248).
+cursor (#248). It has no sender waiting for an HTTP answer and takes no
+ingestion deadline.
 
 **Hop 11, the feed.** Under `daemon` the chain-event feed
 (`chain_feed::run`, `src/chain_feed.rs:167`) replays the header service's
