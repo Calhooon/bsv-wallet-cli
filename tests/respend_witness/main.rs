@@ -41,6 +41,98 @@ async fn build_and_post(
     bsv_wallet_cli::respend::build_and_post(storage, services, root, phantom, sources, &gate).await
 }
 
+/// Add an unproven ancestor between the next phantom and the proven coin.
+async fn descendant_phantom(f: &world::Fixture) -> String {
+    let result = f
+        .wallet
+        .create_action(
+            CreateActionArgs {
+                description: "phantom with unproven ancestry".into(),
+                input_beef: None,
+                inputs: None,
+                outputs: Some(vec![CreateActionOutput {
+                    locking_script: LockingScript::from_hex("51").unwrap().to_binary(),
+                    satoshis: 1000,
+                    output_description: "payment".into(),
+                    basket: None,
+                    custom_instructions: None,
+                    tags: None,
+                }]),
+                options: Some(CreateActionOptions {
+                    accept_delayed_broadcast: Some(false),
+                    ..Default::default()
+                }),
+                lock_time: None,
+                version: None,
+                labels: None,
+            },
+            "bsv-wallet-cli",
+        )
+        .await
+        .unwrap();
+    hex::encode(result.txid.unwrap())
+}
+
+async fn store_child_first_beef(storage: &StorageSqlx, txid: &str) {
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT input_beef FROM proven_tx_reqs WHERE txid=?")
+        .bind(txid)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+    let mut beef = Beef::from_binary(&bytes).unwrap();
+    assert!(
+        beef.txs.len() >= 2,
+        "the input must have an unproven ancestor"
+    );
+    beef.sort_txs();
+    // Like the 0.8.3 writer, the writer sorts only when needs_sort is set.
+    // Reordering the public vector after sorting keeps that flag clear.
+    beef.txs.reverse();
+    let child_first = beef.to_binary();
+    assert!(Beef::from_binary(&child_first)
+        .unwrap()
+        .verify_structure()
+        .is_err());
+    for table in ["transactions", "proven_tx_reqs"] {
+        sqlx::query(&format!("UPDATE {table} SET input_beef=? WHERE txid=?"))
+            .bind(&child_first)
+            .bind(txid)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn respend_sorts_a_child_first_stored_input_beef_before_judging() {
+    let f = fixture().await;
+    let phantom = descendant_phantom(&f).await;
+    let storage = f.wallet.storage();
+    store_child_first_beef(storage, &phantom).await;
+    let before: (String, String) = sqlx::query_as("SELECT t.status,r.status FROM transactions t JOIN proven_tx_reqs r ON r.txid=t.txid WHERE t.txid=?")
+        .bind(&phantom).fetch_one(storage.pool()).await.unwrap();
+    let reserved = coin_state(&f, f.change).await;
+    let absent = status_source(&phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    let replacement = build_and_post(storage, &absent, &f.root, &phantom, &["mock"])
+        .await
+        .expect("stored child-first ancestry must be sorted before the held-order judge");
+    assert_eq!(absent.call_count("post_beef"), 1);
+    let after: (String, String) = sqlx::query_as("SELECT t.status,r.status FROM transactions t JOIN proven_tx_reqs r ON r.txid=t.txid WHERE t.txid=?")
+        .bind(&phantom).fetch_one(storage.pool()).await.unwrap();
+    assert_eq!(after, before);
+    assert_eq!(coin_state(&f, f.change).await, reserved);
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT input_beef FROM proven_tx_reqs WHERE txid=?")
+        .bind(&replacement)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+    assert!(Beef::from_binary(&bytes)
+        .unwrap()
+        .verify_structure()
+        .is_ok());
+}
+
 #[tokio::test]
 async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     let f = fixture().await;
