@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Validate and assemble the per-change entries in changelog.d/ (#195).
+
+    tools/changelog --list                       print fragment paths in assembly order
+    tools/changelog --check --base REV           require an added fragment for watched changes
+    tools/changelog --check --base REV --allow-missing   the no-changelog label exception
+    tools/changelog --assemble VERSION [--date YYYY-MM-DD]   cut a release, date in UTC
+
+Only assembly writes: the existing Unreleased body moves verbatim ahead of
+the fragments, and the fragment files are deleted. README.md stays. The
+standard library and git suffice. Exit 1 is a refused fragment or release;
+exit 2 is a usage error or an unreadable git diff, never a successful check.
+"""
+
+import argparse
+from datetime import date, datetime, timezone
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+FRAGMENT = re.compile(r"([0-9]+)(?:-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)?\.md")
+HEADING = re.compile(r"(?m)^ {0,3}#{1,6}(?:[ \t]+|$)")
+NUMBER = r"(?:0|[1-9][0-9]*)"
+PRE = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}(?:-{PRE}(?:\.{PRE})*)?"
+                    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?")
+WATCHED = ("src/", "mcp/src/", "tests/e2e/")
+
+
+class Refused(Exception):
+    pass
+
+
+def read_utf8(path):
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise Refused(f"{path.relative_to(ROOT)}: cannot read UTF-8 ({error})") from error
+
+
+def fragments():
+    directory = ROOT / "changelog.d"
+    if not directory.exists():
+        return []
+    if directory.is_symlink() or not directory.is_dir():
+        raise Refused("changelog.d: must be a directory")
+    entries = []
+    for path in sorted(directory.iterdir()):
+        name = path.relative_to(ROOT).as_posix()
+        if path.is_symlink() or not path.is_file():
+            raise Refused(f"{name}: must be a regular file")
+        if path.name == "README.md":
+            continue
+        match = FRAGMENT.fullmatch(path.name)
+        if not match:
+            raise Refused(f"{name}: expected <number>.md or <number>-<slug>.md")
+        content = read_utf8(path)
+        if not content.strip():
+            raise Refused(f"{name}: empty fragment")
+        if HEADING.search(content):
+            raise Refused(f"{name}: a fragment must not contain a heading")
+        entries.append((int(match[1]), path, content))
+    return sorted(entries, key=lambda entry: (entry[0], entry[1].name))
+
+
+def diff_paths(base, added=False):
+    command = ["git", "diff", "--name-only", "-z"]
+    if added:
+        command.append("--diff-filter=A")
+    command += [f"{base}...HEAD", "--"]
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=True)
+    except OSError as error:
+        print(f"changelog: cannot read git diff for {base}: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    if result.returncode:
+        why = result.stderr.decode("utf-8", errors="replace").strip()
+        print(f"changelog: cannot read git diff for {base}: {why}", file=sys.stderr)
+        raise SystemExit(2)
+    return set(result.stdout.decode("utf-8", errors="surrogateescape").strip("\0").split("\0")) - {""}
+
+
+def check(base, allow_missing):
+    changed = diff_paths(base)
+    added = diff_paths(base, added=True)
+    entries = fragments()  # Even the label cannot excuse a malformed fragment.
+    watched = sorted(p for p in changed if p == "Cargo.toml" or p.startswith(WATCHED))
+    present = added.intersection(path.relative_to(ROOT).as_posix() for _, path, _ in entries)
+    if not watched:
+        print("changelog: no watched paths changed")
+    elif present:
+        print("changelog: added fragment: " + ", ".join(sorted(present)))
+    elif allow_missing:
+        print("changelog: no-changelog label allowed missing fragment for: " + ", ".join(watched))
+    else:
+        raise Refused("add a changelog.d fragment or use the no-changelog label; changed: "
+                      + ", ".join(watched))
+
+
+def separated(body, entry):
+    """Append an entry with a blank line, keeping the preceding body's bytes."""
+    if not body.strip():
+        return "\n" + entry
+    if not body.endswith("\n\n"):
+        body += "\n" if body.endswith("\n") else "\n\n"
+    return body + entry
+
+
+def assemble(version, release_date):
+    if not SEMVER.fullmatch(version):
+        raise Refused(f"{version}: not a semantic version")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", release_date):
+        raise Refused(f"{release_date}: date must be YYYY-MM-DD")
+    try:
+        date.fromisoformat(release_date)
+    except ValueError as error:
+        raise Refused(f"{release_date}: invalid date") from error
+    entries = fragments()
+    path = ROOT / "CHANGELOG.md"
+    content = read_utf8(path)
+    if re.search(rf"(?m)^## (?:\[{re.escape(version)}\]|{re.escape(version)})(?:[ \t\r\n]|$)", content):
+        raise Refused(f"CHANGELOG.md: section for {version} already exists")
+    sections = list(re.finditer(r"(?m)^## \[Unreleased\][ \t]*(?:\r?\n|$)", content))
+    if len(sections) != 1:
+        raise Refused("CHANGELOG.md: expected one ## [Unreleased] heading")
+    start = sections[0].end()
+    next_section = re.search(r"(?m)^## ", content[start:])
+    end = start + next_section.start() if next_section else len(content)
+    body = content[start:end]
+    if not body.strip() and not entries:
+        raise Refused("nothing to assemble")
+    if not body.strip():
+        body = "\n"
+    for _, _, entry in entries:
+        body = separated(body, entry.strip("\r\n"))
+    if not body.endswith("\n\n"):
+        body += "\n" if body.endswith("\n") else "\n\n"
+    output = content[:start] + f"\n## [{version}] - {release_date}\n" + body + content[end:]
+    path.write_bytes(output.encode("utf-8"))
+    for _, fragment, _ in entries:
+        fragment.unlink()
+    print(f"changelog: assembled {version} ({release_date}); removed {len(entries)} fragments")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--list", action="store_true", help="list fragments in assembly order")
+    mode.add_argument("--check", action="store_true", help="check fragments against the git diff")
+    mode.add_argument("--assemble", metavar="VERSION", help="assemble a release and delete fragments")
+    parser.add_argument("--base", metavar="REV", help="the base revision for --check")
+    parser.add_argument("--allow-missing", action="store_true", help="allow a missing fragment under --check")
+    parser.add_argument("--date", metavar="YYYY-MM-DD", help="the release date (default: today UTC)")
+    args = parser.parse_args()
+    if args.check != (args.base is not None):
+        parser.error("--check requires --base; --base goes only with --check")
+    if args.base is not None and (not args.base or args.base.startswith("-")):
+        parser.error("--base must be a revision (non-empty and not a git option)")
+    if args.allow_missing and not args.check:
+        parser.error("--allow-missing goes only with --check")
+    if args.date is not None and args.assemble is None:
+        parser.error("--date goes only with --assemble")
+    try:
+        if args.list:
+            for _, path, _ in fragments():
+                print(path.relative_to(ROOT).as_posix())
+        elif args.check:
+            check(args.base, args.allow_missing)
+        else:
+            release_date = args.date if args.date is not None else datetime.now(timezone.utc).date().isoformat()
+            assemble(args.assemble, release_date)
+    except (Refused, OSError) as error:
+        print(f"changelog: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
