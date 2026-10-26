@@ -281,6 +281,8 @@ pub const RECEIVED_PENDING: &str = "received-pending";
 /// action, in its one transaction (bsv-wallet-cli #44). The host writes
 /// nothing about the rule after the door.
 pub const RECEIVED_PENDING_LABEL: &str = "spend-gate:received-pending";
+/// Toolbox 0.14's allocation permission for an unproven received coin (#169).
+pub const TOOLBOX_RECEIVED_LABEL: &str = "underReceivedRule";
 /// The door's one value for `allowPending`.
 pub const ALLOW_PENDING_RECEIVED: &str = "received";
 /// Appended to a held received `pending` coin's reason: what would offer it.
@@ -905,7 +907,11 @@ pub async fn label_in(
 /// it; `signAction` takes no labels.
 pub fn strip_rule_label(labels: &mut Option<Vec<String>>) {
     if let Some(labels) = labels.as_mut() {
-        labels.retain(|l| !l.trim().eq_ignore_ascii_case(RECEIVED_PENDING_LABEL));
+        labels.retain(|l| {
+            ![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+                .iter()
+                .any(|rule| l.trim().eq_ignore_ascii_case(rule))
+        });
     }
 }
 
@@ -1801,9 +1807,10 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     let mut args = args;
     strip_rule_label(&mut args.labels);
     if opts.allow_pending.is_on() {
-        args.labels
-            .get_or_insert_with(Vec::new)
-            .push(RECEIVED_PENDING_LABEL.to_string());
+        args.labels.get_or_insert_with(Vec::new).extend([
+            RECEIVED_PENDING_LABEL.to_string(),
+            TOOLBOX_RECEIVED_LABEL.to_string(),
+        ]);
     }
     run_gated(coins, wallet, args, originator, opts).await
 }
