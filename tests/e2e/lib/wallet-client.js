@@ -40,17 +40,12 @@ class WalletClient {
       });
       text = await resp.text();
     } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
+    this.lastStatus = resp.status;
     done(resp.status, text);
     let data = {};
     try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
     if (!resp.ok) {
-      const msg = data.message || data.error || data._raw || text || `HTTP ${resp.status}`;
-      // The status and the body ride on the error, so a scenario can read a
-      // refusal's `code` and `held` (the spend gate's answers).
-      const err = new Error(`${this.name} /${endpoint} ${resp.status}: ${msg}`);
-      err.status = resp.status;
-      err.body = data;
-      throw err;
+      throw this.responseError(endpoint, resp, data, text);
     }
     return data;
   }
@@ -68,8 +63,22 @@ class WalletClient {
       });
       text = await resp.text();
     } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
+    this.lastStatus = resp.status;
     done(resp.status, text);
-    try { return text ? JSON.parse(text) : {}; } catch { return { _raw: text }; }
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
+    if (!resp.ok) throw this.responseError(endpoint, resp, data, text);
+    return data;
+  }
+
+  responseError(endpoint, resp, data, text) {
+    const msg = data.message || data.error || data._raw || text || `HTTP ${resp.status}`;
+    // Keep the refusal and its retry header for scenario 24, on both verbs.
+    const err = new Error(`${this.name} /${endpoint} ${resp.status}: ${msg}`);
+    err.status = resp.status;
+    err.body = data;
+    err.retryAfter = resp.headers.get('retry-after');
+    return err;
   }
 
   // --- Status ---
