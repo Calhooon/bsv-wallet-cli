@@ -129,7 +129,7 @@ async fn an_unrelated_proven_candidate_does_not_pause_the_named_door() {
             UserCoins::new(&store.0, store.1 .0),
             &services,
             &opts(1, true),
-            &[(live.clone(), 0)],
+            &[(live.clone(), 0).into()],
             &[],
             None,
             true,
@@ -189,7 +189,7 @@ async fn a_proven_ancestor_still_retries_on_both_doors() {
         UserCoins::new(&store.0, store.1 .0),
         &services,
         &opts(1, true),
-        &[(d, 0)],
+        &[(d, 0).into()],
         &[],
         None,
         true,
@@ -280,7 +280,7 @@ async fn a_wallet_without_dead_candidates_keeps_its_call_history() {
                 UserCoins::new(&store.0, store.1 .0),
                 &services,
                 &opts(1, true),
-                &[(m.clone(), 0), (d.clone(), 0), (p.clone(), 0)],
+                &[(m.clone(), 0), (d.clone(), 0), (p.clone(), 0)].map(Into::into),
                 &[],
                 None,
                 retry,
@@ -338,7 +338,8 @@ async fn later_heir_doors(
     let services = silent_tip();
     let coins = UserCoins::new(&store.0, store.1 .0);
     let gate = opts(1, true);
-    let door = assess_named(coins, &services, &gate, named, &[], None, true);
+    let named: Vec<NamedInput<'_>> = named.iter().cloned().map(Into::into).collect();
+    let door = assess_named(coins, &services, &gate, &named, &[], None, true);
     let (held, ()) = tokio::join!(door, tip_after(&services, recover));
     let tips = services.call_count("get_chain_tip_header");
     (a, held.unwrap(), tips)

@@ -112,7 +112,8 @@ async fn only_the_owner_holds_and_is_offered_the_coin() {
     let w = two_users().await;
     let owner = UserCoins::from_wallet(&w.owner).await.unwrap();
     let caller = UserCoins::from_wallet(&w.wallet).await.unwrap();
-    let named = [(w.txid.clone(), 0)];
+    let outpoints = [(w.txid.clone(), 0)];
+    let named = [(w.txid.clone(), 0).into()];
     let plain = opts(1, true);
     let held = assess_named(owner, w.wallet.services(), &plain, &named, &[], None, false)
         .await
@@ -129,8 +130,8 @@ async fn only_the_owner_holds_and_is_offered_the_coin() {
         .await
         .unwrap();
     assert_eq!(owned.held, held, "the same held listing on both doors");
-    let scoped = plain.with_allow_pending(AllowPending::ReceivedOnly(named.to_vec()));
-    assert_eq!(check_scope(owner, &named).await.unwrap(), None);
+    let scoped = plain.with_allow_pending(AllowPending::ReceivedOnly(outpoints.to_vec()));
+    assert_eq!(check_scope(owner, &outpoints).await.unwrap(), None);
     assert!(assess_named(
         owner,
         w.wallet.services(),
@@ -233,7 +234,7 @@ async fn another_users_failed_transaction_leaves_our_child_offered() {
     let a = my_assessment(&w, me, &gate).await;
     assert_eq!(reason_of(&a, &child), None, "{:?}", a.held);
     assert_eq!(a.offered.len(), 1);
-    let (coins, named) = (UserCoins::new(storage, me), [(child.clone(), 0)]);
+    let (coins, named) = (UserCoins::new(storage, me), [(child.clone(), 0).into()]);
     let named = assess_named(coins, w.wallet.services(), &gate, &named, &[], None, false).await;
     assert!(named.unwrap().is_empty());
     let lineage = lineage_candidates(storage, me).await.unwrap();

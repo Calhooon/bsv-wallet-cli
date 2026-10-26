@@ -10,6 +10,7 @@ use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
+mod carried;
 mod lineage;
 mod user_scope;
 
@@ -908,7 +909,7 @@ async fn the_offer_holds_a_lost_coin_by_its_record() {
 async fn a_named_lost_coin_is_held_by_its_record_a_consumed_one_by_its_lock() {
     let w = lost_coins().await;
     let named = |coin: &(String, i64), reserved_to: Option<i64>| {
-        let coins = [(coin.0.clone(), 0u32)];
+        let coins = [(coin.0.clone(), 0u32).into()];
         let (storage, services) = (&w.storage, &w.services);
         async move {
             assess_named(
@@ -1199,7 +1200,7 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
         UserCoins::from_wallet(&wallet).await.unwrap(),
         wallet.services(),
         &opts(1, true).with_allow_received(true),
-        &[(received.clone(), 0)],
+        &[(received.clone(), 0).into()],
         &[],
         None,
         false,
@@ -1214,7 +1215,7 @@ async fn a_named_input_the_gate_would_hold_is_refused() {
 /// scoped `allowPending` uses), before a creator is read, the toolbox asked
 /// or anything stored; beside a coin the gate would offer too. The caller's
 /// own input, its transaction carried whole in `inputBEEF`, is not a coin of
-/// ours and is left to the toolbox.
+/// ours and is left to the toolbox with its caller's signer.
 #[tokio::test]
 async fn a_named_input_the_wallet_does_not_hold_is_refused_at_the_gate() {
     let root = PrivateKey::random();
@@ -1249,7 +1250,8 @@ async fn a_named_input_the_wallet_does_not_hold_is_refused_at_the_gate() {
 /// #166: the caller's own input, its transaction carried whole in its
 /// `inputBEEF`, is not a coin of ours and is left to the toolbox; a txid-only
 /// entry, or a BEEF that does not parse, carries nothing, and the same
-/// outpoint is refused.
+/// outpoint is refused. The carried case supplies a length: its caller
+/// promises to sign, as #237 requires.
 #[tokio::test]
 async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
     let root = PrivateKey::random();
@@ -1282,7 +1284,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
         UserCoins::from_wallet(&wallet).await.unwrap(),
         wallet.services(),
         &opts(1, true),
-        &[(carried_txid.clone(), 0)],
+        &[NamedInput::from(&named_input(&carried_txid))],
         &carried,
         None,
         false,
@@ -1295,7 +1297,7 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
             UserCoins::from_wallet(&wallet).await.unwrap(),
             wallet.services(),
             &opts(1, true),
-            &[(carried_txid, 0)],
+            &[(carried_txid, 0).into()],
             &[],
             None,
             false
@@ -2968,7 +2970,7 @@ async fn named_under_word(
         UserCoins::from_wallet(wallet).await.unwrap(),
         wallet.services(),
         gate,
-        &[(txid.to_string(), 0)],
+        &[(txid.to_string(), 0).into()],
         &[],
         None,
         false,
@@ -3206,6 +3208,10 @@ async fn assert_nosend_output_is_held(
 async fn served_gate_error(error: GateError) -> (u16, serde_json::Value) {
     use axum::response::IntoResponse;
     let response = crate::server::error::AppError::from_gate_error(error).into_response();
+    served_response(response).await
+}
+
+async fn served_response(response: axum::response::Response) -> (u16, serde_json::Value) {
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

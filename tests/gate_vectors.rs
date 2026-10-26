@@ -188,7 +188,7 @@ async fn a_named_inputs_status_hold_maps_to_its_record_or_creator_clause() {
             UserCoins::new(&built.storage, built.user),
             &built.services,
             &gate,
-            &[(built.txid.clone(), built.vout)],
+            &[(built.txid.clone(), built.vout).into()],
             &[],
             None,
             false,
@@ -320,7 +320,7 @@ async fn creator_checks(checks: &mut Checks<'_>, built: &Built, origin: Origin) 
 
 /// The coin through the two doors: a named input and the allocation.
 async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
-    let coin = [(built.txid.clone(), built.vout)];
+    let coin = [(built.txid.clone(), built.vout).into()];
     for (tag, opts) in &words(checks.row, built) {
         // A coin the wallet does not hold is refused at the gate, the
         // caller's error (#166): the Lean's 'no coin', not offerable.
