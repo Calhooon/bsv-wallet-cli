@@ -263,6 +263,31 @@ async fn a_carried_input_with_an_odd_length_script_is_refused_by_the_served_hand
 }
 
 #[tokio::test]
+async fn a_carried_input_with_even_utf16_length_uses_the_hex_refusal() {
+    refused_at_door(
+        json!({"unlockingScript": "éa"}),
+        "The unlockingScript parameter must be hexadecimal string.",
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_odd_utf16_length_uses_the_even_length_refusal() {
+    refused_at_door(
+        json!({"unlockingScript": "é"}),
+        "The unlockingScript parameter must be even length, not 1.",
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_a_bom_padded_script_reaches_the_served_toolbox() {
+    reaches_toolbox(json!({"unlockingScript": "\u{feff}51", "unlockingScriptLength": 1})).await;
+}
+
+#[tokio::test]
 async fn a_carried_input_with_a_padded_script_reaches_the_served_toolbox() {
     reaches_toolbox(json!({"unlockingScript": " 51 "})).await;
     reaches_toolbox(json!({"unlockingScript": " 51 ", "unlockingScriptLength": 1})).await;
