@@ -84,9 +84,13 @@ fn prefix_classify(msg: &str) -> (StatusCode, &'static str) {
         (StatusCode::NOT_FOUND, "NOT_FOUND")
     } else if any(&["Unspendable coin:"]) {
         (StatusCode::CONFLICT, "UNSPENDABLE_COIN")
-    } else if any(&["Duplicate entity:", "Invalid operation:"]) {
+    } else if any(&[
+        "Duplicate entity:",
+        "Invalid operation:",
+        "Invalid transaction status: cannot abort action:",
+    ]) {
         (StatusCode::CONFLICT, "CONFLICT")
-    } else if any(&["Invalid BEEF at byte"]) {
+    } else if any(&["Invalid BEEF at byte", "spend refused at offset"]) {
         (StatusCode::BAD_REQUEST, "INVALID_BEEF")
     } else if any(&[
         "Validation error:",
@@ -281,6 +285,9 @@ async fn a_typed_toolbox_error_is_served_by_its_variant() {
                 (StatusCode::SERVICE_UNAVAILABLE, "STORE_BUSY")
             }
             bsv_wallet_toolbox::Error::SdkError(sdk) => prefix_classify(&sdk.to_string()),
+            bsv_wallet_toolbox::Error::InvalidTransactionStatus(_) => {
+                (StatusCode::CONFLICT, "CONFLICT")
+            }
             _ => prefix_classify(&display),
         };
         served_as(AppError::from(e), expected, &display).await;

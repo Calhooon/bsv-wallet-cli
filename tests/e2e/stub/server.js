@@ -191,6 +191,18 @@ class Stub {
     const frame = (value) => ({ status: 'success', value });
     const header = (h) => ({ version: h.version, previousHash: h.previousHash, merkleRoot: h.merkleRoot, time: h.time, bits: h.bits, nonce: h.nonce, height: h.height, hash: h.hash });
     if (req.method !== 'GET') return this.unserved(req, 'chaintracks', route, done);
+    if (route === '/getChain') return done(200, frame('main'));
+    if (route === '/getHeaders') {
+      const height = Number(url.searchParams.get('height'));
+      const count = Number(url.searchParams.get('count'));
+      if (!Number.isInteger(height) || !Number.isInteger(count) || count < 1 || count > 11) {
+        return done(400, { status: 'error', value: null, error: 'invalid header range' });
+      }
+      const range = Array.from({ length: count }, (_, i) => this.chain.headerAt(height + i));
+      return range.every(Boolean)
+        ? done(200, frame(Buffer.concat(range.map(T.headerBytes)).toString('hex')))
+        : done(404, { status: 'error', value: null, error: 'header range unavailable' });
+    }
     if (route === '/getPresentHeight') return done(200, frame(this.chain.height()));
     if (route === '/findChainTipHeaderHex') return done(200, frame(header(this.chain.tip())));
     if (route === '/findHeaderHexForHeight') {

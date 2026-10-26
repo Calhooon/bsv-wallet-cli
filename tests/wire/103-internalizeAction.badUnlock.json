@@ -279,7 +279,7 @@
     }
   },
   "response": {
-    "status": 200,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -288,7 +288,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "accepted": true
+      "code": "INVALID_BEEF",
+      "message": "wallet error: spend refused at offset 176, input 0 of 56648b3b1e546a4dbebf436769cd6e6c03a63ce11d33719e9fed260ceaed6483: OP_EQUALVERIFY requires the top two stack items to be equal."
     }
   }
 }

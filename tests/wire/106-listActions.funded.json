@@ -103,16 +103,16 @@
           "version": 1
         },
         {
-          "description": "wire bad unlock",
+          "description": "wire payment",
           "isOutgoing": false,
           "lockTime": 0,
-          "satoshis": 0,
+          "satoshis": 9000,
           "status": "unproven",
-          "txid": "56648b3b1e546a4dbebf436769cd6e6c03a63ce11d33719e9fed260ceaed6483",
+          "txid": "25172f89b86cf830b3b77933b4684b9adce548ec319a8c6d20a403f5c3285db6",
           "version": 1
         }
       ],
-      "totalActions": 11
+      "totalActions": 10
     }
   }
 }

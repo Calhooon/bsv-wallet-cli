@@ -34,7 +34,7 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 12] = [
+pub(crate) const WORLDS: [&str; 13] = [
     "fresh",
     "auth",
     "callback",
@@ -47,6 +47,7 @@ pub(crate) const WORLDS: [&str; 12] = [
     "busy-read",
     "funded",
     "named-change",
+    "abort-unproven",
 ];
 
 /// The `funded` world's coins: (seed of the parent's input, height mined,
@@ -199,6 +200,7 @@ async fn seed_funded(
             )
             .await;
         rows.coin(Coin {
+            status: "completed",
             txid: &txid,
             made: false,
             proven: Some(proven),
@@ -228,6 +230,7 @@ struct Rows {
 
 /// A coin of the wallet's, written as the toolbox would have stored it.
 struct Coin<'a> {
+    status: &'static str,
     txid: &'a str,
     made: bool,
     /// Its creator's proof row, if it is mined.
@@ -293,10 +296,11 @@ impl Rows {
         let satoshis = i64::try_from(coin.satoshis).unwrap();
         let tx_row = sqlx::query(
             "INSERT INTO transactions (user_id, proven_tx_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, 'completed', ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)",
         )
         .bind(self.user)
         .bind(coin.proven)
+        .bind(coin.status)
         .bind(format!("ref-{}", &coin.txid[..8]))
         .bind(coin.made)
         .bind(satoshis)
@@ -505,6 +509,7 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
         (RECEIVED, Some(received))
     };
     rows.coin(Coin {
+        status: "completed",
         txid,
         made: false,
         proven,
@@ -628,10 +633,15 @@ impl World {
             "tracked" => seed(storage, &identity, true).await,
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" => return seed_funded(storage, &identity, key).await,
-            "named-change" => {
+            "abort-unproven" | "named-change" => {
                 Rows::open(storage, &identity)
                     .await
                     .coin(Coin {
+                        status: if name == "abort-unproven" {
+                            "unproven"
+                        } else {
+                            "completed"
+                        },
                         txid: PENDING,
                         made: true,
                         proven: None,

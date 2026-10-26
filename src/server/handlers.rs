@@ -982,20 +982,15 @@ pub async fn abort_action(
         ));
     }
     let result = wallet.abort_action(args, &originator).await.map_err(|e| {
-        // Since toolbox 0.3.60 a broadcast ('unproven' / 'sending') tx is
-        // aborted on the caller's word when the wallet holds NO chain
-        // evidence for it: inputs released, its unproven descendants retired,
-        // the broadcast memory told never to skip it again. It is refused
-        // when the chain index, a proof, or a mined report vouches for the
-        // tx: failing it then would fabricate a double spend.
+        // Toolbox 0.14 refuses any stored accepting word (#165), including
+        // unproven without a proof. The WalletInterface boundary erases this
+        // variant at beta.1; toolbox_words reads it until beta.2's classes.
         let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
         let mut err = AppError::from(e);
         if on_chain_evidence {
             err = err.with_hint(
-                "the wallet holds chain evidence for this transaction, so it \
-                 cannot be aborted; if it is a phantom after all, \
-                 `bsv-wallet reconcile-broadcasts --execute` re-checks it \
-                 against the chain index",
+                "the wallet holds an accepting word for this transaction; it stays \
+                 until a proof, node verdict or competitor's checked proof decides it",
             );
         }
         err

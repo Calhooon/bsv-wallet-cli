@@ -56,7 +56,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at c462da4 |
 | ratchet `duplicated_tokens` | 32643 |  | `docs/ratchets.json` at c462da4 |
 | ratchet `missing_docs` | 150 |  | `docs/ratchets.json` at c462da4 |
-| wire fixtures | 123 |  | `tests/wire/MANIFEST.json` |
+| wire fixtures | 124 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
 | arch rule A1 allowlist | 0 files, 0 sites |  | `tests/arch_env_reads.rs` ALLOWED |
