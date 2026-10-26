@@ -8,7 +8,7 @@ use super::cases_routes::{
 use super::cases_spending::{
     record_abort_store_busy, record_funded_abort_and_broadcast,
     record_funded_relinquish_and_caller_input, record_funded_sign, record_gate_refusals,
-    record_payments_and_listings, record_store_faults,
+    record_named_change, record_payments_and_listings, record_store_faults,
 };
 use super::recorder::{get, post, Recorder, CERT_TYPE, DECRYPT_CIPHERTEXT, G};
 use super::worlds::{FEE_1_IN_1_OUT, FUNDED_COINS, MINED_AT, P2PKH, UNKNOWN};
@@ -39,6 +39,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_privileged(r).await;
     record_abort_store_busy(r).await;
     record_host_store_busy(r).await;
+    record_named_change(r).await;
 }
 
 /// A key derivation request: `protocol` at level 2, `key_id`, counterparty

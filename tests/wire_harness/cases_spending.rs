@@ -7,8 +7,8 @@ use super::cases::exact;
 use super::recorder::{get, post, Recorder};
 use super::worlds::{
     funded_lock, parent_tx, puzzle_parent, stranger_key, stranger_payment, Payment,
-    FEE_PUZZLE_1_OUT, FROZEN, FUNDED_COINS, MINED, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX, PUZZLE,
-    PUZZLE_UNLOCK, RECEIVED,
+    FEE_PUZZLE_1_OUT, FROZEN, FUNDED_COINS, MINED, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX, PENDING,
+    PUZZLE, PUZZLE_UNLOCK, RECEIVED,
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 
@@ -107,6 +107,26 @@ pub(crate) async fn record_abort_store_busy(r: &mut Recorder) {
         post(
             "/abortAction",
             json!({"reference": "bm8tc3VjaC1yZWZlcmVuY2U="}),
+        ),
+    )
+    .await;
+}
+
+/// Our own change passes the named gate under its rule, then the toolbox
+/// refuses the caller's allocation of managed change (#234). Recorded
+/// last so the existing corpus stays byte-identical.
+pub(crate) async fn record_named_change(r: &mut Recorder) {
+    use serde_json::json;
+    r.case(
+        "createAction.namedChange",
+        "named-change",
+        post(
+            "/createAction",
+            json!({"description": "wire named change",
+                "inputs": [{"outpoint": format!("{PENDING}.0"), "unlockingScriptLength": 107,
+                    "inputDescription": "our change"}],
+                "outputs": [{"lockingScript": P2PKH, "satoshis": 1000,
+                    "outputDescription": "an output"}]}),
         ),
     )
     .await;
