@@ -576,6 +576,10 @@ mod tests {
     /// The exact storage the handler's hook runs against: an `unproven` tx
     /// (broadcast accepted), req `unmined`, one input locked, one change output.
     async fn seeded_storage() -> (StorageSqlx, i64, i64) {
+        seeded_storage_with("unproven", "unmined").await
+    }
+
+    async fn seeded_storage_with(tx_status: &str, req_status: &str) -> (StorageSqlx, i64, i64) {
         use bsv_wallet_toolbox::WalletStorageWriter;
 
         let storage = StorageSqlx::in_memory().await.expect("in-memory storage");
@@ -609,9 +613,10 @@ mod tests {
         .last_insert_rowid();
         let tx_id = sqlx::query(
             "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, 'unproven', 'ours', 1, -2000, 1, 0, 'ours', ?, X'01000000', ?, ?)",
+             VALUES (?, ?, 'ours', 1, -2000, 1, 0, 'ours', ?, X'01000000', ?, ?)",
         )
         .bind(user.user_id)
+        .bind(tx_status)
         .bind(TXID_HEX)
         .bind(now)
         .bind(now)
@@ -652,9 +657,10 @@ mod tests {
         .last_insert_rowid();
         sqlx::query(
             "INSERT INTO proven_tx_reqs (txid, status, attempts, history, notified, notify, raw_tx, created_at, updated_at) \
-             VALUES (?, 'unmined', 0, '{}', 0, '{}', X'01000000', ?, ?)",
+             VALUES (?, ?, 0, '{}', 0, '{}', X'01000000', ?, ?)",
         )
         .bind(TXID_HEX)
+        .bind(req_status)
         .bind(now)
         .bind(now)
         .execute(storage.writer())
@@ -869,11 +875,16 @@ mod tests {
         assert_eq!(rows, 0, "no evidence, no memory row");
     }
 
+    /// Retire a seed with no accepting word: `sending` for both transaction and
+    /// request. Toolbox 0.13.0 retires transactions in `sending` or `unproven`,
+    /// while toolbox #177's D1 rule refuses any accepting word.
+    /// `MockWalletServices` defaults to a successful status response with no
+    /// results, so the alive check does not promote this `sending` transaction.
     #[tokio::test]
     async fn retire_keeps_an_input_the_chain_cannot_vouch_for() {
         use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
 
-        let (storage, input_id, _own_id) = seeded_storage().await;
+        let (storage, input_id, _own_id) = seeded_storage_with("sending", "sending").await;
         let services = MockWalletServices::builder()
             .is_utxo_response(MockResponse::Success(false))
             .build();
