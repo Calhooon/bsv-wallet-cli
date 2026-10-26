@@ -3,6 +3,8 @@
  * The open reader pool prevents an EXCLUSIVE locking-mode connection from
  * taking the file. A normal WAL writer blocks writes, not reads. The read
  * doors' 503s remain covered by the unit/wire tests' unix-dotfile VFS.
+ * abortAction's 503 comes from the toolbox's abort write; #168's pre-check
+ * is a WAL read, covered end to end by the unit test and wire fixture 116.
  * https://www.sqlite.org/wal.html#use_of_wal_without_shared_memory
  */
 const { spawn, execFileSync } = require('child_process');
@@ -51,16 +53,37 @@ async function holdWriter(db, assert) {
   });
   const stop = () => proc.kill('SIGKILL');
   process.once('exit', stop);
+  const lockFailure = `sqlite3 pid ${proc.pid}: e2e_busy write lock outlived the scenario`;
   const release = async () => {
     try {
       proc.stdin.end('ROLLBACK;\n');
       const result = await within(exited, BUSY_MS, `sqlite3 pid ${proc.pid}: lock outlived ROLLBACK and stdin close`);
-      assert(result.code === 0, `sqlite3 holder exits 0, got ${JSON.stringify(result)}: ${errors}`);
+      assert(result.code === 0, `${lockFailure}: holder must exit 0, got ${JSON.stringify(result)}: ${errors}`);
       if (heldAt !== undefined) console.log(`       sqlite3 pid ${proc.pid}: ROLLBACK, stdin closed, exit 0 after holding ${Date.now() - heldAt}ms`);
     } finally {
       if (proc.exitCode === null) { stop(); await exited; }
       process.removeListener('exit', stop);
     }
+  };
+  const confirmReleased = async () => {
+    const start = Date.now();
+    try {
+      const result = await within(exited, BUSY_MS, `holder did not exit within ${BUSY_MS}ms`);
+      assert(result.code === 0, `holder exit ${JSON.stringify(result)}: ${errors}`);
+      // A WAL reader never detects this lock. Acquire the write side, allowing
+      // the server's own brief writes up to two seconds to finish.
+      execFileSync('sqlite3', ['-batch', '-bail', db,
+        'PRAGMA busy_timeout=2000; BEGIN IMMEDIATE; ROLLBACK;'],
+      { encoding: 'utf8', timeout: BUSY_MS, stdio: 'pipe' });
+    } catch (e) {
+      throw new Error(`${lockFailure}: ${e.message}`);
+    } finally {
+      // Even a missing release must fail before cleanup or the harness sweep,
+      // without leaving this holder alive to block either one's writes.
+      if (proc.exitCode === null && proc.signalCode === null) { stop(); await exited; }
+      process.removeListener('exit', stop);
+    }
+    console.log(`       sqlite3 pid ${proc.pid}: released and exited 0; BEGIN IMMEDIATE / ROLLBACK write probe succeeded in ${Date.now() - start}ms (busy_timeout 2000ms)`);
   };
   // No wallet row changes: the table and its one row are rolled back too.
   proc.stdin.on('error', () => {}); // an early exit is reported by exited
@@ -71,7 +94,7 @@ async function holdWriter(db, assert) {
     })]), BUSY_MS, 'sqlite3 holder did not acquire BEGIN IMMEDIATE and write e2e_busy');
   } catch (e) { await release(); throw e; }
   console.log(`       sqlite3 pid ${proc.pid} holds ${db}: WAL/NORMAL BEGIN IMMEDIATE + e2e_busy insert since ${new Date().toISOString()}`);
-  return { release };
+  return { release, confirmReleased };
 }
 
 module.exports = {
@@ -103,9 +126,19 @@ module.exports = {
     // an external input for the kept template instead: the funder's existing
     // change, read with its BEEF, never signed or spent by this scenario.
     const funder = new WalletClient(FUNDER_PORT, 'funder');
-    const source = await funder.listOutputs('default', { include: 'entire transactions', limit: 10_000 });
+    let source = await funder.listOutputs('default', hermetic.enabled
+      ? { include: 'entire transactions', limit: 10_000 }
+      : { limit: 50 });
     const external = source.outputs.find(o => o.satoshis >= 2_000);
-    assert(external && source.beef, 'the funder has an external input and its BEEF for the unsigned template');
+    assert(external, 'the funder has an external input of at least 2000 sats');
+    if (!hermetic.enabled) {
+      // Fetch BEEF only for the selected coin, not the live funder's history.
+      source = await funder.listOutputs('default', {
+        include: 'entire transactions', limit: 1, offset: source.outputs.indexOf(external),
+      });
+      assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
+    }
+    assert(source.beef, 'the funder has BEEF for the unsigned template');
     const pending = new Set();
     const db = path.join(walletA.dir, 'wallet.db');
     let inserted = false;
@@ -173,12 +206,10 @@ module.exports = {
           }
         }
       } finally {
+        const releasedHolder = holder;
         await holder.release();
         holder = null;
-        const start = Date.now();
-        await within(client.listOutputs(), BUSY_MS, 'sqlite3 e2e_busy lock outlived the scenario: release probe exceeded 5000ms');
-        assert(client.lastStatus === 200, 'release probe is 200: no sqlite3 e2e_busy lock outlived the holder');
-        console.log(`       sqlite3 released and exited 0; listOutputs probe 200 in ${Date.now() - start}ms`);
+        await releasedHolder.confirmReleased();
       }
       for (const [name, call] of doors) {
         const answer = await ask(`released ${name}`, call);
