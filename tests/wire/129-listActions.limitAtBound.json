@@ -1,0 +1,28 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "labels": [],
+      "limit": 10000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [],
+      "totalActions": 0
+    }
+  }
+}

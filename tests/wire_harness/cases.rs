@@ -38,6 +38,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     .await;
     record_empty_signer_refusals(r).await;
     record_internalize_at_bound(r).await;
+    super::cases_page_bounds::record_page_bounds(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.

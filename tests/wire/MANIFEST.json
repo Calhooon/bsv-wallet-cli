@@ -127,10 +127,24 @@
     "125-createAction.callerInputEmptyScript.json",
     "126-createAction.callerInputNonHexScript.json",
     "127-internalizeAction.customInstructionsAtBound.json",
-    "128-listOutputs.customInstructionsAtBound.json"
+    "128-listOutputs.customInstructionsAtBound.json",
+    "129-listActions.limitAtBound.json",
+    "130-listActions.limitAboveBound.json",
+    "131-listOutputs.limitAtBound.json",
+    "132-listOutputs.limitAboveBound.json",
+    "133-listOutputs.limitZero.json",
+    "134-listOutputs.offsetNegative.json",
+    "135-listCertificates.limitAtBound.json",
+    "136-listCertificates.limitAboveBound.json",
+    "137-discoverByIdentityKey.limitAtBound.json",
+    "138-discoverByIdentityKey.limitAboveBound.json",
+    "139-discoverByAttributes.limitAtBound.json",
+    "140-discoverByAttributes.limitAboveBound.json",
+    "141-signAction.sequenceNumberAboveType.json"
   ],
   "notes": {
     "103-internalizeAction.badUnlock.json": "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137).",
-    "127-internalizeAction.customInstructionsAtBound.json": "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal."
+    "127-internalizeAction.customInstructionsAtBound.json": "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.",
+    "141-signAction.sequenceNumberAboveType.json": "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198."
   }
 }

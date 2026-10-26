@@ -1,0 +1,28 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "default",
+      "limit": 10001
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Validation error: limit: no more than 10000 length. (limit 1 to 10000, got 10001)"
+    }
+  }
+}
