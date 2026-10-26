@@ -2561,8 +2561,11 @@ impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
 /// The crate rechecks each named word by its stored root (bsv-tracker
 /// 0.7.0): the same root, it stands; a
 /// moved root, `stale` with `Reask::Reorg`; no header, suspect with
-/// `Reask::Recheck` until the next tip. A cursor at or below the stored one was delivered before
-/// (delivery is at least once) and changes nothing.
+/// `Reask::Recheck` until the next tip. A tip reads kept reorgs and
+/// invalidations alike, storing the completed recheck even when replay
+/// cleared its mark before `Tracker::on_chain` selected rows. A cursor at
+/// or below the stored one was delivered before (delivery is at least
+/// once) and changes nothing.
 ///
 /// The rows are named by index, never by a scan of the chain: a fork, a
 /// reorg or a split names the mined rows at or above its height; a tip,
@@ -2689,12 +2692,11 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             });
         }
         // A named row the event did not select (a tip names only suspect
-        // words) whose replay moved it: the stored reorg it keeps was
+        // words) whose replay moved it: a kept reorg or invalidation was
         // rechecked against the new branch in the replay, the crate's own
-        // step. Its `mined` word on a moved root is `stale` now.
-        // An invalidation whose replay found the same root on a new header
-        // already cleared its mark, so the tip selects nothing. Store that
-        // completed recheck too, clearing its kept event and re-ask.
+        // step. A moved root reads `stale`. A tip stores a completed same-root
+        // recheck for either event even if replay already cleared its mark,
+        // clearing its kept events and re-ask through `keep_chain`.
         for row in rows.iter_mut() {
             if moved.iter().any(|m| m.txid == row.txid) {
                 continue;
