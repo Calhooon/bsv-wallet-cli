@@ -1859,8 +1859,9 @@ pub const NOT_HELD: &str = "not a coin of this wallet";
 /// (`validateCreateActionInput`): `WERR_INVALID_PARAMETER` requires at least
 /// one signer field, and matching lengths when both are given (#237).
 /// The same file at `:500-528` refuses an empty hex string (#265).
-/// BRC-100 `wallet/0100.md:649` at `5119a9b` requires a positive length;
-/// the zero-length sentence is toolbox #212's word (`[SRC]`
+/// The reference's validator accepts 0 at `validationHelpers.ts:598`, but
+/// BRC-100's positive-integer type (`wallet/0100.md:649` at `5119a9b`) and
+/// toolbox #212's words decide here under the keeper's #265 ruling (`[SRC]`
 /// bsv-wallet-toolbox-rs `1a0f3f1`, `src/wallet/validation.rs:14-18`).
 fn check_carried_signer(input: &NamedInput<'_>) -> std::result::Result<(), GateError> {
     let why = match (input.unlocking_script, input.unlocking_script_length) {
