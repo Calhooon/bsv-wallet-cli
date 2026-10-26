@@ -608,12 +608,24 @@ fn create_action_inputs(
             .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
         let unlocking_script = match i.unlocking_script {
             // [SRC] ts-stack `edf6e03`, `packages/sdk/src/wallet/validationHelpers.ts:522-528`.
-            Some(h) => Some(hex::decode(&h).map_err(|_| {
-                AppError::new(
-                    Kind::Validation,
-                    "The unlockingScript parameter must be hexadecimal string.",
-                )
-            })?),
+            Some(h) => {
+                let h = h.trim();
+                if h.len() % 2 != 0 {
+                    return Err(AppError::new(
+                        Kind::Validation,
+                        format!(
+                            "The unlockingScript parameter must be even length, not {}.",
+                            h.len()
+                        ),
+                    ));
+                }
+                Some(hex::decode(h).map_err(|_| {
+                    AppError::new(
+                        Kind::Validation,
+                        "The unlockingScript parameter must be hexadecimal string.",
+                    )
+                })?)
+            }
             None => None,
         };
         mapped.push(CreateActionInput {

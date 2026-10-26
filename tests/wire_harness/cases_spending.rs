@@ -60,14 +60,12 @@ pub(crate) async fn record_internalize_at_bound(r: &mut Recorder) {
         "/listOutputs",
         serde_json::json!({"basket": "instructions-bound", "includeCustomInstructions": true}),
     );
-    let (response, body) = r.world("funded").await.serve_raw(&list).await;
-    assert_eq!(response.status, 200);
-    let body = body.unwrap();
-    assert_eq!(body.pointer("/totalOutputs").unwrap().compact(), "1");
+    let stored = r
+        .case("listOutputs.customInstructionsAtBound", "funded", list)
+        .await;
+    assert_eq!(stored.value("/totalOutputs"), 1);
     assert_eq!(
-        body.pointer("/outputs/0/customInstructions")
-            .unwrap()
-            .as_str(),
+        stored.value("/outputs/0/customInstructions").as_str(),
         Some(instructions.as_str()),
     );
     println!("internalizeAction.customInstructionsAtBound: HTTP 200, stored 1000 UTF-8 bytes");

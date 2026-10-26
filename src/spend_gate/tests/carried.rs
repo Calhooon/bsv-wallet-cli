@@ -240,7 +240,7 @@ async fn a_carried_input_treats_null_signer_fields_as_absent() {
 
 #[tokio::test]
 async fn a_carried_input_with_a_non_hex_script_is_refused_by_the_served_handler() {
-    for script in ["zz", "5"] {
+    for script in ["zz", "5g"] {
         refused_at_door(
             json!({"unlockingScript": script}),
             "The unlockingScript parameter must be hexadecimal string.",
@@ -248,4 +248,31 @@ async fn a_carried_input_with_a_non_hex_script_is_refused_by_the_served_handler(
         )
         .await;
     }
+}
+
+#[tokio::test]
+async fn a_carried_input_with_an_odd_length_script_is_refused_by_the_served_handler() {
+    for (script, length) in [("5", 1), (" 5 ", 1), ("51g", 3)] {
+        refused_at_door(
+            json!({"unlockingScript": script}),
+            &format!("The unlockingScript parameter must be even length, not {length}."),
+            false,
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn a_carried_input_with_a_padded_script_reaches_the_served_toolbox() {
+    reaches_toolbox(json!({"unlockingScript": " 51 "})).await;
+    reaches_toolbox(json!({"unlockingScript": " 51 ", "unlockingScriptLength": 1})).await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_a_whitespace_script_is_refused_by_the_served_gate() {
+    refused(
+        json!({"unlockingScript": "  "}),
+        "The unlockingScript parameter must be hexadecimal string.",
+    )
+    .await;
 }
