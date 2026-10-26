@@ -53,7 +53,7 @@ EOF
 chmod +x "$WORK/bin/gh" "$WORK/bin/python3"
 
 fails=0
-# case NAME FAKE_GH FAKE_CODE REFACTOR_FAILS WANT_EXIT WANT_TAIL_PREFIX
+# case NAME FAKE_GH FAKE_CODE REFACTOR_FAILS WANT_EXIT WANT_TAIL_PREFIX [PR_NUMBER, default 1; empty is a push run]
 case_() {
   local name=$1 gh=$2 code=$3 fails_on=$4 want_exit=$5 want_tail=$6 pr=${7-1} shell opts
   for shell in "bash -e" "bash -e -o pipefail"; do

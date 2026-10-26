@@ -561,7 +561,9 @@ jobs:
             # A new branch, a tag (workflow_call), or a `before` the remote no
             # longer serves: the commit before this one (as bench and ratchet
             # fall back), fetched by this sha alone, never every branch.
-            [ -n "$BEFORE" ] && echo "::warning::the push's before ($BEFORE) could not be fetched; the base is HEAD~1"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              echo "::warning::the push's before ($BEFORE) could not be fetched; the base is HEAD~1"
+            fi
             git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
             rev="HEAD~1"
           fi
