@@ -120,7 +120,7 @@
     "118-tx.storeBusy.json",
     "119-arc-callback.storeBusy.json",
     "120-createAction.namedChange.json",
-    "120-createAction.callerInputNoSigner.json",
-    "121-createAction.callerInputLengthMismatch.json"
+    "121-createAction.callerInputNoSigner.json",
+    "122-createAction.callerInputLengthMismatch.json"
   ]
 }
