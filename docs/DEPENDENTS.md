@@ -37,3 +37,11 @@ What no fixture covers: a successful spend's body (`txid`, `tx`, `noSendChange`)
 - teragunv2 derives its payment key under `[2,"wallet payment"]`, not BRC-29's `[2,"3241645161d8"]` [X]: a payee that derives by BRC-29 will not find the output. It is the app's choice to make.
 - The MCP's `create_action` cannot send the scoped `allowPending` (its parameter is a string).
 - The keeper's latest versions-page commit names "the CLI's 0.18.1"; no `v0.18.1` tag exists at origin today [X: `git ls-remote --tags`].
+
+The beta.1 pin replays every consumer request unchanged. Wire fixture 103
+now records the invalid-spend refusal and 106 no longer lists that rejected
+action; 124 records abort's accepting status. All 14 recorded BEEFs retain
+the same transaction sets and proofs, with no byte re-record required.
+Version fixtures 007 and 008 retain `bsv-wallet-toolbox-0.1.0`. The directly
+served SDK JSON types and the stored `InternalizeActionArgs` follow-up keep
+their beta.1 serde shape; bsv-rs #105 and #137 wait for beta.2.
