@@ -12,6 +12,25 @@ use super::worlds::{
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 
+/// #157: record the internalize-only byte bound after every existing case.
+pub(crate) async fn record_internalize_bound(r: &mut Recorder) {
+    use serde_json::json;
+    let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
+    let (_, atomic) = stranger_payment(Payment::Insertion, &key).await;
+    r.case(
+        "internalizeAction.customInstructionsBound",
+        "funded",
+        post(
+            "/internalizeAction",
+            json!({"tx": atomic, "outputs": [{"outputIndex": 0, "protocol": "basket insertion",
+                "insertionRemittance": {"basket": "instructions-bound",
+                    "customInstructions": format!("{}a", "🦀".repeat(250))}}],
+                "description": "wire internalize instructions bound"}),
+        ),
+    )
+    .await;
+}
+
 /// The spend gate's refusals.
 pub(crate) async fn record_gate_refusals(r: &mut Recorder) {
     use serde_json::json;

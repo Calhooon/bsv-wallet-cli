@@ -64,6 +64,8 @@ The caller's own input whose transaction its `inputBEEF` carries whole is the to
 
 ## Moving the pin
 
+The 0.18.2 probe move (#196) and internalize-only instruction bound (#157) change no gate-vector row or divergence: the probe asks the toolbox's explorer ladder, while the bound validates the request before storage. [Wire fixture 123](../tests/wire/123-internalizeAction.customInstructionsBound.json) records the bound's 400 refusal; neither changes the gate's offerability decision.
+
 1. Copy the file at the stack's new commit: `git -C ~/bsv/bsv-stack-lean show <commit>:conformance/wallet-gate-vectors.json > tests/vectors/wallet_gate_vectors.json`.
 2. Write the commit and `shasum -a 256 tests/vectors/wallet_gate_vectors.json` into the pin, and the sha256 into `vectors_sha256` of the divergences file.
 3. Run `cargo test --locked --test gate_vectors -- --nocapture`. A new row the CLI cannot hold fails the unexpressed list; a new difference prints its `DIVERGENCE` line. Record each under a finding (a new finding gets its description in the file), and update the counts on this page.
