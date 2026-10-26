@@ -176,12 +176,13 @@ type LineageTuple = (
 /// on SQLite's busy handler between two pools.
 pub async fn open_shared(
     db: &str,
+    options: bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions,
 ) -> Result<(
     bsv_wallet_toolbox::StorageSqlx,
     std::sync::Arc<bsv_wallet_toolbox::StorageSqlx>,
 )> {
     use bsv_wallet_toolbox::WalletStorageWriter;
-    let store = bsv_wallet_toolbox::StorageSqlx::open(db).await?;
+    let store = bsv_wallet_toolbox::StorageSqlx::open_with_options(db, options).await?;
     store.make_available().await?;
     let monitors = std::sync::Arc::new(store.clone());
     Ok((store, monitors))
@@ -310,6 +311,7 @@ mod tests {
         let src = production(src);
         [
             "StorageSqlx::open(",
+            "StorageSqlx::open_with_options(",
             "SqlitePool::connect(",
             ".connect_with(",
         ]
@@ -350,11 +352,14 @@ mod tests {
         assert_eq!(fleet.matches("WalletContext::load_with(").count(), 1);
 
         let context = production(include_str!("context.rs"));
-        assert_eq!(context.matches("StorageSqlx::open(").count(), 1);
+        assert_eq!(
+            context.matches("StorageSqlx::open_with_options(").count(),
+            1
+        );
         assert_eq!(direct_opens(context), 1);
 
         let shared = production(include_str!("store.rs"));
-        assert_eq!(shared.matches("StorageSqlx::open(").count(), 1);
+        assert_eq!(shared.matches("StorageSqlx::open_with_options(").count(), 1);
     }
 
     /// D2 of the #44 delta review: no command opens the wallet file beside

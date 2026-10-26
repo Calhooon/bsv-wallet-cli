@@ -14,7 +14,7 @@ pub async fn run(config: &Config, json: bool) -> Result<()> {
     let chain = config.chain();
     let db = &config.wallet.db;
 
-    let storage = StorageSqlx::open(db).await?;
+    let storage = StorageSqlx::open_with_options(db, config.wallet.storage_options()).await?;
     storage.make_available().await?;
 
     // Shared services config — see services_env.rs.

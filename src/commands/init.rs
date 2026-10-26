@@ -4,7 +4,12 @@ use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletStorageWriter};
 
 use crate::brc29;
 
-pub async fn run(db_path: &str, key: Option<&str>, force: bool) -> Result<()> {
+pub async fn run(
+    db_path: &str,
+    key: Option<&str>,
+    force: bool,
+    config: &crate::config::Config,
+) -> Result<()> {
     if std::path::Path::new(".env").exists() && !force {
         return Err(anyhow!(
             ".env already exists in this directory. Refusing to overwrite — \
@@ -22,7 +27,7 @@ pub async fn run(db_path: &str, key: Option<&str>, force: bool) -> Result<()> {
     let identity_key = private_key.public_key().to_hex();
     let address = brc29::deposit_address(&private_key, Chain::Main)?;
 
-    let storage = StorageSqlx::open(db_path).await?;
+    let storage = StorageSqlx::open_with_options(db_path, config.wallet.storage_options()).await?;
     storage.migrate("bsv-wallet-cli", &identity_key).await?;
     storage.make_available().await?;
 

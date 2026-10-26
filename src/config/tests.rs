@@ -3,17 +3,17 @@
 
 use super::*;
 
-fn config(pairs: &[(&str, &str)]) -> Config {
+pub(super) fn config(pairs: &[(&str, &str)]) -> Config {
     Config::from_pairs(pairs).unwrap()
 }
 
 /// The knob `name`'s row: its value as the table shows it, and its source.
-fn row(c: &Config, name: &str) -> (String, Source) {
+pub(super) fn row(c: &Config, name: &str) -> (String, Source) {
     let k = c.knobs().into_iter().find(|k| k.name == name).unwrap();
     (k.value.to_string(), k.source)
 }
 
-fn refusal(pairs: &[(&str, &str)]) -> ConfigError {
+pub(super) fn refusal(pairs: &[(&str, &str)]) -> ConfigError {
     let mut refused = Config::from_pairs(pairs).unwrap_err().errors.0;
     assert_eq!(refused.len(), 1, "{refused:?}");
     refused.remove(0)

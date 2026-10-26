@@ -340,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-rs"
-version = "0.8.3"
+version = "0.9.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15f027d9c6828d82a4c134d705dd9dd5dfcf6122e46bee88692aec77e7cc2ef7"
+checksum = "60d2464122d0b903eaeb66a99c76c52521ab994b21cbf294dec19e1348c8447d"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -372,14 +372,15 @@ dependencies = [
  "subtle",
  "thiserror 1.0.69",
  "tokio",
+ "unicode-normalization",
  "urlencoding",
 ]
 
 [[package]]
 name = "bsv-tracker"
-version = "0.8.0"
+version = "0.9.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66dad95bd14542660225554557fe1b2d064bcc0126f2c41a3ab2058b1215c729"
+checksum = "4397c71f75b33979fc37f46df9c6e90dad705fa530f9f575c626a8acb0e40cb2"
 dependencies = [
  "bsv-rs",
  "serde",
@@ -432,9 +433,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.13.1"
+version = "0.14.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec91ecf13702c25cbcd375caf512fbeac2336c35fa1e18d89e9665ac535fc3cc"
+checksum = "20629aa5b3add9352e3698152667fbb3b2a5e41e539b79f71ed8f16320cb428d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3742,7 +3743,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

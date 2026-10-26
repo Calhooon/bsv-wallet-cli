@@ -172,6 +172,9 @@ pub async fn get_public_key(
             .map(|s| parse_counterparty(&s))
             .transpose()?,
         for_self: req.for_self,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
 
     if let Some(p) = args.protocol_id.as_ref() {
@@ -233,6 +236,9 @@ pub async fn create_signature(
         protocol_id: parse_protocol_id(&req.protocol_id)?,
         key_id: req.key_id,
         counterparty: Some(parse_counterparty(&req.counterparty)?),
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
 
     audit::record(audit::protocol_entry(
@@ -756,6 +762,9 @@ pub async fn verify_signature(
             .map(|s| parse_counterparty(&s))
             .transpose()?,
         for_self: req.for_self,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
     let result = wallet
         .verify_signature(args, &originator)
@@ -780,6 +789,9 @@ pub async fn encrypt(
             .counterparty
             .map(|s| parse_counterparty(&s))
             .transpose()?,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
     audit::record(audit::protocol_entry(
         "encrypt",
@@ -812,6 +824,9 @@ pub async fn decrypt(
             .counterparty
             .map(|s| parse_counterparty(&s))
             .transpose()?,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
     audit::record(audit::protocol_entry(
         "decrypt",
@@ -848,6 +863,9 @@ pub async fn create_hmac(
             .counterparty
             .map(|s| parse_counterparty(&s))
             .transpose()?,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
     audit::record(audit::protocol_entry(
         "createHmac",
@@ -889,6 +907,9 @@ pub async fn verify_hmac(
             .counterparty
             .map(|s| parse_counterparty(&s))
             .transpose()?,
+        privileged: req.privileged,
+        privileged_reason: req.privileged_reason,
+        seek_permission: None,
     };
     let result = wallet
         .verify_hmac(args, &originator)

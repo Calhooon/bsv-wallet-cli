@@ -42,7 +42,13 @@ impl WalletContext {
 
         let chain = if testnet { Chain::Test } else { Chain::Main };
         let (storage, services) = open_store(config, chain, db).await?;
-        let wallet = Wallet::new(Some(root_key.clone()), storage, services).await?;
+        let wallet = Wallet::with_options(
+            Some(root_key.clone()),
+            storage,
+            services,
+            config.wallet.options(),
+        )
+        .await?;
 
         Ok(Self {
             wallet,
@@ -74,7 +80,7 @@ pub async fn open_store(
     chain: Chain,
     db: &str,
 ) -> Result<(StorageSqlx, Services)> {
-    let storage = StorageSqlx::open(db).await?;
+    let storage = StorageSqlx::open_with_options(db, config.wallet.storage_options()).await?;
     storage.make_available().await?;
 
     // Shared services config (CHAINTRACKS_URL, ARC_URL, ARC_MODE=arcade,
