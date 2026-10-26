@@ -1177,3 +1177,111 @@ on 0.13.1, #194 (toolbox #142) and #155 (toolbox #141) at their pins, #157
 with 0.13.1; the programme: #79 the evidence layer, #84 observability, #78
 one spend function once toolbox #105 is pinned, #173 to #175 the mutation
 floors, #171.
+
+2026-10-26 (the second day of Phase 1 on beta): THE PIN LANDED, THE CI BALANCE,
+THE NIGHTLY'S FIX, 0.18.2 ON MAIN UNTAGGED. The owner's words of the morning,
+on a decision brief of seven items: 0.18.1 is never published and the next
+patch is 0.18.2 (bsv-rs =0.8.3 for k256 0.14, toolbox =0.13.1, the probe's one
+ladder pass, #157's bound); tag toolbox 0.13.1; one pin PR on beta moving the
+prereleases together, then v0.19.0-beta.1 from beta after a green night; the
+model rule written into cca's RULES.md (Fable on the account expiring soonest
+within a day, else Opus 5.5 on the week-soonest account; a lane names a model
+only on that rule or his word); "the reference" explained (the BRC first, the
+TypeScript reference at a pinned commit only where the BRC is silent, codes
+over words, divergences recorded). The keeper then relayed his "love it... yes
+to all" on five process rulings: record landings batched, a documentation-only
+fold lands on the standing MERGE without a re-check, a reference-shape change
+needs no new word, one message an hour per captain, decisions through the
+keeper's daily brief.
+
+Landed on beta today, each through a cold review on Opus and a fix round where
+the review asked (beta from caf72ac to f4bdab3): PR 253 (the three
+version-agnostic tests, after beta's ratchet refused a doc comment main's CI
+never checked); #221 (PR 252: the gate's last four store-wide reads are the
+user's); #244 (PR 245: the retire guard reads the proof's presence; the PR had
+been closed unmerged by a landing script's unconditional branch delete on a
+draft, restored, and the scripts now mark a reviewed draft ready and delete only
+on MERGED); #247 (PR 254: respend refuses a phantom whose request holds a
+proof, through the guard's shared reader); #228 (PR 256: a tip settles a kept
+reorg whose root a new header carries; the first round stored every unmoved
+row and a stored verdict made a row churn, narrowed to plain mined); #232 (PR
+260: a split key's hash lowercased at delivery and on read; a slice at byte 6
+panicked on a malformed stored key, then A5's text rule refused strip_prefix,
+written as an equality on the first six bytes with its reason recorded); #204
+(PR 259: hermetic scenario 24 holds wallet A's store busy from a second
+process; under WAL no outside lock refuses a reader with BUSY, the ask amended
+to the two write doors' 503 and the reads' availability; three rounds: a
+write-side probe for an outlived lock, the shared GET's contract kept so the
+stranger guard still refuses a 401 daemon, and the differential's self-test
+pinned at 24 by the captain); #248 (PR 263: the relay poller keeps its cursor
+below an item that met a busy store, with the interval reset first since tokio
+fires a missed tick and the next together); #249 (PR 268: the callback route's
+8 s deadline under Arcade's 10 s, the message truthful about the header service,
+the split state a retry converges proven on the rows); #258 (PR 270: a settled
+row stores the header the recheck stood on, since bsv-tracker's recheck never
+replaces its checked header; bsv-tracker #30 filed); #237 (PR 262: a carried
+input naming no signer, or a mismatched length, refused at the gate with the
+reference's words, fixtures 121 and 122; the wire recorder split into section
+functions when the flat list crossed the complexity ceiling); #234 (PR 261: a
+named change coin stays offered by the gate as the Lean's guard offers it, the
+toolbox's refusal the served answer, fixture 120, the keeper citing the
+reference's createAction.ts); #174 (PR 273: the ten handlers.rs mutants the
+Nightly missed each caught by a behaviour test, the floor staying 74 until the
+night's record); main into beta (PR 272: the six 0.18.2 commits, fixture 123
+for #157's bound; two changelog text folds under ruling (b)); THE PIN (PR 274:
+bsv-rs =0.9.0-beta.1, toolbox =0.14.0-beta.1 and bsv-tracker =0.9.0-beta.1
+together, one bsv-rs in the lock, after the first launch found bsv-tracker
+0.8.0 pinned to bsv-rs ^0.8 and the keeper cut the tracker's prerelease in two
+hours; the underReceivedRule label on both received doors, the abort class on
+the accepting-word sentences alone after the review caught a prefix match that
+would have moved every abort refusal, fixture 103 flipped onto the verifier's
+refusal, #235's agreement matrix with its one deferral the keeper read as not
+a defect, the seed knob behind the hermetic wall, every BEEF already
+parents-first; #140 and #235 closed, the beta.2 checklist gathered as #277);
+PR 276 (the signAction guard test driven with a deferred caller input, so the
+toolbox's dependents gate reads green against our beta, which it now does on
+its own, run 40415011255, and fails their run whenever our beta breaks against
+their tree); #265 (PR 275: an empty unlockingScript and a zero length refused
+with the reference's words, the handler's hex refusal in the reference's
+sentences down to UTF-16 counting and U+FEFF trimming, fixtures 125 to 128,
+the at-bound acceptance the keeper's scenario needed).
+
+On main: PR 264 (0.18.2: the two pins, the probe's one pass, #157's bound, the
+deny template adopted with the advisory entry gone; two Opus reviews) landed
+at 07adfcb; the mainnet gate ran once and read 18 of 23 because GorillaPool's
+ARC held every submission at ANNOUNCED for over thirteen minutes, the funder's
+own transaction included, while WhatsOnChain's node accepted the same
+transactions at once and all 44 valid descendants followed (the funder's
+accounting real, 136,634 to 134,464 sats); the tag waits on the owner's word
+on a second run. The CI balance (PRs 266, 267, 269): a pull request runs
+exactly the required set (the keeper patched both protections: macOS off, the
+hermetic e2e required on beta), the bench and the differential on every push
+against the push's before and on the tag's run, the differential on a PR only
+under the refactor label, Dependabot at most two open with its one bsv-stack
+group; the first push run under it green on all thirteen jobs. The checkout's
+binary symlinks repointed at a 0.18.2 build after an older target was removed.
+
+Across the stack: bsv-rs 0.9.0-beta.1 on the index (the gate's reading sent:
+clean, no finding); #137's twenty refusal classes as the reference's WERR table
+(the host map pinned by class name; INVALID_BEEF and UNSPENDABLE_COIN fold at
+beta.2; the four not-found doors by the keeper's reading); #105's substrate
+shapes; toolbox 0.13.1 and 0.14.0-beta.1 on the index on the owner's tags;
+toolbox #66, #106, #163, #169, #177 landed with their shapes recorded; the
+toolbox's #200, #201, #211, #212, #202, #203 (certificates issued before it
+must be re-issued: the owner's note for beta.2) for the next prerelease; the
+keeper's readings on #234, #237, fixture 103's row (status, class, offset and
+reason, never the host's code string) and fixture 124. The lessons in memory:
+a brief's proof list runs the tools' own self-tests; A5's shrink-only
+allowlist; a mainnet gate failing on explorer listing is judged at the
+broadcaster first; main's harness ignores BSV_WALLET_BIN; a review brief never
+takes the chain's output name; a pin moves every dependent crate; cca refuses
+to reuse a lane name whose branch holds commits; the box runs out of ephemeral
+ports under parallel lanes.
+
+Open after the day: the owner's words (the second gate run and the v0.18.2
+tag; the v0.19.0-beta.1 tag after tonight's Nightly, in the keeper's brief;
+the certificate re-issue at beta.2; the production daemon on 3322 was down
+tonight for the certificate count); #277 the beta.2 pin; the floor raise for
+handlers.rs after tonight's record (#174); #243, #215, #212, #211, #195 (the
+CHANGELOG fragments, worth doing before the next busy day), #192, #191, #193
+by the queue; #196 closes with the tag.
