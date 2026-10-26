@@ -2702,13 +2702,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             let Some(state) = tracker.get(&row.txid) else {
                 continue;
             };
-            if matches!(state.word(), Word::Mined(_))
-                && !(matches!(event, ChainEvent::Tip { .. })
-                    && row
-                        .chain_events()
-                        .iter()
-                        .any(|kept| matches!(kept, ChainEvent::Invalidated { .. })))
-            {
+            if matches!(state.word(), Word::Mined(_)) && !matches!(event, ChainEvent::Tip { .. }) {
                 continue;
             }
             row.keep_chain(state, &event)?;
@@ -3608,6 +3602,82 @@ pub(crate) mod tests {
         assert_eq!(stored, open);
         let held = reading(&storage, &services, &txid).await;
         assert_eq!((held.suspect, held.offered()), (true, false));
+    }
+
+    /// A lagging service keeps the reorg open until a new header and tip arrive.
+    async fn reorg_on_lagging_service_then_tip(
+        txid: &str,
+        root: &str,
+    ) -> (StorageSqlx, MockWalletServices, FixedClock) {
+        let (storage, services, clock) = mined_at_900(txid).await;
+        let gone = header_with_hash(900, txid, 0).hash;
+        deliver(&storage, &services, &clock, 1, reorg_at_900(&gone, txid)).await;
+        let open = ("mined".to_string(), Some(900), Some("recheck".to_string()));
+        assert_eq!(word(&storage, txid).await, open);
+        let row = load_row(&storage, txid).await.unwrap().unwrap();
+        assert_eq!(row.chain.len(), 1);
+        assert!(matches!(row.chain_events()[0], ChainEvent::Reorg { .. }));
+        tip_after_invalidation(&storage, &services, &clock, root).await;
+        (storage, services, clock)
+    }
+
+    /// #228: the stored word settles with the door when replay clears the mark.
+    #[tokio::test]
+    async fn a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row() {
+        let txid = "d4".repeat(32);
+        let (storage, services, clock) = reorg_on_lagging_service_then_tip(&txid, &txid).await;
+        let stored = word(&storage, &txid).await;
+        println!("a kept reorg after a same-root tip: {stored:?}");
+        assert_eq!(stored, ("mined".to_string(), Some(900), None));
+        let settled = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert!(settled.chain.is_empty());
+        let offered = reading(&storage, &services, &txid).await;
+        assert!(!offered.suspect && offered.offered());
+        assert_eq!(stored.0, offered.word);
+        assert_eq!(guard_of(&storage, &services, &clock, &txid).await, Ok(true));
+    }
+
+    /// A guard of beta's moved-root behaviour, unchanged by #228.
+    #[tokio::test]
+    async fn a_reorg_on_a_lagging_service_then_a_moved_root_tip_reads_stale() {
+        let txid = "d5".repeat(32);
+        let (storage, services, _) =
+            reorg_on_lagging_service_then_tip(&txid, &"ef".repeat(32)).await;
+        let stored = word(&storage, &txid).await;
+        assert_eq!(
+            stored,
+            ("stale".to_string(), None, Some("reorg@900".to_string()))
+        );
+        assert_stale_creator_reading(&storage, &services, &txid).await;
+        assert_eq!(word(&storage, &txid).await, stored);
+    }
+
+    /// Settling removes the row from the next tip's stored-event selection.
+    #[tokio::test]
+    async fn a_settled_row_is_not_selected_by_the_next_tip() {
+        let txid = "d6".repeat(32);
+        let (storage, services, clock) = reorg_on_lagging_service_then_tip(&txid, &txid).await;
+        let before = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert!(before.chain.is_empty(), "the earlier tip settled the row");
+        let before_word = word(&storage, &txid).await;
+        let tip = decode_envelope(
+            serde_json::json!({
+                "v": 1, "kind": "tip", "height": 907, "hash": "d7".repeat(32),
+                "time": 1_700_000_000u32,
+                "header": event_header(907, &"d7".repeat(32), &"ef".repeat(32)),
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        let delivered = deliver_chain_event(&storage, &services, &clock, &opts(), 3, tip)
+            .await
+            .unwrap();
+        println!("the next tip after the reorg settled: {delivered:?}");
+        assert!(delivered.moved.is_empty());
+        let after = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!(after, before);
+        assert_eq!(word(&storage, &txid).await, before_word);
     }
 
     async fn mined_row_at_900(
