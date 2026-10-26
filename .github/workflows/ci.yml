@@ -1,11 +1,13 @@
 name: CI
 
-# The machine gate. Branch protection on main requires the check names below:
-# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling), the two
-# `Build (...)` checks that were already required, and `deny` (the paved road's
-# cargo-deny gate over the stack's template, adopted at 0.13.x). `wire` (#69)
-# is to be required on `beta` by the captain; `bench` (#71) gates once the
-# entry for its runner CPU carries five runs. Renaming a job removes its
+# The machine gate. Branch protection requires exactly the checks a pull
+# request runs (the keeper's rule of 2026-10-26): on main `Test`, `Rustfmt`,
+# `Clippy`, `vectors` (the four of the ruling), `Build (ubuntu-latest)`,
+# `deny` (the paved road's cargo-deny gate over the stack's template, adopted
+# at 0.13.x) and `locks`; on beta those and `ratchet`, `wire` (#69) and
+# `e2e-hermetic`. `Build (macos-latest)`, `bench` (#71) and `differential`
+# (#70) run on push and on the tag's run, the differential also on a PR
+# labelled `refactor`. Renaming a job removes its
 # context and blocks every PR until the protection is updated. Every action is
 # pinned by commit sha.
 on:
@@ -517,10 +519,11 @@ jobs:
     name: differential
     # On a pull request only when it carries the `refactor` label (the label
     # is what the run can fail on); on every push to beta and main against the
-    # push's `before`, so the record of each landing stays (the keeper's
-    # balance of 2026-10-26). A lane runs the differential locally before its
-    # PR and its cold review runs it again: those two witnesses stand on
-    # every PR; this job is the third, on the refactor ones.
+    # push's `before` (the keeper's balance of 2026-10-26); a later push to the
+    # same branch cancels an earlier push's run, so the record kept is the last
+    # landing's. A lane runs the differential locally before its PR and its
+    # cold review runs it again: those two witnesses stand on every PR; this
+    # job is the third, on the refactor ones.
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'refactor')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -550,13 +553,16 @@ jobs:
           if [ -n "$BASE_REF" ]; then
             git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
             rev="origin/$BASE_REF"
-          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git fetch --no-tags --depth=1 origin "$BEFORE"; then
             # A push: the previous tip of the branch, fetched by its sha.
-            git fetch --no-tags --depth=1 origin "$BEFORE"
             rev="$BEFORE"
           else
-            # A new branch or a tag (workflow_call): the commit before this one.
-            git fetch --no-tags --deepen=1 origin
+            # A new branch, a tag (workflow_call), or a `before` the remote no
+            # longer serves: the commit before this one (as bench and ratchet
+            # fall back), fetched by this sha alone, never every branch.
+            [ -n "$BEFORE" ] && echo "::warning::the push's before ($BEFORE) could not be fetched; the base is HEAD~1"
+            git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
             rev="HEAD~1"
           fi
           git worktree add --detach "$RUNNER_TEMP/base-src" "$rev"
