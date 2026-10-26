@@ -13,8 +13,33 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 
+pub(crate) mod coins;
+
 mod chain_tracker;
 pub use chain_tracker::TestChainTracker;
+
+/// Serve a test router on an ephemeral loopback port, with an abortable task.
+pub async fn serve_router(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, task)
+}
+
+/// Route a served test wallet's headers and posts to the same local mock.
+pub fn mock_services(url: &str) -> bsv_wallet_toolbox::Services {
+    use bsv_wallet_toolbox::{Chain, Services, ServicesOptions};
+    let options = ServicesOptions {
+        arc_url: url.to_string(),
+        arc_gorillapool_url: None,
+        ..ServicesOptions::mainnet()
+            .with_chaintracks_url(url.to_string())
+            .without_bananablocks()
+    };
+    Services::with_options(Chain::Main, options).unwrap()
+}
 
 type Routes = Arc<HashMap<String, (u16, String, Vec<(String, String)>)>>;
 type Hits = Arc<Mutex<Vec<String>>>;

@@ -7,6 +7,8 @@ use crate::test_support::response_answer;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
+mod mutants;
+
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {
     response_answer(e.into_response()).await
 }
