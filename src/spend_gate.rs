@@ -91,10 +91,10 @@
 //! on `completed` or `unproven`; `failed` with `its transaction is failed:
 //! never offered` on failure; otherwise the status
 //! with `its transaction is <status>: not spendable until it is sent`.
-//! A failed coin is held even when its flag is 1. A live coin whose flag
-//! is 1 reads its creator: made change under `SPEND_OWN_CHANGE`, a received
-//! coin under the action's `allowPending: received` word. Toolbox 0.13.0
-//! keeps a `noSend` action's outputs not spendable until the action is sent;
+//! Failed and nosend coins are held even when their flag is 1. Other live
+//! coins whose flag is 1 read their creator: made change under `SPEND_OWN_CHANGE`, a received
+//! coin under the action's `allowPending: received` word. Toolbox 0.14
+//! leaves a `noSend` action's output flags set; its status still holds them;
 //! this wallet does not read `sendWith` yet (#147), so a `noSend` output named
 //! as an input is held `nosend` today. Every named hold is served as
 //! `403 INPUT_NOT_OFFERED`; the scoped word keeps its earlier domain check
@@ -1657,6 +1657,10 @@ fn named_record_hold(
         ));
     }
     let status: String = row.get("status");
+    if status == "nosend" {
+        let reason = not_sent_reason(&status);
+        return Some((status, reason));
+    }
     let spendable: i64 = row.get("spendable");
     let unspendable = spendable == 0 && spent_by.is_none();
     if unspendable {
