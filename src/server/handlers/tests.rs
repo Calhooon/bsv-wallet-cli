@@ -786,3 +786,4 @@ async fn chain_feed_under_a_busy_store_is_503_store_busy() {
 async fn tx_word_under_a_busy_store_is_503_store_busy() {
     host_route_store_faults(&format!("/tx/{}", "11".repeat(32)), "ERR_TX_WORD").await;
 }
+mod custom_instructions;
