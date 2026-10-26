@@ -309,6 +309,8 @@ impl From<anyhow::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = (self.kind.status(), self.kind.code());
+        // Log the response's words too: a callback deadline cannot identify
+        // whether the store or the header service was still answering.
         tracing::warn!(
             status = status.as_u16(),
             code = code,
@@ -324,8 +326,8 @@ impl IntoResponse for AppError {
             body["coin"] = json!(coin);
         }
         match self.kind.retry_after_secs() {
-            // Nothing was written, built, locked or posted; ask again
-            // after the pause.
+            // Retry after the pause. A callback deadline can leave partial
+            // status writes, which repeated delivery converges.
             Some(secs) => (
                 status,
                 [(axum::http::header::RETRY_AFTER, secs.to_string())],
