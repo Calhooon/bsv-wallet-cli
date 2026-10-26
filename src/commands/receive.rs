@@ -291,6 +291,13 @@ pub(crate) mod tests {
         (txid, beef.to_hex())
     }
 
+    /// The courier's bytes (a transaction with no input) are refused as
+    /// invalid BEEF by the toolbox's internalize door, the refusal names the
+    /// txid and the courier, and nothing is stored. The reason's wording is
+    /// the toolbox's, not this test's: 0.13.0 says "BEEF structure is
+    /// invalid", #163 "Invalid BEEF at byte 48: InputNamesNoElement"; the
+    /// CLI maps neither to a typed class, so the test asserts the door's
+    /// `refused tx {txid} from WhatsOnChain` and the word `BEEF`.
     #[tokio::test]
     async fn l2_stub_refusal_names_txid_courier_reason_and_stores_nothing() {
         let ctx = stub_context().await;
@@ -310,9 +317,8 @@ pub(crate) mod tests {
             .unwrap_err();
             let text = error.to_string();
             assert!(
-                text.contains(&txid)
-                    && text.contains("WhatsOnChain")
-                    && text.contains("BEEF structure is invalid"),
+                text.contains(&format!("refused tx {txid} from WhatsOnChain"))
+                    && text.contains("BEEF"),
                 "{text}"
             );
             for table in ["transactions", "outputs"] {
