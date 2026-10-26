@@ -311,14 +311,16 @@ consumed is spent: an input of that action, never a hold that clears. Coins a ca
 hold refuses the action, `403 INPUT_NOT_OFFERED` with the same `held` list.
 Every named input is the caller's to sign; an outpoint the wallet does not
 hold reaches the toolbox's BEEF verification only when `inputBEEF` carries
-its whole transaction and it names `unlockingScript` or
+its whole transaction and it names a nonempty `unlockingScript` or a positive
 `unlockingScriptLength` (a length alone promises to sign later through
 `signAction`), with the gate enforcing the keeper's
 [#237 reading](https://github.com/Calhooon/bsv-wallet-cli/issues/237) before
 any creator read or toolbox call by returning `400 VALIDATION_ERROR` for a
 missing transaction (`not a coin of this wallet`; malformed or txid-only
-BEEF carries none), neither signer field, or a script/length mismatch
-(both signer refusals carry the reference's words;
+BEEF carries none), neither signer field, an empty script, a zero length
+without a script, or a script/length mismatch
+(using the reference's signer and script refusals and the toolbox's
+positive-integer refusal;
 [the gate vectors](docs/GATE-VECTORS.md#the-divergences)).
 The named coin is read frozen, spent by, then its unspendable record
 (`spendable = 0` with no spender), before its creator. That record is held
