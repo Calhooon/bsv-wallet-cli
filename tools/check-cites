@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hold architecture citations and file lengths at the document's pin (#184, #210).
+"""Hold architecture citations and file lengths at the document's pin (#184, #210, #243).
 
     tools/check-cites          check docs/ARCHITECTURE.md
     tools/check-cites FILE...  check the named documents; exit 1 naming each finding
@@ -15,6 +15,14 @@ the preceding citation's path in that same sentence or cell; it needs its own
 preceding identifier. An unnamed citation is a finding, even if its lines exist.
 Paths are resolved from the repository root, including prefixes such as mcp/;
 `mcp/src/main.rs:N` checks that file, never `src/main.rs:N`.
+
+Every backticked Rust path with a line number or range must match that rooted
+citation form; a bare `name.rs:N` or relative `dir/name.rs:N` is a finding:
+write the path from the repository root. Unnumbered backticked paths starting
+with src/, tests/ or a nested crate's src/ must exist at the pin (files as
+blobs, directories ending in / as non-empty trees), unless the same sentence
+or table cell marks them with the word "later" or the phrase "after the pin".
+Mermaid diagrams and all other fenced text stay skipped by design.
 
 The module map's `file | lines` table counts physical newline characters,
 including blank lines, exactly `git show <sha>:<path> | wc -l`, not non-blank
@@ -38,6 +46,9 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*")
 CITE = re.compile(r"(?<![\w/])(?:[A-Za-z_0-9.-]+/)*(?:src|tests)/"
                   r"[A-Za-z_0-9./-]+:(\d+)(?:-(\d+))?\b")
 SHORT = re.compile(r":(\d+)(?:-(\d+))?")
+RUST_CITE = re.compile(r"[A-Za-z_0-9/.-]*[A-Za-z_0-9]+\.rs:\d+(?:-\d+)?")
+SOURCE_PATH = re.compile(r"(?:tests/|(?:[A-Za-z_0-9.-]+/)*src/)[A-Za-z_0-9./-]*")
+LATER = re.compile(r"\blater\b|\bafter\s+the\s+pin\b", re.I)
 
 
 def git(*args):
@@ -153,12 +164,26 @@ def check(doc, text, blobs):
     def blob(path, line):
         key = pin, path
         if key not in blobs:
-            result = git("show", f"{pin}:{path}")
+            result = git("cat-file", "blob", f"{pin}:{path}")
             blobs[key] = result.stdout if result.returncode == 0 else None
         data = blobs[key]
         if data is None:
             fail(line, f"{path} does not exist at pin {short}")
         return data
+
+    for offset, context in contexts(visible):
+        for m in SPAN.finditer(context):
+            label = m.group(2)
+            n = text.count("\n", 0, offset + m.start()) + 1
+            if RUST_CITE.fullmatch(label) and not CITE.fullmatch(label):
+                fail(n, f"{label}: write the path from the repository root")
+            elif SOURCE_PATH.fullmatch(label) and not LATER.search(context):
+                if label.endswith("/"):
+                    result = git("ls-tree", pin, label)
+                    if result.returncode or not result.stdout:
+                        fail(n, f"{label} does not exist at pin {short}")
+                else:
+                    blob(label, n)
 
     ncites = 0
     for pos, label, path, start, end, name in citations(visible):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Planted cases for check-cites (#184, #210), run by CI's ratchet job.
+"""Planted cases for check-cites (#184, #210, #243), run by CI's ratchet job.
 
 Each case runs the command in its own git repository under $TMPDIR, with a
 commit pin and a changed HEAD. No network, cargo, or project fixtures are used.
@@ -29,7 +29,10 @@ class PinnedCitations(unittest.TestCase):
         self.git("init", "-q")
         self.write("src/lib.rs", SOURCE)
         self.write("src/main.rs", SOURCE)
+        self.write("src/name.rs", SOURCE)
+        self.write("src/present.rs", SOURCE)
         self.write("tests/integration.rs", SOURCE)
+        self.write("tests/present/example.rs", SOURCE)
         self.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n")
         self.git("add", "src", "tests", "mcp")
         self.git("commit", "-qm", "pin")
@@ -90,6 +93,106 @@ class PinnedCitations(unittest.TestCase):
         self.passes(body="`nested_alpha` (`mcp/src/main.rs:1`).")
         self.fails("mcp/src/main.rs:1: identifier `alpha` is absent",
                    body="`alpha` (`mcp/src/main.rs:1`).")
+
+    def test_bare_rust_citation_requires_repository_root(self):
+        for span in ["name.rs:1", "name.rs:1-3"]:
+            with self.subTest(span=span):
+                self.fails(f"docs/ARCHITECTURE.md:7: {span}: write the path from the repository root",
+                           body=f"`alpha` (`{span}`).")
+
+    def test_relative_rust_citation_requires_repository_root(self):
+        for span in ["dir/name.rs:1", "dir/name.rs:1-3"]:
+            with self.subTest(span=span):
+                self.fails(f"docs/ARCHITECTURE.md:7: {span}: write the path from the repository root",
+                           body=f"`alpha` (`{span}`).")
+
+    def test_rooted_rust_citation_passes(self):
+        self.passes(body="`alpha` (`src/name.rs:1`).")
+
+    def test_unnumbered_absent_file_is_named(self):
+        self.fails("docs/ARCHITECTURE.md:7: src/absent.rs does not exist at pin",
+                   body="The module is `src/absent.rs`.")
+
+    def test_unnumbered_absent_directory_is_named(self):
+        self.fails("docs/ARCHITECTURE.md:7: tests/absent/ does not exist at pin",
+                   body="The tests are in `tests/absent/`.")
+
+    def test_unnumbered_present_file_passes(self):
+        self.passes(body="The module is `src/present.rs`.")
+
+    def test_unnumbered_present_directory_passes(self):
+        self.passes(body="The tests are in `tests/present/`.")
+
+    def test_unnumbered_source_root_directory_passes(self):
+        self.passes(body="The modules are in `src/`.")
+
+    def test_unnumbered_nested_crate_paths_use_the_repository_root(self):
+        self.passes(body="The companion has `mcp/src/main.rs` in `mcp/src/`.")
+        self.fails("mcp/src/absent.rs does not exist at pin", body="`mcp/src/absent.rs`.")
+        self.fails("mcp/src/absent/ does not exist at pin", body="`mcp/src/absent/`.")
+
+    def test_unnumbered_file_added_only_at_head_still_fails(self):
+        self.write("src/absent.rs", SOURCE)
+        self.git("add", "src/absent.rs")
+        self.git("commit", "-qm", "add a module after the pin")
+        self.fails("src/absent.rs does not exist at pin", body="`src/absent.rs`.")
+
+    def test_unnumbered_directory_added_only_at_head_still_fails(self):
+        self.write("tests/absent/example.rs", SOURCE)
+        self.git("add", "tests/absent")
+        self.git("commit", "-qm", "add a test directory after the pin")
+        self.fails("tests/absent/ does not exist at pin", body="`tests/absent/`.")
+
+    def test_unnumbered_file_requires_a_blob(self):
+        self.fails("tests/present does not exist at pin", body="The file is `tests/present`.")
+
+    def test_unnumbered_directory_requires_a_tree(self):
+        self.fails("src/present.rs/ does not exist at pin", body="The directory is `src/present.rs/`.")
+
+    def test_later_marks_an_unnumbered_absent_file(self):
+        self.passes(body="The later #12 `src/absent.rs` holds the module.")
+
+    def test_after_the_pin_marks_an_unnumbered_absent_file(self):
+        self.passes(body="The module `src/absent.rs` was added after the pin.")
+
+    def test_later_marks_an_unnumbered_absent_directory(self):
+        self.passes(body="The later tests live in `tests/absent/`.")
+
+    def test_marker_in_another_sentence_does_not_rescue_a_path(self):
+        for marker in ["That module comes later", "That module was added after the pin"]:
+            for body in [f"{marker}. The module is `src/absent.rs`.",
+                         f"The module is `src/absent.rs`. {marker}."]:
+                with self.subTest(body=body):
+                    self.fails("src/absent.rs does not exist at pin", body=body)
+
+    def test_marker_in_another_table_cell_does_not_rescue_a_path(self):
+        self.fails("src/absent.rs does not exist at pin",
+                   body="| The later module | `src/absent.rs` |")
+
+    def test_marker_in_the_same_table_cell_allows_a_path(self):
+        self.passes(body="| The later module `src/absent.rs` | The tests |")
+
+    def test_marker_in_another_paragraph_does_not_rescue_a_path(self):
+        self.fails("src/absent.rs does not exist at pin",
+                   body="The later module\n\n`src/absent.rs`.")
+
+    def test_later_marker_must_be_a_word(self):
+        self.fails("src/absent.rs does not exist at pin",
+                   body="The collateral module is `src/absent.rs`.")
+
+    def test_marker_does_not_exempt_numbered_citations(self):
+        self.fails("name.rs:1: write the path from the repository root",
+                   body="The later `alpha` (`name.rs:1`).")
+        self.fails("src/absent.rs does not exist at pin",
+                   body="The later `alpha` (`src/absent.rs:1`).")
+
+    def test_unnumbered_path_inside_a_fence_is_skipped(self):
+        self.passes(body="```rust\n`src/absent.rs`\n```\n"
+                         "~~~text\n`tests/absent/`\n~~~")
+
+    def test_rust_citation_inside_a_mermaid_fence_is_skipped(self):
+        self.passes(body='```mermaid\nflowchart TD\n'
+                         'A["`name.rs:1`"] --> B["`dir/name.rs:1-3`"]\n```')
 
     def test_count_off_by_one_fails_the_process(self):
         self.fails("line count 4, but pin", count="4")
