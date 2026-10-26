@@ -144,13 +144,13 @@ module.exports = {
     let inserted = false;
     let holder, failure;
     const create = () => client.createAction(outputs, 'E2E.24 busy write', { signAndProcess: false });
-    const ask = async (name, call) => {
+    const ask = async (name, call, raw = false) => {
       const start = Date.now();
       let answer;
       try {
-        const body = await within(call(), BUSY_MS * 2, `${name}: request exceeded two busy ceilings`);
-        answer = { status: client.lastStatus, body, retryAfter: null };
-        if (body.signableTransaction?.reference) pending.add(body.signableTransaction.reference);
+        const result = await within(call(), BUSY_MS * 2, `${name}: request exceeded two busy ceilings`);
+        answer = raw ? result : { status: client.lastStatus, body: result, retryAfter: null };
+        if (answer.body.signableTransaction?.reference) pending.add(answer.body.signableTransaction.reference);
       } catch (e) {
         answer = { status: e.status, body: e.body, retryAfter: e.retryAfter, error: e.message };
       }
@@ -181,14 +181,14 @@ module.exports = {
         ['listOutputs', () => client.listOutputs(), 200],
         ['createAction', create, 503],
         ['abortAction', () => client.abortAction(reference), 503],
-        ['GET /chain-feed', () => client.get('chain-feed'), 200],
-        ['GET /tx', () => client.get(`tx/${txid}`), 200],
+        ['GET /chain-feed', () => client.getResponse('chain-feed'), 200, true],
+        ['GET /tx', () => client.getResponse(`tx/${txid}`), 200, true],
       ];
       holder = await holdWriter(db, assert);
       try {
         const answers = [];
-        for (const [name, call] of doors) {
-          const answer = await ask(`held ${name}`, call);
+        for (const [name, call, , raw] of doors) {
+          const answer = await ask(`held ${name}`, call, raw);
           if (name === 'abortAction' && answer.body?.aborted) pending.delete(reference);
           answers.push(answer);
         }
@@ -211,8 +211,8 @@ module.exports = {
         holder = null;
         await releasedHolder.confirmReleased();
       }
-      for (const [name, call] of doors) {
-        const answer = await ask(`released ${name}`, call);
+      for (const [name, call, , raw] of doors) {
+        const answer = await ask(`released ${name}`, call, raw);
         assert(answer.status === 200, `released ${name}: expected 200, got ${answer.status}: ${answer.error || ''}`);
         if (name === 'createAction') {
           assert(answer.body.signableTransaction?.reference, 'released createAction builds a new unsigned template');

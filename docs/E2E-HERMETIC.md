@@ -285,8 +285,10 @@ the server's own brief writes. A missing exit or failed probe fails the
 scenario naming the outlived lock and holder PID, and kills a lingering
 holder before cleanup or any later door. The log says "released" only after
 the holder has exited and the write probe has succeeded. The table and its
-row roll back with the transaction. The client retains each response status
-and exposes `retryAfter` on POST and GET errors;
+row roll back with the transaction. The shared GET keeps beta's contract:
+it returns the parsed body even for a non-2xx response. Scenario 24 alone
+uses `getResponse` to read
+`{ status, retryAfter, body }`; POST errors retain all three fields;
 other scenarios and the response bodies are unchanged.
 
 ## The six tests
