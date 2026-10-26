@@ -280,13 +280,32 @@ The webhook's ingestion has an eight-second deadline
 pin), below [Arcade's ten-second POST timeout at `1ae1208e64b77b64818044d606638939d9f1834a`,
 `config/config.go:1291`](https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291).
 Expiration drops the ingest future and serves `Kind::StoreBusy`: 503
-`STORE_BUSY` with `Retry-After: 1`. A typed busy that arrives sooner keeps its
-existing message. The one-second cases `arc_callback_deadline_seen`,
+`STORE_BUSY` with `Retry-After: 1`. Its message and warn log say
+`the arc-callback deadline of 8s elapsed before the toolbox answered (the store or the header service)`.
+The route cannot identify the wait: an inline MINED proof also checks its root
+with the header service, whose toolbox 0.13.0 client has a 30 s timeout.
+A typed busy that arrives sooner keeps its existing message.
+The one-second cases `arc_callback_deadline_seen`,
 `arc_callback_deadline_in_block` and `arc_callback_deadline_mined`, and the
 eight-second `arc_callback_deadline_served_default_is_eight_seconds`, time the
-answer under a held store lock; `arc_callback_deadline_retries_are_idempotent`
-checks unchanged rows after cancellation and repeated status/proof delivery
-after release. The toolbox's repeated waits remain toolbox #205.
+answer under a held store lock. `arc_callback_deadline_slow_tracker_on_idle_store`
+checks a delayed header answer with an idle store, no stored proof or completion
+on timeout, and successful delivery when the header answer is ready. The seen
+status and memory writes that precede the root check remain.
+The two store waits in toolbox 0.13.0 are writes: broadcast memory's
+`BEGIN IMMEDIATE` (its busy is swallowed by `record_broadcast_status_quiet`),
+then the request `UPDATE`. They are separate statements without a transaction
+around both. Cancelling the unacknowledged `BEGIN` rolls it back, but a running
+request `UPDATE` can finish after cancellation: the request becomes `unmined`,
+the transaction stays `sending`, and broadcast memory is empty.
+`arc_callback_deadline_cancel_before_write_retries_are_idempotent` checks the
+one-second cancellation; `arc_callback_deadline_write_landed_retries_converge`
+uses six seconds (between the two five-second ceilings, saving two seconds per
+path versus the served eight), reads the partial rows on the writer after
+release, and checks that one retry equals a clean delivery and another leaves
+those rows unchanged on all three paths. Conditional status updates, the
+broadcast ladder's upsert, and the proof transaction make retries converge.
+The toolbox's two writes and waits remain toolbox #205.
 The daemon's relay poller (`ingest_relay_items` in
 `src/commands/daemon_tenant.rs`, tested by
 `relay_busy_cursor_retries_after_release_in_order`) holds its acknowledgement

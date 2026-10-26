@@ -150,7 +150,7 @@ async fn deadline_answer(app: Router, payload: &serde_json::Value, deadline: Dur
             StatusCode::SERVICE_UNAVAILABLE,
             Some("1".to_string()),
             json!({"code": "STORE_BUSY", "message": format!(
-                "arc-callback deadline of {deadline:?} elapsed while the store was still busy"
+                "the arc-callback deadline of {deadline:?} elapsed before the toolbox answered (the store or the header service)"
             )}),
         ),
     );
@@ -233,8 +233,37 @@ fn assert_retried_rows(
     }
 }
 
-async fn retry_is_idempotent(status: &str) {
-    let (_dir, wallet, mut holder) = busy_read_wallet().await;
+struct CallbackCase {
+    _dir: tempfile::TempDir,
+    wallet: WalletState,
+    holder: sqlx::SqliteConnection,
+    txid: String,
+    raw: Vec<u8>,
+    bump: MerklePath,
+    payload: serde_json::Value,
+    root_ready: tokio::time::Instant,
+}
+
+struct SlowTracker(TestChainTracker, tokio::time::Instant);
+
+#[async_trait::async_trait]
+impl bsv_sdk::transaction::ChainTracker for SlowTracker {
+    async fn is_valid_root_for_height(
+        &self,
+        root: &str,
+        height: u32,
+    ) -> Result<bool, bsv_sdk::transaction::ChainTrackerError> {
+        tokio::time::sleep_until(self.1).await;
+        self.0.is_valid_root_for_height(root, height).await
+    }
+
+    async fn current_height(&self) -> Result<u32, bsv_sdk::transaction::ChainTrackerError> {
+        self.0.current_height().await
+    }
+}
+
+async fn seeded_callback(status: &str, root_delay: Option<Duration>) -> CallbackCase {
+    let (dir, wallet, mut holder) = busy_read_wallet().await;
     set_read_lock(&mut holder, false).await;
     let storage = wallet.storage();
     let raw = raw_tx(&[(&"22".repeat(32), 0)], &[(500, p2pkh([3; 20]))]);
@@ -245,34 +274,106 @@ async fn retry_is_idempotent(status: &str) {
     let bump = MerklePath::from_coinbase_txid(&txid, height);
     let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, bump.compute_root(Some(&txid)).unwrap());
-    storage.set_chain_tracker(Arc::new(tracker)).await;
+    let root_ready = tokio::time::Instant::now() + root_delay.unwrap_or_default();
+    let tracker: Arc<dyn bsv_sdk::transaction::ChainTracker> = match root_delay {
+        Some(_) => Arc::new(TestChainTracker::from(SlowTracker(tracker, root_ready))),
+        None => Arc::new(tracker),
+    };
+    storage.set_chain_tracker(tracker).await;
     storage
         .set_max_acceptable_proof_height(height)
         .await
         .unwrap();
     let payload = json!({"txid": txid, "txStatus": status, "blockHeight": height,
             "blockHash": "bb".repeat(32), "merklePath": hex::encode(bump.to_binary())});
-    let before = arc_rows(storage, &txid).await;
-    set_read_lock(&mut holder, true).await;
-    deadline_answer(
-        router_with_deadline(wallet.clone(), Duration::from_secs(1)),
-        &payload,
-        Duration::from_secs(1),
-    )
-    .await;
-    set_read_lock(&mut holder, false).await;
-    assert_eq!(arc_rows(storage, &txid).await, before, "cancelled {status}");
-    deliver_callback(wallet.clone(), &payload).await;
-    let once = arc_rows(storage, &txid).await;
-    deliver_callback(wallet.clone(), &payload).await;
-    assert_eq!(arc_rows(storage, &txid).await, once, "repeated {status}");
-    assert_retried_rows(&once, status, &bump, &raw, height);
+    CallbackCase {
+        _dir: dir,
+        wallet,
+        holder,
+        txid,
+        raw,
+        bump,
+        payload,
+        root_ready,
+    }
 }
 
 #[tokio::test]
-async fn arc_callback_deadline_retries_are_idempotent() {
+async fn arc_callback_deadline_slow_tracker_on_idle_store() {
+    let case = seeded_callback("MINED", Some(Duration::from_secs(3))).await;
+    let storage = case.wallet.storage();
+    let mut expected = arc_rows(storage, &case.txid).await;
+    deadline_answer(
+        router_with_deadline(case.wallet.clone(), Duration::from_secs(1)),
+        &case.payload,
+        Duration::from_secs(1),
+    )
+    .await;
+    // MINED marks seen before the root check. No proof or completion is
+    // stored while the header answer is pending; those earlier writes remain.
+    expected["request"][1] = json!("unmined");
+    expected["transaction"][1] = json!("unproven");
+    expected["memory"] = json!([["ArcadeV2", "seen"]]);
+    let waiting = arc_rows(storage, &case.txid).await;
+    eprintln!("idle store awaiting header: {waiting}");
+    assert_eq!(waiting, expected);
+    tokio::time::sleep_until(case.root_ready).await;
+    deliver_callback(case.wallet.clone(), &case.payload).await;
+    assert_retried_rows(
+        &arc_rows(storage, &case.txid).await,
+        "MINED",
+        &case.bump,
+        &case.raw,
+        850_000,
+    );
+}
+
+async fn retry_is_idempotent(status: &str, deadline: Duration) {
+    let control = seeded_callback(status, None).await;
+    deliver_callback(control.wallet.clone(), &control.payload).await;
+    let clean = arc_rows(control.wallet.storage(), &control.txid).await;
+    let mut case = seeded_callback(status, None).await;
+    let storage = case.wallet.storage();
+    let txid = case.txid.as_str();
+    let before = arc_rows(storage, txid).await;
+    set_read_lock(&mut case.holder, true).await;
+    deadline_answer(
+        router_with_deadline(case.wallet.clone(), deadline),
+        &case.payload,
+        deadline,
+    )
+    .await;
+    set_read_lock(&mut case.holder, false).await;
+    let mut expected = before;
+    if deadline > Duration::from_secs(5) {
+        expected["request"][1] = json!("unmined");
+    }
+    // arc_rows reads on the writer, draining the cancelled statement. Only
+    // the request changes after a 6 s deadline: sending tx, no proof or memory.
+    let partial = arc_rows(storage, txid).await;
+    eprintln!("{status}: after {deadline:?} cancellation: {partial}");
+    assert_eq!(partial, expected, "cancelled {status}");
+    deliver_callback(case.wallet.clone(), &case.payload).await;
+    let once = arc_rows(storage, txid).await;
+    assert_eq!(once, clean, "{status}: one retry equals a clean delivery");
+    deliver_callback(case.wallet.clone(), &case.payload).await;
+    assert_eq!(arc_rows(storage, txid).await, once, "repeated {status}");
+    assert_retried_rows(&once, status, &case.bump, &case.raw, 850_000);
+}
+
+#[tokio::test]
+async fn arc_callback_deadline_cancel_before_write_retries_are_idempotent() {
     for status in ["SEEN_ON_NETWORK", "STUMP_PROCESSING", "MINED"] {
-        retry_is_idempotent(status).await;
+        retry_is_idempotent(status, Duration::from_secs(1)).await;
+    }
+}
+
+/// Six seconds sits between the two 5 s busy ceilings, like the served 8 s
+/// deadline, while saving two seconds per path in this three-path test.
+#[tokio::test]
+async fn arc_callback_deadline_write_landed_retries_converge() {
+    for status in ["SEEN_ON_NETWORK", "STUMP_PROCESSING", "MINED"] {
+        retry_is_idempotent(status, Duration::from_secs(6)).await;
     }
 }
 

@@ -443,16 +443,18 @@ async fn ingest_arc_before_deadline(
     payload: &serde_json::Value,
     deadline: Duration,
 ) -> Response {
-    // timeout drops the ingest future. Toolbox 0.13.0's Seen/InBlock/Mined
-    // paths enter mark_transaction_seen_on_network_by: before the status
-    // writes, broadcast memory takes a transaction and reads its ladder.
-    // Cancelling between those reads and writes has written nothing; dropping
-    // an open transaction rolls it back. A queued SQLite write may finish
-    // after cancellation: retry is safe because the status marks are conditional,
-    // the broadcast ladder upserts, and ingest_merkle_proof commits its proof
-    // and completion links together, reusing an existing matching anchor.
-    // arc_callback_deadline_retries_are_idempotent checks the rows after two
-    // deliveries, including a validated MINED proof. No task is spawned here.
+    // The deadline covers the store and the header service's inline MINED root
+    // check; it cannot identify which waited. timeout drops the ingest future.
+    // Toolbox 0.13.0's Seen/InBlock/Mined paths have two separate writes:
+    // broadcast memory's BEGIN IMMEDIATE (its busy is swallowed by
+    // record_broadcast_status_quiet), then the request UPDATE. No transaction
+    // wraps both. sqlx rolls back an unacknowledged BEGIN, but a running UPDATE
+    // can land after the 503: request unmined, transaction sending, memory empty.
+    // A retry converges because the status updates are conditional, the memory
+    // ladder upserts, and ingest_merkle_proof commits proof and completion links
+    // together, reusing a matching anchor. The callback tests cover cancellation
+    // before any write and after the UPDATE lands, checking one retry against a
+    // clean delivery and another for unchanged rows on all three paths.
     match tokio::time::timeout(
         deadline,
         crate::arc_ingest::ingest_arc_payload(storage, payload),
@@ -476,7 +478,7 @@ async fn ingest_arc_before_deadline(
         }
         Err(_) => error::AppError::new(
             error::Kind::StoreBusy,
-            format!("arc-callback deadline of {deadline:?} elapsed while the store was still busy"),
+            format!("the arc-callback deadline of {deadline:?} elapsed before the toolbox answered (the store or the header service)"),
         )
         .into_response(),
     }
