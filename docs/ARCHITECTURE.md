@@ -741,18 +741,18 @@ above; this is the map of what is about to move.
   `BroadcastVerification`, `src/broadcast_verify.rs:142`) and the measured
   report lines (`src/commands/balance.rs`) become one module the passes of
   section 3 are policies over.
-- **#80, typed configuration.** Done: the environment reads at their use
+- **#80, typed configuration.** Done after the pin: the environment reads at their use
   sites (`GateOptions::from_env` per spend, `TickOptions::from_env`, the
   knobs of `src/commands/daemon_tenant.rs`, `src/services_env.rs`) became
   one `Config` (`src/config.rs`) loaded at start; the server builds the
   gate's settings from it once (`GateOptions::from_config`), and A7 holds
   every read in `src/config.rs` with an empty allowlist.
-- **#81, typed errors.** Done: `AppError::classify` and its prefix table
+- **#81, typed errors.** Done after the pin: `AppError::classify` and its prefix table
   are gone; `Kind` (`src/server/error.rs`) holds a status and a code per
   refusal, every typed error reaches it by its variant, and arch rule A8
   holds the served layer to it with an empty allowlist. What remains is
   upstream: the toolbox's refusals arrive as a `WalletError`'s text
-  (`src/toolbox_words.rs`) until bsv-rs carries a refusal's class and the
+  (the later `src/toolbox_words.rs`) until bsv-rs carries a refusal's class and the
   toolbox maps its variants to it.
 - **#86, the lock covers allocation only.** The FIFO lock's span
   (`spending_lock`, `src/server/handlers.rs:585-604`) shrinks to the offer and the
