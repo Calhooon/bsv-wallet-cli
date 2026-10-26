@@ -1586,11 +1586,6 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
             .await
             .unwrap();
     }
-    sqlx::query("UPDATE outputs SET spendable = 0 WHERE txid = ?")
-        .bind(&parent_id)
-        .execute(storage.writer())
-        .await
-        .unwrap();
     let mut creator = bsv_sdk::transaction::Transaction::new();
     creator
         .add_input(bsv_sdk::transaction::TransactionInput::new(
@@ -1603,6 +1598,16 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         .unwrap();
     let received = creator.id();
     coin(&storage, (user, basket), &received, false, None, 8_000, 5).await;
+    // Match 0.14's received output role so this exercises its allocator rule.
+    sqlx::query(
+        "UPDATE outputs SET spendable = (txid != ?), purpose = 'receive' WHERE txid IN (?, ?)",
+    )
+    .bind(&parent_id)
+    .bind(&parent_id)
+    .bind(&received)
+    .execute(storage.writer())
+    .await
+    .unwrap();
     sqlx::query("UPDATE transactions SET raw_tx = ? WHERE txid = ?")
         .bind(creator.to_binary())
         .bind(&received)
