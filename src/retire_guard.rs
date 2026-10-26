@@ -59,15 +59,11 @@ pub async fn broadcaster_took(pool: &SqlitePool, txid: &str) -> Result<bool> {
     if req.is_some_and(|(s, proof)| proof.is_some() || TAKEN_REQ_STATUSES.contains(&s.as_str())) {
         return Ok(true);
     }
-    if table_exists(pool, "proven_txs").await? {
-        let proven: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM proven_txs WHERE txid = ? LIMIT 1")
-                .bind(txid)
-                .fetch_optional(pool)
-                .await?;
-        if proven.is_some() {
-            return Ok(true);
-        }
+    // The store's reader matches `lower(txid)`; callers pass the toolbox's lowercase hex.
+    if table_exists(pool, "proven_txs").await?
+        && crate::store::stored_proof(pool, txid).await?.is_some()
+    {
+        return Ok(true);
     }
     let completed: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM transactions WHERE txid = ? AND status = 'completed' LIMIT 1",
@@ -166,7 +162,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE proven_txs (txid TEXT)")
+        sqlx::query("CREATE TABLE proven_txs (txid TEXT, merkle_root TEXT, height INTEGER)")
             .execute(&pool)
             .await
             .unwrap();
@@ -251,7 +247,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO proven_txs VALUES (?)")
+        sqlx::query("INSERT INTO proven_txs VALUES (?, 'root', 1)")
             .bind(if proof_row { "subject" } else { "unrelated" })
             .execute(&pool)
             .await
