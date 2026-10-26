@@ -369,8 +369,16 @@ the old header and the event rechecks against the new branch.
 A tip reads kept reorgs and invalidations alike: if replay already cleared
 its mark on a new header carrying the same root, delivery stores only plain
 `mined` (not suspect, no re-ask) and clears the stored re-ask and kept events,
-leaving no row for the next tip to select. A stored verdict's recheck leaves
-the row untouched by this fallback.
+leaving no row for the next tip to select. When those events deactivated
+the checked header, the stored hash is the header the recheck stood on:
+the snapshot's header at the proof's height, with the same merkle root.
+An invalidation of that new block therefore selects the row and holds
+its coin. With no kept events, replay checks the proof against that live
+header; a kept event still deactivating the stored hash selects it in
+`OldBranch`, preserving #233's replay invariant. The crate could carry
+this replacement itself by updating the checked header on a matching
+recheck; that is a follow-up for the stack, not part of this change.
+A stored verdict's recheck leaves the row untouched by this fallback.
 `a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row`
 checks that the stored word agrees with the spend door;
 `a_settled_row_is_not_selected_by_the_next_tip` checks the next tip leaves it
