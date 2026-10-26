@@ -2370,8 +2370,12 @@ pub fn event_kind(event: &ChainEvent) -> &'static str {
 /// `Tip` has its hash and header; `Fork` its competing headers; `Reorg` its
 /// deactivated headers and new tip; `TipAge` its tip header. Every header has
 /// a hash, merkle root and previous hash. `Invalidated` has its block hash,
-/// `Frozen` its outpoint txid, and `Split` its tips' hashes. `SplitResolved` has
-/// none. Split keys are identifiers; chain work and rung names also stay as sent.
+/// `Frozen` its outpoint txid, and `Split` its tips' hashes. The bsv-tracker
+/// 0.8.0 contract defines each split key as `split:<64 hex digits>`: the common
+/// ancestor's display-order hash accepts either case. Both `Split` and
+/// `SplitResolved` lowercase that hash; the `split:` prefix stays as defined.
+/// Other key shapes are refused by the decoder before delivery. Chain work and
+/// rung names stay as sent.
 fn lowercase_chain_event(mut event: ChainEvent) -> ChainEvent {
     let lowercase_header = |header: &mut bsv_tracker::EventHeader| {
         header.hash.make_ascii_lowercase();

@@ -306,6 +306,15 @@ and when kept events decode for replay, as checked by
 `an_uppercase_reorg_matches_the_lowercase_reorg`,
 `an_uppercase_frozen_outpoint_is_recorded_lowercase_and_held` and
 `kept_events_normalize_hash_fields_in_every_arm`.
+Split keys follow bsv-tracker 0.8.0's `split:<64 hex digits>` contract: the
+common ancestor's display-order hash accepts either case. Both `split` and
+`splitResolved` lowercase that hash at delivery, preserving the `split:`
+prefix. `read_open_splits` also normalizes records stored before that rule;
+case variants collapse to one entry at the lower fork height, preserving
+every affected coin's hold. Resolution in either case clears the open floor
+and releases that hold, as checked by the split-key tests in
+`tracker_host::tests`. Other key shapes are refused by the decoder before
+delivery.
 `an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it` checks that
 when the service still answers that hash, the new branch has no answer
 there: the word stays suspect with `recheck`, and the stored event
