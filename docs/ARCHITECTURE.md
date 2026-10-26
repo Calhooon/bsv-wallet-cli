@@ -312,9 +312,16 @@ common ancestor's display-order hash accepts either case. Both `split` and
 prefix. `read_open_splits` also normalizes records stored before that rule;
 case variants collapse to one entry at the lower fork height, preserving
 every affected coin's hold. Resolution in either case clears the open floor
-and releases that hold, as checked by the split-key tests in
-`tracker_host::tests`. Other key shapes are refused by the decoder before
-delivery.
+and releases that hold, as checked by
+`a_split_opened_uppercase_resolved_lowercase_clears_its_floor_and_offers_its_coin`,
+`a_split_opened_lowercase_resolved_uppercase_clears_its_floor_and_offers_its_coin`,
+`a_stored_uppercase_split_resolved_lowercase_clears_its_floor_and_offers_its_coin`,
+`a_split_resolved_in_the_same_case_clears_its_floor_and_offers_its_coin` and
+`stored_split_case_variants_keep_the_lower_floor_until_resolved` in
+`tracker_host::tests`. A malformed stored key without the `split:` prefix
+keeps its spelling and holds the floor without a panic, as checked by
+`malformed_stored_split_keys_hold_the_open_floor_without_panicking` in the
+same module. Other key shapes are refused by the decoder before delivery.
 `an_invalidated_block_holds_its_coin_until_a_tip_rechecks_it` checks that
 when the service still answers that hash, the new branch has no answer
 there: the word stays suspect with `recheck`, and the stored event
