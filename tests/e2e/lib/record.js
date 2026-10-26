@@ -27,6 +27,8 @@
 
 const childProcess = require('child_process');
 const fs = require('fs');
+const { createHash } = require('crypto');
+let commandSeed = 0;
 
 const FILE = process.env.DIFF_RECORD || '';
 const enabled = FILE !== '';
@@ -164,10 +166,19 @@ function seatOfCommand(cmd, cwd) {
  * Commands that do not run the wallet binary pass straight through.
  */
 function install(bin) {
-  if (!enabled) return;
+  const hermetic = process.env.E2E_HERMETIC === '1';
+  if (!enabled && !hermetic) return;
   const real = childProcess.execSync;
   childProcess.execSync = function recordedExecSync(cmd, opts = {}) {
     if (typeof cmd !== 'string' || !cmd.includes(bin)) return real.call(this, cmd, opts);
+    // Each CLI invocation opens a fresh RNG stream over the same store.
+    // Repeat the sequence across runs, never reset it to the server's seed.
+    if (hermetic && process.env.E2E_RNG_SEED) {
+      const seed = createHash('sha256').update(process.env.E2E_RNG_SEED)
+        .update(`cli:${++commandSeed}`).digest('hex');
+      opts = { ...opts, env: { ...process.env, ...opts.env, E2E_RNG_SEED: seed } };
+    }
+    if (!enabled) return real.call(this, cmd, opts);
     const event = { kind: 'cli', seq: seq++, phase, seat: seatOfCommand(cmd, opts.cwd), argv: argvOf(redact(cmd), bin) };
     const stdio = normStdio(opts.stdio);
     const r = childProcess.spawnSync(cmd, {

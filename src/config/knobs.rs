@@ -176,6 +176,9 @@ impl Config {
         let w = &self.wallet;
         vec![
             ("--db", w.db.clone().into()),
+            ("--testnet", Value::Switch(w.chain == Chain::Test)),
+            ("--port", w.port.to_string().into()),
+            ("ROOT_KEY", self.secret("ROOT_KEY", w.root_key.as_ref())),
             (
                 "E2E_RNG_SEED",
                 if w.rng_seed.is_some() {
@@ -184,9 +187,6 @@ impl Config {
                     NONE
                 },
             ),
-            ("--testnet", Value::Switch(w.chain == Chain::Test)),
-            ("--port", w.port.to_string().into()),
-            ("ROOT_KEY", self.secret("ROOT_KEY", w.root_key.as_ref())),
             ("RUST_LOG", w.log_filter().0.into()),
         ]
     }

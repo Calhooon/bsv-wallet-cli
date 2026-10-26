@@ -290,8 +290,10 @@ function parseBeef(buf) {
     if (version === BEEF_V2) {
       const format = r.u8();
       if (format === 2) { txs.push({ txidOnly: display(r.bytes(32)) }); continue; }
+      if (format !== 0 && format !== 1) throw new Error(`invalid BEEF V2 transaction format ${format}`);
+      const bumpIndex = format === 1 ? r.varint() : null;
       const tx = readTx(r);
-      tx.bumpIndex = format === 1 ? r.varint() : null;
+      tx.bumpIndex = bumpIndex;
       txs.push(tx);
     } else {
       const tx = readTx(r);
