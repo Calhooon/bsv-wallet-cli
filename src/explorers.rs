@@ -6,16 +6,20 @@
 //! "absent") needs a second provider's clean answer; "could not look" is
 //! never "nothing there". The toolbox's services hold that rule for the
 //! questions they answer (`get_raw_tx`, `get_merkle_path`,
-//! `get_utxo_status`, `get_status_for_txids`, and `get_utxo_leads` for
-//! `sync`'s discovery, toolbox 0.12.0). This module
-//! holds it for the break-glass reads the CLI still makes itself:
+//! `get_utxo_status`, `get_status_for_txids`, `is_utxo_with_spender` for
+//! the spend probe, and `get_utxo_leads` for `sync`'s discovery, toolbox
+//! 0.13.1). This module holds it for the break-glass reads the CLI still
+//! makes itself:
 //!
-//! - who spent an outpoint (the spend probe's step 1): WhatsOnChain's
-//!   `/tx/{txid}/{vout}/spent` and BananaBlocks' `/txo/{txid}/{vout}`,
-//!   a rotating start, a fault moving to the next rung at once;
 //! - a payment's bytes for `receive`: WhatsOnChain's `/tx/{txid}/beef`, then
 //!   BananaBlocks' `/tx/{txid}/hex` (bytes that hash to the txid);
 //! - BananaBlocks as a chain index of the broadcast verifier.
+//!
+//! The spend probe's "who spent it" left this module in 0.18.2: the
+//! toolbox's `is_utxo_with_spender` (0.13.1, bsv-wallet-toolbox-rs #44)
+//! names the spender its own ladder bound beside the verdict, so the probe
+//! (`commands::cleanup_abandoned::probe_input_spend`) asks no spender route
+//! of its own and costs one ladder pass.
 //!
 //! No rung sleeps on a 429: it is a fault returned at once, and the rung is
 //! skipped without a request until its Retry-After passes (the toolbox's
@@ -28,17 +32,13 @@
 //! Every call is logged at info with its provider, status and milliseconds
 //! (marker `explorer_call`), so an audit can see which rung answered.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::services::providers::whatsonchain::WOC_API_KEY_HEADER;
-use bsv_wallet_toolbox::services::providers::{
-    BananaBlocks, OutpointSpend, RateGate, BANANABLOCKS_NAME,
-};
-use bsv_wallet_toolbox::services::traits::convert_script_hash;
+use bsv_wallet_toolbox::services::providers::{BananaBlocks, RateGate, BANANABLOCKS_NAME};
 use bsv_wallet_toolbox::services::GetRawTxResult;
-use bsv_wallet_toolbox::{Chain, GetUtxoStatusOutputFormat, ServicesOptions};
+use bsv_wallet_toolbox::{Chain, ServicesOptions};
 use bsv_wallet_toolbox::{WhatsOnChain, WhatsOnChainConfig};
 use reqwest::StatusCode;
 
@@ -61,23 +61,6 @@ pub fn woc_base(chain: Chain) -> &'static str {
     match chain {
         Chain::Main => "https://api.whatsonchain.com/v1/bsv/main",
         Chain::Test => "https://api.whatsonchain.com/v1/bsv/test",
-    }
-}
-
-/// One rung of the spender question.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rung {
-    WhatsOnChain,
-    BananaBlocks,
-}
-
-impl Rung {
-    /// The provider's name, as logged and reported.
-    pub fn name(self) -> &'static str {
-        match self {
-            Rung::WhatsOnChain => PROVIDER_WHATSONCHAIN,
-            Rung::BananaBlocks => PROVIDER_BANANABLOCKS,
-        }
     }
 }
 
@@ -119,8 +102,6 @@ pub struct Explorers {
     client: reqwest::Client,
     woc: Option<WocRung>,
     bananablocks: Option<Arc<BananaBlocks>>,
-    /// Which spender rung is asked first, advanced once per question.
-    rotation: AtomicUsize,
 }
 
 impl Explorers {
@@ -207,108 +188,12 @@ impl Explorers {
                 gate,
             }),
             bananablocks,
-            rotation: AtomicUsize::new(0),
         }
     }
 
     /// The BananaBlocks provider, when the rung is on.
     pub fn bananablocks(&self) -> Option<&Arc<BananaBlocks>> {
         self.bananablocks.as_ref()
-    }
-
-    /// The spender rungs for one question, the start one on from the last
-    /// question's (so one explorer is not the fixed first word, and one
-    /// rate-limited explorer does not stall every check).
-    pub fn spender_rungs(&self) -> Vec<Rung> {
-        let mut rungs = Vec::new();
-        if self.woc.is_some() {
-            rungs.push(Rung::WhatsOnChain);
-        }
-        if self.bananablocks.is_some() {
-            rungs.push(Rung::BananaBlocks);
-        }
-        if !rungs.is_empty() {
-            let start = self.rotation.fetch_add(1, Ordering::Relaxed) % rungs.len();
-            rungs.rotate_left(start);
-        }
-        rungs
-    }
-
-    /// Who spent `txid:vout`, by one rung. `Ok(Some(name))`: the rung
-    /// names a spender (a word; its bytes bind it). `Ok(None)`: the rung
-    /// knows no spend (a word, not an answer: it is also what an index
-    /// behind, or a parent that does not exist, says). `Err`: could not
-    /// look (a 429, a closed rung, a timeout, a 5xx, a malformed body).
-    /// With `script`, BananaBlocks' answer is about the asked output only
-    /// when its `script_pubkey` hashes to the script's hash; another
-    /// script, the empty one included, is a fault.
-    pub async fn spender(
-        &self,
-        rung: Rung,
-        txid: &str,
-        vout: u32,
-        script: Option<&[u8]>,
-    ) -> Result<Option<String>, String> {
-        match rung {
-            Rung::WhatsOnChain => {
-                // Break-glass (Rule 28, C7): who spent an outpoint. No
-                // header or proof says an output is spent by someone else,
-                // and our outputs table knows only our own spends; the name
-                // is a claim the spender's own bytes and proof must bear out.
-                let (status, body) = self
-                    .woc_get(&format!("/tx/{txid}/{vout}/spent"), "spent")
-                    .await?;
-                match status {
-                    StatusCode::OK => {
-                        let named = serde_json::from_str::<serde_json::Value>(&body)
-                            .ok()
-                            .and_then(|v| {
-                                v.get("txid").and_then(|t| t.as_str()).map(str::to_string)
-                            })
-                            .filter(|t| is_txid(t));
-                        match named {
-                            Some(spender) => Ok(Some(spender.to_ascii_lowercase())),
-                            None => Err(format!(
-                                "{PROVIDER_WHATSONCHAIN}: a 200 that names no spender"
-                            )),
-                        }
-                    }
-                    StatusCode::NOT_FOUND => Ok(None),
-                    status => Err(format!("{PROVIDER_WHATSONCHAIN}: HTTP {status}")),
-                }
-            }
-            Rung::BananaBlocks => {
-                let Some(bb) = &self.bananablocks else {
-                    return Err(format!("{PROVIDER_BANANABLOCKS}: off"));
-                };
-                let started = Instant::now();
-                let answer = bb.get_txo(txid, vout).await;
-                let status = match &answer {
-                    Ok(_) => "200".to_string(),
-                    Err(e) => fault_status(e),
-                };
-                log_call(PROVIDER_BANANABLOCKS, "spend", &status, started);
-                let txo = answer.map_err(|e| format!("{PROVIDER_BANANABLOCKS}: {e}"))?;
-                if let Some(script) = script {
-                    let asked = convert_script_hash(
-                        &hex::encode(script),
-                        Some(GetUtxoStatusOutputFormat::Script),
-                    )
-                    .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: {e}"))?;
-                    if txo.script_hash != asked {
-                        return Err(format!(
-                            "{PROVIDER_BANANABLOCKS}: txo {txid}.{vout}: its script hashes to {}, \
-                             not the asked {asked}",
-                            txo.script_hash
-                        ));
-                    }
-                }
-                match txo.spend {
-                    OutpointSpend::SpentBy(spender) => Ok(Some(spender.to_ascii_lowercase())),
-                    OutpointSpend::Unspent => Ok(None),
-                }
-            }
-        }
     }
 
     /// WhatsOnChain's `/tx/{txid}/beef`: a payment's BEEF, hex. Anything
@@ -371,9 +256,9 @@ impl Explorers {
             );
             return Err(format!("{PROVIDER_WHATSONCHAIN}: {e}"));
         }
-        // Break-glass (Rule 28, C2 and C7): the one WhatsOnChain request
-        // line of the CLI's own rungs (the courier's BEEF, the spender's
-        // name); each route says why at its caller.
+        // Break-glass (Rule 28, C2): the one WhatsOnChain request line of
+        // the CLI's own rungs (the courier's BEEF); the route says why at
+        // its caller.
         let mut request = self.client.get(format!("{}{}", woc.base, path));
         if let Some(key) = &woc.api_key {
             request = request
@@ -423,37 +308,12 @@ pub fn log_call(provider: &str, call: &str, status: &str, started: Instant) {
     );
 }
 
-fn is_txid(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::Fixture;
 
     const SRC: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    /// The start rotates over the rungs that are on.
-    #[test]
-    fn the_spender_start_rotates_over_the_rungs_that_are_on() {
-        let both = Explorers::at(Some("http://127.0.0.1:1"), Some("http://127.0.0.1:1"), None);
-        assert_eq!(
-            both.spender_rungs(),
-            vec![Rung::WhatsOnChain, Rung::BananaBlocks]
-        );
-        assert_eq!(
-            both.spender_rungs(),
-            vec![Rung::BananaBlocks, Rung::WhatsOnChain]
-        );
-        assert_eq!(
-            both.spender_rungs(),
-            vec![Rung::WhatsOnChain, Rung::BananaBlocks]
-        );
-        let woc_only = Explorers::at(Some("http://127.0.0.1:1"), None, None);
-        assert_eq!(woc_only.spender_rungs(), vec![Rung::WhatsOnChain]);
-        assert_eq!(woc_only.spender_rungs(), vec![Rung::WhatsOnChain]);
-    }
 
     /// `BANANABLOCKS_BASE` unset is the chain's default, empty is off.
     #[test]
@@ -470,99 +330,32 @@ mod tests {
         );
         let off = Explorers::configured(Chain::Main, None, Some(String::new()));
         assert!(off.bananablocks().is_none());
-        assert_eq!(off.spender_rungs(), vec![Rung::WhatsOnChain]);
     }
 
-    /// WhatsOnChain's spent route, read: a name, "no spend known", and the
-    /// faults (a 200 naming nothing, a 5xx) kept apart from both.
-    #[tokio::test]
-    async fn whatsonchains_spent_route_is_read_three_ways() {
-        let spender = "bb".repeat(32);
-        let named = format!(r#"{{"txid":"{}","vin":0}}"#, spender.to_uppercase());
-        let fixture = Fixture::start(
-            &[
-                (&format!("/tx/{SRC}/0/spent"), 200, &named),
-                (&format!("/tx/{SRC}/1/spent"), 404, ""),
-                (&format!("/tx/{SRC}/2/spent"), 200, r#"{"vin":0}"#),
-            ],
-            503,
-        )
-        .await;
-        let explorers = Explorers::at(Some(&fixture.base), None, None);
-        let ask = |vout| explorers.spender(Rung::WhatsOnChain, SRC, vout, None);
-        assert_eq!(ask(0).await, Ok(Some(spender)));
-        assert_eq!(ask(1).await, Ok(None));
-        assert!(ask(2).await.unwrap_err().contains("names no spender"));
-        assert!(ask(3).await.unwrap_err().contains("503"));
-    }
-
-    /// BananaBlocks' `/txo/{txid}/{vout}` through the toolbox's provider:
-    /// the recorded shape of the 2026-10-22 probe. With the asked script,
-    /// an output under another script is a fault, never an answer.
-    #[tokio::test]
-    async fn bananablocks_txo_route_is_read_through_the_toolbox() {
-        let spender = "cc".repeat(32);
-        let script = crate::test_support::p2pkh([0xdb; 20]);
-        let held = hex::encode(&script);
-        let other = hex::encode(crate::test_support::p2pkh([0xdc; 20]));
-        let fixture = Fixture::start(
-            &[
-                (
-                    &format!("/txo/{SRC}/0"),
-                    200,
-                    &format!(
-                        r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{spender}","spend_scope":"mempool"}}"#
-                    ),
-                ),
-                (
-                    &format!("/txo/{SRC}/1"),
-                    200,
-                    &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
-                ),
-                (&format!("/txo/{SRC}/2"), 404, ""),
-                (
-                    &format!("/txo/{SRC}/3"),
-                    200,
-                    &format!(
-                        r#"{{"script_pubkey":"{other}","spent":true,"spent_txid":"{spender}"}}"#
-                    ),
-                ),
-                (
-                    &format!("/txo/{SRC}/4"),
-                    200,
-                    r#"{"script_pubkey":"","spent":false}"#,
-                ),
-            ],
-            500,
-        )
-        .await;
-        let explorers = Explorers::at(None, Some(&fixture.base), None);
-        let ask = |vout| explorers.spender(Rung::BananaBlocks, SRC, vout, Some(&script));
-        assert_eq!(ask(0).await, Ok(Some(spender)));
-        assert_eq!(ask(1).await, Ok(None));
-        assert!(ask(2).await.is_err(), "a 404 is a fault, never unspent");
-        assert!(
-            ask(3).await.unwrap_err().contains("not the asked"),
-            "another script is a fault"
-        );
-        assert!(
-            ask(4).await.unwrap_err().contains("not the asked"),
-            "the empty script is a fault"
-        );
+    /// 0.18.1 (toolbox #44): the spend probe's spender rungs left this
+    /// module; what remains asks for bytes (`/beef`, `/hex`) and for a
+    /// chain index's word, never for a spender.
+    #[test]
+    fn the_module_holds_no_spender_route() {
+        let source = include_str!("explorers.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(!code.contains("/spent\""), "a spent request");
+        assert!(!code.contains("get_txo("), "a BananaBlocks txo read");
+        assert!(!code.contains("get_spend("), "a BananaBlocks spend read");
     }
 
     /// A 429 is a fault at once, and the rung is skipped without a request
     /// until its Retry-After passes.
     #[tokio::test]
     async fn a_whatsonchain_429_closes_the_rung_for_its_retry_after() {
-        let route = format!("/tx/{SRC}/0/spent");
+        let route = format!("/tx/{SRC}/beef");
         let fixture =
             Fixture::start_with_headers(&[(&route, 429, "", &[("retry-after", "30")])], 500).await;
         let explorers = Explorers::at(Some(&fixture.base), None, None);
         let started = Instant::now();
-        let first = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        let first = explorers.woc_beef(SRC).await;
         assert!(first.unwrap_err().contains("Rate limited"));
-        let second = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        let second = explorers.woc_beef(SRC).await;
         assert!(second.unwrap_err().contains("Rate limited"));
         assert_eq!(fixture.count(&route), 1, "the closed rung was asked again");
         assert!(
@@ -602,7 +395,7 @@ mod tests {
         let fixture = Fixture::start(&[], 404).await;
         let rung = Explorers::with_woc_gate(Some((&fixture.base, Arc::clone(&gate))), None, None);
         let _ = toolbox(key).rate_gate().close(&retry_after);
-        let closed = rung.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        let closed = rung.woc_beef(SRC).await;
         assert!(closed.unwrap_err().contains("Rate limited"));
         assert_eq!(fixture.total(), 0, "the closed rung made a request");
 
@@ -614,12 +407,12 @@ mod tests {
                 .unwrap()
                 .gate,
         );
-        let route = format!("/tx/{SRC}/0/spent");
+        let route = format!("/tx/{SRC}/beef");
         let limited =
             Fixture::start_with_headers(&[(&route, 429, "", &[("retry-after", "30")])], 500).await;
         let rung = Explorers::with_woc_gate(Some((&limited.base, gate)), None, None);
         assert!(toolbox(key).rate_gate().admit().is_ok());
-        let met = rung.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        let met = rung.woc_beef(SRC).await;
         assert!(met.unwrap_err().contains("Rate limited"));
         assert!(
             toolbox(key).rate_gate().admit().is_err(),
@@ -640,7 +433,7 @@ mod tests {
     async fn the_woc_api_key_is_sent() {
         let fixture = Fixture::start(&[], 404).await;
         let explorers = Explorers::at(Some(&fixture.base), None, Some("k-123".to_string()));
-        let _ = explorers.spender(Rung::WhatsOnChain, SRC, 0, None).await;
+        let _ = explorers.woc_beef(SRC).await;
         let headers = fixture.headers();
         let sent = headers.last().expect("a request");
         assert_eq!(
