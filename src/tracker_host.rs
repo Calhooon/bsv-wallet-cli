@@ -854,19 +854,61 @@ async fn store_row(
     state: &State,
     now: Timestamp,
 ) -> Result<()> {
-    store_row_in(&mut *crate::store::writer(storage).await?, row, state, now).await
+    store_row_in(
+        &mut *crate::store::writer(storage).await?,
+        row,
+        state,
+        now,
+        None,
+    )
+    .await
 }
 
+/// The live hash that settled a proof checked on a deactivated header.
+/// The crate clears the mark on a root match but retains its checked header.
+/// Once the kept events clear, replay checks the proof on this live header,
+/// consistent with #233: a kept event still deactivating the stored hash
+/// continues to select that header in `OldBranch`.
+fn settled_header_hash(
+    state: &State,
+    snapshot: &HeaderSnapshot,
+    deactivated: &Deactivated,
+) -> Option<String> {
+    let Word::Mined(mined) = state.word() else {
+        return None;
+    };
+    if state.suspect() || state.reask().is_some() {
+        return None;
+    }
+    let checked = mined.checked();
+    if !deactivated
+        .get(&mined.height())?
+        .iter()
+        .any(|header| header.hash == checked.header().hash)
+    {
+        return None;
+    }
+    snapshot
+        .header_at(mined.height())
+        .ok()
+        .flatten()
+        .filter(|header| header.merkle_root == checked.root())
+        .map(|header| header.hash)
+}
+
+/// Store the state's checked hash unless chain delivery supplies the live
+/// hash its completed recheck stood on through [`settled_header_hash`].
 async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     executor: E,
     row: &TrackedRow,
     state: &State,
     now: Timestamp,
+    settled_hash: Option<String>,
 ) -> Result<()> {
     let (height, header_hash) = match state.word() {
         Word::Mined(mined) => (
             Some(mined.height() as i64),
-            Some(mined.checked().header().hash.clone()),
+            Some(settled_hash.unwrap_or_else(|| mined.checked().header().hash.clone())),
         ),
         _ => (None, None),
     };
@@ -2703,13 +2745,14 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             ) else {
                 continue;
             };
+            let header_hash = settled_header_hash(state, &snapshot, &gone);
             row.keep_chain(state, &event)?;
             if matches!(update.reask, Some(Reask::Reorg { .. })) {
                 // Asked now, not after the pause an earlier re-ask earned.
                 row.asks = 0;
                 row.next_ask_at = None;
             }
-            store_row_in(&mut *tx, row, state, now).await?;
+            store_row_in(&mut *tx, row, state, now, header_hash).await?;
             let fault = update.result.err().map(|e| e.to_string());
             if let Some(fault) = &fault {
                 tracing::warn!(txid = %update.txid, kind, cursor, %fault, "a chain event's recheck could not look");
@@ -2736,6 +2779,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             let Some(state) = tracker.get(&row.txid) else {
                 continue;
             };
+            let header_hash = settled_header_hash(state, &snapshot, &gone);
             let settled = matches!(event, ChainEvent::Tip { .. })
                 && !state.suspect()
                 && state.reask().is_none();
@@ -2747,7 +2791,7 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
                 row.asks = 0;
                 row.next_ask_at = None;
             }
-            store_row_in(&mut *tx, row, state, now).await?;
+            store_row_in(&mut *tx, row, state, now, header_hash).await?;
             moved.push(ChainMove {
                 txid: row.txid.clone(),
                 word: word_label(state.word()).to_string(),
@@ -4182,6 +4226,89 @@ pub(crate) mod tests {
             (true, Some(&Reask::Recheck))
         );
         assert_held_with_kept(&storage, &services, &txid, &own, &["invalidated", "reorg"]).await;
+    }
+
+    /// #258: settlement records the live header so its invalidation holds the coin.
+    async fn assert_settled_header_is_invalidated(
+        txid: &str,
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        clock: &FixedClock,
+        cursor: u64,
+    ) {
+        let settled = load_row(storage, txid).await.unwrap().unwrap();
+        let stored = word(storage, txid).await;
+        let new_hash = header_with_hash(900, txid, 1).hash;
+        let event = ChainEvent::Invalidated {
+            block_hash: new_hash.clone(),
+        };
+        let delivered = deliver_chain_event(storage, services, clock, &opts(), cursor, event)
+            .await
+            .unwrap();
+        let held = reading(storage, services, txid).await;
+        println!(
+            "settled header={:?}; chain={:?}; word={stored:?}; new-block invalidation: moved={:?}; offered={}",
+            settled.header_hash, settled.chain, delivered.moved, held.offered()
+        );
+        assert_eq!(settled.header_hash.as_deref(), Some(new_hash.as_str()));
+        assert_eq!(stored, ("mined".into(), Some(900), None));
+        assert!(settled.chain.is_empty());
+        assert_eq!(delivered.moved.len(), 1);
+        let moved = &delivered.moved[0];
+        assert_eq!((moved.txid.as_str(), moved.word.as_str()), (txid, "mined"));
+        assert!(moved.suspect);
+        assert_eq!(moved.reask.as_deref(), Some("recheck"));
+        assert_held_with_kept(storage, services, txid, &new_hash, &["invalidated"]).await;
+    }
+
+    #[tokio::test]
+    async fn a_settled_reorg_tracks_the_new_header_and_holds_its_invalidated_coin() {
+        let txid = "b4".repeat(32);
+        let (storage, services, clock) = reorg_on_lagging_service_then_tip(&txid, &txid).await;
+        assert_settled_header_is_invalidated(&txid, &storage, &services, &clock, 3).await;
+    }
+
+    #[tokio::test]
+    async fn a_settled_invalidation_tracks_the_new_header_and_holds_its_invalidated_coin() {
+        let txid = "b5".repeat(32);
+        let (storage, services, clock) = invalidated_at_900(&txid).await;
+        tip_after_invalidation(&storage, &services, &clock, &txid).await;
+        assert_settled_header_is_invalidated(&txid, &storage, &services, &clock, 3).await;
+    }
+
+    #[tokio::test]
+    async fn an_immediate_settle_tracks_the_new_header_and_holds_its_invalidated_coin() {
+        let txid = "b7".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        services.set_header_for_height(header(900, &txid, 1));
+        let event = ChainEvent::Invalidated {
+            block_hash: header_with_hash(900, &txid, 0).hash,
+        };
+        deliver_chain_event(&storage, &services, &clock, &opts(), 1, event)
+            .await
+            .unwrap();
+        assert_settled_header_is_invalidated(&txid, &storage, &services, &clock, 2).await;
+    }
+
+    #[tokio::test]
+    async fn plain_mined_without_kept_events_stores_its_checked_header() {
+        let txid = "b6".repeat(32);
+        let (storage, services, _) = mined_at_900(&txid).await;
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        let checked_on = HeaderSnapshot::take(&services, row.proof_height()).await;
+        let (state, fault) = row.replay(&opts().params(), &checked_on);
+        assert_eq!(fault, None);
+        let Word::Mined(mined) = state.word() else {
+            panic!("expected a checked mined word");
+        };
+        assert!(!state.suspect() && state.reask().is_none() && row.chain.is_empty());
+        assert_eq!(
+            row.header_hash.as_deref(),
+            Some(mined.checked().header().hash.as_str())
+        );
+        services.set_header_for_height(header(900, &txid, 1));
+        let live = HeaderSnapshot::take(&services, [900]).await;
+        assert_eq!(settled_header_hash(&state, &live, &row.deactivated()), None);
     }
 
     /// Two independent stores with identical inputs, including hint timestamps.
