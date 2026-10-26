@@ -359,6 +359,11 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
 /// `Authorization: Bearer <callback-token>` or an `X-CallbackToken` header
 /// (both accepted — broadcaster implementations vary). Returns 404 when no
 /// callback token is configured (route effectively disabled).
+///
+/// Ingestion has an 8 s deadline, below Arcade's 10 s POST timeout:
+/// <https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291>
+/// Expiration is 503 `STORE_BUSY` with `Retry-After: 1`; an earlier typed
+/// busy keeps its existing message.
 async fn arc_callback(state: axum::extract::State<WalletState>, request: Request) -> Response {
     arc_callback_with_deadline(state, request, ARC_CALLBACK_DEADLINE).await
 }
