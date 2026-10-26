@@ -1,0 +1,28 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/discoverByIdentityKey",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "identityKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "limit": 10000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalCertificates": 0,
+      "certificates": []
+    }
+  }
+}

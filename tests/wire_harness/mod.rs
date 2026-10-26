@@ -4,6 +4,7 @@
 //! The record, the replay and the planted cases are `tests/wire.rs`'s.
 
 pub(crate) mod cases;
+pub(crate) mod cases_page_bounds;
 pub(crate) mod cases_routes;
 pub(crate) mod cases_spending;
 pub(crate) mod fixture;

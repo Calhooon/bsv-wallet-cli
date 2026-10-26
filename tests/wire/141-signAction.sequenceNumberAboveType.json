@@ -1,0 +1,30 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/signAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "reference": "bm8tc3VjaC1yZWZlcmVuY2U=",
+      "spends": {
+        "0": {
+          "sequenceNumber": 4294967296,
+          "unlockingScript": "00"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": "Failed to deserialize the JSON body into the target type: spends.0.sequenceNumber: invalid value: integer `4294967296`, expected u32 at line 1 column 82"
+  }
+}
