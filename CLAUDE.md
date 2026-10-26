@@ -52,7 +52,7 @@ cargo test --test integration
 
 # E2E tests (Node.js, requires funder wallet on :3320)
 # See "E2E Testing" section below for full setup.
-node tests/e2e/run.js                   # all 23 scenarios
+node tests/e2e/run.js                   # all 24 scenarios
 node tests/e2e/run.js --scenario 16     # single scenario
 node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
@@ -62,7 +62,7 @@ Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_D
 
 ## E2E Testing
 
-The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 23 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
+The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 24 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
 
 ### E2E Funder Wallet
 
@@ -89,7 +89,7 @@ cd e2e-funder && ../target/release/bsv-wallet init
 cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 ```
 
-### Scenario Coverage (23 scenarios)
+### Scenario Coverage (24 scenarios)
 
 | # | Name | Tests | Cost |
 |---|------|-------|------|
@@ -102,8 +102,11 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 21 | MCP server parity | The 34 MCP tools vs HTTP API: 29 wallet tools and the five host-route tools (which `mcp/src/tests.rs` drives against a stub) | 0 sats |
 | 22 | Rapid internalize + spend | 10 cycles A→B, B internalizes and returns; no phantom UTXOs (needs 50,000 in A at its start) | fees only |
 | 23 | Scoped allowPending | A third wallet C (:3372) with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
+| 24 | Busy store | External sqlite3 WAL writer: createAction and abortAction return 503 STORE_BUSY with Retry-After: 1; listOutputs and the two host reads stay 200; all five are 200 after release, balance unchanged (#204) | 0 sats |
 
 ### Dependencies
+
+Scenario 24 requires the `sqlite3` CLI on `PATH`; its absence fails the scenario. See [the hermetic busy-store coverage](docs/E2E-HERMETIC.md#busy-store-coverage) for the WAL read limit and timing.
 
 Scenario 20 (UI) requires Playwright:
 ```bash

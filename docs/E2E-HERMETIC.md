@@ -1,6 +1,6 @@
 # The hermetic e2e run (#74)
 
-`E2E_HERMETIC=1 node tests/e2e/run.js` runs the e2e scenarios with nothing
+`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 24 e2e scenarios with nothing
 leaving the machine and no sat moving. The mainnet run (`node tests/e2e/run.js`
 against the funder daemon on :3320) is unchanged and stays the release gate;
 the hermetic run is the gate of every PR (the `e2e-hermetic` job of
@@ -186,7 +186,7 @@ funding block is proven by the BUMP inside its BEEF instead.
   `CONNECT api.whatsonchain.com:443` and `CONNECT api.bitails.io:443`
   (`KNOWN_WALLED` in `lib/hermetic.js`), and tolerates walled attempts at them
   only; a walled attempt at any other target fails the run, so a new leak
-  elsewhere is seen. On 2026-10-23 the 23 scenarios under `serve` made none
+  elsewhere is seen. The 24-scenario run under `serve` makes none
   (walled 0): the CLI's own rungs, which the stub serves, answered ahead of them. When
   #98 lands, `services_env.rs` passes `WOC_BASE` and `BITAILS_BASE` through
   and `KNOWN_WALLED` empties.
@@ -227,6 +227,58 @@ CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
 `PUBLIC_CALLBACK_URL`. `E2E_STUB_PORT` moves the stub (default 3380);
 `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` name the binaries when they are not
 under the repository's `target/release`.
+
+## Busy-store coverage
+
+Scenario 24 (`tests/e2e/scenarios/24-busy-store.js`, #204) requires the
+`sqlite3` command-line tool on `PATH`. Missing it fails the scenario with the
+tool's name. CI's `ubuntu-latest` image supplies it. The holder is a child
+process with stdin kept open, so this works on Node 20 as well as CI's Node 24
+without `node:sqlite`.
+
+The served store is already open in WAL mode. An attempted
+`PRAGMA locking_mode=EXCLUSIVE; BEGIN IMMEDIATE` returns SQLite code 5 before
+it can hold that store. The scenario proves and logs this, then holds the WAL
+writer with `locking_mode=NORMAL; BEGIN IMMEDIATE`, creates its own
+`e2e_busy` table and inserts one row. It waits for the child's acknowledgement
+after the write before asking any door. SQLite's [WAL locking
+rules](https://www.sqlite.org/wal.html#use_of_wal_without_shared_memory)
+allow a switch to exclusive mode when only one connection uses the shared
+index; [normal WAL readers coexist with a
+writer](https://www.sqlite.org/wal.html#concurrency).
+
+| Door, in request order | While the writer holds | After release |
+|---|---|---|
+| `listOutputs` | 200 | 200 |
+| `createAction`, unsigned | 503 `STORE_BUSY`, `Retry-After: 1` | 200, new template aborted |
+| `abortAction`, kept reference | 503 `STORE_BUSY`, `Retry-After: 1` | 200, `aborted: true` |
+| `GET /chain-feed` | 200 | 200 |
+| `GET /tx/{txid}` | 200 | 200 |
+
+The read doors' 503 is reachable in the unit and wire tests' `unix-dotfile`
+VFS world, which opens the served store itself with different locking; this
+scenario does not claim to reach it from outside an already-open WAL store.
+The two busy answers each take about the toolbox's five-second busy ceiling.
+The scenario adds about 12 seconds to `e2e-hermetic`, including the exclusive
+attempt, rather than the roughly 25 seconds five blocked doors would need.
+
+Before the lock, A builds an unsigned template paying its own address, with
+an external input from the funder's existing change and its BEEF. It is never
+signed or broadcast. Using an external input leaves A's sole coin available
+for the spend-door check when scenario 24 runs alone. A temporary local
+`unknown` tracker row, only if absent, lets the transaction view read an
+existing txid; the row is removed afterward without asserting a proof or a
+mined word. Under the hermetic flag the stub mines that existing transaction;
+the live run does not ask a miner or run a tracker pass. Both templates are
+aborted and A's balance is unchanged: 0 sats.
+
+The log names the holder's PID, file, SQL, acquisition time, held duration and
+every answer's status, retry header and elapsed time. A `finally` rolls back,
+closes stdin, awaits the child and asserts exit 0. A `listOutputs` probe must
+then return 200 within five seconds or fail naming the lock that outlived its
+holder. The table and its row roll back with the transaction. The client
+retains each response status and exposes `retryAfter` on POST and GET errors;
+other scenarios and the response bodies are unchanged.
 
 ## The six tests
 

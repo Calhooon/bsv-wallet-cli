@@ -412,7 +412,7 @@ jobs:
           path: ${{ runner.temp }}/ratchet/
           if-no-files-found: warn
 
-  # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 23 scenarios of
+  # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 24 scenarios of
   # tests/e2e against a local stub of the header service, the three explorers
   # and the broadcaster (tests/e2e/stub), with the proxy environment walling
   # every other host: every request from the binary and the harness becomes a
@@ -468,7 +468,7 @@ jobs:
         working-directory: tests/e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Run the 23 scenarios against the stub
+      - name: Run the 24 scenarios against the stub
         env:
           E2E_WALLET_TMP: ${{ runner.temp }}/e2e
         run: |
