@@ -196,11 +196,18 @@ class LengthsInPlaceholders(unittest.TestCase):
         import base64
         return base64.b64encode(os.urandom(n)).decode()
 
-    def test_floor_same_lengths_are_equal(self):
-        a = recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": self.b64(16)})
-        b = recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": self.b64(16)})
+    def test_seeded_reference_and_derivation_are_literal(self):
+        ref, derivation = self.b64(12), self.b64(16)
+        a = recording({"reference": ref, "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": derivation})
+        b = recording({"reference": ref, "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": derivation})
         lines, count = compare(a, b)
         self.assertEqual(count, 0, lines)
+        lines, count = compare(a, recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": self.b64(16)}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn("derivationPrefix", lines[1])
+        lines, count = compare(a, recording({"reference": self.b64(12), "ciphertext": os.urandom(80).hex()}, {"derivationPrefix": derivation}))
+        self.assertEqual(count, 1, lines)
+        self.assertIn("reference", lines[1])
 
     def test_planted_reference_grown_by_four_characters_is_caught(self):
         ref = self.b64(12)
@@ -209,8 +216,8 @@ class LengthsInPlaceholders(unittest.TestCase):
         lines, count = compare(recording({"reference": ref}), recording({"reference": grown}))
         self.assertEqual(count, 1, lines)
         self.assertIn(".response.reference", lines[1])
-        self.assertIn("/12B>", lines[1])
-        self.assertIn("/15B>", lines[1])
+        self.assertIn(ref, lines[1])
+        self.assertIn(grown, lines[1])
 
     def test_planted_derivation_length_is_caught(self):
         lines, count = compare(recording(None, {"derivationPrefix": self.b64(16)}),

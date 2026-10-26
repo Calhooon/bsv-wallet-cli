@@ -478,6 +478,9 @@ jobs:
         working-directory: tests/e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Check the hermetic BEEF codecs
+        run: node --test tests/e2e/stub/tx.test.js
+
       - name: Run the 24 scenarios against the stub
         env:
           E2E_WALLET_TMP: ${{ runner.temp }}/e2e
@@ -502,10 +505,8 @@ jobs:
   # normalizations tools/differential lists (`--exclusions`). It is to fail
   # on differences only when the PR carries the label `refactor` (a feature
   # PR changes outputs by design, and its differences are its review's
-  # reading), but that failure is held (REFACTOR_FAILS below) until
-  # bsv-wallet-toolbox-rs #105, the coin tie, is pinned: until then two runs
-  # of one binary can differ from scenario 22 on, and a refactor PR's report
-  # carries the floor pair's numbers beside its own (docs/DIFFERENTIAL.md).
+  # reading). Toolbox #105's deterministic tie and #106's seeded storage are
+  # pinned, with a zero same-binary floor, so REFACTOR_FAILS is enabled.
   # A failed build or suite run, or an incomplete recording (exit 3), fails
   # it either way. The labels are read when the differential step runs, with
   # `gh pr view --json labels`, never from the event payload (a re-run reuses
@@ -610,9 +611,8 @@ jobs:
 
       - name: Run the differential
         env:
-          # Held: `false` until bsv-wallet-toolbox-rs #105 (the coin tie) is
-          # pinned; then `true`, and a refactor PR with differences fails.
-          REFACTOR_FAILS: 'false'
+          # Toolbox #105 and #106 are pinned; the seeded floor is zero.
+          REFACTOR_FAILS: 'true'
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         # The shell runs with -e (GitHub's `bash -e {0}`, and the set below

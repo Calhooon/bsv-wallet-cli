@@ -400,6 +400,7 @@ fn the_rust_log_row_is_the_filter_in_effect() {
 /// Every environment variable `bsv-wallet` reads, in the knob list's order.
 const VARIABLES: &[&str] = &[
     "ROOT_KEY",
+    "E2E_RNG_SEED",
     "RUST_LOG",
     "CHAINTRACKS_URL",
     "BREAK_GLASS_EXPLORER_HEADERS",

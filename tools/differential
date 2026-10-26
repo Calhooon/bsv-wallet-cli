@@ -84,10 +84,9 @@ EXCLUSIONS = [
         "rand atoms: txids, an input script's signature DER bodies and pushes of "
         "20 bytes or more (its public keys), P2PKH hash160s, merkle path hashes "
         "and Atomic BEEF subjects held by one run's recording and not the other's",
-        "the toolbox draws each action's change derivation (derivationPrefix, "
-        "derivationSuffix) from thread_rng (storage/sqlx/create_action.rs "
-        "random_derivation; no seed knob), so every change script, and every "
-        "txid, signature and merkle path over it, is new in each run. Every "
+        "Before toolbox #106, storage draws changed these atoms between runs. "
+        "The seeded beta.1 floor compares shared atoms literally; cross-pin "
+        "recordings retain the bijection for the old binary. Every "
         "transaction in the recording (raw, BEEF V1/V2, Atomic BEEF; a byte "
         "array or a hex string, alone or inside text) is parsed and an atom "
         "present in one run only is rewritten <rand:N/LB>, numbered in order of "
@@ -100,17 +99,19 @@ EXCLUSIONS = [
         "deterministic value byte for byte",
     ),
     (
-        "rand strings: *.reference, *.derivationPrefix, *.derivationSuffix "
-        "(also inside a JSON string) held by one run only",
-        "the same thread_rng draws as plain base64 (random_reference, "
-        "random_derivation); rewritten <rand:N/LB> under the same numbering, L "
-        "the decoded byte length, so a longer or shorter draw is a difference",
+        "unseeded auth nonces, manager salts, monitor jitter and certificate issuance nonce",
+        "toolbox #191 reserves these streams for the next owner-approved shape. "
+        "Auth/clientNonce/serverNonce/requestNonce/responseNonce, manager salt and "
+        "issuanceNonce strings remain rand atoms when recorded; monitor jitter is "
+        "covered only by elapsed-time log fields. The serve harness does not run "
+        "the remote client, managers or monitor. References and derivationPrefix/"
+        "derivationSuffix are literal with E2E_RNG_SEED (toolbox #106)",
     ),
     (
         "ciphertexts: *.ciphertext, *.encryptedLinkage, *.encryptedLinkageProof "
         "(hex, and the base64 the harness makes of a ciphertext), the values of "
         "*.keyringForVerifier, held by one run only",
-        "BRC-2 encryption is AES-GCM with an IV drawn per call (bsv-rs "
+        "BRC-2 (bsv-rs SymmetricKey, outside toolbox #191) encryption is AES-GCM with an IV drawn per call (bsv-rs "
         "SymmetricKey), so the same plaintext and key give new bytes each run; "
         "the certificate fields of scenario 6 are the harness's base64 of "
         "/encrypt's answer, and proveCertificate re-encrypts the keyring for the "
@@ -417,7 +418,7 @@ def _is_bytes(v):
 
 HEX_RE = re.compile(r"[0-9a-f]{120,}")
 HEX_FULL = re.compile(r"[0-9a-f]+")
-RAND_KEYS = ("reference", "derivationPrefix", "derivationSuffix")
+RAND_KEYS = ("clientNonce", "serverNonce", "requestNonce", "responseNonce", "salt", "issuanceNonce")
 # BRC-2 ciphertexts: AES-GCM with an IV drawn per call (bsv-rs SymmetricKey).
 CIPHER_KEYS = ("ciphertext", "encryptedLinkage", "encryptedLinkageProof")
 # A certificate keyring the wallet re-encrypts for a verifier: field -> base64 ciphertext.

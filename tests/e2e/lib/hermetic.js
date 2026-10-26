@@ -222,11 +222,12 @@ async function seedForgedRefused(stub, funder, satoshis) {
     refusal = e.message;
   }
   if (refusal === null) throw new Error(`the funder took a forged coinbase (root ${forged.root} is not the header's ${forged.headerRoot} at ${forged.height}): the seed's root check did not run`);
-  // The refusal must be the root check's own (the toolbox's
-  // verify_beef_merkle_proofs: "Invalid merkle root <root> at height <h>"),
-  // so a regression of that check cannot pass behind another refusal.
-  const rootRefusal = `Invalid merkle root ${forged.root} at height ${forged.height}`;
-  if (!refusal.includes(rootRefusal)) throw new Error(`the funder refused the forged coinbase, but not by its root check (wanted "${rootRefusal}"): ${refusal}`);
+  // The root check's own refusal at either side of the beta.1 pin. The
+  // streaming verifier reports its typed byte rule; the base names the root.
+  const rootRefusals = [`Invalid merkle root ${forged.root} at height ${forged.height}`,
+    'Invalid BEEF at byte 41: RootNotCarried'];
+  const rootRefusal = rootRefusals.join(' or ');
+  if (!rootRefusals.some(word => refusal.includes(word))) throw new Error(`the funder refused the forged coinbase, but not by its root check (wanted "${rootRefusal}"): ${refusal}`);
   const after = await funder.client.balance();
   if (after !== before) throw new Error(`the funder refused the forged coinbase but its balance moved ${before} -> ${after}`);
   return { ...forged, refusal };

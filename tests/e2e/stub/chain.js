@@ -148,6 +148,9 @@ class Chain {
     const height = this.height() + 1;
     const cb = T.makeCoinbase(height, script, satoshis);
     const block = this.mine({ txids: [], coinbase: cb });
+    // The verifier judges the spend of this coinbase at the next block.
+    // Keep the funding proof, and advance to its 100-block maturity.
+    for (let i = 0; i < 99; i++) this.mine({ txids: [] });
     return { txid: cb.txid, vout: 0, satoshis, height: block.height, hash: block.hash, beef: this.beefFor(cb.txid, { atomic: true }).toString('hex') };
   }
 
