@@ -2704,7 +2704,10 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             let Some(state) = tracker.get(&row.txid) else {
                 continue;
             };
-            if matches!(state.word(), Word::Mined(_)) && !matches!(event, ChainEvent::Tip { .. }) {
+            let settled = matches!(event, ChainEvent::Tip { .. })
+                && !state.suspect()
+                && state.reask().is_none();
+            if matches!(state.word(), Word::Mined(_)) && !settled {
                 continue;
             }
             row.keep_chain(state, &event)?;
@@ -3680,6 +3683,65 @@ pub(crate) mod tests {
         let after = load_row(&storage, &txid).await.unwrap().unwrap();
         assert_eq!(after, before);
         assert_eq!(word(&storage, &txid).await, before_word);
+    }
+
+    /// A verdict's recheck stays open even when the kept reorg finds the same root.
+    #[tokio::test]
+    async fn same_root_tips_leave_a_kept_reorg_with_a_stored_verdict_unchanged() {
+        let txid = "d8".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        let gone = header_with_hash(900, &txid, 0).hash;
+        deliver(&storage, &services, &clock, 1, reorg_at_900(&gone, &txid)).await;
+        let mut before = load_row(&storage, &txid).await.unwrap().unwrap();
+        before.verdict = Some(StoredVerdict::Rejected {
+            reason: "rejected".to_string(),
+        });
+        sqlx::query("UPDATE tracker_states SET verdict = ? WHERE txid = ?")
+            .bind(serde_json::to_string(&before.verdict).unwrap())
+            .bind(&txid)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        let before_word = word(&storage, &txid).await;
+        assert_eq!(before.chain_events().len(), 1);
+        assert!(matches!(before.chain_events()[0], ChainEvent::Reorg { .. }));
+        services.set_header_for_height(header(900, &txid, 1));
+        let snapshot = HeaderSnapshot::take(&services, [900]).await;
+        let (state, fault) = before.replay(&opts().params(), &snapshot);
+        assert_eq!(fault, None);
+        assert!(matches!(state.word(), Word::Mined(_)) && !state.suspect());
+        assert_eq!(state.reask(), Some(&Reask::Recheck));
+        let mut observed = Vec::new();
+        for (cursor, height) in [(2, 906), (3, 907)] {
+            let tip = header_with_hash(height, &"0b".repeat(32), 1);
+            services.set_tip_header(tip.clone());
+            let event = decode_envelope(
+                serde_json::json!({
+                    "v": 1, "kind": "tip", "height": height, "hash": tip.hash,
+                    "time": tip.time, "header": event_header(height, &tip.hash, &tip.merkle_root),
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+            let delivered =
+                deliver_chain_event(&storage, &services, &clock, &opts(), cursor, event)
+                    .await
+                    .unwrap();
+            let row = load_row(&storage, &txid).await.unwrap().unwrap();
+            let stored = word(&storage, &txid).await;
+            let chain: Vec<_> = row.chain_events().iter().map(event_kind).collect();
+            println!("same-root tip {cursor}: {delivered:?}; word={stored:?}; chain={chain:?}");
+            observed.push((delivered, row, stored));
+        }
+        for (delivered, row, stored) in observed {
+            assert!(
+                delivered.moved.is_empty(),
+                "a verdict's recheck is not settled"
+            );
+            assert_eq!(stored, before_word);
+            assert_eq!(row, before);
+        }
     }
 
     async fn mined_row_at_900(
