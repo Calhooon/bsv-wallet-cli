@@ -361,7 +361,7 @@ mod tests {
         assert!(off.bananablocks().is_none());
     }
 
-    /// 0.18.1 (toolbox #44): the spend probe's spender rungs left this
+    /// 0.18.2 (toolbox #44): the spend probe's spender rungs left this
     /// module; what remains asks for bytes (`/beef`, `/hex`) and for a
     /// chain index's word, never for a spender.
     #[test]
