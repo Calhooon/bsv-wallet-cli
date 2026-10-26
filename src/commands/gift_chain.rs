@@ -598,7 +598,9 @@ mod tests {
         let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
         let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
         let pay = crate::brc29::deposit_script(&root).unwrap();
-        let lock = 1_900_000_000u64;
+        // Below the mock tracker's median time past (1_700_000_000): final for
+        // the toolbox at 0.13.0 and at #163 alike, which judges finality.
+        let lock = 1_600_000_000u64;
         let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
         let deposit = tx_bytes(
             &[(&"11".repeat(32), 0)],
@@ -688,7 +690,9 @@ mod tests {
         let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
         let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
         let pay = crate::brc29::deposit_script(&root).unwrap();
-        let lock = 1_900_000_000u64;
+        // Below the mock tracker's median time past (1_700_000_000): final for
+        // the toolbox at 0.13.0 and at #163 alike, which judges finality.
+        let lock = 1_600_000_000u64;
         let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
         let deposit = tx_bytes(
             &[(&"11".repeat(32), 0)],
