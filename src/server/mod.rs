@@ -19,11 +19,18 @@ use bsv_wallet_toolbox::{Chain, Services, StorageSqlx, Wallet};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{Config, ServerSettings};
 use handlers::WalletState;
+
+// One 5 s store busy ceiling fits; two do not. Leave time to deliver the
+// answer before Arcade's 10 s POST timeout (arcade@1ae1208e64b77b64818044d606638939d9f1834a,
+// config/config.go:1291, webhook.http_timeout_ms):
+// https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291
+const ARC_CALLBACK_DEADLINE: Duration = Duration::from_secs(8);
 
 /// Lock that serializes spending operations (createAction).
 /// Non-spending endpoints (encrypt, getPublicKey, listOutputs, etc.) are unaffected.
@@ -352,9 +359,14 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
 /// `Authorization: Bearer <callback-token>` or an `X-CallbackToken` header
 /// (both accepted — broadcaster implementations vary). Returns 404 when no
 /// callback token is configured (route effectively disabled).
-async fn arc_callback(
+async fn arc_callback(state: axum::extract::State<WalletState>, request: Request) -> Response {
+    arc_callback_with_deadline(state, request, ARC_CALLBACK_DEADLINE).await
+}
+
+async fn arc_callback_with_deadline(
     axum::extract::State(wallet): axum::extract::State<WalletState>,
     request: Request,
+    deadline: Duration,
 ) -> Response {
     let expected = request
         .extensions()
@@ -418,13 +430,36 @@ async fn arc_callback(
         }
     };
 
-    match crate::arc_ingest::ingest_arc_payload(wallet.storage(), &payload).await {
-        Ok(action) => (
+    ingest_arc_before_deadline(wallet.storage(), &payload, deadline).await
+}
+
+async fn ingest_arc_before_deadline(
+    storage: &StorageSqlx,
+    payload: &serde_json::Value,
+    deadline: Duration,
+) -> Response {
+    // timeout drops the ingest future. Toolbox 0.13.0's Seen/InBlock/Mined
+    // paths enter mark_transaction_seen_on_network_by: before the status
+    // writes, broadcast memory takes a transaction and reads its ladder.
+    // Cancelling between those reads and writes has written nothing; dropping
+    // an open transaction rolls it back. A queued SQLite write may finish
+    // after cancellation: retry is safe because the status marks are conditional,
+    // the broadcast ladder upserts, and ingest_merkle_proof commits its proof
+    // and completion links together, reusing an existing matching anchor.
+    // arc_callback_deadline_retries_are_idempotent checks the rows after two
+    // deliveries, including a validated MINED proof. No task is spawned here.
+    match tokio::time::timeout(
+        deadline,
+        crate::arc_ingest::ingest_arc_payload(storage, payload),
+    )
+    .await
+    {
+        Ok(Ok(action)) => (
             StatusCode::OK,
             Json(json!({"ok": true, "action": format!("{:?}", action)})),
         )
             .into_response(),
-        Err(e) => {
+        Ok(Err(e)) => {
             if let Some(busy) = error::AppError::store_busy(&e) {
                 return busy.into_response();
             }
@@ -434,6 +469,11 @@ async fn arc_callback(
             )
                 .into_response()
         }
+        Err(_) => error::AppError::new(
+            error::Kind::StoreBusy,
+            format!("arc-callback deadline of {deadline:?} elapsed while the store was still busy"),
+        )
+        .into_response(),
     }
 }
 

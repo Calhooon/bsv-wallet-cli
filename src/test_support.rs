@@ -348,6 +348,49 @@ pub async fn seed_arc_requests(storage: &bsv_wallet_toolbox::StorageSqlx, txids:
     }
 }
 
+/// The sending transaction beside a callback's pending proof request.
+pub async fn seed_arc_transaction(
+    storage: &bsv_wallet_toolbox::StorageSqlx,
+    txid: &str,
+    raw_tx: &[u8],
+) {
+    sqlx::query(
+        "INSERT INTO transactions (user_id, txid, status, reference, description, satoshis, \
+         version, lock_time, raw_tx, is_outgoing, created_at, updated_at) \
+         VALUES ((SELECT user_id FROM users LIMIT 1), ?, 'sending', 'callback-retry', \
+         'callback retry', -500, 1, 0, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+    )
+    .bind(txid)
+    .bind(raw_tx)
+    .execute(storage.writer())
+    .await
+    .unwrap();
+}
+
+/// Callback state including row identities, proof bytes, links and memory.
+/// Timestamps are omitted: repeated delivery may refresh them without changing
+/// the status, anchor or rows. Reading on the writer also drains a cancelled
+/// SQLite operation before we inspect its effects.
+pub async fn arc_rows(storage: &bsv_wallet_toolbox::StorageSqlx, txid: &str) -> serde_json::Value {
+    let rows: String = sqlx::query_scalar(
+        "SELECT json_object( \
+         'request', json_array(r.proven_tx_req_id, r.status, r.proven_tx_id, r.history), \
+         'transaction', json_array(t.transaction_id, t.status, t.proven_tx_id), \
+         'proof', json_array(p.proven_tx_id, p.height, p.block_hash, p.merkle_root, \
+                                hex(p.merkle_path), hex(p.raw_tx)), \
+         'proof_count', (SELECT COUNT(*) FROM proven_txs WHERE txid = r.txid), \
+         'memory', (SELECT json_group_array(json_array(provider, status)) \
+                    FROM broadcast_seen WHERE txid = r.txid)) \
+         FROM proven_tx_reqs r LEFT JOIN transactions t ON t.txid = r.txid \
+         LEFT JOIN proven_txs p ON p.txid = r.txid WHERE r.txid = ?",
+    )
+    .bind(txid)
+    .fetch_one(storage.writer())
+    .await
+    .unwrap();
+    serde_json::from_str(&rows).unwrap()
+}
+
 /// A migrated wallet on the given store for router tests. Constructed
 /// before taking a lock so the test exercises only the served read.
 pub async fn test_wallet(
