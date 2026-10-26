@@ -317,6 +317,9 @@ jobs:
   ratchet:
     name: ratchet
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -413,6 +416,40 @@ jobs:
           python3 -B tools/check-links
           python3 -B tools/test_check_cites.py
           python3 -B tools/check-cites
+
+      - name: changelog fragment
+        if: ${{ !cancelled() }}
+        env:
+          REV: ${{ steps.base.outputs.rev }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/test_changelog.py
+          # A push's PR was checked; on a PR the ratchet job's base ref is
+          # the PR's base branch, fetched by The base ref above.
+          if [ "$EVENT" != pull_request ]; then
+            echo "changelog: $EVENT: the fragment requirement is checked on the PR"
+            exit 0
+          fi
+          if [ -z "$REV" ]; then
+            echo "::error::the PR's base ref is empty"
+            exit 1
+          fi
+          # Read current labels, as the differential step does: a re-run
+          # reuses the event payload, so a later label must be read here.
+          if ! allow=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels \
+              --jq '[.labels[].name] | index("no-changelog") != null'); then
+            echo "::error::the PR's labels could not be read (gh pr view)"
+            exit 1
+          fi
+          echo "label no-changelog: $allow (read at run time)"
+          check=(--check --base "$REV")
+          if [ "$allow" = true ]; then
+            check+=(--allow-missing)
+          fi
+          python3 -B tools/changelog "${check[@]}"
 
       - name: Keep the measured JSON
         if: always()
