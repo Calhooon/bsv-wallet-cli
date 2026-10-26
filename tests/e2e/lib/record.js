@@ -99,11 +99,13 @@ function wallet(name, { dir, port, identityKey }) {
  * sweep. A failed read is written as the event's error, never skipped.
  */
 let stubSeen = {};
+let wallSeen = {};
 async function stubCalls(stub) {
   if (!enabled || !stub) return;
   const event = { kind: 'stub', seq: seq++, phase };
   try {
-    const now = (await stub.stats()).calls || {};
+    const stats = await stub.stats();
+    const now = stats.calls || {};
     const calls = {};
     for (const [provider, routes] of Object.entries(now)) {
       for (const [route, n] of Object.entries(routes)) {
@@ -112,7 +114,13 @@ async function stubCalls(stub) {
       }
     }
     stubSeen = JSON.parse(JSON.stringify(now));
-    write({ ...event, calls });
+    const walled = {};
+    for (const [target, n] of Object.entries(stats.leaks || {})) {
+      const delta = n - (wallSeen[target] || 0);
+      if (delta !== 0) walled[target] = delta;
+    }
+    wallSeen = { ...stats.leaks };
+    write({ ...event, calls, walled });
   } catch (e) {
     write({ ...event, error: e.message || String(e) });
   }

@@ -232,6 +232,17 @@ class LengthsInPlaceholders(unittest.TestCase):
         self.assertIn("/80B>", lines[1])
 
 
+class BroadcasterWallCounts(unittest.TestCase):
+    def test_promise_all_provider_attempts_are_compared(self):
+        a, b = recording({"ok": True}), recording({"ok": True})
+        for events, count in [(a, 1), (b, 2)]:
+            events.append({"kind": "stub", "seq": len(events), "phase": SCENARIOS[0],
+                           "calls": {}, "walled": {"CONNECT api.bitails.io:443": count}})
+        lines, count = compare(a, b)
+        self.assertEqual(count, 1, lines)
+        self.assertIn("walled", lines[1])
+
+
 def without(events, drop):
     return [e for e in events if not drop(e)]
 
