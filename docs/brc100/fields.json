@@ -2,541 +2,541 @@
   "brc": "BRC-100",
   "pin": {
     "repository": "bsv-blockchain/BRCs",
-    "commit": "ed1b015bac53106ff34e5d1831acda378cbe5c04",
-    "date": "2026-10-05",
+    "commit": "5119a9b5148e9ec90eb4865b16f9f732a29703df",
+    "date": "2026-10-19",
     "path": "wallet/0100.md",
-    "read": "git -C ~/bsv/BRCs show ed1b015:wallet/0100.md"
+    "read": "git -C ~/bsv/BRCs show 5119a9b:wallet/0100.md"
   },
-  "moves": "This file moves only by its own PR, when the line's BRC-100 pin moves; a served shape never moves it. Upstream 5119a9b differs from the pin in listOutputs (totalOutputs, spendable) and internalizeAction (customInstructions' bound), not in any field's name: docs/WIRE.md.",
-  "notation": "The TypeScript interface of the pin, lines 630 to 1521, extracted call by call. name: a dotted path from the args or the result; an array is transparent (outputs.lockingScript is the lockingScript of each output); * is a key of a Record. required: false where the field is declared with ?; a nested field's required is within its parent. line: the line of the field's declaration at the pin. record: true where the field is a Record (its keys are the caller's, not the BRC's). error: the uniform error structure the BRC names, lines 290 to 295, for every call's refusal.",
+  "moves": "This file moves only by its own PR, when the line's BRC-100 pin moves; a served shape never moves it. At 5119a9b, listOutputs admits module balance and inventory views; the beta.1 JSON type changes wait for bsv-rs #105 in beta.2. The internalize bound already holds: docs/WIRE.md.",
+  "notation": "The TypeScript interface of the pin, lines 637 to 1530, extracted call by call. name: a dotted path from the args or the result; an array is transparent (outputs.lockingScript is the lockingScript of each output); * is a key of a Record. required: false where the field is declared with ?; a nested field's required is within its parent. line: the line of the field's declaration at the pin. record: true where the field is a Record (its keys are the caller's, not the BRC's). error: the uniform error structure the BRC names, lines 290 to 295, for every call's refusal.",
   "error": {
-    "line": 290,
+    "line": 291,
     "fields": [
       {
         "name": "status",
         "required": true,
-        "line": 292
+        "line": 293
       },
       {
         "name": "code",
         "required": true,
-        "line": 293
+        "line": 294
       },
       {
         "name": "description",
         "required": true,
-        "line": 294
+        "line": 295
       },
       {
         "name": "context",
         "required": false,
-        "line": 295
+        "line": 296
       }
     ]
   },
   "calls": {
     "createAction": {
-      "line": 666,
+      "line": 673,
       "request": [
-        {"name": "description", "required": true, "line": 668},
-        {"name": "inputBEEF", "required": false, "line": 669},
-        {"name": "inputs", "required": false, "line": 670},
-        {"name": "inputs.outpoint", "required": true, "line": 671},
-        {"name": "inputs.unlockingScript", "required": false, "line": 672},
-        {"name": "inputs.unlockingScriptLength", "required": false, "line": 673},
-        {"name": "inputs.inputDescription", "required": true, "line": 674},
-        {"name": "inputs.sequenceNumber", "required": false, "line": 675},
-        {"name": "outputs", "required": false, "line": 677},
-        {"name": "outputs.lockingScript", "required": true, "line": 678},
-        {"name": "outputs.satoshis", "required": true, "line": 679},
-        {"name": "outputs.outputDescription", "required": true, "line": 680},
-        {"name": "outputs.basket", "required": false, "line": 681},
-        {"name": "outputs.customInstructions", "required": false, "line": 682},
-        {"name": "outputs.tags", "required": false, "line": 683},
-        {"name": "lockTime", "required": false, "line": 685},
-        {"name": "version", "required": false, "line": 686},
-        {"name": "labels", "required": false, "line": 687},
-        {"name": "options", "required": false, "line": 688},
-        {"name": "options.signAndProcess", "required": false, "line": 689},
-        {"name": "options.acceptDelayedBroadcast", "required": false, "line": 690},
-        {"name": "options.trustSelf", "required": false, "line": 691},
-        {"name": "options.knownTxids", "required": false, "line": 692},
-        {"name": "options.returnTXIDOnly", "required": false, "line": 693},
-        {"name": "options.noSend", "required": false, "line": 694},
-        {"name": "options.noSendChange", "required": false, "line": 695},
-        {"name": "options.sendWith", "required": false, "line": 696},
-        {"name": "options.randomizeOutputs", "required": false, "line": 697}
+        {"name": "description", "required": true, "line": 675},
+        {"name": "inputBEEF", "required": false, "line": 676},
+        {"name": "inputs", "required": false, "line": 677},
+        {"name": "inputs.outpoint", "required": true, "line": 678},
+        {"name": "inputs.unlockingScript", "required": false, "line": 679},
+        {"name": "inputs.unlockingScriptLength", "required": false, "line": 680},
+        {"name": "inputs.inputDescription", "required": true, "line": 681},
+        {"name": "inputs.sequenceNumber", "required": false, "line": 682},
+        {"name": "outputs", "required": false, "line": 684},
+        {"name": "outputs.lockingScript", "required": true, "line": 685},
+        {"name": "outputs.satoshis", "required": true, "line": 686},
+        {"name": "outputs.outputDescription", "required": true, "line": 687},
+        {"name": "outputs.basket", "required": false, "line": 688},
+        {"name": "outputs.customInstructions", "required": false, "line": 689},
+        {"name": "outputs.tags", "required": false, "line": 690},
+        {"name": "lockTime", "required": false, "line": 692},
+        {"name": "version", "required": false, "line": 693},
+        {"name": "labels", "required": false, "line": 694},
+        {"name": "options", "required": false, "line": 695},
+        {"name": "options.signAndProcess", "required": false, "line": 696},
+        {"name": "options.acceptDelayedBroadcast", "required": false, "line": 697},
+        {"name": "options.trustSelf", "required": false, "line": 698},
+        {"name": "options.knownTxids", "required": false, "line": 699},
+        {"name": "options.returnTXIDOnly", "required": false, "line": 700},
+        {"name": "options.noSend", "required": false, "line": 701},
+        {"name": "options.noSendChange", "required": false, "line": 702},
+        {"name": "options.sendWith", "required": false, "line": 703},
+        {"name": "options.randomizeOutputs", "required": false, "line": 704}
       ],
       "response": [
-        {"name": "txid", "required": false, "line": 702},
-        {"name": "tx", "required": false, "line": 703},
-        {"name": "noSendChange", "required": false, "line": 704},
-        {"name": "sendWithResults", "required": false, "line": 705},
-        {"name": "sendWithResults.txid", "required": true, "line": 706},
-        {"name": "sendWithResults.status", "required": true, "line": 707},
-        {"name": "signableTransaction", "required": false, "line": 709},
-        {"name": "signableTransaction.tx", "required": true, "line": 710},
-        {"name": "signableTransaction.reference", "required": true, "line": 711}
+        {"name": "txid", "required": false, "line": 709},
+        {"name": "tx", "required": false, "line": 710},
+        {"name": "noSendChange", "required": false, "line": 711},
+        {"name": "sendWithResults", "required": false, "line": 712},
+        {"name": "sendWithResults.txid", "required": true, "line": 713},
+        {"name": "sendWithResults.status", "required": true, "line": 714},
+        {"name": "signableTransaction", "required": false, "line": 716},
+        {"name": "signableTransaction.tx", "required": true, "line": 717},
+        {"name": "signableTransaction.reference", "required": true, "line": 718}
       ]
     },
     "signAction": {
-      "line": 731,
+      "line": 738,
       "request": [
-        {"name": "spends", "required": true, "line": 733, "record": true},
-        {"name": "spends.*.unlockingScript", "required": true, "line": 736},
-        {"name": "spends.*.sequenceNumber", "required": false, "line": 737},
-        {"name": "reference", "required": true, "line": 740},
-        {"name": "options", "required": false, "line": 741},
-        {"name": "options.acceptDelayedBroadcast", "required": false, "line": 742},
-        {"name": "options.returnTXIDOnly", "required": false, "line": 743},
-        {"name": "options.noSend", "required": false, "line": 744},
-        {"name": "options.sendWith", "required": false, "line": 745}
+        {"name": "spends", "required": true, "line": 740, "record": true},
+        {"name": "spends.*.unlockingScript", "required": true, "line": 743},
+        {"name": "spends.*.sequenceNumber", "required": false, "line": 744},
+        {"name": "reference", "required": true, "line": 747},
+        {"name": "options", "required": false, "line": 748},
+        {"name": "options.acceptDelayedBroadcast", "required": false, "line": 749},
+        {"name": "options.returnTXIDOnly", "required": false, "line": 750},
+        {"name": "options.noSend", "required": false, "line": 751},
+        {"name": "options.sendWith", "required": false, "line": 752}
       ],
       "response": [
-        {"name": "txid", "required": false, "line": 750},
-        {"name": "tx", "required": false, "line": 751},
-        {"name": "sendWithResults", "required": false, "line": 752},
-        {"name": "sendWithResults.txid", "required": true, "line": 753},
-        {"name": "sendWithResults.status", "required": true, "line": 754}
+        {"name": "txid", "required": false, "line": 757},
+        {"name": "tx", "required": false, "line": 758},
+        {"name": "sendWithResults", "required": false, "line": 759},
+        {"name": "sendWithResults.txid", "required": true, "line": 760},
+        {"name": "sendWithResults.status", "required": true, "line": 761}
       ]
     },
     "abortAction": {
-      "line": 766,
+      "line": 773,
       "request": [
-        {"name": "reference", "required": true, "line": 768}
+        {"name": "reference", "required": true, "line": 775}
       ],
       "response": [
-        {"name": "aborted", "required": true, "line": 771}
+        {"name": "aborted", "required": true, "line": 778}
       ]
     },
     "listActions": {
-      "line": 791,
+      "line": 798,
       "request": [
-        {"name": "labels", "required": true, "line": 793},
-        {"name": "labelQueryMode", "required": false, "line": 794},
-        {"name": "includeLabels", "required": false, "line": 795},
-        {"name": "includeInputs", "required": false, "line": 796},
-        {"name": "includeInputSourceLockingScripts", "required": false, "line": 797},
-        {"name": "includeInputUnlockingScripts", "required": false, "line": 798},
-        {"name": "includeOutputs", "required": false, "line": 799},
-        {"name": "includeOutputLockingScripts", "required": false, "line": 800},
-        {"name": "limit", "required": false, "line": 801},
-        {"name": "offset", "required": false, "line": 802},
-        {"name": "seekPermission", "required": false, "line": 803}
+        {"name": "labels", "required": true, "line": 800},
+        {"name": "labelQueryMode", "required": false, "line": 801},
+        {"name": "includeLabels", "required": false, "line": 802},
+        {"name": "includeInputs", "required": false, "line": 803},
+        {"name": "includeInputSourceLockingScripts", "required": false, "line": 804},
+        {"name": "includeInputUnlockingScripts", "required": false, "line": 805},
+        {"name": "includeOutputs", "required": false, "line": 806},
+        {"name": "includeOutputLockingScripts", "required": false, "line": 807},
+        {"name": "limit", "required": false, "line": 808},
+        {"name": "offset", "required": false, "line": 809},
+        {"name": "seekPermission", "required": false, "line": 810}
       ],
       "response": [
-        {"name": "totalActions", "required": true, "line": 807},
-        {"name": "actions", "required": true, "line": 808},
-        {"name": "actions.txid", "required": true, "line": 809},
-        {"name": "actions.satoshis", "required": true, "line": 810},
-        {"name": "actions.status", "required": true, "line": 811},
-        {"name": "actions.isOutgoing", "required": true, "line": 820},
-        {"name": "actions.description", "required": true, "line": 821},
-        {"name": "actions.labels", "required": false, "line": 822},
-        {"name": "actions.version", "required": true, "line": 823},
-        {"name": "actions.lockTime", "required": true, "line": 824},
-        {"name": "actions.inputs", "required": false, "line": 825},
-        {"name": "actions.inputs.sourceOutpoint", "required": true, "line": 826},
-        {"name": "actions.inputs.sourceSatoshis", "required": true, "line": 827},
-        {"name": "actions.inputs.sourceLockingScript", "required": false, "line": 828},
-        {"name": "actions.inputs.unlockingScript", "required": false, "line": 829},
-        {"name": "actions.inputs.inputDescription", "required": true, "line": 830},
-        {"name": "actions.inputs.sequenceNumber", "required": true, "line": 831},
-        {"name": "actions.outputs", "required": false, "line": 833},
-        {"name": "actions.outputs.outputIndex", "required": true, "line": 834},
-        {"name": "actions.outputs.satoshis", "required": true, "line": 835},
-        {"name": "actions.outputs.lockingScript", "required": false, "line": 836},
-        {"name": "actions.outputs.spendable", "required": true, "line": 837},
-        {"name": "actions.outputs.outputDescription", "required": true, "line": 838},
-        {"name": "actions.outputs.basket", "required": true, "line": 839},
-        {"name": "actions.outputs.tags", "required": true, "line": 840},
-        {"name": "actions.outputs.customInstructions", "required": false, "line": 841}
+        {"name": "totalActions", "required": true, "line": 814},
+        {"name": "actions", "required": true, "line": 815},
+        {"name": "actions.txid", "required": true, "line": 816},
+        {"name": "actions.satoshis", "required": true, "line": 817},
+        {"name": "actions.status", "required": true, "line": 818},
+        {"name": "actions.isOutgoing", "required": true, "line": 827},
+        {"name": "actions.description", "required": true, "line": 828},
+        {"name": "actions.labels", "required": false, "line": 829},
+        {"name": "actions.version", "required": true, "line": 830},
+        {"name": "actions.lockTime", "required": true, "line": 831},
+        {"name": "actions.inputs", "required": false, "line": 832},
+        {"name": "actions.inputs.sourceOutpoint", "required": true, "line": 833},
+        {"name": "actions.inputs.sourceSatoshis", "required": true, "line": 834},
+        {"name": "actions.inputs.sourceLockingScript", "required": false, "line": 835},
+        {"name": "actions.inputs.unlockingScript", "required": false, "line": 836},
+        {"name": "actions.inputs.inputDescription", "required": true, "line": 837},
+        {"name": "actions.inputs.sequenceNumber", "required": true, "line": 838},
+        {"name": "actions.outputs", "required": false, "line": 840},
+        {"name": "actions.outputs.outputIndex", "required": true, "line": 841},
+        {"name": "actions.outputs.satoshis", "required": true, "line": 842},
+        {"name": "actions.outputs.lockingScript", "required": false, "line": 843},
+        {"name": "actions.outputs.spendable", "required": true, "line": 844},
+        {"name": "actions.outputs.outputDescription", "required": true, "line": 845},
+        {"name": "actions.outputs.basket", "required": true, "line": 846},
+        {"name": "actions.outputs.tags", "required": true, "line": 847},
+        {"name": "actions.outputs.customInstructions", "required": false, "line": 848}
       ]
     },
     "internalizeAction": {
-      "line": 868,
+      "line": 875,
       "request": [
-        {"name": "tx", "required": true, "line": 870},
-        {"name": "outputs", "required": true, "line": 871},
-        {"name": "outputs.outputIndex", "required": true, "line": 872},
-        {"name": "outputs.protocol", "required": true, "line": 873},
-        {"name": "outputs.paymentRemittance", "required": false, "line": 874},
-        {"name": "outputs.paymentRemittance.derivationPrefix", "required": true, "line": 875},
-        {"name": "outputs.paymentRemittance.derivationSuffix", "required": true, "line": 876},
-        {"name": "outputs.paymentRemittance.senderIdentityKey", "required": true, "line": 877},
-        {"name": "outputs.insertionRemittance", "required": false, "line": 879},
-        {"name": "outputs.insertionRemittance.basket", "required": true, "line": 880},
-        {"name": "outputs.insertionRemittance.customInstructions", "required": false, "line": 881},
-        {"name": "outputs.insertionRemittance.tags", "required": false, "line": 882},
-        {"name": "description", "required": true, "line": 885},
-        {"name": "labels", "required": false, "line": 886},
-        {"name": "seekPermission", "required": false, "line": 887}
+        {"name": "tx", "required": true, "line": 877},
+        {"name": "outputs", "required": true, "line": 878},
+        {"name": "outputs.outputIndex", "required": true, "line": 879},
+        {"name": "outputs.protocol", "required": true, "line": 880},
+        {"name": "outputs.paymentRemittance", "required": false, "line": 881},
+        {"name": "outputs.paymentRemittance.derivationPrefix", "required": true, "line": 882},
+        {"name": "outputs.paymentRemittance.derivationSuffix", "required": true, "line": 883},
+        {"name": "outputs.paymentRemittance.senderIdentityKey", "required": true, "line": 884},
+        {"name": "outputs.insertionRemittance", "required": false, "line": 886},
+        {"name": "outputs.insertionRemittance.basket", "required": true, "line": 887},
+        {"name": "outputs.insertionRemittance.customInstructions", "required": false, "line": 888},
+        {"name": "outputs.insertionRemittance.tags", "required": false, "line": 889},
+        {"name": "description", "required": true, "line": 892},
+        {"name": "labels", "required": false, "line": 893},
+        {"name": "seekPermission", "required": false, "line": 894}
       ],
       "response": [
-        {"name": "accepted", "required": true, "line": 890}
+        {"name": "accepted", "required": true, "line": 897}
       ]
     },
     "listOutputs": {
-      "line": 909,
+      "line": 916,
       "request": [
-        {"name": "basket", "required": true, "line": 911},
-        {"name": "tags", "required": false, "line": 912},
-        {"name": "tagQueryMode", "required": false, "line": 913},
-        {"name": "include", "required": false, "line": 914},
-        {"name": "includeCustomInstructions", "required": false, "line": 915},
-        {"name": "includeTags", "required": false, "line": 916},
-        {"name": "includeLabels", "required": false, "line": 917},
-        {"name": "limit", "required": false, "line": 918},
-        {"name": "offset", "required": false, "line": 919},
-        {"name": "seekPermission", "required": false, "line": 920}
+        {"name": "basket", "required": true, "line": 918},
+        {"name": "tags", "required": false, "line": 919},
+        {"name": "tagQueryMode", "required": false, "line": 920},
+        {"name": "include", "required": false, "line": 921},
+        {"name": "includeCustomInstructions", "required": false, "line": 922},
+        {"name": "includeTags", "required": false, "line": 923},
+        {"name": "includeLabels", "required": false, "line": 924},
+        {"name": "limit", "required": false, "line": 925},
+        {"name": "offset", "required": false, "line": 926},
+        {"name": "seekPermission", "required": false, "line": 927}
       ],
       "response": [
-        {"name": "totalOutputs", "required": true, "line": 924},
-        {"name": "BEEF", "required": false, "line": 925},
-        {"name": "outputs", "required": true, "line": 926},
-        {"name": "outputs.outpoint", "required": true, "line": 927},
-        {"name": "outputs.satoshis", "required": true, "line": 928},
-        {"name": "outputs.lockingScript", "required": false, "line": 929},
-        {"name": "outputs.spendable", "required": true, "line": 930},
-        {"name": "outputs.customInstructions", "required": false, "line": 931},
-        {"name": "outputs.tags", "required": false, "line": 932},
-        {"name": "outputs.labels", "required": false, "line": 933}
+        {"name": "totalOutputs", "required": true, "line": 932},
+        {"name": "BEEF", "required": false, "line": 933},
+        {"name": "outputs", "required": true, "line": 934},
+        {"name": "outputs.outpoint", "required": true, "line": 935},
+        {"name": "outputs.satoshis", "required": true, "line": 936},
+        {"name": "outputs.lockingScript", "required": false, "line": 937},
+        {"name": "outputs.spendable", "required": true, "line": 939},
+        {"name": "outputs.customInstructions", "required": false, "line": 940},
+        {"name": "outputs.tags", "required": false, "line": 941},
+        {"name": "outputs.labels", "required": false, "line": 942}
       ]
     },
     "relinquishOutput": {
-      "line": 946,
+      "line": 955,
       "request": [
-        {"name": "basket", "required": true, "line": 948},
-        {"name": "output", "required": true, "line": 949}
+        {"name": "basket", "required": true, "line": 957},
+        {"name": "output", "required": true, "line": 958}
       ],
       "response": [
-        {"name": "relinquished", "required": true, "line": 952}
+        {"name": "relinquished", "required": true, "line": 961}
       ]
     },
     "getPublicKey": {
-      "line": 969,
+      "line": 978,
       "request": [
-        {"name": "identityKey", "required": false, "line": 971},
-        {"name": "protocolID", "required": false, "line": 972},
-        {"name": "keyID", "required": false, "line": 973},
-        {"name": "privileged", "required": false, "line": 974},
-        {"name": "privilegedReason", "required": false, "line": 975},
-        {"name": "counterparty", "required": false, "line": 976},
-        {"name": "forSelf", "required": false, "line": 977},
-        {"name": "seekPermission", "required": false, "line": 978}
+        {"name": "identityKey", "required": false, "line": 980},
+        {"name": "protocolID", "required": false, "line": 981},
+        {"name": "keyID", "required": false, "line": 982},
+        {"name": "privileged", "required": false, "line": 983},
+        {"name": "privilegedReason", "required": false, "line": 984},
+        {"name": "counterparty", "required": false, "line": 985},
+        {"name": "forSelf", "required": false, "line": 986},
+        {"name": "seekPermission", "required": false, "line": 987}
       ],
       "response": [
-        {"name": "publicKey", "required": true, "line": 981}
+        {"name": "publicKey", "required": true, "line": 990}
       ]
     },
     "revealCounterpartyKeyLinkage": {
-      "line": 994,
+      "line": 1003,
       "request": [
-        {"name": "counterparty", "required": true, "line": 996},
-        {"name": "verifier", "required": true, "line": 997},
-        {"name": "privilegedReason", "required": false, "line": 998},
-        {"name": "privileged", "required": false, "line": 999}
+        {"name": "counterparty", "required": true, "line": 1005},
+        {"name": "verifier", "required": true, "line": 1006},
+        {"name": "privilegedReason", "required": false, "line": 1007},
+        {"name": "privileged", "required": false, "line": 1008}
       ],
       "response": [
-        {"name": "prover", "required": true, "line": 1003},
-        {"name": "verifier", "required": true, "line": 1004},
-        {"name": "counterparty", "required": true, "line": 1005},
-        {"name": "revelationTime", "required": true, "line": 1006},
-        {"name": "encryptedLinkage", "required": true, "line": 1007},
-        {"name": "encryptedLinkageProof", "required": true, "line": 1008}
+        {"name": "prover", "required": true, "line": 1012},
+        {"name": "verifier", "required": true, "line": 1013},
+        {"name": "counterparty", "required": true, "line": 1014},
+        {"name": "revelationTime", "required": true, "line": 1015},
+        {"name": "encryptedLinkage", "required": true, "line": 1016},
+        {"name": "encryptedLinkageProof", "required": true, "line": 1017}
       ]
     },
     "revealSpecificKeyLinkage": {
-      "line": 1024,
+      "line": 1033,
       "request": [
-        {"name": "counterparty", "required": true, "line": 1026},
-        {"name": "verifier", "required": true, "line": 1027},
-        {"name": "protocolID", "required": true, "line": 1028},
-        {"name": "keyID", "required": true, "line": 1029},
-        {"name": "privilegedReason", "required": false, "line": 1030},
-        {"name": "privileged", "required": false, "line": 1031}
+        {"name": "counterparty", "required": true, "line": 1035},
+        {"name": "verifier", "required": true, "line": 1036},
+        {"name": "protocolID", "required": true, "line": 1037},
+        {"name": "keyID", "required": true, "line": 1038},
+        {"name": "privilegedReason", "required": false, "line": 1039},
+        {"name": "privileged", "required": false, "line": 1040}
       ],
       "response": [
-        {"name": "prover", "required": true, "line": 1035},
-        {"name": "verifier", "required": true, "line": 1036},
-        {"name": "counterparty", "required": true, "line": 1037},
-        {"name": "protocolID", "required": true, "line": 1038},
-        {"name": "keyID", "required": true, "line": 1039},
-        {"name": "encryptedLinkage", "required": true, "line": 1040},
-        {"name": "encryptedLinkageProof", "required": true, "line": 1041},
-        {"name": "proofType", "required": true, "line": 1042}
+        {"name": "prover", "required": true, "line": 1044},
+        {"name": "verifier", "required": true, "line": 1045},
+        {"name": "counterparty", "required": true, "line": 1046},
+        {"name": "protocolID", "required": true, "line": 1047},
+        {"name": "keyID", "required": true, "line": 1048},
+        {"name": "encryptedLinkage", "required": true, "line": 1049},
+        {"name": "encryptedLinkageProof", "required": true, "line": 1050},
+        {"name": "proofType", "required": true, "line": 1051}
       ]
     },
     "encrypt": {
-      "line": 1059,
+      "line": 1068,
       "request": [
-        {"name": "plaintext", "required": true, "line": 1061},
-        {"name": "protocolID", "required": true, "line": 1062},
-        {"name": "keyID", "required": true, "line": 1063},
-        {"name": "privilegedReason", "required": false, "line": 1064},
-        {"name": "counterparty", "required": false, "line": 1065},
-        {"name": "privileged", "required": false, "line": 1066},
-        {"name": "seekPermission", "required": false, "line": 1067}
+        {"name": "plaintext", "required": true, "line": 1070},
+        {"name": "protocolID", "required": true, "line": 1071},
+        {"name": "keyID", "required": true, "line": 1072},
+        {"name": "privilegedReason", "required": false, "line": 1073},
+        {"name": "counterparty", "required": false, "line": 1074},
+        {"name": "privileged", "required": false, "line": 1075},
+        {"name": "seekPermission", "required": false, "line": 1076}
       ],
       "response": [
-        {"name": "ciphertext", "required": true, "line": 1070}
+        {"name": "ciphertext", "required": true, "line": 1079}
       ]
     },
     "decrypt": {
-      "line": 1086,
+      "line": 1095,
       "request": [
-        {"name": "ciphertext", "required": true, "line": 1088},
-        {"name": "protocolID", "required": true, "line": 1089},
-        {"name": "keyID", "required": true, "line": 1090},
-        {"name": "privilegedReason", "required": false, "line": 1091},
-        {"name": "counterparty", "required": false, "line": 1092},
-        {"name": "privileged", "required": false, "line": 1093},
-        {"name": "seekPermission", "required": false, "line": 1094}
+        {"name": "ciphertext", "required": true, "line": 1097},
+        {"name": "protocolID", "required": true, "line": 1098},
+        {"name": "keyID", "required": true, "line": 1099},
+        {"name": "privilegedReason", "required": false, "line": 1100},
+        {"name": "counterparty", "required": false, "line": 1101},
+        {"name": "privileged", "required": false, "line": 1102},
+        {"name": "seekPermission", "required": false, "line": 1103}
       ],
       "response": [
-        {"name": "plaintext", "required": true, "line": 1097}
+        {"name": "plaintext", "required": true, "line": 1106}
       ]
     },
     "createHmac": {
-      "line": 1113,
+      "line": 1122,
       "request": [
-        {"name": "data", "required": true, "line": 1115},
-        {"name": "protocolID", "required": true, "line": 1116},
-        {"name": "keyID", "required": true, "line": 1117},
-        {"name": "privilegedReason", "required": false, "line": 1118},
-        {"name": "counterparty", "required": false, "line": 1119},
-        {"name": "privileged", "required": false, "line": 1120},
-        {"name": "seekPermission", "required": false, "line": 1121}
+        {"name": "data", "required": true, "line": 1124},
+        {"name": "protocolID", "required": true, "line": 1125},
+        {"name": "keyID", "required": true, "line": 1126},
+        {"name": "privilegedReason", "required": false, "line": 1127},
+        {"name": "counterparty", "required": false, "line": 1128},
+        {"name": "privileged", "required": false, "line": 1129},
+        {"name": "seekPermission", "required": false, "line": 1130}
       ],
       "response": [
-        {"name": "hmac", "required": true, "line": 1124}
+        {"name": "hmac", "required": true, "line": 1133}
       ]
     },
     "verifyHmac": {
-      "line": 1141,
+      "line": 1150,
       "request": [
-        {"name": "data", "required": true, "line": 1143},
-        {"name": "hmac", "required": true, "line": 1144},
-        {"name": "protocolID", "required": true, "line": 1145},
-        {"name": "keyID", "required": true, "line": 1146},
-        {"name": "privilegedReason", "required": false, "line": 1147},
-        {"name": "counterparty", "required": false, "line": 1148},
-        {"name": "privileged", "required": false, "line": 1149},
-        {"name": "seekPermission", "required": false, "line": 1150}
+        {"name": "data", "required": true, "line": 1152},
+        {"name": "hmac", "required": true, "line": 1153},
+        {"name": "protocolID", "required": true, "line": 1154},
+        {"name": "keyID", "required": true, "line": 1155},
+        {"name": "privilegedReason", "required": false, "line": 1156},
+        {"name": "counterparty", "required": false, "line": 1157},
+        {"name": "privileged", "required": false, "line": 1158},
+        {"name": "seekPermission", "required": false, "line": 1159}
       ],
       "response": [
-        {"name": "valid", "required": true, "line": 1153}
+        {"name": "valid", "required": true, "line": 1162}
       ]
     },
     "createSignature": {
-      "line": 1170,
+      "line": 1179,
       "request": [
-        {"name": "data", "required": false, "line": 1172},
-        {"name": "hashToDirectlySign", "required": false, "line": 1173},
-        {"name": "protocolID", "required": true, "line": 1174},
-        {"name": "keyID", "required": true, "line": 1175},
-        {"name": "privilegedReason", "required": false, "line": 1176},
-        {"name": "counterparty", "required": false, "line": 1177},
-        {"name": "privileged", "required": false, "line": 1178},
-        {"name": "seekPermission", "required": false, "line": 1179}
+        {"name": "data", "required": false, "line": 1181},
+        {"name": "hashToDirectlySign", "required": false, "line": 1182},
+        {"name": "protocolID", "required": true, "line": 1183},
+        {"name": "keyID", "required": true, "line": 1184},
+        {"name": "privilegedReason", "required": false, "line": 1185},
+        {"name": "counterparty", "required": false, "line": 1186},
+        {"name": "privileged", "required": false, "line": 1187},
+        {"name": "seekPermission", "required": false, "line": 1188}
       ],
       "response": [
-        {"name": "signature", "required": true, "line": 1182}
+        {"name": "signature", "required": true, "line": 1191}
       ]
     },
     "verifySignature": {
-      "line": 1201,
+      "line": 1210,
       "request": [
-        {"name": "data", "required": false, "line": 1203},
-        {"name": "hashToDirectlyVerify", "required": false, "line": 1204},
-        {"name": "signature", "required": true, "line": 1205},
-        {"name": "protocolID", "required": true, "line": 1206},
-        {"name": "keyID", "required": true, "line": 1207},
-        {"name": "privilegedReason", "required": false, "line": 1208},
-        {"name": "counterparty", "required": false, "line": 1209},
-        {"name": "forSelf", "required": false, "line": 1210},
-        {"name": "privileged", "required": false, "line": 1211},
-        {"name": "seekPermission", "required": false, "line": 1212}
+        {"name": "data", "required": false, "line": 1212},
+        {"name": "hashToDirectlyVerify", "required": false, "line": 1213},
+        {"name": "signature", "required": true, "line": 1214},
+        {"name": "protocolID", "required": true, "line": 1215},
+        {"name": "keyID", "required": true, "line": 1216},
+        {"name": "privilegedReason", "required": false, "line": 1217},
+        {"name": "counterparty", "required": false, "line": 1218},
+        {"name": "forSelf", "required": false, "line": 1219},
+        {"name": "privileged", "required": false, "line": 1220},
+        {"name": "seekPermission", "required": false, "line": 1221}
       ],
       "response": [
-        {"name": "valid", "required": true, "line": 1215}
+        {"name": "valid", "required": true, "line": 1224}
       ]
     },
     "acquireCertificate": {
-      "line": 1236,
+      "line": 1245,
       "request": [
-        {"name": "type", "required": true, "line": 1238},
-        {"name": "certifier", "required": true, "line": 1239},
-        {"name": "acquisitionProtocol", "required": true, "line": 1240},
-        {"name": "fields", "required": true, "line": 1241, "record": true},
-        {"name": "serialNumber", "required": false, "line": 1242},
-        {"name": "revocationOutpoint", "required": false, "line": 1243},
-        {"name": "signature", "required": false, "line": 1244},
-        {"name": "certifierUrl", "required": false, "line": 1245},
-        {"name": "keyringRevealer", "required": false, "line": 1246},
-        {"name": "keyringForSubject", "required": false, "line": 1247, "record": true},
-        {"name": "privileged", "required": false, "line": 1251},
-        {"name": "privilegedReason", "required": false, "line": 1252}
+        {"name": "type", "required": true, "line": 1247},
+        {"name": "certifier", "required": true, "line": 1248},
+        {"name": "acquisitionProtocol", "required": true, "line": 1249},
+        {"name": "fields", "required": true, "line": 1250, "record": true},
+        {"name": "serialNumber", "required": false, "line": 1251},
+        {"name": "revocationOutpoint", "required": false, "line": 1252},
+        {"name": "signature", "required": false, "line": 1253},
+        {"name": "certifierUrl", "required": false, "line": 1254},
+        {"name": "keyringRevealer", "required": false, "line": 1255},
+        {"name": "keyringForSubject", "required": false, "line": 1256, "record": true},
+        {"name": "privileged", "required": false, "line": 1260},
+        {"name": "privilegedReason", "required": false, "line": 1261}
       ],
       "response": [
-        {"name": "type", "required": true, "line": 1256},
-        {"name": "subject", "required": true, "line": 1257},
-        {"name": "serialNumber", "required": true, "line": 1258},
-        {"name": "certifier", "required": true, "line": 1259},
-        {"name": "revocationOutpoint", "required": true, "line": 1260},
-        {"name": "signature", "required": true, "line": 1261},
-        {"name": "fields", "required": true, "line": 1262, "record": true}
+        {"name": "type", "required": true, "line": 1265},
+        {"name": "subject", "required": true, "line": 1266},
+        {"name": "serialNumber", "required": true, "line": 1267},
+        {"name": "certifier", "required": true, "line": 1268},
+        {"name": "revocationOutpoint", "required": true, "line": 1269},
+        {"name": "signature", "required": true, "line": 1270},
+        {"name": "fields", "required": true, "line": 1271, "record": true}
       ]
     },
     "listCertificates": {
-      "line": 1278,
+      "line": 1287,
       "request": [
-        {"name": "certifiers", "required": true, "line": 1280},
-        {"name": "types", "required": true, "line": 1281},
-        {"name": "limit", "required": false, "line": 1282},
-        {"name": "offset", "required": false, "line": 1283},
-        {"name": "privileged", "required": false, "line": 1284},
-        {"name": "privilegedReason", "required": false, "line": 1285}
+        {"name": "certifiers", "required": true, "line": 1289},
+        {"name": "types", "required": true, "line": 1290},
+        {"name": "limit", "required": false, "line": 1291},
+        {"name": "offset", "required": false, "line": 1292},
+        {"name": "privileged", "required": false, "line": 1293},
+        {"name": "privilegedReason", "required": false, "line": 1294}
       ],
       "response": [
-        {"name": "totalCertificates", "required": true, "line": 1289},
-        {"name": "certificates", "required": true, "line": 1290},
-        {"name": "certificates.type", "required": true, "line": 1291},
-        {"name": "certificates.subject", "required": true, "line": 1292},
-        {"name": "certificates.serialNumber", "required": true, "line": 1293},
-        {"name": "certificates.certifier", "required": true, "line": 1294},
-        {"name": "certificates.revocationOutpoint", "required": true, "line": 1295},
-        {"name": "certificates.signature", "required": true, "line": 1296},
-        {"name": "certificates.fields", "required": true, "line": 1297, "record": true}
+        {"name": "totalCertificates", "required": true, "line": 1298},
+        {"name": "certificates", "required": true, "line": 1299},
+        {"name": "certificates.type", "required": true, "line": 1300},
+        {"name": "certificates.subject", "required": true, "line": 1301},
+        {"name": "certificates.serialNumber", "required": true, "line": 1302},
+        {"name": "certificates.certifier", "required": true, "line": 1303},
+        {"name": "certificates.revocationOutpoint", "required": true, "line": 1304},
+        {"name": "certificates.signature", "required": true, "line": 1305},
+        {"name": "certificates.fields", "required": true, "line": 1306, "record": true}
       ]
     },
     "proveCertificate": {
-      "line": 1320,
+      "line": 1329,
       "request": [
-        {"name": "certificate", "required": true, "line": 1322},
-        {"name": "certificate.type", "required": true, "line": 1323},
-        {"name": "certificate.subject", "required": true, "line": 1324},
-        {"name": "certificate.serialNumber", "required": true, "line": 1325},
-        {"name": "certificate.certifier", "required": true, "line": 1326},
-        {"name": "certificate.revocationOutpoint", "required": true, "line": 1327},
-        {"name": "certificate.signature", "required": true, "line": 1328},
-        {"name": "certificate.fields", "required": true, "line": 1329, "record": true},
-        {"name": "fieldsToReveal", "required": true, "line": 1331},
-        {"name": "verifier", "required": true, "line": 1332},
-        {"name": "privileged", "required": false, "line": 1333},
-        {"name": "privilegedReason", "required": false, "line": 1334}
+        {"name": "certificate", "required": true, "line": 1331},
+        {"name": "certificate.type", "required": true, "line": 1332},
+        {"name": "certificate.subject", "required": true, "line": 1333},
+        {"name": "certificate.serialNumber", "required": true, "line": 1334},
+        {"name": "certificate.certifier", "required": true, "line": 1335},
+        {"name": "certificate.revocationOutpoint", "required": true, "line": 1336},
+        {"name": "certificate.signature", "required": true, "line": 1337},
+        {"name": "certificate.fields", "required": true, "line": 1338, "record": true},
+        {"name": "fieldsToReveal", "required": true, "line": 1340},
+        {"name": "verifier", "required": true, "line": 1341},
+        {"name": "privileged", "required": false, "line": 1342},
+        {"name": "privilegedReason", "required": false, "line": 1343}
       ],
       "response": [
-        {"name": "keyringForVerifier", "required": true, "line": 1338, "record": true}
+        {"name": "keyringForVerifier", "required": true, "line": 1347, "record": true}
       ]
     },
     "relinquishCertificate": {
-      "line": 1354,
+      "line": 1363,
       "request": [
-        {"name": "type", "required": true, "line": 1356},
-        {"name": "serialNumber", "required": true, "line": 1357},
-        {"name": "certifier", "required": true, "line": 1358}
+        {"name": "type", "required": true, "line": 1365},
+        {"name": "serialNumber", "required": true, "line": 1366},
+        {"name": "certifier", "required": true, "line": 1367}
       ],
       "response": [
-        {"name": "relinquished", "required": true, "line": 1361}
+        {"name": "relinquished", "required": true, "line": 1370}
       ]
     },
     "discoverByIdentityKey": {
-      "line": 1374,
+      "line": 1383,
       "request": [
-        {"name": "identityKey", "required": true, "line": 1376},
-        {"name": "limit", "required": false, "line": 1377},
-        {"name": "offset", "required": false, "line": 1378},
-        {"name": "seekPermission", "required": false, "line": 1379}
+        {"name": "identityKey", "required": true, "line": 1385},
+        {"name": "limit", "required": false, "line": 1386},
+        {"name": "offset", "required": false, "line": 1387},
+        {"name": "seekPermission", "required": false, "line": 1388}
       ],
       "response": [
-        {"name": "totalCertificates", "required": true, "line": 1383},
-        {"name": "certificates", "required": true, "line": 1384},
-        {"name": "certificates.type", "required": true, "line": 1385},
-        {"name": "certificates.subject", "required": true, "line": 1386},
-        {"name": "certificates.serialNumber", "required": true, "line": 1387},
-        {"name": "certificates.certifier", "required": true, "line": 1388},
-        {"name": "certificates.revocationOutpoint", "required": true, "line": 1389},
-        {"name": "certificates.signature", "required": true, "line": 1390},
-        {"name": "certificates.fields", "required": true, "line": 1391, "record": true},
-        {"name": "certificates.certifierInfo", "required": true, "line": 1392},
-        {"name": "certificates.certifierInfo.name", "required": true, "line": 1393},
-        {"name": "certificates.certifierInfo.iconUrl", "required": true, "line": 1394},
-        {"name": "certificates.certifierInfo.description", "required": true, "line": 1395},
-        {"name": "certificates.certifierInfo.trust", "required": true, "line": 1396},
-        {"name": "certificates.publiclyRevealedKeyring", "required": true, "line": 1398, "record": true},
-        {"name": "certificates.decryptedFields", "required": true, "line": 1402, "record": true}
+        {"name": "totalCertificates", "required": true, "line": 1392},
+        {"name": "certificates", "required": true, "line": 1393},
+        {"name": "certificates.type", "required": true, "line": 1394},
+        {"name": "certificates.subject", "required": true, "line": 1395},
+        {"name": "certificates.serialNumber", "required": true, "line": 1396},
+        {"name": "certificates.certifier", "required": true, "line": 1397},
+        {"name": "certificates.revocationOutpoint", "required": true, "line": 1398},
+        {"name": "certificates.signature", "required": true, "line": 1399},
+        {"name": "certificates.fields", "required": true, "line": 1400, "record": true},
+        {"name": "certificates.certifierInfo", "required": true, "line": 1401},
+        {"name": "certificates.certifierInfo.name", "required": true, "line": 1402},
+        {"name": "certificates.certifierInfo.iconUrl", "required": true, "line": 1403},
+        {"name": "certificates.certifierInfo.description", "required": true, "line": 1404},
+        {"name": "certificates.certifierInfo.trust", "required": true, "line": 1405},
+        {"name": "certificates.publiclyRevealedKeyring", "required": true, "line": 1407, "record": true},
+        {"name": "certificates.decryptedFields", "required": true, "line": 1411, "record": true}
       ]
     },
     "discoverByAttributes": {
-      "line": 1417,
+      "line": 1426,
       "request": [
-        {"name": "attributes", "required": true, "line": 1419, "record": true},
-        {"name": "limit", "required": false, "line": 1420},
-        {"name": "offset", "required": false, "line": 1421},
-        {"name": "seekPermission", "required": false, "line": 1422}
+        {"name": "attributes", "required": true, "line": 1428, "record": true},
+        {"name": "limit", "required": false, "line": 1429},
+        {"name": "offset", "required": false, "line": 1430},
+        {"name": "seekPermission", "required": false, "line": 1431}
       ],
       "response": [
-        {"name": "totalCertificates", "required": true, "line": 1426},
-        {"name": "certificates", "required": true, "line": 1427},
-        {"name": "certificates.type", "required": true, "line": 1428},
-        {"name": "certificates.subject", "required": true, "line": 1429},
-        {"name": "certificates.serialNumber", "required": true, "line": 1430},
-        {"name": "certificates.certifier", "required": true, "line": 1431},
-        {"name": "certificates.revocationOutpoint", "required": true, "line": 1432},
-        {"name": "certificates.signature", "required": true, "line": 1433},
-        {"name": "certificates.fields", "required": true, "line": 1434, "record": true},
-        {"name": "certificates.certifierInfo", "required": true, "line": 1435},
-        {"name": "certificates.certifierInfo.name", "required": true, "line": 1436},
-        {"name": "certificates.certifierInfo.iconUrl", "required": true, "line": 1437},
-        {"name": "certificates.certifierInfo.description", "required": true, "line": 1438},
-        {"name": "certificates.certifierInfo.trust", "required": true, "line": 1439},
-        {"name": "certificates.publiclyRevealedKeyring", "required": true, "line": 1441, "record": true},
-        {"name": "certificates.decryptedFields", "required": true, "line": 1445, "record": true}
+        {"name": "totalCertificates", "required": true, "line": 1435},
+        {"name": "certificates", "required": true, "line": 1436},
+        {"name": "certificates.type", "required": true, "line": 1437},
+        {"name": "certificates.subject", "required": true, "line": 1438},
+        {"name": "certificates.serialNumber", "required": true, "line": 1439},
+        {"name": "certificates.certifier", "required": true, "line": 1440},
+        {"name": "certificates.revocationOutpoint", "required": true, "line": 1441},
+        {"name": "certificates.signature", "required": true, "line": 1442},
+        {"name": "certificates.fields", "required": true, "line": 1443, "record": true},
+        {"name": "certificates.certifierInfo", "required": true, "line": 1444},
+        {"name": "certificates.certifierInfo.name", "required": true, "line": 1445},
+        {"name": "certificates.certifierInfo.iconUrl", "required": true, "line": 1446},
+        {"name": "certificates.certifierInfo.description", "required": true, "line": 1447},
+        {"name": "certificates.certifierInfo.trust", "required": true, "line": 1448},
+        {"name": "certificates.publiclyRevealedKeyring", "required": true, "line": 1450, "record": true},
+        {"name": "certificates.decryptedFields", "required": true, "line": 1454, "record": true}
       ]
     },
     "isAuthenticated": {
-      "line": 1456,
+      "line": 1465,
       "request": [],
       "response": [
-        {"name": "authenticated", "required": true, "line": 1459}
+        {"name": "authenticated", "required": true, "line": 1468}
       ]
     },
     "waitForAuthentication": {
-      "line": 1468,
+      "line": 1477,
       "request": [],
       "response": [
-        {"name": "authenticated", "required": true, "line": 1471}
+        {"name": "authenticated", "required": true, "line": 1480}
       ]
     },
     "getHeight": {
-      "line": 1480,
+      "line": 1489,
       "request": [],
       "response": [
-        {"name": "height", "required": true, "line": 1483}
+        {"name": "height", "required": true, "line": 1492}
       ]
     },
     "getHeaderForHeight": {
-      "line": 1493,
+      "line": 1502,
       "request": [
-        {"name": "height", "required": true, "line": 1494}
+        {"name": "height", "required": true, "line": 1503}
       ],
       "response": [
-        {"name": "header", "required": true, "line": 1496}
+        {"name": "header", "required": true, "line": 1505}
       ]
     },
     "getNetwork": {
-      "line": 1505,
+      "line": 1514,
       "request": [],
       "response": [
-        {"name": "network", "required": true, "line": 1508}
+        {"name": "network", "required": true, "line": 1517}
       ]
     },
     "getVersion": {
-      "line": 1517,
+      "line": 1526,
       "request": [],
       "response": [
-        {"name": "version", "required": true, "line": 1520}
+        {"name": "version", "required": true, "line": 1529}
       ]
     }
   }
