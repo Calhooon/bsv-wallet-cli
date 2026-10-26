@@ -33,7 +33,8 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
 
     let result = ctx.wallet.list_actions(args, "bsv-wallet-cli").await?;
     // The rule an action named at the door (R1 (d)), as `underRule`.
-    let rules = crate::spend_gate::action_rules(ctx.wallet.storage()).await?;
+    let user = crate::spend_gate::UserCoins::from_wallet(&ctx.wallet).await?;
+    let rules = crate::spend_gate::action_rules(ctx.wallet.storage(), user.user_id()).await?;
 
     if ctx.json_output {
         let shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);

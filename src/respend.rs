@@ -193,7 +193,7 @@ pub async fn build_and_post(
     // toolbox's own allocation does (#29); their lock to the phantom is the
     // respend's own and is not a hold. The replacement inherits the word the
     // phantom was created under (R1 (d); `lean/Wallet.lean` `onRespend`).
-    let under_rule = crate::spend_gate::rules_of(storage)
+    let under_rule = crate::spend_gate::rules_of(storage, user_id)
         .await?
         .get(&txid)
         .cloned();

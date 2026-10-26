@@ -2274,21 +2274,34 @@ async fn ensure_frozen(storage: &StorageSqlx) -> Result<()> {
     Ok(())
 }
 
-/// Every frozen outpoint: (lowercase txid, vout).
+/// Every frozen outpoint that is an output of the user `user_id`:
+/// (lowercase txid, vout). The record is the host's, one row per outpoint
+/// whoever holds it; the gate reads only its user's coins (#221), so the
+/// outpoint is joined to that user's outputs through their transaction's
+/// txid, as the gate's own coin read names them (`UserCoins`). For the
+/// user's own coins the answer is the whole record's; another user's
+/// frozen coin is absent from it. [`frozen_count`] stays the whole record.
 pub async fn frozen_outpoints(
     storage: &StorageSqlx,
+    user_id: i64,
 ) -> Result<std::collections::HashSet<(String, i64)>> {
     ensure_frozen(storage).await?;
-    let rows = sqlx::query("SELECT txid, vout FROM frozen_outpoints")
-        .fetch_all(storage.pool())
-        .await?;
+    let rows = sqlx::query(
+        "SELECT f.txid, f.vout FROM frozen_outpoints f \
+         JOIN outputs o ON o.vout = f.vout AND o.user_id = ? \
+         JOIN transactions t ON t.transaction_id = o.transaction_id AND lower(t.txid) = f.txid",
+    )
+    .bind(user_id)
+    .fetch_all(storage.pool())
+    .await?;
     Ok(rows
         .iter()
         .map(|r| (r.get::<String, _>("txid"), r.get::<i64, _>("vout")))
         .collect())
 }
 
-/// How many outpoints the frozen record holds.
+/// How many outpoints the frozen record holds, every user's (the
+/// inspector's count).
 pub async fn frozen_count(storage: &StorageSqlx) -> Result<u64> {
     ensure_frozen(storage).await?;
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM frozen_outpoints")
@@ -4099,7 +4112,7 @@ pub(crate) mod tests {
                 }),
             )
             .await;
-            let frozen = frozen_outpoints(&storage).await.unwrap();
+            let frozen = frozen_outpoints(&storage, user).await.unwrap();
             let gate = assess_tracked_coin(&storage, &services, user, true).await;
             println!(
                 "uppercase={uppercase}: frozen {frozen:?}, held {:?}",

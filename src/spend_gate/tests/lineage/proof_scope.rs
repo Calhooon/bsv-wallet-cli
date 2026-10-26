@@ -41,7 +41,7 @@ async fn selected_candidates_keep_the_original_proof_order() {
     for ancestor in [&p, &q] {
         node_verdict(&store.0, ancestor, "conflicted").await;
     }
-    let lineage = lineage_candidates(&store.0).await.unwrap();
+    let lineage = lineage_candidates(&store.0, store.1 .0).await.unwrap();
     let creators = [("d4".repeat(32), None), ("d5".repeat(32), None)];
     let selected: Vec<_> = lineage
         .proofs(&creators)
@@ -49,6 +49,32 @@ async fn selected_candidates_keep_the_original_proof_order() {
         .map(|(txid, _)| txid)
         .collect();
     assert_eq!(selected, vec![p, q]);
+}
+
+/// #221: a received heir selects no candidate (no rule reads a received
+/// coin's lineage), where a made heir of the same dead P selects P:
+/// [`dead_parent_with_proof`]'s P, its P0 spent by our D and its free P1
+/// spent by a received R.
+#[tokio::test]
+async fn a_received_heir_selects_no_candidate() {
+    let store = wallet_store().await;
+    let (p, d) = dead_parent_with_proof(&store, Death::Word("conflicted")).await;
+    let received = "d7".repeat(32);
+    coin(&store.0, store.1, &received, false, None, 6_000, 3).await;
+    let p1: i64 = sqlx::query_scalar("SELECT output_id FROM outputs WHERE txid = ? AND vout = 1")
+        .bind(&p)
+        .fetch_one(store.0.pool())
+        .await
+        .unwrap();
+    spends(&store.0, &received, p1).await;
+    let lineage = lineage_candidates(&store.0, store.1 .0).await.unwrap();
+    assert_eq!(lineage.proofs(&[(received, None)]), Vec::<Pair>::new());
+    let selected: Vec<_> = lineage
+        .proofs(&[(d, None)])
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
+    assert_eq!(selected, vec![p]);
 }
 
 /// The live coin and optional unrelated lineage used by both door probes.
