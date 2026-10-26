@@ -292,13 +292,16 @@ pub(crate) mod tests {
         (txid, beef.to_hex())
     }
 
-    /// The courier's bytes (a transaction with no input) are refused as
-    /// invalid BEEF by the toolbox's internalize door, the refusal names the
-    /// txid and the courier, and nothing is stored. The reason's wording is
-    /// the toolbox's, not this test's: 0.13.0 says "BEEF structure is
-    /// invalid", #163 "Invalid BEEF at byte 48: InputNamesNoElement"; the
-    /// CLI maps neither to a typed class, so the test asserts the door's
-    /// `refused tx {txid} from WhatsOnChain` and the word `BEEF`.
+    /// The courier's bytes (a transaction with one input whose parent the
+    /// BEEF does not carry, unproven) are refused as invalid BEEF by the
+    /// toolbox's internalize door, the refusal names the txid and the
+    /// courier, and nothing is stored. The reason's wording is the
+    /// toolbox's, not this test's: 0.13.0 says "BEEF structure is invalid",
+    /// #163 "Invalid BEEF at byte 48: InputNamesNoElement"; the CLI maps
+    /// neither to a typed class, so the test asserts the door's
+    /// `refused tx {txid} from WhatsOnChain: wallet error: ` (the CLI's own
+    /// refusals before the toolbox is asked carry no `wallet error: `) and
+    /// that the text after it is one of the two toolboxes' BEEF refusals.
     #[tokio::test]
     async fn l2_stub_refusal_names_txid_courier_reason_and_stores_nothing() {
         let ctx = stub_context().await;
@@ -317,9 +320,11 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
             let text = error.to_string();
+            let door = format!("refused tx {txid} from WhatsOnChain: wallet error: ");
+            let reason = text.split_once(&door).map(|(_, reason)| reason);
             assert!(
-                text.contains(&format!("refused tx {txid} from WhatsOnChain"))
-                    && text.contains("BEEF"),
+                reason.is_some_and(|reason| reason.contains("BEEF structure is invalid")
+                    || reason.contains("Invalid BEEF at byte")),
                 "{text}"
             );
             for table in ["transactions", "outputs"] {
