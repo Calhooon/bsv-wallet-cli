@@ -3,6 +3,10 @@
 Releases before 0.7.0 carry their notes in the release commit's message
 (`RELEASING.md`).
 
+## [Unreleased]
+
+- Tests only, no shipped code, fixture or vector moves: three tests made version-agnostic for the toolbox's dependents gate (toolbox #163, which judges a claim's lock time against the tracker's median time past and codes the BEEF verifier's verdict). `gift_claim_records_its_own_claim_and_the_flow_names_no_chain_scan` and `a_held_claim_is_recorded_when_its_re_announce_is_accepted` carried a lock time of 1,900,000,000, final under 0.13.0 (which did not judge it) and not final under #163 against the mock's median of 1,700,000,000; they now carry 1,600,000,000, final on both, with every clock and assertion unchanged. `l2_stub_refusal_names_txid_courier_reason_and_stores_nothing` asserted 0.13.0's text "BEEF structure is invalid"; it now asserts the class true on both, `refused tx {txid} from WhatsOnChain` naming `BEEF`, and still that nothing is stored.
+
 ## [0.18.1] - 2026-10-23
 0.18.1: two pin moves, no CLI code change. `bsv-wallet-toolbox-rs` `=0.12.1` to `=0.13.0` (toolbox #44, PR 50: `is_utxo_with_spender(txid, vout, script) -> (UtxoVerdict, Option<BoundSpender { txid, confirmed }>)` beside the unchanged `is_utxo`, four requests per check) and `bsv-rs` `=0.8.1` to `=0.8.2` (bsv-rs #73, PR 74: `Error::WalletTransport { status, detail }` for a bare 502, 503 or 504 with no busy code, a connection error or a timeout, retryable and promising nothing about what the wallet did; `WalletBusy`'s reading unchanged). `bsv-tracker` `=0.8.0` unchanged. The lock moves those two entries and this crate's version only.
 
