@@ -297,7 +297,7 @@ pub(crate) mod tests {
     /// toolbox's internalize door, the refusal names the txid and the
     /// courier, and nothing is stored. The reason's wording is the
     /// toolbox's, not this test's: 0.13.0 says "BEEF structure is invalid",
-    /// #163 "Invalid BEEF at byte 48: InputNamesNoElement"; the CLI maps
+    /// #163 "Invalid BEEF at byte 48: `InputNamesNoElement`"; the CLI maps
     /// neither to a typed class, so the test asserts the door's
     /// `refused tx {txid} from WhatsOnChain: wallet error: ` (the CLI's own
     /// refusals before the toolbox is asked carry no `wallet error: `) and
