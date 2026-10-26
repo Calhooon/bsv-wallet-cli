@@ -5,7 +5,7 @@ storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. It pins
-**bsv-wallet-toolbox-rs =0.13.1**, **bsv-rs =0.8.3** and **bsv-tracker =0.8.0**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.1**, **bsv-rs =0.9.0-beta.1** and **bsv-tracker =0.9.0-beta.1**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -249,13 +249,14 @@ an incomplete ancestry and checks every proof it carries against the header
 service), so the one word trusted is the sender's broadcast. Its cost: if the
 sender double-spends, this action becomes `conflicted` and the coins of ours
 it spent are lost with it, though nothing of ours was ever lost in fact. The
-action carries the word as its label, `spend-gate:received-pending`, which the
+action carries the word as its labels, `spend-gate:received-pending` and the
+toolbox's `underReceivedRule` (plain and scoped forms), which the
 toolbox writes with the action in its one transaction (the gate writes nothing
 after the call), and `actions` and `/listActions` show it as `underRule:
 "received-pending"`. A template made for deferred signing (`signAndProcess:
 false`) carries the label from its creation through `signAction`; an aborted
 template keeps it. The label is the gate's alone: a caller's own
-`spend-gate:received-pending` (in any case) is stripped from `createAction`'s
+`spend-gate:received-pending` or `underReceivedRule` (in any case) is stripped from `createAction`'s
 and `internalizeAction`'s labels, so it grants nothing. The records a 0.15
 store made (`spend_gate_actions`) keep answering. There is no environment
 variable for it.
@@ -325,10 +326,10 @@ whatever its transaction's status: `lost` on `completed` or `unproven`, with
 `lost: the store marks it not spendable`; `failed` on a failed transaction,
 with `its transaction is failed: never offered`; otherwise the status,
 with `its transaction is <status>: not spendable until it is sent`.
-A failed coin is held even with flag 1. A live coin with flag 1 reads its
+A failed or nosend coin is held even with flag 1. A live coin with flag 1 reads its
 creator under the existing own-change and received rules.
-Toolbox 0.13.0 keeps a noSend action's outputs not spendable until the action
-is sent. This wallet does not read `sendWith` yet (#147), so a noSend output
+Toolbox 0.14.0-beta.1 leaves noSend output flags spendable. The gate holds
+those coins by `nosend` status until the action is sent. This wallet does not read `sendWith` yet (#147), so a noSend output
 named as an input is held `nosend` today. Every named hold is served as
 `403 INPUT_NOT_OFFERED`. The scoped word's domain still refuses statuses
 outside `completed` and `unproven` with `400 VALIDATION_ERROR`.
@@ -394,7 +395,9 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 `abortAction` is refused with `409 CONFLICT` once a broadcaster took the
 transaction, including an `unfail` request or a request holding a proof
 whatever its status says. An abort before any accepting word reaches the
-toolbox.
+toolbox, which also refuses an unproven status without a proof as an accepting
+word (fixture 124). This arrives through the beta.1 erased error table as
+409 `CONFLICT`; typed classes replace it at beta.2.
 
 `503 STORE_BUSY` is answered by the error's type, never its words: the
 toolbox's `WalletBusy` from a wallet door, or a read or write of the spend
@@ -441,14 +444,16 @@ clean answer; no rung sleeps on a 429, and a rate-limited rung is skipped
 without a request until its Retry-After passes. Every explorer call is logged
 at info with marker `explorer_call`, `provider`, `call`, `status` and `ms`.
 
-The CLI's sites:
+The CLI's sites (unchanged at beta.1): `post_beef` now asks every named
+broadcaster by default (`PromiseAll`), preserving every word. This fan-out
+does not move any explorer rung or its fault/negative rules.
 
 | site | what it asks, and when |
 |---|---|
 | `src/broadcast_verify.rs` (C1) | WhatsOnChain `GET /tx/hash/{txid}`, Bitails `GET /tx/{txid}`, BananaBlocks `GET /tx/{txid}` (through the toolbox's provider; its `mined` is chain evidence, its `known` a presence word read as a broadcaster's `SEEN`, never a proof or chain evidence, and its 404 a gap, never an absence vote): after a send, whether the network holds what a broadcaster took. The start rotates; a `mined` from any index outranks BananaBlocks' `known`; absence is WhatsOnChain's and Bitails' clean 404s both, which a `known` does not stand against; the report names the index that answered (`chain_index_by`) |
 | `src/explorers.rs` (C2) | `receive`, a payment's BEEF no store of ours holds: WhatsOnChain `GET /tx/{txid}/beef`, then BananaBlocks `GET /tx/{txid}/hex` (bytes that hash to the txid) with the proof the wallet's services checked against the header service, then the toolbox's `get_beef`. A fault (a 429, a closed rung, bytes that do not hash, no checked proof) moves to the next courier at once. The WhatsOnChain rung passes the toolbox WhatsOnChain provider's own gate and the BananaBlocks rung is the toolbox's provider, so the CLI and the toolbox's ladders spend one budget per host and a 429 either meets closes that host for both until Retry-After passes |
 | `src/commands/sync.rs` (C4) | a chain scan for payments to our deposit address nobody handed us, through the toolbox's `get_utxo_leads` with the deposit script itself (WhatsOnChain and Bitails by the script's hash, BananaBlocks by the deposit address); `sync` only, by hand. A lead is discovery, not a verdict: one explorer's list is enough to look, the union of every answering explorer's list is the fullest look, and each lead is received only after its bytes hash to its txid and its proof meets the header service. An empty set is every answering explorer's empty list; no answer at all is "could not look", an error. Each explorer's list is read page by page, at most 10 pages of 1000 (the toolbox's `LEAD_PAGES_MAX`); a list cut short (the cap, or a later page it could not read) is still a list, its leads received as any other, and the sync names it (`unspent_partial`, "N explorers answered (M cut short)"). When every answering list was cut short the summary says the sync was not a full look: an output past the cap is reached by a later sync only if the explorers' ordering brings it into the pages read, which nothing promises. An outpoint of ours missing from the leads, a cut-short list's included, is only a question for the spend probe, never "spent" |
-| `src/commands/cleanup_abandoned.rs` (C7) | who spent an outpoint: one call to toolbox 0.13.1's `is_utxo_with_spender` (#196). Its ladder asks WhatsOnChain, BananaBlocks and Bitails for the unspent set (two clean answers needed), and binds a spender from WhatsOnChain `/tx/{txid}/{vout}/spent` or BananaBlocks `/txo/{txid}/{vout}` by its own bytes. One ladder pass per outpoint: four explorer requests in the bound-spender witness with or without the header service, plus a proof and header when needed. Without the header service this costs four rather than 0.13.0's two; bytes still name the spender with `confirmed: false`. An unreadable or unbound name is `(Unknown, None)`, never an unspent hint (#96). Only a checked merkle proof sets `confirmed: true`; only `UnspentHint` under our stored script releases. The CLI asks no spender route of its own. Called by `cleanup-abandoned`, `reconcile-outputs`, the daemon's sweep and `sync --reconcile-spent` |
+| `src/commands/cleanup_abandoned.rs` (C7) | who spent an outpoint: one call to toolbox 0.14.0-beta.1's `is_utxo_with_spender` (#196). Its ladder asks WhatsOnChain, BananaBlocks and Bitails for the unspent set (two clean answers needed), and binds a spender from WhatsOnChain `/tx/{txid}/{vout}/spent` or BananaBlocks `/txo/{txid}/{vout}` by its own bytes. One ladder pass per outpoint: four explorer requests in the bound-spender witness with or without the header service, plus a proof and header when needed. Without the header service this costs four rather than 0.13.0's two; bytes still name the spender with `confirmed: false`. An unreadable or unbound name is `(Unknown, None)`, never an unspent hint (#96). Only a checked merkle proof sets `confirmed: true`; only `UnspentHint` under our stored script releases. The CLI asks no spender route of its own. Called by `cleanup-abandoned`, `reconcile-outputs`, the daemon's sweep and `sync --reconcile-spent` |
 | the toolbox's monitor, `check_for_proofs` (`daemon` only) | the monitor's own proof backstop, not the tracker's path: on each new header (and a two-hour fallback) it asks the status providers about every unproven transaction, then a merkle path for each one called mined, from Arcade when configured, then WhatsOnChain, then Bitails; the path is checked against the header service before it is stored. Each proof it stores is logged at info with the provider that served it: marker `proof_backstop_provider`, `provider`, `txid`, `height` ([src/backstop_log.rs](src/backstop_log.rs)); `status-answer` when the status answer carried the proof. No setting turns its explorer providers off (toolbox 0.9.0 `ServicesOptions` has none; `BREAK_GLASS_EXPLORER_HEADERS` governs headers only) |
 | the tracker's re-ask (`Courier`, every served pass) | a merkle path for one named transaction whose re-ask is due, through the same toolbox couriers (Arcade, then WhatsOnChain, then Bitails), checked by the tracker against the header service |
 
@@ -507,3 +512,8 @@ Dependabot moves the stack's crates daily at 18:00Z under
 [CHANGELOG.md](CHANGELOG.md) records changes and
 [docs/reading-a-balance.md](docs/reading-a-balance.md) explains balance evidence.
 Licensed under [MIT](LICENSE).
+
+`E2E_RNG_SEED` is a 32-byte hexadecimal test seed, read only in `src/config.rs`.
+It is refused unless `E2E_HERMETIC=1` and the complete loopback proxy wall is
+set. The hermetic harness sets it for the wallet and storage streams; ordinary
+wallets leave it unset and use OS entropy.

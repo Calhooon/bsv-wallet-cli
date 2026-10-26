@@ -40,7 +40,7 @@ Not recorded: scenario 20's fetches of the inspector UI and its browser, scenari
 
 Under `DIFF_RECORD` the harness's HTTP calls run one at a time in the order the scenarios issue them. Scenario 10 fires five sends together; they would otherwise reach the wallet's spending lock in the scheduler's order, and every coin graph after them would follow that order. The race itself is the plain hermetic run's to test, which records nothing.
 
-**The same wallets.** `DIFF_ROOT_KEYS=<A>,<B>,<C>[,<funder>]` (64-digit hex each) makes `setup.js` pass the seat's key to `bsv-wallet init --key` instead of drawing one. The tool draws four keys once per comparison and gives both runs the same ones. The variable is refused outside `E2E_HERMETIC=1`, so a known key never holds mainnet sats.
+**The same wallets.** `DIFF_ROOT_KEYS=<A>,<B>,<C>[,<funder>]` (64-digit hex each) makes `setup.js` pass the seat's key to `bsv-wallet init --key` instead of drawing one. The tool draws four keys once per comparison and gives both runs the same ones. The variable is refused outside `E2E_HERMETIC=1`, so a known key never holds mainnet sats. The harness also sets `E2E_RNG_SEED` for the wallet and storage streams (toolbox #106), with a distinct repeatable seed for each CLI invocation so reopening a store cannot repeat its server's action references.
 
 **No recording holds a key.** `record.js` writes every key of `DIFF_ROOT_KEYS` as its seat's name, `<root-key:A>` (so `init`'s argv is `--key <root-key:A>`), in every line and in the error a failed command throws; the tool refuses a run whose recording or log holds one (exit 2), and `tools/test_differential.py` greps a recording for each key. A failed run keeps the wallets' directories under `--out` (`base-wallets/`, `head-wallets/`: each `.env` holds `ROOT_KEY`); the CI job's upload leaves them out and carries the report, the recordings and the run logs only.
 
@@ -52,15 +52,27 @@ The harness, the scenarios, the stub and its fixtures are the head's tree for bo
 
 The rule for the list: a field goes on it only with evidence from the floor (`--same`: one binary twice, same keys, same stub), and the reason names the source of the difference in the code. A txid or a signature is never excluded as such. The binary's randomness is the toolbox's `thread_rng` (change derivations, references) and BRC-2's per-call IV. The tool parses every transaction in the recording and renames the atoms one run holds alone to `<rand:N/LB>`, numbered in order of appearance, `L` the atom's decoded byte length (a reference, a derivation and a ciphertext as well as a txid or a key; a signature's DER body is `<rand:N/der>`), so an atom that grows or shrinks is a difference, so two equal normalized recordings are a consistent bijection of their random atoms. An input's script is split into its pushes: only a signature's DER body and a push of 20 bytes or more (a public key) are atoms; the push count, each push's opcode, each signature's sighash byte and its strict DER form (BIP 66, low-S) are compared, so a build signing with sighash `0xC1` against a `0x41` preimage is a difference. A renamed signature's length byte is written `der+1`: the DER length of a random r and s is the draw's (70 to 72 bytes), and with the literal byte the floor of 2026-10-23 showed 87 differences in 11 phases instead of 13. Every amount, count, order, script template and deterministic value is still compared byte for byte.
 
-## The floor today (2026-10-24)
+## The beta.1 floor
 
-On the binary of beta at 6227a9c the floor is zero in five pairs of nine. In the other four, the earliest difference is in scenario 22 (rapid-internalize-spend): wallet B pays from one of several coins of equal value, and the two runs pick different ones. The toolbox's change pick (`storage/sqlx/create_action.rs`) ranks candidates by satoshis, then status, then `LENGTH(t.input_beef)`. That length follows the 70 to 72 byte DER signatures of the random transactions, so equal coins are ranked by chance. The same key makes the sweep's input order vary; the tool compares a transaction's inputs by outpoint for that, but it cannot make two different coin choices equal. Until the toolbox breaks that tie deterministically, a differential can show this difference on a refactor that changed nothing. The report shows where: an earliest difference in scenario 22 or later, an input's `.vout` or `.prev` or an outpoint (a transaction's fields are compared in their wire order, its txid last, so the coin is named before what follows from it), every scenario before it zero. Read it against a `--same` run before calling it the refactor's.
+Toolbox 0.14.0-beta.1 ends equal-coin selection on output_id (#105) and
+provides seeded storage draws (#106). References, derivationPrefix and
+derivationSuffix are now compared literally. Auth nonces, manager salts,
+monitor jitter and certificate issuance nonces remain outside that seed
+(toolbox #191); BRC-2 IVs remain the SDK's draw. `--exclusions` names those
+sources. The pin's floor reads `0 differences over 359 calls and 35 commands`, with
+13 unshared atoms per run still renamed (BRC-2 ciphertexts). Both runs pass
+24/24. Any remaining difference is reviewed, never hidden by adding an exclusion.
+
+A pin move uses the re-record reading: the base and head intentionally differ,
+so a non-refactor PR reports the difference as a warning under the job's
+existing exit mapping. A failed build, failed suite or incomplete recording
+still fails. Each re-recorded fixture and reason belongs in the pin PR.
 
 ## The label rule and CI
 
 The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull request. It builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`.
 
-- A PR carrying the label `refactor` is to fail the job on any difference. **That failure is held** until bsv-wallet-toolbox-rs #105 (the coin tie of "The floor today") is pinned: until then two runs of one binary can differ from scenario 22 on, so a refactor that changed nothing could fail. The job reports the differences as a warning, and a refactor PR carries the floor pair's numbers (`--same` on its head binary) beside its own, both in the lane's REPORT. The failure switches on by one line, `REFACTOR_FAILS: 'true'` in the job, in the PR that pins the toolbox release holding #105.
+- A PR carrying the label `refactor` fails on any difference. `REFACTOR_FAILS: 'true'` is enabled with this pin: toolbox #105 and #106 are in the binary and its same-binary floor is zero. A failed or incomplete suite is never a comparison verdict.
 - Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
 - A failed build or suite run, or an incomplete recording (exit 3), fails the job either way.
 
@@ -68,4 +80,4 @@ The labels are read when the job's differential step runs (`gh pr view --json la
 
 ## The exit test
 
-A refactor PR carries the report with zero differences: `DIFFERENTIAL: 0 differences over N calls and M commands`. A lane cannot mark a refactor done without it. Until bsv-wallet-toolbox-rs #105 is pinned, the exit test is the pair: the head against its base and the floor (`--same`) on the head, both `DIFFERENTIAL:` lines in the REPORT; a difference the floor does not show (an earlier scenario, another field than the coin choice's) is the refactor's.
+A refactor PR carries the report with zero differences: `DIFFERENTIAL: 0 differences over N calls and M commands`. A lane cannot mark a refactor done without it. The pin records the pair: the head against its base and the floor (`--same`) on the head, both `DIFFERENTIAL:` lines in the REPORT; a difference the floor does not show (an earlier scenario, another field than the coin choice's) is the refactor's.

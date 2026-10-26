@@ -78,8 +78,8 @@ the job runs its step and is its own concern: #136.
 
 **The funder** is a third stub-backed wallet the harness starts on :3373
 (`FUNDER_PORT` moves it; 3320 is refused) in a scratch directory. The stub mines
-a coinbase paying the funder's BRC-29 address (`POST /_stub/fund`) and the
-funder internalizes its AtomicBEEF: the wallet checks the BUMP's root against the
+a coinbase paying the funder's BRC-29 address (`POST /_stub/fund`), advances 99 more stub blocks for its next-block
+coinbase maturity, and the funder internalizes its AtomicBEEF: the wallet checks the BUMP's root against the
 stub's header for that height (`/findHeaderHexForHeight`), as it would against
 the real header service. The check is shown to run: the harness then offers a
 forged coinbase (`POST /_stub/forge`: a BUMP claiming it alone in the recorded
@@ -94,12 +94,14 @@ gate (`max_acceptable_proof_height`, written by the monitor) is closed under
 ## The routes the stub serves
 
 Each answers in the shape the toolbox's provider or the CLI's rung parses
-(`bsv-wallet-toolbox-rs` 0.13.0 `src/services/providers/*.rs`,
+(`bsv-wallet-toolbox-rs` 0.14.0-beta.1 `src/services/providers/*.rs`,
 `src/explorers.rs`, `src/broadcast_verify.rs`). A fault injected for a provider
 (`POST /_stub/fault`) is served before any of its routes.
 
 `/chaintracks` (`{"status":"success","value":...}` frames; a header is
 `{version, previousHash, merkleRoot, time, bits, nonce, height, hash}`):
+`GET /getChain` (main), `GET /getHeaders?height=START&count=N` (concatenated
+80-byte headers, including the eleven ending at the tip),
 `GET /getPresentHeight`, `GET /findChainTipHeaderHex`,
 `GET /findHeaderHexForHeight?height=N` (404 and an error frame off the chain),
 `GET /findHeaderHexForBlockHash?hash=H`. The chain-feed SSE is not served:
@@ -172,7 +174,7 @@ funding block is proven by the BUMP inside its BEEF instead.
 - **The toolbox's WhatsOnChain and Bitails providers** keep their default bases
   (`api.whatsonchain.com`, `api.bitails.io`): `ServicesOptions` takes no
   `whatsonchain_base` or `bitails_base` (toolbox #98 asks for the knobs). So
-  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.13.0,
+  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.14.0-beta.1,
   `Services::with_options`) these rungs never run hermetically today; each
   reaches the wall, is refused, and the ladder moves on (to BananaBlocks,
   which the stub serves, or to the stub's ARC):
@@ -204,8 +206,8 @@ funding block is proven by the BUMP inside its BEEF instead.
   served.
 - **Proof of work and signatures**: not checked by the stub, not needed by the
   scenarios (the wallet checks a BUMP's root against the header, which the stub
-  honours; a script's validity is the real network's judgment, exercised by the
-  mainnet gate).
+  honours; the pinned toolbox runs bsv-rs's script verifier at internalize;
+  the stub itself remains an inclusion oracle).
 - **Scenario 20's browser checks** need Playwright's Chromium; without it the
   scenario's API checks run and the browser checks are skipped by the scenario
   itself. CI installs Chromium; under the flag it runs behind the wall by its
@@ -219,7 +221,8 @@ funding block is proven by the BUMP inside its BEEF instead.
 `CHAINTRACKS_URL`, `ARC_URL`, `BANANABLOCKS_BASE`, `WOC_BASE`, `BITAILS_BASE`
 at the stub; `ARC_GORILLAPOOL_URL=` (out); `HTTPS_PROXY`, `HTTP_PROXY`,
 `ALL_PROXY` at the stub and `NO_PROXY=127.0.0.1,localhost` (both letter cases),
-`NODE_USE_ENV_PROXY=1`;
+`NODE_USE_ENV_PROXY=1`; `E2E_RNG_SEED` is the same 32-byte seed for every
+wallet and storage stream, refused by the binary without this complete wall;
 `FUNDER_PORT` 3373 unless set (3320 refused); `E2E_WALLET_TMP` the system
 temporary directory unless set (the wallets' directories, the stub's log and
 CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
@@ -302,3 +305,20 @@ computed, not recorded. T5 (fewer trusted words): a walled attempt outside the
 two named targets, an unserved route or unread stats fails the run, and the
 seed's root check is shown to refuse a forged root; the stub's double-spend answer is derived from its own
 spends, not asserted. T6 (executable): `E2E_HERMETIC=1 node tests/e2e/run.js`.
+
+At beta.1 the verifier asks the header service for its network and eleven
+linked headers to compute median time past. The initial range is drawn from
+the twelve real headers already recorded above; subsequent ranges include
+the stub's mined headers. `PromiseAll` records every named broadcaster, so
+WhatsOnChain and Bitails' unconfigurable broadcast bases can reach the
+known proxy wall even after ARC accepts. Their counts remain in the
+differential recordings; no explorer rung moves.
+
+Each CLI invocation gets a distinct seed derived from the harness seed and
+its command index. Reopening a store with the server's initial stream would
+repeat action references; paired runs replay the same per-command sequence.
+
+The BEEF V2 decoder reads the format-1 proof index before the transaction
+(BRC-96). `node --test tests/e2e/stub/tx.test.js` checks it against the same
+transactions and proof as a recorded V1 body. This keeps signAction's
+broadcast readable by the inclusion oracle without changing its bytes.
