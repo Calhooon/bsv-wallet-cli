@@ -609,14 +609,14 @@ fn create_action_inputs(
         let unlocking_script = match i.unlocking_script {
             // [SRC] ts-stack `edf6e03`, `packages/sdk/src/wallet/validationHelpers.ts:522-528`.
             Some(h) => {
-                let h = h.trim();
-                if h.len() % 2 != 0 {
+                // Include JavaScript's U+FEFF trim and count UTF-16 code units.
+                // Rust also trims U+0085 via is_whitespace; JavaScript's trim does not.
+                let h = h.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+                let length = h.encode_utf16().count();
+                if length % 2 != 0 {
                     return Err(AppError::new(
                         Kind::Validation,
-                        format!(
-                            "The unlockingScript parameter must be even length, not {}.",
-                            h.len()
-                        ),
+                        format!("The unlockingScript parameter must be even length, not {length}."),
                     ));
                 }
                 Some(hex::decode(h).map_err(|_| {
