@@ -520,7 +520,7 @@ Dependabot moves the stack's crates daily at 18:00Z under
 ## Records and releases
 
 [RELEASING.md](RELEASING.md) defines the machine gate and release publication.
-[CHANGELOG.md](CHANGELOG.md) records changes and
+[CHANGELOG.md](CHANGELOG.md) records releases, with pending changes in [changelog.d/](changelog.d/README.md), and
 [docs/reading-a-balance.md](docs/reading-a-balance.md) explains balance evidence.
 Licensed under [MIT](LICENSE).
 
