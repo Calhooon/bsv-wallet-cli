@@ -982,9 +982,9 @@ pub async fn abort_action(
         ));
     }
     let result = wallet.abort_action(args, &originator).await.map_err(|e| {
-        // Toolbox 0.14 refuses any stored accepting word (#165), including
-        // unproven without a proof. The WalletInterface boundary erases this
-        // variant at beta.1; toolbox_words reads it until beta.2's classes.
+        // Toolbox 0.14's accepting-word sentences (#165) alone name this
+        // hint and conflict, including unproven without a proof. Other
+        // abort refusals keep beta's answer until beta.2's typed classes.
         let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
         let mut err = AppError::from(e);
         if on_chain_evidence {

@@ -1,6 +1,8 @@
 //! The toolbox's refusals that reach this crate as words only (#81).
 //!
-//! `bsv-wallet-toolbox-rs` =0.14.0-beta.1 converts its error at the
+//! The stack pins are `bsv-rs` =0.9.0-beta.1,
+//! `bsv-wallet-toolbox-rs` =0.14.0-beta.1 and `bsv-tracker` =0.9.0-beta.1.
+//! The toolbox converts its error at the
 //! `WalletInterface` boundary (`impl From<Error> for bsv_rs::Error`, its
 //! `src/error.rs`): `StoreBusy` becomes bsv-rs's typed `WalletBusy`, an
 //! `SdkError` passes its bsv-rs error through, and every other variant
@@ -13,20 +15,20 @@
 //! (`src/server/error.rs`) and the gate map every typed error by its
 //! variant and ask here only for a `WalletError`'s text.
 //!
-//! What would type each, to be filed upstream (the lane files nothing):
+//! [`WORDS`] reads the pinned toolbox's Display prefixes, including the
+//! SDK's `SpendRefused` rendering (`spend refused at offset`). The abort
+//! door also reads two accepting-word sentences: `records an acceptance
+//! and cannot be aborted` and `has a recorded acceptance (`. Only those
+//! sentences name Conflict and the accepting-word hint. The common
+//! `cannot abort action:` prefix also introduces failed-status, incoming
+//! and spent-output refusals; those keep beta's unclassified 400 ERROR
+//! without a hint. No retired network-presence sentence is read.
 //!
-//! - bsv-rs: a wallet refusal that carries its class (for instance
-//!   `WalletError { class, detail }`, the class one of the toolbox's
-//!   refusal kinds), since bsv-rs's `Error` is `Clone + Eq` and cannot
-//!   hold the toolbox's error itself.
-//! - bsv-wallet-toolbox-rs: its `From<Error> for bsv_rs::Error` mapping
-//!   each variant [`WORDS`] reads to that class; and the abort refusal on
-//!   chain evidence (`InvalidTransactionStatus("cannot abort action: the
-//!   network has transaction ..")`, its `abort_action.rs`) a variant of its
-//!   own.
+//! Typed refusal classes (bsv-rs #137 and toolbox #185) replace these
+//! reads at beta.2. This pin does not anticipate their host mapping.
 //!
 //! Two words of the table, `insufficient funds:` and `not found:`, are
-//! produced by neither library at the pins (=0.13.0, =0.8.2); they stay
+//! produced by neither pinned library; they stay
 //! as `AppError::classify` had them, so no answer moves.
 
 /// The class of a toolbox refusal, as its words name it.
@@ -57,8 +59,9 @@ pub enum Erased {
 }
 
 /// Each word a toolbox Display begins with, and the class it names. The
-/// words are the toolbox's `#[error(..)]` texts at =0.13.0 up to their
-/// first field; they do not overlap, so the order decides nothing.
+/// words are the Display texts at =0.14.0-beta.1 up to their variable
+/// fields; they do not overlap, so the order decides nothing. Accepting
+/// abort sentences are read separately, never by their common prefix.
 pub const WORDS: &[(&str, Erased)] = &[
     ("Insufficient funds:", Erased::InsufficientFunds),
     ("insufficient funds:", Erased::InsufficientFunds),
@@ -72,10 +75,6 @@ pub const WORDS: &[(&str, Erased)] = &[
     ("Invalid operation:", Erased::Conflict),
     ("Invalid BEEF at byte", Erased::InvalidBeef),
     ("spend refused at offset", Erased::InvalidBeef),
-    (
-        "Invalid transaction status: cannot abort action:",
-        Erased::Conflict,
-    ),
     ("Validation error:", Erased::Validation),
     ("Invalid argument:", Erased::Validation),
     ("Storage error:", Erased::Internal),
@@ -90,6 +89,9 @@ pub const WORDS: &[(&str, Erased)] = &[
 /// [`Erased::Unread`].
 #[must_use]
 pub fn class(text: &str) -> Erased {
+    if accepting_abort(text) {
+        return Erased::Conflict;
+    }
     WORDS
         .iter()
         .find(|(word, _)| text.starts_with(word))
@@ -128,8 +130,16 @@ pub fn is_unspendable(e: &bsv_sdk::Error) -> bool {
 /// The typed classes replace this word read at beta.2 (bsv-rs #137).
 #[must_use]
 pub fn is_abort_on_chain_evidence(e: &bsv_sdk::Error) -> bool {
-    e.to_string()
-        .contains("Invalid transaction status: cannot abort action:")
+    matches!(e, bsv_sdk::Error::WalletError(text) if accepting_abort(text))
+}
+
+fn accepting_abort(text: &str) -> bool {
+    text.split_once("cannot abort action: ")
+        .is_some_and(|(kind, refusal)| {
+            kind == "Invalid transaction status: "
+                && (refusal.contains("records an acceptance and cannot be aborted")
+                    || refusal.contains("has a recorded acceptance ("))
+        })
 }
 
 #[cfg(test)]
@@ -144,6 +154,24 @@ mod tests {
             assert_eq!(class(&format!("wallet error: {word} x")), Erased::Unread);
         }
         assert_eq!(class("anything else"), Erased::Unread);
+    }
+
+    #[test]
+    fn only_accepting_abort_sentences_name_conflict_and_a_hint() {
+        for (refusal, accepting) in [
+            ("action with status 'unproven' records an acceptance and cannot be aborted", true),
+            ("transaction aa has a recorded acceptance (tracker word 'seen'); only a transaction never accepted can be retired", true),
+            ("action with status 'failed' cannot be aborted", false),
+            ("must be an outgoing transaction", false),
+            ("transaction has outputs that have been spent", false),
+            ("transaction with status 'sending' has no txid, so its stored acceptance cannot be checked", false),
+            ("transaction aa has a proven descendant bb, so it is on chain", false),
+        ] {
+            let text = format!("Invalid transaction status: cannot abort action: {refusal}");
+            assert_eq!(class(&text), if accepting { Erased::Conflict } else { Erased::Unread }, "{refusal}");
+            assert_eq!(is_abort_on_chain_evidence(&bsv_sdk::Error::WalletError(text)), accepting, "{refusal}");
+        }
+        assert_eq!(class("Invalid transaction status: cannot retire transaction: transaction aa has a recorded acceptance (tracker word 'seen')"), Erased::Unread);
     }
 
     #[test]

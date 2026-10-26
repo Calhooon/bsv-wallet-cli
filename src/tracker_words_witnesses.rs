@@ -546,6 +546,118 @@ async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() 
     assert_eq!(output_state(&storage, output).await, before);
 }
 
+async fn serve_abort(
+    wallet: &crate::server::handlers::WalletState,
+    reference: &str,
+) -> (StatusCode, serde_json::Value) {
+    let app = crate::server::make_router(wallet.clone(), Default::default());
+    let request = axum::http::Request::post("/abortAction")
+        .header("Origin", "http://witness.local")
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::json!({"reference": reference}).to_string(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+async fn abort_wallet(
+    storage: StorageSqlx,
+    key: PrivateKey,
+) -> crate::server::handlers::WalletState {
+    let services = bsv_wallet_toolbox::Services::with_options(
+        bsv_wallet_toolbox::Chain::Main,
+        bsv_wallet_toolbox::ServicesOptions::mainnet(),
+    )
+    .unwrap();
+    crate::server::make_wallet_state(Wallet::new(Some(key), storage, services).await.unwrap())
+}
+
+#[tokio::test]
+async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() {
+    let key = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
+    let txid = "e3".repeat(32);
+    let row = insert_tx(&storage, user, &txid, "unsigned").await;
+    let output = insert_output(&storage, user, basket, row, &txid, true, None).await;
+    let wallet = abort_wallet(storage, key).await;
+    let reference = format!("ref-{}", &txid[..8]);
+    assert_eq!(
+        serve_abort(&wallet, &reference).await,
+        (StatusCode::OK, serde_json::json!({"aborted": true}))
+    );
+    let before = output_state(wallet.storage(), output).await;
+    let (status, body) = serve_abort(&wallet, &reference).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "code": "ERROR",
+            "message": "wallet error: Invalid transaction status: cannot abort action: action with status 'failed' cannot be aborted"
+        })
+    );
+    assert_eq!(tx_status(wallet.storage(), &txid).await, "failed");
+    assert_eq!(output_state(wallet.storage(), output).await, before);
+}
+
+#[tokio::test]
+async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptance_hint() {
+    let key = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
+    let txid = "e4".repeat(32);
+    let row = insert_tx(&storage, user, &txid, "unproven").await;
+    sqlx::query("UPDATE transactions SET is_outgoing=0 WHERE transaction_id=?")
+        .bind(row)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    let output = insert_output(&storage, user, basket, row, &txid, true, None).await;
+    let before = output_state(&storage, output).await;
+    let wallet = abort_wallet(storage, key).await;
+    for reference in [format!("ref-{}", &txid[..8]), txid.clone()] {
+        let (status, body) = serve_abort(&wallet, &reference).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{reference}: {body}");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "code": "ERROR",
+                "message": "wallet error: Invalid transaction status: cannot abort action: must be an outgoing transaction"
+            })
+        );
+        assert_eq!(tx_status(wallet.storage(), &txid).await, "unproven");
+        assert_eq!(output_state(wallet.storage(), output).await, before);
+    }
+}
+
+#[tokio::test]
+async fn abort_accepting_status_keeps_conflict_and_acceptance_hint() {
+    let key = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
+    let txid = "e5".repeat(32);
+    let row = insert_tx(&storage, user, &txid, "unproven").await;
+    let output = insert_output(&storage, user, basket, row, &txid, true, None).await;
+    let before = output_state(&storage, output).await;
+    let wallet = abort_wallet(storage, key).await;
+    let (status, body) = serve_abort(&wallet, &txid).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "CONFLICT");
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("records an acceptance and cannot be aborted"));
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("(hint: the wallet holds an accepting word"));
+    assert_eq!(tx_status(wallet.storage(), &txid).await, "unproven");
+    assert_eq!(output_state(wallet.storage(), output).await, before);
+}
+
 // ---------------------------------------------------------------------------
 // The spend guard
 // ---------------------------------------------------------------------------

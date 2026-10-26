@@ -39,8 +39,12 @@ coinbase to maturity and reads the V2 proof index before its transaction;
 the forged-root preflight accepts the new RootNotCarried refusal. Abort/retire refuse accepting words
 (#165): new fixture 124 records 409 CONFLICT for an unproven action with no
 proof, while the host's proof guard retains its earlier 409. Beta.1 erases the
-abort variant at WalletInterface; toolbox_words reads its exact abort prefix
-and the SpendRefused prefix in its existing error-reading site.
+abort variant at WalletInterface; toolbox_words reads only the accepting-word
+sentences `records an acceptance and cannot be aborted` and
+`has a recorded acceptance (` for the conflict class and accepting-word hint.
+Other abort refusals (a failed template, an incoming action or spent outputs)
+keep beta's 400 ERROR without a hint; the shared abort prefix is not a class.
+The SpendRefused prefix stays in the existing error-reading site.
 
 The SDK judges BEEF in held BRC-62 order. Both SDK writers sort, but export's
 validation preceded writing: export now sorts before judging a child-first
