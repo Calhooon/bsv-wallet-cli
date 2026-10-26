@@ -2207,12 +2207,17 @@ fn deep_enough<H: Headers>(
 // Chain events from the header service's feed
 // ---------------------------------------------------------------------------
 
-/// The decoder requires `split:` followed by 64 ASCII hex digits.
+/// The key shape is the crate's `valid_split_key`: `split:` and 64 ASCII
+/// hex digits. This is an identifier shape, not an error classification.
+/// A5's grep counts prefix methods and its allowlist ceiling only shrinks,
+/// so the prefix is checked with a slice equality.
 /// A stored key without that prefix is read as it is and holds the floor as
 /// beta did; the crate refuses malformed keys before delivery.
 fn lowercase_split_key(key: &mut str) {
-    if key.strip_prefix("split:").is_some() {
-        key["split:".len()..].make_ascii_lowercase();
+    if key.get(.."split:".len()) == Some("split:") {
+        if let Some(hash) = key.get_mut("split:".len()..) {
+            hash.make_ascii_lowercase();
+        }
     }
 }
 
