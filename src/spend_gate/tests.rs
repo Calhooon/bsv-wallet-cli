@@ -1617,6 +1617,15 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         ..Default::default()
     });
 
+    let (without, asked) = at_the_door(create_action(
+        &wallet,
+        args.clone(),
+        "gate.local",
+        &opts(1, true),
+    ))
+    .await;
+    assert!(!asked, "a received unproven coin is held before allocation");
+    assert!(without.is_err());
     let result = create_action(
         &wallet,
         args,
@@ -1629,7 +1638,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL]
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
     assert!(rules_of(wallet.storage(), user).await.unwrap().is_empty());
 
@@ -1655,7 +1664,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         .unwrap();
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL]
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
 }
 
@@ -1680,6 +1689,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
         args.labels = Some(vec![
             RECEIVED_PENDING_LABEL.to_string(),
             " Spend-Gate:Received-Pending ".to_string(),
+            " underReceivedRule ".to_string(),
             "mine".to_string(),
         ]);
         args.options = Some(CreateActionOptions {
@@ -1719,7 +1729,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec!["mine", RECEIVED_PENDING_LABEL]
+        vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
 
     let mut labels = Some(vec![
@@ -2569,7 +2579,10 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL.to_string()]
+        vec![
+            RECEIVED_PENDING_LABEL.to_string(),
+            TOOLBOX_RECEIVED_LABEL.to_string()
+        ]
     );
 }
 
