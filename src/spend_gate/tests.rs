@@ -1617,15 +1617,16 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         ..Default::default()
     });
 
-    let (without, asked) = at_the_door(create_action(
-        &wallet,
-        args.clone(),
-        "gate.local",
-        &opts(1, true),
-    ))
-    .await;
-    assert!(!asked, "a received unproven coin is held before allocation");
-    assert!(without.is_err());
+    let without = create_action(&wallet, args.clone(), "gate.local", &opts(1, true))
+        .await
+        .unwrap_err();
+    let GateError::Refused(refusal) = without else {
+        panic!("expected held receipt: {without:?}")
+    };
+    assert!(refusal
+        .held
+        .iter()
+        .any(|coin| coin.outpoint.starts_with(&received)));
     let result = create_action(
         &wallet,
         args,
@@ -2728,7 +2729,14 @@ const SCOPED_WORD_DOMAIN_READINGS: [ScopeReading; 7] = [
         Some("own change of an action of this wallet, not a received coin"),
         None,
     ),
-    (3, Some("its transaction is nosend"), None),
+    (
+        3,
+        Some("its transaction is nosend"),
+        Some((
+            "nosend",
+            "its transaction is nosend: not spendable until it is sent",
+        )),
+    ),
     (
         10,
         Some("its transaction is nosend"),
@@ -2929,13 +2937,13 @@ async fn a_failed_named_input_is_held_on_its_status_under_every_word() {
     assert_eq!(stored_rows(wallet.storage()).await, before);
 }
 
-/// A spendable received nosend, unsigned or sending coin reads its live
+/// A spendable received unsigned or sending coin reads its live
 /// creator: held without a received word, offered with it. The scoped word
 /// refuses each status with its own 400 before reading the creator.
 #[tokio::test]
 async fn live_statuses_at_the_named_door_read_the_received_creator() {
     let (wallet, coins) = scope_wallet().await;
-    for (i, status) in [(3, "nosend"), (14, "unsigned"), (15, "sending")] {
+    for (i, status) in [(14, "unsigned"), (15, "sending")] {
         let txid = &coins[i];
         let flag: i64 = sqlx::query_scalar("SELECT spendable FROM outputs WHERE txid = ?")
             .bind(txid)
@@ -3000,7 +3008,7 @@ async fn unspendable_live_statuses_at_the_named_door_are_held_under_every_word()
 }
 
 /// A real `noSend` action leaves both its change and its user output
-/// unspendable (toolbox 0.13.0 `process_action.rs:675-676`). Each is held at
+/// spendable (toolbox 0.14.0-beta.1 #66). The nosend status holds each at
 /// the named door before a second `createAction` can ask the toolbox.
 #[tokio::test]
 async fn a_made_nosend_actions_change_and_user_output_are_held_under_every_word() {
@@ -3030,7 +3038,7 @@ async fn a_made_nosend_actions_change_and_user_output_are_held_under_every_word(
         let vout: i64 = row.get("vout");
         let change: i64 = row.get("change");
         let flag: i64 = row.get("spendable");
-        assert_eq!(flag, 0, "vout {vout}, change={change}");
+        assert_eq!(flag, 1, "vout {vout}, change={change}");
         assert_eq!(row.get::<Option<i64>, _>("spent_by"), None);
         assert_eq!(
             change != 0,
