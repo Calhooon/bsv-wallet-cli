@@ -34,7 +34,7 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 11] = [
+pub(crate) const WORLDS: [&str; 12] = [
     "fresh",
     "auth",
     "callback",
@@ -46,6 +46,7 @@ pub(crate) const WORLDS: [&str; 11] = [
     "busy",
     "busy-read",
     "funded",
+    "named-change",
 ];
 
 /// The `funded` world's coins: (seed of the parent's input, height mined,
@@ -199,6 +200,7 @@ async fn seed_funded(
             .await;
         rows.coin(Coin {
             txid: &txid,
+            made: false,
             proven: Some(proven),
             satoshis,
             description: "a funded coin",
@@ -227,6 +229,7 @@ struct Rows {
 /// A coin of the wallet's, written as the toolbox would have stored it.
 struct Coin<'a> {
     txid: &'a str,
+    made: bool,
     /// Its creator's proof row, if it is mined.
     proven: Option<i64>,
     satoshis: u64,
@@ -284,17 +287,18 @@ impl Rows {
         .last_insert_rowid()
     }
 
-    /// A completed incoming transaction and its one output, the coin.
+    /// A completed transaction and its one output, the coin.
     async fn coin(&self, coin: Coin<'_>) {
         let now = row_time();
         let satoshis = i64::try_from(coin.satoshis).unwrap();
         let tx_row = sqlx::query(
             "INSERT INTO transactions (user_id, proven_tx_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, raw_tx, created_at, updated_at) \
-             VALUES (?, ?, 'completed', ?, 0, ?, 1, 0, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, 'completed', ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)",
         )
         .bind(self.user)
         .bind(coin.proven)
         .bind(format!("ref-{}", &coin.txid[..8]))
+        .bind(coin.made)
         .bind(satoshis)
         .bind(coin.description)
         .bind(coin.txid)
@@ -502,6 +506,7 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
     };
     rows.coin(Coin {
         txid,
+        made: false,
         proven,
         satoshis: 50_000,
         description: "a received coin",
@@ -533,6 +538,8 @@ impl World {
     ///   ([`FUNDED_COINS`]), the header stub answering the blocks of the
     ///   stranger's payments ([`Payment`]) and of the puzzle ([`PUZZLE`]),
     ///   and a broadcaster that takes every post ([`arc_stub`]).
+    /// - `named-change`: a completed made change coin. The other worlds
+    ///   seed incoming coins, and their spends make no change.
     ///
     /// Any other name is a panic naming it.
     pub(crate) async fn build(name: &str) -> World {
@@ -621,6 +628,21 @@ impl World {
             "tracked" => seed(storage, &identity, true).await,
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" => return seed_funded(storage, &identity, key).await,
+            "named-change" => {
+                Rows::open(storage, &identity)
+                    .await
+                    .coin(Coin {
+                        txid: PENDING,
+                        made: true,
+                        proven: None,
+                        satoshis: 50_000,
+                        description: "our change",
+                        raw: vec![1, 0, 0, 0],
+                        lock: hex::decode(P2PKH).unwrap(),
+                        derivation: None,
+                    })
+                    .await;
+            }
             "broken" => {
                 sqlx::query("DROP TABLE outputs")
                     .execute(storage.writer())

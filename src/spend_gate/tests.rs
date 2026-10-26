@@ -1107,6 +1107,62 @@ fn named_input(txid: &str) -> bsv_sdk::wallet::CreateActionInput {
     }
 }
 
+/// #234: offerability and the caller's right to name managed change are
+/// separate rules. The toolbox speaks after the gate offers; disabling
+/// the own-change rule holds the same coin before the toolbox is asked.
+#[tokio::test]
+async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_without_the_rule() {
+    let root = PrivateKey::random();
+    let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
+    let txid = "d8".repeat(32);
+    coin(&storage, (user, basket), &txid, true, None, 8_000, 5).await;
+    let wallet = Wallet::new(
+        Some(root),
+        storage,
+        headers_with(&"0c".repeat(32), 900, 900),
+    )
+    .await
+    .unwrap();
+    let mut args = pay(1_000);
+    args.inputs = Some(vec![named_input(&txid)]);
+    let before = stored_rows(wallet.storage()).await;
+
+    let held = named_under_word(&wallet, &txid, &opts(1, true)).await;
+    assert!(held.is_empty(), "own change must be offered: {held:?}");
+    let (result, asked) = at_the_door(create_action(
+        &wallet,
+        args.clone(),
+        "gate.local",
+        &opts(1, true),
+    ))
+    .await;
+    assert!(asked, "the offered coin must reach the toolbox");
+    let Err(GateError::Wallet(bsv_sdk::Error::WalletError(message))) = result else {
+        panic!("expected the toolbox's named-change refusal: {result:?}");
+    };
+    assert_eq!(
+        message,
+        format!("Validation error: inputs[0]: cannot spend change output {txid}:0 directly. Change is managed by the wallet.")
+    );
+
+    let (result, asked) =
+        at_the_door(create_action(&wallet, args, "gate.local", &opts(1, false))).await;
+    assert!(!asked, "the own-change hold must precede the toolbox");
+    let Err(GateError::Refused(refusal)) = result else {
+        panic!("expected the gate's own-change hold: {result:?}");
+    };
+    assert!(refusal.is_named_input());
+    assert_eq!(refusal.held.len(), 1);
+    let held = &refusal.held[0];
+    assert_eq!(held.outpoint, format!("{txid}.0"));
+    assert_eq!(held.origin, Origin::Made);
+    assert_eq!(
+        held.reason,
+        "depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0"
+    );
+    assert_eq!(stored_rows(wallet.storage()).await, before);
+}
+
 /// Explicit inputs under the guard: a coin the caller names that the gate
 /// would hold refuses the action before the toolbox runs, with the same
 /// `held[]` listing; under the door's word the same received coin passes
