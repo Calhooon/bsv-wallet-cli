@@ -8,10 +8,11 @@
 #
 #   bash tools/test_differential_step.sh
 #
-# The eight cases are the tool's four exit codes under the two label states
-# with REFACTOR_FAILS false (as the job holds it until toolbox #105); then the
-# refactor failure switched on, and a failed label read. Each case prints its
-# step's exit and the last line it wrote.
+# The cases are the tool's four exit codes under the two label states with
+# REFACTOR_FAILS false (as the job holds it until toolbox #105); then the
+# refactor failure switched on, a failed label read, and a push run (no PR
+# number: no label read, a difference reported and never failed, case 12).
+# Each case prints its step's exit and the last line it wrote.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
