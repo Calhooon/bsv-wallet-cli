@@ -12,6 +12,14 @@ struct TwoUsers {
     output: i64,
 }
 
+impl TwoUsers {
+    async fn user_ids(&self) -> (i64, i64) {
+        let caller = UserCoins::from_wallet(&self.wallet).await.unwrap();
+        let owner = UserCoins::from_wallet(&self.owner).await.unwrap();
+        (caller.user_id(), owner.user_id())
+    }
+}
+
 async fn two_users() -> TwoUsers {
     let root = PrivateKey::random();
     let (storage, _, _) = storage_for(&root.public_key().to_hex()).await;
@@ -187,8 +195,7 @@ async fn another_users_lost_and_spent_coins_never_enter_a_refusal() {
 /// (the harness, this user's id, the other user's id).
 async fn with_my_coin(txid: &str, made: bool) -> (TwoUsers, i64, i64) {
     let w = two_users().await;
-    let me = UserCoins::from_wallet(&w.wallet).await.unwrap().user_id();
-    let owner = UserCoins::from_wallet(&w.owner).await.unwrap().user_id();
+    let (me, owner) = w.user_ids().await;
     let storage = w.wallet.storage();
     let basket = storage.find_or_create_default_basket(me).await.unwrap();
     coin(storage, (me, basket.basket_id), txid, made, None, 6_000, 3).await;
@@ -265,6 +272,89 @@ async fn another_users_label_never_reaches_our_respend() {
     );
     let ours = rules_of(storage, me).await.unwrap();
     assert!(ours.is_empty(), "{ours:?}");
+}
+
+/// #221: another user's unlabelled unsigned template of the same shape
+/// cannot make this user's labelled template ambiguous in their listing.
+#[tokio::test]
+async fn another_users_template_never_hides_our_rule() {
+    let w = two_users().await;
+    let (me, owner) = w.user_ids().await;
+    let storage = w.wallet.storage();
+    for (user, reference) in [(me, "our-template"), (owner, "their-template")] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, created_at, updated_at) \
+             VALUES (?, 'unsigned', ?, 1, -1000, 1, 0, 'pay someone', ?, ?) RETURNING transaction_id",
+        )
+        .bind(user)
+        .bind(reference)
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .fetch_one(storage.writer())
+        .await
+        .unwrap();
+        if user == me {
+            let mut conn = storage.writer().acquire().await.unwrap();
+            label_in(&mut conn, me, id, RECEIVED_PENDING).await.unwrap();
+        }
+    }
+    let list = w
+        .wallet
+        .list_actions(list_args(), "gate.local")
+        .await
+        .unwrap();
+    let rules = action_rules(storage, me).await.unwrap();
+    assert_eq!(
+        listed(serde_json::to_value(list).unwrap(), &rules),
+        vec![("unsigned".to_string(), Some(RECEIVED_PENDING.to_string()))]
+    );
+}
+
+/// #221: a 0.15 record naming another user's signed action, by txid or
+/// reference, answers for that owner only and never enters our action rules.
+#[tokio::test]
+async fn another_users_015_records_never_reach_our_rules() {
+    let w = two_users().await;
+    let (me, owner) = w.user_ids().await;
+    let storage = w.wallet.storage();
+    let by_reference = "c4".repeat(32);
+    let basket = storage.find_or_create_default_basket(owner).await.unwrap();
+    coin(
+        storage,
+        (owner, basket.basket_id),
+        &by_reference,
+        true,
+        None,
+        1_000,
+        1,
+    )
+    .await;
+    a_015_rule_table(storage).await;
+    for (txid, reference) in [
+        (Some(w.txid.to_ascii_uppercase()), None),
+        (None, Some(format!("ref-{}", &by_reference[..8]))),
+    ] {
+        sqlx::query(
+            "INSERT INTO spend_gate_actions (txid, rule, recorded_at, reference) VALUES (?, ?, 0, ?)",
+        )
+        .bind(txid)
+        .bind(RECEIVED_PENDING)
+        .bind(reference)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    }
+    let theirs = action_rules(storage, owner).await.unwrap();
+    assert_eq!(
+        theirs.by_txid,
+        HashMap::from([
+            (w.txid, RECEIVED_PENDING.to_string()),
+            (by_reference, RECEIVED_PENDING.to_string()),
+        ])
+    );
+    let ours = action_rules(storage, me).await.unwrap();
+    assert!(ours.by_txid.is_empty(), "{:?}", ours.by_txid);
+    assert!(ours.by_template.is_empty(), "{:?}", ours.by_template);
 }
 
 /// #221: another user's frozen coin is not in this user's frozen set, and
