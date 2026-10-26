@@ -39,6 +39,38 @@ const TAKEN_MEMORY_STATUSES: [&str; 3] = ["accepted", "seen", "mined"];
 /// and `stale`, which was `mined`).
 const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 
+/// Whether the wallet holds proof evidence for `txid`: the request's proof
+/// link, its `unfail` word, or a stored proof. A proof wins over every request
+/// word (the keeper's rule, #244), including at the respend door (#247).
+pub async fn proof_present(pool: &SqlitePool, txid: &str) -> Result<bool> {
+    let req = proof_request(pool, txid).await?;
+    proof_present_with_request(pool, txid, req.as_ref()).await
+}
+
+async fn proof_request(pool: &SqlitePool, txid: &str) -> Result<Option<(String, Option<i64>)>> {
+    Ok(
+        sqlx::query_as("SELECT status, proven_tx_id FROM proven_tx_reqs WHERE txid = ? LIMIT 1")
+            .bind(txid)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+// The guard already needs the request's word. Reuse that read so its word
+// and proof link still come from one query, with the same short circuits.
+async fn proof_present_with_request(
+    pool: &SqlitePool,
+    txid: &str,
+    req: Option<&(String, Option<i64>)>,
+) -> Result<bool> {
+    if req.is_some_and(|(s, proof)| proof.is_some() || s == "unfail") {
+        return Ok(true);
+    }
+    // The store's reader matches `lower(txid)`; callers pass the toolbox's lowercase hex.
+    Ok(table_exists(pool, "proven_txs").await?
+        && crate::store::stored_proof(pool, txid).await?.is_some())
+}
+
 /// Whether a broadcaster ever took `txid`, by the wallet's own records: its
 /// proof request past the post (`unfail` included) or holding a proof, a
 /// `proven_txs` row, a completed transaction, a broadcast-memory row with an
@@ -51,17 +83,11 @@ const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 /// refusal there. The request keeps `unmined`: a refusal is a hint at the
 /// toolbox 0.7.4 and moves no request.
 pub async fn broadcaster_took(pool: &SqlitePool, txid: &str) -> Result<bool> {
-    let req: Option<(String, Option<i64>)> =
-        sqlx::query_as("SELECT status, proven_tx_id FROM proven_tx_reqs WHERE txid = ? LIMIT 1")
-            .bind(txid)
-            .fetch_optional(pool)
-            .await?;
-    if req.is_some_and(|(s, proof)| proof.is_some() || TAKEN_REQ_STATUSES.contains(&s.as_str())) {
-        return Ok(true);
-    }
-    // The store's reader matches `lower(txid)`; callers pass the toolbox's lowercase hex.
-    if table_exists(pool, "proven_txs").await?
-        && crate::store::stored_proof(pool, txid).await?.is_some()
+    let req = proof_request(pool, txid).await?;
+    if req
+        .as_ref()
+        .is_some_and(|(s, _)| TAKEN_REQ_STATUSES.contains(&s.as_str()))
+        || proof_present_with_request(pool, txid, req.as_ref()).await?
     {
         return Ok(true);
     }

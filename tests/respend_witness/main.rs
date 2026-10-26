@@ -1,6 +1,7 @@
 //! L2-67: real SQLite, throwaway keys and the #66 mock chain/status sources.
 //! No live wallet, external HTTP, or real coin.
 
+mod proof_presence;
 mod world;
 
 #[path = "../../src/test_support/chain_tracker.rs"]
