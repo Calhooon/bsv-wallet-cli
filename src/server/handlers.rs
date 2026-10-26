@@ -440,6 +440,7 @@ pub async fn internalize_action(
     Json(req): Json<McInternalizeActionReq>,
 ) -> Result<Json<McInternalizeActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
+    validate_internalize_instructions(&req)?;
     let args = internalize_args(req);
 
     let output_count = args.outputs.len();
@@ -466,6 +467,33 @@ pub async fn internalize_action(
         accepted: result.accepted,
         broadcast,
     }))
+}
+
+/// Refuse oversized insertion instructions before any output can be stored.
+fn validate_internalize_instructions(req: &McInternalizeActionReq) -> Result<(), AppError> {
+    // #157: validate every output before the wallet can store any of them.
+    // String::len counts UTF-8 bytes. The reference applies this bound only
+    // at internalizeAction, not to createAction's output instructions.
+    const CUSTOM_INSTRUCTIONS_MAX_BYTES: usize = 1000;
+    for output in &req.outputs {
+        if let Some(instructions) = output
+            .insertion_remittance
+            .as_ref()
+            .and_then(|insertion| insertion.custom_instructions.as_deref())
+        {
+            let bytes = instructions.len();
+            if bytes > CUSTOM_INSTRUCTIONS_MAX_BYTES {
+                return Err(AppError::new(
+                    Kind::Validation,
+                    format!(
+                        "Validation error: customInstructions: no more than 1000 length. \
+                     (UTF-8 bytes: limit {CUSTOM_INSTRUCTIONS_MAX_BYTES}, got {bytes})"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The toolbox's `internalizeAction` arguments for a caller's request, the
