@@ -1,0 +1,27 @@
+{
+  "world": "abort-unproven",
+  "request": {
+    "method": "POST",
+    "path": "/abortAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "reference": "ref-22222222"
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "CONFLICT",
+      "message": "wallet error: Invalid transaction status: cannot abort action: action with status 'unproven' records an acceptance and cannot be aborted (hint: the wallet holds an accepting word for this transaction; it stays until a proof, node verdict or competitor's checked proof decides it)"
+    }
+  }
+}

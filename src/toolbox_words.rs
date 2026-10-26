@@ -1,6 +1,6 @@
 //! The toolbox's refusals that reach this crate as words only (#81).
 //!
-//! `bsv-wallet-toolbox-rs` =0.13.0 converts its error at the
+//! `bsv-wallet-toolbox-rs` =0.14.0-beta.1 converts its error at the
 //! `WalletInterface` boundary (`impl From<Error> for bsv_rs::Error`, its
 //! `src/error.rs`): `StoreBusy` becomes bsv-rs's typed `WalletBusy`, an
 //! `SdkError` passes its bsv-rs error through, and every other variant
@@ -71,6 +71,11 @@ pub const WORDS: &[(&str, Erased)] = &[
     ("Duplicate entity:", Erased::Conflict),
     ("Invalid operation:", Erased::Conflict),
     ("Invalid BEEF at byte", Erased::InvalidBeef),
+    ("spend refused at offset", Erased::InvalidBeef),
+    (
+        "Invalid transaction status: cannot abort action:",
+        Erased::Conflict,
+    ),
     ("Validation error:", Erased::Validation),
     ("Invalid argument:", Erased::Validation),
     ("Storage error:", Erased::Internal),
@@ -119,11 +124,12 @@ pub fn is_unspendable(e: &bsv_sdk::Error) -> bool {
     e.to_string().contains("Unspendable coin:")
 }
 
-/// The toolbox's refusal to abort a transaction it holds chain evidence
-/// for (`cannot abort action: the network has transaction ..`).
+/// The erased accepting-word refusal at the beta.1 abort door (#165).
+/// The typed classes replace this word read at beta.2 (bsv-rs #137).
 #[must_use]
 pub fn is_abort_on_chain_evidence(e: &bsv_sdk::Error) -> bool {
-    e.to_string().contains("the network has transaction")
+    e.to_string()
+        .contains("Invalid transaction status: cannot abort action:")
 }
 
 #[cfg(test)]

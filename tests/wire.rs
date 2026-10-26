@@ -11,7 +11,7 @@
 //!
 //! The field names the shapes must keep are BRC-100's at the line's pin,
 //! bsv-blockchain/BRCs `ed1b015` (2026-10-05, the stack's
-//! docs/PROVENANCE.md). Upstream master `5119a9b` (2026-10-19) differs for
+//! docs/PROVENANCE.md). Upstream master `ed1b015` (2026-10-05) differs for
 //! `listOutputs` (`totalOutputs` may be a string, `spendable` may be false,
 //! for BRC-112 and BRC-207 module views) and for `internalizeAction` (an
 //! insertion's `customInstructions` bounded at 1000 bytes). The latter is
@@ -255,6 +255,7 @@ fn the_manifest_judges_the_set_on_disk() {
             MANIFEST,
             &serde_json::to_string(&Manifest {
                 fixtures: names.iter().map(ToString::to_string).collect(),
+                notes: Default::default(),
             })
             .unwrap(),
         );
@@ -323,6 +324,7 @@ fn a_fixture_of_an_unknown_world_fails_the_replay() {
         tmp.path().join(MANIFEST),
         serde_json::to_string(&Manifest {
             fixtures: vec!["001-nowhere.json".to_string()],
+            notes: Default::default(),
         })
         .unwrap(),
     )
@@ -401,4 +403,59 @@ fn every_app_error_code_is_judged() {
          UNPRODUCED (with its reason in docs/WIRE.md) lists; and lists {gone:?}, which it no \
          longer writes"
     );
+}
+
+/// #140: the verifier refuses the script sentence, stores nothing, then
+/// takes the valid payment as pending. The host code moves again at beta.2.
+#[test]
+fn internalize_verifies_the_script_before_storing_a_payment() {
+    on_runtime(|| async {
+        use wire_harness::recorder::post;
+        let world = World::build("funded").await;
+        let listing = post(
+            "/listActions",
+            serde_json::json!({"labels": [], "limit": 100}),
+        );
+        let as_value = |r: wire_support::Resp| serde_json::to_value(r.json.unwrap()).unwrap();
+        let before = as_value(world.serve_raw(&listing).await.0);
+        let bad: Fixture = read_fixture(&wire_dir().join("103-internalizeAction.badUnlock.json"));
+        let refused = world.serve_raw(&bad.request).await.0;
+        assert_eq!(refused.status, 400);
+        let body = as_value(refused);
+        assert_eq!(body["code"], "INVALID_BEEF");
+        assert!(body["message"]
+            .as_str()
+            .unwrap()
+            .contains("OP_EQUALVERIFY requires the top two stack items to be equal."));
+        assert_ne!(body["accepted"], true);
+        assert_eq!(
+            as_value(world.serve_raw(&listing).await.0),
+            before,
+            "nothing stored"
+        );
+        assert_eq!(
+            as_value(
+                world
+                    .serve_raw(&post("/listOutputs", serde_json::json!({"basket": "wire"})))
+                    .await
+                    .0
+            )["totalOutputs"],
+            0
+        );
+        let good: Fixture =
+            read_fixture(&wire_dir().join("104-internalizeAction.walletPayment.json"));
+        let accepted = world.serve_raw(&good.request).await.0;
+        assert_eq!(accepted.status, 200);
+        assert_eq!(as_value(accepted)["accepted"], true);
+        let after = as_value(world.serve_raw(&listing).await.0);
+        assert_eq!(
+            after["totalActions"].as_u64().unwrap(),
+            before["totalActions"].as_u64().unwrap() + 1
+        );
+        assert!(after["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["status"] == "unproven"));
+    });
 }

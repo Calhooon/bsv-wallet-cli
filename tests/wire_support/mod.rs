@@ -24,6 +24,8 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tower::ServiceExt;
 
+mod mining;
+
 // ---------------------------------------------------------------------------
 // JSON that keeps its key order (serde_json's `Value` sorts keys here, and a
 // key moved is a byte changed).
@@ -428,13 +430,30 @@ pub async fn header_stub(down: bool, roots: HashMap<u32, String>, other: &'stati
         })
     }
     let roots = std::sync::Arc::new(roots);
+    let (tip, range) = mining::range(other);
     let app = if down {
         Router::new().fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR })
     } else {
         Router::new()
             .route(
+                "/getChain",
+                get(|| async {
+                    axum::Json(serde_json::json!({"status":"success","value":"main"}))
+                }),
+            )
+            .route(
+                "/getHeaders",
+                get(move || {
+                    let range = range.clone();
+                    async move { axum::Json(serde_json::json!({"status":"success","value":range})) }
+                }),
+            )
+            .route(
                 "/findChainTipHeaderHex",
-                get(move || async move { axum::Json(header(TIP, other)) }),
+                get(move || {
+                    let tip = tip.clone();
+                    async move { axum::Json(tip) }
+                }),
             )
             .route(
                 "/getPresentHeight",

@@ -256,8 +256,10 @@ impl AppError {
                 let coin = Some(outpoint.trim().to_string()).filter(|c| !c.is_empty());
                 return (Kind::UnspendableCoin, coin);
             }
-            T::Duplicate { .. } | T::InvalidOperation(_) => Kind::Conflict,
-            T::InvalidBeef { .. } => Kind::InvalidBeef,
+            T::Duplicate { .. } | T::InvalidOperation(_) | T::InvalidTransactionStatus(_) => {
+                Kind::Conflict
+            }
+            T::InvalidBeef { .. } | T::SpendRefused { .. } => Kind::InvalidBeef,
             T::ValidationError(_) | T::InvalidArgument(_) => Kind::Validation,
             T::StorageError(_) | T::DatabaseError(_) | T::Internal(_) => Kind::Internal,
             T::ServiceError(_) | T::NetworkError(_) | T::BroadcastFailed(_) => Kind::Service,

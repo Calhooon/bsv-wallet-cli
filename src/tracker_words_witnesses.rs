@@ -504,6 +504,48 @@ async fn the_abort_door_refuses_a_transaction_a_broadcaster_took() {
     assert_eq!(spendable, 0, "the coin stays locked");
 }
 
+/// Toolbox #165 at beta.1: status alone is an accepting word; the host's
+/// proof guard does not read it. The typed refusal reaches 409 after erasure.
+#[tokio::test]
+async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() {
+    let key = PrivateKey::random();
+    let identity = key.public_key().to_hex();
+    let (storage, user, basket) = storage_for(&identity).await;
+    let txid = "e2".repeat(32);
+    let row = insert_tx(&storage, user, &txid, "unproven").await;
+    let output = insert_output(&storage, user, basket, row, &txid, true, None).await;
+    let before = output_state(&storage, output).await;
+    let reference = format!("ref-{}", &txid[..8]);
+    assert!(
+        crate::retire_guard::abort_refused_for(storage.pool(), &reference)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let auth = bsv_wallet_toolbox::AuthId {
+        identity_key: identity,
+        user_id: Some(user),
+        is_active: Some(true),
+    };
+    let error = WalletStorageWriter::abort_action(
+        &storage,
+        &auth,
+        bsv_sdk::wallet::AbortActionArgs { reference },
+    )
+    .await
+    .unwrap_err();
+    let bsv_wallet_toolbox::Error::InvalidTransactionStatus(message) = &error else {
+        panic!("expected accepting-word refusal: {error:?}");
+    };
+    assert!(message.starts_with("cannot abort action:"), "{message}");
+    let erased = bsv_sdk::Error::from(error);
+    let response =
+        axum::response::IntoResponse::into_response(crate::server::error::AppError::from(erased));
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(tx_status(&storage, &txid).await, "unproven");
+    assert_eq!(output_state(&storage, output).await, before);
+}
+
 // ---------------------------------------------------------------------------
 // The spend guard
 // ---------------------------------------------------------------------------

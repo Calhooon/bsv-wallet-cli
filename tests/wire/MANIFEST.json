@@ -122,6 +122,10 @@
     "120-createAction.namedChange.json",
     "121-createAction.callerInputNoSigner.json",
     "122-createAction.callerInputLengthMismatch.json",
-    "123-internalizeAction.customInstructionsBound.json"
-  ]
+    "123-internalizeAction.customInstructionsBound.json",
+    "124-abortAction.acceptingStatus.json"
+  ],
+  "notes": {
+    "103-internalizeAction.badUnlock.json": "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137)."
+  }
 }

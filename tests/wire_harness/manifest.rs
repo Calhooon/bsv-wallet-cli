@@ -16,6 +16,8 @@ pub(crate) const MANIFEST: &str = "MANIFEST.json";
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Manifest {
     pub(crate) fixtures: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) notes: std::collections::BTreeMap<String, String>,
 }
 
 /// Whether a file's name is a fixture's: a `.json` file.

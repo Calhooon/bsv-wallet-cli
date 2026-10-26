@@ -97,6 +97,7 @@ impl Recorder {
     pub(crate) fn write_manifest(&self) {
         let mut text = serde_json::to_string_pretty(&Manifest {
             fixtures: self.written.clone(),
+            notes: [("103-internalizeAction.badUnlock.json".into(), "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137).".into())].into_iter().collect(),
         })
         .unwrap();
         text.push('\n');

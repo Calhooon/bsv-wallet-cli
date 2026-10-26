@@ -26,6 +26,15 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_privileged_and_busy(r).await;
     record_named_input_cases(r).await;
     record_internalize_bound(r).await;
+    r.case(
+        "abortAction.acceptingStatus",
+        "abort-unproven",
+        post(
+            "/abortAction",
+            serde_json::json!({"reference": format!("ref-{}", &super::worlds::PENDING[..8])}),
+        ),
+    )
+    .await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.
