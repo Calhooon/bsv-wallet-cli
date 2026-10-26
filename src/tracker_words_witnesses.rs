@@ -658,6 +658,166 @@ async fn abort_accepting_status_keeps_conflict_and_acceptance_hint() {
     assert_eq!(output_state(wallet.storage(), output).await, before);
 }
 
+async fn plant_agreement_word(storage: &StorageSqlx, txid: &str, word: &str) {
+    if word.starts_with("history") {
+        let history = match word {
+            "history refused" => {
+                serde_json::json!({"notes": [{"sendWithResults": [{"txid": txid, "status": "rejected"}]}]})
+            }
+            "history other txid" => {
+                serde_json::json!({"notes": [{"sendWithResults": [{"txid": "ff".repeat(32), "status": "success"}]}]})
+            }
+            "history text" => {
+                serde_json::json!({"notes": ["status success, accepted transaction"]})
+            }
+            "history unrelated field" => {
+                serde_json::json!({"unrelated": {"txid": txid, "status": "accepted"}})
+            }
+            _ => {
+                serde_json::json!({"notes": [{"sendWithResults": [{"txid": txid, "status": "success"}]}]})
+            }
+        };
+        insert_req(storage, txid, "sending", &history.to_string()).await;
+    } else if let Some(status) = word.strip_prefix("request ") {
+        insert_req(storage, txid, status, "{}").await;
+    } else if let Some(status) = word.strip_prefix("tracker ") {
+        sqlx::query("CREATE TABLE IF NOT EXISTS tracker_states (txid TEXT PRIMARY KEY, word TEXT)")
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tracker_states (txid,word) VALUES (?,?)")
+            .bind(txid)
+            .bind(status)
+            .execute(storage.writer())
+            .await
+            .unwrap();
+    } else if let Some(status) = word.strip_prefix("memory ") {
+        storage
+            .record_broadcast_status(txid, PROVIDER_ARCADE_V2, status)
+            .await
+            .unwrap();
+    } else if word == "all refused" {
+        insert_req(storage, txid, "unsent", "{}").await;
+        for provider in [PROVIDER_ARCADE_V2, bsv_wallet_toolbox::PROVIDER_TAAL_ARC] {
+            storage
+                .record_broadcast_status(txid, provider, BROADCAST_STATUS_REJECTED)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+/// #235: each reader is planted without another accepting word hiding it.
+/// Fixture 124 is the named status-only divergence, not an agreement.
+#[tokio::test]
+async fn retire_guard_and_toolbox_agreement_matrix_names_fixture_124_divergence() {
+    let mut disagreements = Vec::new();
+    for (word, guard_refuses, toolbox_refuses) in [
+        ("request unmined", true, true),
+        ("request callback", true, true),
+        ("request unconfirmed", true, true),
+        ("request completed", true, true),
+        ("request unfail", true, true),
+        ("memory accepted", true, true),
+        ("memory seen", true, true),
+        ("memory mined", true, true),
+        ("tracker announced", true, true),
+        ("tracker seen", true, true),
+        ("tracker mined", true, true),
+        ("tracker stale", true, true),
+        ("all refused", false, false),
+        ("no record", false, false),
+        ("fixture 124: unproven without proof", false, true),
+        ("history", true, true),
+        ("history refused", false, false),
+        ("history other txid", false, false),
+        ("history text", false, false),
+        ("history unrelated field", false, false),
+    ] {
+        for abort in [false, true] {
+            if assert_agreement_row(word, toolbox_refuses, abort).await != guard_refuses {
+                disagreements.push(format!(
+                    "{word}: abort={abort}, expected guard={guard_refuses}"
+                ));
+            }
+        }
+    }
+    assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+}
+
+async fn exercise_toolbox_word(
+    storage: &StorageSqlx,
+    user: i64,
+    identity: &str,
+    txid: &str,
+    abort: bool,
+) -> bsv_wallet_toolbox::Result<()> {
+    if abort {
+        WalletStorageWriter::abort_action(
+            storage,
+            &bsv_wallet_toolbox::AuthId::with_user_id(identity, user),
+            bsv_sdk::wallet::AbortActionArgs {
+                reference: txid.to_string(),
+            },
+        )
+        .await
+        .map(|r| {
+            assert!(r.aborted);
+        })
+    } else {
+        storage
+            .retire_undeliverable_txid(&MockWalletServices::default(), txid, "unsent")
+            .await
+            .map(|_| ())
+    }
+}
+
+async fn assert_agreement_row(word: &str, toolbox_refuses: bool, abort: bool) -> bool {
+    let key = PrivateKey::random();
+    let identity = key.public_key().to_hex();
+    let (storage, user, basket) = storage_for(&identity).await;
+    let txid = "e6".repeat(32);
+    let status = if word.starts_with("fixture 124:") {
+        "unproven"
+    } else {
+        "sending"
+    };
+    let row = insert_tx(&storage, user, &txid, status).await;
+    let output = insert_output(&storage, user, basket, row, &txid, true, None).await;
+    plant_agreement_word(&storage, &txid, word).await;
+    let before = output_state(&storage, output).await;
+    let retired = crate::retire_guard::broadcaster_took(storage.pool(), &txid)
+        .await
+        .unwrap();
+    let aborted =
+        crate::retire_guard::abort_refused_for(storage.pool(), &format!("ref-{}", &txid[..8]))
+            .await
+            .unwrap()
+            .is_some();
+    let result = exercise_toolbox_word(&storage, user, &identity, &txid, abort).await;
+    assert_eq!(
+        result.is_err(),
+        toolbox_refuses,
+        "{word}: abort={abort}: {result:?}"
+    );
+    if toolbox_refuses {
+        let bsv_wallet_toolbox::Error::InvalidTransactionStatus(message) = result.unwrap_err()
+        else {
+            panic!("{word}: wrong refusal class")
+        };
+        assert!(
+            message.contains("records an acceptance and cannot be aborted")
+                || message.contains("has a recorded acceptance ("),
+            "{word}: {message}"
+        );
+        assert_eq!(tx_status(&storage, &txid).await, status, "{word}");
+        assert_eq!(output_state(&storage, output).await, before, "{word}");
+    }
+    eprintln!("agreement {word}: abort={abort}, guard={retired}, toolbox={toolbox_refuses}");
+    assert_eq!(retired, aborted, "{word}: both CLI guards agree");
+    retired
+}
+
 // ---------------------------------------------------------------------------
 // The spend guard
 // ---------------------------------------------------------------------------

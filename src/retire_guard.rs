@@ -11,7 +11,8 @@
 //! until a proof, a node verdict or a competitor's checked proof decides it.
 //!
 //! [`broadcaster_took`] reads the wallet's own records for an accepting word:
-//! a request past the post (`unfail` included), a proof's presence (the
+//! a request past the post (`unfail` included), acceptance retained in its
+//! post history, a proof's presence (the
 //! request's `proven_tx_id` or a `proven_txs` row), a completed transaction,
 //! an accepting broadcast-memory row, or a tracker word past `built`. A
 //! proof wins whatever the request's status says (the keeper's rule, #244).
@@ -39,6 +40,8 @@ const TAKEN_MEMORY_STATUSES: [&str; 3] = ["accepted", "seen", "mined"];
 /// and `stale`, which was `mined`).
 const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 
+type ProofRequest = (String, Option<i64>, String);
+
 /// Whether the wallet holds proof evidence for `txid`: the request's proof
 /// link, its `unfail` word, or a stored proof. A proof wins over every request
 /// word (the keeper's rule, #244), including at the respend door (#247).
@@ -51,13 +54,13 @@ pub async fn proof_present(pool: &SqlitePool, txid: &str) -> Result<bool> {
     proof_present_with_request(pool, txid, req.as_ref()).await
 }
 
-async fn proof_request(pool: &SqlitePool, txid: &str) -> Result<Option<(String, Option<i64>)>> {
-    Ok(
-        sqlx::query_as("SELECT status, proven_tx_id FROM proven_tx_reqs WHERE txid = ? LIMIT 1")
-            .bind(txid)
-            .fetch_optional(pool)
-            .await?,
+async fn proof_request(pool: &SqlitePool, txid: &str) -> Result<Option<ProofRequest>> {
+    Ok(sqlx::query_as(
+        "SELECT status, proven_tx_id, history FROM proven_tx_reqs WHERE txid = ? LIMIT 1",
     )
+    .bind(txid)
+    .fetch_optional(pool)
+    .await?)
 }
 
 // The guard already needs the request's word. Reuse that read so its word
@@ -65,9 +68,9 @@ async fn proof_request(pool: &SqlitePool, txid: &str) -> Result<Option<(String, 
 async fn proof_present_with_request(
     pool: &SqlitePool,
     txid: &str,
-    req: Option<&(String, Option<i64>)>,
+    req: Option<&ProofRequest>,
 ) -> Result<bool> {
-    if req.is_some_and(|(s, proof)| proof.is_some() || s == "unfail") {
+    if req.is_some_and(|(s, proof, _)| proof.is_some() || s == "unfail") {
         return Ok(true);
     }
     // The store's reader matches `lower(txid)`; callers pass the toolbox's lowercase hex.
@@ -76,7 +79,8 @@ async fn proof_present_with_request(
 }
 
 /// Whether a broadcaster ever took `txid`, by the wallet's own records: its
-/// proof request past the post (`unfail` included) or holding a proof, a
+/// proof request past the post (`unfail` included), acceptance in its post
+/// history, or a proof link, a
 /// `proven_txs` row, a completed transaction, a broadcast-memory row with an
 /// accepting word, or the tracker's stored word past `built`. A missing
 /// request row or optional proof, memory or tracker table says nothing.
@@ -84,14 +88,14 @@ async fn proof_present_with_request(
 /// The memory alone is not enough: its ladder overwrites a provider's
 /// `accepted` with a later `rejected` (toolbox `ladder_step`), so an Arcade
 /// that accepted a transaction and then pushed REJECTED leaves only the
-/// refusal there. The request keeps `unmined`: a refusal is a hint at the
-/// toolbox 0.7.4 and moves no request.
+/// refusal there. Read the retained post history too, as toolbox beta.1
+/// does, even when the current request word is still `sending`.
 pub async fn broadcaster_took(pool: &SqlitePool, txid: &str) -> Result<bool> {
     let req = proof_request(pool, txid).await?;
-    if req
-        .as_ref()
-        .is_some_and(|(s, _)| TAKEN_REQ_STATUSES.contains(&s.as_str()))
-        || proof_present_with_request(pool, txid, req.as_ref()).await?
+    if req.as_ref().is_some_and(|(s, _, history)| {
+        TAKEN_REQ_STATUSES.contains(&s.as_str())
+            || serde_json::from_str(history).is_ok_and(|value| history_has_acceptance(&value, txid))
+    }) || proof_present_with_request(pool, txid, req.as_ref()).await?
     {
         return Ok(true);
     }
@@ -130,6 +134,57 @@ pub async fn broadcaster_took(pool: &SqlitePool, txid: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// The structured post-result paths read by toolbox beta.1's accepting-word
+/// guard. A different txid or a sentence quoting a word is not acceptance.
+fn history_has_acceptance(value: &serde_json::Value, txid: &str) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values.iter().any(|v| history_has_acceptance(v, txid)),
+        serde_json::Value::Object(fields) => {
+            if fields
+                .get("txid")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id != txid)
+            {
+                return false;
+            }
+            if fields
+                .get("status")
+                .and_then(|v| v.as_str())
+                .is_some_and(|status| {
+                    matches!(
+                        status,
+                        "success"
+                            | "accepted"
+                            | "announced"
+                            | "seen"
+                            | "mined"
+                            | "stale"
+                            | "unproven"
+                            | "unmined"
+                            | "callback"
+                            | "unconfirmed"
+                            | "completed"
+                    )
+                })
+            {
+                return true;
+            }
+            [
+                "notes",
+                "words",
+                "sendWithResults",
+                "txid_results",
+                "txids",
+                "results",
+            ]
+            .iter()
+            .filter_map(|key| fields.get(*key))
+            .any(|v| history_has_acceptance(v, txid))
+        }
+        _ => false,
+    }
+}
+
 /// The first of `txids` a broadcaster took ([`broadcaster_took`]), if any.
 pub async fn first_taken<'a>(
     pool: &SqlitePool,
@@ -146,10 +201,9 @@ pub async fn first_taken<'a>(
 /// The transaction an `abortAction` of `reference` (a createAction
 /// reference, or a txid) would fail, when a broadcaster took it: the abort
 /// is then refused (the tracker's `abandoned` is refused once the word left
-/// `built`; #24, never abort a template already broadcast). The toolbox
-/// honours the abort of a broadcast transaction whenever the wallet holds
-/// no chain evidence for it, an accepting word included (its 0.3.60
-/// broadcast abort); this is the host's narrower rule.
+/// `built`; #24, never abort a template already broadcast). Toolbox beta.1
+/// reads those accepting words too. Its additional status-only refusal of
+/// an unproven row without a proof is the named divergence in fixture 124.
 pub async fn abort_refused_for(pool: &SqlitePool, reference: &str) -> Result<Option<String>> {
     let by_reference: Option<Option<String>> =
         sqlx::query_scalar("SELECT txid FROM transactions WHERE reference = ? LIMIT 1")
@@ -188,7 +242,7 @@ mod tests {
 
     async fn pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE proven_tx_reqs (txid TEXT, status TEXT, proven_tx_id INTEGER)")
+        sqlx::query("CREATE TABLE proven_tx_reqs (txid TEXT, status TEXT, proven_tx_id INTEGER, history TEXT NOT NULL DEFAULT '{}')")
             .execute(&pool)
             .await
             .unwrap();
@@ -271,12 +325,14 @@ mod tests {
 
     async fn request_is_taken(status: &str, proof_id: Option<i64>, proof_row: bool) -> bool {
         let pool = pool().await;
-        sqlx::query("INSERT INTO proven_tx_reqs VALUES ('subject', ?, ?)")
-            .bind(status)
-            .bind(proof_id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO proven_tx_reqs (txid,status,proven_tx_id) VALUES ('subject', ?, ?)",
+        )
+        .bind(status)
+        .bind(proof_id)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO proven_txs VALUES (?, 'root', 1)")
             .bind(if proof_row { "subject" } else { "unrelated" })
             .execute(&pool)
@@ -288,6 +344,20 @@ mod tests {
     #[tokio::test]
     async fn an_unfail_request_is_taken() {
         assert!(request_is_taken("unfail", None, false).await);
+    }
+
+    #[tokio::test]
+    async fn an_acceptance_in_post_history_is_taken_but_is_not_a_proof() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO proven_tx_reqs (txid,status,history) VALUES ('subject','sending',?)",
+        )
+        .bind(r#"{"notes":[{"sendWithResults":[{"txid":"subject","status":"success"}]}]}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(broadcaster_took(&pool, "subject").await.unwrap());
+        assert!(!proof_present(&pool, "subject").await.unwrap());
     }
 
     #[tokio::test]

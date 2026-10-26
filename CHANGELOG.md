@@ -46,6 +46,13 @@ Other abort refusals (a failed template, an incoming action or spent outputs)
 keep beta's 400 ERROR without a hint; the shared abort prefix is not a class.
 The SpendRefused prefix stays in the existing error-reading site.
 
+The #235 agreement matrix also isolates an acceptance retained only in a
+request's post history. The retire guard now reads that structured result
+beside the request's status and proof link in its existing query, as the
+toolbox does; quoted words and results for another txid do not count. The
+guard and both toolbox doors agree on the planted words, with fixture 124's
+unproven status without a proof the one named divergence.
+
 The SDK judges BEEF in held BRC-62 order. Both SDK writers sort, but export's
 validation preceded writing: export now sorts before judging a child-first
 store. Atomic single transactions and gift's deposit-before-claim assembly
