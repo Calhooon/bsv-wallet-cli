@@ -99,7 +99,7 @@ impl Recorder {
             fixtures: self.written.clone(),
             notes: [
                 ("103-internalizeAction.badUnlock.json".into(), "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137).".into()),
-                ("127-internalizeAction.customInstructionsAtBound.json".into(), "Acceptance at the bound is this fixture's claim: internalizeAction stores exactly 1000 UTF-8 bytes (250 four-byte characters) whole. The case reads the output's customInstructions through listOutputs and compares every byte, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.".into()),
+                ("127-internalizeAction.customInstructionsAtBound.json".into(), "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.".into()),
             ].into_iter().collect(),
         })
         .unwrap();
