@@ -457,8 +457,12 @@ tracked until the competitor's checked proof establishes the conflict.
 [src/respend.rs](src/respend.rs) refuses when a current status source still
 holds the original, when a configured or previously accepting source cannot
 answer, when no broadcaster ever took it, or when it already has proof or a
-terminal word. It also refuses missing or invalid ancestry, inputs that are
-not the wallet's reserved P2PKH outputs, changed reservations, insufficient
+terminal word. The proof's presence is read through the retire guard's shared
+reader: the request's `proven_tx_id` or `unfail` word, or a `proven_txs` row
+for its txid. A checked proof wins from every word (the keeper's rule, #247),
+so that evidence refuses the replacement before any status lookup, whatever
+the request's other label. It also refuses missing or invalid ancestry, inputs
+that are not the wallet's reserved P2PKH outputs, changed reservations, insufficient
 fee coverage, and an already tracked replacement. Silence must be established;
 an unavailable source is not silence. A refused post of the replacement is
 still a retryable hint.

@@ -4,6 +4,10 @@
 //! Its exact inputs stay reserved until the toolbox's competitor-proof path
 //! writes doubleSpend. The replacement uses the same process/post/classify
 //! path as createAction; broadcaster refusals remain retryable hints.
+//! A proof's presence refuses the replacement before any status lookup:
+//! the request's proof link or `unfail` word, or a stored proof for its txid,
+//! read through the retire guard's shared reader. A checked proof wins from
+//! every word (the keeper's rule, #244 and #247).
 use std::collections::HashSet;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
