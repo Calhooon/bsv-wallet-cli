@@ -55,14 +55,14 @@ chmod +x "$WORK/bin/gh" "$WORK/bin/python3"
 fails=0
 # case NAME FAKE_GH FAKE_CODE REFACTOR_FAILS WANT_EXIT WANT_TAIL_PREFIX
 case_() {
-  local name=$1 gh=$2 code=$3 fails_on=$4 want_exit=$5 want_tail=$6 shell opts
+  local name=$1 gh=$2 code=$3 fails_on=$4 want_exit=$5 want_tail=$6 pr=${7-1} shell opts
   for shell in "bash -e" "bash -e -o pipefail"; do
     read -ra opts <<< "${shell#bash }"
     local run="$WORK/run" got_exit tail
     rm -rf "$run"; mkdir -p "$run"
     got_exit=0
     (cd "$ROOT" && env PATH="$WORK/bin:$PATH" FAKE_GH="$gh" FAKE_CODE="$code" \
-      REFACTOR_FAILS="$fails_on" GH_TOKEN=x PR_NUMBER=1 GITHUB_REPOSITORY=o/r \
+      REFACTOR_FAILS="$fails_on" GH_TOKEN=x PR_NUMBER="$pr" GITHUB_REPOSITORY=o/r \
       RUNNER_TEMP="$run" GITHUB_STEP_SUMMARY="$run/summary" \
       bash --noprofile --norc "${opts[@]}" "$WORK/body.sh") > "$run/out" 2>&1 || got_exit=$?
     tail=$(tail -n 1 "$run/out")
@@ -86,6 +86,9 @@ case_ "8 code 3, label"              true  3 false 1 "::error::DIFFERENTIAL: inc
 case_ "9 code 1, label, fails on"    true  1 true  1 "::error::DIFFERENTIAL: 13 differences over 335 calls and 35 commands on a PR labelled refactor"
 case_ "10 code 1, no label, fails on" false 1 true 0 "::notice::DIFFERENTIAL: 13 differences over 335 calls and 35 commands (no refactor label"
 case_ "11 the label read fails"      fail  0 false 1 "::error::the PR's labels could not be read (gh pr view)"
+# A push run: no PR number, so no label read (gh would fail if called); a
+# difference is reported, never failed, even with the refactor failure on.
+case_ "12 a push, differences"      fail  1 true  0 "::notice::" ""
 
 if [ "$fails" -ne 0 ]; then echo "test_differential_step: $fails failed"; exit 1; fi
 echo "test_differential_step: all cases ok"
