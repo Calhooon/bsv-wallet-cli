@@ -40,7 +40,15 @@ updates:
     # 2026-10-13: "value \"increase\" did not match one of the following values: lockfile-only, auto"),
     # and `auto` for an application is the increase behaviour: the `=x.y.z` pin moves to the new release.
     versioning-strategy: auto
-    open-pull-requests-limit: 5
+    # One grouped PR for the stack's crates (the auto-merge workflow selects the
+    # branch dependabot/cargo/bsv-stack-<hash>), at most two open at once, so a
+    # merge never rebases a chain of PRs through the auto-merge workflow (the
+    # keeper's balance of 2026-10-26: 43 auto-merge runs a day were that chain).
+    groups:
+      bsv-stack:
+        patterns:
+          - "bsv-*"
+    open-pull-requests-limit: 2
     commit-message:
       prefix: deps(stack)
     labels:
