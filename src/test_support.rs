@@ -328,6 +328,26 @@ pub async fn busy_read_wallet() -> (
     (dir, wallet, holder)
 }
 
+/// Take or release the exclusive lock returned by [`busy_read_wallet`].
+pub async fn set_read_lock(holder: &mut sqlx::SqliteConnection, held: bool) {
+    let statement = if held { "BEGIN EXCLUSIVE" } else { "ROLLBACK" };
+    sqlx::query(statement).execute(holder).await.unwrap();
+}
+
+/// Plant pending proof requests whose status a delivered ARC word can change.
+pub async fn seed_arc_requests(storage: &bsv_wallet_toolbox::StorageSqlx, txids: &[String]) {
+    for txid in txids {
+        sqlx::query(
+            "INSERT INTO proven_tx_reqs (txid, status, attempts, history, notified, notify, raw_tx, created_at, updated_at) \
+             VALUES (?, 'unsent', 0, '{}', 0, '{}', X'01000000', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        )
+        .bind(txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    }
+}
+
 /// A migrated wallet on the given store for router tests. Constructed
 /// before taking a lock so the test exercises only the served read.
 pub async fn test_wallet(

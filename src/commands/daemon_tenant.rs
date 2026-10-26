@@ -307,39 +307,14 @@ pub async fn start(
                         Ok(resp) if resp.status().is_success() => {
                             match resp.json::<Vec<serde_json::Value>>().await {
                                 Ok(items) => {
-                                    for item in items {
-                                        let id = item
-                                            .get("id")
-                                            .and_then(|v| v.as_i64())
-                                            .unwrap_or(last_id);
-                                        if let Some(payload) = item.get("payload") {
-                                            match crate::arc_ingest::ingest_arc_payload(
-                                                    relay_wallet.storage(),
-                                                    payload,
-                                                )
-                                                .await
-                                                {
-                                                    // A refused proof (no tracker,
-                                                    // bad root) or a refused word
-                                                    // is not a success line.
-                                                    Ok(
-                                                        action @ (crate::arc_ingest::IngestAction::ProofRejected(_)
-                                                        | crate::arc_ingest::IngestAction::Refused(_)),
-                                                    ) => tracing::warn!(
-                                                        ?action,
-                                                        "relay: payload ingested, proof or word refused"
-                                                    ),
-                                                    Ok(action) => tracing::info!(
-                                                        ?action,
-                                                        "relay: payload ingested"
-                                                    ),
-                                                    Err(e) => tracing::warn!(
-                                                        error = %e,
-                                                        "relay: payload ingest failed"
-                                                    ),
-                                                }
-                                        }
-                                        last_id = last_id.max(id);
+                                    let (cursor, store_busy) =
+                                        ingest_relay_items(relay_wallet.storage(), &items, last_id)
+                                            .await;
+                                    last_id = cursor;
+                                    if store_busy {
+                                        // One extra RELAY_POLL_SECS tick backs off after
+                                        // the store's five-second busy ceiling: no spin.
+                                        interval.tick().await;
                                     }
                                 }
                                 Err(e) => {
@@ -369,8 +344,251 @@ pub async fn start(
     })
 }
 
+/// Consume the relay's id-ordered batch, returning the next cursor and whether
+/// a typed store busy stopped it. Later items wait behind that unacked item.
+async fn ingest_relay_items(
+    storage: &StorageSqlx,
+    items: &[serde_json::Value],
+    mut cursor: i64,
+) -> (i64, bool) {
+    for item in items {
+        let id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(cursor);
+        if let Some(payload) = item.get("payload") {
+            match crate::arc_ingest::ingest_arc_payload(storage, payload).await {
+                Ok(action) => log_relay_action(&action),
+                Err(e) if crate::store::is_store_busy(&e) => {
+                    tracing::warn!(
+                        id,
+                        error = %e,
+                        "relay: store busy; the cursor stays, the item is read again next poll"
+                    );
+                    return (cursor, true);
+                }
+                Err(e) => tracing::warn!(error = %e, "relay: payload ingest failed"),
+            }
+        }
+        cursor = cursor.max(id);
+    }
+    (cursor, false)
+}
+
+/// Log a refused proof or word as a warning, keeping successful actions distinct.
+fn log_relay_action(action: &crate::arc_ingest::IngestAction) {
+    use crate::arc_ingest::IngestAction;
+
+    match action {
+        IngestAction::ProofRejected(_) | IngestAction::Refused(_) => {
+            tracing::warn!(?action, "relay: payload ingested, proof or word refused");
+        }
+        _ => tracing::info!(?action, "relay: payload ingested"),
+    }
+}
+
 /// Identity for a root key hex — used by callers for boot logging.
 pub fn identity_of(root_key_hex: &str) -> Result<String> {
     let key = PrivateKey::from_hex(root_key_hex).context("bad ROOT_KEY hex")?;
     Ok(key.public_key().to_hex())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ingest_relay_items;
+    use crate::arc_ingest::{ingest_arc_payload, IngestAction};
+    use crate::test_support::{
+        busy_read_wallet, response_answer, seed_arc_requests, set_read_lock,
+    };
+    use bsv_wallet_toolbox::storage::{entities::ProvenTxReqStatus, FindProvenTxReqsArgs};
+    use bsv_wallet_toolbox::WalletStorageReader;
+    use serde_json::{json, Value};
+
+    struct RelayFixture {
+        _dir: tempfile::TempDir,
+        wallet: crate::server::handlers::WalletState,
+        holder: sqlx::SqliteConnection,
+        items: Vec<Value>,
+    }
+
+    impl RelayFixture {
+        async fn new() -> Self {
+            let (dir, wallet, mut holder) = busy_read_wallet().await;
+            set_read_lock(&mut holder, false).await;
+            let txids = ["31".repeat(32), "42".repeat(32)];
+            seed_arc_requests(wallet.storage(), &txids).await;
+            let items = [
+                (40, &txids[0], "RECEIVED"),
+                (41, &txids[0], "SEEN_ON_NETWORK"),
+                (42, &txids[1], "RECEIVED"),
+                (43, &txids[1], "SEEN_ON_NETWORK"),
+            ]
+            .map(|(id, txid, status)| {
+                json!({"id": id, "payload": {"txid": txid, "txStatus": status}})
+            })
+            .to_vec();
+            Self {
+                _dir: dir,
+                wallet,
+                holder,
+                items,
+            }
+        }
+
+        async fn assert_statuses(&self, expected: ProvenTxReqStatus) {
+            let requests = self
+                .wallet
+                .storage()
+                .find_proven_tx_reqs(FindProvenTxReqsArgs {
+                    status: Some(vec![expected]),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            // The toolbox decodes unsent/unmined as Pending; filter the
+            // stored status itself so that lossy decoding cannot pass this.
+            assert_eq!(requests.len(), 2, "stored status must be {expected:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_busy_cursor_retries_after_release_in_order() {
+        let mut fixture = RelayFixture::new().await;
+        set_read_lock(&mut fixture.holder, true).await;
+        let (cursor, busy) = ingest_relay_items(fixture.wallet.storage(), &fixture.items, 39).await;
+        assert_eq!(
+            cursor, 40,
+            "the busy item and later items must stay unacked"
+        );
+        assert!(busy);
+        set_read_lock(&mut fixture.holder, false).await;
+        fixture.assert_statuses(ProvenTxReqStatus::Unsent).await;
+        assert_eq!(
+            ingest_relay_items(fixture.wallet.storage(), &fixture.items, cursor).await,
+            (43, false)
+        );
+        fixture.assert_statuses(ProvenTxReqStatus::Unmined).await;
+    }
+
+    /// Beta has no batch function. Reproduce its inline cursor rule to show
+    /// the next pull acknowledges failed deliveries and can never retry them.
+    #[tokio::test]
+    async fn relay_beta_inline_logic_loses_busy_deliveries() {
+        let mut fixture = RelayFixture::new().await;
+        set_read_lock(&mut fixture.holder, true).await;
+        let mut cursor = 39;
+        for item in &fixture.items {
+            let id = item.get("id").and_then(Value::as_i64).unwrap_or(cursor);
+            if let Some(payload) = item.get("payload") {
+                let _ = ingest_arc_payload(fixture.wallet.storage(), payload).await;
+            }
+            cursor = cursor.max(id);
+        }
+        assert_eq!(cursor, 43, "beta acknowledges both busy status deliveries");
+        set_read_lock(&mut fixture.holder, false).await;
+        let next_pull: Vec<_> = fixture
+            .items
+            .into_iter()
+            .filter(|item| item["id"].as_i64().unwrap() > cursor)
+            .collect();
+        fixture.items = next_pull;
+        assert_eq!(
+            ingest_relay_items(fixture.wallet.storage(), &fixture.items, cursor).await,
+            (43, false)
+        );
+        fixture.assert_statuses(ProvenTxReqStatus::Unsent).await;
+    }
+
+    #[tokio::test]
+    async fn relay_malformed_payload_advances_cursor() {
+        let fixture = RelayFixture::new().await;
+        let mut items = fixture.items;
+        items[1]["payload"]["blockHeight"] = json!("Store busy: database is locked (code: 517)");
+        assert_eq!(
+            ingest_relay_items(fixture.wallet.storage(), &items, 39).await,
+            (43, false)
+        );
+        let requests = fixture
+            .wallet
+            .storage()
+            .find_proven_tx_reqs(FindProvenTxReqsArgs {
+                status: Some(vec![ProvenTxReqStatus::Unsent]),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(requests.len(), 1, "the valid later status was ingested");
+    }
+
+    #[tokio::test]
+    async fn relay_refused_proof_advances_cursor() {
+        let fixture = RelayFixture::new().await;
+        let mut item = fixture.items[1].clone();
+        let payload = &mut item["payload"];
+        payload["txStatus"] = json!("MINED");
+        payload["merklePath"] = json!("deadbeef");
+        payload["blockHeight"] = json!(850_000);
+        payload["blockHash"] = json!("ab".repeat(32));
+        assert!(matches!(
+            ingest_arc_payload(fixture.wallet.storage(), payload).await,
+            Ok(IngestAction::ProofRejected(_))
+        ));
+        assert_eq!(
+            ingest_relay_items(fixture.wallet.storage(), &[item], 40).await,
+            (41, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_ok_items_advance_cursor_and_store_status() {
+        let fixture = RelayFixture::new().await;
+        assert_eq!(
+            ingest_relay_items(fixture.wallet.storage(), &fixture.items, 39).await,
+            (43, false)
+        );
+        fixture.assert_statuses(ProvenTxReqStatus::Unmined).await;
+    }
+
+    async fn relay_response(app: &axum::Router, uri: &str, payload: Option<Value>) -> Value {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        let request = Request::builder()
+            .method(if payload.is_some() { "POST" } else { "GET" })
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("x-callbacktoken", "relay-test")
+            .body(payload.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+            .unwrap();
+        let (status, _, body) = response_answer(app.clone().oneshot(request).await.unwrap()).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        body
+    }
+
+    #[tokio::test]
+    async fn relay_returns_unacked_items_and_deletes_acked_items() {
+        use bsv_wallet_cli::relay::{make_relay_router, open_relay_db, RelayState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_relay_db(dir.path().join("relay.db").to_str().unwrap())
+            .await
+            .unwrap();
+        let app = make_relay_router(RelayState {
+            pool,
+            admin_token: None,
+            require_register: false,
+        });
+        let pull = "/pull?token=relay-test&after=0&ack=0";
+        assert_eq!(relay_response(&app, pull, None).await, json!([]));
+        relay_response(
+            &app,
+            "/arc-callback",
+            Some(json!({"txid": "31".repeat(32), "txStatus": "SEEN_ON_NETWORK"})),
+        )
+        .await;
+        let items = relay_response(&app, pull, None).await;
+        assert_eq!(items.as_array().unwrap().len(), 1);
+        assert_eq!(relay_response(&app, pull, None).await, items);
+        let cursor = items[0]["id"].as_i64().unwrap();
+        let ack = format!("/pull?token=relay-test&after={cursor}&ack={cursor}");
+        assert_eq!(relay_response(&app, &ack, None).await, json!([]));
+        assert_eq!(relay_response(&app, pull, None).await, json!([]));
+    }
 }
