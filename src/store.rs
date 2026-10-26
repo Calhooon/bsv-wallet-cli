@@ -89,6 +89,11 @@ pub struct LineageRow {
 /// actions, whatever `spent_by` links the store holds. Each row says
 /// whether its heir is made (`is_outgoing`): the gate reads a candidate's
 /// proof only for a made heir, the only kind whose lineage a rule reads.
+/// The two seed, two step and final-heir user conditions overlap (any one
+/// suffices on toolbox-written rows), since toolbox 0.13.0 writes `spent_by`
+/// only to the output owner's own transaction and only clears another
+/// user's `spendable`, so a same-user heir reached through another user's
+/// transaction cannot occur in one store.
 ///
 /// # Errors
 ///

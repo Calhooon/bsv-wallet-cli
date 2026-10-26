@@ -937,6 +937,8 @@ pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
 /// same), a 0.15 record through the user's transaction its reference or
 /// txid names, a template's shape among the user's templates; another
 /// user's action of the same txid answers nothing here. Reads only.
+/// `l.user_id = t.user_id` is defence in depth: both `label_in` and the
+/// toolbox write a label under the action's user.
 pub async fn action_rules(storage: &StorageSqlx, user_id: i64) -> Result<ActionRules> {
     let pool = storage.pool();
     // (txid or NULL, reference, label): one row per toolbox action of the
