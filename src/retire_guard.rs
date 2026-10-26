@@ -42,6 +42,10 @@ const TAKEN_TRACKER_WORDS: [&str; 4] = ["announced", "seen", "mined", "stale"];
 /// Whether the wallet holds proof evidence for `txid`: the request's proof
 /// link, its `unfail` word, or a stored proof. A proof wins over every request
 /// word (the keeper's rule, #244), including at the respend door (#247).
+///
+/// # Errors
+///
+/// Propagates a failed request, table, or stored-proof read.
 pub async fn proof_present(pool: &SqlitePool, txid: &str) -> Result<bool> {
     let req = proof_request(pool, txid).await?;
     proof_present_with_request(pool, txid, req.as_ref()).await
