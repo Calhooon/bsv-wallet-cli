@@ -284,15 +284,15 @@ class FailClosed(unittest.TestCase):
 
     def test_planted_a_scenario_missing(self):
         r = without(recording(), lambda e: e["phase"] == SCENARIOS[10])
-        self.assertIncomplete(r, r, f"22 scenario phases, the suite has {len(SCENARIOS)}")
+        self.assertIncomplete(r, r, f"23 scenario phases, the suite has {len(SCENARIOS)}")
 
     def test_planted_a_phase_the_suite_lacks(self):
         r = recording()
-        r.append({**r[-1], "seq": len(r), "phase": "a-24th-scenario"})
-        self.assertIncomplete(r, r, "a phase the suite does not have: a-24th-scenario")
+        r.append({**r[-1], "seq": len(r), "phase": "a-25th-scenario"})
+        self.assertIncomplete(r, r, "a phase the suite does not have: a-25th-scenario")
 
-    def test_the_suite_has_23(self):
-        self.assertEqual(len(SCENARIOS), 23)
+    def test_the_suite_has_24(self):
+        self.assertEqual(len(SCENARIOS), 24)
 
 
 class LogRulesOnlyOnStderr(unittest.TestCase):
