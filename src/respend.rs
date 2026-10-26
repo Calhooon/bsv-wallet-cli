@@ -210,10 +210,10 @@ pub async fn build_and_post(
     let gate = gate
         .clone()
         .with_allow_received(under_rule.as_deref() == Some(crate::spend_gate::RECEIVED_PENDING));
-    let named: Vec<(String, u32)> = phantom
+    let named: Vec<crate::spend_gate::NamedInput<'_>> = phantom
         .inputs
         .iter()
-        .map(|i| Ok((i.get_source_txid()?, i.source_output_index)))
+        .map(|i| Ok((i.get_source_txid()?, i.source_output_index).into()))
         .collect::<bsv_sdk::Result<_>>()?;
     // A source that is not a coin of this wallet is refused here, before a
     // creator is read (#166): the respend carries no caller's BEEF.

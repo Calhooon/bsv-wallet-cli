@@ -132,6 +132,39 @@ pub(crate) async fn record_named_change(r: &mut Recorder) {
     .await;
 }
 
+/// #237: both carried-input signer refusals, recorded after the existing set.
+pub(crate) async fn record_carried_signer_refusals(r: &mut Recorder) {
+    use serde_json::json;
+    let (puzzle, input_beef) = puzzle_parent();
+    for (name, signer) in [
+        ("createAction.callerInputNoSigner", json!({})),
+        (
+            "createAction.callerInputLengthMismatch",
+            json!({"unlockingScript": PUZZLE_UNLOCK, "unlockingScriptLength": 2}),
+        ),
+    ] {
+        let mut input = json!({"outpoint": format!("{}.0", puzzle.id()),
+            "inputDescription": "the puzzle"});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(signer.as_object().unwrap().clone());
+        r.case(
+            name,
+            "funded",
+            post(
+                "/createAction",
+                json!({"description": "wire caller input", "inputBEEF": input_beef,
+                    "inputs": [input],
+                    "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
+                        "outputDescription": "an output"}],
+                    "options": {"signAndProcess": false, "randomizeOutputs": false}}),
+            ),
+        )
+        .await;
+    }
+}
+
 /// The funded world: a 200 body from each spending or state-changing
 /// call. Each action asks for exactly its coin less the fee, so the
 /// toolbox builds no change output (whose derivation it draws at

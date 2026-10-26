@@ -106,7 +106,10 @@
 //! the door decides before the store is asked). The one outpoint left to
 //! the toolbox is the caller's own input whose transaction its `inputBEEF`
 //! carries whole (a covenant, a puzzle): not a coin of ours, and the
-//! toolbox checks the BEEF.
+//! toolbox checks the BEEF. The gate requires its caller's signer: an
+//! `unlockingScript` or `unlockingScriptLength` (a promise to sign through
+//! `signAction`); neither, or both with conflicting lengths, is the caller's
+//! 400 before any creator is read or the toolbox asked (#237).
 //!
 //! # The shape: the offer
 //!
@@ -1458,6 +1461,37 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
     out.capped = Some(capped);
 }
 
+/// A named outpoint and the caller's signer fields. Respend carries no
+/// caller BEEF and builds this from the outpoint alone.
+pub struct NamedInput<'a> {
+    outpoint: (String, u32),
+    unlocking_script: Option<&'a [u8]>,
+    unlocking_script_length: Option<u32>,
+}
+
+impl From<(String, u32)> for NamedInput<'_> {
+    fn from(outpoint: (String, u32)) -> Self {
+        Self {
+            outpoint,
+            unlocking_script: None,
+            unlocking_script_length: None,
+        }
+    }
+}
+
+impl<'a> From<&'a bsv_sdk::wallet::CreateActionInput> for NamedInput<'a> {
+    fn from(input: &'a bsv_sdk::wallet::CreateActionInput) -> Self {
+        Self {
+            outpoint: (
+                bsv_sdk::primitives::to_hex(&input.outpoint.txid),
+                input.outpoint.vout,
+            ),
+            unlocking_script: input.unlocking_script.as_deref(),
+            unlocking_script_length: input.unlocking_script_length,
+        }
+    }
+}
+
 /// The coins a caller named (`createAction`'s `inputs`, `respend`'s exact
 /// inputs), judged coin by coin in record order: frozen, locked (`spent_by`,
 /// unless it is `reserved_to`, the phantom a respend replaces), then an
@@ -1470,7 +1504,10 @@ fn cap_offer(out: &mut Assessment, cap: usize) {
 /// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
 /// (#166), unless `carried` (the transactions the caller's `inputBEEF`
 /// carries whole, [`carried_txids`]) holds its transaction: the caller's own
-/// input (a covenant, a puzzle), left to the toolbox. When `retry` (the
+/// input (a covenant, a puzzle), left to the toolbox if it has an
+/// `unlockingScript` or `unlockingScriptLength`. Neither field, or both
+/// with conflicting lengths, is the same caller's 400 before any creator
+/// is read or the toolbox asked (#237). When `retry` (the
 /// named door's read) and the header service did not answer for a reading
 /// of the call (a creator's or a lineage candidate's), those readings are
 /// read once more after [`HEADER_RETRY_PAUSE`] (#59), through
@@ -1480,7 +1517,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     coins: UserCoins<'_>,
     services: &V,
     opts: &GateOptions,
-    named: &[(String, u32)],
+    named: &[NamedInput<'_>],
     carried: &[String],
     reserved_to: Option<i64>,
     retry: bool,
@@ -1490,7 +1527,8 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
         .await
         .map_err(GateError::Gate)?;
     let mut named_coins = Vec::new();
-    for (txid, vout) in named {
+    for input in named {
+        let (txid, vout) = &input.outpoint;
         let txid = txid.to_ascii_lowercase();
         let row = coins
             .outpoint(&txid, *vout)
@@ -1498,7 +1536,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             .map_err(GateError::Gate)?;
         match row {
             Some(r) => named_coins.push((txid, *vout, r)),
-            None if carried.contains(&txid) => {}
+            None if carried.contains(&txid) => check_carried_signer(input)?,
             None => {
                 return Err(GateError::Scope(named_refusal(
                     "inputs",
@@ -1729,17 +1767,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     {
         return Err(GateError::Scope(error));
     }
-    let named: Vec<(String, u32)> = args
-        .inputs
-        .iter()
-        .flatten()
-        .map(|i| {
-            (
-                bsv_sdk::primitives::to_hex(&i.outpoint.txid),
-                i.outpoint.vout,
-            )
-        })
-        .collect();
+    let named: Vec<NamedInput<'_>> = args.inputs.iter().flatten().map(NamedInput::from).collect();
     if !named.is_empty() {
         let carried = carried_txids(args.input_beef.as_deref());
         // A reading the header service did not answer for, a named coin's
@@ -1812,6 +1840,27 @@ fn headers_error(reading: &CreatorReading) -> Option<String> {
 /// the one word for "not held", the scoped word's ([`check_scope`]) and a
 /// named input's ([`assess_named`]) alike (#166).
 pub const NOT_HELD: &str = "not a coin of this wallet";
+
+/// Read only the carried input's signer, before the creator or toolbox.
+/// `[SRC]` ts-stack `edf6e03`, `packages/sdk/src/wallet/validationHelpers.ts:587-603`
+/// (`validateCreateActionInput`): `WERR_INVALID_PARAMETER` requires at least
+/// one signer field, and matching lengths when both are given (#237).
+fn check_carried_signer(input: &NamedInput<'_>) -> std::result::Result<(), GateError> {
+    let why = match (input.unlocking_script, input.unlocking_script_length) {
+        (None, None) => "names no signer: The unlockingScript, unlockingScriptLength parameter must be at least one valid value.",
+        (Some(script), Some(length)) if script.len() != length as usize => {
+            "The unlockingScriptLength parameter must be length unlockingScript if both valid."
+        }
+        _ => return Ok(()),
+    };
+    let (txid, vout) = &input.outpoint;
+    Err(GateError::Scope(named_refusal(
+        "inputs",
+        &format!("{txid}.{vout}"),
+        "a valid caller input",
+        why,
+    )))
+}
 
 /// The caller's error for a coin it names (the 400 of [`GateError::Scope`]):
 /// `word` names `outpoint`, which is not `what`, because `why`.

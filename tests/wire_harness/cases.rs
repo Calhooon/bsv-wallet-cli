@@ -6,7 +6,7 @@ use super::cases_routes::{
     record_preflights,
 };
 use super::cases_spending::{
-    record_abort_store_busy, record_funded_abort_and_broadcast,
+    record_abort_store_busy, record_carried_signer_refusals, record_funded_abort_and_broadcast,
     record_funded_relinquish_and_caller_input, record_funded_sign, record_gate_refusals,
     record_named_change, record_payments_and_listings, record_store_faults,
 };
@@ -40,6 +40,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_abort_store_busy(r).await;
     record_host_store_busy(r).await;
     record_named_change(r).await;
+    record_carried_signer_refusals(r).await;
 }
 
 /// A key derivation request: `protocol` at level 2, `key_id`, counterparty
