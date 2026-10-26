@@ -2207,6 +2207,11 @@ fn deep_enough<H: Headers>(
 // Chain events from the header service's feed
 // ---------------------------------------------------------------------------
 
+/// The decoder requires `split:` followed by 64 ASCII hex digits.
+fn lowercase_split_key(key: &mut str) {
+    key["split:".len()..].make_ascii_lowercase();
+}
+
 /// The splits the feed has delivered and not yet seen resolved: each
 /// split's key and its `forkHeight` (`tracker_meta`, key `open_splits`),
 /// written in the delivery's transaction.
@@ -2217,10 +2222,21 @@ async fn read_open_splits<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
         sqlx::query_scalar("SELECT value FROM tracker_meta WHERE key = 'open_splits'")
             .fetch_optional(executor)
             .await?;
-    Ok(match value {
+    let stored: BTreeMap<String, Height> = match value {
         Some(v) => serde_json::from_str(&v)?,
         None => BTreeMap::new(),
-    })
+    };
+    // A stored record can predate delivery's key normalization. Case variants
+    // collapse to one entry, keeping the lower height: the floor is the lowest
+    // open split, so retaining every affected coin's hold is the only safe read.
+    let mut open = BTreeMap::new();
+    for (mut key, height) in stored {
+        lowercase_split_key(&mut key);
+        open.entry(key)
+            .and_modify(|h: &mut Height| *h = (*h).min(height))
+            .or_insert(height);
+    }
+    Ok(open)
 }
 
 /// The lowest `forkHeight` of the splits still open, if any. The guard
@@ -2385,12 +2401,13 @@ fn lowercase_chain_event(mut event: ChainEvent) -> ChainEvent {
         ChainEvent::Invalidated { block_hash } => block_hash.make_ascii_lowercase(),
         ChainEvent::Frozen { outpoint } => outpoint.txid.make_ascii_lowercase(),
         ChainEvent::TipAge { tip, .. } => lowercase_header(tip),
-        ChainEvent::Split { tips, .. } => {
+        ChainEvent::Split { key, tips, .. } => {
+            lowercase_split_key(key);
             for tip in tips {
                 tip.hash.make_ascii_lowercase();
             }
         }
-        ChainEvent::SplitResolved { .. } => {}
+        ChainEvent::SplitResolved { key, .. } => lowercase_split_key(key),
     }
     event
 }
@@ -4325,8 +4342,8 @@ pub(crate) mod tests {
         .await;
     }
 
-    /// Every kept event accepts either hash case. Identifier strings,
-    /// chain work and rung names retain their original spelling.
+    /// Every kept event accepts either hash case, including a split key's
+    /// hash. Chain work and rung names retain their original spelling.
     #[test]
     fn kept_events_normalize_hash_fields_in_every_arm() {
         let hashes = ["ab".repeat(32), "cd".repeat(32), "ef".repeat(32)];
@@ -4336,7 +4353,7 @@ pub(crate) mod tests {
         header["chainWork"] = "AF".repeat(32).into();
         let mut other = header.clone();
         other["hash"] = root.clone().into();
-        let key = format!("split:{}", "AB".repeat(32));
+        let key = format!("split:{}", "ab".repeat(32));
         let envelopes = [
             serde_json::json!({"v": 1, "kind": "tip", "height": 900, "hash": hash,
                 "time": 1_700_000_000u32, "header": header}),
@@ -4410,6 +4427,108 @@ pub(crate) mod tests {
             (row, read)
         })
         .await;
+    }
+
+    async fn store_open_splits(storage: &StorageSqlx, splits: &serde_json::Value) {
+        sqlx::query("INSERT INTO tracker_meta (key, value) VALUES ('open_splits', ?)")
+            .bind(splits.to_string())
+            .execute(&mut *crate::store::writer(storage).await.unwrap())
+            .await
+            .unwrap();
+    }
+
+    fn split_at(key: &str, height: Height) -> serde_json::Value {
+        serde_json::json!({
+            "v": 2, "kind": "split", "key": key, "forkHeight": height,
+            "tips": [
+                {"hash": "a1".repeat(32), "height": height,
+                 "chainWork": "AF".repeat(32), "rungs": ["Rung-A"]},
+                {"hash": "a2".repeat(32), "height": height,
+                 "chainWork": "AF".repeat(32), "rungs": ["Rung-B"]},
+            ],
+        })
+    }
+
+    async fn assert_split_resolution(opens: &[(&str, Height)], resolved: &str, stored: bool) {
+        let txid = "ad".repeat(32);
+        let (storage, services, clock) = mined_at_900(&txid).await;
+        let user = coin_of_tracked_creator(&storage, &txid).await;
+        if stored {
+            let entries: BTreeMap<_, _> = opens.iter().copied().collect();
+            store_open_splits(&storage, &serde_json::json!(entries)).await;
+        } else {
+            for (cursor, (key, height)) in opens.iter().enumerate() {
+                deliver(
+                    &storage,
+                    &services,
+                    &clock,
+                    cursor as u64 + 1,
+                    split_at(key, *height),
+                )
+                .await;
+            }
+        }
+        assert_eq!(open_split_floor(&storage).await.unwrap(), Some(900));
+        assert_eq!(read_open_splits(storage.pool()).await.unwrap().len(), 1);
+        let held = assess_tracked_coin(&storage, &services, user, true).await;
+        assert_eq!((held.offered.len(), held.held.len()), (0, 1));
+        deliver(
+            &storage,
+            &services,
+            &clock,
+            opens.len() as u64 + 1,
+            serde_json::json!({
+                "v": 2, "kind": "splitResolved", "key": resolved, "forkHeight": 900,
+            }),
+        )
+        .await;
+        let floor = open_split_floor(&storage).await.unwrap();
+        let offered = assess_tracked_coin(&storage, &services, user, true).await;
+        println!(
+            "stored={stored}, resolved={resolved}: floor={floor:?}, offered={}, held={}",
+            offered.offered.len(),
+            offered.held.len()
+        );
+        assert_eq!(floor, None);
+        assert_eq!((offered.offered.len(), offered.held.len()), (1, 0));
+        assert_eq!(
+            word(&storage, &txid).await,
+            ("mined".into(), Some(900), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_split_opened_uppercase_resolved_lowercase_clears_its_floor_and_offers_its_coin() {
+        let upper = format!("split:{}", "AB".repeat(32));
+        assert_split_resolution(&[(&upper, 900)], &upper.to_ascii_lowercase(), false).await;
+    }
+
+    #[tokio::test]
+    async fn a_split_opened_lowercase_resolved_uppercase_clears_its_floor_and_offers_its_coin() {
+        let lower = format!("split:{}", "ab".repeat(32));
+        let upper = format!("split:{}", "AB".repeat(32));
+        assert_split_resolution(&[(&lower, 900)], &upper, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_stored_uppercase_split_resolved_lowercase_clears_its_floor_and_offers_its_coin() {
+        let upper = format!("split:{}", "AB".repeat(32));
+        assert_split_resolution(&[(&upper, 900)], &upper.to_ascii_lowercase(), true).await;
+    }
+
+    #[tokio::test]
+    async fn a_split_resolved_in_the_same_case_clears_its_floor_and_offers_its_coin() {
+        for hash in ["ab", "AB"] {
+            let key = format!("split:{}", hash.repeat(32));
+            assert_split_resolution(&[(&key, 900)], &key, false).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_split_case_variants_keep_the_lower_floor_until_resolved() {
+        let upper = format!("split:{}", "AB".repeat(32));
+        let lower = upper.to_ascii_lowercase();
+        assert_split_resolution(&[(&upper, 900), (&lower, 901)], &lower, true).await;
     }
 
     /// Ruling 7a at the reading: a creator whose proof a reorg took reads
@@ -4487,11 +4606,11 @@ pub(crate) mod tests {
         deliver(&m_storage, &m_services, &m_clock, 1, fork_at(900, &marked)).await;
         let suspect = reading(&m_storage, &m_services, &marked).await;
 
-        sqlx::query("INSERT INTO tracker_meta (key, value) VALUES ('open_splits', ?)")
-            .bind(serde_json::json!({ format!("split:{}", "5a".repeat(32)): 900 }).to_string())
-            .execute(&mut *crate::store::writer(&storage).await.unwrap())
-            .await
-            .unwrap();
+        store_open_splits(
+            &storage,
+            &serde_json::json!({ format!("split:{}", "5a".repeat(32)): 900 }),
+        )
+        .await;
         let split = reading(&storage, &services, &txid).await;
         assert_eq!(
             word(&storage, &txid).await,
