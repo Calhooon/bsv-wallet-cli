@@ -369,15 +369,17 @@ the old header and the event rechecks against the new branch.
 A tip reads kept reorgs and invalidations alike: if replay already cleared
 its mark on a new header carrying the same root, delivery stores only plain
 `mined` (not suspect, no re-ask) and clears the stored re-ask and kept events,
-leaving no row for the next tip to select. When those events deactivated
-the checked header, the stored hash is the header the recheck stood on:
+leaving no row for the next tip to select. Whenever a plain `mined` row
+settles whose checked header those events deactivated, in either loop of
+delivery (a tip's own update, a reorg or invalidation that settles at once,
+or this tip fallback), the stored hash is the header the recheck stood on:
 the snapshot's header at the proof's height, with the same merkle root.
 An invalidation of that new block therefore selects the row and holds
 its coin. With no kept events, replay checks the proof against that live
 header; a kept event still deactivating the stored hash selects it in
 `OldBranch`, preserving #233's replay invariant. The crate could carry
 this replacement itself by updating the checked header on a matching
-recheck; that is a follow-up for the stack, not part of this change.
+recheck; that is bsv-tracker #30, not part of this change.
 A stored verdict's recheck leaves the row untouched by this fallback.
 `a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row`
 checks that the stored word agrees with the spend door;
@@ -385,8 +387,13 @@ checks that the stored word agrees with the spend door;
 untouched. `same_root_tips_leave_a_kept_reorg_with_a_stored_verdict_unchanged`
 checks that a verdict's recheck changes neither the word nor the kept events
 on two tips. `a_reorg_on_a_lagging_service_then_a_moved_root_tip_reads_stale`
-guards beta's unchanged moved-root reading. This fallback changes no
-other event's delivery.
+guards beta's unchanged moved-root reading. The tip fallback changes no
+other event's delivery; the stored-hash rule applies on whichever event
+settles the row, as checked by
+`a_settled_reorg_tracks_the_new_header_and_holds_its_invalidated_coin`,
+`a_settled_invalidation_tracks_the_new_header_and_holds_its_invalidated_coin`,
+`an_immediate_settle_tracks_the_new_header_and_holds_its_invalidated_coin`
+and `plain_mined_without_kept_events_stores_its_checked_header`.
 `an_invalidated_blocks_moved_root_reads_stale_after_the_next_tip` checks
 that a later tip on a moved root stores `stale` with `reorg@<height>`.
 `an_invalidated_block_whose_root_already_moved_reads_stale_at_delivery`
