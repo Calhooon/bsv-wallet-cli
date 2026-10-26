@@ -133,6 +133,9 @@ fn beef_of(stored: &Beef, txid: &str) -> Result<Vec<u8>> {
             }
         }
     }
+    // bsv-rs 0.9 judges held order; 0.8 sorted inside its judge. The
+    // writer sorts too, but validation must already see parents first.
+    beef.sort_txs();
     if !beef.is_valid(false) {
         return Err(anyhow!(
             "the stored transactions do not chain back to stored proofs"
@@ -335,13 +338,21 @@ mod tests {
 
         let mut stored = Beef::new();
         let bump = stored.merge_bump(MerklePath::from_coinbase_txid(&parent_id, 900_000));
-        stored.merge_raw_tx(parent, Some(bump));
+        // Store order is deliberately child before parent.
         stored.merge_raw_tx(child, None);
+        stored.merge_raw_tx(parent, Some(bump));
         let other = stored.merge_bump(MerklePath::from_coinbase_txid(&stranger_id, 900_001));
         stored.merge_raw_tx(stranger, Some(other));
 
         let mut beef = Beef::from_binary(&beef_of(&stored, &child_id).unwrap()).unwrap();
-        assert!(beef.is_valid(false));
+        assert!(
+            beef.verify_structure().is_ok(),
+            "0.9 judges the exported bytes"
+        );
+        assert_eq!(
+            beef.txs.iter().map(|t| t.txid()).collect::<Vec<_>>(),
+            vec![parent_id.clone(), child_id.clone()]
+        );
         assert!(beef.find_txid(&parent_id).unwrap().has_proof());
         assert!(!beef.find_txid(&child_id).unwrap().has_proof());
         assert!(beef.find_txid(&stranger_id).is_none());
