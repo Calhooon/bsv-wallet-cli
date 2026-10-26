@@ -16,29 +16,69 @@ use super::worlds::{FEE_1_IN_1_OUT, FUNDED_COINS, MINED_AT, P2PKH, UNKNOWN};
 /// Every case, in order: the order is the files' (and a world's state
 /// runs through it).
 pub(crate) async fn record_all(r: &mut Recorder) {
+    record_status_keys_and_crypto(r).await;
+    record_malformed_and_empty_wallet(r).await;
+    record_certificate_cases(r).await;
+    record_host_routes_and_callback(r).await;
+    record_refusals_and_faults(r).await;
+    record_funded_world(r).await;
+    record_privileged_and_busy(r).await;
+    record_named_input_cases(r).await;
+}
+
+/// Status and public keys, signatures, crypto and key linkage.
+async fn record_status_keys_and_crypto(r: &mut Recorder) {
     record_status_and_keys(r).await;
     record_signatures(r).await;
     record_crypto(r).await;
     record_linkage(r).await;
+}
+
+/// Malformed requests, empty wallets and unknown action references.
+async fn record_malformed_and_empty_wallet(r: &mut Recorder) {
     record_malformed(r).await;
     record_empty_wallet(r).await;
     record_unknown_references(r).await;
+}
+
+/// Certificate spelling, held and unknown certificates, and discovery.
+async fn record_certificate_cases(r: &mut Recorder) {
     record_certificate_spelling(r).await;
     record_certificates(r).await;
     record_unknown_certificates_and_discovery(r).await;
+}
+
+/// Host routes, the ARC callback, bearer checks and preflights.
+async fn record_host_routes_and_callback(r: &mut Recorder) {
     record_host_routes(r).await;
     record_arc_callback(r).await;
     record_bearer(r).await;
     record_preflights(r).await;
+}
+
+/// The spend gate's refusals and the store's faults.
+async fn record_refusals_and_faults(r: &mut Recorder) {
     record_gate_refusals(r).await;
     record_store_faults(r).await;
+}
+
+/// The funded world's spends, payments and listings.
+async fn record_funded_world(r: &mut Recorder) {
     record_funded_sign(r).await;
     record_funded_abort_and_broadcast(r).await;
     record_funded_relinquish_and_caller_input(r).await;
     record_payments_and_listings(r).await;
+}
+
+/// Privileged-key refusals, then the busy worlds.
+async fn record_privileged_and_busy(r: &mut Recorder) {
     record_privileged(r).await;
     record_abort_store_busy(r).await;
     record_host_store_busy(r).await;
+}
+
+/// Named change, then the caller's carried-input signer refusals.
+async fn record_named_input_cases(r: &mut Recorder) {
     record_named_change(r).await;
     record_carried_signer_refusals(r).await;
 }
