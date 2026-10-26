@@ -397,7 +397,13 @@ transaction, including an `unfail` request or a request holding a proof
 whatever its status says. An abort before any accepting word reaches the
 toolbox, which also refuses an unproven status without a proof as an accepting
 word (fixture 124). This arrives through the beta.1 erased error table as
-409 `CONFLICT`; typed classes replace it at beta.2.
+409 `CONFLICT` with the accepting-word hint only when the abort refusal says
+`records an acceptance and cannot be aborted` or `has a recorded acceptance (`.
+Other abort refusals, including a failed template, an incoming action and
+spent outputs, keep beta's `400 ERROR` without that hint. The common
+`cannot abort action:` prefix is not an accepting word. Typed classes replace
+this word read at beta.2; the reference class for a known but unabortable
+action is `INVALID_PARAMETER`.
 
 `503 STORE_BUSY` is answered by the error's type, never its words: the
 toolbox's `WalletBusy` from a wallet door, or a read or write of the spend
