@@ -57,7 +57,15 @@ async fn main() -> Result<()> {
         // without them, and every other command refuses naming them all.
         Err(refused) => match &cli.command {
             Commands::Config => return commands::config::run(&refused.config, cli.json),
-            Commands::Init { .. } => *refused.config,
+            Commands::Init { .. }
+                if !refused
+                    .errors
+                    .0
+                    .iter()
+                    .any(|e| e.variable == "E2E_RNG_SEED") =>
+            {
+                *refused.config
+            }
             _ => return Err(refused.into()),
         },
     };
@@ -85,7 +93,7 @@ async fn main() -> Result<()> {
     let open = || context::WalletContext::load(&config, cli.json);
     match &cli.command {
         Commands::Init { key, force } => {
-            commands::init::run(&cli.db, key.as_deref(), *force).await?;
+            commands::init::run(&cli.db, key.as_deref(), *force, &config).await?;
         }
         Commands::Identity => {
             let ctx = open().await?;

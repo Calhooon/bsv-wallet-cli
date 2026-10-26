@@ -2232,9 +2232,10 @@ async fn the_daemons_monitor_and_its_served_create_action_share_one_writer() {
             .await
             .unwrap();
     }
-    let (storage, monitor_store) = crate::store::open_shared(path.to_str().unwrap())
-        .await
-        .unwrap();
+    let (storage, monitor_store) =
+        crate::store::open_shared(path.to_str().unwrap(), Default::default())
+            .await
+            .unwrap();
     let (user, _) = storage
         .find_or_insert_user(&root.public_key().to_hex())
         .await

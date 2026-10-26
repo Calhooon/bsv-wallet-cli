@@ -54,7 +54,7 @@ impl<'a> Reader<'a> {
     }
 
     /// `result`'s value, or `None` with its refusal kept.
-    fn kept<T>(&self, result: Result<Option<T>, ConfigError>) -> Option<T> {
+    pub(super) fn kept<T>(&self, result: Result<Option<T>, ConfigError>) -> Option<T> {
         result.unwrap_or_else(|e| {
             self.refused.borrow_mut().push(e);
             None

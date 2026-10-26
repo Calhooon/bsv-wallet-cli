@@ -49,7 +49,8 @@ pub async fn start(
 
     // One store over the file (`store::open_shared`): the wallet's handle
     // and the monitor's share one writer pool and one reservation set.
-    let (storage, storage_arc) = crate::store::open_shared(db).await?;
+    let (storage, storage_arc) =
+        crate::store::open_shared(db, config.wallet.storage_options()).await?;
 
     let db_path = db.to_string();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
@@ -125,7 +126,7 @@ pub async fn start(
     // handle (its chain tracker, set above, is every handle's) and its own
     // `Services`.
     let services2 = make_services(chain)?;
-    let wallet = Wallet::new(Some(root_key), storage, services2)
+    let wallet = Wallet::with_options(Some(root_key), storage, services2, config.wallet.options())
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     let wallet_state = server::make_wallet_state(wallet);

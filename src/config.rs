@@ -13,19 +13,12 @@
 //! [`RelaySettings::load`]. This file is the crate's one reader of the
 //! environment (the architecture rule A7, `tests/arch_config_env.rs`).
 //!
-//! The names do not change: they are the operators' interface (README's
-//! table, `src/CLAUDE.md`). A number, an address or a URL that does not
-//! parse is refused at start with a [`ConfigError`] naming the variable and
-//! the shape it must have, never read as its default; unset or blank is the
-//! default. Every refusal is found in one reading and returned together
-//! ([`Refused`]), with the configuration read with each refused setting at
-//! its default: `bsv-wallet config` prints it with the refused rows marked
-//! and exits 1, `init` (which asks no setting) runs, and every other
-//! command refuses at start naming every refused variable. A switch keeps
-//! the words it always had (each group's field says which), and
-//! `CHAINTRACKS_URL` stays required where a command builds its services
-//! ([`ServicesSettings::header_service`]), so a command that asks no chain
-//! (`init`, `config`) runs without it.
+//! Malformed settings return typed [`ConfigError`]s together in [`Refused`].
+//! `config` shows every refused row. `init` needs no services, but also
+//! refuses a seed outside the hermetic wall. Other commands refuse all
+//! malformed settings before acting; unset or blank retains the default.
+//! [`ServicesSettings::header_service`] requires `CHAINTRACKS_URL` only
+//! when services are built.
 //!
 //! A key or a token is a [`Secret`]: its `Debug` and `Display` print
 //! `<set>`. [`Config::knobs`] lists every setting with its effective value
@@ -42,6 +35,8 @@ use serde::Serialize;
 
 mod knobs;
 mod read;
+#[cfg(test)]
+mod seed_tests;
 #[cfg(test)]
 mod tests;
 
@@ -218,6 +213,48 @@ fn not_zero_or_false(v: &str) -> bool {
     v != "0" && !v.eq_ignore_ascii_case("false")
 }
 
+/// The harness seed is refused unless the complete loopback proxy wall is set.
+fn hermetic_seed(raw: &Reader) -> Option<[u8; 32]> {
+    let value = raw.given("E2E_RNG_SEED")?;
+    let proxy = raw.get("HTTPS_PROXY");
+    let loopback = proxy
+        .and_then(|p| url::Url::parse(p).ok())
+        .is_some_and(|p| {
+            p.scheme() == "http" && p.host_str() == Some("127.0.0.1") && p.port().is_some()
+        });
+    let wall = raw.get("E2E_HERMETIC") == Some("1")
+        && loopback
+        && [
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ]
+        .iter()
+        .all(|k| raw.get(k) == proxy)
+        && ["NO_PROXY", "no_proxy"]
+            .iter()
+            .all(|k| raw.get(k) == Some("127.0.0.1,localhost"));
+    raw.kept(if wall {
+        hex::decode(value)
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .map(Some)
+            .ok_or(ConfigError {
+                variable: "E2E_RNG_SEED",
+                value: "<set>".into(),
+                expected: "a 32-byte hexadecimal seed behind the hermetic wall",
+            })
+    } else {
+        Err(ConfigError {
+            variable: "E2E_RNG_SEED",
+            value: "<set>".into(),
+            expected: "a seed used only with E2E_HERMETIC=1 and its loopback proxy wall",
+        })
+    })
+}
+
 /// The wallet's own settings: the global flags and the root key.
 #[derive(Debug, Clone)]
 pub struct WalletSettings {
@@ -230,6 +267,8 @@ pub struct WalletSettings {
     /// `ROOT_KEY`, as set (its hex is parsed where a wallet opens, so `init
     /// --force` can replace a damaged one).
     pub root_key: Option<Secret>,
+    /// `E2E_RNG_SEED`: deterministic draws only behind the hermetic wall.
+    pub rng_seed: Option<[u8; 32]>,
     /// `RUST_LOG`, as set: the log filter (`tracing`'s directives), else
     /// [`DEFAULT_LOG_FILTER`]; one that does not parse is the default too,
     /// as `tracing_subscriber` always read it. `--verbose` overrides it
@@ -250,8 +289,24 @@ impl WalletSettings {
             },
             port: flags.port,
             root_key: raw.get("ROOT_KEY").map(Secret::new),
+            rng_seed: hermetic_seed(raw),
             rust_log: raw.get("RUST_LOG").map(str::to_string),
             verbose: flags.verbose,
+        }
+    }
+
+    /// The storage stream; production has no seed.
+    pub fn storage_options(&self) -> bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
+        bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
+            rng_seed: self.rng_seed,
+        }
+    }
+
+    /// The separate wallet stream, seeded alike by the hermetic harness.
+    pub fn options(&self) -> bsv_wallet_toolbox::WalletOptions {
+        bsv_wallet_toolbox::WalletOptions {
+            rng_seed: self.rng_seed,
+            ..Default::default()
         }
     }
 

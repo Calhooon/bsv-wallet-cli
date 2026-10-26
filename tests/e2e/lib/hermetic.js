@@ -52,6 +52,7 @@ function applyEnv() {
     // (Node 24, 22.21); read at a process's start, so it binds the children
     // here and the harness itself only when its launcher set it (CI does).
     NODE_USE_ENV_PROXY: '1',
+    E2E_RNG_SEED: '42'.repeat(32),
   };
   Object.assign(process.env, forced);
   // The funder's seat and the wallets' scratch root, unless the caller named them.
