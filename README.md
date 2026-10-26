@@ -79,6 +79,10 @@ the callback token. A store busy by type answers 503 `STORE_BUSY` with
 `Retry-After: 1`, so the sender can retry the payload (#226). Other invalid
 payloads keep 400 `BAD_PAYLOAD` and their existing messages; a valid status
 for an unknown transaction still answers 200 `StatusIgnored`.
+The `RELAY_URL` poller keeps its acknowledgement cursor below an item that
+meets a typed store busy, waits one extra `RELAY_POLL_SECS` tick and reads it
+and the later items again; successful ingests, refused proofs and malformed
+payloads still advance the cursor (#248).
 
 Configuration and defaults
 are defined in [src/config.rs](src/config.rs): every variable is read once at
