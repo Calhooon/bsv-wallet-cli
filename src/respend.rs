@@ -121,6 +121,12 @@ pub async fn build_and_post(
     let word: String = row.get("status");
     let req_word: String = row.get("req_status");
     ensure!(
+        !crate::retire_guard::proof_present(storage.pool(), &txid).await?,
+        "respend refused: a proof is present for {txid}: not a phantom"
+    );
+    // These labels also exclude terminal requests without a stored proof
+    // (notably a competitor's doubleSpend); the proof check above is separate.
+    ensure!(
         matches!(word.as_str(), "unproven" | "sending")
             && !matches!(req_word.as_str(), "completed" | "doubleSpend" | "invalid"),
         "respend refused: phantom already has proof or a terminal word"
