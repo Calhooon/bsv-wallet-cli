@@ -63,17 +63,31 @@ class WalletClient {
       });
       text = await resp.text();
     } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
-    this.lastStatus = resp.status;
     done(resp.status, text);
-    let data;
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
-    if (!resp.ok) throw this.responseError(endpoint, resp, data, text);
-    return data;
+    try { return text ? JSON.parse(text) : {}; } catch { return { _raw: text }; }
+  }
+
+  // Scenario 24 reads the HTTP response without changing the shared GET contract.
+  async getResponse(endpoint) {
+    return record.serial(async () => {
+      const done = record.httpStart(this.name, 'GET', `/${endpoint}`);
+      let resp, text;
+      try {
+        resp = await fetch(`${this.base}/${endpoint}`, {
+          headers: { 'Origin': this.origin },
+        });
+        text = await resp.text();
+      } catch (e) { done(resp ? resp.status : null, null, e); throw e; }
+      done(resp.status, text);
+      let body;
+      try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+      return { status: resp.status, retryAfter: resp.headers.get('retry-after'), body };
+    });
   }
 
   responseError(endpoint, resp, data, text) {
     const msg = data.message || data.error || data._raw || text || `HTTP ${resp.status}`;
-    // Keep the refusal and its retry header for scenario 24, on both verbs.
+    // Keep the POST refusal and its retry header for scenario 24.
     const err = new Error(`${this.name} /${endpoint} ${resp.status}: ${msg}`);
     err.status = resp.status;
     err.body = data;
