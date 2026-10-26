@@ -1,6 +1,5 @@
 //! The answer's rule (#44): the store busy is 503 `STORE_BUSY` with
-//! `Retry-After: 1` by its type only; every other fault keeps its own word
-//! and status.
+//! `Retry-After: 1` by its type only; every other fault keeps its word and status.
 
 use super::*;
 use crate::test_support::response_answer;
@@ -798,3 +797,4 @@ async fn tx_word_under_a_busy_store_is_503_store_busy() {
     host_route_store_faults(&format!("/tx/{}", "11".repeat(32)), "ERR_TX_WORD").await;
 }
 mod custom_instructions;
+mod page_bounds;

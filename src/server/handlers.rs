@@ -71,6 +71,7 @@ use std::sync::Arc;
 
 pub use super::error::AppError;
 use super::error::Kind;
+use super::page_bounds::check_page_bounds;
 use super::types::*;
 
 pub type WalletState = Arc<Wallet<StorageSqlx, Services>>;
@@ -1029,9 +1030,9 @@ pub async fn list_actions(
     headers: HeaderMap,
     Json(args): Json<ListActionsArgs>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let originator = extract_originator(&headers)?;
+    check_page_bounds(args.limit, args.offset.map(i64::from))?;
     let result = wallet
-        .list_actions(args, &originator)
+        .list_actions(args, &extract_originator(&headers)?)
         .await
         .map_err(AppError::from)?;
     let user = crate::spend_gate::UserCoins::from_wallet(&wallet)
@@ -1088,9 +1089,9 @@ pub async fn list_outputs(
     headers: HeaderMap,
     Json(args): Json<ListOutputsArgs>,
 ) -> Result<Json<ListOutputsResult>, AppError> {
-    let originator = extract_originator(&headers)?;
+    check_page_bounds(args.limit, args.offset.map(i64::from))?;
     let result = wallet
-        .list_outputs(args, &originator)
+        .list_outputs(args, &extract_originator(&headers)?)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1139,9 +1140,9 @@ pub async fn list_certificates(
     headers: HeaderMap,
     Json(args): Json<ListCertificatesArgs>,
 ) -> Result<Json<ListCertificatesResult>, AppError> {
-    let originator = extract_originator(&headers)?;
+    check_page_bounds(args.limit, args.offset.map(i64::from))?;
     let result = wallet
-        .list_certificates(args, &originator)
+        .list_certificates(args, &extract_originator(&headers)?)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1185,9 +1186,9 @@ pub async fn discover_by_identity_key(
     headers: HeaderMap,
     Json(args): Json<DiscoverByIdentityKeyArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
-    let originator = extract_originator(&headers)?;
+    check_page_bounds(args.limit, args.offset.map(i64::from))?;
     let result = wallet
-        .discover_by_identity_key(args, &originator)
+        .discover_by_identity_key(args, &extract_originator(&headers)?)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1199,9 +1200,9 @@ pub async fn discover_by_attributes(
     headers: HeaderMap,
     Json(args): Json<DiscoverByAttributesArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
-    let originator = extract_originator(&headers)?;
+    check_page_bounds(args.limit, args.offset.map(i64::from))?;
     let result = wallet
-        .discover_by_attributes(args, &originator)
+        .discover_by_attributes(args, &extract_originator(&headers)?)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
