@@ -5,6 +5,7 @@ pub mod broadcast_follow_up;
 pub mod error;
 pub mod handlers;
 mod host_reads;
+mod page_bounds;
 pub mod post_word;
 pub mod types;
 
@@ -32,8 +33,7 @@ use handlers::WalletState;
 // https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291
 const ARC_CALLBACK_DEADLINE: Duration = Duration::from_secs(8);
 
-/// Lock that serializes spending operations (createAction).
-/// Non-spending endpoints (encrypt, getPublicKey, listOutputs, etc.) are unaffected.
+/// Serializes createAction; non-spending endpoints remain unaffected.
 ///
 /// Why: With limited UTXOs, concurrent createAction calls race on SQLite's write lock
 /// and the loser gets SQLITE_BUSY_SNAPSHOT instead of waiting for the winner's change
