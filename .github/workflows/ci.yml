@@ -61,7 +61,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Ubuntu decides a pull request (the required check); macOS builds on
+        # every push and on the tag's run, where the release binaries are made
+        # (the keeper's rule of 2026-10-26: a PR runs exactly the required set;
+        # Build (macos-latest) left the required set on main and beta that day).
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
