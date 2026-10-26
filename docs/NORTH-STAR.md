@@ -73,7 +73,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | mutation floor `src/spend_gate.rs` | 80 | 87.1 at 93f160f | `.github/workflows/nightly.yml` |
 | mutation floor `src/tracker_host.rs` | 72 | 72.6 at 93f160f | `.github/workflows/nightly.yml` |
 | bench baseline | no baseline yet |  | `benches/baseline.json` |
-| e2e scenarios | 23 |  | `tests/e2e/scenarios/` |
+| e2e scenarios | 24 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/hermetic.js` |
 <!-- scoreboard:end -->
 
