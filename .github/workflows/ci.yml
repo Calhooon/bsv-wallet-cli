@@ -191,6 +191,11 @@ jobs:
   # the candidate the captain commits: the base's file with this run appended.
   bench:
     name: bench
+    # On push to beta and main and on a tag, never on a pull request: a PR's
+    # merge is decided by the jobs branch protection requires; the bench's
+    # baseline compare reads the push's `before` (the keeper's balance of
+    # 2026-10-26, the owner's word: "there has gotta be a balance").
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       # Over any rust-toolchain.toml a PR adds; the tool refuses another rustc -V.
@@ -507,7 +512,13 @@ jobs:
   # line is in the summary.
   differential:
     name: differential
-    if: github.event_name == 'pull_request'
+    # On a pull request only when it carries the `refactor` label (the label
+    # is what the run can fail on); on every push to beta and main against the
+    # push's `before`, so the record of each landing stays (the keeper's
+    # balance of 2026-10-26). A lane runs the differential locally before its
+    # PR and its cold review runs it again: those two witnesses stand on
+    # every PR; this job is the third, on the refactor ones.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'refactor')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -527,13 +538,25 @@ jobs:
       # The base's tree in a worktree beside the checkout, built into the same
       # target dir before the head (the dependencies are shared), its two
       # binaries copied out before the head's build replaces them.
-      - name: Build the base (the PR's base branch at its tip)
+      - name: Build the base (a PR's base branch at its tip; a push's `before`)
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-          git worktree add --detach "$RUNNER_TEMP/base-src" "origin/$BASE_REF"
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            rev="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            # A push: the previous tip of the branch, fetched by its sha.
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            rev="$BEFORE"
+          else
+            # A new branch or a tag (workflow_call): the commit before this one.
+            git fetch --no-tags --deepen=1 origin
+            rev="HEAD~1"
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base-src" "$rev"
           echo "base: $(git -C "$RUNNER_TEMP/base-src" log --oneline -1)"
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           (cd "$RUNNER_TEMP/base-src" && cargo build --release --locked && cargo build --release --locked -p bsv-wallet-mcp)
@@ -590,10 +613,15 @@ jobs:
           set -euo pipefail
           # The PR's labels now, not the event's (a label added after the
           # run started counts on a re-run). A failed read is no "no label".
-          if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
-              --jq '[.labels[].name] | index("refactor") != null'); then
-            echo "::error::the PR's labels could not be read (gh pr view)"
-            exit 1
+          if [ -n "${PR_NUMBER:-}" ]; then
+            if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
+                --jq '[.labels[].name] | index("refactor") != null'); then
+              echo "::error::the PR's labels could not be read (gh pr view)"
+              exit 1
+            fi
+          else
+            # A push: no PR, no label; the report is recorded, never failed.
+            REFACTOR=false
           fi
           echo "label refactor: $REFACTOR (read at run time)"
           out="$RUNNER_TEMP/differential"
