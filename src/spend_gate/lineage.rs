@@ -65,9 +65,16 @@
 //! a reorg moves the lineage only with its creators' words
 //! (`reorg_lifts_dead_lineage`).
 //!
-//! **The walk.** One query for the whole wallet, forward from the
-//! candidates to their descendants: the actions spending an output of a
-//! candidate, then those spending an output of one of them, and so on. A
+//! **The walk.** One query for the user's own actions (#221), forward from
+//! the candidates to their descendants: the actions spending an output of a
+//! candidate, then those spending an output of one of them, and so on. The
+//! walk is the user's: a candidate is a transaction of the authenticated
+//! user, each step follows that user's output, and each descendant is that
+//! user's action, as every other gate read is the user's (#201), so another
+//! user's dead transaction never marks this user's coins, whatever
+//! `spent_by` links the store holds. A candidate's proof is read only for a
+//! made descendant ([`Lineage::proofs`]): a received coin's lineage is never
+//! read, so a received descendant would read it for nothing. A
 //! wallet with no candidate pays one indexed read, no walk and no header
 //! read. The query returns each (descendant, candidate) pair once (SQL's
 //! `UNION`), not the nearest candidate per descendant, since which
