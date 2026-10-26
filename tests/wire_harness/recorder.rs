@@ -97,7 +97,10 @@ impl Recorder {
     pub(crate) fn write_manifest(&self) {
         let mut text = serde_json::to_string_pretty(&Manifest {
             fixtures: self.written.clone(),
-            notes: [("103-internalizeAction.badUnlock.json".into(), "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137).".into())].into_iter().collect(),
+            notes: [
+                ("103-internalizeAction.badUnlock.json".into(), "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 maps the typed class to 400 VALIDATION_ERROR (bsv-rs #137).".into()),
+                ("127-internalizeAction.customInstructionsAtBound.json".into(), "Acceptance at the bound is this fixture's claim: internalizeAction stores exactly 1000 UTF-8 bytes (250 four-byte characters) whole. The case reads the output's customInstructions through listOutputs and compares every byte, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.".into()),
+            ].into_iter().collect(),
         })
         .unwrap();
         text.push('\n');

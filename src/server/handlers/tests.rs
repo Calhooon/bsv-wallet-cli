@@ -545,13 +545,14 @@ fn create_action_args_maps_the_bare_body() {
 /// The door's refusals, in the handler's words: a scope naming an outpoint
 /// that does not parse, a locking script that is not hex, an input
 /// outpoint that does not parse.
-#[test]
-fn create_action_args_refuses_a_bad_word_hex_or_outpoint() {
+#[tokio::test]
+async fn create_action_args_refuses_a_bad_word_hex_or_outpoint() {
     let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
         "description": "bad scope", "allowPending": { "received": ["nope"] }
     }))
     .unwrap();
-    let err = create_action_args(req).unwrap_err().to_string();
+    let (_, _, body) = answer(create_action_args(req).unwrap_err()).await;
+    let err = body["message"].as_str().unwrap();
     assert!(err.starts_with("Invalid argument: "), "{err}");
     let req: McCreateActionReq = serde_json::from_value(serde_json::json!({
         "description": "bad hex",
@@ -563,7 +564,8 @@ fn create_action_args_refuses_a_bad_word_hex_or_outpoint() {
         "description": "bad outpoint", "inputs": [{ "outpoint": "nope" }]
     }))
     .unwrap();
-    let err = create_action_args(req).unwrap_err().to_string();
+    let (_, _, body) = answer(create_action_args(req).unwrap_err()).await;
+    let err = body["message"].as_str().unwrap();
     assert!(err.starts_with("invalid input outpoint 'nope'"), "{err}");
 }
 

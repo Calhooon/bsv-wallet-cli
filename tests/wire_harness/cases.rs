@@ -6,8 +6,9 @@ use super::cases_routes::{
     record_preflights,
 };
 use super::cases_spending::{
-    record_abort_store_busy, record_carried_signer_refusals, record_funded_abort_and_broadcast,
-    record_funded_relinquish_and_caller_input, record_funded_sign, record_gate_refusals,
+    record_abort_store_busy, record_carried_signer_refusals, record_empty_signer_refusals,
+    record_funded_abort_and_broadcast, record_funded_relinquish_and_caller_input,
+    record_funded_sign, record_gate_refusals, record_internalize_at_bound,
     record_internalize_bound, record_named_change, record_payments_and_listings,
     record_store_faults,
 };
@@ -35,6 +36,8 @@ pub(crate) async fn record_all(r: &mut Recorder) {
         ),
     )
     .await;
+    record_empty_signer_refusals(r).await;
+    record_internalize_at_bound(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.

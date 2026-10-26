@@ -115,6 +115,10 @@ fn request(w: &CarriedWorld, fields: &Value) -> Value {
 
 /// Also put an owned named coin before the bad carried input: no creator read.
 async fn refused(fields: Value, why: &str) {
+    refused_at_door(fields, why, true).await;
+}
+
+async fn refused_at_door(fields: Value, why: &str, at_gate: bool) {
     let w = world().await;
     let before = store_state(w.wallet.storage()).await;
     let rows = stored_rows(w.wallet.storage()).await;
@@ -131,10 +135,14 @@ async fn refused(fields: Value, why: &str) {
         let (status, answer, asked) = serve(&w, body).await;
         println!("carried refusal: HTTP {status} {answer}; toolbox called: {asked}");
         assert_eq!(status, 400);
+        let message = if at_gate {
+            format!("Invalid argument: inputs names {outpoint}, which is not a valid caller input: {why}")
+        } else {
+            why.to_string()
+        };
         assert_eq!(
             answer,
-            json!({"code": "VALIDATION_ERROR", "message": format!(
-            "Invalid argument: inputs names {outpoint}, which is not a valid caller input: {why}")})
+            json!({"code": "VALIDATION_ERROR", "message": message})
         );
         assert!(!asked, "the toolbox was called");
         assert!(w.calls.lock().unwrap().is_empty(), "a creator was read");
@@ -186,4 +194,58 @@ async fn a_carried_input_with_only_a_length_reaches_the_served_toolbox() {
 async fn a_carried_input_with_a_script_reaches_the_served_toolbox() {
     reaches_toolbox(json!({"unlockingScript": "51"})).await;
     reaches_toolbox(json!({"unlockingScript": "51", "unlockingScriptLength": 1})).await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_an_empty_script_is_refused_by_the_served_gate() {
+    refused(
+        json!({"unlockingScript": ""}),
+        "The unlockingScript parameter must be hexadecimal string.",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_an_empty_script_and_a_length_is_refused_by_the_served_gate() {
+    for length in [0, 1] {
+        refused(
+            json!({"unlockingScript": "", "unlockingScriptLength": length}),
+            "The unlockingScript parameter must be hexadecimal string.",
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn a_carried_input_with_zero_length_and_no_script_is_refused_by_the_served_gate() {
+    for fields in [
+        json!({"unlockingScriptLength": 0}),
+        json!({"unlockingScript": null, "unlockingScriptLength": 0}),
+    ] {
+        refused(
+            fields,
+            "The unlockingScriptLength parameter must be a positive integer.",
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn a_carried_input_treats_null_signer_fields_as_absent() {
+    refused(json!({"unlockingScript": null, "unlockingScriptLength": null}),
+        "names no signer: The unlockingScript, unlockingScriptLength parameter must be at least one valid value.").await;
+    reaches_toolbox(json!({"unlockingScript": null, "unlockingScriptLength": 1})).await;
+    reaches_toolbox(json!({"unlockingScript": "51", "unlockingScriptLength": null})).await;
+}
+
+#[tokio::test]
+async fn a_carried_input_with_a_non_hex_script_is_refused_by_the_served_handler() {
+    for script in ["zz", "5"] {
+        refused_at_door(
+            json!({"unlockingScript": script}),
+            "The unlockingScript parameter must be hexadecimal string.",
+            false,
+        )
+        .await;
+    }
 }
