@@ -40,6 +40,7 @@ The field names each shape must keep are BRC-100's (`wallet/0100.md` of bsv-bloc
   | `busy` | a file store whose write lock another connection holds |
   | `busy-read` | a file store no reader can open: opened on SQLite's dotfile locking (no shared memory, so no WAL), its one lock held by another connection; carries the callback token and covers `abortAction`, `GET /chain-feed`, `GET /tx/{txid}` and `POST /arc-callback` answering 503 `STORE_BUSY` with `Retry-After: 1` |
   | `funded` | four mined coins the wallet can sign for (50,000, 40,000, 30,000, 20,000 sats, each a one-leaf block of its own that the header stub answers); the mined parents of three payments from a fixed stranger key and of a puzzle coin (`OP_1 OP_EQUAL`), whose blocks the header stub answers too; and a local ARC that takes every post |
+  | `named-change` | one completed made change coin, offered under `SPEND_OWN_CHANGE=1`; the other worlds seed incoming coins and their spends make no change |
 
 - **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
 - **`request.json`** is sent as its compact bytes with `content-type: application/json`; **`request.raw`** is sent byte for byte (a malformed body); **`request.fill`** is a body of that many spaces (an oversized one; the file carries the count, not the megabyte).
@@ -77,6 +78,15 @@ abort pre-check. Only this busy answer moves from beta's 400 `BAD_PAYLOAD`
 to 503 `STORE_BUSY` with `Retry-After: 1`; other callback failures keep their
 codes and messages. Fixtures 064 to 069 and 080, and all 118 older fixtures,
 remain byte-identical.
+
+`120-createAction.namedChange.json` records the toolbox's refusal after the
+gate offers a named coin of our own change (#234): `400 VALIDATION_ERROR`,
+with `wallet error: Validation error: inputs[0]: cannot spend change output txid:vout directly. Change is managed by the wallet.`
+and the named outpoint in the message. The request omits `allowPending`.
+This is the served decision, explained in [A word after the door](GATE-VECTORS.md#a-word-after-the-door).
+The dedicated world supplies made change because the existing seeded coins
+are incoming and the funded spends leave none. It is recorded last;
+all 119 earlier fixtures remain byte-identical.
 
 ## Known server defects, recorded as served
 
