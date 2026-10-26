@@ -312,9 +312,7 @@ pub async fn start(
                                             .await;
                                     last_id = cursor;
                                     if store_busy {
-                                        // One extra RELAY_POLL_SECS tick backs off after
-                                        // the store's five-second busy ceiling: no spin.
-                                        interval.tick().await;
+                                        wait_after_relay_busy(&mut interval).await;
                                     }
                                 }
                                 Err(e) => {
@@ -342,6 +340,14 @@ pub async fn start(
         monitor,
         server,
     })
+}
+
+/// Wait one extra poll tick after a busy store. Reset because the default
+/// `MissedTickBehavior::Burst` can consume missed ticks immediately when the
+/// busy wait outlasts the poll period, otherwise leaving no back-off at all.
+async fn wait_after_relay_busy(interval: &mut tokio::time::Interval) {
+    interval.reset();
+    interval.tick().await;
 }
 
 /// Consume the relay's id-ordered batch, returning the next cursor and whether
@@ -392,7 +398,7 @@ pub fn identity_of(root_key_hex: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::ingest_relay_items;
+    use super::{ingest_relay_items, wait_after_relay_busy};
     use crate::arc_ingest::{ingest_arc_payload, IngestAction};
     use crate::test_support::{
         busy_read_wallet, response_answer, seed_arc_requests, set_read_lock,
@@ -400,6 +406,7 @@ mod tests {
     use bsv_wallet_toolbox::storage::{entities::ProvenTxReqStatus, FindProvenTxReqsArgs};
     use bsv_wallet_toolbox::WalletStorageReader;
     use serde_json::{json, Value};
+    use std::time::{Duration, Instant};
 
     struct RelayFixture {
         _dir: tempfile::TempDir,
@@ -446,6 +453,16 @@ mod tests {
             // stored status itself so that lossy decoding cannot pass this.
             assert_eq!(requests.len(), 2, "stored status must be {expected:?}");
         }
+
+        async fn retry_after_release(&mut self, cursor: i64) {
+            set_read_lock(&mut self.holder, false).await;
+            self.assert_statuses(ProvenTxReqStatus::Unsent).await;
+            assert_eq!(
+                ingest_relay_items(self.wallet.storage(), &self.items, cursor).await,
+                (43, false)
+            );
+            self.assert_statuses(ProvenTxReqStatus::Unmined).await;
+        }
     }
 
     #[tokio::test]
@@ -458,42 +475,33 @@ mod tests {
             "the busy item and later items must stay unacked"
         );
         assert!(busy);
-        set_read_lock(&mut fixture.holder, false).await;
-        fixture.assert_statuses(ProvenTxReqStatus::Unsent).await;
-        assert_eq!(
-            ingest_relay_items(fixture.wallet.storage(), &fixture.items, cursor).await,
-            (43, false)
-        );
-        fixture.assert_statuses(ProvenTxReqStatus::Unmined).await;
+        fixture.retry_after_release(cursor).await;
     }
 
-    /// Beta has no batch function. Reproduce its inline cursor rule to show
-    /// the next pull acknowledges failed deliveries and can never retry them.
     #[tokio::test]
-    async fn relay_beta_inline_logic_loses_busy_deliveries() {
+    async fn relay_busy_at_batch_start_keeps_cursor_and_ingests_nothing() {
         let mut fixture = RelayFixture::new().await;
+        fixture.items[0]["payload"]["txStatus"] = json!("SEEN_ON_NETWORK");
         set_read_lock(&mut fixture.holder, true).await;
-        let mut cursor = 39;
-        for item in &fixture.items {
-            let id = item.get("id").and_then(Value::as_i64).unwrap_or(cursor);
-            if let Some(payload) = item.get("payload") {
-                let _ = ingest_arc_payload(fixture.wallet.storage(), payload).await;
-            }
-            cursor = cursor.max(id);
-        }
-        assert_eq!(cursor, 43, "beta acknowledges both busy status deliveries");
-        set_read_lock(&mut fixture.holder, false).await;
-        let next_pull: Vec<_> = fixture
-            .items
-            .into_iter()
-            .filter(|item| item["id"].as_i64().unwrap() > cursor)
-            .collect();
-        fixture.items = next_pull;
         assert_eq!(
-            ingest_relay_items(fixture.wallet.storage(), &fixture.items, cursor).await,
-            (43, false)
+            ingest_relay_items(fixture.wallet.storage(), &fixture.items, 39).await,
+            (39, true)
         );
-        fixture.assert_statuses(ProvenTxReqStatus::Unsent).await;
+        fixture.retry_after_release(39).await;
+    }
+
+    #[tokio::test]
+    async fn relay_busy_backoff_waits_a_full_period_after_missed_ticks() {
+        let period = Duration::from_millis(40);
+        let mut interval = tokio::time::interval(period);
+        interval.tick().await;
+        tokio::time::sleep(period * 5 / 2).await;
+        let busy_returned = Instant::now();
+        wait_after_relay_busy(&mut interval).await;
+        interval.tick().await; // The poll loop's tick before its next pull.
+        let waited = busy_returned.elapsed();
+        eprintln!("relay back-off after missed ticks: {waited:?}; poll period: {period:?}");
+        assert!(waited >= period, "next pull waited only {waited:?}");
     }
 
     #[tokio::test]
@@ -563,7 +571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_returns_unacked_items_and_deletes_acked_items() {
+    async fn relay_router_retries_busy_items_in_order_and_deletes_acked_rows() {
         use bsv_wallet_cli::relay::{make_relay_router, open_relay_db, RelayState};
 
         let dir = tempfile::tempdir().unwrap();
@@ -577,16 +585,31 @@ mod tests {
         });
         let pull = "/pull?token=relay-test&after=0&ack=0";
         assert_eq!(relay_response(&app, pull, None).await, json!([]));
-        relay_response(
-            &app,
-            "/arc-callback",
-            Some(json!({"txid": "31".repeat(32), "txStatus": "SEEN_ON_NETWORK"})),
-        )
-        .await;
+        let mut fixture = RelayFixture::new().await;
+        for item in &fixture.items {
+            relay_response(&app, "/arc-callback", Some(item["payload"].clone())).await;
+        }
         let items = relay_response(&app, pull, None).await;
-        assert_eq!(items.as_array().unwrap().len(), 1);
-        assert_eq!(relay_response(&app, pull, None).await, items);
-        let cursor = items[0]["id"].as_i64().unwrap();
+        let items = items.as_array().unwrap();
+        let ids: Vec<_> = items
+            .iter()
+            .map(|item| item["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+        set_read_lock(&mut fixture.holder, true).await;
+        let (cursor, busy) = ingest_relay_items(fixture.wallet.storage(), items, 0).await;
+        assert_eq!((cursor, busy), (ids[0], true));
+        let ack = format!("/pull?token=relay-test&after={cursor}&ack={cursor}");
+        let again = relay_response(&app, &ack, None).await;
+        assert_eq!(again, json!(items[1..]));
+        assert_eq!(relay_response(&app, pull, None).await, again);
+        set_read_lock(&mut fixture.holder, false).await;
+        fixture.assert_statuses(ProvenTxReqStatus::Unsent).await;
+        let (cursor, busy) =
+            ingest_relay_items(fixture.wallet.storage(), again.as_array().unwrap(), cursor).await;
+        assert_eq!((cursor, busy), (ids[3], false));
+        fixture.assert_statuses(ProvenTxReqStatus::Unmined).await;
         let ack = format!("/pull?token=relay-test&after={cursor}&ack={cursor}");
         assert_eq!(relay_response(&app, &ack, None).await, json!([]));
         assert_eq!(relay_response(&app, pull, None).await, json!([]));
