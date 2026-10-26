@@ -311,6 +311,15 @@ when the service still answers that hash, the new branch has no answer
 there: the word stays suspect with `recheck`, and the stored event
 reconstructs that deactivation on reload. The stored proof checks against
 the old header and the event rechecks against the new branch.
+A tip reads kept reorgs and invalidations alike: if replay already cleared
+its mark on a new header carrying the same root, delivery stores plain
+`mined` and clears the re-ask and kept events, leaving no row for the next
+tip to select. `a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row`
+checks that the stored word agrees with the spend door;
+`a_settled_row_is_not_selected_by_the_next_tip` checks the next tip leaves it
+untouched. `a_reorg_on_a_lagging_service_then_a_moved_root_tip_reads_stale`
+guards beta's unchanged moved-root reading. This fallback changes no
+other event's delivery.
 `an_invalidated_blocks_moved_root_reads_stale_after_the_next_tip` checks
 that a later tip on a moved root stores `stale` with `reorg@<height>`.
 `an_invalidated_block_whose_root_already_moved_reads_stale_at_delivery`
