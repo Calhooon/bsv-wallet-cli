@@ -189,6 +189,9 @@ pub async fn build_and_post(
         }
     }
     beef.txs.retain(|t| keep.contains(&t.txid()));
+    // Stored BEEF can retain child-first order: the 0.8 writer sorted only
+    // when marked dirty. The 0.9 judge requires parents before children.
+    beef.sort_txs();
     let roots = beef
         .verify_structure()
         .map_err(|e| anyhow!("respend refused: invalid input BEEF: {e:?}"))?;

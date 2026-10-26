@@ -53,9 +53,9 @@ toolbox does; quoted words and results for another txid do not count. The
 guard and both toolbox doors agree on the planted words, with fixture 124's
 unproven status without a proof the one named divergence.
 
-The SDK judges BEEF in held BRC-62 order. Both SDK writers sort, but export's
-validation preceded writing: export now sorts before judging a child-first
-store. Atomic single transactions and gift's deposit-before-claim assembly
+The SDK judges BEEF in held BRC-62 order. Both SDK writers sort only when
+their dirty flag asks for it. Export and respend now sort stored ancestry
+before judging a child-first BEEF. Atomic single transactions and gift's deposit-before-claim assembly
 already have the required order. All 14 recorded BEEFs were decoded and
 compared: identical transaction sets and proof bytes, no re-record for order.
 Version fixtures 007 and 008 also remain byte-identical: the toolbox answers
