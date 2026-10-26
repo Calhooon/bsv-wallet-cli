@@ -48,16 +48,7 @@ const OLD: &str = "2026-01-01T00:00:00+00:00";
 /// A migrated in-memory wallet storage for `identity`: (storage, user id,
 /// default basket id).
 async fn storage_for(identity: &str) -> (StorageSqlx, i64, i64) {
-    let storage = StorageSqlx::in_memory().await.unwrap();
-    storage.migrate("witness-073", identity).await.unwrap();
-    storage.make_available().await.unwrap();
-    let (user, _) = storage.find_or_insert_user(identity).await.unwrap();
-    let basket = storage
-        .find_or_create_default_basket(user.user_id)
-        .await
-        .unwrap()
-        .basket_id;
-    (storage, user.user_id, basket)
+    crate::test_support::coins::storage_for_named(identity, "witness-073").await
 }
 
 async fn insert_tx(storage: &StorageSqlx, user_id: i64, txid: &str, status: &str) -> i64 {

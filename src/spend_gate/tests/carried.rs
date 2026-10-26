@@ -1,13 +1,14 @@
 //! #237 through the served handler: the caller's signer is read at the gate.
 
 use super::{at_the_door, mined_coin, served_response, storage_for, store_state, stored_rows};
+use crate::test_support::{mock_services, serve_router};
 use axum::{body::Body, http::Request, Router};
 use bsv_sdk::{
     primitives::PrivateKey,
     script::LockingScript,
     transaction::{Beef, MerklePath, Transaction, TransactionInput, TransactionOutput},
 };
-use bsv_wallet_toolbox::{Chain, Services, ServicesOptions, StorageSqlx, Wallet};
+use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
@@ -49,14 +50,7 @@ async fn world() -> CarriedWorld {
         .collect();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let (url, mock) = headers(roots, calls.clone()).await;
-    let options = ServicesOptions {
-        arc_url: url.clone(),
-        arc_gorillapool_url: None,
-        ..ServicesOptions::mainnet()
-            .with_chaintracks_url(url)
-            .without_bananablocks()
-    };
-    let services = Services::with_options(Chain::Main, options).unwrap();
+    let services = mock_services(&url);
     let wallet = Arc::new(Wallet::new(Some(key), storage, services).await.unwrap());
     let body = json!({"description": "carried signer", "inputBEEF": beef.to_binary(),
         "inputs": [{"outpoint": format!("{}.0", puzzle.id()), "inputDescription": "the puzzle"}],
@@ -95,12 +89,7 @@ async fn headers(
             }}))
         }
     });
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (url, task)
+    serve_router(app).await
 }
 
 async fn serve(w: &CarriedWorld, body: Value) -> (u16, Value, bool) {
