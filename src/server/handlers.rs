@@ -969,7 +969,10 @@ pub async fn list_actions(
         .list_actions(args, &originator)
         .await
         .map_err(AppError::from)?;
-    let rules = crate::spend_gate::action_rules(wallet.storage())
+    let user = crate::spend_gate::UserCoins::from_wallet(&wallet)
+        .await
+        .map_err(|e| AppError::new(Kind::Internal, format!("Storage error: {e}")))?;
+    let rules = crate::spend_gate::action_rules(wallet.storage(), user.user_id())
         .await
         .map_err(|e| AppError::new(Kind::Internal, format!("Storage error: {e}")))?;
     let result = serde_json::to_value(result)

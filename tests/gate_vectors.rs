@@ -394,7 +394,9 @@ async fn replay(row: &Value, out: &mut Vec<Divergence>) {
         ..TickOptions::default()
     }
     .floored();
-    let lineage = lineage_candidates(&built.storage).await.unwrap();
+    let lineage = lineage_candidates(&built.storage, built.user)
+        .await
+        .unwrap();
     let proofs = lineage.proofs(&[(built.txid.clone(), None)]);
     let readings = match proofs.as_slice() {
         [] => std::collections::HashMap::new(),

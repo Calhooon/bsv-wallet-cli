@@ -695,8 +695,12 @@ async fn a_015_rule_table(storage: &StorageSqlx) {
 /// read writes nothing (no table is made on a store without one).
 #[tokio::test]
 async fn a_015_record_of_the_word_keeps_answering() {
-    let (storage, _, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
-    assert!(action_rules(&storage).await.unwrap().by_txid.is_empty());
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    assert!(action_rules(&storage, user)
+        .await
+        .unwrap()
+        .by_txid
+        .is_empty());
     assert!(
         !crate::store::has_column(storage.pool(), "spend_gate_actions", "txid")
             .await
@@ -705,13 +709,16 @@ async fn a_015_record_of_the_word_keeps_answering() {
     );
     a_015_rule_table(&storage).await;
     let under = "b7".repeat(32);
+    // The record names an action of this user's (#221: a record is read
+    // through the user's transaction it names).
+    coin(&storage, (user, basket), &under, true, None, 1_000, 1).await;
     sqlx::query("INSERT INTO spend_gate_actions (txid, rule, recorded_at) VALUES (?, ?, 0)")
         .bind(&under)
         .bind(RECEIVED_PENDING)
         .execute(storage.writer())
         .await
         .unwrap();
-    let rules = action_rules(&storage).await.unwrap();
+    let rules = action_rules(&storage, user).await.unwrap();
     assert_eq!(
         rules.by_txid.get(&under).map(String::as_str),
         Some("received-pending")
@@ -1706,13 +1713,13 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         labels_of(wallet.storage(), &reference).await,
         vec![RECEIVED_PENDING_LABEL]
     );
-    assert!(rules_of(wallet.storage()).await.unwrap().is_empty());
+    assert!(rules_of(wallet.storage(), user).await.unwrap().is_empty());
 
     let list = wallet
         .list_actions(list_args(), "gate.local")
         .await
         .unwrap();
-    let rules = action_rules(wallet.storage()).await.unwrap();
+    let rules = action_rules(wallet.storage(), user).await.unwrap();
     let shown = listed(serde_json::to_value(&list).unwrap(), &rules);
     assert!(
         shown.contains(&("unsigned".to_string(), Some("received-pending".to_string()))),
@@ -1769,7 +1776,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
         .unwrap();
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(labels_of(wallet.storage(), &reference).await, vec!["mine"]);
-    let rules = action_rules(wallet.storage()).await.unwrap();
+    let rules = action_rules(wallet.storage(), user).await.unwrap();
     assert!(rules.by_txid.is_empty() && rules.by_template.is_empty());
     let list = wallet
         .list_actions(list_args(), "gate.local")
@@ -1833,6 +1840,7 @@ async fn labels_of(storage: &StorageSqlx, reference: &str) -> Vec<String> {
 async fn a_015_template_record_answers_before_and_after_its_signing() {
     let (storage, user, _) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
     a_015_rule_table(&storage).await;
+    let read = || action_rules(&storage, user);
     let pool = storage.writer();
     let template = |reference: &'static str| {
         sqlx::query(
@@ -1857,7 +1865,7 @@ async fn a_015_template_record_answers_before_and_after_its_signing() {
     let before = serde_json::json!({"totalActions": 1, "actions": [
         {"txid": zero, "status": "unsigned", "description": "pay someone", "satoshis": -1000},
     ]});
-    let rules = action_rules(&storage).await.unwrap();
+    let rules = read().await.unwrap();
     assert_eq!(
         listed(before.clone(), &rules),
         vec![("unsigned".to_string(), Some("received-pending".to_string()))]
@@ -1881,7 +1889,7 @@ async fn a_015_template_record_answers_before_and_after_its_signing() {
         (None, Some("tmpl-ref".to_string())),
         "nothing written at the sign"
     );
-    let rules = action_rules(&storage).await.unwrap();
+    let rules = read().await.unwrap();
     assert!(rules.by_template.is_empty());
     let after = serde_json::json!({"totalActions": 1, "actions": [
         {"txid": signed, "status": "unproven", "description": "pay someone", "satoshis": -1000},
@@ -1896,7 +1904,7 @@ async fn a_015_template_record_answers_before_and_after_its_signing() {
     template("tmpl-a").execute(pool).await.unwrap();
     template("tmpl-b").execute(pool).await.unwrap();
     record("tmpl-a").execute(pool).await.unwrap();
-    let rules = action_rules(&storage).await.unwrap();
+    let rules = read().await.unwrap();
     assert_eq!(
         listed(before.clone(), &rules),
         vec![("unsigned".to_string(), None)]
@@ -1914,7 +1922,7 @@ async fn a_015_template_record_answers_before_and_after_its_signing() {
             .await
             .unwrap();
     }
-    let rules = action_rules(&storage).await.unwrap();
+    let rules = read().await.unwrap();
     assert_eq!(
         listed(before, &rules),
         vec![("unsigned".to_string(), Some("received-pending".to_string()))]

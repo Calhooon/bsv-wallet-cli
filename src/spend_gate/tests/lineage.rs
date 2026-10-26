@@ -254,11 +254,14 @@ async fn a_cycle_in_spent_by_ends_the_walk_and_holds_only_what_a_dead_word_reach
     spends(&store.0, &a, b0).await;
     second_output(&store, &b, 1).await;
     let walk = || async {
-        tokio::time::timeout(Duration::from_secs(5), lineage_candidates(&store.0))
-            .await
-            .expect("the walk hung")
-            .unwrap()
-            .dead(&HashMap::new())
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            lineage_candidates(&store.0, store.1 .0),
+        )
+        .await
+        .expect("the walk hung")
+        .unwrap()
+        .dead(&HashMap::new())
     };
     assert!(walk().await.is_empty());
     let a1 = assess(coins, &quiet_headers(), &opts(1, true), None)

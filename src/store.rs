@@ -49,6 +49,9 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
 pub struct LineageRow {
     /// The heir's txid, as the toolbox stores it.
     pub heir: String,
+    /// The heir is an action this wallet made (`is_outgoing`), not one it
+    /// received: only a made heir's lineage is read by a rule.
+    pub made: bool,
     /// The dead ancestor's txid, or its reference when it was never signed.
     pub ancestor: String,
     /// The ancestor's stored dead word: `conflicted`, `rejected`,
@@ -63,7 +66,8 @@ pub struct LineageRow {
 }
 
 /// The lineage walk of the spend gate
-/// ([`crate::spend_gate::lineage_candidates`], #163), one statement on the reader: each action a dead candidate's
+/// ([`crate::spend_gate::lineage_candidates`], #163), one statement on the
+/// reader, the user's own (#221): each action of `user_id` a dead candidate's
 /// output reaches through `outputs.spent_by`, directly or through other
 /// such actions, with that candidate, by the heir's row, then the
 /// latest-created ancestor, then a tracker word before a `failed` status.
@@ -78,12 +82,18 @@ pub struct LineageRow {
 /// are every such pair, not the nearest per heir, since which candidates
 /// stay dead is known only once the gate has read their proofs. A store
 /// the tracker never touched has no words: its candidates are the `failed`
-/// alone.
+/// alone. The walk is the user's (#221): a candidate is a transaction of
+/// `user_id` (both selects of `dead`), each step follows an output of
+/// `user_id` (`outputs.user_id`), and an heir is a transaction of
+/// `user_id`, so another user's dead transaction never marks this user's
+/// actions, whatever `spent_by` links the store holds. Each row says
+/// whether its heir is made (`is_outgoing`): the gate reads a candidate's
+/// proof only for a made heir, the only kind whose lineage a rule reads.
 ///
 /// # Errors
 ///
 /// The store's error when the read fails.
-pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<LineageRow>> {
+pub async fn dead_lineage_rows(reader: &SqlitePool, user_id: i64) -> Result<Vec<LineageRow>> {
     // The tracker's words, and its bump beside a `failed` status, when the
     // tracker's table holds words at all.
     let (words, failed_bump, failed_join) = if has_column(reader, "tracker_states", "word").await? {
@@ -92,7 +102,7 @@ pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<LineageRow>> {
                     s.bump IS NOT NULL OR p.txid IS NOT NULL, p.merkle_path \
              FROM tracker_states s JOIN transactions t ON s.txid = lower(t.txid) \
              LEFT JOIN proven_txs p ON p.txid = t.txid \
-             WHERE s.word IN ('conflicted', 'rejected', 'abandoned') UNION ",
+             WHERE s.word IN ('conflicted', 'rejected', 'abandoned') AND t.user_id = ?1 UNION ",
             "s.bump IS NOT NULL",
             "LEFT JOIN tracker_states s ON s.txid = lower(t.txid)",
         )
@@ -107,38 +117,43 @@ pub async fn dead_lineage_rows(reader: &SqlitePool) -> Result<Vec<LineageRow>> {
                     {failed_bump} OR p.txid IS NOT NULL, p.merkle_path \
              FROM transactions t \
              LEFT JOIN proven_txs p ON p.txid = t.txid {failed_join} \
-             WHERE t.status = 'failed'), \
+             WHERE t.status = 'failed' AND t.user_id = ?1), \
            heir(transaction_id, ancestor) AS ( \
              SELECT o.spent_by, d.transaction_id FROM dead d \
              JOIN outputs o ON o.transaction_id = d.transaction_id \
-             WHERE o.spent_by IS NOT NULL \
+             WHERE o.spent_by IS NOT NULL AND o.user_id = ?1 \
              UNION \
              SELECT o.spent_by, h.ancestor FROM heir h \
              JOIN outputs o ON o.transaction_id = h.transaction_id \
-             WHERE o.spent_by IS NOT NULL) \
-         SELECT t.txid, d.name, d.word, d.txid, d.held, d.merkle_path FROM heir h \
+             WHERE o.spent_by IS NOT NULL AND o.user_id = ?1) \
+         SELECT t.txid, t.is_outgoing != 0, d.name, d.word, d.txid, d.held, d.merkle_path \
+         FROM heir h \
          JOIN transactions t ON t.transaction_id = h.transaction_id \
          JOIN dead d ON d.transaction_id = h.ancestor \
-         WHERE t.txid IS NOT NULL \
+         WHERE t.txid IS NOT NULL AND t.user_id = ?1 \
          ORDER BY h.transaction_id, d.transaction_id DESC, d.rank"
     );
-    let rows: Vec<LineageTuple> = sqlx::query_as(&sql).fetch_all(reader).await?;
+    let rows: Vec<LineageTuple> = sqlx::query_as(&sql).bind(user_id).fetch_all(reader).await?;
     Ok(rows
         .into_iter()
-        .map(|(heir, ancestor, word, txid, held, path)| LineageRow {
-            heir,
-            ancestor,
-            word,
-            proof: txid.filter(|_| held).map(|txid| (txid, path)),
-        })
+        .map(
+            |(heir, made, ancestor, word, txid, held, path)| LineageRow {
+                heir,
+                made,
+                ancestor,
+                word,
+                proof: txid.filter(|_| held).map(|txid| (txid, path)),
+            },
+        )
         .collect())
 }
 
-/// A row of [`dead_lineage_rows`]' statement: the heir's txid, the
-/// ancestor's name and word, its lowercase txid, whether it holds a proof,
-/// and the stored merkle path.
+/// A row of [`dead_lineage_rows`]' statement: the heir's txid, whether it
+/// is made, the ancestor's name and word, its lowercase txid, whether it
+/// holds a proof, and the stored merkle path.
 type LineageTuple = (
     String,
+    bool,
     String,
     String,
     Option<String>,

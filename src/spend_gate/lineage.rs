@@ -126,23 +126,26 @@ pub struct Lineage {
     proofs: Vec<Pair>,
 }
 
-/// Read the lineage's candidates in one pass on the reader: no service, no
-/// header. Nothing is written.
+/// Read the lineage's candidates of the user `user_id` in one pass on the
+/// reader: no service, no header. Nothing is written.
 ///
 /// # Errors
 ///
 /// The store's error when the read fails.
-pub async fn lineage_candidates(storage: &StorageSqlx) -> Result<Lineage> {
-    let rows = crate::store::dead_lineage_rows(storage.pool()).await?;
+pub async fn lineage_candidates(storage: &StorageSqlx, user_id: i64) -> Result<Lineage> {
+    let rows = crate::store::dead_lineage_rows(storage.pool(), user_id).await?;
     let mut proofs = Vec::new();
     join_pairs(&mut proofs, rows.iter().filter_map(|r| r.proof.clone()));
     Ok(Lineage { rows, proofs })
 }
 
 impl Lineage {
-    /// The distinct proof pairs of candidates with an heir in `creators`.
-    /// The gate reads these beside the creators it may judge in this call.
-    /// Keep their original order even when an earlier heir is not judged.
+    /// The distinct proof pairs of candidates with a made heir in
+    /// `creators`. The gate reads these beside the creators it may judge
+    /// in this call. A received heir selects none: no rule reads a received
+    /// coin's lineage (`coin_hold`), so its candidates would be read for
+    /// nothing (#221). Keep their original order even when an earlier heir
+    /// is not judged.
     #[must_use]
     pub fn proofs(&self, creators: &[Pair]) -> Vec<Pair> {
         if self.proofs.is_empty() {
@@ -152,7 +155,7 @@ impl Lineage {
         let selected: HashSet<_> = self
             .rows
             .iter()
-            .filter(|r| judged.contains(r.heir.to_ascii_lowercase().as_str()))
+            .filter(|r| r.made && judged.contains(r.heir.to_ascii_lowercase().as_str()))
             .filter_map(|r| r.proof.as_ref().map(|(txid, _)| txid.as_str()))
             .collect();
         self.proofs

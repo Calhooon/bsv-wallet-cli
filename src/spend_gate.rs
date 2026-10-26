@@ -209,6 +209,13 @@ impl<'a> UserCoins<'a> {
         Ok(Self::new(storage, user.user_id))
     }
 
+    /// The authenticated user's id, for a gate read keyed by the action's
+    /// user (the rule labels, [`action_rules`]).
+    #[must_use]
+    pub fn user_id(self) -> i64 {
+        self.user_id
+    }
+
     /// The shared read for named inputs, scope, offers, locks and respend.
     /// Every caller adds its selection after the mandatory owner filter.
     fn query(self) -> QueryBuilder<'static, Sqlite> {
@@ -850,10 +857,10 @@ pub fn reference_string(reference: &[u8]) -> String {
     String::from_utf8(reference.to_vec()).unwrap_or_else(|_| hex::encode(reference))
 }
 
-/// The rule each action was created under, by txid; a template not yet
-/// signed has none (see [`ActionRules`]).
-pub async fn rules_of(storage: &StorageSqlx) -> Result<HashMap<String, String>> {
-    Ok(action_rules(storage).await?.by_txid)
+/// The rule each action of the user `user_id` was created under, by txid;
+/// a template not yet signed has none (see [`ActionRules`]).
+pub async fn rules_of(storage: &StorageSqlx, user_id: i64) -> Result<HashMap<String, String>> {
+    Ok(action_rules(storage, user_id).await?.by_txid)
 }
 
 /// Label the action `transaction_id` with `rule`'s label inside the
@@ -921,21 +928,27 @@ pub fn template_key(status: &str, description: &str, satoshis: i64) -> String {
     format!("{status}\u{1f}{description}\u{1f}{satoshis}")
 }
 
-/// Every recorded rule, as a listing shows it: the action's label first
-/// ([`RECEIVED_PENDING_LABEL`], written by the toolbox with the action),
-/// then a 0.15 store's `spend_gate_actions` rows (by txid, or by the
-/// reference of a template, which names its txid once signed). Reads only.
-pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
+/// Every recorded rule of the user `user_id`'s actions, as a listing shows
+/// it: the action's label ([`RECEIVED_PENDING_LABEL`], written by
+/// the toolbox with the action), then a 0.15 store's `spend_gate_actions`
+/// rows (by txid, or by the reference of a template, which names its txid
+/// once signed). Every read is the user's (#221): a label through the
+/// action's user (the transaction's `user_id`, and the label's own the
+/// same), a 0.15 record through the user's transaction its reference or
+/// txid names, a template's shape among the user's templates; another
+/// user's action of the same txid answers nothing here. Reads only.
+pub async fn action_rules(storage: &StorageSqlx, user_id: i64) -> Result<ActionRules> {
     let pool = storage.pool();
-    // (txid or NULL, reference, label): one row per toolbox action that
-    // carries the gate's label.
+    // (txid or NULL, reference, label): one row per toolbox action of the
+    // user that carries the gate's label.
     let labelled = sqlx::query(
         "SELECT lower(t.txid) AS txid, t.reference, l.label FROM transactions t \
          JOIN tx_labels_map m ON m.transaction_id = t.transaction_id AND m.is_deleted = 0 \
          JOIN tx_labels l ON l.tx_label_id = m.tx_label_id AND l.is_deleted = 0 \
-         WHERE l.label = ?",
+         WHERE l.label = ? AND t.user_id = ? AND l.user_id = t.user_id",
     )
     .bind(RECEIVED_PENDING_LABEL)
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     let mut by_txid: HashMap<String, String> = HashMap::new();
@@ -955,12 +968,15 @@ pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
             }
         }
     }
-    // A 0.15 store's records, read where the label says nothing.
+    // A 0.15 store's records, read where the label says nothing: a record
+    // names the user's action by its reference or its txid.
     if crate::store::has_column(pool, "spend_gate_actions", "reference").await? {
         let legacy = sqlx::query(
             "SELECT lower(COALESCE(g.txid, t.txid)) AS txid, g.reference, g.rule \
-             FROM spend_gate_actions g LEFT JOIN transactions t ON t.reference = g.reference",
+             FROM spend_gate_actions g JOIN transactions t ON t.user_id = ? \
+             AND (t.reference = g.reference OR lower(t.txid) = lower(g.txid))",
         )
+        .bind(user_id)
         .fetch_all(pool)
         .await?;
         for r in &legacy {
@@ -979,8 +995,9 @@ pub async fn action_rules(storage: &StorageSqlx) -> Result<ActionRules> {
     }
     let rows = sqlx::query(
         "SELECT t.status, t.description, t.satoshis, t.reference FROM transactions t \
-         WHERE t.txid IS NULL",
+         WHERE t.txid IS NULL AND t.user_id = ?",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     let mut shapes: HashMap<String, Option<String>> = HashMap::new();
@@ -1109,11 +1126,11 @@ fn coin_hold(
     }
 }
 
-/// The lineage's candidates, read only when some coin of ours is judged: a
-/// gate over received coins alone reads none.
-async fn lineage_of(storage: &StorageSqlx, any_made: bool) -> Result<Lineage> {
+/// The lineage's candidates, the user's own (#221), read only when some
+/// coin of ours is judged: a gate over received coins alone reads none.
+async fn lineage_of(coins: UserCoins<'_>, any_made: bool) -> Result<Lineage> {
     if any_made {
-        lineage_candidates(storage).await
+        lineage_candidates(coins.storage, coins.user_id).await
     } else {
         Ok(Lineage::default())
     }
@@ -1171,7 +1188,7 @@ async fn read_batch<V: WalletServices + ?Sized>(
 /// toolbox's preference: completed first, then the largest.
 async fn candidates(coins: UserCoins<'_>) -> Result<Vec<Candidate>> {
     let storage = coins.storage;
-    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
+    let frozen = crate::tracker_host::frozen_outpoints(storage, coins.user_id).await?;
     let rows = coins
         .query()
         .push(
@@ -1309,7 +1326,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
     let all = candidates(coins).await?;
     let tick = opts.tick();
     let lineage = lineage_of(
-        storage,
+        coins,
         all.iter()
             .any(|c| c.origin == Origin::Made && c.record_hold().is_none()),
     )
@@ -1467,7 +1484,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     retry: bool,
 ) -> std::result::Result<Vec<HeldCoin>, GateError> {
     let storage = coins.storage;
-    let frozen = crate::tracker_host::frozen_outpoints(storage)
+    let frozen = crate::tracker_host::frozen_outpoints(storage, coins.user_id)
         .await
         .map_err(GateError::Gate)?;
     let mut named_coins = Vec::new();
@@ -1506,9 +1523,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
     let any_made = named_coins.iter().any(|(t, _, r)| {
         r.get::<i64, _>("is_outgoing") != 0 && creators.iter().any(|(c, _)| c == t)
     });
-    let lineage = lineage_of(storage, any_made)
-        .await
-        .map_err(GateError::Gate)?;
+    let lineage = lineage_of(coins, any_made).await.map_err(GateError::Gate)?;
     // One reading of the creators and the lineage's candidates holding a
     // proof, against one read of the headers and retried together: one
     // word per creator.
@@ -1836,7 +1851,7 @@ async fn check_scope(coins: UserCoins<'_>, named: &[(String, u32)]) -> Result<Op
         return Ok(None);
     }
     let storage = coins.storage;
-    let frozen = crate::tracker_host::frozen_outpoints(storage).await?;
+    let frozen = crate::tracker_host::frozen_outpoints(storage, coins.user_id).await?;
     for (txid, vout) in named {
         let row = coins.outpoint(txid, *vout).await?;
         let why = match row {

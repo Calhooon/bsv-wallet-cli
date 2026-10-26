@@ -1,4 +1,6 @@
-//! #201: all gate reads belong to the user whose action is at the door.
+//! #201 and #221: all gate reads belong to the user whose action is at the
+//! door: the coins (#201), and the lineage walk, the rule labels and the
+//! frozen set (#221).
 
 use super::*;
 use axum::response::IntoResponse;
@@ -179,4 +181,116 @@ async fn another_users_lost_and_spent_coins_never_enter_a_refusal() {
         panic!("expected a funds refusal");
     };
     assert!(refused.held.is_empty(), "{refused:?}");
+}
+
+/// The harness with a coin of this user's at `txid`, made or received:
+/// (the harness, this user's id, the other user's id).
+async fn with_my_coin(txid: &str, made: bool) -> (TwoUsers, i64, i64) {
+    let w = two_users().await;
+    let me = UserCoins::from_wallet(&w.wallet).await.unwrap().user_id();
+    let owner = UserCoins::from_wallet(&w.owner).await.unwrap().user_id();
+    let storage = w.wallet.storage();
+    let basket = storage.find_or_create_default_basket(me).await.unwrap();
+    coin(storage, (me, basket.basket_id), txid, made, None, 6_000, 3).await;
+    (w, me, owner)
+}
+
+/// This user's allocation read under `gate`.
+async fn my_assessment(w: &TwoUsers, me: i64, gate: &GateOptions) -> Assessment {
+    let coins = UserCoins::new(w.wallet.storage(), me);
+    assess(coins, w.wallet.services(), gate, None)
+        .await
+        .unwrap()
+}
+
+/// #221: another user's failed transaction whose output's `spent_by` names
+/// this user's action (a pair planted by hand: one transaction with inputs
+/// from two users of the store) is no dead candidate of this user's walk,
+/// so this user's change is offered through both doors and names nothing.
+#[tokio::test]
+async fn another_users_failed_transaction_leaves_our_child_offered() {
+    let child = "c1".repeat(32);
+    let (w, me, _) = with_my_coin(&child, true).await;
+    let storage = w.wallet.storage();
+    fail(storage, &w.txid).await;
+    sqlx::query(
+        "UPDATE outputs SET spent_by = (SELECT transaction_id FROM transactions WHERE txid = ?) \
+         WHERE output_id = ?",
+    )
+    .bind(&child)
+    .bind(w.output)
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    let gate = opts(1, true);
+    let a = my_assessment(&w, me, &gate).await;
+    assert_eq!(reason_of(&a, &child), None, "{:?}", a.held);
+    assert_eq!(a.offered.len(), 1);
+    let (coins, named) = (UserCoins::new(storage, me), [(child.clone(), 0)]);
+    let named = assess_named(coins, w.wallet.services(), &gate, &named, &[], None, false).await;
+    assert!(named.unwrap().is_empty());
+    let lineage = lineage_candidates(storage, me).await.unwrap();
+    assert!(lineage.dead(&HashMap::new()).is_empty());
+}
+
+/// #221: another user's action of the same txid carrying the received
+/// rule's label never reaches this user's rules (`rules_of`, the read
+/// respend decides the replacement's rule from), while the owner's read
+/// still names it.
+#[tokio::test]
+async fn another_users_label_never_reaches_our_respend() {
+    let shared = "c2".repeat(32);
+    let (w, me, owner) = with_my_coin(&shared, true).await;
+    let storage = w.wallet.storage();
+    let theirs: i64 = sqlx::query_scalar(
+        "INSERT INTO transactions (user_id, status, reference, is_outgoing, satoshis, version, lock_time, description, txid, created_at, updated_at) \
+         VALUES (?, 'unproven', 'ref-theirs', 1, 0, 1, 0, 'gate', ?, ?, ?) RETURNING transaction_id",
+    )
+    .bind(owner)
+    .bind(&shared)
+    .bind(Utc::now())
+    .bind(Utc::now())
+    .fetch_one(storage.writer())
+    .await
+    .unwrap();
+    let mut conn = storage.writer().acquire().await.unwrap();
+    label_in(&mut conn, owner, theirs, RECEIVED_PENDING)
+        .await
+        .unwrap();
+    drop(conn);
+    let theirs = rules_of(storage, owner).await.unwrap();
+    assert_eq!(
+        theirs.get(&shared).map(String::as_str),
+        Some(RECEIVED_PENDING)
+    );
+    let ours = rules_of(storage, me).await.unwrap();
+    assert!(ours.is_empty(), "{ours:?}");
+}
+
+/// #221: another user's frozen coin is not in this user's frozen set, and
+/// this user's own frozen coin is still held frozen; the record's count
+/// stays every user's.
+#[tokio::test]
+async fn another_users_frozen_coin_is_not_in_our_frozen_set() {
+    let mine = "c3".repeat(32);
+    let (w, me, owner) = with_my_coin(&mine, false).await;
+    let storage = w.wallet.storage();
+    freeze(storage, &w.txid, 7).await;
+    freeze(storage, &mine, 8).await;
+    let frozen = |user| crate::tracker_host::frozen_outpoints(storage, user);
+    let set = |txid: &str| std::collections::HashSet::from([(txid.to_string(), 0)]);
+    assert_eq!(frozen(me).await.unwrap(), set(&mine));
+    assert_eq!(frozen(owner).await.unwrap(), set(&w.txid));
+    assert_eq!(crate::tracker_host::frozen_count(storage).await.unwrap(), 2);
+    let gate = opts(1, true).with_allow_received(true);
+    let a = my_assessment(&w, me, &gate).await;
+    assert!(a.offered.is_empty());
+    assert_eq!(
+        (
+            a.held.len(),
+            a.held[0].word.as_str(),
+            a.held[0].reason.as_str()
+        ),
+        (1, "frozen", "frozen: never offered")
+    );
 }
