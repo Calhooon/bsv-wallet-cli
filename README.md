@@ -394,7 +394,8 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 
 `abortAction` is refused with `409 CONFLICT` once a broadcaster took the
 transaction, including an `unfail` request or a request holding a proof
-whatever its status says. An abort before any accepting word reaches the
+whatever its status says, and an acceptance retained in the request's post
+history. An abort before any accepting word reaches the
 toolbox, which also refuses an unproven status without a proof as an accepting
 word (fixture 124). This arrives through the beta.1 erased error table as
 409 `CONFLICT` with the accepting-word hint only when the abort refusal says
