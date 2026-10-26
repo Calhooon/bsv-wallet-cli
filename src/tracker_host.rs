@@ -2562,10 +2562,11 @@ impl<H: Headers + ?Sized> Headers for NewBranch<'_, H> {
 /// 0.7.0): the same root, it stands; a
 /// moved root, `stale` with `Reask::Reorg`; no header, suspect with
 /// `Reask::Recheck` until the next tip. A tip reads kept reorgs and
-/// invalidations alike, storing the completed recheck even when replay
-/// cleared its mark before `Tracker::on_chain` selected rows. A cursor at
-/// or below the stored one was delivered before (delivery is at least
-/// once) and changes nothing.
+/// invalidations alike. When replay cleared its mark before
+/// `Tracker::on_chain` selected rows, a tip stores only plain `mined`
+/// (not suspect, no re-ask), clearing its kept events and stored re-ask.
+/// A cursor at or below the stored one was delivered before (delivery is
+/// at least once) and changes nothing.
 ///
 /// The rows are named by index, never by a scan of the chain: a fork, a
 /// reorg or a split names the mined rows at or above its height; a tip,
@@ -2695,8 +2696,9 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         // words) whose replay moved it: a kept reorg or invalidation was
         // rechecked against the new branch in the replay, the crate's own
         // step. A moved root reads `stale`. A tip stores a completed same-root
-        // recheck for either event even if replay already cleared its mark,
-        // clearing its kept events and re-ask through `keep_chain`.
+        // recheck only when it is plain `mined` (not suspect, no re-ask),
+        // clearing its kept events through `keep_chain` and stored re-ask.
+        // A stored verdict's recheck leaves the row untouched here.
         for row in rows.iter_mut() {
             if moved.iter().any(|m| m.txid == row.txid) {
                 continue;

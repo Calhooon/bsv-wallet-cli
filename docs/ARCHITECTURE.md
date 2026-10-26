@@ -312,12 +312,16 @@ there: the word stays suspect with `recheck`, and the stored event
 reconstructs that deactivation on reload. The stored proof checks against
 the old header and the event rechecks against the new branch.
 A tip reads kept reorgs and invalidations alike: if replay already cleared
-its mark on a new header carrying the same root, delivery stores plain
-`mined` and clears the re-ask and kept events, leaving no row for the next
-tip to select. `a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row`
+its mark on a new header carrying the same root, delivery stores only plain
+`mined` (not suspect, no re-ask) and clears the stored re-ask and kept events,
+leaving no row for the next tip to select. A stored verdict's recheck leaves
+the row untouched by this fallback.
+`a_reorg_on_a_lagging_service_then_a_same_root_tip_settles_the_row`
 checks that the stored word agrees with the spend door;
 `a_settled_row_is_not_selected_by_the_next_tip` checks the next tip leaves it
-untouched. `a_reorg_on_a_lagging_service_then_a_moved_root_tip_reads_stale`
+untouched. `same_root_tips_leave_a_kept_reorg_with_a_stored_verdict_unchanged`
+checks that a verdict's recheck changes neither the word nor the kept events
+on two tips. `a_reorg_on_a_lagging_service_then_a_moved_root_tip_reads_stale`
 guards beta's unchanged moved-root reading. This fallback changes no
 other event's delivery.
 `an_invalidated_blocks_moved_root_reads_stale_after_the_next_tip` checks
