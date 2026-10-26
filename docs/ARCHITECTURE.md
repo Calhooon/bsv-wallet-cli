@@ -275,6 +275,13 @@ toolbox's `check_for_proofs`; its provider logged by
 `log`, `src/backstop_log.rs:86`). The word is served at `GET /tx/{txid}`
 (`tx_word`, `src/server/mod.rs:629`; `stored_word`,
 `src/tracker_host.rs:901`) as a view; nothing is decided from it.
+The daemon's relay poller (`ingest_relay_items` in
+`src/commands/daemon_tenant.rs`, tested by
+`relay_busy_cursor_retries_after_release_in_order`) holds its acknowledgement
+cursor below an item that meets a typed busy store and stops that batch,
+waiting one extra poll tick before retrying it and the later items, while
+successful ingests, refused proofs and malformed payloads still advance the
+cursor (#248).
 
 **Hop 11, the feed.** Under `daemon` the chain-event feed
 (`chain_feed::run`, `src/chain_feed.rs:167`) replays the header service's
