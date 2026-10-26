@@ -4,7 +4,7 @@
 use bsv_sdk::primitives::PrivateKey;
 
 use super::cases::exact;
-use super::recorder::{get, post, Recorder};
+use super::recorder::{get, post, Recorded, Recorder};
 use super::worlds::{
     funded_lock, parent_tx, puzzle_parent, stranger_key, stranger_payment, Payment,
     FEE_PUZZLE_1_OUT, FROZEN, FUNDED_COINS, MINED, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX, PENDING,
@@ -14,21 +14,63 @@ use crate::wire_support::{BOUND, ROOT_KEY};
 
 /// #157: record the internalize-only byte bound after every existing case.
 pub(crate) async fn record_internalize_bound(r: &mut Recorder) {
+    record_internalize_instructions(
+        r,
+        "internalizeAction.customInstructionsBound",
+        format!("{}a", "🦀".repeat(250)),
+    )
+    .await;
+}
+
+async fn record_internalize_instructions(
+    r: &mut Recorder,
+    name: &str,
+    instructions: String,
+) -> Recorded {
     use serde_json::json;
     let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
     let (_, atomic) = stranger_payment(Payment::Insertion, &key).await;
     r.case(
-        "internalizeAction.customInstructionsBound",
+        name,
         "funded",
         post(
             "/internalizeAction",
             json!({"tx": atomic, "outputs": [{"outputIndex": 0, "protocol": "basket insertion",
                 "insertionRemittance": {"basket": "instructions-bound",
-                    "customInstructions": format!("{}a", "🦀".repeat(250))}}],
+                    "customInstructions": instructions}}],
                 "description": "wire internalize instructions bound"}),
         ),
     )
+    .await
+}
+
+/// The stack's internalize-bound scenario, steps 3 and 4: accept at the
+/// 1,000-byte bound, then read the whole stored string through `listOutputs`.
+pub(crate) async fn record_internalize_at_bound(r: &mut Recorder) {
+    let instructions = "🦀".repeat(250);
+    assert_eq!(instructions.len(), 1000);
+    let accepted = record_internalize_instructions(
+        r,
+        "internalizeAction.customInstructionsAtBound",
+        instructions.clone(),
+    )
     .await;
+    assert_eq!(accepted.value("/accepted"), true);
+    let list = post(
+        "/listOutputs",
+        serde_json::json!({"basket": "instructions-bound", "includeCustomInstructions": true}),
+    );
+    let (response, body) = r.world("funded").await.serve_raw(&list).await;
+    assert_eq!(response.status, 200);
+    let body = body.unwrap();
+    assert_eq!(body.pointer("/totalOutputs").unwrap().compact(), "1");
+    assert_eq!(
+        body.pointer("/outputs/0/customInstructions")
+            .unwrap()
+            .as_str(),
+        Some(instructions.as_str()),
+    );
+    println!("internalizeAction.customInstructionsAtBound: HTTP 200, stored 1000 UTF-8 bytes");
 }
 
 /// The spend gate's refusals.
@@ -154,7 +196,6 @@ pub(crate) async fn record_named_change(r: &mut Recorder) {
 /// #237: both carried-input signer refusals, recorded after the existing set.
 pub(crate) async fn record_carried_signer_refusals(r: &mut Recorder) {
     use serde_json::json;
-    let (puzzle, input_beef) = puzzle_parent();
     for (name, signer) in [
         ("createAction.callerInputNoSigner", json!({})),
         (
@@ -162,26 +203,42 @@ pub(crate) async fn record_carried_signer_refusals(r: &mut Recorder) {
             json!({"unlockingScript": PUZZLE_UNLOCK, "unlockingScriptLength": 2}),
         ),
     ] {
-        let mut input = json!({"outpoint": format!("{}.0", puzzle.id()),
-            "inputDescription": "the puzzle"});
-        input
-            .as_object_mut()
-            .unwrap()
-            .extend(signer.as_object().unwrap().clone());
-        r.case(
-            name,
-            "funded",
-            post(
-                "/createAction",
-                json!({"description": "wire caller input", "inputBEEF": input_beef,
-                    "inputs": [input],
-                    "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
-                        "outputDescription": "an output"}],
-                    "options": {"signAndProcess": false, "randomizeOutputs": false}}),
-            ),
-        )
-        .await;
+        record_carried_signer_case(r, name, signer).await;
     }
+}
+
+/// #265: empty and non-hex scripts, appended after the pinned corpus.
+pub(crate) async fn record_empty_signer_refusals(r: &mut Recorder) {
+    for (name, script) in [
+        ("createAction.callerInputEmptyScript", ""),
+        ("createAction.callerInputNonHexScript", "zz"),
+    ] {
+        record_carried_signer_case(r, name, serde_json::json!({"unlockingScript": script})).await;
+    }
+}
+
+async fn record_carried_signer_case(r: &mut Recorder, name: &str, signer: serde_json::Value) {
+    use serde_json::json;
+    let (puzzle, input_beef) = puzzle_parent();
+    let mut input = json!({"outpoint": format!("{}.0", puzzle.id()),
+        "inputDescription": "the puzzle"});
+    input
+        .as_object_mut()
+        .unwrap()
+        .extend(signer.as_object().unwrap().clone());
+    r.case(
+        name,
+        "funded",
+        post(
+            "/createAction",
+            json!({"description": "wire caller input", "inputBEEF": input_beef,
+                "inputs": [input],
+                "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
+                    "outputDescription": "an output"}],
+                "options": {"signAndProcess": false, "randomizeOutputs": false}}),
+        ),
+    )
+    .await;
 }
 
 /// The funded world: a 200 body from each spending or state-changing

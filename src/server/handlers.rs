@@ -547,7 +547,7 @@ pub fn internalize_args(req: McInternalizeActionReq) -> InternalizeActionArgs {
 /// script that is not hex, or an input outpoint that does not parse.
 pub fn create_action_args(
     req: McCreateActionReq,
-) -> Result<(CreateActionArgs, crate::spend_gate::AllowPending)> {
+) -> Result<(CreateActionArgs, crate::spend_gate::AllowPending), AppError> {
     // R1 (d): the action's word, read here at the door and nowhere else:
     // `"received"`, or the scoped `{"received": ["txid:vout", ...]}` (#63).
     let allow_pending = crate::spend_gate::AllowPending::from_json(req.allow_pending.as_ref())
@@ -598,7 +598,7 @@ fn create_action_outputs(
 /// covenant input was silently dropped and the tx was funded from change.
 fn create_action_inputs(
     inputs: Option<Vec<McCreateActionInput>>,
-) -> Result<Option<Vec<CreateActionInput>>> {
+) -> Result<Option<Vec<CreateActionInput>>, AppError> {
     let Some(reqs) = inputs.filter(|reqs| !reqs.is_empty()) else {
         return Ok(Some(vec![]));
     };
@@ -607,7 +607,13 @@ fn create_action_inputs(
         let outpoint = Outpoint::from_string(&i.outpoint)
             .map_err(|e| anyhow::anyhow!("invalid input outpoint '{}': {e}", i.outpoint))?;
         let unlocking_script = match i.unlocking_script {
-            Some(h) => Some(hex::decode(&h).context("invalid unlockingScript hex")?),
+            // [SRC] ts-stack `edf6e03`, `packages/sdk/src/wallet/validationHelpers.ts:522-528`.
+            Some(h) => Some(hex::decode(&h).map_err(|_| {
+                AppError::new(
+                    Kind::Validation,
+                    "The unlockingScript parameter must be hexadecimal string.",
+                )
+            })?),
             None => None,
         };
         mapped.push(CreateActionInput {

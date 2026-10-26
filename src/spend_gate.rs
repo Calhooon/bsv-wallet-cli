@@ -106,10 +106,11 @@
 //! the door decides before the store is asked). The one outpoint left to
 //! the toolbox is the caller's own input whose transaction its `inputBEEF`
 //! carries whole (a covenant, a puzzle): not a coin of ours, and the
-//! toolbox checks the BEEF. The gate requires its caller's signer: an
-//! `unlockingScript` or `unlockingScriptLength` (a promise to sign through
-//! `signAction`); neither, or both with conflicting lengths, is the caller's
-//! 400 before any creator is read or the toolbox asked (#237).
+//! toolbox checks the BEEF. The gate requires its caller's signer: a
+//! nonempty `unlockingScript` or positive `unlockingScriptLength` (a promise
+//! to sign through `signAction`); neither, an empty script, a zero length
+//! without a script, or both with conflicting lengths, is the caller's 400
+//! before any creator is read or the toolbox asked (#237, #265).
 //!
 //! # The shape: the offer
 //!
@@ -1510,10 +1511,11 @@ impl<'a> From<&'a bsv_sdk::wallet::CreateActionInput> for NamedInput<'a> {
 /// error ([`GateError::Scope`], [`NOT_HELD`]), before a creator is read
 /// (#166), unless `carried` (the transactions the caller's `inputBEEF`
 /// carries whole, [`carried_txids`]) holds its transaction: the caller's own
-/// input (a covenant, a puzzle), left to the toolbox if it has an
-/// `unlockingScript` or `unlockingScriptLength`. Neither field, or both
-/// with conflicting lengths, is the same caller's 400 before any creator
-/// is read or the toolbox asked (#237). When `retry` (the
+/// input (a covenant, a puzzle), left to the toolbox if it has a
+/// nonempty `unlockingScript` or positive `unlockingScriptLength`. Neither
+/// field, an empty script, a zero length without a script, or both with
+/// conflicting lengths, is the same caller's 400 before any creator is
+/// read or the toolbox asked (#237, #265). When `retry` (the
 /// named door's read) and the header service did not answer for a reading
 /// of the call (a creator's or a lineage candidate's), those readings are
 /// read once more after [`HEADER_RETRY_PAUSE`] (#59), through
@@ -1856,8 +1858,14 @@ pub const NOT_HELD: &str = "not a coin of this wallet";
 /// `[SRC]` ts-stack `edf6e03`, `packages/sdk/src/wallet/validationHelpers.ts:587-603`
 /// (`validateCreateActionInput`): `WERR_INVALID_PARAMETER` requires at least
 /// one signer field, and matching lengths when both are given (#237).
+/// The same file at `:500-528` refuses an empty hex string (#265).
+/// BRC-100 `wallet/0100.md:649` at `5119a9b` requires a positive length;
+/// the zero-length sentence is toolbox #212's word (`[SRC]`
+/// bsv-wallet-toolbox-rs `1a0f3f1`, `src/wallet/validation.rs:14-18`).
 fn check_carried_signer(input: &NamedInput<'_>) -> std::result::Result<(), GateError> {
     let why = match (input.unlocking_script, input.unlocking_script_length) {
+        (Some([]), _) => "The unlockingScript parameter must be hexadecimal string.",
+        (None, Some(0)) => "The unlockingScriptLength parameter must be a positive integer.",
         (None, None) => "names no signer: The unlockingScript, unlockingScriptLength parameter must be at least one valid value.",
         (Some(script), Some(length)) if script.len() != length as usize => {
             "The unlockingScriptLength parameter must be length unlockingScript if both valid."
