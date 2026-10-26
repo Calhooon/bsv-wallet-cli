@@ -10,6 +10,8 @@ The test parses the four tables below by their header rows, which must stay exac
 
 Only JSON keys are judged. The transport (HTTP methods, headers, status codes, the framework's text bodies) is described under "The transport" and not tested here; the status codes and refusal codes are judged by `tests/wire.rs`.
 
+The `internalizeAction` basket insertion's `customInstructions` bound is the reference's rule, not an extension: at `edf6e03`, `validateInternalizeActionArgs` limits it to 1,000 UTF-8 bytes and throws `WERR_INVALID_PARAMETER`. Since 0.18.2, [fixture 123](../tests/wire/123-internalizeAction.customInstructionsBound.json) records 1,001 bytes refused as HTTP 400 `VALIDATION_ERROR`, with `customInstructions: no more than 1000 length.` and the measured byte count. The served-handler tests also check that nothing is stored. `createAction` output instructions remain unbounded. No table row changes.
+
 ## Extensions: 41 rows
 
 | endpoint | side | field | reason | added |

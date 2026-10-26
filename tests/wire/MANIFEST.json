@@ -121,6 +121,7 @@
     "119-arc-callback.storeBusy.json",
     "120-createAction.namedChange.json",
     "121-createAction.callerInputNoSigner.json",
-    "122-createAction.callerInputLengthMismatch.json"
+    "122-createAction.callerInputLengthMismatch.json",
+    "123-internalizeAction.customInstructionsBound.json"
   ]
 }

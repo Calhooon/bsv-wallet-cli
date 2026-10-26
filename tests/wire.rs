@@ -14,8 +14,9 @@
 //! docs/PROVENANCE.md). Upstream master `5119a9b` (2026-10-19) differs for
 //! `listOutputs` (`totalOutputs` may be a string, `spendable` may be false,
 //! for BRC-112 and BRC-207 module views) and for `internalizeAction` (an
-//! insertion's `customInstructions` bounded at 1000 bytes): upstream, not
-//! on the line.
+//! insertion's `customInstructions` bounded at 1000 bytes). The latter is
+//! enforced since 0.18.2 and recorded by fixture 123; the list shape stays
+//! at the line's pin.
 //!
 //! Each fixture names its world (the wallet and the server config it is
 //! served from). A world is built once per run from its name alone, and the
