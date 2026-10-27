@@ -12,8 +12,11 @@ filename, with one blank line between entries.
 
 A PR changing `src/`, `mcp/src/`, `tests/e2e/` or `Cargo.toml` adds a fragment
 or carries `no-changelog`. That label means tests only, docs only, a re-record,
-or CI wiring. Editing or deleting an existing fragment does not count as
-adding one. Never add a line to CHANGELOG.md's Unreleased section.
+or CI wiring. Editing, deleting or renaming an unchanged fragment does not
+count as adding one. Never add a line to CHANGELOG.md's Unreleased section.
+Adding a label does not trigger CI (`pull_request` runs on opened, synchronize
+and reopened); a `no-changelog` label added after a failure counts when the
+ratchet job is re-run.
 
 From the repository root:
 
@@ -29,6 +32,9 @@ python3 -B tools/changelog --assemble 0.19.0-beta.1
 verbatim into the new version section ahead of the fragments, leaves Unreleased
 empty, and deletes the assembled files while keeping this README. Its date
 defaults to today in UTC; `--date YYYY-MM-DD` fixes it explicitly. Assembly
-refuses an invalid semantic version, a version already present, or no entries.
+refuses an invalid semantic version or a version already present. With no
+pending entries it also refuses unless `--allow-empty` is used; that flag writes
+`No changes since ...` using the release heading directly below the new section,
+read from CHANGELOG.md.
 Commit the result with the release's version bump as [RELEASING.md](../RELEASING.md)
 describes.

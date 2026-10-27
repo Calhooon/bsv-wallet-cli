@@ -163,6 +163,36 @@ class WatchedChanges(Case):
         self.tree.commit()
         self.check(1, "src/lib.rs")
 
+    def test_src_moved_out_needs_a_fragment_with_rename_detection_enabled(self):
+        self.tree.git("config", "diff.renames", "true")
+        (self.tree.root / "lib").mkdir()
+        self.tree.git("mv", "src/lib.rs", "lib/lib.rs")
+        self.tree.commit()
+        self.assertIn("R100", self.tree.git("diff", "--name-status", self.tree.base))
+        self.check(1, "src/lib.rs")
+
+    def test_similar_added_fragment_counts_beside_a_deleted_one_with_renames_enabled(self):
+        self.tree.git("config", "diff.renames", "true")
+        shared = "- Keep pending rows visible until the refreshed balance is ready.\n" * 4
+        self.tree.write("changelog.d/100.md", shared + "- Fix an old balance refresh.\n")
+        self.tree.base = self.tree.commit("base with fragment")
+        (self.tree.root / "changelog.d/100.md").unlink()
+        self.tree.write("changelog.d/195.md", shared + "- Fix a new balance refresh.\n")
+        self.tree.write("src/lib.rs", "// changed\n")
+        self.tree.commit()
+        self.assertIn("R", self.tree.git("diff", "--name-status", self.tree.base))
+        self.check(0, "added fragment: changelog.d/195.md")
+
+    def test_renamed_fragment_is_not_new_with_rename_detection_enabled(self):
+        self.tree.git("config", "diff.renames", "true")
+        self.tree.write("changelog.d/100.md", "- An existing change.\n")
+        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.git("mv", "changelog.d/100.md", "changelog.d/195.md")
+        self.tree.write("src/lib.rs", "// changed\n")
+        self.tree.commit()
+        self.assertIn("R100", self.tree.git("diff", "--name-status", self.tree.base))
+        self.check(1, "src/lib.rs")
+
     def test_an_unknown_base_is_exit_2_even_with_the_label(self):
         self.tree.commit()
         self.result(2, "cannot read git diff for no-such-revision", "--check",
@@ -246,6 +276,50 @@ class Assembly(Case):
         self.tree.commit()
         self.assemble(code=1, needle="nothing to assemble")
 
+    def test_minor_after_prerelease_refuses_empty_assembly_without_the_flag(self):
+        self.tree.write("changelog.d/195.md", "- A change.\n")
+        self.tree.commit()
+        self.assemble("0.19.0-beta.1")
+        self.assemble(code=1, needle="nothing to assemble")
+
+    def test_allow_empty_reads_the_heading_directly_below_after_prerelease(self):
+        self.tree.write("changelog.d/195.md", "- A change.\n")
+        self.tree.commit()
+        self.assemble("0.27.0-beta.3+build.9")
+        previous = (self.tree.root / "CHANGELOG.md").read_text()
+        self.assemble("0.27.0", 0, "removed 0 fragments", "--allow-empty")
+        self.assertEqual((self.tree.root / "CHANGELOG.md").read_text(), previous.replace(
+            "## [Unreleased]\n\n", "## [Unreleased]\n\n## [0.27.0] - 2026-10-26\n\n"
+            "No changes since [0.27.0-beta.3+build.9] - 2026-10-26.\n\n", 1))
+
+    def test_allow_empty_without_a_previous_heading_is_refused_without_writes(self):
+        self.tree.write("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n")
+        self.tree.commit()
+        self.assemble("0.19.0", 1, "previous release heading", "--allow-empty")
+
+    def test_allow_empty_goes_only_with_assembly(self):
+        self.tree.commit()
+        self.result(2, "--allow-empty goes only with --assemble", "--list", "--allow-empty")
+
+    def test_readonly_fragment_directory_refuses_before_writing_anything(self):
+        self.tree.write("changelog.d/195.md", "- A change.\n")
+        self.tree.commit()
+        directory = self.tree.root / "changelog.d"
+        original_mode = directory.stat().st_mode
+        self.addCleanup(directory.chmod, original_mode)
+        directory.chmod(0o555)
+        if os.access(directory, os.W_OK):
+            self.skipTest("this user can write read-only directories")
+        self.assemble(code=1, needle="changelog.d: cannot delete fragments")
+
+    def test_a_plain_rule_after_a_blank_line_is_allowed(self):
+        self.tree.write("changelog.d/195.md", "A paragraph.\n\n---\n\nAnother paragraph.\n")
+        self.tree.commit()
+        self.result(0, "changelog.d/195.md", "--list")
+        self.assemble()
+        self.assertIn("A paragraph.\n\n---\n\nAnother paragraph.",
+                      (self.tree.root / "CHANGELOG.md").read_text())
+
     def test_existing_version_is_refused_without_writes(self):
         self.tree.write("changelog.d/195.md", "- A change.\n")
         self.tree.commit()
@@ -301,6 +375,11 @@ for case, name, content in (
         ("whitespace", "195.md", " \t\n"),
         ("heading", "195.md", "- A change.\n\n## Release\n"),
         ("indented_heading", "195.md", "   ### Release\n"),
+        ("setext_dash_heading", "195.md", "Oops\n---\n"),
+        ("setext_equals_heading", "195.md", "Oops\n===\n"),
+        ("list_item_heading", "195.md", "- ## Release\n"),
+        ("star_list_item_heading", "195.md", "  * ### Release\n"),
+        ("plus_list_item_heading", "195.md", "+ # Release\n"),
         ("non_utf8", "195.md", b"- Invalid \xff\n")):
     setattr(Malformed, f"test_{case}_is_refused_by_name", malformed_case(name, content))
 
