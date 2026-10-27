@@ -25,7 +25,7 @@ chain:
 | `/woc` | WhatsOnChain's shape | `WOC_BASE` (the CLI's own rungs), the auditor |
 | `/bitails` | Bitails' shape | `BITAILS_BASE` (the CLI's own rung), the auditor |
 | `/bananablocks` | BananaBlocks' shape | `BANANABLOCKS_BASE` (the toolbox's provider and the CLI's rung) |
-| `/arc` | a classic ARC broadcaster | `ARC_URL`; `ARC_GORILLAPOOL_URL=` (empty) leaves the second ARC out |
+| `/arc` | a classic ARC broadcaster | `ARC_URL` with `ARC_MODE=classic`, which the harness sets explicitly until #299 (Arcade is the wallet's default, #300); `ARC_GORILLAPOOL_URL=` (empty) leaves GorillaPool's ARC out of the broadcast verifier's stores (it is never a broadcaster) |
 | `/_stub` | the harness's own routes | `tests/e2e/lib/hermetic.js` |
 
 The chain starts from twelve recorded, linked mainnet headers
@@ -130,7 +130,8 @@ unmined), `GET /tx/{txid}/hex`, `GET /tx/{txid}/proof` (`targetType:
 "merkleRoot"`), `GET /txo/{txid}/{vout}` (`script_pubkey`, `spent`,
 `spent_txid`), `GET /address/{address}/utxos`.
 
-`/arc`: `POST /v1/tx` (bytes as `application/octet-stream`, BEEF, EF or raw
+`/arc` (the classic mode the harness names, `ARC_MODE=classic`, until #299):
+`POST /v1/tx` (bytes as `application/octet-stream`, BEEF, EF or raw
 told apart by their leading bytes; or JSON `{"rawTx": hex}`; answers
 `txStatus: SEEN_ON_NETWORK`, `MINED` with `merklePath` once mined,
 `DOUBLE_SPEND_ATTEMPTED` with `competingTxs`, or a 400 problem document for
@@ -179,7 +180,7 @@ funding block is proven by the BUMP inside its BEEF instead.
   reaches the wall, is refused, and the ladder moves on (to BananaBlocks,
   which the stub serves, or to the stub's ARC):
   `getMerklePath` (WhatsOnChain, Bitails), `getRawTx` (WhatsOnChain, Bitails),
-  `postBeef` (the Bitails and WhatsOnChain broadcasters behind the ARCs),
+  `postBeef` (the Bitails and WhatsOnChain broadcasters behind the ARC),
   `getUtxoStatus` (WhatsOnChain, Bitails), `getStatusForTxids` (WhatsOnChain,
   Bitails), `getScriptHashHistory` (WhatsOnChain, Bitails), the BSV exchange
   rate (WhatsOnChain), and the break-glass header fallback by hash
@@ -201,9 +202,10 @@ funding block is proven by the BUMP inside its BEEF instead.
   then the stub plays a SLAP tracker and `ls_identity` host.
 - **The chain-feed SSE** (`daemon`'s tenant loop): not subscribed by `serve`,
   not served.
-- **Arcade V2** (`ARC_MODE=arcade`): the harness drops the mode; the stub plays
-  classic ARC only. Arcade's `/tx/{txid}` status route and SSE stream are not
-  served.
+- **Arcade V2**, the wallet's default broadcaster (#300): the stub plays
+  classic ARC only, so the harness sets `ARC_MODE=classic` explicitly until
+  #299 gives the stub an Arcade face. Arcade's `/tx/{txid}` status route and
+  SSE stream are not served.
 - **Proof of work and signatures**: not checked by the stub, not needed by the
   scenarios (the wallet checks a BUMP's root against the header, which the stub
   honours; the pinned toolbox runs bsv-rs's script verifier at internalize;
@@ -219,14 +221,15 @@ funding block is proven by the BUMP inside its BEEF instead.
 ## Environment the hermetic run forces
 
 `CHAINTRACKS_URL`, `ARC_URL`, `BANANABLOCKS_BASE`, `WOC_BASE`, `BITAILS_BASE`
-at the stub; `ARC_GORILLAPOOL_URL=` (out); `HTTPS_PROXY`, `HTTP_PROXY`,
+at the stub; `ARC_MODE=classic` (the stub's ARC, until #299);
+`ARC_GORILLAPOOL_URL=` (out); `HTTPS_PROXY`, `HTTP_PROXY`,
 `ALL_PROXY` at the stub and `NO_PROXY=127.0.0.1,localhost` (both letter cases),
 `NODE_USE_ENV_PROXY=1`; `E2E_RNG_SEED` is the same 32-byte seed for every
 wallet and storage stream, refused by the binary without this complete wall;
 `FUNDER_PORT` 3373 unless set (3320 refused); `E2E_WALLET_TMP` the system
 temporary directory unless set (the wallets' directories, the stub's log and
 CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
-`MAIN_TAAL_API_KEY`, `ARC_MODE`, `ARCADE`, `BREAK_GLASS_EXPLORER_HEADERS`,
+`MAIN_TAAL_API_KEY`, `ARCADE`, `BREAK_GLASS_EXPLORER_HEADERS`,
 `PUBLIC_CALLBACK_URL`. `E2E_STUB_PORT` moves the stub (default 3380);
 `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` name the binaries when they are not
 under the repository's `target/release`.
