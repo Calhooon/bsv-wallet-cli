@@ -1,0 +1,112 @@
+# This file is on main so GitHub registers the workflow (a dispatch and a badge need the
+# file on the default branch); dispatch it on the line that carries the measurement's
+# tools: `gh workflow run bench.yml --ref beta`. main's own tree has no benches and no
+# differential harness; a dispatch on main measures nothing and is not the rule.
+# The bench against the base's baseline. The owner's word of 2026-10-27: a push runs exactly the required set; the bench runs on workflow_dispatch and once before a tag (RELEASING.md), never on the push run.
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "A branch on origin to measure against (empty: the commit before HEAD)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      base:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One run per ref at a time; a dispatched measurement is never cancelled by a later one.
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The hot path's benches (#71). tools/bench-compare --ci holds the gate's
+  # profile, margin, sample floor and history floor as constants; nothing
+  # here names them (docs/BENCHES.md). The job checks out the PR's head and
+  # stamps the candidate baseline with that sha, measures into a directory
+  # of its own, and checks the tree's benches/baseline.json against the
+  # base ref's (read as the ratchet job reads its record: the base branch's
+  # tip on a PR, the commit before on a push): a changed margin, a dropped
+  # entry or bench id, a rewritten run, or a new run that does not match
+  # this run's measure or is over the base's reference fails. The reference is the base's entry, never the
+  # tree's; the comparison gates once the base's entry for this runner's CPU
+  # carries five runs; until then it warns and passes, and with no base
+  # nothing is gated. A runner CPU with no entry gates nothing and says so
+  # in an annotation and the step summary. The artifact bench-baseline is
+  # the candidate the captain commits: the base's file with this run appended.
+  bench:
+    name: bench
+    # On push to beta and main and on a tag, never on a pull request: a PR's
+    # merge is decided by the jobs branch protection requires; the bench's
+    # baseline compare reads the push's `before` (the keeper's balance of
+    # 2026-10-26, the owner's word: "there has gotta be a balance").
+    runs-on: ubuntu-latest
+    env:
+      # Over any rust-toolchain.toml a PR adds; the tool refuses another rustc -V.
+      RUSTUP_TOOLCHAIN: 1.98.1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: The gate's planted cases
+        run: python3 tools/test_bench_compare.py
+
+      - name: No p99 above the base's baseline
+        env:
+          BASE_REF: ${{ inputs.base }}
+          BEFORE: ''
+          BENCH_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          rev=""
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            rev="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ]; then
+            if git fetch --no-tags --depth=1 origin "$BEFORE"; then
+              rev="$BEFORE"
+            else
+              echo "::warning::the commit before the push ($BEFORE) is not fetchable"
+            fi
+          fi
+          base=()
+          if [ -n "$rev" ]; then
+            # A base with no baseline file is a baseline with no entry.
+            git show "$rev:benches/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null \
+              || : > "$RUNNER_TEMP/base-baseline.json"
+            echo "bench: the base baseline is $rev:benches/baseline.json"
+            base=(--base "$RUNNER_TEMP/base-baseline.json")
+          fi
+          mkdir -p "$RUNNER_TEMP/bench/results"
+          BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci "${base[@]}" \
+            --out "$RUNNER_TEMP/bench/baseline.json"
+
+      - name: Keep the measured JSON and the candidate baseline
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-baseline
+          path: ${{ runner.temp }}/bench/
+          if-no-files-found: warn
+
+  # The paved road's deny job, from bsv-stack-lean template/ci.yml: deny.toml is
+  # the template byte for byte (its sha256 stamped in template/stack.toml), then
+  # cargo-deny 0.20.2 from a temporary root checks advisories, bans, licenses and
+  # sources against the committed lock.
