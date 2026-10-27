@@ -19,6 +19,10 @@ refused in either direction: raised by hand above the tree (the PR 296
 re-check's plant, through the CI shell) or lowered by hand below it; a
 correct re-record passes with the warning, and the same-instrument path keeps
 its hint.
+The base comparison (#126) covers a base above, equal to and below the tree,
+a raised PR record, a key the base predates and an unrecorded key. Only a tree
+below its own record gets the re-record hint. Non-object JSON records are
+refused by name under --check, --record and --base.
 Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
@@ -282,6 +286,148 @@ class CheckIsUnchanged(Case):
         self.assertEqual(code, 0, out)
         self.assertIn("ratchet: no number above the record", out)
         self.note(code, out)
+
+
+class CheckAgainstBase(Case):
+    def setUp(self):
+        super().setUp()
+        self.tree.recorded(OLD)
+
+    def check_base(self, base):
+        path = self.tree.base(base)
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertIn(f"ratchet: base record {path}", out)
+        self.assertNotIn("::warning::", out)
+        self.note(code, out)
+        return code, out
+
+    def test_a_base_above_the_tree_passes_without_a_rerecord_hint(self):
+        base = self.tree.json()
+        with open(os.path.join(self.tree.root, "src", "lib.rs"), "w") as f:
+            f.write("pub fn f() -> u8 {\n    1\n}\n")
+        self.tree.commit("an unwrap removed")
+        self.tree.recorded(OLD)
+        code, out = self.check_base(base)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("lower than the record", out)
+        self.assertNotIn("re-record", out)
+        self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
+
+    def test_a_base_equal_to_the_tree_passes(self):
+        code, out = self.check_base(self.tree.json())
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("lower than the record", out)
+        self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
+
+    def test_a_base_below_the_tree_fails_with_raised(self):
+        base = self.tree.json()
+        base["ratchets"]["unwrap_expect_outside_tests"] = 0
+        code, out = self.check_base(base)
+        self.assertEqual(code, 1, out)
+        self.assertIn("RAISED: the tree is above the base record", out)
+        self.assertIn("unwrap_expect_outside_tests: 0 -> 1 (+1)", out)
+
+    def test_a_pr_record_above_the_base_fails_even_when_the_tree_is_not(self):
+        base = self.tree.json()
+        rec = self.tree.json()
+        rec["ratchets"]["unwrap_expect_outside_tests"] += 1
+        with open(self.tree.record, "w") as f:
+            json.dump(rec, f)
+        self.tree.commit("the PR record raised above the base")
+        code, out = self.check_base(base)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"RAISED: the record {self.tree.record} is above the base record", out)
+        self.assertIn("unwrap_expect_outside_tests: 1 -> 2 (+1)", out)
+        self.assertNotIn("RAISED: the tree", out)
+
+    def test_a_key_the_base_predates_has_nothing_to_be_above(self):
+        base = self.tree.json()
+        del base["ratchets"]["unwrap_expect_outside_tests"]
+        code, out = self.check_base(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("(record 1, base new)", out)
+        self.assertNotIn("RAISED", out)
+        self.assertNotIn("UNRECORDED", out)
+
+    def test_a_key_missing_from_the_pr_record_is_unrecorded(self):
+        base = self.tree.json()
+        rec = self.tree.json()
+        del rec["ratchets"]["unwrap_expect_outside_tests"]
+        with open(self.tree.record, "w") as f:
+            json.dump(rec, f)
+        self.tree.commit("the PR record missing a ratchet")
+        code, out = self.check_base(base)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"UNRECORDED: {self.tree.record} does not hold unwrap_expect_outside_tests", out)
+        self.assertIn("1 -> absent (a ratchet dropped)", out)
+
+    def test_the_rerecord_hint_uses_the_record_even_with_a_different_base(self):
+        base = self.tree.json()
+        base["ratchets"]["unwrap_expect_outside_tests"] = 3
+        rec = self.tree.json()
+        rec["ratchets"]["unwrap_expect_outside_tests"] = 2
+        with open(self.tree.record, "w") as f:
+            json.dump(rec, f)
+        self.tree.commit("the record and base above the tree by different amounts")
+        code, out = self.check_base(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lower than the record (re-record in its own commit", out)
+        self.assertIn("unwrap_expect_outside_tests: 2 -> 1 (-1)", out)
+        self.assertNotIn("unwrap_expect_outside_tests: 3 -> 1 (-2)", out)
+
+
+class RecordMustBeAnObject(Case):
+    def refuses(self, value, mode):
+        self.tree.recorded(OLD)
+        if mode == "--base":
+            path = self.tree.base(value)
+            args = ("--check", "--base", path)
+        else:
+            path = self.tree.record
+            with open(path, "w") as f:
+                json.dump(value, f)
+            self.tree.commit("a non-object record")
+            args = (mode,)
+        os.remove(os.path.join(self.tree.bin, "measured"))
+        with open(path, "rb") as f:
+            before = f.read()
+        code, out = self.tree.run(OLD, *args)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: {path} is not a record"
+                         " (a JSON object with schema, commit, toolchain, ratchets)")
+        self.assertNotIn("Traceback", out)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+        if mode == "--record":
+            self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def test_check_refuses_an_array_record_by_name(self):
+        self.refuses([], "--check")
+
+    def test_check_refuses_a_string_record_by_name(self):
+        self.refuses("record", "--check")
+
+    def test_check_refuses_a_null_record_by_name(self):
+        self.refuses(None, "--check")
+
+    def test_record_refuses_an_array_record_by_name(self):
+        self.refuses([], "--record")
+
+    def test_record_refuses_a_string_record_by_name(self):
+        self.refuses("record", "--record")
+
+    def test_record_refuses_a_null_record_by_name(self):
+        self.refuses(None, "--record")
+
+    def test_base_refuses_an_array_record_by_name(self):
+        self.refuses([], "--base")
+
+    def test_base_refuses_a_string_record_by_name(self):
+        self.refuses("record", "--base")
+
+    def test_base_refuses_a_null_record_by_name(self):
+        self.refuses(None, "--base")
 
 
 
