@@ -3643,6 +3643,73 @@ fn a_dead_creator_is_never_offered_under_any_rule() {
     }
 }
 
+/// The sentence a suspect creator's coin is held with, for every word.
+const SUSPECT: &str = "suspect: a fork or an unresolved split at or below its height";
+
+/// Every rule that offers a word claiming nothing about the chain: a
+/// received coin under each `allowPending` form (off, on, scoped to the
+/// coin) and our own change under `SPEND_OWN_CHANGE` on.
+fn every_rule(txid: &str) -> Vec<(GateOptions, Origin)> {
+    every_word(txid)
+        .into_iter()
+        .map(|gate| (gate, Origin::Received))
+        .chain([(opts(1, true), Origin::Made)])
+        .collect()
+}
+
+/// A hand-built reading with the mark set and no fault.
+fn marked(word: &'static str, door: bool, depth: u64) -> CreatorReading {
+    CreatorReading {
+        word,
+        depth,
+        suspect: true,
+        door,
+        fault: None,
+        headers_fault: false,
+    }
+}
+
+/// The mark holds a `stale` creator under every rule (#211): the Lean's
+/// `offerableUnder` checks `!a.tracker.suspect` apart from the door, for
+/// every word. No reading bsv-tracker 0.9.0-beta.1 produces carries it on
+/// a `stale` word (`stale()` clears it), so this guards a later crate.
+#[test]
+fn a_suspect_stale_creator_is_held_under_every_rule() {
+    let txid = "f6".repeat(32);
+    let reading = marked("stale", false, 0);
+    for (gate, origin) in every_rule(&txid) {
+        assert_eq!(
+            hold_reason(&reading, origin, (&txid, 0), &gate).as_deref(),
+            Some(SUSPECT),
+            "{origin:?}, {gate:?}"
+        );
+    }
+}
+
+/// The mark holds a pending creator (`seen`, `built`) under every rule, as
+/// it does a `stale` one (#211), and a `mined` one as before, door open or
+/// not.
+#[test]
+fn a_suspect_pending_creator_is_held_under_every_rule() {
+    let txid = "f7".repeat(32);
+    let readings = [
+        marked("seen", false, 0),
+        marked("built", false, 0),
+        marked("mined", true, 6),
+        marked("mined", false, 1),
+    ];
+    for reading in &readings {
+        for (gate, origin) in every_rule(&txid) {
+            assert_eq!(
+                hold_reason(reading, origin, (&txid, 0), &gate).as_deref(),
+                Some(SUSPECT),
+                "{}, {origin:?}, {gate:?}",
+                reading.word
+            );
+        }
+    }
+}
+
 /// The toolbox allocates a stale creator's coin the gate offers (#165's
 /// lesson: under `acceptDelayedBroadcast` the toolbox reads the store, not
 /// the word). The `serve` shape, where no monitor demotes the action: still
