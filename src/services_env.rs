@@ -10,9 +10,9 @@
 //! |-----|--------|
 //! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven |
 //! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
-//! | `ARC_MODE` | The broadcaster mode: unset or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, the one opt-out, kept for the hermetic stub until #299; any other value is refused by name |
+//! | `ARC_MODE` | The broadcaster mode: unset, blank or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; any other value is refused by name |
 //! | `ARCADE` | The older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic; any other value is refused by name |
-//! | `ARC_URL` | Override the broadcaster URL: the Arcade endpoint in Arcade mode (default `ARCADE_V2_MAINNET`), the classic ARC URL in classic mode (default the chain's TAAL ARC) |
+//! | `ARC_URL` | Override the broadcaster URL (blank is unset): the Arcade endpoint in Arcade mode (default `ARCADE_V2_MAINNET` on mainnet; no testnet default, so a testnet wallet without it is refused by name), the classic ARC URL in classic mode (default the chain's TAAL ARC) |
 //! | `CALLBACK_TOKEN` | Override the per-wallet callback token (otherwise auto-generated and persisted next to the db) |
 //! | `PUBLIC_CALLBACK_URL` | Public HTTPS URL Arcade should POST status webhooks to (`X-CallbackUrl`) |
 //! | `TAAL_API_KEY` | Deprecated (#300): classic mode only, TAAL ARC key sent as `Authorization: Bearer <key>`; in Arcade mode it is unused and logged once at warn |
@@ -146,11 +146,13 @@ pub const ARCADE_ENV: &str = "ARCADE";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArcMode {
     /// Arcade V2, the default (the owner's word of 2026-10-27, #300: "arc is
-    /// old af... we use arcade now for everything").
+    /// old af... we use arcade now for everyting").
     Arcade,
-    /// The toolbox's classic ARC ladder: the one opt-out, kept for the
-    /// hermetic stub, which answers classic ARC only, until #299 gives it an
-    /// Arcade face. No production wallet runs it.
+    /// The toolbox's classic ARC ladder, deprecated: "arc is just deprecated,
+    /// arcade is the standard" (the owner's wording of 2026-10-27). Kept for
+    /// the hermetic stub, which answers classic ARC only, until #299 gives it
+    /// an Arcade face; never a default or a failover. No production wallet
+    /// runs it.
     Classic,
 }
 
@@ -392,7 +394,7 @@ fn services_options_with(
     opts.bananablocks_base = bananablocks_base_for(env(BANANABLOCKS_BASE_ENV).as_deref());
 
     // GorillaPool's ARC is never a rung, in either mode: the owner's word of
-    // 2026-10-27 ("arc is old af... we use arcade now for everything") and
+    // 2026-10-27 ("arc is old af... we use arcade now for everyting") and
     // the keeper's reading of it (#300: GorillaPool's ARC is a rung of no
     // gate and no courier; it held every submission of the 0.18.2 gate at
     // ANNOUNCED for over thirteen minutes). The toolbox's mainnet default
