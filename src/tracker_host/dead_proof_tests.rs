@@ -346,27 +346,45 @@ async fn a_dead_row_already_holding_a_bump_is_not_readopted() {
     assert_eq!(stored_bytes(&storage, &txid).await, before);
 }
 
+/// The `i`th proven creator at height `100 + i`, its header's root `root`
+/// (its own txid when `None`), with a dead row when `word` names one.
+async fn numbered(
+    storage: &StorageSqlx,
+    user: i64,
+    services: &MockWalletServices,
+    i: usize,
+    salt: &str,
+    root: Option<&str>,
+    word: Option<&str>,
+) -> String {
+    let txid = format!("{i:08x}{}", salt.repeat(28));
+    let height = 100 + u32::try_from(i).unwrap();
+    proven_coin(storage, user, &txid, height, 1_000).await;
+    services.set_header_for_height(header(height, root.unwrap_or(&txid), 0));
+    if let Some(word) = word {
+        dead_row(storage, &txid, word).await;
+    }
+    txid
+}
+
 #[tokio::test]
 async fn one_adoption_limit_covers_new_and_all_three_dead_words() {
     let (storage, user) = wallet_storage().await;
     let services = services();
     let mut txids = Vec::new();
     for i in 0..MAX_ADOPT_PER_PASS + 3 {
-        let txid = format!("{i:08x}{}", "ab".repeat(28));
-        let height = 100 + u32::try_from(i).unwrap();
-        proven_coin(&storage, user, &txid, height, 1_000).await;
-        services.set_header_for_height(header(height, &txid, 0));
-        if let Some(word) = [
+        let word = [
             None,
             Some("conflicted"),
             Some("rejected"),
             Some("abandoned"),
-        ][i % 4]
-        {
-            dead_row(&storage, &txid, word).await;
-        }
-        txids.push(txid);
+        ][i % 4];
+        txids.push(numbered(&storage, user, &services, i, "ab", None, word).await);
     }
+    // New creators lead the selection, then the dead rows, each oldest first.
+    let (new, dead): (Vec<_>, Vec<_>) =
+        txids.into_iter().enumerate().partition(|(i, _)| i % 4 == 0);
+    let txids: Vec<String> = new.into_iter().chain(dead).map(|(_, txid)| txid).collect();
     let report = pass(&storage, &services, 100).await;
     assert_eq!(report.adopted_mined, txids[..MAX_ADOPT_PER_PASS]);
     assert!(report.faults.is_empty());
@@ -377,4 +395,29 @@ async fn one_adoption_limit_covers_new_and_all_three_dead_words() {
     let done = pass(&storage, &services, 102).await;
     assert!(done.adopted_mined.is_empty());
     assert_eq!((done.tracked, done.asked), (0, 0));
+}
+
+#[tokio::test]
+async fn dead_rows_whose_proofs_keep_failing_never_hold_back_a_new_creator() {
+    let (storage, user) = wallet_storage().await;
+    let services = services();
+    let mismatched = "dd".repeat(32);
+    for i in 0..MAX_ADOPT_PER_PASS {
+        let root = Some(mismatched.as_str());
+        numbered(&storage, user, &services, i, "cd", root, Some("rejected")).await;
+    }
+    let fresh = "ce".repeat(32);
+    proven_coin(&storage, user, &fresh, 900, 1_000).await;
+    services.set_header_for_height(header(900, &fresh, 0));
+    let report = pass(&storage, &services, 100).await;
+    assert_eq!(report.adopted_mined, vec![fresh.clone()]);
+    assert_eq!(report.faults.len(), MAX_ADOPT_PER_PASS - 1);
+    assert_eq!(
+        stored_word(&storage, &fresh).await.unwrap().unwrap().0,
+        "mined"
+    );
+    // Each failing dead row is reported again, within the bound.
+    let next = pass(&storage, &services, 101).await;
+    assert!(next.adopted_mined.is_empty());
+    assert_eq!(next.faults.len(), MAX_ADOPT_PER_PASS);
 }
