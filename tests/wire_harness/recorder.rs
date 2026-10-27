@@ -102,6 +102,7 @@ impl Recorder {
                 ("127-internalizeAction.customInstructionsAtBound.json".into(), "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.".into()),
                 ("134-listOutputs.offsetNegative.json".into(), "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.".into()),
                 ("141-signAction.sequenceNumberAboveType.json".into(), "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.".into()),
+                ("142-listActions.offsetAboveType.json".into(), "The u32 argument type refuses offset 4294967296 before listActions is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.".into()),
             ].into_iter().collect(),
         })
         .unwrap();

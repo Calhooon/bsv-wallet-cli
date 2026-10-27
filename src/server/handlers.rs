@@ -1030,9 +1030,10 @@ pub async fn list_actions(
     headers: HeaderMap,
     Json(args): Json<ListActionsArgs>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_actions(args, &extract_originator(&headers)?)
+        .list_actions(args, &originator)
         .await
         .map_err(AppError::from)?;
     let user = crate::spend_gate::UserCoins::from_wallet(&wallet)
@@ -1089,9 +1090,10 @@ pub async fn list_outputs(
     headers: HeaderMap,
     Json(args): Json<ListOutputsArgs>,
 ) -> Result<Json<ListOutputsResult>, AppError> {
+    let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_outputs(args, &extract_originator(&headers)?)
+        .list_outputs(args, &originator)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1140,9 +1142,10 @@ pub async fn list_certificates(
     headers: HeaderMap,
     Json(args): Json<ListCertificatesArgs>,
 ) -> Result<Json<ListCertificatesResult>, AppError> {
+    let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_certificates(args, &extract_originator(&headers)?)
+        .list_certificates(args, &originator)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1186,9 +1189,10 @@ pub async fn discover_by_identity_key(
     headers: HeaderMap,
     Json(args): Json<DiscoverByIdentityKeyArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
+    let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .discover_by_identity_key(args, &extract_originator(&headers)?)
+        .discover_by_identity_key(args, &originator)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1200,9 +1204,10 @@ pub async fn discover_by_attributes(
     headers: HeaderMap,
     Json(args): Json<DiscoverByAttributesArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
+    let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .discover_by_attributes(args, &extract_originator(&headers)?)
+        .discover_by_attributes(args, &originator)
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))

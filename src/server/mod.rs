@@ -33,8 +33,8 @@ use handlers::WalletState;
 // https://github.com/bsv-blockchain/arcade/blob/1ae1208e64b77b64818044d606638939d9f1834a/config/config.go#L1291
 const ARC_CALLBACK_DEADLINE: Duration = Duration::from_secs(8);
 
-/// Serializes createAction; non-spending endpoints remain unaffected.
-///
+/// Serializes createAction; non-spending endpoints (encrypt, getPublicKey,
+/// listOutputs, etc.) remain unaffected.
 /// Why: With limited UTXOs, concurrent createAction calls race on SQLite's write lock
 /// and the loser gets SQLITE_BUSY_SNAPSHOT instead of waiting for the winner's change
 /// output. This lock queues them so each spending request sees the previous one's change.
