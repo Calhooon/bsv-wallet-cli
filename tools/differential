@@ -9,6 +9,8 @@
                                             bsv-wallet-mcp is read beside each
     tools/differential --same [--head-bin H]
                                             the floor: one binary run twice
+    tools/differential --ports A,B,C,F,S     use five explicit ports instead of
+                                            choosing free ports for this pair
     tools/differential --compare R1 R2      diff two recordings already made
     tools/differential --exclusions         print the normalization list and exit
 
@@ -17,6 +19,10 @@ scenarios, the stub and its fixtures are the head's for both builds, so only the
 binary differs), with DIFF_RECORD set (tests/e2e/lib/record.js writes every HTTP
 call and CLI command as a JSON line) and DIFF_ROOT_KEYS set to four keys this tool
 draws once per comparison, so both runs drive the same wallets on the same ports.
+Ports are chosen once per pair. --compare can read recordings from separate
+invocations, so their recorded ports and loopback URLs are normalized by role,
+like wallet directories. A ports event carries the stub's port as well as the
+wallet ports; it supplies normalization metadata, not a compared harness call.
 
 The two recordings are compared byte for byte after the normalizations of
 EXCLUSIONS, and only those; each names what it rewrites and why two runs of the
@@ -42,23 +48,28 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HARNESS = ROOT / "tests" / "e2e" / "run.js"
 
-# The ports of the hermetic run, the same for both runs (the harness's own
-# defaults, off every port of the registry).
-PORTS = {
-    "WALLET_A_PORT": "3370",
-    "WALLET_B_PORT": "3371",
-    "WALLET_C_PORT": "3372",
-    "FUNDER_PORT": "3373",
-    "E2E_STUB_PORT": "3380",
+# The order of --ports, and each port's role in a recording.
+PORT_SEATS = {
+    "WALLET_A_PORT": "A",
+    "WALLET_B_PORT": "B",
+    "WALLET_C_PORT": "C",
+    "FUNDER_PORT": "funder",
+    "E2E_STUB_PORT": "stub",
 }
+# The live funder and prod-test-wallets/REGISTRY.md own these ports. Never
+# choose, probe or accept them, even when an explicit --ports names one.
+FORBIDDEN_PORTS = frozenset({3320, 3323, *range(3330, 3345)})
+LOOPBACK_PORT_RE = re.compile(r"(https?://(?:127\.0\.0\.1|localhost|\[::1\]):)([0-9]+)\b")
 
 # What may differ between two runs of the same binary with the same keys, the
 # same stub and the same ports, and only that. Each entry: the field path it
@@ -79,6 +90,13 @@ EXCLUSIONS = [
         "wallet.dir, and the directory inside any string",
         "the wallet's scratch directory is mkdtemp's (a random suffix); it is "
         "rewritten to <dir:SEAT>",
+    ),
+    (
+        "wallet.port, recorded run ports in loopback URLs and CLI --port operands",
+        "free ports are chosen per pair, and --compare can read separate pairs; "
+        "only the recorded ports are rewritten to <port:SEAT> (stub included). "
+        "The ports event supplies the role map and is not a harness call; "
+        "other numbers, hosts, URL paths and unrecorded ports stay literal",
     ),
     (
         "rand atoms: txids, an input script's signature DER bodies and pushes of "
@@ -630,12 +648,13 @@ class Renamer:
     CLI's --json stdout) is compared as its value.
     """
 
-    def __init__(self, hexes, ders, strings, dirs):
+    def __init__(self, hexes, ders, strings, dirs, ports):
         self.names = {}
         self.hexes = hexes
         self.ders = ders
         self.unique = hexes | strings
         self.dirs = dirs
+        self.ports = ports
         alts = sorted(self.unique, key=len, reverse=True)
         self.re = re.compile("|".join(re.escape(a) for a in alts)) if alts else None
 
@@ -653,6 +672,9 @@ class Renamer:
     def text(self, s):
         for d, seat in self.dirs:
             s = s.replace(d, f"<dir:{seat}>")
+        s = LOOPBACK_PORT_RE.sub(
+            lambda m: m[1] + self.ports.get(int(m[2]), m[2]), s,
+        )
         return self.re.sub(self._name, s) if self.re else s
 
     def _script(self, script):
@@ -783,9 +805,31 @@ def normalize(a, b):
         return [{**e, "stderr": log_text(e["stderr"])} if e.get("kind") == "cli" and isinstance(e.get("stderr"), str)
                 else e for e in events]
 
-    a, b = logs(polls(a)), logs(polls(b))
-    ra = Renamer(ha - hb, da - db, sa - sb, dirs(a))
-    rb = Renamer(hb - ha, db - da, sb - sa, dirs(b))
+    def ports(events):
+        # Older recordings have wallet ports but no ports metadata event.
+        names = {e["port"]: f"<port:{e['seat']}>" for e in events if e.get("kind") == "wallet"}
+        for e in events:
+            if e.get("kind") == "ports":
+                names.update({int(port): f"<port:{PORT_SEATS[key]}>" for key, port in e["ports"].items()})
+        out = []
+        for e in events:
+            if e.get("kind") == "ports":
+                continue
+            if e.get("kind") == "wallet":
+                e = {**e, "port": f"<port:{e['seat']}>"}
+            if e.get("kind") == "cli":
+                argv = list(e["argv"])
+                for i in range(1, len(argv)):
+                    if argv[i - 1] == "--port" and isinstance(argv[i], str) and argv[i].isdigit():
+                        argv[i] = names.get(int(argv[i]), argv[i])
+                e = {**e, "argv": argv}
+            out.append(e)
+        return out, names
+
+    a, pa = ports(logs(polls(a)))
+    b, pb = ports(logs(polls(b)))
+    ra = Renamer(ha - hb, da - db, sa - sb, dirs(a), pa)
+    rb = Renamer(hb - ha, db - da, sb - sa, dirs(b), pb)
     na = [ra.value({k: v for k, v in e.items() if k != "seq"}) for e in a]
     nb = [rb.value({k: v for k, v in e.items() if k != "seq"}) for e in b]
     return na, nb, len(ra.names), len(rb.names)
@@ -951,6 +995,12 @@ def scratch_root():
     return Path(base) / "bsv-wallet-differential"
 
 
+def scratch_dir(prefix):
+    root = scratch_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+
+
 def build(tree, target):
     env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
     run(["cargo", "build", "--release", "--locked"], cwd=tree, env=env)
@@ -966,18 +1016,27 @@ def head_target():
     return Path(json.loads(meta.stdout)["target_directory"])
 
 
-def build_base(rev, target):
+def build_base(rev, target=None):
+    """Build in a worktree owned by this call, keeping the per-sha target cache.
+
+    Cargo's own target-directory file lock serializes builds of the same
+    sources in that cache, including builds from separate worktrees. A run
+    removes only its own worktree, after its build has released that lock.
+    """
     sha = subprocess.run(["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=ROOT,
                          check=True, capture_output=True, text=True).stdout.strip()
-    tree = scratch_root() / f"base-{sha[:12]}"
-    if tree.exists():
-        run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
-    tree.parent.mkdir(parents=True, exist_ok=True)
-    run(["git", "worktree", "add", "--detach", str(tree), sha], cwd=ROOT)
+    target = Path(target) if target else scratch_root() / f"target-base-{sha[:12]}"
+    tree = scratch_dir(f"base-{sha[:12]}-")
+    added = False
     try:
+        run(["git", "worktree", "add", "--detach", str(tree), sha], cwd=ROOT)
+        added = True
         return build(tree, target), sha
     finally:
-        run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
+        if added:
+            run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
+        else:
+            shutil.rmtree(tree)
 
 
 def merge_base():
@@ -992,7 +1051,52 @@ class Failure(Exception):
     """A build, a path or a run that failed: exit 2, never read as a difference."""
 
 
-def record(binary, keys, out, name):
+def choose_ports():
+    """Five distinct free loopback ports, shared by both recordings of a pair.
+
+    Bind port zero and close; do not reserve a harness default. Also retry a
+    port answering on localhost (including IPv6), which the harness refuses.
+    Another process can still take a released port before the harness binds;
+    its existing startup guards remain the final check.
+    """
+    ports = {}
+    for name in PORT_SEATS:
+        for _ in range(100):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            if port in FORBIDDEN_PORTS or str(port) in ports.values():
+                continue
+            try:
+                with socket.create_connection(("localhost", port), timeout=0.1):
+                    continue
+            except OSError:
+                ports[name] = str(port)
+                break
+        else:
+            raise Failure(f"could not choose a free port for {name}")
+    return ports
+
+
+def parse_ports(value):
+    """The explicit --ports A,B,C,F,S, refused before a build or port probe."""
+    try:
+        values = [int(p) for p in value.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError("--ports needs five integers: A,B,C,F,S") from None
+    if len(values) != len(PORT_SEATS):
+        raise argparse.ArgumentTypeError("--ports needs five ports: A,B,C,F,S")
+    for name, port in zip(PORT_SEATS, values):
+        if port in FORBIDDEN_PORTS:
+            raise argparse.ArgumentTypeError(f"{name} port {port} belongs to the registry; refused")
+        if not 1 <= port <= 65535:
+            raise argparse.ArgumentTypeError(f"{name} port {port} is outside 1..65535")
+    if len(set(values)) != len(values):
+        raise argparse.ArgumentTypeError("--ports must name five distinct ports")
+    return dict(zip(PORT_SEATS, map(str, values)))
+
+
+def record(binary, keys, out, name, ports):
     """One hermetic run of the suite against `binary`, recorded to out/<name>.jsonl."""
     binary = Path(binary).resolve()
     mcp = binary.parent / "bsv-wallet-mcp"
@@ -1000,13 +1104,13 @@ def record(binary, keys, out, name):
         if not b.is_file():
             raise Failure(f"{b} is not a file (bsv-wallet-mcp is read beside bsv-wallet)")
     rec = out / f"{name}.jsonl"
-    rec.unlink(missing_ok=True)
+    rec.write_text(json.dumps({"kind": "ports", "seq": -1, "phase": "setup", "ports": ports}) + "\n")
     tmp = out / f"{name}-wallets"
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     env = {
         **os.environ,
-        **PORTS,
+        **ports,
         "E2E_HERMETIC": "1",
         "NODE_USE_ENV_PROXY": "1",
         "DIFF_RECORD": str(rec),
@@ -1032,7 +1136,7 @@ def record(binary, keys, out, name):
 
 
 def default_out():
-    return scratch_root() / time.strftime("run-%Y%m%dT%H%M%S")
+    return scratch_dir(time.strftime("run-%Y%m%dT%H%M%S-"))
 
 
 def main():
@@ -1044,6 +1148,8 @@ def main():
     ap.add_argument("--same", action="store_true", help="the floor: run the head binary twice")
     ap.add_argument("--compare", nargs=2, metavar=("BASE", "HEAD"), help="diff two recordings")
     ap.add_argument("--out", help="where the recordings, logs and report go")
+    ap.add_argument("--ports", type=parse_ports, metavar="A,B,C,F,S",
+                    help="explicit wallet A, B, C, funder and stub ports (default: choose free ports)")
     ap.add_argument("--exclusions", action="store_true", help="print the normalization list and exit")
     args = ap.parse_args()
 
@@ -1061,6 +1167,9 @@ def main():
 
     out = Path(args.out) if args.out else default_out()
     out.mkdir(parents=True, exist_ok=True)
+    ports = args.ports if args.ports is not None else choose_ports()
+    port_line = "differential: ports " + ", ".join(f"{name}={port}" for name, port in ports.items())
+    print(port_line, file=sys.stderr, flush=True)
 
     head = Path(args.head_bin) if args.head_bin else build(ROOT, head_target())
     if args.same:
@@ -1072,16 +1181,16 @@ def main():
             base, base_label = Path(args.base_bin), args.base_bin
         else:
             rev = args.base or merge_base()
-            target = Path(args.base_target) if args.base_target else scratch_root() / "target-base"
-            base, sha = build_base(rev, target)
+            base, sha = build_base(rev, args.base_target)
             base_label = f"{rev} ({sha[:12]})"
         head_label = str(head)
 
     keys = [secrets.token_hex(32) for _ in range(4)]
-    rec_a, code_a, passed_a = record(base, keys, out, names[0])
-    rec_b, code_b, passed_b = record(head, keys, out, names[1])
+    rec_a, code_a, passed_a = record(base, keys, out, names[0], ports)
+    rec_b, code_b, passed_b = record(head, keys, out, names[1], ports)
     text, count, gaps = compare(rec_a, rec_b, names)
     header = [
+        port_line,
         f"differential: {names[0]} build {base_label}: suite exit {code_a}, {passed_a}",
         f"differential: {names[1]} build {head_label}: suite exit {code_b}, {passed_b}",
         "differential: exclusions (tools/differential --exclusions):",
