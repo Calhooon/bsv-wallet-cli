@@ -556,8 +556,17 @@ def tool_refusal(path, rec, now):
     )
 
 
-def load(path, now):
+def read_record(path):
+    """Read a record object before any field or schema is inspected."""
     rec = json.loads(path.read_text())
+    if not isinstance(rec, dict):
+        sys.exit(f"ratchet: {path} is not a record"
+                 " (a JSON object with schema, commit, toolchain, ratchets)")
+    return rec
+
+
+def load(path, now):
+    rec = read_record(path)
     if refusal := (schema_refusal(path, rec) or differs(path, rec, now["toolchain"])
                    or tool_refusal(path, rec, now)):
         sys.exit(refusal)
@@ -572,7 +581,7 @@ def load_base(path, now):
     base's instrument against the base's record, and this tool still checks
     the tree against its own record. A newer schema and another
     toolchain are refused as for the record."""
-    rec = json.loads(path.read_text())
+    rec = read_record(path)
     if older_schema(rec):
         why = f" (schema {rec.get('schema')}, the tool is {SCHEMA})"
     elif refusal := schema_refusal(path, rec) or differs(path, rec, now["toolchain"]):
@@ -615,7 +624,7 @@ def check(now, path, base_path):
     for k in RATCHETS:
         of_base = f", base {of(base, k)}" if base else ""
         print(f"  {k:32} {tree[k]:>6} (record {of(rec, k)}{of_base})")
-    ref = (base or rec)["ratchets"]
+    ref = rec["ratchets"]
     better = [
         f"  {k}: {ref[k]} -> {tree[k]} (-{ref[k] - tree[k]})"
         for k in RATCHETS
@@ -694,7 +703,7 @@ def main():
     if a.record and a.baseline.exists():
         # Read before the measurement and refused before a byte is written: a
         # record under another toolchain is one --check refuses to compare (#132).
-        rec = json.loads(a.baseline.read_text())
+        rec = read_record(a.baseline)
         refusal = schema_refusal(a.baseline, rec)
         if refusal and not (a.schema_move and older_schema(rec)):
             hint = "\nratchet: --record refuses it; a schema move is its own commit: --record --schema-move"
