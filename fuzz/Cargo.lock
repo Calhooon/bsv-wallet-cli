@@ -355,6 +355,7 @@ dependencies = [
  "bsv-rs",
  "bsv-wallet-cli",
  "bsv-wallet-toolbox-rs",
+ "encoding_rs",
  "hex",
  "libfuzzer-sys",
  "serde_json",
