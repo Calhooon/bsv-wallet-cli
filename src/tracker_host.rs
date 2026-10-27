@@ -3557,20 +3557,61 @@ pub(crate) mod tests {
         (storage, services, clock)
     }
 
+    /// The stored row of `txid` and its replay against the headers its
+    /// proof height reads now, the replay without a fault.
+    async fn replay_stored(
+        storage: &StorageSqlx,
+        services: &MockWalletServices,
+        txid: &str,
+    ) -> (TrackedRow, State) {
+        let row = load_row(storage, txid).await.unwrap().unwrap();
+        let checked_on = HeaderSnapshot::take(services, row.proof_height()).await;
+        let (state, fault) = row.replay(&opts().params(), &checked_on);
+        assert_eq!(fault, None);
+        (row, state)
+    }
+
+    /// `index`, refused at compile time when `WORD_LABELS` has no label there.
+    const fn label_at(index: usize) -> usize {
+        assert!(index < WORD_LABELS.len(), "WORD_LABELS has no label here");
+        index
+    }
+
+    /// The index in `WORD_LABELS` of `word`'s label. The match has no `_`
+    /// arm and each index is checked against `WORD_LABELS` at compile time:
+    /// a variant the crate adds, or a label dropped from the constant,
+    /// breaks the compile here; a variant not built in the test below
+    /// leaves its index unhit (#286, the PR 295 review).
+    fn witness(word: &Word) -> usize {
+        match word {
+            Word::Unknown => const { label_at(0) },
+            Word::Built => const { label_at(1) },
+            Word::Announced => const { label_at(2) },
+            Word::Seen => const { label_at(3) },
+            Word::Mined(_) => const { label_at(4) },
+            Word::Stale => const { label_at(5) },
+            Word::Rejected { .. } => const { label_at(6) },
+            Word::Conflicted { .. } => const { label_at(7) },
+            Word::Abandoned => const { label_at(8) },
+        }
+    }
+
     /// `WORD_LABELS` is exactly the set `word_label` produces over the
-    /// crate's words (#286): each variant built here, and the mined word as
-    /// the host stores it after a checked proof (`Mined` has no public
-    /// constructor); a string outside the set is not a known label.
+    /// crate's words (#286): each variant built here, the mined word from
+    /// the host's replay of a checked proof (`Mined` has no public
+    /// constructor), each hitting its own index of `WORD_LABELS` through
+    /// [`witness`]; a string outside the set is not a known label.
     #[tokio::test]
     async fn word_labels_are_exactly_the_labels_word_label_produces() {
         let txid = "c4".repeat(32);
-        let (storage, _, _) = mined_at_900(&txid).await;
-        let mined = stored_word(&storage, &txid).await.unwrap().unwrap().0;
-        let mut produced: Vec<String> = [
+        let (storage, services, _) = mined_at_900(&txid).await;
+        let (_, mined) = replay_stored(&storage, &services, &txid).await;
+        let words = [
             Word::Unknown,
             Word::Built,
             Word::Announced,
             Word::Seen,
+            mined.word().clone(),
             Word::Stale,
             Word::Rejected {
                 reason: "r".to_string(),
@@ -3579,23 +3620,17 @@ pub(crate) mod tests {
                 competitors: vec!["d5".repeat(32)],
             },
             Word::Abandoned,
-        ]
-        .iter()
-        .map(|word| word_label(word).to_string())
-        .chain([mined])
-        .collect();
-        for label in &produced {
-            assert!(
-                WORD_LABELS.contains(&label.as_str()),
-                "{label} not in WORD_LABELS"
-            );
+        ];
+        let mut hits = vec![0_usize; WORD_LABELS.len()];
+        for word in &words {
+            let index = witness(word);
+            hits[index] += 1;
+            assert_eq!(word_label(word), WORD_LABELS[index], "{word:?}");
         }
-        produced.sort();
-        let mut known: Vec<String> = WORD_LABELS.iter().map(ToString::to_string).collect();
-        known.sort();
         assert_eq!(
-            known, produced,
-            "WORD_LABELS holds a label word_label never produces"
+            hits,
+            vec![1; WORD_LABELS.len()],
+            "each label of WORD_LABELS is produced by exactly one built word"
         );
         for outside in ["", "Mined", "mined ", "orphaned"] {
             assert!(!WORD_LABELS.contains(&outside), "{outside:?} read as known");
@@ -4433,10 +4468,7 @@ pub(crate) mod tests {
     async fn plain_mined_without_kept_events_stores_its_checked_header() {
         let txid = "b6".repeat(32);
         let (storage, services, _) = mined_at_900(&txid).await;
-        let row = load_row(&storage, &txid).await.unwrap().unwrap();
-        let checked_on = HeaderSnapshot::take(&services, row.proof_height()).await;
-        let (state, fault) = row.replay(&opts().params(), &checked_on);
-        assert_eq!(fault, None);
+        let (row, state) = replay_stored(&storage, &services, &txid).await;
         let Word::Mined(mined) = state.word() else {
             panic!("expected a checked mined word");
         };
