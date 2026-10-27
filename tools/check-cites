@@ -18,10 +18,13 @@ Paths are resolved from the repository root, including prefixes such as mcp/;
 
 Every backticked Rust path with a line number or range must match that rooted
 citation form; a bare `name.rs:N` or relative `dir/name.rs:N` is a finding:
-write the path from the repository root. Unnumbered backticked paths starting
+write the path from the repository root. Rooted line-and-column, multiple-path
+and #L spans must cite as path:N or path:N-M. Unnumbered backticked paths starting
 with src/, tests/ or a nested crate's src/ must exist at the pin (files as
 blobs, directories ending in / as non-empty trees), unless the same sentence
 or table cell marks them with the word "later" or the phrase "after the pin".
+A nested prefix that is not a tree at the pin is not this repository's path
+and is not checked.
 Mermaid diagrams and all other fenced text stay skipped by design.
 
 The module map's `file | lines` table counts physical newline characters,
@@ -46,8 +49,8 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*")
 CITE = re.compile(r"(?<![\w/])(?:[A-Za-z_0-9.-]+/)*(?:src|tests)/"
                   r"[A-Za-z_0-9./-]+:(\d+)(?:-(\d+))?\b")
 SHORT = re.compile(r":(\d+)(?:-(\d+))?")
-RUST_CITE = re.compile(r"[A-Za-z_0-9/.-]*[A-Za-z_0-9]+\.rs:\d+(?:-\d+)?")
-SOURCE_PATH = re.compile(r"(?:tests/|(?:[A-Za-z_0-9.-]+/)*src/)[A-Za-z_0-9./-]*")
+RUST_CITE = re.compile(r"\.rs(?::|#L)\d")
+SOURCE_PATH = re.compile(r"(?:tests/|((?:[A-Za-z_0-9.-]+/)*?)src/)[A-Za-z_0-9./-]*")
 LATER = re.compile(r"\blater\b|\bafter\s+the\s+pin\b", re.I)
 
 
@@ -128,7 +131,7 @@ def count_rows(text):
             yield n, paths, count
 
 
-def check(doc, text, blobs):
+def check(doc, text, blobs, trees):
     problems = []
 
     def fail(line, why):
@@ -171,16 +174,26 @@ def check(doc, text, blobs):
             fail(line, f"{path} does not exist at pin {short}")
         return data
 
+    def tree(path):
+        key = pin, path
+        if key not in trees:
+            result = git("ls-tree", pin, path)
+            trees[key] = result.returncode == 0 and bool(result.stdout)
+        return trees[key]
+
     for offset, context in contexts(visible):
         for m in SPAN.finditer(context):
             label = m.group(2)
             n = text.count("\n", 0, offset + m.start()) + 1
-            if RUST_CITE.fullmatch(label) and not CITE.fullmatch(label):
-                fail(n, f"{label}: write the path from the repository root")
-            elif SOURCE_PATH.fullmatch(label) and not LATER.search(context):
+            if RUST_CITE.search(label) and not CITE.fullmatch(label):
+                advice = ("cite as path:N or path:N-M" if SOURCE_PATH.match(label)
+                          else "write the path from the repository root")
+                fail(n, f"{label}: {advice}")
+            elif (source := SOURCE_PATH.fullmatch(label)) and not LATER.search(context):
+                if source[1] and not tree(source[1]):
+                    continue
                 if label.endswith("/"):
-                    result = git("ls-tree", pin, label)
-                    if result.returncode or not result.stdout:
+                    if not tree(label):
                         fail(n, f"{label} does not exist at pin {short}")
                 else:
                     blob(label, n)
@@ -227,6 +240,7 @@ def main():
     args = parser.parse_args()
     docs = args.files or ["docs/ARCHITECTURE.md"]
     blobs = {}
+    trees = {}
     failures = ncites = nrows = 0
     for doc in docs:
         try:
@@ -234,7 +248,7 @@ def main():
         except (OSError, UnicodeError) as e:
             problems, cites, rows = [f"{doc}:1: cannot read document: {e}"], 0, 0
         else:
-            problems, cites, rows = check(doc, text, blobs)
+            problems, cites, rows = check(doc, text, blobs, trees)
         for problem in problems:
             print(problem)
         failures += len(problems)

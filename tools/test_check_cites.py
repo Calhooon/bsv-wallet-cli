@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 TOOL = Path(__file__).with_name("check-cites")
@@ -33,7 +34,7 @@ class PinnedCitations(unittest.TestCase):
         self.write("src/present.rs", SOURCE)
         self.write("tests/integration.rs", SOURCE)
         self.write("tests/present/example.rs", SOURCE)
-        self.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n")
+        self.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n\npub fn nested_beta() {}\n")
         self.git("add", "src", "tests", "mcp")
         self.git("commit", "-qm", "pin")
         self.pin = self.git("rev-parse", "--short=12", "HEAD").strip()
@@ -109,6 +110,36 @@ class PinnedCitations(unittest.TestCase):
     def test_rooted_rust_citation_passes(self):
         self.passes(body="`alpha` (`src/name.rs:1`).")
 
+    def test_bare_rust_column_requires_repository_root(self):
+        self.fails("handlers.rs:2:1: write the path from the repository root",
+                   body="`alpha` (`handlers.rs:2:1`).")
+
+    def test_rooted_rust_column_requires_accepted_form(self):
+        self.fails("src/handlers.rs:1:5: cite as path:N or path:N-M",
+                   body="`alpha` (`src/handlers.rs:1:5`).")
+
+    def test_bare_rust_path_list_requires_repository_root(self):
+        self.fails("handlers.rs:1, mod.rs:2: write the path from the repository root",
+                   body="`alpha` (`handlers.rs:1, mod.rs:2`).")
+
+    def test_rooted_rust_path_list_requires_accepted_form(self):
+        self.fails("src/handlers.rs:1, src/mod.rs:2: cite as path:N or path:N-M",
+                   body="`alpha` (`src/handlers.rs:1, src/mod.rs:2`).")
+
+    def test_bare_rust_anchor_requires_repository_root(self):
+        self.fails("handlers.rs#L25: write the path from the repository root",
+                   body="`alpha` (`handlers.rs#L25`).")
+
+    def test_rooted_rust_anchor_requires_accepted_form(self):
+        self.fails("src/handlers.rs#L25: cite as path:N or path:N-M",
+                   body="`alpha` (`src/handlers.rs#L25`).")
+
+    def test_nested_crate_line_three_passes(self):
+        self.passes(body="`nested_beta` (`mcp/src/main.rs:3`).")
+
+    def test_rooted_rust_range_passes(self):
+        self.passes(body="`alpha` (`src/present.rs:1-2`).")
+
     def test_unnumbered_absent_file_is_named(self):
         self.fails("docs/ARCHITECTURE.md:7: src/absent.rs does not exist at pin",
                    body="The module is `src/absent.rs`.")
@@ -130,6 +161,49 @@ class PinnedCitations(unittest.TestCase):
         self.passes(body="The companion has `mcp/src/main.rs` in `mcp/src/`.")
         self.fails("mcp/src/absent.rs does not exist at pin", body="`mcp/src/absent.rs`.")
         self.fails("mcp/src/absent/ does not exist at pin", body="`mcp/src/absent/`.")
+
+    def test_scheme_less_url_is_not_a_repository_path(self):
+        self.passes(body="`github.com/Calhooon/bsv-wallet-cli/src/`.")
+
+    def test_sibling_repository_path_is_not_checked(self):
+        self.passes(body="`bsv-rs/src/wallet/interface.rs`.")
+
+    def test_nested_crate_prefix_added_only_at_head_is_not_checked(self):
+        self.write("other/src/main.rs", SOURCE)
+        self.git("add", "other")
+        self.git("commit", "-qm", "add a crate after the pin")
+        self.passes(body="`other/src/absent.rs`.")
+
+    def test_non_tree_nested_crate_prefix_is_not_checked(self):
+        self.write("other", "not a directory\n")
+        self.git("add", "other")
+        self.git("commit", "-qm", "add a blob at the prefix")
+        self.pin = self.git("rev-parse", "--short=12", "HEAD").strip()
+        self.passes(body="`other/src/absent.rs`.", count="5")
+
+    def test_nested_crate_prefix_can_have_multiple_segments(self):
+        self.write("group/mcp/src/main.rs", SOURCE)
+        self.git("add", "group")
+        self.git("commit", "-qm", "add a nested crate")
+        self.pin = self.git("rev-parse", "--short=12", "HEAD").strip()
+        self.passes(body="`group/mcp/src/main.rs`.", count="5")
+        self.fails("group/mcp/src/absent.rs does not exist at pin",
+                   body="`group/mcp/src/absent.rs`.", count="5")
+
+    def test_nested_crate_prefixes_are_checked_once_across_documents(self):
+        body = ("`mcp/src/main.rs` and `mcp/src/`. "
+                "`bsv-rs/src/wallet/interface.rs` and `bsv-rs/src/`.")
+        text = self.document(body=body)
+        self.write("docs/a.md", text)
+        trace = self.root / "git-trace"
+        with patch.dict(os.environ, {"GIT_TRACE": str(trace)}):
+            result = self.run_tool(text, "docs/a.md", "docs/b.md", name="docs/b.md")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [line.split("built-in: git ", 1)[-1]
+                    for line in trace.read_text().splitlines()]
+        pin = self.git("rev-parse", self.pin).strip()
+        for prefix in ("mcp/", "bsv-rs/"):
+            self.assertEqual(commands.count(f"ls-tree {pin} {prefix}"), 1, commands)
 
     def test_unnumbered_file_added_only_at_head_still_fails(self):
         self.write("src/absent.rs", SOURCE)
