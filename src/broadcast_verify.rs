@@ -407,7 +407,7 @@ impl AbsenceVotes {
 /// endpoint the transaction was actually handed to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BroadcastPlane {
-    /// Arcade V2 (`ARC_MODE=arcade` / `ARCADE=1`).
+    /// Arcade V2, the default mode (`ARC_MODE` unset or `arcade`, #300).
     ///
     /// Status endpoint is `GET {base}/tx/{txid}` — **no `/v1` prefix**. Verified
     /// two ways: `ArcadeV2Provider::get_tx_status` in `bsv-wallet-toolbox-rs`
@@ -417,7 +417,7 @@ enum BroadcastPlane {
     /// (i.e. the `/v1` path does not exist and its 404 is a routing artifact).
     /// Keyless: Arcade's status read needs no `Authorization` header.
     ArcadeV2 { base: String },
-    /// Classic ARC. Status endpoint is `GET {base}/v1/tx/{txid}`, matching
+    /// Classic ARC (`ARC_MODE=classic`, the hermetic stub's). Status endpoint is `GET {base}/v1/tx/{txid}`, matching
     /// `ArcProvider::get_tx_status` in the toolbox.
     ClassicArc { base: String },
 }
@@ -629,7 +629,7 @@ pub struct BroadcastVerifier {
 impl BroadcastVerifier {
     /// Build a verifier for `chain`, reading the broadcast plane and optional
     /// overrides from the env:
-    /// - `ARC_MODE=arcade` / `ARCADE=1` + `ARC_URL` select the plane probed first.
+    /// - `ARC_MODE` (Arcade unless `classic`) + `ARC_URL` select the plane probed first.
     /// - `BSV_WALLET_SKIP_BROADCAST_VERIFY=1` disables verification entirely.
     /// - `BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS` overrides the probe-round count.
     /// - `BSV_WALLET_BROADCAST_VERIFY_DELAY_MS` overrides the inter-round delay.
