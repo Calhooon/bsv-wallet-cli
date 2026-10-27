@@ -189,8 +189,11 @@ funding block is proven by the BUMP inside its BEEF instead.
   `CONNECT api.whatsonchain.com:443` and `CONNECT api.bitails.io:443`
   (`KNOWN_WALLED` in `lib/hermetic.js`), and tolerates walled attempts at them
   only; a walled attempt at any other target fails the run, so a new leak
-  elsewhere is seen. The 24-scenario run under `serve` makes none
-  (walled 0): the CLI's own rungs, which the stub serves, answered ahead of them. When
+  elsewhere is seen. The 24-scenario run under `serve` walls 168, all known
+  and none served: 84 to WhatsOnChain and 84 to Bitails, one of each beside
+  each of the stub ARC's 84 `POST /v1/tx`, the toolbox's postBeef posting to
+  every provider in parallel (its `PromiseAll`); the CLI's own rungs, which the
+  stub serves, answer every read ahead of them (2026-10-27, PR 312). When
   #98 lands, `services_env.rs` passes `WOC_BASE` and `BITAILS_BASE` through
   and `KNOWN_WALLED` empties.
 - **Overlay discovery** (`discoverByIdentityKey`, `discoverByAttributes`): the
