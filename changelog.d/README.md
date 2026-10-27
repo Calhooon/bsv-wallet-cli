@@ -11,8 +11,10 @@ carry no fenced or indented code blocks; use inline backticks only. For every
 line, strip leading whitespace and repeated container prefixes (`> `, `- `,
 `* `, `+ `, or 1 to 9 digits followed by `. ` or `) `). The remainder must not
 begin with `#` or consist only of `=` or only of `-`, with or without spaces
-between them. Indentation, fences and preceding blank lines never exempt a
-line; write a horizontal rule as `***`. Everything else is allowed. Entries
+between them, nor begin with three or more backticks or tildes (a fence,
+refused with its line number). Indentation, fences and preceding blank lines
+never exempt a line; write a horizontal rule as `***`. Everything else is
+allowed. Entries
 are assembled by ascending number, then filename, with one blank line between
 entries.
 

@@ -43,21 +43,39 @@ def read_utf8(path):
         raise Refused(f"{path.relative_to(ROOT)}: cannot read UTF-8 ({error})") from error
 
 
+def stripped_lines(content):
+    """Yield (number, line) with leading whitespace and container prefixes gone."""
+    for number, line in enumerate(content.splitlines(), 1):
+        line = line.strip()
+        while match := CONTAINER.match(line):
+            line = line[match.end():].lstrip()
+        yield number, line
+
+
 def has_heading(content):
     """Apply one line rule, regardless of indentation or Markdown context.
 
     Strip leading whitespace and repeated "> ", "- ", "* ", "+ ", or
     "[0-9]{1,9}[.)] " prefixes. Refuse a leading # or a line of only = or
     only -, with optional spaces between characters, anywhere in the fragment.
-    Fragments use inline backticks, never fenced or indented code blocks.
+    Fragments use inline backticks, never fenced or indented code blocks;
+    fence_line refuses a fence line by the same stripping.
     """
-    for line in content.splitlines():
-        line = line.strip()
-        while match := CONTAINER.match(line):
-            line = line[match.end():].lstrip()
-        if line.startswith("#") or SEPARATOR.fullmatch(line):
-            return True
-    return False
+    return any(line.startswith("#") or SEPARATOR.fullmatch(line)
+               for _, line in stripped_lines(content))
+
+
+def fence_line(content):
+    """Return the number of the first line that opens a fence, or None.
+
+    After the same stripping as the heading rule, a line beginning with three
+    or more backticks or tildes is a fence; an unclosed one would render every
+    release heading below it in CHANGELOG.md as code. Two backticks are inline.
+    """
+    for number, line in stripped_lines(content):
+        if line.startswith(("```", "~~~")):
+            return number
+    return None
 
 
 def fragments():
@@ -81,6 +99,8 @@ def fragments():
             raise Refused(f"{name}: empty fragment")
         if has_heading(content):
             raise Refused(f"{name}: a fragment must not contain a heading")
+        if (number := fence_line(content)) is not None:
+            raise Refused(f"{name}:{number}: a fragment carries no code block; inline backticks only")
         entries.append((int(match[1]), path, content))
     return sorted(entries, key=lambda entry: (entry[0], entry[1].name))
 
