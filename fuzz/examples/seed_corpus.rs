@@ -2,7 +2,7 @@
 //! shapes the tree's tests and e2e scenarios already use: the BEEF frames
 //! of `src/atomic_beef.rs`'s tests, the request bodies of
 //! `tests/e2e/lib/wallet-client.js` and `tests/e2e/scenarios/`, the
-//! explorer answers of `src/explorers.rs`'s tests, the outpoints of
+//! explorer bodies of `explorer_bodies`'s readers, the outpoints of
 //! scenario 23. Run from `fuzz/`: `cargo run --example seed_corpus`. A seed's
 //! name is stable, so a rerun rewrites the same files.
 
@@ -122,74 +122,54 @@ fn main() {
         format!("{outpoint}\n {child_id}.1 \n{outpoint}").as_bytes(),
     );
 
-    // explorer_bodies: [call, status, body], the answers explorers.rs's
-    // tests serve. Calls: 0 WoC spent, 1 BB txo, 2 BB txo with the script,
-    // 3 WoC beef, 4 BB hex; status 0 is 200, 4 is 404.
-    let held = hex::encode(p2pkh([7; 20]));
-    let other = hex::encode(p2pkh([8; 20]));
-    let seed = |call: u8, status: u8, body: &str| {
-        let mut bytes = vec![call, status];
-        bytes.extend_from_slice(body.as_bytes());
+    // explorer_bodies: [reader, status, body], each reader's body valid,
+    // malformed and about another transaction. Readers: 0 WoC `/beef`, 1 BB
+    // `/hex`, 2 WoC chain index, 3 Bitails chain index, 4 BB chain index;
+    // status 0 is 200. The txid asked is `control`'s.
+    let seed = |reader: u8, body: &[u8]| {
+        let mut bytes = vec![reader, 0];
+        bytes.extend_from_slice(body);
         bytes
     };
-    let upper = child_id.to_uppercase();
-    write(
-        "explorer_bodies",
-        "woc-spent",
-        &seed(0, 0, &format!(r#"{{"txid":"{upper}","vin":0}}"#)),
-    );
-    write(
-        "explorer_bodies",
-        "woc-spent-no-txid",
-        &seed(0, 0, r#"{"vin":0}"#),
-    );
-    write("explorer_bodies", "woc-spent-404", &seed(0, 4, ""));
-    for (call, name) in [(1u8, "bb-txo"), (2u8, "bb-txo-script")] {
-        write(
-            "explorer_bodies",
-            &format!("{name}-spent"),
-            &seed(
-                call,
-                0,
-                &format!(
-                    r#"{{"script_pubkey":"{held}","spent":true,"spent_txid":"{child_id}","spend_scope":"mempool"}}"#
-                ),
-            ),
-        );
-        write(
-            "explorer_bodies",
-            &format!("{name}-unspent"),
-            &seed(
-                call,
-                0,
-                &format!(r#"{{"script_pubkey":"{held}","spent":false}}"#),
-            ),
-        );
-        write(
-            "explorer_bodies",
-            &format!("{name}-other-script"),
-            &seed(
-                call,
-                0,
-                &format!(r#"{{"script_pubkey":"{other}","spent":true,"spent_txid":"{child_id}"}}"#),
-            ),
-        );
-        write(
-            "explorer_bodies",
-            &format!("{name}-empty-script"),
-            &seed(call, 0, r#"{"script_pubkey":"","spent":false}"#),
+    let explorer = |name: &str, reader: u8, body: &[u8]| {
+        write("explorer_bodies", name, &seed(reader, body));
+    };
+    explorer("woc-beef", 0, hex::encode(&proven).as_bytes());
+    explorer("woc-beef-not-hex", 0, b"{\"error\":\"not found\"}");
+    explorer("woc-beef-other-tx", 0, hex::encode(&atomic).as_bytes());
+    explorer("bb-hex", 1, hex::encode(&control).as_bytes());
+    explorer("bb-hex-not-hex", 1, b"zz");
+    explorer("bb-hex-other-tx", 1, hex::encode(&child).as_bytes());
+    let block = "00".repeat(31) + "01";
+    for (reader, name, mined, unmined) in [
+        (
+            2u8,
+            "woc-index",
+            format!(r#"{{"txid":"{control_id}","confirmations":3}}"#),
+            format!(r#"{{"txid":"{control_id}","confirmations":0}}"#),
+        ),
+        (
+            3u8,
+            "bitails-index",
+            format!(r#"{{"txid":"{control_id}","blockHeight":900000}}"#),
+            format!(r#"{{"txid":"{control_id}"}}"#),
+        ),
+        (
+            4u8,
+            "bb-index",
+            format!(r#"{{"txid":"{control_id}","block_hash":"{block}","block_height":900000}}"#),
+            format!(r#"{{"txid":"{control_id}"}}"#),
+        ),
+    ] {
+        explorer(&format!("{name}-mined"), reader, mined.as_bytes());
+        explorer(&format!("{name}-unmined"), reader, unmined.as_bytes());
+        explorer(&format!("{name}-malformed"), reader, b"{\"txid\":");
+        explorer(
+            &format!("{name}-other-tx"),
+            reader,
+            mined.replace(&control_id, &child_id).as_bytes(),
         );
     }
-    write(
-        "explorer_bodies",
-        "woc-beef",
-        &seed(3, 0, &hex::encode(&proven)),
-    );
-    write(
-        "explorer_bodies",
-        "bb-hex",
-        &seed(4, 0, &hex::encode(&control)),
-    );
 
     // brc29_remittance: structured input (arbitrary); seeds are the e2e
     // derivation strings as bytes, for the fuzzer to cut from.
