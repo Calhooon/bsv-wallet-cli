@@ -1903,9 +1903,15 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// An existing dead row is stored only when the replay ends `mined` with
 /// no check fault; otherwise its word and inputs stand. A service outage
 /// waits for the next pass without a fault; a failed proof names the row
-/// in the report. Its verdict remains history: replaying it after the
-/// proof leaves `mined` with `Reask::Recheck`. The tick does not load an
-/// unchanged mined row, so that re-ask does not fetch on every pass.
+/// in the report. New creators are selected before dead rows, so a dead
+/// row whose proof keeps failing is reported again every pass, bounded by
+/// the limit and after every new creator, and never holds one back. Its
+/// verdict remains history: replaying it after the proof leaves `mined`
+/// with `Reask::Recheck`. The tick does not load an unchanged mined row,
+/// so that re-ask does not fetch on every pass; on a tick whose header
+/// moved at or below the row's height the row is loaded and asked once
+/// (one header read, one merkle path), as any mined row with a verdict
+/// is, and its served re-ask reads `recheck` for good.
 /// The toolbox's own rows are never written. The stack's wallet charter,
 /// section 1: about a transaction the wallet believes only the tracker's
 /// word, and each action hosts one tracker state.
@@ -1933,7 +1939,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                                   AND s.bump IS NULL)) \
            AND EXISTS (SELECT 1 FROM outputs o \
                        WHERE o.transaction_id = t.transaction_id AND o.spent_by IS NULL) \
-         GROUP BY lower(t.txid) ORDER BY MIN(t.transaction_id) LIMIT ?",
+         GROUP BY lower(t.txid) ORDER BY (s.txid IS NOT NULL), MIN(t.transaction_id) LIMIT ?",
     )
     .bind(MAX_ADOPT_PER_PASS as i64)
     .fetch_all(storage.pool())
