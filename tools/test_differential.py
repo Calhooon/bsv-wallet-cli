@@ -12,13 +12,17 @@ The standard library only, like the tool.
 
 import importlib.machinery
 import importlib.util
+from contextlib import ExitStack
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # The tool has no .py name; loading it must leave no __pycache__ in tools/.
 sys.dont_write_bytecode = True
@@ -396,6 +400,171 @@ class StubCounts(unittest.TestCase):
         self.assertEqual(count, 1, lines)
         self.assertIn("the stub's calls at the phase's end", lines[1])
         self.assertIn(".calls.woc", lines[1])
+
+
+class RunIsolation(unittest.TestCase):
+    """#192: another run owns its scratch paths and its listening ports."""
+
+    def test_chosen_ports_are_distinct_off_registry_and_held_ports(self):
+        with ExitStack() as stack:
+            held = set()
+            for _ in range(5):
+                sock = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+                sock.bind(("127.0.0.1", 0))
+                sock.listen()
+                held.add(sock.getsockname()[1])
+            ports = D.choose_ports()
+            chosen = set(map(int, ports.values()))
+            self.assertEqual(list(ports), list(D.PORT_SEATS))
+            self.assertEqual(len(chosen), 5)
+            self.assertFalse(chosen & D.FORBIDDEN_PORTS)
+            self.assertFalse(chosen & held)
+
+    def test_chooser_retries_registry_duplicate_and_answering_ports(self):
+        candidates = iter([3320, 50100, 50100, 50101, 50102, 50103, 50104, 50105])
+        sock = mock.MagicMock()
+        sock.__enter__.return_value = sock
+        sock.getsockname.side_effect = lambda: ("127.0.0.1", next(candidates))
+
+        def connect(address, **kwargs):
+            self.assertNotIn(address[1], D.FORBIDDEN_PORTS)
+            if address[1] == 50101:
+                return mock.MagicMock()
+            raise ConnectionRefusedError()
+
+        with mock.patch.object(D.socket, "socket", return_value=sock), \
+                mock.patch.object(D.socket, "create_connection", side_effect=connect):
+            self.assertEqual(list(D.choose_ports().values()), ["50100", "50102", "50103", "50104", "50105"])
+        self.assertEqual(sock.bind.call_args_list, [mock.call(("127.0.0.1", 0))] * 8)
+
+    def test_output_paths_in_the_same_second_have_random_suffixes(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(D, "scratch_root", return_value=Path(tmp) / "scratch"), \
+                mock.patch.object(D.time, "strftime", return_value="run-20261026T010203-"):
+            a, b = D.default_out(), D.default_out()
+            self.assertNotEqual(a, b)
+            for path in (a, b):
+                self.assertTrue(path.is_dir())
+                self.assertTrue(path.name.startswith("run-20261026T010203-"))
+                self.assertGreater(len(path.name), len("run-20261026T010203-"))
+
+    def test_second_base_cleanup_preserves_the_first_worktree(self):
+        sha = "a" * 40
+        trees, targets, removed = [], [], []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(cmd, **kwargs):
+                tree = Path(cmd[-2] if cmd[2] == "add" else cmd[-1])
+                if cmd[2] == "add":
+                    (tree / "owned").write_text("this run")
+                else:
+                    removed.append(tree)
+                    shutil.rmtree(tree)
+
+            def build(tree, target):
+                trees.append(tree)
+                targets.append(target)
+                self.assertTrue((tree / "owned").is_file())
+                self.assertTrue(tree.name.startswith(f"base-{sha[:12]}-"))
+                self.assertGreater(len(tree.name), len(f"base-{sha[:12]}-"))
+                if len(trees) == 1:
+                    D.build_base("same-rev")
+                    self.assertTrue((tree / "owned").is_file())
+                    self.assertFalse(trees[1].exists())
+                return target / "release" / "bsv-wallet"
+
+            with mock.patch.object(D, "scratch_root", return_value=root), \
+                    mock.patch.object(D.subprocess, "run", return_value=mock.Mock(stdout=sha)), \
+                    mock.patch.object(D, "run", side_effect=git), \
+                    mock.patch.object(D, "build", side_effect=build):
+                D.build_base("same-rev")
+            self.assertNotEqual(*trees)
+            self.assertEqual(removed, list(reversed(trees)))
+            self.assertEqual(targets, [root / f"target-base-{sha[:12]}"] * 2)
+            self.assertFalse(any(tree.exists() for tree in trees))
+
+    def test_failed_base_build_removes_only_its_worktree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            other = root / ("base-" + "a" * 12)
+            other.mkdir()
+            (other / "owned").write_text("another run")
+
+            def git(cmd, **kwargs):
+                if cmd[2] == "remove":
+                    shutil.rmtree(cmd[-1])
+
+            with mock.patch.object(D, "scratch_root", return_value=root), \
+                    mock.patch.object(D.subprocess, "run", return_value=mock.Mock(stdout="a" * 40)), \
+                    mock.patch.object(D, "run", side_effect=git), \
+                    mock.patch.object(D, "build", side_effect=D.Failure("planted build failure")):
+                with self.assertRaisesRegex(D.Failure, "planted build failure"):
+                    D.build_base("same-rev", root / "explicit-target")
+            self.assertEqual(list(root.iterdir()), [other])
+            self.assertTrue((other / "owned").is_file())
+
+    def test_explicit_ports_refuse_each_registry_port_by_name_before_building(self):
+        for index, name in enumerate(D.PORT_SEATS):
+            for port in D.FORBIDDEN_PORTS:
+                values = [3370, 3371, 3372, 3373, 3380]
+                values[index] = port
+                with self.subTest(name=name, port=port):
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/differential"), "--ports", ",".join(map(str, values))],
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{name} port {port} belongs to the registry", result.stderr)
+                    self.assertNotIn("+ cargo", result.stderr)
+
+    def test_explicit_ports_keep_the_requested_order_and_validate_shape(self):
+        self.assertEqual(list(D.parse_ports("3370,3371,3372,3373,3380").values()),
+                         ["3370", "3371", "3372", "3373", "3380"])
+        for invalid in ("1,2,3,4", "1,2,3,4,5,6", "a,2,3,4,5", "1,2,3,4,4", "0,2,3,4,5", "65536,2,3,4,5"):
+            with self.subTest(invalid=invalid), self.assertRaises(D.argparse.ArgumentTypeError):
+                D.parse_ports(invalid)
+
+
+class RecordedPorts(unittest.TestCase):
+    """#192: --compare across invocations renames only recorded run ports."""
+
+    def at_ports(self, start):
+        ports = dict(zip(D.PORT_SEATS, map(str, range(start, start + 5))))
+        events = recording({"ok": True})
+        for event in events:
+            if event["kind"] == "wallet":
+                name = next(name for name, seat in D.PORT_SEATS.items() if seat == event["seat"])
+                event["port"] = int(ports[name])
+        events[-1]["argv"] += ["--port", ports["WALLET_A_PORT"], "--url", f"http://localhost:{start}/isAuthenticated"]
+        events[-1]["stdout"] = json.dumps({"stub": f"http://127.0.0.1:{start + 4}/arc", "amount": 50000})
+        return [{"kind": "ports", "seq": -1, "phase": "setup", "ports": ports}] + events
+
+    def test_separate_runs_compare_equal_with_different_ports(self):
+        a, b = self.at_ports(50000), self.at_ports(51000)
+        code, out = run_compare(a, b)
+        self.assertEqual(code, 0, out)
+        self.assertIn("DIFFERENTIAL: 0 differences", out)
+        self.assertTrue(any("wallet.port" in field for field, _ in D.EXCLUSIONS))
+
+    def test_planted_amount_and_unknown_url_ports_stay_compared(self):
+        a, b = self.at_ports(50000), self.at_ports(51000)
+        b[-1]["stdout"] = json.dumps({"stub": "http://127.0.0.1:51004/arc", "amount": 51000})
+        lines, count = compare(a, b)
+        self.assertEqual(count, 1, lines)
+        self.assertIn("amount", lines[1])
+        for events, port in ((a, 52000), (b, 52001)):
+            events[-1]["stdout"] = f"http://localhost:{port}/unexpected"
+        lines, count = compare(a, b)
+        self.assertEqual(count, 1, lines)
+        self.assertIn("52000", lines[1])
+        self.assertIn("52001", lines[1])
+
+    def test_legacy_recordings_name_wallet_ports_without_metadata(self):
+        a, b = self.at_ports(50000)[1:], self.at_ports(51000)[1:]
+        a[-1]["stdout"] = b[-1]["stdout"] = "1000\n"
+        lines, count = compare(a, b)
+        self.assertEqual(count, 0, lines)
 
 
 def plant_sighash(events, old=0x41, new=0xC1):
