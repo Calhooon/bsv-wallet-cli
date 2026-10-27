@@ -206,24 +206,44 @@ pub fn arcade_mode_enabled() -> bool {
     !matches!(arc_mode_from_env(), Ok(ArcMode::Classic))
 }
 
+/// What a testnet wallet in Arcade mode without `ARC_URL` is told.
+pub const NO_TESTNET_ARCADE_DEFAULT: &str =
+    "no testnet Arcade default; set ARC_URL (or ARC_MODE=classic, deprecated)";
+
+/// The Arcade endpoint for `chain` from `ARC_URL` (blank is unset).
+///
+/// Unset on mainnet is [`ARCADE_V2_MAINNET`]. Unset on testnet is refused
+/// by name: the toolbox has no testnet Arcade, and a testnet wallet must
+/// never post to mainnet Arcade, nor fall back to classic ARC (#300). The
+/// broadcast verifier reads its plane through this same rule.
+pub fn arcade_url_for(chain: Chain, arc_url: Option<&str>) -> Result<String> {
+    match (arc_url.map(str::trim).filter(|s| !s.is_empty()), chain) {
+        (Some(url), _) => Ok(url.to_string()),
+        (None, Chain::Main) => Ok(ARCADE_V2_MAINNET.to_string()),
+        (None, Chain::Test) => anyhow::bail!("{NO_TESTNET_ARCADE_DEFAULT}"),
+    }
+}
+
 /// Resolve the Arcade runtime settings, or `None` in classic mode.
 ///
 /// `db_path` locates the persisted per-wallet callback token
 /// (`<db>.callback-token`), giving each wallet db/port its own independent
-/// SSE stream and webhook identity. A mode [`arc_mode_for`] refuses is an
-/// error here too.
-pub fn arcade_runtime(db_path: &str) -> Result<Option<ArcadeRuntime>> {
-    arcade_runtime_with(db_path, &process_env)
+/// SSE stream and webhook identity. A mode [`arc_mode_for`] refuses, or a
+/// testnet wallet without `ARC_URL` ([`arcade_url_for`]), is an error here
+/// too.
+pub fn arcade_runtime(chain: Chain, db_path: &str) -> Result<Option<ArcadeRuntime>> {
+    arcade_runtime_with(chain, db_path, &process_env)
 }
 
 fn arcade_runtime_with(
+    chain: Chain,
     db_path: &str,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Option<ArcadeRuntime>> {
     if arc_mode_with(env)? == ArcMode::Classic {
         return Ok(None);
     }
-    let url = env("ARC_URL").unwrap_or_else(|| ARCADE_V2_MAINNET.to_string());
+    let url = arcade_url_for(chain, env("ARC_URL").as_deref())?;
     let callback_token = resolve_callback_token(db_path, env)?;
     let public_callback_url = env("PUBLIC_CALLBACK_URL").filter(|s| !s.is_empty());
     Ok(Some(ArcadeRuntime {
@@ -292,8 +312,9 @@ pub fn callback_token_path(db_path: &str) -> PathBuf {
 }
 
 /// What a wallet in Arcade mode is told, once, when a TAAL key is set.
-pub const TAAL_KEY_UNUSED_WARNING: &str = "is set but no classic ARC rung runs: the owner's \
-     word of 2026-10-27; remove the knob";
+pub const TAAL_KEY_UNUSED_WARNING: &str = "is set but unused in Arcade mode (arc is just \
+     deprecated, arcade is the standard); the toolbox's TAAL provider posts unauthenticated \
+     until toolbox #317; remove the knob";
 
 /// The postBeef ladder the toolbox builds from `opts`, in order, by its
 /// provider names: the rule of `Services::with_options` in toolbox 0.13.1
@@ -387,12 +408,13 @@ fn services_options_with(
     let taal_api_key = env("TAAL_API_KEY").filter(|k| !k.is_empty());
     let main_taal_api_key = env("MAIN_TAAL_API_KEY").filter(|k| !k.is_empty());
 
-    if let Some(runtime) = arcade_runtime_with(db_path, env)? {
+    if let Some(runtime) = arcade_runtime_with(chain, db_path, env)? {
         // Arcade V2 mode: explicit flag on ServicesOptions (never inferred
-        // from the URL). No classic ARC config is passed: no classic ARC rung
-        // runs by the owner's word. The toolbox still registers its TAAL
-        // provider behind Arcade (services.rs 660-673), posting
-        // unauthenticated, until toolbox #317 drops it.
+        // from the URL). The TAAL keys are unused in Arcade mode (arc is just
+        // deprecated, arcade is the standard): no classic ARC config is
+        // passed. The toolbox's TAAL provider still sits behind Arcade
+        // (services.rs 660-673) and posts unauthenticated until toolbox #317
+        // drops it.
         static TAAL_UNUSED: Once = Once::new();
         TAAL_UNUSED.call_once(|| {
             for (name, value) in [
@@ -620,7 +642,12 @@ mod tests {
     fn gorillapool_arc_is_never_a_rung() {
         assert!(ServicesOptions::mainnet().arc_gorillapool_url.is_some());
         for chain in [Chain::Main, Chain::Test] {
-            for pairs in [&[][..], &[("ARC_MODE", "classic")][..]] {
+            // A testnet wallet in Arcade mode names its endpoint.
+            let arcade: &[(&str, &str)] = match chain {
+                Chain::Main => &[],
+                Chain::Test => &[("ARC_URL", "https://arcade-test.invalid")],
+            };
+            for pairs in [arcade, &[("ARC_MODE", "classic")][..]] {
                 let opts = built(chain, pairs).unwrap();
                 assert_eq!(opts.arc_gorillapool_url, None, "{chain:?} {pairs:?}");
             }
@@ -673,6 +700,51 @@ mod tests {
         .unwrap();
         assert!(!classic.arcade_v2);
         assert_eq!(classic.arc_url, "https://arc.invalid");
+    }
+
+    #[test]
+    fn a_blank_arc_url_is_the_arcade_default() {
+        for blank in ["", "  "] {
+            let opts = built(Chain::Main, &[("ARC_URL", blank)]).unwrap();
+            assert!(opts.arcade_v2, "{blank:?}");
+            assert_eq!(opts.arc_url, ARCADE_V2_MAINNET, "{blank:?}");
+            assert_eq!(post_beef_ladder(&opts)[0], PROVIDER_ARCADE_V2, "{blank:?}");
+        }
+        assert_eq!(
+            arcade_url_for(Chain::Main, Some(" ")).unwrap(),
+            ARCADE_V2_MAINNET
+        );
+    }
+
+    #[test]
+    fn testnet_arcade_without_arc_url_is_refused_by_name() {
+        for pairs in [
+            &[][..],
+            &[("ARC_URL", " ")][..],
+            &[("ARC_MODE", "arcade")][..],
+        ] {
+            let err = built(Chain::Test, pairs).unwrap_err().to_string();
+            assert_eq!(err, NO_TESTNET_ARCADE_DEFAULT, "{pairs:?}");
+        }
+        assert_eq!(
+            arcade_url_for(Chain::Test, None).unwrap_err().to_string(),
+            "no testnet Arcade default; set ARC_URL (or ARC_MODE=classic, deprecated)"
+        );
+        // ARC_URL set: it runs, on that endpoint, Arcade first.
+        let opts = built(Chain::Test, &[("ARC_URL", "https://arcade-test.invalid")]).unwrap();
+        assert!(opts.arcade_v2);
+        assert_eq!(opts.arc_url, "https://arcade-test.invalid");
+        // The deprecated classic knob is the chain's TAAL testnet ARC.
+        let opts = built(Chain::Test, &[("ARC_MODE", "classic")]).unwrap();
+        assert!(!opts.arcade_v2);
+        assert_eq!(opts.arc_url, "https://arc-test.taal.com");
+    }
+
+    #[test]
+    fn the_taal_warning_names_the_provider_that_still_posts() {
+        assert!(TAAL_KEY_UNUSED_WARNING.contains("arc is just deprecated, arcade is the standard"));
+        assert!(TAAL_KEY_UNUSED_WARNING.contains("toolbox #317"));
+        assert!(!TAAL_KEY_UNUSED_WARNING.contains("no classic ARC rung runs"));
     }
 
     #[test]

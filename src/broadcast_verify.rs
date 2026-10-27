@@ -93,9 +93,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::{
-    services::{providers::BananaBlocks, ARCADE_V2_MAINNET},
-    BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
-    PROVIDER_ARCADE_V2,
+    services::providers::BananaBlocks, BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN,
+    BROADCAST_PROVIDER_NETWORK, PROVIDER_ARCADE_V2,
 };
 use reqwest::Client;
 
@@ -427,22 +426,24 @@ impl BroadcastPlane {
     ///
     /// `arcade_mode` and `arc_url` are read from the same env vars that
     /// `services_env` reads, so the verifier cannot drift from the broadcaster.
-    fn resolve(chain: Chain, arcade_mode: bool, arc_url: Option<String>) -> Self {
+    /// The Arcade endpoint is `services_env::arcade_url_for`'s: a testnet
+    /// wallet without `ARC_URL` is refused, never probed on mainnet Arcade.
+    fn resolve(chain: Chain, arcade_mode: bool, arc_url: Option<String>) -> anyhow::Result<Self> {
+        if arcade_mode {
+            let url = crate::services_env::arcade_url_for(chain, arc_url.as_deref())?;
+            return Ok(BroadcastPlane::ArcadeV2 {
+                base: normalize_base(&url),
+            });
+        }
         let arc_url = arc_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        if arcade_mode {
-            BroadcastPlane::ArcadeV2 {
-                base: normalize_base(&arc_url.unwrap_or_else(|| ARCADE_V2_MAINNET.to_string())),
-            }
-        } else {
-            BroadcastPlane::ClassicArc {
-                base: normalize_base(&arc_url.unwrap_or_else(|| taal_arc_url(chain).to_string())),
-            }
-        }
+        Ok(BroadcastPlane::ClassicArc {
+            base: normalize_base(&arc_url.unwrap_or_else(|| taal_arc_url(chain).to_string())),
+        })
     }
 
-    fn from_env(chain: Chain) -> Self {
+    fn from_env(chain: Chain) -> anyhow::Result<Self> {
         Self::resolve(
             chain,
             crate::services_env::arcade_mode_enabled(),
@@ -656,16 +657,28 @@ impl BroadcastVerifier {
                     .filter(|k| !k.is_empty())
             });
 
-        let plane = BroadcastPlane::from_env(chain);
-        tracing::debug!(plane = ?plane, "broadcast verifier plane");
         let bananablocks = crate::explorers::Explorers::from_env(chain)
             .bananablocks()
             .cloned();
         let bananablocks_base = bananablocks.as_ref().map(|bb| bb.base_url().to_string());
+        // A plane the services builder refuses (a testnet wallet in Arcade
+        // mode without ARC_URL) is refused here too: no source is probed and
+        // every verdict is `Inconclusive`, the fail-safe direction.
+        let (sources, enabled) = match BroadcastPlane::from_env(chain) {
+            Ok(plane) => {
+                tracing::debug!(plane = ?plane, "broadcast verifier plane");
+                let sources = build_sources(chain, &plane, taal_key, bananablocks_base.as_deref());
+                (sources, enabled)
+            }
+            Err(e) => {
+                tracing::warn!("broadcast verifier off: {e}");
+                (Vec::new(), false)
+            }
+        };
 
         Self {
             client: Client::new(),
-            sources: build_sources(chain, &plane, taal_key, bananablocks_base.as_deref()),
+            sources,
             attempts,
             delay: Duration::from_millis(delay_ms),
             enabled,
@@ -1241,6 +1254,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::get;
     use axum::Router;
+    use bsv_wallet_toolbox::services::ARCADE_V2_MAINNET;
     use std::net::SocketAddr;
 
     // ---- synthetic values only (never a real txid / URL from any wallet) ----
@@ -1280,7 +1294,8 @@ mod tests {
             Chain::Main,
             /* arcade_mode */ true,
             Some(SYNTHETIC_ARCADE.to_string()),
-        );
+        )
+        .unwrap();
         assert_eq!(
             plane.status_template(),
             format!("{SYNTHETIC_ARCADE}/tx/{{txid}}")
@@ -1298,7 +1313,8 @@ mod tests {
             Chain::Main,
             /* arcade_mode */ false,
             Some(SYNTHETIC_ARC.to_string()),
-        );
+        )
+        .unwrap();
         assert_eq!(
             plane.status_template(),
             format!("{SYNTHETIC_ARC}/v1/tx/{{txid}}")
@@ -1308,25 +1324,45 @@ mod tests {
 
     #[test]
     fn arcade_mode_defaults_to_the_arcade_endpoint_when_arc_url_is_unset() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, None);
+        let plane = BroadcastPlane::resolve(Chain::Main, true, None).unwrap();
         assert_eq!(plane.base(), ARCADE_V2_MAINNET.trim_end_matches('/'));
     }
 
     #[test]
     fn classic_mode_defaults_to_taal_and_respects_chain() {
         assert_eq!(
-            BroadcastPlane::resolve(Chain::Main, false, None).base(),
+            BroadcastPlane::resolve(Chain::Main, false, None)
+                .unwrap()
+                .base(),
             "https://arc.taal.com"
         );
         assert_eq!(
-            BroadcastPlane::resolve(Chain::Test, false, None).base(),
+            BroadcastPlane::resolve(Chain::Test, false, None)
+                .unwrap()
+                .base(),
             "https://arc-test.taal.com"
         );
     }
 
     #[test]
+    fn a_testnet_arcade_plane_without_arc_url_is_refused_never_mainnet() {
+        for unset in [None, Some(String::new()), Some("  ".to_string())] {
+            let err = BroadcastPlane::resolve(Chain::Test, true, unset.clone()).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                crate::services_env::NO_TESTNET_ARCADE_DEFAULT,
+                "{unset:?}"
+            );
+        }
+        let plane =
+            BroadcastPlane::resolve(Chain::Test, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
+        assert_eq!(plane.base(), SYNTHETIC_ARCADE);
+        assert_eq!(plane.kind(), SourceKind::Arcade);
+    }
+
+    #[test]
     fn empty_arc_url_falls_back_to_the_default_rather_than_an_empty_base() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some("   ".to_string()));
+        let plane = BroadcastPlane::resolve(Chain::Main, true, Some("   ".to_string())).unwrap();
         assert_eq!(plane.base(), ARCADE_V2_MAINNET.trim_end_matches('/'));
     }
 
@@ -1336,7 +1372,8 @@ mod tests {
             Chain::Main,
             true,
             Some(format!("{SYNTHETIC_ARCADE}/").to_string()),
-        );
+        )
+        .unwrap();
         assert_eq!(
             plane.status_template(),
             format!("{SYNTHETIC_ARCADE}/tx/{{txid}}")
@@ -1348,8 +1385,8 @@ mod tests {
         // This is the whole point of the fix: the plane that actually holds the
         // answer must be asked FIRST, in both modes.
         for plane in [
-            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())),
-            BroadcastPlane::resolve(Chain::Main, false, Some(SYNTHETIC_ARC.to_string())),
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap(),
+            BroadcastPlane::resolve(Chain::Main, false, Some(SYNTHETIC_ARC.to_string())).unwrap(),
         ] {
             let sources = build_sources(Chain::Main, &plane, None, None);
             assert_eq!(sources[0].absence, AbsenceAuthority::Broadcaster);
@@ -1365,14 +1402,15 @@ mod tests {
 
     #[test]
     fn arcade_broadcaster_probe_is_keyless_even_when_a_taal_key_exists() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let plane =
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
         let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         assert!(sources[0].auth.is_none());
     }
 
     #[test]
     fn classic_broadcaster_probe_carries_the_taal_key_when_present() {
-        let plane = BroadcastPlane::resolve(Chain::Main, false, None);
+        let plane = BroadcastPlane::resolve(Chain::Main, false, None).unwrap();
         let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         assert_eq!(sources[0].auth.as_deref(), Some(SYNTHETIC_KEY));
     }
@@ -1380,7 +1418,8 @@ mod tests {
     #[test]
     fn keyless_taal_is_not_probed_at_all() {
         // Without a key TAAL answers 401 → Unknown: pure latency, zero signal.
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let plane =
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
         let sources = build_sources(Chain::Main, &plane, None, None);
         assert!(!sources.iter().any(|s| s.name == "arc-taal"));
     }
@@ -1393,7 +1432,8 @@ mod tests {
             Chain::Main,
             false,
             Some("https://arc.gorillapool.io".to_string()),
-        );
+        )
+        .unwrap();
         let sources = build_sources(Chain::Main, &plane, None, None);
         let gp_rows: Vec<_> = sources
             .iter()
@@ -1413,7 +1453,8 @@ mod tests {
         // It is a submission-scoped metamorph store, not a chain index: when we
         // broadcast through Arcade, its 404 is the EXPECTED answer and carries
         // no information. Marking it authoritative caused false "funds not sent".
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let plane =
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
         let sources = build_sources(Chain::Main, &plane, Some(SYNTHETIC_KEY.to_string()), None);
         for s in sources.iter().filter(|s| s.name.starts_with("arc-")) {
             assert_eq!(
@@ -1427,7 +1468,8 @@ mod tests {
 
     #[test]
     fn whatsonchain_is_the_chain_index_authority() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let plane =
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
         let sources = build_sources(Chain::Main, &plane, None, None);
         let woc = sources.iter().find(|s| s.name == "whatsonchain").unwrap();
         assert_eq!(woc.absence, AbsenceAuthority::ChainIndex);
@@ -2197,7 +2239,8 @@ mod tests {
     /// base: WhatsOnChain alone.
     #[test]
     fn bitails_is_a_second_chain_index() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string()));
+        let plane =
+            BroadcastPlane::resolve(Chain::Main, true, Some(SYNTHETIC_ARCADE.to_string())).unwrap();
         let sources = build_sources(Chain::Main, &plane, None, None);
         let indexes: Vec<_> = sources
             .iter()
@@ -2270,7 +2313,7 @@ mod tests {
     /// through the toolbox's provider, and left out when it is off.
     #[test]
     fn bananablocks_is_the_third_chain_index_when_on() {
-        let plane = BroadcastPlane::resolve(Chain::Main, true, None);
+        let plane = BroadcastPlane::resolve(Chain::Main, true, None).unwrap();
         let on = build_sources(
             Chain::Main,
             &plane,

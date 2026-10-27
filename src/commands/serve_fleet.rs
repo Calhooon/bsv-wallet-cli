@@ -165,7 +165,7 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
         }),
         _ => None,
     };
-    let callback_token = crate::services_env::arcade_runtime(&ctx.db_path)?
+    let callback_token = crate::services_env::arcade_runtime(ctx.chain, &ctx.db_path)?
         .map(|rt| rt.callback_token)
         .or_else(|| {
             std::env::var("CALLBACK_TOKEN")
@@ -273,10 +273,12 @@ pub async fn run(specs: &[String], testnet: bool, daemon: bool) -> Result<()> {
     for (ctx, port) in tenants {
         let config = tenant_config(&ctx)?;
         let db_path = ctx.db_path.clone();
+        let chain = ctx.chain;
         let state = server::make_wallet_state(ctx.wallet);
         // Bare serve has no monitor: each tenant gets its own served loop
         // (the SSE drain, the tracker's pass, the sweep; every 60 s).
-        let reconcile = crate::broadcast_reconcile::spawn_serve_loop(state.clone(), &db_path);
+        let reconcile =
+            crate::broadcast_reconcile::spawn_serve_loop(state.clone(), chain, &db_path);
         let tx = tx.clone();
         tokio::spawn(async move {
             let res = server::run(state, port, config).await;

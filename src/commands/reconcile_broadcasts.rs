@@ -14,7 +14,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
     let opts = ReconcileOptions::for_command(
         execute,
         max_probes,
-        broadcast_reconcile::arcade_sse_for(&ctx.db_path),
+        broadcast_reconcile::arcade_sse_for(ctx.chain, &ctx.db_path),
     );
     println!(
         "Reconciling broadcasts{} (absence threshold {} min, up to {} probe(s){})...",

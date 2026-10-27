@@ -49,7 +49,7 @@ pub async fn start(db: &str, root_key_hex: &str, chain: Chain, port: u16) -> Res
         Ok(Services::with_options(chain, opts)?)
     };
 
-    let arcade_rt = services_env::arcade_runtime(db)?;
+    let arcade_rt = services_env::arcade_runtime(chain, db)?;
     if let Some(ref rt) = arcade_rt {
         eprintln!(
             "[{port}] Arcade V2 mode: {} (SSE status stream enabled)",
