@@ -84,6 +84,25 @@ The explorers ([src/services_env.rs](src/services_env.rs), 0.17.0):
 | `BITAILS_API_KEY` | Bitails key; optional |
 | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it; BananaBlocks takes no key and paces itself at 60 requests a minute |
 
+The broadcaster ([src/services_env.rs](src/services_env.rs), #300; the owner's
+word of 2026-10-27: "arc is old af... we use arcade now for everything"):
+
+| variable | effect |
+|---|---|
+| `ARC_MODE` | `arcade` by default (unset, or `arcade` in any case): Arcade V2, EF-only submits, its SSE status stream and push proofs. `classic` (any case) is the toolbox's classic ARC ladder, the one opt-out, kept for the hermetic stub until #299. Any other value is refused by name before any command runs |
+| `ARCADE` | the older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic, any other value refused by name |
+| `ARC_URL` | in Arcade mode the Arcade endpoint (default the toolbox's `ARCADE_V2_MAINNET`); in classic mode the ARC URL (default the chain's TAAL ARC) |
+| `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode no classic ARC rung runs, and a set key is logged once at warn as unused |
+
+The postBeef ladder is Arcade, then Bitails and WhatsOnChain. GorillaPool's
+ARC is never a rung, in either mode (the keeper's reading: a rung of no gate
+and no courier); BananaBlocks keeps its explorer rung, which is not ARC. Until
+toolbox #317 drops it, the toolbox still registers its classic TAAL provider
+behind Arcade, pointed at TAAL's ARC and posting unauthenticated. Classic mode
+is TAAL's ARC (or `ARC_URL`), then Bitails and WhatsOnChain. At start the
+services build logs the ladder once at info: marker `post_beef_ladder`, `mode`,
+`broadcaster`, `providers`.
+
 ## The chain-event feed
 
 `daemon` holds the header service's chain-event feed
