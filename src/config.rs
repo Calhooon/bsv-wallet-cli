@@ -40,11 +40,14 @@ mod read;
 mod seed_tests;
 #[cfg(test)]
 mod tests;
+mod words;
 
 pub use arc_mode::ArcMode;
 pub(crate) use knobs::url_or;
-pub use knobs::{shown_url, Knob, Value};
-pub(crate) use read::{Raw, Reader};
+pub use knobs::{Knob, Value};
+pub(crate) use read::Reader;
+pub(crate) use words::Raw;
+pub use words::{shown_url, ConfigError, Secret};
 
 /// The global flags the configuration takes, as [`Config::knobs`] names
 /// them.
@@ -60,36 +63,6 @@ fn environment() -> Vec<(String, String)> {
     std::env::vars_os()
         .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
         .collect()
-}
-
-/// A key or a token: its `Debug` and `Display` print `<set>`, so a log
-/// line, a panic or `bsv-wallet config` never carries it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
-
-impl Secret {
-    /// A secret holding `value`.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// The value itself, for the one place that sends it.
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<set>")
-    }
-}
-
-impl fmt::Display for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<set>")
-    }
 }
 
 /// Where a setting's effective value came from.
@@ -113,31 +86,6 @@ impl fmt::Display for Source {
         })
     }
 }
-
-/// A setting refused at start: the variable, the value it holds (a URL as
-/// [`shown_url`] shows it), and the shape it must have. Never built for a
-/// [`Secret`], whose value is not parsed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigError {
-    /// The variable's name.
-    pub variable: &'static str,
-    /// The value it holds (a URL's credentials `<set>`).
-    pub value: String,
-    /// The shape it must have.
-    pub expected: &'static str,
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} is {:?}, which is not {}: set it so, or unset it for the default",
-            self.variable, self.value, self.expected
-        )
-    }
-}
-
-impl std::error::Error for ConfigError {}
 
 /// Every setting refused at start, together: one line each.
 #[derive(Debug, Clone, PartialEq, Eq)]

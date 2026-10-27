@@ -12,7 +12,7 @@ use std::fmt;
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
 use serde::{Serialize, Serializer};
 
-use super::{ArcMode, Config, HeaderService, Secret, Source};
+use super::{shown_url, ArcMode, Config, HeaderService, Secret, Source};
 
 /// A setting's effective value, as the table shows it ([`fmt::Display`])
 /// and as the JSON carries it ([`Serialize`]).
@@ -74,39 +74,6 @@ pub struct Knob {
     /// value is then as set, and the setting reads as its default).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<&'static str>,
-}
-
-/// A URL as it may be shown: its userinfo and its query (or fragment) are
-/// `<set>`, its scheme, host, port and path as set. Read as text, so a
-/// value that does not parse is shown the same way (a credential in a URL
-/// is never printed, #80).
-#[must_use]
-pub fn shown_url(value: &str) -> String {
-    let (scheme, rest) = value
-        .split_once("://")
-        .map_or(("", value), |(scheme, rest)| (scheme, rest));
-    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
-    let mut shown = String::new();
-    if !scheme.is_empty() {
-        shown.push_str(scheme);
-        shown.push_str("://");
-    }
-    match authority.rfind('@') {
-        Some(at) => {
-            shown.push_str("<set>@");
-            shown.push_str(&authority[at + 1..]);
-        }
-        None => shown.push_str(authority),
-    }
-    match tail.find(['?', '#']) {
-        Some(q) => {
-            shown.push_str(&tail[..q]);
-            shown.push_str(&tail[q..=q]);
-            shown.push_str("<set>");
-        }
-        None => shown.push_str(tail),
-    }
-    shown
 }
 
 /// A secret as the knob list shows it, from its variable as set and the
