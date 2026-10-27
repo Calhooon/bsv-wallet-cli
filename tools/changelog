@@ -23,9 +23,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 FRAGMENT = re.compile(r"([0-9]+)(?:-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)?\.md")
-CONTAINER = re.compile(r"^ {0,3}(?:>[ \t]?|[-*+][ \t]+|[0-9]{1,9}[.)][ \t]+)")
-HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
-SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+CONTAINER = re.compile(r"^(?:>[ \t]?|[-*+][ \t]+|[0-9]{1,9}[.)][ \t]+)")
+SEPARATOR = re.compile(r"(?:=[ \t]*)+|(?:-[ \t]*)+")
 NUMBER = r"(?:0|[1-9][0-9]*)"
 PRE = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}(?:-{PRE}(?:\.{PRE})*)?"
@@ -45,13 +44,19 @@ def read_utf8(path):
 
 
 def has_heading(content):
-    previous = ""
+    """Apply one line rule, regardless of indentation or Markdown context.
+
+    Strip leading whitespace and repeated "> ", "- ", "* ", "+ ", or
+    "[0-9]{1,9}[.)] " prefixes. Refuse a leading # or a line of only = or
+    only -, with optional spaces between characters, anywhere in the fragment.
+    Fragments use inline backticks, never fenced or indented code blocks.
+    """
     for line in content.splitlines():
+        line = line.strip()
         while match := CONTAINER.match(line):
-            line = line[match.end():]
-        if HEADING.match(line) or (previous.strip() and SETEXT.fullmatch(line)):
+            line = line[match.end():].lstrip()
+        if line.startswith("#") or SEPARATOR.fullmatch(line):
             return True
-        previous = line
     return False
 
 
