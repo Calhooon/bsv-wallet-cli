@@ -678,6 +678,14 @@ impl TrackedRow {
         )
     }
 
+    /// One more ask that brought nothing: the next one waits a pause that
+    /// doubles with each ask, up to [`MAX_BACKOFF_DOUBLINGS`] times.
+    fn pause(&mut self, age_threshold: Timestamp, now: Timestamp) {
+        let pause = age_threshold.saturating_mul(1 << self.asks.min(MAX_BACKOFF_DOUBLINGS));
+        self.asks = self.asks.saturating_add(1);
+        self.next_ask_at = Some(now.saturating_add(pause));
+    }
+
     fn proof_height(&self) -> Option<Height> {
         self.proof()?.ok().map(|p| p.height())
     }
@@ -929,6 +937,20 @@ async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     now: Timestamp,
     settled_hash: Option<String>,
 ) -> Result<()> {
+    store_word_in(executor, None, row, state, now, settled_hash).await
+}
+
+/// [`store_row_in`], with `kept_word` written in place of the state's word:
+/// the dead word a failed check of the toolbox's proof leaves standing
+/// ([`adopt_proven`]).
+async fn store_word_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+    kept_word: Option<&str>,
+    row: &TrackedRow,
+    state: &State,
+    now: Timestamp,
+    settled_hash: Option<String>,
+) -> Result<()> {
     let (height, header_hash) = match state.word() {
         Word::Mined(mined) => (
             Some(mined.height() as i64),
@@ -953,7 +975,7 @@ async fn store_row_in<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     .bind(row.built as i64)
     .bind(serde_json::to_string(&row.hints)?)
     .bind(&row.bump)
-    .bind(word_label(state.word()))
+    .bind(kept_word.unwrap_or_else(|| word_label(state.word())))
     .bind(height)
     .bind(header_hash)
     .bind(state.reask().map(reask_label))
@@ -1640,11 +1662,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             row.next_ask_at = None;
             report.mined.push(txid.clone());
         } else {
-            let pause = opts
-                .age_threshold
-                .saturating_mul(1 << row.asks.min(MAX_BACKOFF_DOUBLINGS));
-            row.asks = row.asks.saturating_add(1);
-            row.next_ask_at = Some(now.saturating_add(pause));
+            row.pause(opts.age_threshold, now);
         }
     }
 
@@ -1951,37 +1969,65 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
          LEFT JOIN tracker_states s ON s.txid = lower(t.txid) \
          WHERE t.txid IS NOT NULL AND t.status = 'completed' \
            AND (s.txid IS NULL OR (s.word IN ('rejected', 'conflicted', 'abandoned') \
-                                  AND s.bump IS NULL)) \
+                                  AND s.bump IS NULL \
+                                  AND (s.next_ask_at IS NULL OR s.next_ask_at <= ? \
+                                       OR p.height >= ?))) \
            AND EXISTS (SELECT 1 FROM outputs o \
                        WHERE o.transaction_id = t.transaction_id AND o.spent_by IS NULL) \
          GROUP BY lower(t.txid) ORDER BY (s.txid IS NOT NULL), MIN(t.transaction_id) LIMIT ?",
     )
+    .bind(i64::try_from(now)?)
+    .bind(report.moved_from.map(i64::from))
     .bind(MAX_ADOPT_PER_PASS as i64)
     .fetch_all(storage.pool())
     .await?;
     let mut rows = Vec::with_capacity(found.len());
     for r in &found {
-        if let Some(row) = proven_row(storage, r, report).await? {
+        if let Some(row) = proven_row(storage, r).await? {
             rows.push(row);
         }
     }
     snapshot
         .extend(services, rows.iter().filter_map(TrackedRow::proof_height))
         .await;
-    for row in rows {
+    for mut row in rows {
         let (state, fault) = row.replay(params, &*snapshot);
-        if row.stored_word.is_some() && (fault.is_some() || !matches!(state.word(), Word::Mined(_)))
-        {
+        let parsed = row.bump.is_some();
+        let dead = row.stored_word.clone();
+        match (&fault, &dead) {
             // No answer from the service is no verdict on the stored proof.
-            if !matches!(fault, Some(CheckError::Headers(_))) {
+            (Some(CheckError::Headers(_)), Some(_)) => continue,
+            // Could not look: nothing is stored, the next pass looks again.
+            (Some(CheckError::Unavailable(_)), Some(_)) => {
                 report.faults.push(proof_stands(&row));
+                continue;
             }
+            (Some(fault @ (CheckError::Headers(_) | CheckError::Unavailable(_))), None) => {
+                report
+                    .faults
+                    .push(format!("{}: not adopted: {fault}", row.txid));
+                continue;
+            }
+            _ => {}
+        }
+        let mined = parsed && fault.is_none() && matches!(state.word(), Word::Mined(_));
+        if mined {
+            report.adopted_mined.push(row.txid.clone());
+            row.asks = 0;
+            row.next_ask_at = None;
+            store_row(storage, &row, &state, now).await?;
+            continue;
+        }
+        if let Some(word) = dead {
+            // The failed check is stored once; its dead word stands.
+            report.faults.push(proof_stands(&row));
+            row.bump = None;
+            row.pause(params.age_threshold, now);
+            let mut writer = crate::store::writer(storage).await?;
+            store_word_in(&mut *writer, Some(&word), &row, &state, now, None).await?;
             continue;
         }
         match fault {
-            None if matches!(state.word(), Word::Mined(_)) => {
-                report.adopted_mined.push(row.txid.clone());
-            }
             Some(CheckError::RootMismatch(_)) => {
                 tracing::warn!(
                     marker = "tracker_adopted_proof_failed",
@@ -1991,12 +2037,18 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                 );
                 report.adopted_proof_failed.push(row.txid.clone());
             }
-            // Could not look: nothing is adopted, the next pass looks again.
             Some(fault) => {
-                report
-                    .faults
-                    .push(format!("{}: not adopted: {fault}", row.txid));
-                continue;
+                row.bump = None;
+                report.faults.push(format!(
+                    "{}: the stored proof does not hold: {fault}; tracked without it",
+                    row.txid
+                ));
+            }
+            None if !parsed => {
+                report.faults.push(format!(
+                    "{}: the stored proof does not parse; tracked without it",
+                    row.txid
+                ));
             }
             None => {
                 report.faults.push(format!(
@@ -2012,12 +2064,12 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     Ok(())
 }
 
-/// Load a selected dead row intact, or build a newly adopted creator's row.
+/// Load a selected dead row intact, or build a newly adopted creator's row,
+/// its `bump` the toolbox's stored path, or none when that does not parse.
 /// The query's dead words are the list in `spend_gate::hold_reason`.
 async fn proven_row(
     storage: &StorageSqlx,
     found: &sqlx::sqlite::SqliteRow,
-    report: &mut TickReport,
 ) -> Result<Option<TrackedRow>> {
     let txid: String = found.get("txid");
     let mut row = if found.get::<Option<String>, _>("word").is_some() {
@@ -2032,18 +2084,10 @@ async fn proven_row(
         }
     };
     let path: Option<Vec<u8>> = found.get("merkle_path");
-    let Some(path) = path
+    row.bump = path
         .as_deref()
         .and_then(|bytes| MerklePath::from_binary(bytes).ok())
-    else {
-        report.faults.push(if row.stored_word.is_some() {
-            proof_stands(&row)
-        } else {
-            format!("{txid}: the stored proof does not parse; not adopted")
-        });
-        return Ok(None);
-    };
-    row.bump = Some(path.to_hex());
+        .map(|path| path.to_hex());
     Ok(Some(row))
 }
 
