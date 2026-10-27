@@ -10,6 +10,10 @@ fingerprint (#127): --check refuses a record whose fingerprint is not the
 tree's tool's; the same record (or one of an older schema) as --base warns and
 the check passes on the record alone; a re-record after a tool edit carries
 the new fingerprint; --record --schema-move rewrites an older schema's record.
+Working-copy instrument edits are refused before measuring; malformed
+fingerprints are named; a source edit keeps -dirty in the check's header.
+The CI shell also checks a changed instrument's tree with the base's tool,
+including a raise hidden by the PR's tool and the unchanged-instrument path.
 Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
@@ -87,11 +91,30 @@ class Tree:
         self.git("commit", "-q", "-m", msg)
 
     def run(self, toolchain, *args):
+        r = subprocess.run([sys.executable, "-B", os.path.join(self.root, "tools", "ratchet"), *args],
+                           cwd=self.root, env=self.env(toolchain), capture_output=True, text=True)
+        return r.returncode, (r.stdout + r.stderr).strip()
+
+    def env(self, toolchain):
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
                    STUB_RUSTC=toolchain[0], STUB_CLIPPY=toolchain[1],
                    STUB_LOG=os.path.join(self.bin, "measured"))
         env.pop("RUSTUP_TOOLCHAIN", None)
-        r = subprocess.run([sys.executable, "-B", os.path.join(self.root, "tools", "ratchet"), *args],
+        return env
+
+    def run_ci_step(self, rev):
+        """The workflow's actual shell, with the same stub toolchain as run()."""
+        with open(os.path.join(HERE, "..", ".github", "workflows", "ci.yml")) as f:
+            workflow = f.read()
+        step = workflow.split("      - name: No number above the base's record\n", 1)[1]
+        lines = step.split("        run: |\n", 1)[1].splitlines()
+        shell = []
+        for line in lines:
+            if line and not line.startswith("          "):
+                break
+            shell.append(line[10:])
+        env = dict(self.env(OLD), REV=rev, RUNNER_TEMP=self.bin)
+        r = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", "\n".join(shell)],
                            cwd=self.root, env=env, capture_output=True, text=True)
         return r.returncode, (r.stdout + r.stderr).strip()
 
@@ -360,7 +383,11 @@ class OlderRecordIsNamed(Case):
 TOOL_DIFFERS = (
     "ratchet: the tool differs from {}'s record (tools/ratchet or"
     " tools/ratchet.d/clippy.toml changed since it was recorded): re-record"
-    " in the commit that changes the tool, with the reason in its message"
+    " in its own commit after the tool's, in the same PR, with the reason in its message"
+)
+NO_INSTRUMENT = (
+    "ratchet: the tool differs from {}'s record (names no instrument (schema 2)): re-record"
+    " in its own commit after the tool's, in the same PR, with the reason in its message"
 )
 BASE_SKIPPED = (
     "::warning::ratchet: the base record {} was made by another tool{}:"
@@ -388,11 +415,31 @@ class TheToolIsFingerprinted(Case):
         self.note(code, out)
 
     def test_check_refuses_a_record_with_no_fingerprint(self):
-        self.tree.planted(tool=MISSING)
+        self.refused_instrument(MISSING)
+
+    def refused_instrument(self, tool):
+        before = self.tree.planted(tool=tool)
         code, out = self.tree.run(OLD, "--check")
         self.assertEqual(code, 1, out)
-        self.assertEqual(out, TOOL_DIFFERS.format(self.tree.record))
+        self.assertEqual(out, NO_INSTRUMENT.format(self.tree.record))
+        self.assertEqual(self.tree.bytes(), before)
+        self.assertNotIn("Traceback", out)
         self.note(code, out)
+
+    def test_check_names_a_null_instrument(self):
+        self.refused_instrument(None)
+
+    def test_check_names_a_non_object_instrument(self):
+        self.refused_instrument("sha256")
+
+    def test_check_names_an_instrument_without_clippy_toml(self):
+        self.refused_instrument({"ratchet": "0" * 64})
+
+    def test_check_names_an_instrument_with_a_non_string_hash(self):
+        self.refused_instrument(dict(OTHER_TOOL, ratchet=7))
+
+    def test_check_names_an_instrument_with_a_malformed_hash(self):
+        self.refused_instrument(dict(OTHER_TOOL, clippy_toml="not a sha256"))
 
     def test_a_tool_edit_without_a_re_record_fails_check(self):
         # The issue's exit test: a PR that edits the tool without re-recording.
@@ -427,16 +474,44 @@ class TheToolIsFingerprinted(Case):
         self.assertIn("ratchet: no number above the record", out)
         self.note(code, out)
 
-    def test_the_fingerprint_reads_head_not_the_working_copy(self):
-        self.tree.recorded(OLD)
-        with open(os.path.join(self.tree.root, "tools", "ratchet"), "a") as f:
-            f.write("# uncommitted\n")
-        code, out = self.tree.run(OLD)
+    def test_fingerprint_prints_heads_hashes_without_measuring(self):
+        code, out = self.tree.run(OLD, "--fingerprint")
         self.assertEqual(code, 0, out)
-        measured = json.loads(out)
-        self.assertEqual(measured["tool"], self.tree.json()["tool"])
-        self.assertTrue(measured["commit"].endswith("-dirty"))
-        self.note(code, measured["commit"][-6:])
+        self.assertEqual(json.loads(out), {
+            "ratchet": self.tree.sha("tools/ratchet"),
+            "clippy_toml": self.tree.sha("tools/ratchet.d/clippy.toml"),
+        })
+        self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def refused_working_copy(self, rel):
+        self.tree.recorded(OLD)
+        os.remove(os.path.join(self.tree.bin, "measured"))
+        with open(os.path.join(self.tree.root, rel), "a") as f:
+            f.write("# uncommitted\n")
+        for args in ((), ("--check",), ("--fingerprint",)):
+            with self.subTest(args=args):
+                code, out = self.tree.run(OLD, *args)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, f"ratchet: {rel} differs from HEAD:"
+                                 " commit or remove the instrument edit before measuring")
+                self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def test_fingerprint_refuses_an_uncommitted_tool_edit_before_measuring(self):
+        self.refused_working_copy("tools/ratchet")
+
+    def test_fingerprint_refuses_an_uncommitted_clippy_toml_edit_before_measuring(self):
+        self.refused_working_copy("tools/ratchet.d/clippy.toml")
+
+    def test_check_keeps_the_dirty_suffix_for_an_uncommitted_source_edit(self):
+        self.tree.recorded(OLD)
+        with open(os.path.join(self.tree.root, "src", "lib.rs"), "a") as f:
+            f.write("// uncommitted source\n")
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out.splitlines()[0], r"tree at [0-9a-f]{12}-dirty$")
+        self.note(code, out.splitlines()[0])
 
     def base_is_skipped(self, base, why):
         self.tree.recorded(OLD)
@@ -533,10 +608,12 @@ class SchemaMove(Case):
 
     def test_schema_move_with_no_move_is_refused(self):
         before = self.tree.recorded(OLD)
+        os.remove(os.path.join(self.tree.bin, "measured"))
         code, out = self.tree.run(OLD, "--record", "--schema-move")
         self.assertEqual(code, 1, out)
         self.assertEqual(out, f"ratchet: --schema-move, but {self.tree.record} is the tool's schema {SCHEMA}")
         self.assertEqual(self.tree.bytes(), before)
+        self.assertFalse(self.tree.measured())
         self.note(code, out)
 
     def test_schema_move_refuses_a_newer_schema(self):
@@ -552,6 +629,54 @@ class SchemaMove(Case):
         self.assertEqual(code, 2, out)
         self.assertIn("--schema-move needs --record", out)
         self.note(code, out)
+
+
+class BaseInstrumentGuards(Case):
+    def test_ci_measures_with_the_base_instrument_when_fingerprints_differ(self):
+        self.tree.recorded(OLD)
+        self.tree.git("tag", "case-base")
+        self.tree.edit_tool("tools/ratchet.d/clippy.toml")
+        self.tree.recorded(OLD)
+        code, out = self.tree.run_ci_step("case-base")
+        self.assertEqual(code, 0, out)
+        self.assertIn("checking the PR tree with case-base's instrument", out)
+        self.assertIn("::warning::ratchet: the base record", out)
+        self.assertEqual(out.count("ratchet: no number above the record"), 2, out)
+        self.assertFalse(any(name.startswith("ratchet-base.") for name in os.listdir(self.tree.bin)))
+        self.note(code, "both the base's instrument and the PR's instrument pass")
+
+    def test_ci_base_instrument_rejects_a_raise_hidden_by_the_pr_instrument(self):
+        self.tree.recorded(OLD)
+        self.tree.git("tag", "case-base")
+        tool = os.path.join(self.tree.root, "tools", "ratchet")
+        with open(tool) as f:
+            text = f.read()
+        with open(tool, "w") as f:
+            f.write(text.replace('\nif __name__ == "__main__":',
+                                 '\nunwrap_expect = lambda *args: 0\n\nif __name__ == "__main__":'))
+        with open(os.path.join(self.tree.root, "src", "lib.rs"), "w") as f:
+            f.write("pub fn f() -> u8 { Some(1).unwrap() + Some(2).unwrap() }\n")
+        self.tree.commit("the PR instrument hides an extra unwrap")
+        self.tree.recorded(OLD)
+        self.assertEqual(self.tree.json()["ratchets"]["unwrap_expect_outside_tests"], 0)
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 0, out)
+        code, out = self.tree.run_ci_step("case-base")
+        self.assertEqual(code, 1, out)
+        self.assertIn("RAISED: the tree is above the record", out)
+        self.assertIn("unwrap_expect_outside_tests: 1 -> 2 (+1)", out)
+        self.assertFalse(any(name.startswith("ratchet-base.") for name in os.listdir(self.tree.bin)))
+        self.note(code, "RAISED: the base's instrument counts the unwrap the PR hid")
+
+    def test_ci_uses_the_ordinary_path_when_fingerprints_match(self):
+        self.tree.recorded(OLD)
+        self.tree.git("tag", "case-base")
+        code, out = self.tree.run_ci_step("case-base")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("checking the PR tree with", out)
+        self.assertNotIn("::warning::", out)
+        self.assertIn("ratchet: no number above the record or the base record", out)
+        self.note(code, tail(out))
 
 
 if __name__ == "__main__":

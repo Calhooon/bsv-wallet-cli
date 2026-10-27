@@ -11,13 +11,16 @@
                              toolchain (the move's own commit, #132)
     tools/ratchet --record --schema-move   the same, accepting a record of an
                              older SCHEMA (the move's own commit, #127)
+    tools/ratchet --fingerprint   print HEAD's two instrument hashes, no measurement
 
 The record names its instrument (#127): `tool` holds the sha256 of
 tools/ratchet's bytes and of tools/ratchet.d/clippy.toml's, as HEAD holds them.
 --check refuses a record whose fingerprint is not the tree's tool's (a PR that
-edits the tool re-records in the same PR, with the reason in its commit
+edits the tool re-records in its own commit after the tool's, in the same PR,
+with the reason in its commit
 message); against a --base record of another tool or an older schema it warns
 and skips the base comparison, the tree still checked against its own record.
+CI also checks the tree with the base's instrument against the base's record.
 SCHEMA names the record's shape: a key added, renamed or dropped in the record
 bumps it.
 
@@ -390,14 +393,18 @@ def toolchain():
 
 def fingerprint():
     """The sha256 of each of TOOL_FILES' bytes at HEAD (`git show HEAD:<path>`),
-    never the working copy's: the record names HEAD's commit, so it names
-    HEAD's instrument too, and an uncommitted edit of the tool is what
-    `-dirty` already marks (and what --record refuses)."""
+    refusing working-copy changes so HEAD names the instrument that measures."""
     out = {}
     for key, rel in TOOL_FILES.items():
         proc = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=ROOT, capture_output=True)
         if proc.returncode != 0:
             sys.exit(f"ratchet: {rel} is not in HEAD: the fingerprint reads the committed tool")
+        try:
+            working = (ROOT / rel).read_bytes()
+        except OSError as exc:
+            sys.exit(f"ratchet: cannot read {rel}: {exc}")
+        if working != proc.stdout:
+            sys.exit(f"ratchet: {rel} differs from HEAD: commit or remove the instrument edit before measuring")
         out[key] = hashlib.sha256(proc.stdout).hexdigest()
     return out
 
@@ -406,6 +413,7 @@ def fingerprint():
 
 
 def measure():
+    tool = fingerprint()
     files = sources()
     lexed, lines = {}, {}
     for f in files:
@@ -452,7 +460,7 @@ def measure():
         "schema": SCHEMA,
         "commit": commit,
         "toolchain": {"rustc": rustc_v, "clippy": clippy_v},
-        "tool": fingerprint(),
+        "tool": tool,
         "ratchets": {
             "clippy_pedantic": sum(pedantic.values()),
             "unwrap_expect_outside_tests": sum(unwraps.values()),
@@ -521,15 +529,28 @@ def older_schema(rec):
     return isinstance(s, int) and not isinstance(s, bool) and s < SCHEMA
 
 
+def recorded_tool(rec):
+    """The instrument's two SHA-256 hashes, or None when the record names none."""
+    tool = rec.get("tool")
+    if isinstance(tool, dict) and all(
+        isinstance(tool.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", tool[key])
+        for key in TOOL_FILES
+    ):
+        return tool
+    return None
+
+
 def tool_refusal(path, rec, now):
     """The refusal when the record's tool fingerprint is not the tree's, else
     None: another tool or lint config counts other things."""
-    if rec.get("tool") == now["tool"]:
+    tool = recorded_tool(rec)
+    if tool == now["tool"]:
         return None
+    why = ("tools/ratchet or tools/ratchet.d/clippy.toml changed since it was recorded"
+           if tool else f"names no instrument (schema {rec.get('schema')})")
     return (
-        f"ratchet: the tool differs from {path}'s record (tools/ratchet or"
-        " tools/ratchet.d/clippy.toml changed since it was recorded): re-record"
-        " in the commit that changes the tool, with the reason in its message"
+        f"ratchet: the tool differs from {path}'s record ({why}): re-record"
+        " in its own commit after the tool's, in the same PR, with the reason in its message"
     )
 
 
@@ -545,8 +566,9 @@ def load_base(path, now):
     """The base record, or None when it was made by another tool or under an
     older schema: a PR that changes the tool re-records in its own commit, so
     its record is the tree's and the base's is the old tool's. The base
-    comparison is then skipped with a warning (CI's step marks it); the tree
-    is still checked against its own record. A newer schema and another
+    comparison is then skipped with a warning; CI checks the tree with the
+    base's instrument against the base's record, and this tool still checks
+    the tree against its own record. A newer schema and another
     toolchain are refused as for the record."""
     rec = json.loads(path.read_text())
     if older_schema(rec):
@@ -584,7 +606,8 @@ def check(now, path, base_path):
     rec = load(path, now)
     base = load_base(base_path, now) if base_path else None
     tree = now["ratchets"]
-    print(f"ratchet: record {path} at {rec['commit'][:12]}, tree at {now['commit'][:12]}")
+    tree_at = now["commit"][:12] + ("-dirty" if now["commit"].endswith("-dirty") else "")
+    print(f"ratchet: record {path} at {rec['commit'][:12]}, tree at {tree_at}")
     if base:
         print(f"ratchet: base record {base_path} at {base['commit'][:12]}")
     for k in RATCHETS:
@@ -628,6 +651,7 @@ def main():
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--check", action="store_true", help="fail when a number is above docs/ratchets.json")
     g.add_argument("--record", action="store_true", help="rewrite docs/ratchets.json from this tree (a clean one)")
+    g.add_argument("--fingerprint", action="store_true", help="print HEAD's instrument hashes without measuring")
     ap.add_argument("--baseline", type=Path, default=BASELINE, help="the baseline file (default docs/ratchets.json)")
     ap.add_argument("--base", type=Path, help="with --check: a second record (the base branch's) neither the tree nor the baseline may be above")
     ap.add_argument("--toolchain-move", action="store_true", help="with --record: accept a toolchain other than the record's (the move's own commit)")
@@ -640,6 +664,9 @@ def main():
         ap.error("--toolchain-move needs --record")
     if a.schema_move and not a.record:
         ap.error("--schema-move needs --record")
+    if a.fingerprint:
+        sys.stdout.write(dump(fingerprint()))
+        return 0
     if a.record and (changes := dirty()):
         sys.exit(
             "ratchet: --record refuses a dirty tree: the record names HEAD, and HEAD is not what"

@@ -361,12 +361,40 @@ jobs:
       - name: No number above the base's record
         env:
           REV: ${{ steps.base.outputs.rev }}
+          RUSTUP_TOOLCHAIN: 1.98.1
         run: |
           rev="$REV"
           base=()
           if [ -n "$rev" ] && git show "$rev:docs/ratchets.json" > "$RUNNER_TEMP/base-ratchets.json" 2>/dev/null; then
             echo "ratchet: the base record is $rev:docs/ratchets.json"
             base=(--base "$RUNNER_TEMP/base-ratchets.json")
+            python3 tools/ratchet --fingerprint > "$RUNNER_TEMP/head-fingerprint.json"
+            python3 - "$rev" > "$RUNNER_TEMP/base-fingerprint.json" <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          import sys
+
+          files = {"ratchet": "tools/ratchet", "clippy_toml": "tools/ratchet.d/clippy.toml"}
+          print(json.dumps({key: hashlib.sha256(subprocess.check_output(
+              ["git", "show", f"{sys.argv[1]}:{path}"])).hexdigest()
+              for key, path in files.items()}, indent=2))
+          PY
+            if ! cmp -s "$RUNNER_TEMP/head-fingerprint.json" "$RUNNER_TEMP/base-fingerprint.json"; then
+              # Records from different instruments cannot be compared. The
+              # base's instrument still guards the PR's tree against a raise.
+              base_tree=$(mktemp -d "$RUNNER_TEMP/ratchet-base.XXXXXX")
+              trap 'git worktree remove --force "$base_tree"' EXIT
+              git worktree add --detach "$base_tree" HEAD
+              (
+                cd "$base_tree"
+                git checkout "$rev" -- tools/ratchet tools/ratchet.d
+                git -c user.name=ratchet -c user.email=ratchet@invalid -c commit.gpgsign=false \
+                  commit --no-verify -m "ratchet: the base's instrument"
+                echo "ratchet: checking the PR tree with $rev's instrument against the base record"
+                python3 tools/ratchet --check --baseline "$RUNNER_TEMP/base-ratchets.json"
+              )
+            fi
           else
             echo "::notice::no base record (${rev:-no base ref}): the tree is checked against its own docs/ratchets.json alone"
           fi
