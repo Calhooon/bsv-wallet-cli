@@ -449,6 +449,8 @@ impl StoredHint {
 struct TrackedRow {
     txid: TxId,
     built: bool,
+    /// The last word written by the tracker; absent on a new replay row.
+    stored_word: Option<String>,
     /// Oldest first.
     hints: Vec<StoredHint>,
     /// The raw merkle path, hex. Checked again on every load.
@@ -528,6 +530,7 @@ impl TrackedRow {
         Self {
             txid: txid.to_ascii_lowercase(),
             built: true,
+            stored_word: None,
             hints: vec![],
             bump: None,
             header_hash: None,
@@ -809,7 +812,7 @@ pub(crate) async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
     Ok(())
 }
 
-const ROW_COLUMNS: &str = "txid, built, hints, bump, header_hash, asks, next_ask_at, \
+const ROW_COLUMNS: &str = "txid, built, word, hints, bump, header_hash, asks, next_ask_at, \
      reannounce_beef, reannounce_at, on_accept, chain, verdict, follow_up";
 
 fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
@@ -818,6 +821,7 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
     TrackedRow {
         txid: row.get("txid"),
         built: row.get::<i64, _>("built") != 0,
+        stored_word: row.get("word"),
         hints: serde_json::from_str(&hints).unwrap_or_default(),
         bump: row.get("bump"),
         header_hash: row.get("header_hash"),
@@ -2213,10 +2217,31 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
         };
         let headers_fault = matches!(fault, Some(CheckError::Headers(_)));
         let split = under_split(state.word(), split_floor);
+        // A failed check cannot replace the last stored word with the
+        // replay's starting tier. Unknown stored strings use that tier.
+        let word = fault
+            .as_ref()
+            .and(row.stored_word.as_deref())
+            .and_then(|stored| {
+                [
+                    "unknown",
+                    "built",
+                    "announced",
+                    "seen",
+                    "mined",
+                    "stale",
+                    "rejected",
+                    "conflicted",
+                    "abandoned",
+                ]
+                .into_iter()
+                .find(|label| *label == stored)
+            })
+            .unwrap_or_else(|| word_label(state.word()));
         readings.insert(
             row.txid.clone(),
             CreatorReading {
-                word: word_label(state.word()),
+                word,
                 depth,
                 suspect: state.suspect() || split,
                 door,
@@ -4746,6 +4771,58 @@ pub(crate) mod tests {
             hold(false).as_deref(),
             Some("stale: its block left the chain; own change, SPEND_OWN_CHANGE=0")
         );
+    }
+
+    #[tokio::test]
+    async fn faulted_creator_with_an_invalid_path_uses_only_known_stored_words() {
+        let txid = "e4".repeat(32);
+        for (stored, expected) in [("stale", "stale"), ("future-word", "built")] {
+            let (storage, _user) = wallet_storage().await;
+            stale_row(&storage, &txid, 900).await;
+            sqlx::query("UPDATE tracker_states SET word = ?, bump = 'not-hex' WHERE txid = ?")
+                .bind(stored)
+                .bind(&txid)
+                .execute(storage.writer())
+                .await
+                .unwrap();
+            let services = MockWalletServices::builder().build();
+            services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+            let read = reading(&storage, &services, &txid).await;
+            println!("stored={stored}: {read:?}");
+            assert_eq!(read.word, expected);
+            assert!(read.fault.as_deref().unwrap().contains("InvalidProof"));
+            assert!(!read.headers_fault && !read.door && !read.suspect);
+            assert_eq!(read.depth, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn faulted_creator_above_the_tip_keeps_its_stored_word_without_a_service_fault() {
+        let txid = "e5".repeat(32);
+        let (storage, services, _clock) = mined_at_900(&txid).await;
+        services.set_tip_header(header_with_hash(899, &"0a".repeat(32), 0));
+        let read = reading(&storage, &services, &txid).await;
+        println!("header above the tip: {read:?}");
+        assert_eq!(read.word, "mined");
+        assert_eq!(read.fault.as_deref(), Some("Unavailable(900)"));
+        assert!(!read.headers_fault && !read.door && !read.suspect);
+        assert_eq!(read.depth, 0);
+    }
+
+    #[tokio::test]
+    async fn faulted_creator_word_fallback_does_not_apply_to_a_root_mismatch() {
+        let txid = "e6".repeat(32);
+        let (storage, services, _clock) = mined_at_900(&txid).await;
+        services.set_header_for_height(header(900, &"0c".repeat(32), 0));
+        let read = reading(&storage, &services, &txid).await;
+        println!("root mismatch: {read:?}");
+        assert_eq!(
+            read.word,
+            load_row(&storage, &txid).await.unwrap().unwrap().tier()
+        );
+        assert_ne!(read.word, "mined");
+        assert!(read.fault.is_none());
+        assert!(!read.headers_fault && !read.door && !read.suspect);
     }
 
     /// `CreatorReading::offered` is the answer `read_creators` stored as a
