@@ -36,10 +36,10 @@
           "outpoint": "6666666666666666666666666666666666666666666666666666666666666666.0",
           "reason": "headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",
           "satoshis": 50000,
-          "word": "built"
+          "word": "mined"
         }
       ],
-      "message": "Could not verify now: the header service did not answer (Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)); 1 coin(s), 50000 sats, held on it, no verdict (Insufficient funds: need 1005, have 0; 0 sats offered, 1 coin(s) held back)\n  6666666666666666666666666666666666666666666666666666666666666666.0 50000 sats: built, received, <minutes> min old: headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",
+      "message": "Could not verify now: the header service did not answer (Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)); 1 coin(s), 50000 sats, held on it, no verdict (Insufficient funds: need 1005, have 0; 0 sats offered, 1 coin(s) held back)\n  6666666666666666666666666666666666666666666666666666666666666666.0 50000 sats: mined, received, <minutes> min old: headers unavailable: Service error: get_header_for_height: no header service answered (chaintracks: Service error: Chaintracks findHeaderHexForHeight failed: HTTP 500 Internal Server Error)",
       "offeredSatoshis": 0
     }
   }
