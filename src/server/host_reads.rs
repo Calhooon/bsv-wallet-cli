@@ -29,7 +29,7 @@ pub(super) trait ChainFeedReads: Sync {
 
 /// The three reads that determine a transaction-word response.
 pub(super) trait TxReads: Sync {
-    /// The tracker's word, if it holds one for this transaction.
+    /// The last stored tracker word, if it holds one for this transaction.
     fn word(&self, txid: &str) -> impl Future<Output = Result<Option<StoredWord>>> + Send;
     /// The proof used as evidence for a mined word.
     fn proof(&self, txid: &str) -> impl Future<Output = Result<Option<StoredProof>>> + Send;
@@ -91,7 +91,11 @@ pub(super) async fn answer_chain_feed(reads: &impl ChainFeedReads) -> Response {
     }
 }
 
-/// Read the word and its evidence, preserving the absent-word short circuit.
+/// Read the last tick's stored word and, for `mined`, the proof's root and
+/// height, preserving the absent-word short circuit. The next tick corrects
+/// a dead row without a path when the toolbox holds a proof whose root
+/// checks, within the shared adoption bound. The spend door's reading
+/// replays that proof at each call (`tracker_host::read_creators`).
 async fn read_word(reads: &impl TxReads, txid: &str) -> Result<Option<Value>> {
     let Some((word, height, reask)) = reads.word(txid).await? else {
         return Ok(None);

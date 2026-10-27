@@ -208,7 +208,14 @@ headers of the moment, as the spend guard replays it: the row's word is
 root, else the row has no word and the pending re-ask `proofFailed`, run by the
 next pass. A header the service could not give adopts nothing that pass; the
 toolbox's rows are never written; at most 100 such creators per pass. A creator
-the toolbox moves to `completed` while a row exists keeps its row. So
+the toolbox moves to `completed` while a live row exists keeps its row. The
+same pass also hands the stored proof to an existing `rejected`, `conflicted`
+or `abandoned` row with no path of its own. A root that checks revives its
+stored word to `mined` with the proof's height and header hash; its hints,
+chain events and node verdict remain its history. A failed proof leaves
+the dead row untouched and names it in the report. An unanswered header
+leaves it untouched for the next pass without a fault. Adoption and revival
+share the 100-creator limit. So
 `GET /tx/{txid}` answers for every coin the wallet holds.
 
 ## The spend guard on coin selection
@@ -436,14 +443,23 @@ browser caller can read it.
 
 ## One transaction's word
 
-`GET /tx/{txid}` (behind the same bearer as `/chain-feed`) serves the
-tracker's stored word for one transaction: `{txid, word, height, reask,
+| route | reading |
+|---|---|
+| `GET /tx/{txid}` (`tx_word`, behind the same bearer as `/chain-feed`) | The last tick's stored tracker word. The next tick corrects a dead row with no path when the toolbox holds a proof the word predates and its root checks, within the pass's shared 100-creator limit. |
+
+The response for one transaction is `{txid, word, height, reask,
 evidence}`, where `evidence` is, for `mined`, the stored proof's `root` and
 `height` (the toolbox's `proven_txs`), else `null`; 404 when the tracker holds
 no word for it. A `stale` word adds `tier`, the word its hints give
 (`announced` or `seen`: its status before the proof, which an app reads as
 "confirming"), and its `reask` is the one the reorg left (`reorg@900`). A view; nothing is decided from it. The MCP tool `tx_word`
 reads it.
+
+The spend door replays the available proof at each call, including the
+toolbox's proof when the tracked row has no path: one word per creator,
+the door's reading. It can read `mined` before the tick has corrected the
+served word. [The vector guide](docs/GATE-VECTORS.md) describes that reading;
+no fixture or vector changes for this correction.
 
 ## Explorer calls (rule 28)
 
