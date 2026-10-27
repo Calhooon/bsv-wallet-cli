@@ -136,10 +136,13 @@ impl WalletMcp {
 
 /// A tool's parameters as the wallet's JSON body.
 fn args(p: &impl Serialize) -> Value {
-    serde_json::to_value(p).expect(
-        "the parameter structs hold only strings, numbers, bools, lists and JSON values: \
-         they always serialize",
-    )
+    match serde_json::to_value(p) {
+        Ok(value) => value,
+        Err(e) => unreachable!(
+            "the parameter structs hold only strings, numbers, bools, lists and JSON values: \
+             they always serialize ({e})"
+        ),
+    }
 }
 
 // ── Typed parameter structs ────────────────────────────────────

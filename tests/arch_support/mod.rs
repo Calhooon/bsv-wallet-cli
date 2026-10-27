@@ -1,6 +1,7 @@
-//! The source scan the `tests/arch_*.rs` rules share (#73): the crate's own
-//! `src/` read as text, its comments and its test code blanked, so a rule
-//! counts only what the shipped binary holds.
+//! The source scan the `tests/arch_*.rs` rules share (#73): the shipped
+//! code of both crates of the workspace, `src/` and the MCP companion's
+//! `mcp/src/` (#171), read as text, its comments and its test code blanked,
+//! so a rule counts only what the shipped binaries hold.
 //!
 //! Two views of each file, both keeping every newline so a hit keeps its
 //! line number:
@@ -35,7 +36,11 @@ pub fn root() -> PathBuf {
         .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from)
 }
 
-/// One source file of `src/`, in its two views.
+/// The directories of shipped code, from the workspace root: the main
+/// crate's and the MCP companion's (#171).
+pub const ROOTS: &[&str] = &["src", "mcp/src"];
+
+/// One source file of [`ROOTS`], in its two views.
 pub struct Source {
     /// The path from the crate root, `/`-separated.
     pub file: String,
@@ -43,9 +48,12 @@ pub struct Source {
     pub bare: String,
 }
 
-/// Every `.rs` file under `src/` that is not test code, sorted.
+/// Every `.rs` file under [`ROOTS`] that is not test code, sorted.
 pub fn sources() -> Vec<Source> {
-    let paths = rust_files(&root().join("src"));
+    let paths: Vec<PathBuf> = ROOTS
+        .iter()
+        .flat_map(|r| rust_files(&root().join(r)))
+        .collect();
     let tests = test_files(&paths);
     paths
         .into_iter()

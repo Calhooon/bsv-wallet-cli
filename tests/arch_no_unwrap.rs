@@ -124,6 +124,8 @@ fn test_files_are_declared_in_code() {
         "src/spend_gate.rs",
         "src/test_support.rs",
         "src/server/handlers.rs",
+        "mcp/src/main.rs",
+        "mcp/src/config.rs",
     ] {
         paths.push(root.join(f));
     }
@@ -138,12 +140,33 @@ fn test_files_are_declared_in_code() {
         "src/chain_feed_tests.rs",
         "src/spend_gate/tests.rs",
         "src/server/handlers/tests.rs",
+        "mcp/src/tests.rs",
     ] {
         assert!(
             tests.iter().any(|t| t == f),
             "{f} not seen as test code: {tests:?}"
         );
     }
+    assert!(!tests.iter().any(|t| t == "mcp/src/config.rs"), "{tests:?}");
+}
+
+#[test]
+fn the_scan_reads_both_crates() {
+    // The MCP companion's shipped files are read beside the main crate's
+    // (#171); its test module is not.
+    let files: Vec<String> = arch_support::sources()
+        .into_iter()
+        .map(|s| s.file)
+        .collect();
+    for f in [
+        "src/main.rs",
+        "src/config.rs",
+        "mcp/src/main.rs",
+        "mcp/src/config.rs",
+    ] {
+        assert!(files.iter().any(|s| s == f), "{f} not scanned: {files:?}");
+    }
+    assert!(!files.iter().any(|s| s == "mcp/src/tests.rs"), "{files:?}");
 }
 
 #[test]
