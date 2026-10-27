@@ -54,7 +54,9 @@
 //! row with no path of its own ([`adopt_proven`]). A checking root revives
 //! its stored word to `mined`; a failed check leaves the word standing and
 //! is stored once with its pause, so the row is not selected again until
-//! the pause passes or a header at or below its proof moves. Adoption and
+//! the pause passes or a header at or below its proof moves. A new creator whose path does
+//! not parse or hold is tracked without it under the same mark, and
+//! adopted when a later check reads a path that holds. Adoption and
 //! revival share one [`MAX_ADOPT_PER_PASS`] bound, which a failing row
 //! never holds twice in a row.
 //!
@@ -1928,7 +1930,9 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// backstop, `check_for_proofs`, moves a transaction to `completed` with
 /// `proven_tx_id` set. Candidates create a coin we hold and have no tracker
 /// row, or a `rejected`, `conflicted` or `abandoned` row with no `bump`
-/// whose check is due (below). The stored path is replayed as the row's
+/// whose check is due (below), or a marked `unknown` or `built` row with
+/// no `bump` (a creator tracked without its path) whose check is due on
+/// the same rule. The stored path is replayed as the row's
 /// input against the headers of the moment, as the guard's
 /// [`read_creators`] replays it: a root that checks gives the row the word
 /// `mined` at its height with that path as its evidence; a root that does
@@ -1936,9 +1940,17 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// re-ask `proofFailed`, which the next pass runs (the path dropped, a
 /// fresh one asked for). A new creator whose stored path does not parse,
 /// or does not hold for its txid, is tracked without it: its row holds the
-/// word its hints give and no `bump`, and the tick treats it as any of the
-/// wallet's rows (a proof is asked for when its hints make one due); the
-/// guard still replays the toolbox's path at every read. A header the
+/// word its hints give (`unknown` received, `built` made) and no `bump`,
+/// with the dead row's mark below (one ask and its pause), and the tick
+/// treats it as any of the wallet's rows; the guard still replays the
+/// toolbox's path at every read. No hint makes a proof due for it (the
+/// crate's age re-ask is only for `announced` and `seen`), so the mark is
+/// what checks it again: when the pause has passed, or its header moved,
+/// the toolbox's path is read once more and a path it repaired since (the
+/// JSON-to-BUMP repair) adopts the row as `mined`. Such a txid's
+/// `/tx/{txid}` serves the row's word (`unknown` or `built`) until then,
+/// where with no row it was 404: the row is what keeps it out of the
+/// limit. A header the
 /// service could not give, or a height above its tip, adopts nothing this
 /// pass.
 ///
@@ -1988,8 +2000,10 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
          JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
          LEFT JOIN tracker_states s ON s.txid = lower(t.txid) \
          WHERE t.txid IS NOT NULL AND t.status = 'completed' \
-           AND (s.txid IS NULL OR (s.word IN ('rejected', 'conflicted', 'abandoned') \
-                                  AND s.bump IS NULL \
+           AND (s.txid IS NULL OR (s.bump IS NULL \
+                                  AND (s.word IN ('rejected', 'conflicted', 'abandoned') \
+                                       OR (s.word IN ('unknown', 'built') \
+                                           AND s.next_ask_at IS NOT NULL)) \
                                   AND (s.next_ask_at IS NULL OR s.next_ask_at <= ? \
                                        OR p.height >= ?))) \
            AND EXISTS (SELECT 1 FROM outputs o \
@@ -2013,7 +2027,12 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     for mut row in rows {
         let (state, fault) = row.replay(params, &*snapshot);
         let parsed = row.bump.is_some();
-        let dead = row.stored_word.clone();
+        // The query's dead words; a marked `unknown` or `built` row is a
+        // creator tracked without its path, checked again as a new one.
+        let dead = row
+            .stored_word
+            .clone()
+            .filter(|word| matches!(word.as_str(), "rejected" | "conflicted" | "abandoned"));
         match (&fault, &dead) {
             // No answer from the service is no verdict on the stored proof.
             (Some(CheckError::Headers(_)), Some(_)) => continue,
@@ -2057,14 +2076,19 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                 );
                 report.adopted_proof_failed.push(row.txid.clone());
             }
+            // Tracked without the path, with the dead row's mark: checked
+            // again when its pause passes or its header moves, so a path the
+            // toolbox repairs is adopted (#292).
             Some(fault) => {
                 row.bump = None;
+                row.pause(params.age_threshold, now);
                 report.faults.push(format!(
                     "{}: the stored proof does not hold: {fault}; tracked without it",
                     row.txid
                 ));
             }
             None if !parsed => {
+                row.pause(params.age_threshold, now);
                 report.faults.push(format!(
                     "{}: the stored proof does not parse; tracked without it",
                     row.txid
