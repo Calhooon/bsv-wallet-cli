@@ -1,5 +1,10 @@
 # bsv-wallet-cli
 
+[![CI](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/ci.yml)
+[![bench](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/bench.yml/badge.svg)](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/bench.yml)
+[![differential](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/differential.yml/badge.svg)](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/differential.yml)
+[![nightly](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/nightly.yml/badge.svg)](https://github.com/Calhooon/bsv-wallet-cli/actions/workflows/nightly.yml)
+
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
@@ -570,9 +575,16 @@ cargo build --locked
 cargo fmt --all -- --check
 ```
 
-[.github/workflows/ci.yml](.github/workflows/ci.yml) runs workspace tests,
-formatting, clippy, release builds on Linux and macOS, and the status/covenant
-vector checks on every PR and main push. [tests](tests) contains the HTTP and
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs exactly the
+required set on every pull request and every push to main or beta (the owner's
+word of 2026-10-27): workspace tests, formatting, clippy, the Linux release
+build, the status/covenant vector checks, `deny` and `locks`, and on beta the
+ratchet, the wire fixtures and the hermetic suite. The measurements run on
+`workflow_dispatch` and once before a tag, each with its own badge above:
+[bench.yml](.github/workflows/bench.yml), [differential.yml](.github/workflows/differential.yml),
+[nightly.yml](.github/workflows/nightly.yml) (the mutation score and the fuzz
+hours) and [build-macos.yml](.github/workflows/build-macos.yml). A run a newer
+push cancels is never a red. [tests](tests) contains the HTTP and
 tracker integration witnesses; local fixture tests are not live-wallet proof.
 Dependabot moves the stack's crates daily at 18:00Z under
 [.github/dependabot.yml](.github/dependabot.yml).
