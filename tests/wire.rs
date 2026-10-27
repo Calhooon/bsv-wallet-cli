@@ -36,6 +36,9 @@ use wire_harness::fixture::{j, normalize, normalize_text, Fixture};
 use wire_harness::judge::{app_codes_in_source, judge_coverage, APP_CODES, UNPRODUCED};
 use wire_harness::manifest::{judge_manifest, Manifest, MANIFEST};
 use wire_harness::recorder::{get, Recorder};
+use wire_harness::text_report::{
+    message_difference, print_text_diffs, recording_difference, text_diff_line, write_text_diff,
+};
 use wire_harness::worlds::{known_world, resolve, World, WORLDS};
 use wire_support::{diff, on_runtime, read_fixture, Resp, J};
 
@@ -98,69 +101,6 @@ fn text_diff_word(value: Option<&str>, recording: bool) -> bool {
         Some(other) => panic!(
             "WIRE_TEXT_DIFF is `{other}`: `report` reports message-text differences, unset is strict, and nothing else is a word"
         ),
-    }
-}
-
-/// Keep the ordered body, status and contract headers. The internalize
-/// note in MANIFEST names the offset and script reason: that entire detail
-/// after `spend refused at offset ` must also stay equal.
-fn message_difference<'a>(want: &'a Resp, got: &'a Resp) -> Option<(&'a str, &'a str)> {
-    if !(400..600).contains(&want.status) || want.text.is_some() || got.text.is_some() {
-        return None;
-    }
-    let expected = want.json.as_ref()?;
-    let actual = got.json.as_ref()?;
-    if expected.get("code")?.as_str()? != actual.get("code")?.as_str()? {
-        return None;
-    }
-    let expected = expected.get("message")?.as_str()?;
-    let actual = actual.get("message")?.as_str()?;
-    let detail = |s: &'a str| {
-        s.split_once("spend refused at offset ")
-            .map(|(_, tail)| tail)
-    };
-    if expected == actual || detail(expected) != detail(actual) {
-        return None;
-    }
-    let mut same = want.clone();
-    same.json
-        .as_mut()?
-        .set_pointer("/message", J::Str(actual.to_string()));
-    (same == *got).then_some((expected, actual))
-}
-
-fn text_diff_line(file: &str, expected: &str, actual: &str) -> String {
-    format!(
-        "TEXT-DIFF: {file} {} {}",
-        serde_json::to_string(expected).unwrap(),
-        serde_json::to_string(actual).unwrap()
-    )
-}
-
-/// Recording comparison keeps even the file's whitespace and envelope.
-/// Only the JSON-quoted message may be replaced in the committed bytes.
-fn recording_difference(file: &str, want: &[u8], got: &[u8]) -> Option<String> {
-    let expected: Fixture = serde_json::from_slice(want).ok()?;
-    let actual: Fixture = serde_json::from_slice(got).ok()?;
-    let (expected, actual) = message_difference(&expected.response, &actual.response)?;
-    let replaced = std::str::from_utf8(want).ok()?.replacen(
-        &serde_json::to_string(expected).unwrap(),
-        &serde_json::to_string(actual).unwrap(),
-        1,
-    );
-    (replaced.as_bytes() == got).then(|| text_diff_line(file, expected, actual))
-}
-
-/// Bypass the test runner's success-output capture so the gate sees the
-/// marker. The replay and fresh recording report the same row only once.
-fn print_text_diffs(lines: &[String]) {
-    use std::io::Write;
-    static PRINTED: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
-    let mut printed = PRINTED.lock().unwrap();
-    for line in lines {
-        if printed.insert(line.clone()) {
-            writeln!(std::io::stdout().lock(), "{line}").unwrap();
-        }
     }
 }
 
@@ -383,17 +323,34 @@ const TEXT_FIXTURE: &str = "066-arc-callback.badJson.json";
 
 /// Each planted response lives in a copy; the committed corpus is untouched.
 fn plant_response(change: impl FnOnce(&mut Resp)) -> (tempfile::TempDir, Resp) {
+    let tmp = copy_corpus();
+    let original = plant_into(tmp.path(), TEXT_FIXTURE, change);
+    (tmp, original)
+}
+
+fn copy_corpus() -> tempfile::TempDir {
     let tmp = tempfile::TempDir::new().unwrap();
     for entry in std::fs::read_dir(wire_dir()).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), tmp.path().join(entry.file_name())).unwrap();
     }
-    let path = tmp.path().join(TEXT_FIXTURE);
+    tmp
+}
+
+fn plant_into(dir: &Path, file: &str, change: impl FnOnce(&mut Resp)) -> Resp {
+    let path = dir.join(file);
     let mut fixture: Fixture = read_fixture(&path);
     let original = fixture.response.clone();
     change(&mut fixture.response);
     std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
-    (tmp, original)
+    original
+}
+
+fn plant_message(r: &mut Resp, message: &str) {
+    r.json
+        .as_mut()
+        .unwrap()
+        .set_pointer("/message", J::Str(message.to_string()));
 }
 
 fn replay_copy(dir: &Path, report_text: bool) -> Result<Replay, String> {
@@ -443,6 +400,69 @@ fn a_message_only_difference_fails_strict_and_reports_under_the_knob() {
         original.json.unwrap().get("message").unwrap().as_str(),
         Some("EOF while parsing a value at line 1 column 8")
     );
+}
+
+/// Two fixtures' changed messages are two markers, in fixture order, and
+/// the summary counts both. A row the corpus already reports (the gate's
+/// toolbox tip) is counted beside them, never in place of them.
+#[test]
+fn two_message_only_differences_report_two_markers() {
+    const SECOND: &str = "083-createAction.inputNotOffered.json";
+    let tmp = copy_corpus();
+    let first = plant_into(tmp.path(), TEXT_FIXTURE, |r| {
+        plant_message(r, "planted one")
+    });
+    let second = plant_into(tmp.path(), SECOND, |r| plant_message(r, "planted two"));
+    let served = |r: Resp| {
+        r.json
+            .unwrap()
+            .get("message")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let expected = vec![
+        text_diff_line(TEXT_FIXTURE, "planted one", &served(first)),
+        text_diff_line(SECOND, "planted two", &served(second)),
+    ];
+    let planted = |line: &str| {
+        [TEXT_FIXTURE, SECOND]
+            .iter()
+            .any(|file| line.starts_with(&format!("TEXT-DIFF: {file} ")))
+    };
+    let strict = replay_copy(tmp.path(), false).unwrap_err();
+    assert!(strict.contains(&format!(
+        "{TEXT_FIXTURE}: POST /arc-callback answered differently"
+    )));
+    assert!(strict.contains(&format!(
+        "{SECOND}: POST /createAction answered differently"
+    )));
+    let report = replay_copy(tmp.path(), true).unwrap();
+    let (lines, others): (Vec<_>, Vec<_>) = report
+        .text_diffs
+        .iter()
+        .cloned()
+        .partition(|line| planted(line));
+    assert_eq!(lines, expected);
+    assert!(
+        report.summary.ends_with(&format!(
+            " 0 differ, 0 coverage gaps, {} text differences reported",
+            2 + others.len()
+        )),
+        "{}",
+        report.summary
+    );
+    let mut out = Vec::new();
+    for line in &report.text_diffs {
+        write_text_diff(&mut out, line).unwrap();
+    }
+    let out = String::from_utf8(out).unwrap();
+    let markers: Vec<_> = out
+        .lines()
+        .filter(|l| l.starts_with("TEXT-DIFF: ") && planted(l))
+        .collect();
+    assert_eq!(markers, expected);
 }
 
 /// A changed refusal class remains a failure even in the gate's mode.

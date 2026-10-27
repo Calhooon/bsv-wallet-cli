@@ -590,6 +590,7 @@ fn assert_toolbox_abort_refusal(body: &serde_json::Value) {
 
 /// The toolbox owns this refusal's sentence (#290). Keep the served
 /// status, code, prefix and stored state; print the reference's wording.
+/// The asserted 400 holds the missing acceptance hint: a hint is a 409.
 #[tokio::test]
 async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() {
     let key = PrivateKey::random();
@@ -613,6 +614,7 @@ async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() 
 
 /// The toolbox owns this refusal's sentence (#290). Keep the served
 /// status, code, prefix and stored state; print the reference's wording.
+/// The asserted 400 holds the missing acceptance hint: a hint is a 409.
 #[tokio::test]
 async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptance_hint() {
     let key = PrivateKey::random();

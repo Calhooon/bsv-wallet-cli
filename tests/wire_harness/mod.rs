@@ -1,6 +1,7 @@
 //! The wire oracle's harness, by concern: the fixture and its normalizer, the
 //! worlds a fixture is served from, the recorder and the cases it records,
-//! the judge of the corpus's coverage, and the manifest of the recorded set.
+//! the judge of the corpus's coverage, the manifest of the recorded set, and
+//! the dependents gate's text report.
 //! The record, the replay and the planted cases are `tests/wire.rs`'s.
 
 pub(crate) mod cases;
@@ -11,4 +12,5 @@ pub(crate) mod fixture;
 pub(crate) mod judge;
 pub(crate) mod manifest;
 pub(crate) mod recorder;
+pub(crate) mod text_report;
 pub(crate) mod worlds;
