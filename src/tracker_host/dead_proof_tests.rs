@@ -640,6 +640,48 @@ async fn a_new_creator_tracked_without_its_path_is_adopted_after_the_toolbox_rep
     );
 }
 
+#[tokio::test]
+async fn a_made_creator_tracked_without_its_path_reads_built_with_its_door_and_reason_unchanged() {
+    use crate::spend_gate::{hold_reason, GateOptions, Origin};
+
+    let (storage, user) = wallet_storage().await;
+    let services = services();
+    let txid = "e2".repeat(32);
+    proven_coin(&storage, user, &txid, 900, 1_000).await;
+    sqlx::query("UPDATE transactions SET is_outgoing = 1 WHERE txid = ?")
+        .bind(&txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    unparseable(&storage, &txid).await;
+    let reasons = |reading: &CreatorReading| {
+        [true, false].map(|own_change| {
+            let opts = GateOptions {
+                own_change,
+                ..GateOptions::default()
+            };
+            hold_reason(reading, Origin::Made, (&txid, 0), &opts)
+        })
+    };
+    let before = creator(&storage, &services, &txid).await;
+    assert_eq!(before.word, word_label(&Word::Unknown));
+
+    pass(&storage, &services, 100).await;
+    let row = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!((row.built, row.bump, row.asks), (true, None, 1));
+    let after = creator(&storage, &services, &txid).await;
+    // The word is the made row's: `built` where no row read `unknown`;
+    // the gate shows it in a refusal's `held[].word`.
+    assert_eq!(after.word, word_label(&Word::Built));
+    assert_eq!(
+        (after.door, &after.fault, after.depth, after.suspect),
+        (before.door, &before.fault, before.depth, before.suspect)
+    );
+    assert!(!after.door && after.fault.is_none());
+    assert_eq!(reasons(&after), reasons(&before));
+    assert!(reasons(&after)[1].is_some());
+}
+
 /// A conflicted row at 900 whose stored proof misses the header there.
 async fn mismatched_at_900(txid: &str) -> (StorageSqlx, MockWalletServices) {
     let (storage, _) = proven_dead(txid, "conflicted", 900).await;
