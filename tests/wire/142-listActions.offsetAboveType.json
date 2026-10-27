@@ -1,0 +1,25 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "labels": [],
+      "offset": 4294967296
+    }
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "text": "Failed to deserialize the JSON body into the target type: offset: invalid value: integer `4294967296`, expected u32 at line 1 column 32"
+  }
+}
