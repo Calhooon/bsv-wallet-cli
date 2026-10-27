@@ -3,22 +3,11 @@
 use super::error::{AppError, Kind};
 
 /// Check supplied values without replacing the toolbox's absent defaults.
-/// The argument types already enforce the offset's upper bound.
-pub(super) fn check_page_bounds(limit: Option<u32>, offset: Option<i64>) -> Result<(), AppError> {
+pub(super) fn check_page_bounds(limit: Option<u32>) -> Result<(), AppError> {
     let problem = match limit {
         Some(0) => Some(("limit", "at least 1 length.", "1 to 10000", 0)),
-        Some(value @ 10001..) => Some((
-            "limit",
-            "no more than 10000 length.",
-            "1 to 10000",
-            i64::from(value),
-        )),
-        _ => match offset {
-            Some(value) if value < 0 => {
-                Some(("offset", "at least 0 length.", "0 to 4294967295", value))
-            }
-            _ => None,
-        },
+        Some(value @ 10001..) => Some(("limit", "no more than 10000 length.", "1 to 10000", value)),
+        _ => None,
     };
     match problem {
         Some((field, must_be, bounds, value)) => Err(AppError::new(
@@ -37,34 +26,24 @@ mod tests {
     async fn page_bounds_table() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        for (limit, offset, error) in [
-            (None, None, None),
+        for (limit, error) in [
+            (None, None),
             (
                 Some(0),
-                None,
                 Some("limit: at least 1 length. (limit 1 to 10000, got 0)"),
             ),
-            (Some(1), None, None),
-            (Some(10000), None, None),
+            (Some(1), None),
+            (Some(10000), None),
             (
                 Some(10001),
-                None,
                 Some("limit: no more than 10000 length. (limit 1 to 10000, got 10001)"),
             ),
             (
                 Some(u32::MAX),
-                None,
                 Some("limit: no more than 10000 length. (limit 1 to 10000, got 4294967295)"),
             ),
-            (
-                None,
-                Some(-1),
-                Some("offset: at least 0 length. (offset 0 to 4294967295, got -1)"),
-            ),
-            (None, Some(0), None),
-            (None, Some(i64::from(u32::MAX)), None),
         ] {
-            let result = check_page_bounds(limit, offset);
+            let result = check_page_bounds(limit);
             if let Some(error) = error {
                 let (status, _, body) =
                     crate::test_support::response_answer(result.unwrap_err().into_response()).await;
@@ -74,10 +53,7 @@ mod tests {
                     serde_json::json!({"code": "VALIDATION_ERROR", "message": format!("Validation error: {error}")})
                 );
             } else {
-                assert!(
-                    result.is_ok(),
-                    "limit={limit:?}, offset={offset:?}: {result:?}"
-                );
+                assert!(result.is_ok(), "limit={limit:?}: {result:?}");
             }
         }
     }
