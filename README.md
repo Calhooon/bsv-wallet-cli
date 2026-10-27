@@ -72,6 +72,8 @@ command help for arguments before operating a wallet.
 The server implements the wallet interface and serializes spending operations.
 `serve`, `daemon` and `serve-fleet` refuse a non-loopback bind without
 `AUTH_TOKEN`, unless the operator explicitly supplies `--allow-no-token`.
+Under `AUTH_TOKEN` a browser client passes the CORS preflight, which carries
+no credentials, and sends its bearer on the request (#138).
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked.
 
