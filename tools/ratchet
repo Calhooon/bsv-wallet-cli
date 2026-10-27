@@ -5,7 +5,10 @@
     tools/ratchet --check    measure, compare with docs/ratchets.json, fail on a rise
     tools/ratchet --check --base B   also fail when the tree or docs/ratchets.json
                              is above the record B (CI: the PR's base branch's)
-    tools/ratchet --record   measure a clean tree, rewrite docs/ratchets.json
+    tools/ratchet --record   measure a clean tree, rewrite docs/ratchets.json;
+                             refuses a toolchain other than the record's
+    tools/ratchet --record --toolchain-move   the same, accepting a new
+                             toolchain (the move's own commit, #132)
 
 docs/RATCHETS.md says what each number is and how a lane moves one. A Python
 script with the standard library only: no crate enters the workspace or its
@@ -447,15 +450,29 @@ def dump(obj):
     return json.dumps(obj, indent=2, sort_keys=False) + "\n"
 
 
+def differs(path, rec, now):
+    """The refusal when the record's toolchain is not this run's, else None:
+    a new clippy brings new pedantic lints, and the numbers would move with
+    no change to the tree."""
+    if rec.get("toolchain") == now:
+        return None
+    old = (rec.get("toolchain") or {}).get("clippy")
+    return (
+        f"ratchet: the toolchain differs from {path}'s, the clippy numbers do not compare\n"
+        f"  record:   {old}\n  this run: {now['clippy']}"
+    )
+
+
+def named(tc):
+    return f"{tc.get('rustc')}, {tc.get('clippy')}"
+
+
 def load(path, now):
     rec = json.loads(path.read_text())
     if rec.get("schema") != SCHEMA:
         sys.exit(f"ratchet: {path} is schema {rec.get('schema')}, the tool is {SCHEMA}")
-    if rec["toolchain"] != now["toolchain"]:
-        sys.exit(
-            f"ratchet: the toolchain differs from {path}'s, the clippy numbers do not compare\n"
-            f"  record:   {rec['toolchain']['clippy']}\n  this run: {now['toolchain']['clippy']}"
-        )
+    if refusal := differs(path, rec, now["toolchain"]):
+        sys.exit(refusal)
     return rec
 
 
@@ -527,21 +544,43 @@ def main():
     g.add_argument("--record", action="store_true", help="rewrite docs/ratchets.json from this tree (a clean one)")
     ap.add_argument("--baseline", type=Path, default=BASELINE, help="the baseline file (default docs/ratchets.json)")
     ap.add_argument("--base", type=Path, help="with --check: a second record (the base branch's) neither the tree nor the baseline may be above")
+    ap.add_argument("--toolchain-move", action="store_true", help="with --record: accept a toolchain other than the record's (the move's own commit)")
     ap.add_argument("--out", type=Path, help="also write the measured JSON here")
     a = ap.parse_args()
     if a.base and not a.check:
         ap.error("--base needs --check")
+    if a.toolchain_move and not a.record:
+        ap.error("--toolchain-move needs --record")
     if a.record and (changes := dirty()):
         sys.exit(
             "ratchet: --record refuses a dirty tree: the record names HEAD, and HEAD is not what"
             " would be measured; commit or remove these:\n  " + "\n  ".join(changes)
         )
+    if a.toolchain_move and not a.baseline.exists():
+        sys.exit(f"ratchet: --toolchain-move, but {a.baseline} does not exist: nothing to move from")
+    old = None
+    if a.record and a.baseline.exists():
+        # Read before the measurement and refused before a byte is written: a
+        # record under another toolchain is one --check refuses to compare (#132).
+        old = json.loads(a.baseline.read_text()).get("toolchain") or {}
+        clippy_v, rustc_v = toolchain()
+        this = {"rustc": rustc_v, "clippy": clippy_v}
+        refusal = differs(a.baseline, {"toolchain": old}, this)
+        if refusal and not a.toolchain_move:
+            sys.exit(
+                f"{refusal}\n"
+                "ratchet: --record refuses it; a toolchain move is its own commit: --record --toolchain-move"
+            )
+        if a.toolchain_move and not refusal:
+            sys.exit(f"ratchet: --toolchain-move, but the toolchain is the record's: {named(this)}")
     now = measure()
     if a.out:
         a.out.write_text(dump(now))
     if a.record:
         a.baseline.write_text(dump(now))
-        print(f"ratchet: recorded {a.baseline} at {now['commit'][:12]}")
+        print(f"ratchet: recorded {a.baseline} at {now['commit'][:12]} under {named(now['toolchain'])}")
+        if a.toolchain_move:
+            print(f"ratchet: the toolchain moved from {named(old)} to {named(now['toolchain'])}")
         return 0
     if a.check:
         return check(now, a.baseline, a.base)
