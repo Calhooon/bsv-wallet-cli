@@ -605,7 +605,7 @@ const E2E_HARNESS: &[Case] = &[
         call: "relinquishOutput",
         source: "tests/e2e/lib/wallet-client.js relinquishOutput",
         path: "/relinquishOutput",
-        body: Some(r#"{"txid":"{UNKNOWN}","vout":0,"basket":"default"}"#),
+        body: Some(r#"{"basket":"default","output":"{UNKNOWN}.0"}"#),
         ..E2E_CLIENT
     },
     Case {
