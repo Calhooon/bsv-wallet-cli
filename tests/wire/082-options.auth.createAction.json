@@ -10,13 +10,14 @@
     }
   },
   "response": {
-    "status": 401,
+    "status": 200,
     "headers": {
-      "content-type": "application/json"
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-allow-methods": "POST",
+      "access-control-allow-origin": "http://wire.test",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "json": {
-      "code": "UNAUTHORIZED",
-      "message": "Invalid or missing bearer token"
-    }
+    "text": ""
   }
 }
