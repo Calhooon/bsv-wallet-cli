@@ -252,6 +252,60 @@ async fn a_conflicted_row_with_a_toolbox_proof_is_mined_after_one_tick() {
 }
 
 #[tokio::test]
+async fn a_moved_header_clears_the_revived_rows_reask_after_one_fetch() {
+    let txid = "cf".repeat(32);
+    let (storage, _) = proven_dead(&txid, "conflicted", 900).await;
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(super::tests::proof_answer(Some(path_of(&txid, 900))))
+        .build();
+    services.set_tip_header(super::tests::header_with_hash(900, &txid, 0));
+    services.set_header_for_height(header(900, &txid, 0));
+    let revived = pass(&storage, &services, 100).await;
+    assert_eq!(
+        revived.adopted_mined.as_slice(),
+        std::slice::from_ref(&txid)
+    );
+    assert_eq!(
+        stored_word(&storage, &txid).await.unwrap().unwrap().2,
+        Some("recheck".into())
+    );
+    let original = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert!(matches!(
+        original.verdict,
+        Some(StoredVerdict::Conflicted { .. })
+    ));
+
+    services.reset_history();
+    services.set_header_for_height(header(900, &txid, 1));
+    services.set_tip_header(super::tests::header_with_hash(901, &"aa".repeat(32), 0));
+    let moved = pass(&storage, &services, 101).await;
+    assert_eq!(
+        (moved.moved_from, moved.tracked, moved.asked),
+        (Some(900), 1, 1)
+    );
+    assert!(moved.faults.is_empty());
+    assert_eq!(moved.mined.as_slice(), std::slice::from_ref(&txid));
+    assert_eq!(services.call_count("get_header_for_height"), 1);
+    assert_eq!(services.call_count("get_merkle_path"), 1);
+    let word = stored_word(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!(word, ("mined".into(), Some(900), None));
+    let fetched = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!((fetched.asks, fetched.verdict), (0, original.verdict));
+    assert!(served_word(&storage, &txid).await["reask"].is_null());
+    println!("moved tick: {word:?}; {moved:?}; one header read, one merkle call");
+
+    let settled = stored_bytes(&storage, &txid).await;
+    services.reset_history();
+    let quiet = pass(&storage, &services, 102).await;
+    assert_idle(&quiet);
+    assert_eq!(quiet.moved_from, None);
+    assert_eq!(stored_bytes(&storage, &txid).await, settled);
+    assert_eq!(services.call_count("get_header_for_height"), 0);
+    assert_eq!(services.call_count("get_merkle_path"), 0);
+    println!("unmoved tick: {quiet:?}; stored word unchanged");
+}
+
+#[tokio::test]
 async fn a_rejected_rows_mismatched_proof_leaves_its_word_and_null_bump() {
     let txid = "c2".repeat(32);
     let (storage, services) = proven_dead(&txid, "rejected", 900).await;
