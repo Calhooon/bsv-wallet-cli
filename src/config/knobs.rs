@@ -12,7 +12,7 @@ use std::fmt;
 use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
 use serde::{Serialize, Serializer};
 
-use super::{Config, HeaderService, Secret, Source};
+use super::{ArcMode, Config, HeaderService, Secret, Source};
 
 /// A setting's effective value, as the table shows it ([`fmt::Display`])
 /// and as the JSON carries it ([`Serialize`]).
@@ -157,12 +157,20 @@ impl Config {
     }
 
     /// Every setting as `NAME=value` on one line, secrets `<set>`: what
-    /// `daemon` and `serve` log at start.
+    /// `daemon` and `serve` log at start. A value with a space in it is
+    /// quoted (`ARC_MODE="arcade (default)"`), so each setting is one word.
     #[must_use]
     pub fn log_line(&self) -> String {
         self.knobs()
             .iter()
-            .map(|k| format!("{}={}", k.name, k.value))
+            .map(|k| {
+                let value = k.value.to_string();
+                if value.contains(char::is_whitespace) {
+                    format!("{}={value:?}", k.name)
+                } else {
+                    format!("{}={value}", k.name)
+                }
+            })
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -191,17 +199,41 @@ impl Config {
         ]
     }
 
+    /// The broadcaster's rows (#300): `ARC_URL` in effect (else the mode's
+    /// default on the chain; a testnet wallet in Arcade mode has none,
+    /// refused where services are built, `services_env::arcade_url_for`),
+    /// the mode in effect (`ARC_MODE`'s, or `ARCADE`'s when it is unset),
+    /// and `ARCADE` as set (blank is no value).
+    fn broadcaster_values(&self) -> [(&'static str, Value); 3] {
+        let s = &self.services;
+        let arc_url = match (&s.arc_url, s.arc_mode, self.chain()) {
+            (Some(url), _, _) => Value::Text(shown_url(url)),
+            (None, ArcMode::Arcade, Chain::Main) => Value::Text(ARCADE_V2_MAINNET.to_string()),
+            (None, ArcMode::Arcade, Chain::Test) => Value::None("unset"),
+            (None, ArcMode::Classic, Chain::Main) => {
+                Value::Text(ServicesOptions::mainnet().arc_url)
+            }
+            (None, ArcMode::Classic, Chain::Test) => {
+                Value::Text(ServicesOptions::testnet().arc_url)
+            }
+        };
+        let mode = match s.arc_mode {
+            ArcMode::Arcade => "arcade (default)",
+            ArcMode::Classic => "classic",
+        };
+        let arcade = match self.raw.get("ARCADE") {
+            Some(v) if v.trim().is_empty() => Value::None("empty"),
+            set => or_none(set),
+        };
+        [
+            ("ARC_URL", arc_url),
+            ("ARC_MODE", Value::Text(mode.to_string())),
+            ("ARCADE", arcade),
+        ]
+    }
+
     fn services_values(&self) -> Vec<(&'static str, Value)> {
         let s = &self.services;
-        let defaults = match self.chain() {
-            Chain::Main => ServicesOptions::mainnet(),
-            Chain::Test => ServicesOptions::testnet(),
-        };
-        let arc_url = match (&s.arc_url, s.arcade()) {
-            (Some(url), _) => shown_url(url),
-            (None, true) => ARCADE_V2_MAINNET.to_string(),
-            (None, false) => defaults.arc_url,
-        };
         let mut values = vec![
             (
                 "CHAINTRACKS_URL",
@@ -215,17 +247,9 @@ impl Config {
                 "BREAK_GLASS_EXPLORER_HEADERS",
                 Value::Switch(s.break_glass_explorer_headers),
             ),
-            ("ARC_URL", arc_url.into()),
-            // ARC_MODE's own value as set: the mode in effect is this or
-            // ARCADE's, each on its own row. Blank is no value.
-            (
-                "ARC_MODE",
-                match self.raw.get("ARC_MODE") {
-                    Some(v) if v.trim().is_empty() => Value::None("empty"),
-                    set => or_none(set),
-                },
-            ),
-            ("ARCADE", Value::Switch(s.arcade_flag)),
+        ];
+        values.extend(self.broadcaster_values());
+        values.extend([
             (
                 "CALLBACK_TOKEN",
                 self.secret("CALLBACK_TOKEN", s.callback_token.as_ref()),
@@ -242,7 +266,7 @@ impl Config {
                 "MAIN_TAAL_API_KEY",
                 self.secret("MAIN_TAAL_API_KEY", s.main_taal_api_key.as_ref()),
             ),
-        ];
+        ]);
         values.extend(
             s.explorers
                 .values(self.chain(), |name, key| self.secret(name, key)),

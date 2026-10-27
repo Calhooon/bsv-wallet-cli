@@ -31,7 +31,11 @@ fn an_empty_environment_is_every_default_of_the_wallet_settings() {
         c.services.header_service().is_err(),
         "no default header service"
     );
-    assert!(!c.services.arcade());
+    assert!(
+        c.services.arcade(),
+        "Arcade is the default broadcaster (#300)"
+    );
+    assert_eq!(c.services.arc_mode, ArcMode::Arcade);
     assert_eq!(c.host.spend_depth, 1);
     assert!(c.host.spend_own_change);
     assert_eq!(c.host.tracker_age_secs, 600);
@@ -234,11 +238,19 @@ fn each_switch_keeps_its_words() {
         assert!(!break_glass(off), "{off:?}");
     }
     assert!(!Config::default().services.break_glass_explorer_headers);
-    assert!(config(&[("ARC_MODE", "Arcade")]).services.arcade());
-    assert!(config(&[("ARCADE", " true ")]).services.arcade());
-    assert!(!config(&[("ARC_MODE", "arc"), ("ARCADE", "0")])
-        .services
-        .arcade());
+    let mode = |pairs: &[(&str, &str)]| config(pairs).services.arc_mode;
+    assert_eq!(mode(&[("ARC_MODE", "Arcade")]), ArcMode::Arcade);
+    assert_eq!(mode(&[("ARCADE", " true ")]), ArcMode::Arcade);
+    assert_eq!(mode(&[("ARC_MODE", "classic")]), ArcMode::Classic);
+    assert_eq!(mode(&[("ARCADE", "0")]), ArcMode::Classic);
+    assert_eq!(
+        mode(&[("ARC_MODE", ""), ("ARCADE", "no")]),
+        ArcMode::Classic
+    );
+    assert_eq!(
+        mode(&[("ARC_MODE", "arcade"), ("ARCADE", "0")]),
+        ArcMode::Arcade
+    );
 }
 
 #[test]
@@ -364,20 +376,6 @@ fn an_empty_secret_shows_empty_and_keeps_its_meaning() {
 }
 
 #[test]
-fn arc_mode_and_arcade_each_show_their_own_value() {
-    let c = config(&[("ARCADE", "1")]);
-    assert!(c.services.arcade());
-    assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
-    assert_eq!(row(&c, "ARCADE"), ("on".to_string(), Source::Env));
-    let c = config(&[("ARC_MODE", "Arcade")]);
-    assert!(c.services.arcade());
-    assert_eq!(row(&c, "ARC_MODE"), ("Arcade".to_string(), Source::Env));
-    assert_eq!(row(&c, "ARCADE"), ("off".to_string(), Source::Default));
-    let c = Config::default();
-    assert_eq!(row(&c, "ARC_MODE"), ("-".to_string(), Source::Default));
-}
-
-#[test]
 fn the_rust_log_row_is_the_filter_in_effect() {
     let row = |c: &Config| row(c, "RUST_LOG");
     let default = (DEFAULT_LOG_FILTER.to_string(), Source::Default);
@@ -473,7 +471,10 @@ fn every_variable_is_a_knob_with_its_source() {
     );
     assert_eq!(of("RELAY_POLL_SECS").source, Source::Default);
     assert_eq!(c.raw("MIN_UTXOS"), Some("7"));
-    assert_eq!(c.log_line().split(' ').count(), knobs.len());
+    let line = c.log_line();
+    let words = line.split(' ').filter(|w| w.contains('='));
+    assert_eq!(words.count(), knobs.len());
+    assert!(line.contains(" ARC_MODE=\"arcade (default)\" "), "{line}");
     assert!(
         !format!("{c:?}").contains("UNRELATED"),
         "the snapshot's names stay out of Debug"
@@ -542,7 +543,7 @@ fn the_json_carries_null_for_no_value_and_booleans_for_switches() {
     for name in [
         "ROOT_KEY",
         "CHAINTRACKS_URL",
-        "ARC_MODE",
+        "ARCADE",
         "PUBLIC_CALLBACK_URL",
         "TLS_CERT_PATH",
         "MONITOR_CHECK_PROOFS_INTERVAL_SECS",
@@ -557,7 +558,6 @@ fn the_json_carries_null_for_no_value_and_booleans_for_switches() {
     for (name, on) in [
         ("--testnet", false),
         ("BREAK_GLASS_EXPLORER_HEADERS", false),
-        ("ARCADE", false),
         ("SPEND_OWN_CHANGE", true),
         ("BROADCAST_RECONCILE", true),
         ("BSV_WALLET_SKIP_BROADCAST_VERIFY", false),
@@ -593,24 +593,30 @@ fn the_json_of_set_empty_and_refused_values() {
         assert_eq!(json_row(&rows, name)["source"], "env", "{name}");
     }
     assert_eq!(json_row(&rows, "TAAL_API_KEY")["value"], "<set>");
-    assert_eq!(json_row(&rows, "ARCADE")["value"], true);
-    // A blank ARC_MODE is no value; CHAINTRACKS_URL=off is a value (the
-    // header service set off), apart from blank, which is none.
+    assert_eq!(json_row(&rows, "ARCADE")["value"], "yes");
+    // A blank ARCADE is no value; CHAINTRACKS_URL=off is a value (the
+    // header service set off), apart from blank, which is none. A blank
+    // ARC_MODE is unset: the mode in effect is the default (#300).
     for blank in ["", "  "] {
-        let c = config(&[("ARC_MODE", blank), ("CHAINTRACKS_URL", blank)]);
+        let c = config(&[
+            ("ARC_MODE", blank),
+            ("ARCADE", blank),
+            ("CHAINTRACKS_URL", blank),
+        ]);
         let rows = json_rows(&c);
-        for name in ["ARC_MODE", "CHAINTRACKS_URL"] {
+        for name in ["ARCADE", "CHAINTRACKS_URL"] {
             let row = json_row(&rows, name);
             assert_eq!(row["value"], serde_json::Value::Null, "{name}={blank:?}");
             assert_eq!(row["source"], "env", "{name}={blank:?}");
         }
-        assert_eq!(row(&c, "ARC_MODE").0, "empty", "{blank:?}");
+        assert_eq!(row(&c, "ARCADE").0, "empty", "{blank:?}");
+        assert_eq!(json_row(&rows, "ARC_MODE")["value"], "arcade (default)");
     }
     let rows = json_rows(&config(&[
-        ("ARC_MODE", "arcade"),
+        ("ARC_MODE", "classic"),
         ("CHAINTRACKS_URL", "off"),
     ]));
-    assert_eq!(json_row(&rows, "ARC_MODE")["value"], "arcade");
+    assert_eq!(json_row(&rows, "ARC_MODE")["value"], "classic");
     assert_eq!(json_row(&rows, "CHAINTRACKS_URL")["value"], "off");
     assert_eq!(json_row(&rows, "CHAINTRACKS_URL")["source"], "env");
     let refused = Config::from_pairs(&[("MIN_UTXOS", "x")]).unwrap_err();
@@ -661,8 +667,11 @@ fn the_testnet_defaults_are_the_test_bases_with_gorillapool_off() {
             Source::Default
         )
     );
+    // Arcade has no testnet default (#300): refused where services are
+    // built; classic is the chain's TAAL testnet ARC.
+    assert_eq!(row("ARC_URL"), ("unset".to_string(), Source::Default));
     assert_eq!(
-        row("ARC_URL"),
+        super::tests::row(&testnet(&[("ARC_MODE", "classic")]), "ARC_URL"),
         ("https://arc-test.taal.com".to_string(), Source::Default)
     );
     // A URL still moves GorillaPool on the test chain.

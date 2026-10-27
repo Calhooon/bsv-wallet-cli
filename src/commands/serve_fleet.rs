@@ -159,8 +159,9 @@ pub fn assert_env_uniform(env_path: &Path, config: &Config) -> Result<()> {
 /// Build one tenant's ServerConfig — the same shape `serve` builds, with
 /// the callback token resolved per-db (Arcade runtime is db-anchored).
 fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
-    let arcade_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
-        .map(|rt| rt.callback_token);
+    let arcade_token =
+        crate::services_env::arcade_runtime(&ctx.config.services, ctx.chain, &ctx.db_path)?
+            .map(|rt| rt.callback_token);
     Ok(ServerConfig::from_config(
         &ctx.config,
         ctx.chain,

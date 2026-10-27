@@ -58,7 +58,7 @@ pub async fn start(
         Ok(Services::with_options(chain, opts)?)
     };
 
-    let arcade_rt = services_env::arcade_runtime(&config.services, db)?;
+    let arcade_rt = services_env::arcade_runtime(&config.services, chain, db)?;
     if let Some(ref rt) = arcade_rt {
         eprintln!(
             "[{port}] Arcade V2 mode: {} (SSE status stream enabled)",

@@ -9,8 +9,9 @@ pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
     // /arc-callback is enabled when a callback token exists (Arcade mode, or
     // explicit CALLBACK_TOKEN). No monitor runs under `serve`, so push proofs
     // arrive via the webhook only.
-    let arcade_token = crate::services_env::arcade_runtime(&ctx.config.services, &ctx.db_path)?
-        .map(|rt| rt.callback_token);
+    let arcade_token =
+        crate::services_env::arcade_runtime(&ctx.config.services, ctx.chain, &ctx.db_path)?
+            .map(|rt| rt.callback_token);
     let config = ServerConfig::from_config(&ctx.config, ctx.chain, arcade_token);
     let settings = ctx.config.clone();
     let db_path = ctx.db_path.clone();
