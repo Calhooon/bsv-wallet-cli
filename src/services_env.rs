@@ -12,18 +12,19 @@
 //! |-----|--------|
 //! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven |
 //! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
-//! | `ARC_URL` | Override the broadcaster URL (classic ARC, or the Arcade endpoint in Arcade mode) |
-//! | `ARC_MODE=arcade` or `ARCADE=1` | Arcade V2 mode: EF-only submit, SSE status stream, push proofs |
+//! | `ARC_MODE` | The broadcaster mode: unset, blank or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; any other value is refused by name |
+//! | `ARCADE` | The older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic; any other value is refused by name |
+//! | `ARC_URL` | Override the broadcaster URL (blank is unset): the Arcade endpoint in Arcade mode (default `ARCADE_V2_MAINNET` on mainnet; no testnet default, so a testnet wallet without it is refused by name), the classic ARC URL in classic mode (default the chain's TAAL ARC) |
 //! | `CALLBACK_TOKEN` | Override the per-wallet callback token (otherwise auto-generated and persisted next to the db) |
 //! | `PUBLIC_CALLBACK_URL` | Public HTTPS URL Arcade should POST status webhooks to (`X-CallbackUrl`) |
-//! | `TAAL_API_KEY` | TAAL ARC key sent as `Authorization: Bearer <key>` |
-//! | `MAIN_TAAL_API_KEY` | TAAL ARC key sent as raw `Authorization: <key>` (TAAL accepts no Bearer prefix) |
+//! | `TAAL_API_KEY` | Deprecated (#300): classic mode only, TAAL ARC key sent as `Authorization: Bearer <key>`; in Arcade mode it is unused and logged once at warn |
+//! | `MAIN_TAAL_API_KEY` | Deprecated (#300): classic mode only, TAAL ARC key sent as raw `Authorization: <key>` (TAAL accepts no Bearer prefix); in Arcade mode it is unused and logged once at warn |
 //! | `WOC_API_KEY` | WhatsOnChain key, sent as `woc-api-key` and `Authorization: Bearer` by the toolbox's provider and the CLI's own WhatsOnChain rung (optional) |
 //! | `BITAILS_API_KEY` | Bitails key (optional) |
 //! | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it (no key exists) |
 //! | `WOC_BASE` | WhatsOnChain API base for the CLI's own rungs (the spend probe, `receive`'s courier, the broadcast verifier's chain index): unset or blank is the chain's default, a URL moves it (a fixture, a mirror). The toolbox's own WhatsOnChain provider keeps its default until it takes a base (bsv-wallet-cli #74) |
 //! | `BITAILS_BASE` | Bitails API base for the broadcast verifier's chain index: unset or blank is the chain's default, a URL moves it. The toolbox's own Bitails provider keeps its default until it takes a base (#74) |
-//! | `ARC_GORILLAPOOL_URL` | The GorillaPool ARC, the toolbox's second broadcaster and the verifier's third-party store: unset is the chain's default (mainnet only), empty leaves it out, a URL moves it |
+//! | `ARC_GORILLAPOOL_URL` | The GorillaPool ARC as the broadcast verifier's third-party store, never a broadcaster (#300): unset is the chain's default (mainnet only), empty leaves it out, a URL moves it |
 
 use anyhow::{Context, Result};
 use bsv_wallet_toolbox::services::providers::{
@@ -36,8 +37,11 @@ use bsv_wallet_toolbox::{
 };
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Once;
 
-use crate::config::{shown_url, url_or, HeaderService, Reader, Secret, ServicesSettings, Value};
+use crate::config::{
+    shown_url, url_or, ArcMode, HeaderService, Reader, Secret, ServicesSettings, Value,
+};
 
 /// What an unset or empty `CHAINTRACKS_URL` is told. No explorer in the
 /// proof path (P0-1c, bsv-stack-lean #48): the header source is the
@@ -87,17 +91,17 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
     Ok(())
 }
 
-/// The bases of the explorers and the third-party broadcaster the CLI's
-/// own rungs ask (`explorers.rs`, `broadcast_verify.rs`): `WhatsOnChain` and
+/// The bases of the explorers and the third-party store the CLI's own
+/// rungs ask (`explorers.rs`, `broadcast_verify.rs`): `WhatsOnChain` and
 /// Bitails always on, at the chain's default or where `WOC_BASE` /
-/// `BITAILS_BASE` point; `GorillaPool` at the chain's default (mainnet only),
-/// where `ARC_GORILLAPOOL_URL` points, or left out when it is empty. A
-/// hermetic run points all three at a local stub (#74).
+/// `BITAILS_BASE` point; `GorillaPool`'s ARC at the chain's default (mainnet
+/// only), where `ARC_GORILLAPOOL_URL` points, or left out when it is empty.
+/// A hermetic run points all three at a local stub (#74).
 ///
 /// The toolbox's own `WhatsOnChain` and Bitails providers do not take a base
 /// (`ServicesOptions` has `bananablocks_base` alone); `GorillaPool`'s base
-/// here is the toolbox's `arc_gorillapool_url`, set from it by
-/// [`services_options`].
+/// here is the broadcast verifier's alone: [`services_options`] never hands
+/// it to the toolbox as a broadcaster (#300).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerBases {
     /// `WhatsOnChain`'s API base, no trailing slash.
@@ -225,7 +229,8 @@ impl ExplorerSettings {
 /// Resolved Arcade V2 runtime settings (present only in Arcade mode).
 #[derive(Debug, Clone)]
 pub struct ArcadeRuntime {
-    /// Arcade base URL (from `ARC_URL`, default [`ARCADE_V2_MAINNET`]).
+    /// Arcade base URL ([`arcade_url_for`]: `ARC_URL`, default
+    /// [`ARCADE_V2_MAINNET`] on mainnet).
     pub url: String,
     /// Per-wallet callback token (env override or persisted next to the db).
     pub callback_token: String,
@@ -233,20 +238,46 @@ pub struct ArcadeRuntime {
     pub public_callback_url: Option<String>,
 }
 
-/// Resolve the Arcade runtime settings, or `None` when not in Arcade mode
-/// (`ARC_MODE=arcade` or `ARCADE=1`, [`ServicesSettings::arcade`]).
+/// What a testnet wallet in Arcade mode without `ARC_URL` is told.
+pub const NO_TESTNET_ARCADE_DEFAULT: &str =
+    "no testnet Arcade default; set ARC_URL (or ARC_MODE=classic, deprecated)";
+
+/// The Arcade endpoint for `chain` from `ARC_URL` as the configuration read
+/// it (trimmed, blank none).
+///
+/// Unset on mainnet is [`ARCADE_V2_MAINNET`]. Unset on testnet is refused
+/// by name: the toolbox has no testnet Arcade, and a testnet wallet must
+/// never post to mainnet Arcade, nor fall back to classic ARC (#300). The
+/// broadcast verifier reads its plane through this same rule.
+///
+/// # Errors
+///
+/// [`NO_TESTNET_ARCADE_DEFAULT`]: `chain` is the test chain and `arc_url`
+/// is unset or blank.
+pub fn arcade_url_for(chain: Chain, arc_url: Option<&str>) -> Result<String> {
+    match (arc_url.map(str::trim).filter(|s| !s.is_empty()), chain) {
+        (Some(url), _) => Ok(url.to_string()),
+        (None, Chain::Main) => Ok(ARCADE_V2_MAINNET.to_string()),
+        (None, Chain::Test) => anyhow::bail!("{NO_TESTNET_ARCADE_DEFAULT}"),
+    }
+}
+
+/// Resolve the Arcade runtime settings, or `None` in classic mode
+/// ([`ServicesSettings::arcade`]).
 ///
 /// `db_path` locates the persisted per-wallet callback token
 /// (`<db>.callback-token`), giving each wallet db/port its own independent
-/// SSE stream and webhook identity.
-pub fn arcade_runtime(settings: &ServicesSettings, db_path: &str) -> Result<Option<ArcadeRuntime>> {
-    if !settings.arcade() {
+/// SSE stream and webhook identity. A testnet wallet without `ARC_URL`
+/// ([`arcade_url_for`]) is an error here.
+pub fn arcade_runtime(
+    settings: &ServicesSettings,
+    chain: Chain,
+    db_path: &str,
+) -> Result<Option<ArcadeRuntime>> {
+    if settings.arc_mode == ArcMode::Classic {
         return Ok(None);
     }
-    let url = settings
-        .arc_url
-        .clone()
-        .unwrap_or_else(|| ARCADE_V2_MAINNET.to_string());
+    let url = arcade_url_for(chain, settings.arc_url.as_deref())?;
     let callback_token = resolve_callback_token(
         settings
             .callback_token
@@ -312,11 +343,36 @@ pub fn callback_token_path(db_path: &str) -> PathBuf {
     PathBuf::from(format!("{}.callback-token", db_path))
 }
 
+/// What a wallet in Arcade mode is told, once, when a TAAL key is set.
+pub const TAAL_KEY_UNUSED_WARNING: &str = "is set but unused in Arcade mode (arc is just \
+     deprecated, arcade is the standard); the toolbox's TAAL provider posts unauthenticated \
+     until toolbox #317; remove the knob";
+
 /// Build `ServicesOptions` from the configuration (the ONE shared helper).
 ///
 /// `db_path` is used only in Arcade mode, to resolve the persisted callback
-/// token.
+/// token. The first build logs the postBeef providers once
+/// (`post_beef_ladder`, [`crate::broadcast_verify::post_beef_ladder`]).
 pub fn services_options(
+    settings: &ServicesSettings,
+    chain: Chain,
+    db_path: &str,
+) -> Result<ServicesOptions> {
+    static LADDER: Once = Once::new();
+    let opts = services_options_quiet(settings, chain, db_path)?;
+    LADDER.call_once(|| {
+        tracing::info!(
+            marker = "post_beef_ladder",
+            mode = if opts.arcade_v2 { "arcade" } else { "classic" },
+            broadcaster = %opts.arc_url,
+            providers = %crate::broadcast_verify::post_beef_ladder(&opts).join(","),
+            "broadcast ladder"
+        );
+    });
+    Ok(opts)
+}
+
+fn services_options_quiet(
     settings: &ServicesSettings,
     chain: Chain,
     db_path: &str,
@@ -349,18 +405,50 @@ pub fn services_options(
         opts = opts.with_bitails_api_key(key.expose().to_string());
     }
     opts.bananablocks_base = explorers.bananablocks_base.clone();
-    // GorillaPool, the toolbox's second broadcaster: the toolbox's default
-    // unless `ARC_GORILLAPOOL_URL` moves it or, empty, leaves it out (#74);
-    // the base the knob shows and the verifier asks.
-    opts.arc_gorillapool_url
-        .clone_from(&explorers.bases.gorillapool);
 
-    // TAAL ARC auth (applies to the classic ARC provider — in Arcade mode
-    // that provider is the failover behind Arcade).
-    // - TAAL_API_KEY       → `Authorization: Bearer <key>`
-    // - MAIN_TAAL_API_KEY  → raw `Authorization: <key>` (TAAL accepts the key
-    //   WITHOUT the Bearer prefix; kept for backward compatibility with
-    //   existing daemon deployments).
+    // GorillaPool's ARC is never a rung, in either mode: the owner's word of
+    // 2026-10-27 ("arc is old af... we use arcade now for everyting") and
+    // the keeper's reading of it (#300: GorillaPool's ARC is a rung of no
+    // gate and no courier; it held every submission of the 0.18.2 gate at
+    // ANNOUNCED for over thirteen minutes). The toolbox's mainnet default
+    // registers it whenever this is Some. `ARC_GORILLAPOOL_URL` stays the
+    // broadcast verifier's third-party store; BananaBlocks, its explorer,
+    // keeps its explorer rung above: neither is a broadcaster.
+    opts.arc_gorillapool_url = None;
+
+    if let Some(runtime) = arcade_runtime(settings, chain, db_path)? {
+        // Arcade V2 mode: explicit flag on ServicesOptions (never inferred
+        // from the URL). The TAAL keys are unused in Arcade mode (arc is just
+        // deprecated, arcade is the standard): no classic ARC config is
+        // passed. The toolbox's TAAL provider still sits behind Arcade
+        // (services.rs 672-685) and posts unauthenticated until toolbox #317
+        // drops it.
+        warn_unused_taal_keys(settings);
+        let arcade_config = ArcadeConfig {
+            callback_token: Some(runtime.callback_token.clone()),
+            callback_url: runtime.public_callback_url.clone(),
+            ..Default::default()
+        };
+        opts.arc_config = None;
+        opts = opts.with_arcade(runtime.url, Some(arcade_config));
+    } else {
+        // Classic ARC: honor ARC_URL override, else keep the chain default.
+        let arc_url = settings
+            .arc_url
+            .clone()
+            .unwrap_or_else(|| opts.arc_url.clone());
+        opts = opts.with_arc(arc_url, classic_arc_config(settings));
+    }
+
+    Ok(opts)
+}
+
+/// TAAL ARC auth, for the classic mode only (deprecated, #300):
+/// - `TAAL_API_KEY`       → `Authorization: Bearer <key>`
+/// - `MAIN_TAAL_API_KEY`  → raw `Authorization: <key>` (TAAL accepts the key
+///   WITHOUT the Bearer prefix; kept for backward compatibility with
+///   existing daemon deployments).
+fn classic_arc_config(settings: &ServicesSettings) -> Option<ArcConfig> {
     let mut arc_config: Option<ArcConfig> = settings
         .taal_api_key
         .as_ref()
@@ -372,29 +460,26 @@ pub fn services_options(
         cfg.headers = Some(headers);
         arc_config = Some(cfg);
     }
-
-    if let Some(runtime) = arcade_runtime(settings, db_path)? {
-        // Arcade V2 mode: explicit flag on ServicesOptions (never inferred
-        // from the URL). Classic ARC config still applies to the TAAL
-        // failover provider.
-        let arcade_config = ArcadeConfig {
-            callback_token: Some(runtime.callback_token.clone()),
-            callback_url: runtime.public_callback_url.clone(),
-            ..Default::default()
-        };
-        opts.arc_config = arc_config;
-        opts = opts.with_arcade(runtime.url, Some(arcade_config));
-    } else {
-        // Classic ARC: honor ARC_URL override, else keep the chain default.
-        let arc_url = settings
-            .arc_url
-            .clone()
-            .unwrap_or_else(|| opts.arc_url.clone());
-        opts = opts.with_arc(arc_url, arc_config);
-    }
-
-    Ok(opts)
+    arc_config
 }
+
+/// In Arcade mode a set TAAL key is unused: said once, at warn.
+fn warn_unused_taal_keys(settings: &ServicesSettings) {
+    static TAAL_UNUSED: Once = Once::new();
+    TAAL_UNUSED.call_once(|| {
+        for (name, value) in [
+            ("TAAL_API_KEY", &settings.taal_api_key),
+            ("MAIN_TAAL_API_KEY", &settings.main_taal_api_key),
+        ] {
+            if value.is_some() {
+                tracing::warn!("{name} {TAAL_KEY_UNUSED_WARNING}");
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod arc_mode_tests;
 
 #[cfg(test)]
 mod tests {
@@ -477,60 +562,6 @@ mod tests {
         );
     }
 
-    /// `ARC_GORILLAPOOL_URL` (#74, #172): the one base, the knob's and the
-    /// toolbox's. Unset is `ServicesOptions`' own default for either chain;
-    /// empty or blank leaves `GorillaPool` out; a URL moves it; a refused
-    /// value is the default in both (before #172 item 2, the toolbox took
-    /// its default while the knob and the verifier took the value refused).
-    #[test]
-    fn the_toolbox_takes_the_gorillapool_base_the_knob_shows() {
-        let options = |pairs: &[(&str, &str)], chain| {
-            let mut pairs = pairs.to_vec();
-            pairs.push(("CHAINTRACKS_URL", "off"));
-            let flags = crate::config::Flags {
-                testnet: chain == Chain::Test,
-                ..crate::config::Flags::default()
-            };
-            let vars = pairs
-                .iter()
-                .map(|(k, v)| ((*k).to_string(), (*v).to_string()));
-            // A refused setting's configuration, each refused one at its
-            // default: what `config` prints.
-            let config = crate::config::Config::from_vars(&flags, vars)
-                .unwrap_or_else(|refused| *refused.config);
-            let opts = services_options(&config.services, chain, "unused.db").unwrap();
-            (
-                opts.arc_gorillapool_url,
-                config.services.explorers.bases.gorillapool,
-            )
-        };
-        for (chain, base) in [
-            (Chain::Main, ServicesOptions::mainnet()),
-            (Chain::Test, ServicesOptions::testnet()),
-        ] {
-            let (toolbox, shown) = options(&[], chain);
-            assert_eq!(toolbox, base.arc_gorillapool_url, "{chain:?}");
-            assert_eq!(shown, toolbox, "{chain:?}");
-        }
-        for blank in ["", "  "] {
-            let (toolbox, shown) = options(&[("ARC_GORILLAPOOL_URL", blank)], Chain::Main);
-            assert_eq!((toolbox, shown), (None, None), "{blank:?}");
-        }
-        let (toolbox, shown) = options(
-            &[("ARC_GORILLAPOOL_URL", " http://127.0.0.1:3380/arc/ ")],
-            Chain::Main,
-        );
-        assert_eq!(toolbox.as_deref(), Some("http://127.0.0.1:3380/arc"));
-        assert_eq!(shown, toolbox);
-        let (toolbox, shown) = options(&[("ARC_GORILLAPOOL_URL", "nope")], Chain::Main);
-        assert_eq!(toolbox, ServicesOptions::mainnet().arc_gorillapool_url);
-        assert_eq!(shown, toolbox, "the refused value is the default in both");
-        assert_eq!(
-            ServicesOptions::mainnet().arc_gorillapool_url.as_deref(),
-            Some("https://arc.gorillapool.io")
-        );
-    }
-
     /// `WOC_BASE` and `BITAILS_BASE` (#74): unset or blank is the chain's
     /// default, a URL moves the rung, a trailing slash is dropped.
     #[test]
@@ -593,7 +624,9 @@ mod tests {
             let config =
                 crate::config::Config::from_pairs(&[("ARCADE", "1"), ("CALLBACK_TOKEN", token)])
                     .unwrap();
-            let runtime = arcade_runtime(&config.services, db).unwrap().unwrap();
+            let runtime = arcade_runtime(&config.services, Chain::Main, db)
+                .unwrap()
+                .unwrap();
             let shown = config
                 .knobs()
                 .into_iter()

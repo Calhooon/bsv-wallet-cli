@@ -33,6 +33,7 @@ use bsv_tracker::{Height, Timestamp};
 use bsv_wallet_toolbox::Chain;
 use serde::Serialize;
 
+mod arc_mode;
 mod knobs;
 mod read;
 #[cfg(test)]
@@ -40,6 +41,7 @@ mod seed_tests;
 #[cfg(test)]
 mod tests;
 
+pub use arc_mode::ArcMode;
 pub(crate) use knobs::url_or;
 pub use knobs::{shown_url, Knob, Value};
 pub(crate) use read::{Raw, Reader};
@@ -363,24 +365,22 @@ pub struct ServicesSettings {
     pub break_glass_explorer_headers: bool,
     /// `ARC_URL`: the broadcaster (the Arcade endpoint in Arcade mode).
     pub arc_url: Option<String>,
-    /// `ARC_MODE=arcade` (any case).
-    pub arc_mode_arcade: bool,
-    /// `ARCADE`: `1`, `true` or `yes`.
-    pub arcade_flag: bool,
+    /// `ARC_MODE` (or `ARCADE`): Arcade unless `classic` (#300).
+    pub arc_mode: ArcMode,
     /// `CALLBACK_TOKEN`, trimmed, when not blank (the token the webhook
     /// checks and Arcade is given; blank is none, so the persisted or a
     /// generated token stands in Arcade mode).
     pub callback_token: Option<Secret>,
     /// `PUBLIC_CALLBACK_URL`: the webhook Arcade posts to.
     pub public_callback_url: Option<String>,
-    /// `TAAL_API_KEY`, when not empty (`Authorization: Bearer <key>`).
+    /// `TAAL_API_KEY`, when not empty (Bearer); deprecated, classic only (#300).
     pub taal_api_key: Option<Secret>,
-    /// `MAIN_TAAL_API_KEY`, when not empty (raw `Authorization: <key>`).
+    /// `MAIN_TAAL_API_KEY`, when not empty (raw); deprecated, classic only.
     pub main_taal_api_key: Option<Secret>,
     /// The explorers' keys and bases ([`crate::services_env::ExplorerSettings`]),
     /// `GorillaPool`'s among them: `ARC_GORILLAPOOL_URL`, read here once,
     /// is its base (`explorers.bases.gorillapool`), the one the knob shows
-    /// and the toolbox takes.
+    /// and the broadcast verifier asks; never a broadcaster (#300).
     pub explorers: crate::services_env::ExplorerSettings,
 }
 
@@ -396,8 +396,7 @@ impl ServicesSettings {
             chaintracks_url,
             break_glass_explorer_headers: raw.switch("BREAK_GLASS_EXPLORER_HEADERS", false, yes),
             arc_url: raw.url("ARC_URL"),
-            arc_mode_arcade: raw.switch("ARC_MODE", false, |v| v.eq_ignore_ascii_case("arcade")),
-            arcade_flag: raw.switch("ARCADE", false, yes),
+            arc_mode: ArcMode::read(raw),
             callback_token: raw.key("CALLBACK_TOKEN"),
             public_callback_url: raw.url("PUBLIC_CALLBACK_URL"),
             taal_api_key: raw.secret("TAAL_API_KEY"),
@@ -410,10 +409,10 @@ impl ServicesSettings {
         }
     }
 
-    /// Arcade V2 mode (`ARC_MODE=arcade` or `ARCADE=1`).
+    /// Arcade V2 mode, the default ([`ArcMode`]).
     #[must_use]
     pub fn arcade(&self) -> bool {
-        self.arc_mode_arcade || self.arcade_flag
+        self.arc_mode == ArcMode::Arcade
     }
 
     /// The header service: `Some(url)`, or `None` for `off`.
@@ -716,6 +715,8 @@ impl Config {
     pub fn source(&self, name: &str) -> Source {
         if name == "RUST_LOG" {
             self.wallet.log_filter().1
+        } else if name == "ARC_MODE" {
+            arc_mode::source(&self.raw)
         } else if self.given.contains(&name) {
             Source::Flag
         } else if FLAG_NAMES.contains(&name) || self.raw.get(name).is_none() {

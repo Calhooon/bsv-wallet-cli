@@ -94,8 +94,9 @@ use std::time::{Duration, Instant};
 
 use bsv_wallet_toolbox::{
     services::{providers::BananaBlocks, ARCADE_V2_MAINNET},
-    BroadcastStatus, Chain, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
-    PROVIDER_ARCADE_V2,
+    BroadcastStatus, Chain, ServicesOptions, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
+    PROVIDER_ARCADE_V2, PROVIDER_BITAILS, PROVIDER_GORILLAPOOL_ARC, PROVIDER_TAAL_ARC,
+    PROVIDER_WHATSONCHAIN,
 };
 use reqwest::Client;
 
@@ -402,6 +403,30 @@ impl AbsenceVotes {
     }
 }
 
+/// The postBeef providers the toolbox builds from `opts` (as
+/// `services_env::services_options` built them), in its order, by their
+/// names, which `services_env` logs once at start: the rule of
+/// `Services::with_options` in toolbox 0.14.0-beta.1 (`services.rs`
+/// 775-805), which logs no provider list of its own. In Arcade mode the
+/// classic TAAL provider stays behind Arcade, pointed at TAAL's URL, until
+/// toolbox #317 drops it. Here, beside the plane the verifier mirrors, since
+/// the ladder names the explorers that are also broadcasters (A3).
+#[must_use]
+#[allow(dead_code)] // the binary's copy of this module: called by the library's `services_env`
+pub fn post_beef_ladder(opts: &ServicesOptions) -> Vec<&'static str> {
+    let mut ladder = Vec::new();
+    if opts.arcade_v2 {
+        ladder.push(PROVIDER_ARCADE_V2);
+    }
+    ladder.push(PROVIDER_TAAL_ARC);
+    if opts.arc_gorillapool_url.is_some() {
+        ladder.push(PROVIDER_GORILLAPOOL_ARC);
+    }
+    ladder.push(PROVIDER_BITAILS);
+    ladder.push(PROVIDER_WHATSONCHAIN);
+    ladder
+}
+
 /// The broadcast plane the wallet is configured to submit through.
 ///
 /// This mirrors `services_env::services_options` — the ONE place that
@@ -409,7 +434,7 @@ impl AbsenceVotes {
 /// endpoint the transaction was actually handed to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BroadcastPlane {
-    /// Arcade V2 (`ARC_MODE=arcade` / `ARCADE=1`).
+    /// Arcade V2, the default mode (`ARC_MODE` unset or `arcade`, #300).
     ///
     /// Status endpoint is `GET {base}/tx/{txid}` — **no `/v1` prefix**. Verified
     /// two ways: `ArcadeV2Provider::get_tx_status` in `bsv-wallet-toolbox-rs`
@@ -419,7 +444,7 @@ enum BroadcastPlane {
     /// (i.e. the `/v1` path does not exist and its 404 is a routing artifact).
     /// Keyless: Arcade's status read needs no `Authorization` header.
     ArcadeV2 { base: String },
-    /// Classic ARC. Status endpoint is `GET {base}/v1/tx/{txid}`, matching
+    /// Classic ARC (`ARC_MODE=classic`, the hermetic stub's). Status endpoint is `GET {base}/v1/tx/{txid}`, matching
     /// `ArcProvider::get_tx_status` in the toolbox.
     ClassicArc { base: String },
 }
@@ -444,8 +469,22 @@ impl BroadcastPlane {
         }
     }
 
-    fn for_settings(chain: Chain, settings: &crate::config::ServicesSettings) -> Self {
-        Self::resolve(chain, settings.arcade(), settings.arc_url.clone())
+    /// The plane of the configuration. The Arcade endpoint is
+    /// `services_env::arcade_url_for`'s: a testnet wallet in Arcade mode
+    /// without `ARC_URL` is refused (#300), never probed on mainnet Arcade.
+    fn for_settings(
+        chain: Chain,
+        settings: &crate::config::ServicesSettings,
+    ) -> anyhow::Result<Self> {
+        let arc_url = if settings.arcade() {
+            Some(crate::services_env::arcade_url_for(
+                chain,
+                settings.arc_url.as_deref(),
+            )?)
+        } else {
+            settings.arc_url.clone()
+        };
+        Ok(Self::resolve(chain, settings.arcade(), arc_url))
     }
 
     fn base(&self) -> &str {
@@ -627,7 +666,7 @@ pub struct BroadcastVerifier {
 
 impl BroadcastVerifier {
     /// Build a verifier for `chain` from the configuration:
-    /// - `ARC_MODE=arcade` / `ARCADE=1` + `ARC_URL` select the plane probed first.
+    /// - `ARC_MODE` (Arcade unless `classic`) + `ARC_URL` select the plane probed first.
     /// - `BSV_WALLET_SKIP_BROADCAST_VERIFY=1` disables verification entirely.
     /// - `BSV_WALLET_BROADCAST_VERIFY_ATTEMPTS` overrides the probe-round count.
     /// - `BSV_WALLET_BROADCAST_VERIFY_DELAY_MS` overrides the inter-round delay.
@@ -641,25 +680,37 @@ impl BroadcastVerifier {
             .or(services.main_taal_api_key.as_ref())
             .map(|k| k.expose().to_string());
 
-        let plane = BroadcastPlane::for_settings(chain, services);
-        tracing::debug!(plane = ?plane, "broadcast verifier plane");
         let bananablocks = crate::explorers::Explorers::for_settings(chain, services)
             .bananablocks()
             .cloned();
         let bananablocks_base = bananablocks.as_ref().map(|bb| bb.base_url().to_string());
+        // A plane the services builder refuses (a testnet wallet in Arcade
+        // mode without ARC_URL) is refused here too: no source is probed and
+        // every verdict is `Inconclusive`, the fail-safe direction.
+        let (sources, enabled) = match BroadcastPlane::for_settings(chain, services) {
+            Ok(plane) => {
+                tracing::debug!(plane = ?plane, "broadcast verifier plane");
+                let sources = build_sources(
+                    chain,
+                    &plane,
+                    &services.explorers.bases,
+                    taal_key,
+                    bananablocks_base.as_deref(),
+                );
+                (sources, !verify.skip)
+            }
+            Err(e) => {
+                tracing::warn!("broadcast verifier off: {e}");
+                (Vec::new(), false)
+            }
+        };
 
         Self {
             client: Client::new(),
-            sources: build_sources(
-                chain,
-                &plane,
-                &services.explorers.bases,
-                taal_key,
-                bananablocks_base.as_deref(),
-            ),
+            sources,
             attempts: verify.attempts,
             delay: Duration::from_millis(verify.delay_ms),
-            enabled: !verify.skip,
+            enabled,
             rotation: Arc::default(),
             bananablocks,
         }
@@ -1298,6 +1349,35 @@ mod tests {
             BroadcastPlane::resolve(Chain::Test, false, None).base(),
             "https://arc-test.taal.com"
         );
+    }
+
+    #[test]
+    fn a_testnet_arcade_plane_without_arc_url_is_refused_never_mainnet() {
+        let testnet = |pairs: &[(&str, &str)]| {
+            let flags = crate::config::Flags {
+                testnet: true,
+                ..crate::config::Flags::default()
+            };
+            let vars = pairs.iter().map(|(k, v)| ((*k).into(), (*v).into()));
+            crate::config::Config::from_vars(&flags, vars).unwrap()
+        };
+        for pairs in [&[][..], &[("ARC_URL", "  ")][..]] {
+            let config = testnet(pairs);
+            let err = BroadcastPlane::for_settings(Chain::Test, &config.services).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                crate::services_env::NO_TESTNET_ARCADE_DEFAULT,
+                "{pairs:?}"
+            );
+            // The verifier the configuration builds asks nothing and keeps
+            // every transaction (`Inconclusive`), the fail-safe direction.
+            let verifier = BroadcastVerifier::new(Chain::Test, &config);
+            assert!(verifier.sources.is_empty() && !verifier.enabled);
+        }
+        let config = testnet(&[("ARC_URL", SYNTHETIC_ARCADE)]);
+        let plane = BroadcastPlane::for_settings(Chain::Test, &config.services).unwrap();
+        assert_eq!(plane.base(), SYNTHETIC_ARCADE);
+        assert_eq!(plane.kind(), SourceKind::Arcade);
     }
 
     #[test]

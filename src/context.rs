@@ -83,8 +83,8 @@ pub async fn open_store(
     let storage = StorageSqlx::open_with_options(db, config.wallet.storage_options()).await?;
     storage.make_available().await?;
 
-    // Shared services config (CHAINTRACKS_URL, ARC_URL, ARC_MODE=arcade,
-    // TAAL keys, callback token) — see services_env.rs.
+    // Shared services config (CHAINTRACKS_URL, ARC_URL, ARC_MODE,
+    // callback token) — see services_env.rs.
     let opts = services_env::services_options(&config.services, chain, db)?;
     let services = Services::with_options(chain, opts)?;
     if let Some(ref ct) = services.chaintracks {

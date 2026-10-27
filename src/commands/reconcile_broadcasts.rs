@@ -15,7 +15,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         execute,
         max_probes,
         ctx.config.reconcile.absence_minutes,
-        broadcast_reconcile::arcade_sse_for(&ctx.config.services, &ctx.db_path),
+        broadcast_reconcile::arcade_sse_for(&ctx.config.services, ctx.chain, &ctx.db_path),
     );
     println!(
         "Reconciling broadcasts{} (absence threshold {} min, up to {} probe(s){})...",

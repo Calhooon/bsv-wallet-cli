@@ -85,8 +85,8 @@ use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
 use bsv_wallet_toolbox::services::providers::arcade::statuses;
 use bsv_wallet_toolbox::{
     ArcadeSseClient, ArcadeStatusEvent, BroadcastMemory, BroadcastSeenRecord, BroadcastStatus,
-    LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx, Wallet,
-    WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
+    Chain, LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx,
+    Wallet, WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
     BROADCAST_SEEN_STALE_SECS, BROADCAST_STATUS_MINED, BROADCAST_STATUS_SEEN,
     BROADCAST_STATUS_UNKNOWN, PROVIDER_ARCADE_V2,
 };
@@ -175,9 +175,10 @@ impl ReconcileOptions {
 /// mode (mirrors `services_env::arcade_runtime`).
 pub fn arcade_sse_for(
     settings: &crate::config::ServicesSettings,
+    chain: Chain,
     db_path: &str,
 ) -> Option<ArcadeSse> {
-    crate::services_env::arcade_runtime(settings, db_path)
+    crate::services_env::arcade_runtime(settings, chain, db_path)
         .ok()
         .flatten()
         .map(|rt| ArcadeSse {
@@ -675,7 +676,7 @@ pub fn spawn_serve_loop(
     config: &crate::config::Config,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    let sse = arcade_sse_for(&config.services, db_path);
+    let sse = arcade_sse_for(&config.services, config.chain(), db_path);
     spawn_served_loop(wallet, config, sse, false, false)
 }
 
