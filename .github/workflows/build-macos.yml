@@ -1,0 +1,37 @@
+# The macOS build. The owner's word of 2026-10-27: a push runs exactly the required set
+# (Build (ubuntu-latest) among it); the macOS build runs on workflow_dispatch, never on
+# the push run; the tag's Binaries job in release.yml builds the macOS targets.
+name: build-macos
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build workspace (release)
+        run: cargo build --release --locked
+
+      - name: Build MCP subcrate (release)
+        run: cargo build --release --locked -p bsv-wallet-mcp
