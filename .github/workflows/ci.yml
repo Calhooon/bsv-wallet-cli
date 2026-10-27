@@ -387,6 +387,9 @@ jobs:
               trap 'git worktree remove --force "$base_tree"' EXIT
               git worktree add --detach "$base_tree" HEAD
               (
+                # The job's own target dir: the scratch worktree would otherwise
+                # build the workspace cold a second time under its own target/.
+                export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
                 cd "$base_tree"
                 git checkout "$rev" -- tools/ratchet tools/ratchet.d
                 git -c user.name=ratchet -c user.email=ratchet@invalid -c commit.gpgsign=false \

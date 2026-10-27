@@ -14,6 +14,11 @@ Working-copy instrument edits are refused before measuring; malformed
 fingerprints are named; a source edit keeps -dirty in the check's header.
 The CI shell also checks a changed instrument's tree with the base's tool,
 including a raise hidden by the PR's tool and the unchanged-instrument path.
+With the base skipped, a record that is not the tree's measurement is
+refused in either direction: raised by hand above the tree (the PR 296
+re-check's plant, through the CI shell) or lowered by hand below it; a
+correct re-record passes with the warning, and the same-instrument path keeps
+its hint.
 Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
@@ -113,7 +118,7 @@ class Tree:
             if line and not line.startswith("          "):
                 break
             shell.append(line[10:])
-        env = dict(self.env(OLD), REV=rev, RUNNER_TEMP=self.bin)
+        env = dict(self.env(OLD), REV=rev, RUNNER_TEMP=self.bin, GITHUB_WORKSPACE=self.root)
         r = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", "\n".join(shell)],
                            cwd=self.root, env=env, capture_output=True, text=True)
         return r.returncode, (r.stdout + r.stderr).strip()
@@ -676,6 +681,67 @@ class BaseInstrumentGuards(Case):
         self.assertNotIn("checking the PR tree with", out)
         self.assertNotIn("::warning::", out)
         self.assertIn("ratchet: no number above the record or the base record", out)
+        self.note(code, tail(out))
+
+
+    def rerecorded_after_a_tool_edit(self, **ratchets):
+        """A base record, a clippy.toml edit and a re-record, committed, then
+        `ratchets` set by hand in the record and committed; the base's path."""
+        self.tree.recorded(OLD)
+        self.tree.git("tag", "case-base")
+        path = self.tree.base(self.tree.json())
+        self.tree.edit_tool("tools/ratchet.d/clippy.toml")
+        self.tree.recorded(OLD)
+        if ratchets:
+            rec = self.tree.json()
+            rec["ratchets"].update(ratchets)
+            with open(self.tree.record, "w") as f:
+                json.dump(rec, f, indent=2)
+                f.write("\n")
+            self.tree.commit("the record edited by hand")
+        return path
+
+    def test_a_record_raised_by_hand_across_instruments_is_refused_in_ci(self):
+        # The PR 296 re-check's plant: the base's instrument passes the tree,
+        # and the PR's tool, skipping the base, must refuse the raised record.
+        self.rerecorded_after_a_tool_edit(clippy_pedantic=900)
+        code, out = self.tree.run_ci_step("case-base")
+        self.assertEqual(code, 1, out)
+        self.assertIn("checking the PR tree with case-base's instrument", out)
+        self.assertIn("::warning::ratchet: the base record", out)
+        self.assertIn(f"RAISED: the base record {self.tree.bin}/base-ratchets.json is another instrument's", out)
+        self.assertIn("  clippy_pedantic: record 900, tree 0", out)
+        self.note(code, "clippy_pedantic: record 900, tree 0")
+
+    def test_a_record_lowered_by_hand_across_instruments_is_refused(self):
+        path = self.rerecorded_after_a_tool_edit(unwrap_expect_outside_tests=0)
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"RAISED: the base record {path} is another instrument's", out)
+        self.assertIn("  unwrap_expect_outside_tests: record 0, tree 1", out)
+        self.note(code, "unwrap_expect_outside_tests: record 0, tree 1")
+
+    def test_a_re_record_across_instruments_passes_with_the_warning(self):
+        path = self.rerecorded_after_a_tool_edit()
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 0, out)
+        self.assertIn(BASE_SKIPPED.format(path, ""), out)
+        self.assertNotIn("RAISED", out)
+        self.assertTrue(out.endswith("ratchet: no number above the record"), out)
+        self.note(code, tail(out))
+
+    def test_the_same_instrument_keeps_its_hint_for_a_tree_below_the_record(self):
+        self.tree.recorded(OLD)
+        path = self.tree.base(self.tree.json())
+        with open(os.path.join(self.tree.root, "src", "lib.rs"), "w") as f:
+            f.write("pub fn f() -> u8 {\n    1\n}\n")
+        self.tree.commit("an unwrap removed, not yet re-recorded")
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("::warning::", out)
+        self.assertNotIn("another instrument's", out)
+        self.assertIn("unwrap_expect_outside_tests: 1 -> 0 (-1)", out)
+        self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
         self.note(code, tail(out))
 
 
