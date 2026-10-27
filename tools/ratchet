@@ -19,7 +19,9 @@ tools/ratchet's bytes and of tools/ratchet.d/clippy.toml's, as HEAD holds them.
 edits the tool re-records in its own commit after the tool's, in the same PR,
 with the reason in its commit
 message); against a --base record of another tool or an older schema it warns
-and skips the base comparison, the tree still checked against its own record.
+and skips the base comparison, the tree still checked against its own record,
+which must then equal the tree's measurement in every number (a re-record
+across instruments is a measurement, never a hand edit).
 CI also checks the tree with the base's instrument against the base's record.
 SCHEMA names the record's shape: a key added, renamed or dropped in the record
 bumps it.
@@ -628,6 +630,19 @@ def check(now, path, base_path):
         # the record the tree is checked against: an unrecorded number gates nothing.
         print(f"UNRECORDED: {path} does not hold {', '.join(unrecorded)}"
               " (record it in its own commit: tools/ratchet --record)")
+        failed = True
+    if base_path and not base and (moved := [
+        f"  {k}: record {rec['ratchets'][k]}, tree {tree[k]}"
+        for k in RATCHETS
+        if k in rec["ratchets"] and rec["ratchets"][k] != tree[k]
+    ]):
+        # The base was made by another instrument, so nothing compares this
+        # record with it: across instruments a re-record is a measurement,
+        # never a hand edit. A record above the tree is a hand raise the next
+        # PR could spend; one below it hides a rise of the tree.
+        print(f"RAISED: the base record {base_path} is another instrument's, and the record"
+              f" {path} is not this tree's measurement (re-record: tools/ratchet --record):")
+        print("\n".join(moved))
         failed = True
     for what, new, old in [
         (f"the tree is above the record {path}", tree, rec["ratchets"]),
