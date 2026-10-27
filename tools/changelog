@@ -4,7 +4,7 @@
     tools/changelog --list                       print fragment paths in assembly order
     tools/changelog --check --base REV           require an added fragment for watched changes
     tools/changelog --check --base REV --allow-missing   the no-changelog label exception
-    tools/changelog --assemble VERSION [--date YYYY-MM-DD]   cut a release, date in UTC
+    tools/changelog --assemble VERSION [--date YYYY-MM-DD] [--allow-empty]   cut a release
 
 Only assembly writes: the existing Unreleased body moves verbatim ahead of
 the fragments, and the fragment files are deleted. README.md stays. The
@@ -14,14 +14,17 @@ exit 2 is a usage error or an unreadable git diff, never a successful check.
 
 import argparse
 from datetime import date, datetime, timezone
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 FRAGMENT = re.compile(r"([0-9]+)(?:-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)?\.md")
-HEADING = re.compile(r"(?m)^ {0,3}#{1,6}(?:[ \t]+|$)")
+HEADING = re.compile(r"(?m)^ {0,3}#{1,6}(?:[ \t]+|$)|^\s*[-*+]\s+#{1,6}\s")
+SETEXT = re.compile(r"(?m)^[^\r\n]*\S[^\r\n]*\r?\n {0,3}(?:=+|-{2,})\s*$")
 NUMBER = r"(?:0|[1-9][0-9]*)"
 PRE = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}(?:-{PRE}(?:\.{PRE})*)?"
@@ -59,14 +62,14 @@ def fragments():
         content = read_utf8(path)
         if not content.strip():
             raise Refused(f"{name}: empty fragment")
-        if HEADING.search(content):
+        if HEADING.search(content) or SETEXT.search(content):
             raise Refused(f"{name}: a fragment must not contain a heading")
         entries.append((int(match[1]), path, content))
     return sorted(entries, key=lambda entry: (entry[0], entry[1].name))
 
 
 def diff_paths(base, added=False):
-    command = ["git", "diff", "--name-only", "-z"]
+    command = ["git", "diff", "--no-renames", "--raw", "--no-abbrev", "-z"]
     if added:
         command.append("--diff-filter=A")
     command += [f"{base}...HEAD", "--"]
@@ -79,7 +82,14 @@ def diff_paths(base, added=False):
         why = result.stderr.decode("utf-8", errors="replace").strip()
         print(f"changelog: cannot read git diff for {base}: {why}", file=sys.stderr)
         raise SystemExit(2)
-    return set(result.stdout.decode("utf-8", errors="surrogateescape").strip("\0").split("\0")) - {""}
+    # With renames disabled, each raw record is metadata followed by one path.
+    fields = result.stdout.split(b"\0")
+    paths = {}
+    for index in range(0, len(fields) - 1, 2):
+        _, _, old, new, status = fields[index].split()
+        path = fields[index + 1].decode("utf-8", errors="surrogateescape")
+        paths[path] = (old, new, status)
+    return paths
 
 
 def check(base, allow_missing):
@@ -87,7 +97,13 @@ def check(base, allow_missing):
     added = diff_paths(base, added=True)
     entries = fragments()  # Even the label cannot excuse a malformed fragment.
     watched = sorted(p for p in changed if p == "Cargo.toml" or p.startswith(WATCHED))
-    present = added.intersection(path.relative_to(ROOT).as_posix() for _, path, _ in entries)
+    # A byte-identical fragment move is not a new entry. An edited replacement
+    # is, even when git's similarity heuristic would otherwise call it a rename.
+    removed = {old for path, (old, _, status) in changed.items()
+               if status == b"D" and path.startswith("changelog.d/")
+               and FRAGMENT.fullmatch(path[len("changelog.d/"):])}
+    present = {path.relative_to(ROOT).as_posix() for _, path, _ in entries}
+    present = {path for path in present.intersection(added) if added[path][1] not in removed}
     if not watched:
         print("changelog: no watched paths changed")
     elif present:
@@ -108,7 +124,7 @@ def separated(body, entry):
     return body + entry
 
 
-def assemble(version, release_date):
+def assemble(version, release_date, allow_empty=False):
     if not SEMVER.fullmatch(version):
         raise Refused(f"{version}: not a semantic version")
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", release_date):
@@ -130,7 +146,12 @@ def assemble(version, release_date):
     end = start + next_section.start() if next_section else len(content)
     body = content[start:end]
     if not body.strip() and not entries:
-        raise Refused("nothing to assemble")
+        if not allow_empty:
+            raise Refused("nothing to assemble")
+        if not next_section:
+            raise Refused("CHANGELOG.md: --allow-empty needs a previous release heading")
+        previous_heading = content[end:].splitlines()[0][3:].strip()
+        body = f"\nNo changes since {previous_heading}.\n"
     if not body.strip():
         body = "\n"
     for _, _, entry in entries:
@@ -138,9 +159,20 @@ def assemble(version, release_date):
     if not body.endswith("\n\n"):
         body += "\n" if body.endswith("\n") else "\n\n"
     output = content[:start] + f"\n## [{version}] - {release_date}\n" + body + content[end:]
-    path.write_bytes(output.encode("utf-8"))
     for _, fragment, _ in entries:
-        fragment.unlink()
+        if not os.access(fragment.parent, os.W_OK | os.X_OK):
+            raise Refused(f"{fragment.parent.relative_to(ROOT)}: cannot delete fragments (directory is not writable)")
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(output.encode("utf-8"))
+        temporary.chmod(path.stat().st_mode)
+        for _, fragment, _ in entries:
+            fragment.unlink()
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     print(f"changelog: assembled {version} ({release_date}); removed {len(entries)} fragments")
 
 
@@ -152,6 +184,7 @@ def main():
     mode.add_argument("--assemble", metavar="VERSION", help="assemble a release and delete fragments")
     parser.add_argument("--base", metavar="REV", help="the base revision for --check")
     parser.add_argument("--allow-missing", action="store_true", help="allow a missing fragment under --check")
+    parser.add_argument("--allow-empty", action="store_true", help="allow assembly with no pending changes")
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="the release date (default: today UTC)")
     args = parser.parse_args()
     if args.check != (args.base is not None):
@@ -160,6 +193,8 @@ def main():
         parser.error("--base must be a revision (non-empty and not a git option)")
     if args.allow_missing and not args.check:
         parser.error("--allow-missing goes only with --check")
+    if args.allow_empty and args.assemble is None:
+        parser.error("--allow-empty goes only with --assemble")
     if args.date is not None and args.assemble is None:
         parser.error("--date goes only with --assemble")
     try:
@@ -170,7 +205,7 @@ def main():
             check(args.base, args.allow_missing)
         else:
             release_date = args.date if args.date is not None else datetime.now(timezone.utc).date().isoformat()
-            assemble(args.assemble, release_date)
+            assemble(args.assemble, release_date, args.allow_empty)
     except (Refused, OSError) as error:
         print(f"changelog: {error}", file=sys.stderr)
         return 1
