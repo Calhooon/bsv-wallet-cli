@@ -23,6 +23,15 @@ Ports are chosen once per pair. --compare can read recordings from separate
 invocations, so their recorded ports and loopback URLs are normalized by role,
 like wallet directories. A ports event carries the stub's port as well as the
 wallet ports; it supplies normalization metadata, not a compared harness call.
+Port normalization makes a cross-run comparison readable, but it is not a zero
+test because the root keys differ; a zero test compares the pair within one run.
+
+Base builds hold an exclusive fcntl.flock on <target>/.differential.lock through
+the build and the copy of both binaries into the run's output directory.
+A head build is copied there too;
+each run's head CARGO_TARGET_DIR must be private so another build cannot replace
+the binaries while they are being copied. Recordings use these copies, never
+the build cache's paths.
 
 The two recordings are compared byte for byte after the normalizations of
 EXCLUSIONS, and only those; each names what it rewrites and why two runs of the
@@ -42,6 +51,7 @@ script with the standard library only, like tools/ratchet.
 import argparse
 import base64
 import difflib
+import fcntl
 import hashlib
 import json
 import os
@@ -96,7 +106,9 @@ EXCLUSIONS = [
         "free ports are chosen per pair, and --compare can read separate pairs; "
         "only the recorded ports are rewritten to <port:SEAT> (stub included). "
         "The ports event supplies the role map and is not a harness call; "
-        "other numbers, hosts, URL paths and unrecorded ports stay literal",
+        "other numbers, hosts, URL paths and unrecorded ports stay literal. "
+        "Port normalization makes a cross-run comparison readable, but it is "
+        "not a zero test because the root keys differ; a zero test is within one run",
     ),
     (
         "rand atoms: txids, an input script's signature DER bodies and pushes of "
@@ -1008,6 +1020,14 @@ def build(tree, target):
     return Path(target) / "release" / "bsv-wallet"
 
 
+def copy_binaries(binary, destination):
+    """Keep both executables in this run, independent of later cache rebuilds."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("bsv-wallet", "bsv-wallet-mcp"):
+        shutil.copy2(binary.parent / name, destination / name)
+    return destination / "bsv-wallet"
+
+
 def head_target():
     meta = subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--no-deps"],
@@ -1016,12 +1036,13 @@ def head_target():
     return Path(json.loads(meta.stdout)["target_directory"])
 
 
-def build_base(rev, target=None):
+def build_base(rev, target=None, *, destination):
     """Build in a worktree owned by this call, keeping the per-sha target cache.
 
-    Cargo's own target-directory file lock serializes builds of the same
-    sources in that cache, including builds from separate worktrees. A run
-    removes only its own worktree, after its build has released that lock.
+    Hold <target>/.differential.lock across both builds and both binary copies:
+    Cargo's lock alone ends before the copies. Record only from this run's
+    destination, so a later cache rebuild cannot change a running pair.
+    Remove only this call's worktree, including when a build or copy fails.
     """
     sha = subprocess.run(["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=ROOT,
                          check=True, capture_output=True, text=True).stdout.strip()
@@ -1031,7 +1052,10 @@ def build_base(rev, target=None):
     try:
         run(["git", "worktree", "add", "--detach", str(tree), sha], cwd=ROOT)
         added = True
-        return build(tree, target), sha
+        target.mkdir(parents=True, exist_ok=True)
+        with (target / ".differential.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return copy_binaries(build(tree, target), destination), sha
     finally:
         if added:
             run(["git", "worktree", "remove", "--force", str(tree)], cwd=ROOT)
@@ -1167,11 +1191,9 @@ def main():
 
     out = Path(args.out) if args.out else default_out()
     out.mkdir(parents=True, exist_ok=True)
-    ports = args.ports if args.ports is not None else choose_ports()
-    port_line = "differential: ports " + ", ".join(f"{name}={port}" for name, port in ports.items())
-    print(port_line, file=sys.stderr, flush=True)
 
-    head = Path(args.head_bin) if args.head_bin else build(ROOT, head_target())
+    head = (Path(args.head_bin) if args.head_bin else
+            copy_binaries(build(ROOT, head_target()), out / "bin-head"))
     if args.same:
         base, names = head, ("run1", "run2")
         base_label = head_label = str(head)
@@ -1181,10 +1203,13 @@ def main():
             base, base_label = Path(args.base_bin), args.base_bin
         else:
             rev = args.base or merge_base()
-            base, sha = build_base(rev, args.base_target)
+            base, sha = build_base(rev, args.base_target, destination=out / "bin-base")
             base_label = f"{rev} ({sha[:12]})"
         head_label = str(head)
 
+    ports = args.ports if args.ports is not None else choose_ports()
+    port_line = "differential: ports " + ", ".join(f"{name}={port}" for name, port in ports.items())
+    print(port_line, file=sys.stderr, flush=True)
     keys = [secrets.token_hex(32) for _ in range(4)]
     rec_a, code_a, passed_a = record(base, keys, out, names[0], ports)
     rec_b, code_b, passed_b = record(head, keys, out, names[1], ports)

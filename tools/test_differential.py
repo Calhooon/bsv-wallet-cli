@@ -457,28 +457,31 @@ class RunIsolation(unittest.TestCase):
             def git(cmd, **kwargs):
                 tree = Path(cmd[-2] if cmd[2] == "add" else cmd[-1])
                 if cmd[2] == "add":
+                    trees.append(tree)
                     (tree / "owned").write_text("this run")
+                    if len(trees) == 1:
+                        D.build_base("same-rev", destination=root / "run-b")
+                        self.assertTrue((tree / "owned").is_file())
+                        self.assertFalse(trees[1].exists())
                 else:
                     removed.append(tree)
                     shutil.rmtree(tree)
 
             def build(tree, target):
-                trees.append(tree)
                 targets.append(target)
                 self.assertTrue((tree / "owned").is_file())
                 self.assertTrue(tree.name.startswith(f"base-{sha[:12]}-"))
                 self.assertGreater(len(tree.name), len(f"base-{sha[:12]}-"))
-                if len(trees) == 1:
-                    D.build_base("same-rev")
-                    self.assertTrue((tree / "owned").is_file())
-                    self.assertFalse(trees[1].exists())
+                (target / "release").mkdir(exist_ok=True)
+                for name in ("bsv-wallet", "bsv-wallet-mcp"):
+                    (target / "release" / name).write_bytes(b"built")
                 return target / "release" / "bsv-wallet"
 
             with mock.patch.object(D, "scratch_root", return_value=root), \
                     mock.patch.object(D.subprocess, "run", return_value=mock.Mock(stdout=sha)), \
                     mock.patch.object(D, "run", side_effect=git), \
                     mock.patch.object(D, "build", side_effect=build):
-                D.build_base("same-rev")
+                D.build_base("same-rev", destination=root / "run-a")
             self.assertNotEqual(*trees)
             self.assertEqual(removed, list(reversed(trees)))
             self.assertEqual(targets, [root / f"target-base-{sha[:12]}"] * 2)
@@ -500,9 +503,132 @@ class RunIsolation(unittest.TestCase):
                     mock.patch.object(D, "run", side_effect=git), \
                     mock.patch.object(D, "build", side_effect=D.Failure("planted build failure")):
                 with self.assertRaisesRegex(D.Failure, "planted build failure"):
-                    D.build_base("same-rev", root / "explicit-target")
-            self.assertEqual(list(root.iterdir()), [other])
+                    D.build_base("same-rev", root / "explicit-target", destination=root / "run")
+            self.assertEqual(set(root.iterdir()), {other, root / "explicit-target"})
             self.assertTrue((other / "owned").is_file())
+            with (root / "explicit-target" / ".differential.lock").open("a") as probe:
+                D.fcntl.flock(probe, D.fcntl.LOCK_EX | D.fcntl.LOCK_NB)
+
+    def test_planted_cache_replacement_keeps_copied_binaries_under_one_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "cache"
+            generation = 0
+
+            def assert_locked():
+                with (target / ".differential.lock").open("a") as probe:
+                    with self.assertRaises(BlockingIOError):
+                        D.fcntl.flock(probe, D.fcntl.LOCK_EX | D.fcntl.LOCK_NB)
+
+            def git(cmd, **kwargs):
+                if cmd[2] == "remove":
+                    shutil.rmtree(cmd[-1])
+
+            def build(tree, cache):
+                nonlocal generation
+                assert_locked()
+                generation += 1
+                (cache / "release").mkdir(exist_ok=True)
+                for name in ("bsv-wallet", "bsv-wallet-mcp"):
+                    replacement = cache / "release" / (name + ".new")
+                    replacement.write_bytes(f"{name}: build {generation}".encode())
+                    replacement.chmod(0o755)
+                    replacement.replace(cache / "release" / name)
+                return cache / "release" / "bsv-wallet"
+
+            copy2 = shutil.copy2
+
+            def copy(source, destination):
+                assert_locked()
+                return copy2(source, destination)
+
+            with mock.patch.object(D, "scratch_root", return_value=root / "scratch"), \
+                    mock.patch.object(D.subprocess, "run", return_value=mock.Mock(stdout="a" * 40)), \
+                    mock.patch.object(D, "run", side_effect=git), \
+                    mock.patch.object(D, "build", side_effect=build), \
+                    mock.patch.object(D.shutil, "copy2", side_effect=copy) as copies:
+                binary_a, _ = D.build_base("same-rev", target, destination=root / "run-a")
+                before = {p.name: p.read_bytes() for p in binary_a.parent.iterdir()}
+                cache_inode = (target / "release" / "bsv-wallet").stat().st_ino
+                binary_b, _ = D.build_base("same-rev", target, destination=root / "run-b")
+                self.assertEqual(copies.call_count, 4)
+            self.assertNotEqual(cache_inode, (target / "release" / "bsv-wallet").stat().st_ino)
+            for name, content in before.items():
+                self.assertEqual((binary_a.parent / name).read_bytes(), content)
+                self.assertNotEqual((target / "release" / name).read_bytes(), content)
+                self.assertEqual((binary_b.parent / name).read_bytes(),
+                                 (target / "release" / name).read_bytes())
+                self.assertTrue(os.access(binary_a.parent / name, os.X_OK))
+            with (target / ".differential.lock").open("a") as probe:
+                D.fcntl.flock(probe, D.fcntl.LOCK_EX | D.fcntl.LOCK_NB)
+
+    def test_failed_copy_releases_lock_and_removes_its_worktree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "cache"
+
+            def git(cmd, **kwargs):
+                if cmd[2] == "remove":
+                    shutil.rmtree(cmd[-1])
+
+            with mock.patch.object(D, "scratch_root", return_value=root / "scratch"), \
+                    mock.patch.object(D.subprocess, "run", return_value=mock.Mock(stdout="a" * 40)), \
+                    mock.patch.object(D, "run", side_effect=git), \
+                    mock.patch.object(D, "build", return_value=target / "release" / "bsv-wallet"), \
+                    mock.patch.object(D, "copy_binaries", side_effect=OSError("planted copy failure")):
+                with self.assertRaisesRegex(OSError, "planted copy failure"):
+                    D.build_base("same-rev", target, destination=root / "run")
+            self.assertEqual(list((root / "scratch").iterdir()), [])
+            with (target / ".differential.lock").open("a") as probe:
+                D.fcntl.flock(probe, D.fcntl.LOCK_EX | D.fcntl.LOCK_NB)
+
+    def test_built_head_is_copied_and_ports_chosen_after_both_builds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "head-target"
+            target.mkdir()
+            out = root / "run"
+            before = {name: f"{name}: head build".encode()
+                      for name in ("bsv-wallet", "bsv-wallet-mcp")}
+            for name, content in before.items():
+                (target / name).write_bytes(content)
+            calls = []
+            ports = D.parse_ports("50000,50001,50002,50003,50004")
+
+            def build(*args):
+                calls.append("head build")
+                return target / "bsv-wallet"
+
+            def base(*args, **kwargs):
+                calls.append("base build")
+                return out / "bin-base" / "bsv-wallet", "a" * 40
+
+            def choose():
+                calls.append("ports")
+                return ports
+
+            def record(binary, keys, run_out, name, chosen):
+                calls.append(name)
+                self.assertEqual(chosen, ports)
+                if name == "base":
+                    for binary_name in before:
+                        (target / binary_name).write_bytes(b"planted later head build")
+                else:
+                    self.assertEqual(binary, out / "bin-head" / "bsv-wallet")
+                    for binary_name, content in before.items():
+                        self.assertEqual((binary.parent / binary_name).read_bytes(), content)
+                return out / f"{name}.jsonl", 0, "Passed: 24/24"
+
+            with mock.patch.object(sys, "argv", ["differential", "--base", "base-rev", "--out", str(out)]), \
+                    mock.patch.object(sys, "stdout"), mock.patch.object(sys, "stderr"), \
+                    mock.patch.object(D, "head_target", return_value=target), \
+                    mock.patch.object(D, "build", side_effect=build), \
+                    mock.patch.object(D, "build_base", side_effect=base), \
+                    mock.patch.object(D, "choose_ports", side_effect=choose), \
+                    mock.patch.object(D, "record", side_effect=record), \
+                    mock.patch.object(D, "compare", return_value=("DIFFERENTIAL: 0 differences", 0, [])):
+                self.assertEqual(D.main(), 0)
+            self.assertEqual(calls, ["head build", "base build", "ports", "base", "head"])
 
     def test_explicit_ports_refuse_each_registry_port_by_name_before_building(self):
         for index, name in enumerate(D.PORT_SEATS):
@@ -546,6 +672,14 @@ class RecordedPorts(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("DIFFERENTIAL: 0 differences", out)
         self.assertTrue(any("wallet.port" in field for field, _ in D.EXCLUSIONS))
+
+    def test_separate_root_keys_still_differ_after_port_normalization(self):
+        a, b = self.at_ports(50000), self.at_ports(51000)
+        b[1]["identityKey"] = "03" * 33
+        code, out = run_compare(a, b)
+        self.assertEqual(code, 1, out)
+        self.assertIn(".identityKey", out)
+        self.assertIn("DIFFERENTIAL: 1 difference", out)
 
     def test_planted_amount_and_unknown_url_ports_stay_compared(self):
         a, b = self.at_ports(50000), self.at_ports(51000)
