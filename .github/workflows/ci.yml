@@ -77,12 +77,31 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
 
       - name: Build workspace (release)
         run: cargo build --release --locked
 
       - name: Build MCP subcrate (release)
         run: cargo build --release --locked -p bsv-wallet-mcp
+
+      # The fuzz crate (fuzz/, its own workspace and lock) is built by no
+      # other job but the Nightly, so a pin or an API move broke two targets
+      # silently until the night lost their hour (#301). Every target, its
+      # lib and its seed example are checked against the committed lock on
+      # the pinned toolchain; libfuzzer-sys checks on stable, so no nightly
+      # and no cargo-fuzz here.
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - name: Check the fuzz crate (every target)
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: cargo check --manifest-path fuzz/Cargo.toml --locked --all-targets
 
   test:
     name: Test
@@ -287,11 +306,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: One bsv-rs per committed Cargo.lock
+      # One bsv-rs per lock is not enough alone: on beta.1 fuzz/Cargo.lock
+      # held one bsv-rs, 0.8.2, beside the root's 0.9.0-beta.1, and the fuzz
+      # crate stopped building (#301). Every other committed lock holds the
+      # root lock's version of each crate of the stack.
+      - name: One bsv-rs per committed Cargo.lock, the stack at the root's versions
         run: |
           set -euo pipefail
           status=0
           found=0
+          version() { { grep -A1 "^name = \"$2\"$" "$1" || true; } | sed -n 's/^version = "\(.*\)"$/\1/p' | sort -u | paste -sd, -; }
+          stack="bsv-rs bsv-wallet-toolbox-rs bsv-tracker"
           while IFS= read -r -d '' lock; do
             found=$((found + 1))
             n=$(grep -c '^name = "bsv-rs"$' "$lock" || true)
@@ -300,6 +325,16 @@ jobs:
               echo "::error file=$lock::$n bsv-rs entries; one bsv-rs per lock"
               status=1
             fi
+            [ "$lock" = Cargo.lock ] && continue
+            for crate in $stack; do
+              ours=$(version "$lock" "$crate")
+              root=$(version Cargo.lock "$crate")
+              echo "$lock: $crate ${ours:-none} (Cargo.lock: ${root:-none})"
+              if [ -n "$ours" ] && [ "$ours" != "$root" ]; then
+                echo "::error file=$lock::$crate $ours, the root lock's is ${root:-none}; a pin moves every committed lock"
+                status=1
+              fi
+            done
           done < <(git ls-files -z -- 'Cargo.lock' '*/Cargo.lock')
           [ "$found" -gt 0 ] || echo "no committed Cargo.lock"
           exit "$status"

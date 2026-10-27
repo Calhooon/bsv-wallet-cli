@@ -8,6 +8,12 @@
 //! `docs/NIGHTLY.md` names it, and the cure is a function in the toolbox
 //! the target calls. The CLI's own door mappings are functions the targets
 //! call (`server::handlers::create_action_args`, `internalize_args`).
+//!
+//! The crate is its own workspace with its own `Cargo.lock`. Its bsv-rs and
+//! toolbox pins are the root `Cargo.toml`'s, moved with them in every pin
+//! PR and the lock regenerated; CI's `build` job checks every target
+//! against the lock and its `locks` job holds the stack at the root lock's
+//! versions (#301, `docs/NIGHTLY.md`).
 
 use bsv_sdk::primitives::{PrivateKey, PublicKey};
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
