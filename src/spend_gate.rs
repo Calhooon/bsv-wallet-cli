@@ -1056,7 +1056,11 @@ fn blocks(n: u64) -> String {
 }
 
 /// Why `reading` holds the coin `outpoint` of `origin`, or `None` when it
-/// is offered.
+/// is offered. A fault outranks every reading (the gate could not look);
+/// then the mark, for every word and under every rule: the stack's
+/// `Wallet.offerableUnder` checks `!a.tracker.suspect` apart from the door
+/// (`lean/Wallet.lean` at 103c5bd, 261-267), so a suspect creator is held
+/// whatever its word, not only a `mined` one (#211); then the door.
 pub fn hold_reason(
     reading: &CreatorReading,
     origin: Origin,
@@ -1065,6 +1069,9 @@ pub fn hold_reason(
 ) -> Option<String> {
     if let Some(fault) = &reading.fault {
         return Some(format!("{HEADERS_UNAVAILABLE_PREFIX}{fault}"));
+    }
+    if reading.suspect {
+        return Some("suspect: a fork or an unresolved split at or below its height".to_string());
     }
     if reading.offered() {
         return None;
@@ -1076,9 +1083,6 @@ pub fn hold_reason(
         blocks(reading.depth)
     );
     match reading.word {
-        "mined" if reading.suspect => {
-            Some("suspect: a fork or an unresolved split at or below its height".to_string())
-        }
         "mined" => Some(depth),
         "rejected" | "conflicted" | "abandoned" => Some(format!("{}: never offered", reading.word)),
         // `stale` ranks as `seen` at the door (the owner's ruling 7a of
