@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::test_support::{
-    arc_rows, busy_read_wallet, p2pkh, raw_tx, response_answer, seed_arc_requests,
+    arc_rows, busy_read_wallet, no_wait_file, p2pkh, raw_tx, response_answer, seed_arc_requests,
     seed_arc_transaction, set_read_lock, test_wallet, txid_of, TestChainTracker,
 };
 use bsv_sdk::primitives::PrivateKey;
@@ -194,11 +194,90 @@ async fn arc_callback_deadline_mined() {
 }
 
 /// This deliberately takes eight seconds: only the served default proves the
-/// response still reaches Arcade before its ten-second POST timeout.
+/// response still reaches Arcade before its ten-second POST timeout. The arm
+/// is slow but not busy (the header service answers after ten seconds on an
+/// idle store), so the deadline is the only answer either toolbox can give.
 #[tokio::test]
 async fn arc_callback_deadline_served_default_is_eight_seconds() {
     assert_eq!(ARC_CALLBACK_DEADLINE, Duration::from_secs(8));
-    busy_status_deadline("SEEN_ON_NETWORK", ARC_CALLBACK_DEADLINE, true).await;
+    let case = seeded_callback("MINED", Some(Duration::from_secs(10))).await;
+    let storage = case.wallet.storage();
+    let landed = status_landed(arc_rows(storage, &case.txid).await);
+    deadline_answer(
+        router(case.wallet.clone()),
+        &case.payload,
+        ARC_CALLBACK_DEADLINE,
+    )
+    .await;
+    assert_eq!(arc_rows(storage, &case.txid).await, landed);
+}
+
+/// A busy store under the served default answers 503 STORE_BUSY within the
+/// deadline and its margin, in one of two shapes, both right by the keeper's
+/// reading of #285 (the typed busy is the door's word and is served at once;
+/// the deadline is for work that is not a busy store):
+/// - the typed busy after one busy_timeout: toolbox #205 and later commit the
+///   statuses and the memory hint in one write transaction;
+/// - the deadline's message at eight seconds: 0.14.0-beta.1 waits twice, the
+///   swallowed memory write and then the request UPDATE, about ten seconds.
+///
+/// The test asserts the shape that arrived and prints which.
+#[tokio::test]
+async fn arc_callback_busy_store_under_the_served_default() {
+    let mut case = seeded_callback("SEEN_ON_NETWORK", None).await;
+    let storage = case.wallet.storage();
+    // One busy_timeout, which the competitor-hint test reads and asserts.
+    let wait = Duration::from_secs(5);
+    let before = arc_rows(storage, &case.txid).await;
+    set_read_lock(&mut case.holder, true).await;
+    let started = Instant::now();
+    let response = tokio::time::timeout(
+        ARC_CALLBACK_DEADLINE + Duration::from_secs(1),
+        router(case.wallet.clone()).oneshot(request(&case.payload)),
+    )
+    .await
+    .expect("callback exceeded its deadline plus a one-second margin")
+    .unwrap();
+    let (status, retry, body) = response_answer(response).await;
+    let elapsed = started.elapsed();
+    assert_eq!(
+        (status, retry.as_deref(), &body["code"]),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("1"),
+            &json!("STORE_BUSY")
+        ),
+    );
+    let deadline_message = format!(
+        "the arc-callback deadline of {ARC_CALLBACK_DEADLINE:?} elapsed before the toolbox answered (the store or the header service)"
+    );
+    if body["message"] == "apply_event: Store busy: sqlite code 5" {
+        eprintln!("busy store, served default: typed busy after {elapsed:.3?} (one wait)");
+        assert!(elapsed >= wait, "the writer did not wait: {elapsed:?}");
+        assert!(elapsed < ARC_CALLBACK_DEADLINE, "{elapsed:?}");
+    } else {
+        assert_eq!(body["message"], json!(deadline_message));
+        eprintln!("busy store, served default: the deadline after {elapsed:.3?} (two waits)");
+        assert!(elapsed >= ARC_CALLBACK_DEADLINE, "{elapsed:?}");
+        // The cancelled request UPDATE is still waiting in SQLite. The writer
+        // has one connection, so a statement that reads no table queues
+        // behind it: with the lock held, the UPDATE fails rather than lands.
+        let drained = Instant::now();
+        sqlx::query("SELECT 1")
+            .execute(storage.writer())
+            .await
+            .unwrap();
+        eprintln!(
+            "the cancelled write drained after {:.3?}",
+            drained.elapsed()
+        );
+    }
+    assert!(
+        elapsed < ARC_CALLBACK_DEADLINE + Duration::from_secs(1),
+        "{elapsed:?}"
+    );
+    set_read_lock(&mut case.holder, false).await;
+    assert_eq!(arc_rows(storage, &case.txid).await, before, "rows changed");
 }
 
 async fn deliver_callback(wallet: WalletState, payload: &serde_json::Value) {
@@ -328,10 +407,38 @@ async fn arc_callback_deadline_slow_tracker_on_idle_store() {
     );
 }
 
-async fn retry_is_idempotent(status: &str, deadline: Duration) {
+/// The rows a clean delivery of `status` leaves.
+async fn clean_rows(status: &str) -> serde_json::Value {
     let control = seeded_callback(status, None).await;
     deliver_callback(control.wallet.clone(), &control.payload).await;
-    let clean = arc_rows(control.wallet.storage(), &control.txid).await;
+    arc_rows(control.wallet.storage(), &control.txid).await
+}
+
+/// One retry equals a clean delivery and a second changes nothing.
+async fn assert_retries_converge(case: &CallbackCase, status: &str, clean: &serde_json::Value) {
+    let storage = case.wallet.storage();
+    deliver_callback(case.wallet.clone(), &case.payload).await;
+    let once = arc_rows(storage, &case.txid).await;
+    assert_eq!(&once, clean, "{status}: one retry equals a clean delivery");
+    deliver_callback(case.wallet.clone(), &case.payload).await;
+    assert_eq!(
+        arc_rows(storage, &case.txid).await,
+        once,
+        "repeated {status}"
+    );
+    assert_retried_rows(&once, status, &case.bump, &case.raw, 850_000);
+}
+
+/// MINED's statuses and seen memory landed, no proof stored.
+fn status_landed(mut rows: serde_json::Value) -> serde_json::Value {
+    rows["request"][1] = json!("unmined");
+    rows["transaction"][1] = json!("unproven");
+    rows["memory"] = json!([["ArcadeV2", "seen"]]);
+    rows
+}
+
+async fn retry_is_idempotent(status: &str, deadline: Duration) {
+    let clean = clean_rows(status).await;
     let mut case = seeded_callback(status, None).await;
     let storage = case.wallet.storage();
     let txid = case.txid.as_str();
@@ -344,21 +451,11 @@ async fn retry_is_idempotent(status: &str, deadline: Duration) {
     )
     .await;
     set_read_lock(&mut case.holder, false).await;
-    let mut expected = before;
-    if deadline > Duration::from_secs(5) {
-        expected["request"][1] = json!("unmined");
-    }
-    // arc_rows reads on the writer, draining the cancelled statement. Only
-    // the request changes after a 6 s deadline: sending tx, no proof or memory.
+    // arc_rows reads on the writer, draining the cancelled statement.
     let partial = arc_rows(storage, txid).await;
     eprintln!("{status}: after {deadline:?} cancellation: {partial}");
-    assert_eq!(partial, expected, "cancelled {status}");
-    deliver_callback(case.wallet.clone(), &case.payload).await;
-    let once = arc_rows(storage, txid).await;
-    assert_eq!(once, clean, "{status}: one retry equals a clean delivery");
-    deliver_callback(case.wallet.clone(), &case.payload).await;
-    assert_eq!(arc_rows(storage, txid).await, once, "repeated {status}");
-    assert_retried_rows(&once, status, &case.bump, &case.raw, 850_000);
+    assert_eq!(partial, before, "cancelled {status}");
+    assert_retries_converge(&case, status, &clean).await;
 }
 
 #[tokio::test]
@@ -368,13 +465,74 @@ async fn arc_callback_deadline_cancel_before_write_retries_are_idempotent() {
     }
 }
 
-/// Six seconds sits between the two 5 s busy ceilings, like the served 8 s
-/// deadline, while saving two seconds per path in this three-path test.
+/// Takes the busy lock from inside the header check, which every toolbox
+/// version reaches only after MINED's status writes have committed and
+/// before the proof ingest's write transaction.
+/// It takes the lock once, from a second connection; the retry's header
+/// check finds it released.
+struct LockingTracker(
+    TestChainTracker,
+    Arc<tokio::sync::Mutex<sqlx::SqliteConnection>>,
+    std::sync::atomic::AtomicBool,
+);
+
+#[async_trait::async_trait]
+impl bsv_sdk::transaction::ChainTracker for LockingTracker {
+    async fn current_height(&self) -> Result<u32, bsv_sdk::transaction::ChainTrackerError> {
+        self.0.current_height().await
+    }
+
+    async fn is_valid_root_for_height(
+        &self,
+        root: &str,
+        height: u32,
+    ) -> Result<bool, bsv_sdk::transaction::ChainTrackerError> {
+        if self.2.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            set_read_lock(&mut *self.1.lock().await, true).await;
+        }
+        self.0.is_valid_root_for_height(root, height).await
+    }
+}
+
+/// MINED is the one arm where a landed status can still meet a busy write
+/// under both toolbox versions: the statuses commit (0.14.0-beta.1 as
+/// separate statements, toolbox #205 in one transaction), then the proof
+/// ingest's write transaction waits on the lock (toolbox #201 left it outside
+/// the status transaction). The lock is taken only after the statuses commit,
+/// from the header check, so the seeding is the same under both versions.
+/// The deadline (3 s) sits below one busy_timeout because 0.14.0-beta.1 logs
+/// a busy proof ingest and falls back to the re-ask (a 200) where toolbox
+/// #205 returns the typed busy; the deadline cuts the wait under both.
 #[tokio::test]
 async fn arc_callback_deadline_write_landed_retries_converge() {
-    for status in ["SEEN_ON_NETWORK", "STUMP_PROCESSING", "MINED"] {
-        retry_is_idempotent(status, Duration::from_secs(6)).await;
-    }
+    let clean = clean_rows("MINED").await;
+    let case = seeded_callback("MINED", None).await;
+    let storage = case.wallet.storage();
+    let txid = case.txid.as_str();
+    let mut tracker = TestChainTracker::new(850_001);
+    tracker.add_root(850_000, case.bump.compute_root(Some(txid)).unwrap());
+    let second = no_wait_file(&case._dir.path().join("busy.db")).vfs("unix-dotfile");
+    let holder = Arc::new(tokio::sync::Mutex::new(second.connect().await.unwrap()));
+    storage
+        .set_chain_tracker(Arc::new(TestChainTracker::from(LockingTracker(
+            tracker,
+            holder.clone(),
+            true.into(),
+        ))))
+        .await;
+    let landed = status_landed(arc_rows(storage, txid).await);
+    let deadline = Duration::from_secs(3);
+    deadline_answer(
+        router_with_deadline(case.wallet.clone(), deadline),
+        &case.payload,
+        deadline,
+    )
+    .await;
+    set_read_lock(&mut *holder.lock().await, false).await;
+    let rows = arc_rows(storage, txid).await;
+    eprintln!("MINED: status landed, proof write cut by the deadline: {rows}");
+    assert_eq!(rows, landed, "the status landed and no proof");
+    assert_retries_converge(&case, "MINED", &clean).await;
 }
 
 #[tokio::test]
