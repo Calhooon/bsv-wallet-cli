@@ -39,6 +39,18 @@ A hold's reason maps to the Lean's clause: `frozen` to frozen; `spent by`, `lost
 
 The columns the gate gives no value for are named by the test's `COLUMNS_NOT_ANSWERED` and printed on every run: `rule_for`, `received_pending`, `door_word`, `coin_word` (the gate computes none of them apart from its hold), and `host_answer` (a row names its door but carries none of its arguments, so the host's answer at that door cannot be replayed from the row).
 
+The vectors do not simulate a header-service outage. When that service
+cannot answer, the gate still holds the coin on `headers unavailable: ...`
+and retries as before; the listed creator word is the stored tracker word,
+not the tier an interrupted replay reached (#212). The spend-gate tests
+cover stale creators in both store shapes, a stored mined creator, and a
+toolbox proof without a tracker row, which reads `unknown`: the tracker
+never held a word for it. Other check faults also preserve a known stored
+word; a root mismatch remains the replay's reading. Wire fixture
+`084-createAction.headersUnavailable.json` records the stored `mined` word
+in the hold and its message. The vector bytes and divergence list do not
+change.
+
 ### A word after the door
 
 The named door offers our own change under `SPEND_OWN_CHANGE=1`, as the Lean's own-change rule does ([SRC] bsv-stack-lean `103c5bd`, `lean/Wallet.lean:3044`). Toolbox 0.14.0-beta.1 then refuses a named change coin as managed by the wallet ([SRC] `src/storage/sqlx/create_action/inputs.rs:114-119`), served as `400 VALIDATION_ERROR` with its message, `inputs[0]: cannot spend change output txid:vout directly. Change is managed by the wallet.` (`wallet error: Validation error: ` prefixes the served message); [wire fixture 120](../tests/wire/120-createAction.namedChange.json) records it. The keeper's reading on [#234](https://github.com/Calhooon/bsv-wallet-cli/issues/234#issuecomment-6415020424) records this as a door constraint beside the Lean: the reference's `applyStoredInputScript` throws `WERR_INVALID_PARAMETER` on `inputs[vin]` when the stored output is change, requiring `an unmanaged input. Change outputs are managed by your wallet.` ([SRC] ts-stack `edf6e03`, `packages/wallet/wallet-toolbox/src/storage/methods/createAction.ts:966-978`); the toolbox states the same rule in its own words. The rules sit on different axes: the Lean's is the guard's word on offerability, the reference's the door's word on who may name an input, with managed change the wallet's to allocate and never the caller's to name. The vectors' `offerable` stays the guard's answer. `respend` never meets the toolbox's named-input check: its exact inputs pass `assess_named` with the phantom's reservation, and it builds and signs the replacement itself (`src/respend.rs:198-232,316-375`).
