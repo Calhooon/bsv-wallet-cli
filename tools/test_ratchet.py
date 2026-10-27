@@ -3,12 +3,15 @@
 a toolchain other than the record's exits 1 and writes nothing, --record
 --toolchain-move writes and names both toolchains, --record with no record
 writes it, a success line names the toolchain, and --check still refuses a
-toolchain other than the record's. Each case copies the tool into a git tree
+toolchain other than the record's; a record that names no toolchain (none,
+null, not an object) is named so under both, and --record refuses an older
+schema before measuring (the PR 294 review, finding 1). Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
 CI job ratchet: python3 tools/test_ratchet.py
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -23,9 +26,11 @@ OLD = ("rustc 1.98.1 (48a229cea 2026-09-01)", "clippy 0.1.98 (48a229ceae 2026-09
 NEW = ("rustc 1.95.0 (29483883e 2026-07-15)", "clippy 0.1.95 (29483883ee 2026-07-15)")
 
 # `cargo clippy --version` prints the clippy line; `cargo clippy ...` and
-# `cargo doc ...` print no message and succeed: every count is 0.
+# `cargo doc ...` print no message and succeed (every count is 0) and log
+# their arguments to $STUB_LOG: a measurement leaves a line there.
 CARGO = """#!/bin/sh
 for a in "$@"; do [ "$a" = --version ] && { echo "$STUB_CLIPPY"; exit 0; }; done
+echo "$*" >> "$STUB_LOG"
 exit 0
 """
 RUSTC = """#!/bin/sh
@@ -77,7 +82,8 @@ class Tree:
 
     def run(self, toolchain, *args):
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
-                   STUB_RUSTC=toolchain[0], STUB_CLIPPY=toolchain[1])
+                   STUB_RUSTC=toolchain[0], STUB_CLIPPY=toolchain[1],
+                   STUB_LOG=os.path.join(self.bin, "measured"))
         env.pop("RUSTUP_TOOLCHAIN", None)
         r = subprocess.run([sys.executable, "-B", os.path.join(self.root, "tools", "ratchet"), *args],
                            cwd=self.root, env=env, capture_output=True, text=True)
@@ -90,12 +96,37 @@ class Tree:
         self.commit("the record")
         return self.bytes()
 
+    def planted(self, **fields):
+        """A record under OLD with `fields` set (a value of MISSING deletes
+        the field), committed: an older record's shape."""
+        self.recorded(OLD)
+        with open(self.record) as f:
+            rec = json.load(f)
+        for k, v in fields.items():
+            if v is MISSING:
+                del rec[k]
+            else:
+                rec[k] = v
+        with open(self.record, "w") as f:
+            json.dump(rec, f, indent=2)
+            f.write("\n")
+        self.commit("the planted record")
+        os.remove(os.path.join(self.bin, "measured"))  # the planting run's own
+        return self.bytes()
+
+    def measured(self):
+        """Whether a run measured the tree (the stub cargo was asked to build)."""
+        return os.path.exists(os.path.join(self.bin, "measured"))
+
     def bytes(self):
         with open(self.record, "rb") as f:
             return f.read()
 
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
+
+
+MISSING = object()
 
 
 def tail(out):
@@ -196,6 +227,99 @@ class CheckIsUnchanged(Case):
         self.assertEqual(code, 0, out)
         self.assertIn("ratchet: no number above the record", out)
         self.note(code, out)
+
+
+
+# The review of PR 294, finding 1: a record that names no toolchain (no field,
+# null, or not an object holding rustc and clippy) is named so, never `None`
+# and never a traceback; and --record refuses an older schema before measuring.
+NO_TOOLCHAIN = "names no toolchain (schema 1)"
+
+
+class OlderRecordIsNamed(Case):
+    def refused_by_check(self, **fields):
+        self.tree.planted(**fields)
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(
+            out,
+            "ratchet: the toolchain differs from " + self.tree.record
+            + "'s, the clippy numbers do not compare\n"
+            f"  record:   {NO_TOOLCHAIN}\n  this run: {OLD[1]}",
+        )
+        self.note(code, out)
+
+    def refused_by_record(self, **fields):
+        before = self.tree.planted(**fields)
+        code, out = self.tree.run(OLD, "--record")
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(f"  record:   {NO_TOOLCHAIN}\n  this run: {OLD[1]}", out)
+        self.assertIn("--record --toolchain-move", out)
+        self.assertEqual(self.tree.bytes(), before)
+        self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def moved_by_record(self, **fields):
+        before = self.tree.planted(**fields)
+        code, out = self.tree.run(OLD, "--record", "--toolchain-move")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(f"ratchet: the toolchain moved from no toolchain (schema 1) to {named(OLD)}", out)
+        self.assertNotIn("None", out)
+        self.assertNotEqual(self.tree.bytes(), before)
+        self.assertIn(OLD[1].encode(), self.tree.bytes())
+        self.note(code, out)
+
+    def test_check_names_a_missing_toolchain(self):
+        self.refused_by_check(toolchain=MISSING)
+
+    def test_check_names_a_null_toolchain(self):
+        self.refused_by_check(toolchain=None)
+
+    def test_check_names_a_non_object_toolchain(self):
+        self.refused_by_check(toolchain="rustc 1.98.1")
+
+    def test_check_names_an_object_without_clippy(self):
+        self.refused_by_check(toolchain={"rustc": OLD[0]})
+
+    def test_record_refuses_a_missing_toolchain(self):
+        self.refused_by_record(toolchain=MISSING)
+
+    def test_record_refuses_a_null_toolchain(self):
+        self.refused_by_record(toolchain=None)
+
+    def test_record_refuses_a_non_object_toolchain(self):
+        self.refused_by_record(toolchain="rustc 1.98.1")
+
+    def test_toolchain_move_names_a_missing_toolchain(self):
+        self.moved_by_record(toolchain=MISSING)
+
+    def test_toolchain_move_names_a_null_toolchain(self):
+        self.moved_by_record(toolchain=None)
+
+    def test_toolchain_move_names_a_non_object_toolchain(self):
+        self.moved_by_record(toolchain="rustc 1.98.1")
+
+    def refused_schema(self, *args):
+        before = self.tree.planted(schema=0, toolchain=MISSING)
+        code, out = self.tree.run(OLD, *args)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: {self.tree.record} is schema 0, the tool is 1")
+        self.assertEqual(self.tree.bytes(), before)
+        if "--record" in args:
+            self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def test_record_refuses_an_older_schema_before_measuring(self):
+        self.refused_schema("--record")
+
+    def test_toolchain_move_refuses_an_older_schema_before_measuring(self):
+        self.refused_schema("--record", "--toolchain-move")
+
+    def test_check_refuses_an_older_schema_with_the_same_message(self):
+        self.refused_schema("--check")
 
 
 if __name__ == "__main__":

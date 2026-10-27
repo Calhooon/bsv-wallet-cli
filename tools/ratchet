@@ -450,28 +450,46 @@ def dump(obj):
     return json.dumps(obj, indent=2, sort_keys=False) + "\n"
 
 
+def recorded_toolchain(rec):
+    """The record's toolchain, or None when it names none: an older record
+    with no `toolchain` field, a null one, or one that is not an object
+    holding `rustc` and `clippy`."""
+    tc = rec.get("toolchain")
+    if isinstance(tc, dict) and isinstance(tc.get("rustc"), str) and isinstance(tc.get("clippy"), str):
+        return tc
+    return None
+
+
+def named(tc, schema=SCHEMA):
+    if tc is None:
+        return f"no toolchain (schema {schema})"
+    return f"{tc['rustc']}, {tc['clippy']}"
+
+
 def differs(path, rec, now):
     """The refusal when the record's toolchain is not this run's, else None:
     a new clippy brings new pedantic lints, and the numbers would move with
     no change to the tree."""
-    if rec.get("toolchain") == now:
+    tc = recorded_toolchain(rec)
+    if tc == now:
         return None
-    old = (rec.get("toolchain") or {}).get("clippy")
+    old = tc["clippy"] if tc else f"names {named(None, rec.get('schema'))}"
     return (
         f"ratchet: the toolchain differs from {path}'s, the clippy numbers do not compare\n"
         f"  record:   {old}\n  this run: {now['clippy']}"
     )
 
 
-def named(tc):
-    return f"{tc.get('rustc')}, {tc.get('clippy')}"
+def schema_refusal(path, rec):
+    """The refusal when the record is not this tool's schema, else None."""
+    if rec.get("schema") != SCHEMA:
+        return f"ratchet: {path} is schema {rec.get('schema')}, the tool is {SCHEMA}"
+    return None
 
 
 def load(path, now):
     rec = json.loads(path.read_text())
-    if rec.get("schema") != SCHEMA:
-        sys.exit(f"ratchet: {path} is schema {rec.get('schema')}, the tool is {SCHEMA}")
-    if refusal := differs(path, rec, now["toolchain"]):
+    if refusal := schema_refusal(path, rec) or differs(path, rec, now["toolchain"]):
         sys.exit(refusal)
     return rec
 
@@ -562,10 +580,13 @@ def main():
     if a.record and a.baseline.exists():
         # Read before the measurement and refused before a byte is written: a
         # record under another toolchain is one --check refuses to compare (#132).
-        old = json.loads(a.baseline.read_text()).get("toolchain") or {}
+        rec = json.loads(a.baseline.read_text())
+        if refusal := schema_refusal(a.baseline, rec):
+            sys.exit(refusal)
+        old = recorded_toolchain(rec)
         clippy_v, rustc_v = toolchain()
         this = {"rustc": rustc_v, "clippy": clippy_v}
-        refusal = differs(a.baseline, {"toolchain": old}, this)
+        refusal = differs(a.baseline, rec, this)
         if refusal and not a.toolchain_move:
             sys.exit(
                 f"{refusal}\n"
@@ -580,7 +601,7 @@ def main():
         a.baseline.write_text(dump(now))
         print(f"ratchet: recorded {a.baseline} at {now['commit'][:12]} under {named(now['toolchain'])}")
         if a.toolchain_move:
-            print(f"ratchet: the toolchain moved from {named(old)} to {named(now['toolchain'])}")
+            print(f"ratchet: the toolchain moved from {named(old, rec['schema'])} to {named(now['toolchain'])}")
         return 0
     if a.check:
         return check(now, a.baseline, a.base)
