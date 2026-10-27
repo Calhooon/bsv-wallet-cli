@@ -447,14 +447,14 @@ async fn ingest_arc_before_deadline(
     // check; it cannot identify which waited. timeout drops the ingest future.
     // Toolbox 0.13.0's Seen/InBlock/Mined paths have two separate writes:
     // broadcast memory's BEGIN IMMEDIATE (its busy is swallowed by
-    // record_broadcast_status_quiet), then the request UPDATE. No transaction
-    // wraps both. sqlx rolls back an unacknowledged BEGIN, but a running UPDATE
-    // can land after the 503: request unmined, transaction sending, memory empty.
-    // A retry converges because the status updates are conditional, the memory
-    // ladder upserts, and ingest_merkle_proof commits proof and completion links
-    // together, reusing a matching anchor. The callback tests cover cancellation
-    // before any write and after the UPDATE lands, checking one retry against a
-    // clean delivery and another for unchanged rows on all three paths.
+    // record_broadcast_status_quiet), then the request UPDATE, and no transaction
+    // wraps both (toolbox #205 commits the status and the hint in one). sqlx rolls
+    // back an unacknowledged BEGIN, but a running UPDATE can land after the 503:
+    // request unmined, transaction sending, memory empty. A retry converges: the
+    // status updates are conditional, the memory ladder upserts, ingest_merkle_proof
+    // commits proof and completion links together, reusing a matching anchor. The
+    // tests cover cancellation before any write on all three paths and after the
+    // statuses land on MINED: one retry equals a clean delivery, a second is a no-op.
     match tokio::time::timeout(
         deadline,
         crate::arc_ingest::ingest_arc_payload(storage, payload),
