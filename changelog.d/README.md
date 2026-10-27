@@ -36,5 +36,6 @@ refuses an invalid semantic version or a version already present. With no
 pending entries it also refuses unless `--allow-empty` is used; that flag writes
 `No changes since ...` using the release heading directly below the new section,
 read from CHANGELOG.md.
+If assembly is interrupted, run `git restore changelog.d`, remove any leftover `.CHANGELOG.md.*` file, then run assembly again.
 Commit the result with the release's version bump as [RELEASING.md](../RELEASING.md)
 describes.
