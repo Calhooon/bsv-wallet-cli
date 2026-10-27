@@ -6,7 +6,8 @@ Eight numbers of the tree, measured by `tools/ratchet` and recorded in `docs/rat
 tools/ratchet            # measure the tree, print one JSON object
 tools/ratchet --check    # measure, compare with docs/ratchets.json, exit 1 on a rise
 tools/ratchet --check --base B   # also exit 1 when the tree or docs/ratchets.json is above the record B
-tools/ratchet --record   # measure, rewrite docs/ratchets.json; refuses a dirty tree
+tools/ratchet --record   # measure, rewrite docs/ratchets.json; refuses a dirty tree and a toolchain other than the record's
+tools/ratchet --record --toolchain-move   # the same, accepting a new toolchain (the move's own commit)
 tools/ratchet --out F    # with any of the above, also write the measured JSON to F
 ```
 
@@ -39,7 +40,7 @@ Every lint is passed with `--force-warn`, not `-W`: an in-source `#[allow(..)]` 
 
 ## Determinism
 
-Two runs on the same tree give the same JSON byte for byte, on a warm target dir and on an empty one (cargo replays a fresh crate's cached warnings). No timestamp is recorded; every list is sorted. The JSON names the commit measured (`git rev-parse HEAD`, with `-dirty` after it when the working tree differs from HEAD; `--record` refuses a dirty tree, so a record always names the commit it measured) and the toolchain (`rustc --version`, `cargo clippy --version`). `--check` refuses to compare when the toolchain differs from the record's: a new clippy brings new pedantic lints and the numbers would move with no change to the tree. The CI job pins the record's toolchain (1.98.1).
+Two runs on the same tree give the same JSON byte for byte, on a warm target dir and on an empty one (cargo replays a fresh crate's cached warnings). No timestamp is recorded; every list is sorted. The JSON names the commit measured (`git rev-parse HEAD`, with `-dirty` after it when the working tree differs from HEAD; `--record` refuses a dirty tree, so a record always names the commit it measured) and the toolchain (`rustc --version`, `cargo clippy --version`). `--check` refuses to compare when the toolchain differs from the record's: a new clippy brings new pedantic lints and the numbers would move with no change to the tree. The CI job pins the record's toolchain (1.98.1) `--record` refuses the same, with the same message, exit 1 and nothing written (#132: a re-record under rustc 1.95.0 wrote 871 pedantic warnings against 847 under 1.98.1, a record `--check` could not compare); its success line names the toolchain it measured under. Run it under the pin (`RUSTUP_TOOLCHAIN=1.98.1 tools/ratchet --record`).
 
 ## Why they may only fall
 
@@ -52,7 +53,7 @@ Each number is a debt a reviewer cannot see growing one PR at a time: a panic pa
 3. Run `tools/ratchet --check`: it prints the number lower than the record.
 4. In its own commit of that PR, run `tools/ratchet --record` and commit `docs/ratchets.json`. The PR says it re-records and names each number that fell. A PR that does not say so does not touch `docs/ratchets.json`.
 
-A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record, and name every number that moved.
+A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record with `tools/ratchet --record --toolchain-move` (the only way `--record` accepts a toolchain other than the record's; it prints the toolchain moved from and to), and name every number that moved.
 
 
 ## Two file-length ratchets: the shipped code's and the test code's (2026-10-24)
