@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "commit": "93f160f393b9875291f63d1c80ddc8abea366acd",
-  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/40074725488",
-  "date": "2026-10-24",
+  "commit": "2f8e6cf2e74b482afe3b77d99158d7007dbc9c7d",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/40473522272",
+  "date": "2026-10-27",
   "files": {
-    "src/broadcast_verify.rs": {"score": 75.5, "caught": 148, "missed": 48, "timeout": 0, "unviable": 36},
-    "src/explorers.rs": {"score": 74.2, "caught": 46, "missed": 16, "timeout": 0, "unviable": 16},
-    "src/server/handlers.rs": {"score": 74.2, "caught": 92, "missed": 32, "timeout": 0, "unviable": 252},
-    "src/spend_gate.rs": {"score": 87.1, "caught": 169, "missed": 25, "timeout": 0, "unviable": 7},
-    "src/tracker_host.rs": {"score": 72.6, "caught": 170, "missed": 64, "timeout": 0, "unviable": 38}
+    "src/broadcast_verify.rs": {"score": 86.7, "caught": 144, "missed": 22, "timeout": 0, "unviable": 34},
+    "src/explorers.rs": {"score": 82.6, "caught": 38, "missed": 8, "timeout": 0, "unviable": 14},
+    "src/server/handlers.rs": {"score": 100.0, "caught": 79, "missed": 0, "timeout": 0, "unviable": 143},
+    "src/spend_gate.rs": {"score": 90.7, "caught": 225, "missed": 23, "timeout": 0, "unviable": 13},
+    "src/tracker_host.rs": {"score": 75.4, "caught": 202, "missed": 66, "timeout": 0, "unviable": 51}
   }
 }

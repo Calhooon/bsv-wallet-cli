@@ -504,14 +504,15 @@ class NoNumberFallsFromTheBase(Case):
                                    "a floor is never above the measured score rounded down: 70, not 75")
 
     def test_the_real_unchanged_floors_under_the_nights_record_pass(self):
-        # This PR's tip at base and tree: spend_gate 80 under 87.1, explorers 69
-        # under 74.2, every floor at or under its score rounded down.
+        # The tree's own floors and record (run 40473522272) at base and tree:
+        # spend_gate 90 under 90.7, explorers 82 under 82.6, every floor at or
+        # under its score rounded down.
         with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
             self.tree.write(".github/workflows/nightly.yml", f.read())
         with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
             mutants = f.read()
         scores = {k: v["score"] for k, v in json.loads(mutants)["files"].items()}
-        self.assertEqual((scores["src/spend_gate.rs"], scores["src/explorers.rs"]), (87.1, 74.2))
+        self.assertEqual((scores["src/spend_gate.rs"], scores["src/explorers.rs"]), (90.7, 82.6))
         self.tree.write("docs/scoreboard/mutants.json", mutants)
         base = self.tree.values()
         code, out = self.checked(base)
@@ -778,15 +779,15 @@ class TheScoreIsItsCounts(Case):
         with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
             return json.load(f)["files"]
 
-    def test_a_score_of_95_over_counts_of_72_6_is_refused(self):
+    def test_a_score_of_95_over_counts_of_75_4_is_refused(self):
         # The finding: tracker_host's counts with its score raised to 95.0 and
         # its floor to 95 passed every check.
         self.tree.write(".github/workflows/nightly.yml",
                         NIGHTLY.replace('"src/explorers.rs": 69}', '"src/explorers.rs": 69,\n             "src/tracker_host.rs": 95}'))
         self.with_entry("src/tracker_host.rs", dict(self.real()["src/tracker_host.rs"], score=95.0))
         self.refused("docs/scoreboard/mutants.json: files.src/tracker_host.rs.score: 95 stored, "
-                     "72.6 computed from its counts")
-        self.refused("72.6 computed from its counts", "--check")
+                     "75.4 computed from its counts")
+        self.refused("75.4 computed from its counts", "--check")
 
     def test_a_score_off_by_a_tenth_is_refused(self):
         self.with_entry("src/spend_gate.rs", dict(MUTANTS["files"]["src/spend_gate.rs"], score=86.7))
