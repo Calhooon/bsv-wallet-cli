@@ -8,6 +8,7 @@ tools/ratchet --check    # measure, compare with docs/ratchets.json, exit 1 on a
 tools/ratchet --check --base B   # also exit 1 when the tree or docs/ratchets.json is above the record B
 tools/ratchet --record   # measure, rewrite docs/ratchets.json; refuses a dirty tree and a toolchain other than the record's
 tools/ratchet --record --toolchain-move   # the same, accepting a new toolchain (the move's own commit)
+tools/ratchet --record --schema-move   # the same, accepting a record of an older schema (the move's own commit)
 tools/ratchet --out F    # with any of the above, also write the measured JSON to F
 ```
 
@@ -41,6 +42,8 @@ Every lint is passed with `--force-warn`, not `-W`: an in-source `#[allow(..)]` 
 ## Determinism
 
 Two runs on the same tree give the same JSON byte for byte, on a warm target dir and on an empty one (cargo replays a fresh crate's cached warnings). No timestamp is recorded; every list is sorted. The JSON names the commit measured (`git rev-parse HEAD`, with `-dirty` after it when the working tree differs from HEAD; `--record` refuses a dirty tree, so a record always names the commit it measured) and the toolchain (`rustc --version`, `cargo clippy --version`). `--check` refuses to compare when the toolchain differs from the record's: a new clippy brings new pedantic lints and the numbers would move with no change to the tree. The CI job pins the record's toolchain (1.98.1). `--record` refuses the same, with the same message, exit 1 and nothing written (#132: a re-record under rustc 1.95.0 wrote 871 pedantic warnings against 847 under 1.98.1, a record `--check` could not compare); its success line names the toolchain it measured under. Run it under the pin (`RUSTUP_TOOLCHAIN=1.98.1 tools/ratchet --record`).
+
+The record names its instrument too (#127, schema 2): `tool` holds the sha256 of `tools/ratchet` and of `tools/ratchet.d/clippy.toml` as HEAD holds them (`git show HEAD:<path>`, never the working copy: the record names HEAD's commit, so it names HEAD's tool). `--check` refuses a record whose fingerprint is not the tree's tool's, exit 1, nothing compared: a PR that edits the tool or its lint config re-records in the commit that changes the tool, with the reason in its message; `--record` always writes the current fingerprint, so no flag is needed and the diff shows the tool change beside the re-record. The base comparison is the one place this is not a refusal: a `--base` record made by another tool, or under an older schema, prints a `::warning::` (CI marks the step) and the base comparison is skipped, the tree still checked against its own record. A key added, renamed or dropped in the record bumps the schema; `--record` refuses a record of an older schema unless given `--schema-move`, the move's own commit.
 
 ## Why they may only fall
 
