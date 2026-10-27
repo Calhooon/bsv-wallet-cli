@@ -10,7 +10,7 @@ From the checkout, with the cargo toolchain, Node 24 (22.21 works too) and `test
 CARGO_TARGET_DIR=<your target dir> python3 tools/differential
 ```
 
-That one command builds the base (the merge-base of `HEAD` and `origin/beta`) in a scratch worktree with its own target dir and the head from the tree, runs both, and prints the report. The variants:
+That one command builds the base (the merge-base of `HEAD` and `origin/beta`) in a per-run scratch worktree with a cached target dir for that base commit and the head from the tree, runs both, and prints the report. The variants:
 
 ```bash
 tools/differential --base REV                    # the base at REV
@@ -20,9 +20,12 @@ tools/differential --compare R1 R2               # diff two recordings already m
 tools/differential --exclusions                  # the normalization list with its reasons
 tools/differential --out DIR                     # where the recordings, logs and report go
 tools/differential --base-target DIR             # the base build's CARGO_TARGET_DIR
+tools/differential --ports A,B,C,F,S              # explicit wallet A, B, C, funder and stub ports
 ```
 
-Scratch (the base's worktree, its target dir unless `--base-target` names one, the default `--out`) goes under `$TMPDIR/bsv-wallet-differential/`, or `~/bsv/targets/bsv-wallet-differential/` when `$TMPDIR` is unset or `/tmp`. A lane keeps its runs under `/Volumes/Lanes/out/bsv-wallet-cli/` with `--out`. Two runs take about 15 seconds after the builds. The ports are the hermetic run's own (3370 to 3373, the stub on 3380), never a port of the registry's.
+Scratch goes under `$TMPDIR/bsv-wallet-differential/`, or `~/bsv/targets/bsv-wallet-differential/` when `$TMPDIR` is unset, `/tmp` or `/private/tmp`. Each invocation creates its own `base-<sha12>-<random>` worktree and removes only that worktree after building, even if the build fails. The base build cache is `target-base-<sha12>` unless `--base-target` names one: Cargo's target-directory file lock serializes builds of the same sources from separate worktrees. The default output is a fresh `run-<timestamp>-<random>` directory, so invocations within one second do not collide. Two runs may share a machine; no private `TMPDIR` is needed. A lane keeps its runs under `/Volumes/Lanes/out/bsv-wallet-cli/` with distinct `--out` paths. Two recordings take about 15 seconds after the builds.
+
+The tool chooses five distinct free TCP ports per invocation and prints them in the report header. Both recordings use that set for wallet A, B, C, the funder and the stub. Selection binds `127.0.0.1:0`, closes it, and retries duplicates or a port already answering on localhost; the harness's startup guards still check before serving. It never chooses or probes the registry's ports (3320, 3323, 3330 to 3344), and does not prefer the harness defaults. `--ports 3370,3371,3372,3373,3380` requests those fixed ports explicitly; repeated, invalid or registry ports are refused before building.
 
 Exit 0 on zero differences, 1 on differences, 2 when a build, a path or a suite run failed (a failed suite's differences are no verdict), 3 when a recording is not a whole run. The tool fails closed: a recording is incomplete when it has no events, no wallet event (or none for a seat the setup starts: the funder, A, B), no HTTP calls or no commands, a line that is not a JSON event (a truncated file), a missing `setup` or `sweep` phase, a scenario phase count other than the suite's 24 (read from `tests/e2e/scenarios`) or a phase the suite lacks; and a pair is incomplete when a phase holds a different number of calls and commands in the two. The report names each gap on an `INCOMPLETE:` line and its last line reads `DIFFERENTIAL: INCOMPLETE recording (...)`; two empty recordings are never zero differences.
 
@@ -35,6 +38,8 @@ Under `DIFF_RECORD=<file>` the harness writes one JSON line per event (`tests/e2
 - each wallet's directory, port and identity key once, as a `wallet` event;
 - at the end of each phase, a `stub` event: the calls the hermetic stub answered in that phase, by provider and route with its status (`woc` `GET /tx/{id}/hex 200: 3`), and each known wall target's per-phase attempt count (`walled`), so a changed rung or broadcaster fan-out is a difference;
 - each with its phase (`setup`, the scenario's name, `sweep`) and a sequence number taken when the call starts.
+
+The tool prefixes each recording with a `ports` metadata event naming all five chosen ports, including the stub's. `--compare` can read recordings from separate invocations: wallet ports, recorded ports in loopback URLs and CLI `--port` operands are normalized by role, like the wallet directories. The metadata supplies that map and is not a compared harness call. Other numbers, hosts, URL paths and unrecorded ports stay literal; `--exclusions` names the rule and its reason.
 
 Not recorded: scenario 20's fetches of the inspector UI and its browser, scenario 21's JSON-RPC to the MCP server (the MCP server's own HTTP calls to the wallet included), the `serve` logs, and the stub's requests and answers themselves (only their counts, above). Those scenarios still run and must pass in both runs.
 
@@ -70,7 +75,7 @@ still fails. Each re-recorded fixture and reason belongs in the pin PR.
 
 ## The label rule and CI
 
-The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull request. It builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`.
+The CI job `differential` (`.github/workflows/ci.yml`) runs on every pull request. It builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`. The job is unchanged by #192: it runs one comparison pair per job.
 
 - A PR carrying the label `refactor` fails on any difference. `REFACTOR_FAILS: 'true'` is enabled with this pin: toolbox #105 and #106 are in the binary and its same-binary floor is zero. A failed or incomplete suite is never a comparison verdict.
 - Any other PR passes and reports. A feature changes outputs by design; its differences are its review's reading, and a behaviour change changes its fixture in its own commit (docs/lanes/README.md, rule 5).
