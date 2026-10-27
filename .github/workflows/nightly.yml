@@ -277,22 +277,21 @@ jobs:
 
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
-      # header). The measured night: run 40074725488, dispatched on beta at
-      # 93f160f (2026-10-24, cargo-mutants 27.1.0, no timeout;
-      # docs/scoreboard/mutants.json). One line a file:
-      # - spend_gate.rs: 87.1 measured; the floor stays 80, since one night is
-      #   not a trend; it may rise to 85 when a second night holds 87.1.
-      # - tracker_host.rs: 72.6 measured, floor 72; #175 raises it to 80.
-      # - server/handlers.rs: 74.2 measured, floor 74; #174 raises it to 80.
-      # - broadcast_verify.rs: 75.5 measured, floor 75; #173 raises it to 80.
-      # - explorers.rs: 74.2 measured (69.7 on #75's lane run, 2026-10-23);
-      #   the floor stays 69 until #124's tests raise it.
+      # header). The measured night: run 40473522272, the last scheduled one
+      # (#303), every mutant judged on beta at 2f8e6cf (2026-10-27,
+      # cargo-mutants 27.1.0, no timeout; docs/scoreboard/mutants.json). Each
+      # floor is that score rounded down. One line a file:
+      # - spend_gate.rs: 90.7 measured, floor 90.
+      # - tracker_host.rs: 75.4 measured, floor 75; #175 raises it to 80.
+      # - server/handlers.rs: 100.0 measured, floor 100 (#174).
+      # - broadcast_verify.rs: 86.7 measured, floor 86 (#173).
+      # - explorers.rs: 82.6 measured, floor 82 (#124).
       - name: Score per file against the floors
         env:
           MUTANTS_FLOORS: >-
-            {"src/spend_gate.rs": 80,
-             "src/tracker_host.rs": 72,
-             "src/server/handlers.rs": 74,
-             "src/broadcast_verify.rs": 75,
-             "src/explorers.rs": 69}
+            {"src/spend_gate.rs": 90,
+             "src/tracker_host.rs": 75,
+             "src/server/handlers.rs": 100,
+             "src/broadcast_verify.rs": 86,
+             "src/explorers.rs": 82}
         run: python3 .github/nightly/mutants_score.py outcomes
