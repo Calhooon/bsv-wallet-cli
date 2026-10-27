@@ -5,12 +5,18 @@ a toolchain other than the record's exits 1 and writes nothing, --record
 writes it, a success line names the toolchain, and --check still refuses a
 toolchain other than the record's; a record that names no toolchain (none,
 null, not an object) is named so under both, and --record refuses an older
-schema before measuring (the PR 294 review, finding 1). Each case copies the tool into a git tree
+schema before measuring (the PR 294 review, finding 1). The tool's
+fingerprint (#127): --check refuses a record whose fingerprint is not the
+tree's tool's; the same record (or one of an older schema) as --base warns and
+the check passes on the record alone; a re-record after a tool edit carries
+the new fingerprint; --record --schema-move rewrites an older schema's record.
+Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
 CI job ratchet: python3 tools/test_ratchet.py
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -121,6 +127,27 @@ class Tree:
     def bytes(self):
         with open(self.record, "rb") as f:
             return f.read()
+
+    def json(self):
+        with open(self.record) as f:
+            return json.load(f)
+
+    def sha(self, rel):
+        with open(os.path.join(self.root, rel), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    def edit_tool(self, rel="tools/ratchet"):
+        """A change to the instrument (a comment appended), committed."""
+        with open(os.path.join(self.root, rel), "a") as f:
+            f.write("# an edit of the instrument\n")
+        self.commit("the tool edited")
+
+    def base(self, rec):
+        """`rec` written as a base record outside the tree."""
+        p = os.path.join(self.bin, "base-ratchets.json")
+        with open(p, "w") as f:
+            json.dump(rec, f, indent=2)
+        return p
 
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -233,7 +260,8 @@ class CheckIsUnchanged(Case):
 # The review of PR 294, finding 1: a record that names no toolchain (no field,
 # null, or not an object holding rustc and clippy) is named so, never `None`
 # and never a traceback; and --record refuses an older schema before measuring.
-NO_TOOLCHAIN = "names no toolchain (schema 1)"
+SCHEMA = 2
+NO_TOOLCHAIN = f"names no toolchain (schema {SCHEMA})"
 
 
 class OlderRecordIsNamed(Case):
@@ -266,7 +294,7 @@ class OlderRecordIsNamed(Case):
         code, out = self.tree.run(OLD, "--record", "--toolchain-move")
         self.assertEqual(code, 0, out)
         self.assertNotIn("Traceback", out)
-        self.assertIn(f"ratchet: the toolchain moved from no toolchain (schema 1) to {named(OLD)}", out)
+        self.assertIn(f"ratchet: the toolchain moved from no toolchain (schema {SCHEMA}) to {named(OLD)}", out)
         self.assertNotIn("None", out)
         self.assertNotEqual(self.tree.bytes(), before)
         self.assertIn(OLD[1].encode(), self.tree.bytes())
@@ -306,10 +334,14 @@ class OlderRecordIsNamed(Case):
         before = self.tree.planted(schema=0, toolchain=MISSING)
         code, out = self.tree.run(OLD, *args)
         self.assertEqual(code, 1, out)
-        self.assertEqual(out, f"ratchet: {self.tree.record} is schema 0, the tool is 1")
-        self.assertEqual(self.tree.bytes(), before)
+        refusal = f"ratchet: {self.tree.record} is schema 0, the tool is {SCHEMA}"
         if "--record" in args:
+            self.assertEqual(out, refusal + "\nratchet: --record refuses it;"
+                             " a schema move is its own commit: --record --schema-move")
             self.assertFalse(self.tree.measured())
+        else:
+            self.assertEqual(out, refusal)
+        self.assertEqual(self.tree.bytes(), before)
         self.note(code, out)
 
     def test_record_refuses_an_older_schema_before_measuring(self):
@@ -320,6 +352,206 @@ class OlderRecordIsNamed(Case):
 
     def test_check_refuses_an_older_schema_with_the_same_message(self):
         self.refused_schema("--check")
+
+
+
+# #127: the record names its instrument, the sha256 of tools/ratchet and of
+# tools/ratchet.d/clippy.toml as HEAD holds them.
+TOOL_DIFFERS = (
+    "ratchet: the tool differs from {}'s record (tools/ratchet or"
+    " tools/ratchet.d/clippy.toml changed since it was recorded): re-record"
+    " in the commit that changes the tool, with the reason in its message"
+)
+BASE_SKIPPED = (
+    "::warning::ratchet: the base record {} was made by another tool{}:"
+    " the base comparison is skipped; the PR's re-record commit states the reason"
+)
+OTHER_TOOL = {"ratchet": "0" * 64, "clippy_toml": "0" * 64}
+
+
+class TheToolIsFingerprinted(Case):
+    def test_record_writes_the_fingerprint_of_heads_tool(self):
+        self.tree.recorded(OLD)
+        rec = self.tree.json()
+        self.assertEqual(rec["schema"], SCHEMA)
+        self.assertEqual(rec["tool"], {"ratchet": self.tree.sha("tools/ratchet"),
+                                       "clippy_toml": self.tree.sha("tools/ratchet.d/clippy.toml")})
+        self.assertEqual(list(rec)[:5], ["schema", "commit", "toolchain", "tool", "ratchets"])
+        self.note(0, str(rec["tool"]))
+
+    def test_check_refuses_a_record_of_another_tool(self):
+        before = self.tree.planted(tool=OTHER_TOOL)
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, TOOL_DIFFERS.format(self.tree.record))
+        self.assertEqual(self.tree.bytes(), before)
+        self.note(code, out)
+
+    def test_check_refuses_a_record_with_no_fingerprint(self):
+        self.tree.planted(tool=MISSING)
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, TOOL_DIFFERS.format(self.tree.record))
+        self.note(code, out)
+
+    def test_a_tool_edit_without_a_re_record_fails_check(self):
+        # The issue's exit test: a PR that edits the tool without re-recording.
+        self.tree.recorded(OLD)
+        self.tree.edit_tool()
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, TOOL_DIFFERS.format(self.tree.record))
+        self.note(code, out)
+
+    def test_a_clippy_toml_edit_without_a_re_record_fails_check(self):
+        self.tree.recorded(OLD)
+        self.tree.edit_tool("tools/ratchet.d/clippy.toml")
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, TOOL_DIFFERS.format(self.tree.record))
+        self.note(code, out)
+
+    def test_a_re_record_after_a_tool_edit_carries_the_new_fingerprint(self):
+        self.tree.recorded(OLD)
+        old_tool = self.tree.json()["tool"]
+        self.tree.edit_tool()
+        code, out = self.tree.run(OLD, "--record")
+        self.assertEqual(code, 0, out)
+        self.tree.commit("the re-record")
+        tool = self.tree.json()["tool"]
+        self.assertNotEqual(tool["ratchet"], old_tool["ratchet"])
+        self.assertEqual(tool["ratchet"], self.tree.sha("tools/ratchet"))
+        self.assertEqual(tool["clippy_toml"], old_tool["clippy_toml"])
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ratchet: no number above the record", out)
+        self.note(code, out)
+
+    def test_the_fingerprint_reads_head_not_the_working_copy(self):
+        self.tree.recorded(OLD)
+        with open(os.path.join(self.tree.root, "tools", "ratchet"), "a") as f:
+            f.write("# uncommitted\n")
+        code, out = self.tree.run(OLD)
+        self.assertEqual(code, 0, out)
+        measured = json.loads(out)
+        self.assertEqual(measured["tool"], self.tree.json()["tool"])
+        self.assertTrue(measured["commit"].endswith("-dirty"))
+        self.note(code, measured["commit"][-6:])
+
+    def base_is_skipped(self, base, why):
+        self.tree.recorded(OLD)
+        path = self.tree.base(base)
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 0, out)
+        self.assertIn(BASE_SKIPPED.format(path, why), out)
+        self.assertNotIn("ratchet: base record", out)
+        self.assertNotIn(", base ", out)
+        self.assertTrue(out.endswith("ratchet: no number above the record"), out)
+        self.note(code, out)
+
+    def test_a_base_of_another_tool_warns_and_checks_the_record_alone(self):
+        self.tree.recorded(OLD)
+        base = dict(self.tree.json(), tool=OTHER_TOOL)
+        base["ratchets"] = {k: 0 for k in base["ratchets"]}  # would fail if compared
+        self.base_is_skipped(base, "")
+
+    def test_a_base_of_an_older_schema_warns_and_checks_the_record_alone(self):
+        self.tree.recorded(OLD)
+        base = dict(self.tree.json(), schema=1)
+        del base["tool"]
+        base["ratchets"] = {k: 0 for k in base["ratchets"]}
+        self.base_is_skipped(base, f" (schema 1, the tool is {SCHEMA})")
+
+    def test_a_skipped_base_still_fails_a_tree_above_its_record(self):
+        self.tree.planted(ratchets={"unwrap_expect_outside_tests": 0})
+        path = self.tree.base(dict(self.tree.json(), tool=OTHER_TOOL))
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 1, out)
+        self.assertIn("::warning::ratchet: the base record", out)
+        self.assertIn("RAISED: the tree is above the record", out)
+        self.note(code, tail(out))
+
+    def test_a_base_of_the_same_tool_is_compared(self):
+        self.tree.recorded(OLD)
+        base = self.tree.json()
+        base["ratchets"] = dict(base["ratchets"], unwrap_expect_outside_tests=0)
+        path = self.tree.base(base)
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("::warning::", out)
+        self.assertIn(f"RAISED: the tree is above the base record {path}", out)
+        self.note(code, tail(out))
+
+    def test_a_base_of_a_newer_schema_is_refused(self):
+        self.tree.recorded(OLD)
+        path = self.tree.base(dict(self.tree.json(), schema=SCHEMA + 1))
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: {path} is schema {SCHEMA + 1}, the tool is {SCHEMA}")
+        self.note(code, out)
+
+    def test_a_base_of_another_toolchain_is_still_refused(self):
+        self.tree.recorded(OLD)
+        base = dict(self.tree.json(), toolchain={"rustc": NEW[0], "clippy": NEW[1]})
+        path = self.tree.base(base)
+        code, out = self.tree.run(OLD, "--check", "--base", path)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the toolchain differs from {path}'s", out)
+        self.note(code, out.splitlines()[0])
+
+    def test_check_refuses_an_older_schema_on_the_baseline_by_name(self):
+        before = self.tree.planted(schema=1, tool=MISSING)
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: {self.tree.record} is schema 1, the tool is {SCHEMA}")
+        self.assertEqual(self.tree.bytes(), before)
+        self.note(code, out)
+
+
+class SchemaMove(Case):
+    def test_schema_move_rewrites_an_older_schema_with_the_fingerprint(self):
+        self.tree.planted(schema=1, tool=MISSING)
+        code, out = self.tree.run(OLD, "--record", "--schema-move")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"ratchet: the schema moved from 1 to {SCHEMA}", out)
+        rec = self.tree.json()
+        self.assertEqual(rec["schema"], SCHEMA)
+        self.assertEqual(rec["tool"]["ratchet"], self.tree.sha("tools/ratchet"))
+        self.tree.commit("the re-record")
+        code, out = self.tree.run(OLD, "--check")
+        self.assertEqual(code, 0, out)
+        self.note(code, tail(out))
+
+    def test_schema_move_still_guards_the_toolchain(self):
+        before = self.tree.planted(schema=1, tool=MISSING)
+        code, out = self.tree.run(NEW, "--record", "--schema-move")
+        self.assertEqual(code, 1, out)
+        self.assertIn("the toolchain differs from", out)
+        self.assertEqual(self.tree.bytes(), before)
+        self.assertFalse(self.tree.measured())
+        self.note(code, out.splitlines()[0])
+
+    def test_schema_move_with_no_move_is_refused(self):
+        before = self.tree.recorded(OLD)
+        code, out = self.tree.run(OLD, "--record", "--schema-move")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: --schema-move, but {self.tree.record} is the tool's schema {SCHEMA}")
+        self.assertEqual(self.tree.bytes(), before)
+        self.note(code, out)
+
+    def test_schema_move_refuses_a_newer_schema(self):
+        before = self.tree.planted(schema=SCHEMA + 1)
+        code, out = self.tree.run(OLD, "--record", "--schema-move")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, f"ratchet: {self.tree.record} is schema {SCHEMA + 1}, the tool is {SCHEMA}")
+        self.assertEqual(self.tree.bytes(), before)
+        self.note(code, out)
+
+    def test_schema_move_needs_record(self):
+        code, out = self.tree.run(OLD, "--check", "--schema-move")
+        self.assertEqual(code, 2, out)
+        self.assertIn("--schema-move needs --record", out)
+        self.note(code, out)
 
 
 if __name__ == "__main__":
