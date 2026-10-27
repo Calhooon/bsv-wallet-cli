@@ -39,7 +39,7 @@ Each line is the phase's issues and its exit test. The epic gives no exit line p
 | 5, hardening | #97 #98 #99 | the chaos suite runs on every PR, two builds of a tag are identical and signed with an SBOM, and RELEASING.md carries the canary and rollback policy |
 | 6, the engine API and the desktop app | #102 #103 #104 #105 | `bsv-wallet-core` builds with no axum and no clap, and the desktop app and both scenario drivers pass the same scenarios |
 
-The milestones hold each phase's later issues beside these (`gh issue list --milestone "Phase 1: structure"`); the queue below ranks them all.
+Since the hygiene pass of 2026-10-27 (#316) the milestones name the releases (`0.19.0-beta.2`; `0.19.0` for Phases 0 and 1; `0.20` for Phases 2 and 3; `0.21` for Phases 4 to 6) and the labels are the stack's six; each phase's later issues stand under its heading in the queue below, which ranks them all.
 
 ## 4. The scoreboard
 
@@ -90,11 +90,11 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 **Phase 0, the oracle**
 
 - Q1: #70 the differential harness, old binary against new on recorded inputs; the nothing-changed evidence every refactor of Phase 1 must carry, and #78 waits on it; waits on nothing (the wire fixtures of #69 are on `beta`).
-- Q25: #140 internalizeAction accepts a payment whose transaction does not verify; a stranger's invalid spend is taken as a coin, ranked here because it is the programme's one correctness defect (its milestone is Phase 1); waits on the toolbox (`Calhooon/bsv-wallet-toolbox-rs#103` codes the check in the toolbox's internalize path) and the owner's word (spend semantics); the CLI's wire fixture 103 changes, in its own commit, when the toolbox's fix ships in a beta prerelease.
+- Q25: #140 internalizeAction accepts a payment whose transaction does not verify; a stranger's invalid spend is taken as a coin, ranked here because it is the programme's one correctness defect (its phase is 1); waits on the toolbox (`Calhooon/bsv-wallet-toolbox-rs#103` codes the check in the toolbox's internalize path) and the owner's word (spend semantics); the CLI's wire fixture 103 changes, in its own commit, when the toolbox's fix ships in a beta prerelease.
 - Q2: #100 BRC-100 conformance at a pin; the extensions document every shape question (#117, #122) is settled against; a lane is on it now; waits on nothing.
 - Q3: #130 the stack's wallet-gate vectors in the vectors job; the gate checked against the Lean definition's rows on every PR, the ground #88 is proven against; waits on nothing (the stack's #184 landed).
 - Q4: #133 split the oracle's harness files over 800 lines; empties `detail.tests_files_over_800_lines` so the key becomes a ratchet; waits on #110 (PR 116 brings `tests/wire_consumers.rs`).
-  Its milestone is Phase 1 (structure); it is ranked in Phase 0 because the files it splits are the oracle's own harness and the key it empties is the ratchet's (#72), so it finishes an oracle record rather than restructuring the shipped code.
+  Its phase is 1 (structure); it is ranked in Phase 0 because the files it splits are the oracle's own harness and the key it empties is the ratchet's (#72), so it finishes an oracle record rather than restructuring the shipped code.
 - Q5: #126 ratchet: a unit test for `check()` against a base record; the base comparison has never executed; waits on nothing.
 - Q6: #127 ratchet: a tool fingerprint in the record; a PR that edits the tool changes what is counted unseen; waits on Q5 (the same function, landed in turn).
 - Q7: #132 ratchet `--record` refuses a toolchain other than the pinned one; a re-record under the wrong toolchain is written today; waits on Q6 (the same file, landed in turn).
@@ -106,7 +106,7 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 - Q44: #136 hermetic e2e: block the runner's egress at the OS, not only the proxy wall; a client that ignores the proxy environment would reach the network unseen; waits on #74 (PR 131).
 - Q45: #142 a nightly bench run on `beta` so the CI runner's CPU entries reach the gate's run count; the bench gate of #71 gates only on an entry that carries `MIN_RUNS` runs (`tools/bench-compare`); waits on #71 (PR 125) and #76's nightly.
 
-**Phase 1, structure** (the epic's order, then the milestone's later issues)
+**Phase 1, structure** (the epic's order, then the phase's later issues)
 
 - Q13: #78 one spend function for send, drain, split and gift-send; four copies of the spend become one and the duplication ratchet falls; waits on Q1.
 - Q14: #79 one evidence layer and one report type for the repair passes; brings the three largest files under 800 lines; waits on Q1.
@@ -138,7 +138,7 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 
 ## 7. Pointers
 
-- The epic and its phases: #106; the milestones `Phase 0: the oracle` to `Phase 6: the engine API and the desktop app`.
+- The epic and its phases: #106; the milestones name the releases since #316 (`0.19.0` holds Phases 0 and 1, `0.20` Phases 2 and 3, `0.21` Phases 4 to 6; `0.19.0-beta.2` the pin).
 - The machine: `~/bsv/bsv-stack-lean/docs/charters/wallet.md` and `lean/Wallet.lean`; the six tests: `~/bsv/bsv-stack-lean/docs/BSV-NORTH-STAR.md` lines 25 to 36.
 - The oracle's records: [ratchets.json](ratchets.json) and [RATCHETS.md](RATCHETS.md); [WIRE.md](WIRE.md) and [MANIFEST.json](../tests/wire/MANIFEST.json); [NIGHTLY.md](NIGHTLY.md) and [nightly.yml](../.github/workflows/nightly.yml); [ARCHITECTURE.md](ARCHITECTURE.md); the e2e harness [run.js](../tests/e2e/run.js). Coming with their PRs: `docs/ARCH-RULES.md` and `tests/arch_*.rs` (#73), `docs/DEPENDENTS.md` (#110), `benches/baseline.json` (#71), `docs/E2E-HERMETIC.md` (#74), `docs/BRC-100-EXTENSIONS.md` (#100).
 - The tools: [tools/ratchet](../tools/ratchet), [tools/scoreboard](../tools/scoreboard), [tools/check-links](../tools/check-links) (every relative link in `docs/**/*.md` resolves, and an anchor names a heading of its target), and [tools/check-cites](../tools/check-cites) (the architecture's named citations and file-table line counts agree with its pinned commit); the CI job `ratchet` runs them. The planted cases are `tools/test_scoreboard.py`, `tools/test_check_links.py` and `tools/test_check_cites.py`, run by the same job.
