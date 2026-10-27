@@ -8,6 +8,11 @@ would not render as headings: "    # x", "#hashtag", "- - -", "Foo\n- - -",
 and "# comment" inside a fenced block. Indentation and fences never exempt
 a line. The retired test_a_plain_rule_after_a_blank_line_is_allowed is now
 test_dash_rule_after_blank_line_is_refused_by_name; use "***" for a rule.
+
+A line beginning with three or more backticks or tildes after the same
+stripping is a fence and is refused with its line number (#282), even where
+CommonMark would not open one ("    ```", "``` a ` b"); two backticks and
+two tildes are inline and allowed.
 """
 
 from datetime import datetime, timezone
@@ -451,6 +456,24 @@ for case, name, content in (
     setattr(Malformed, f"test_{case}_is_refused_by_name", malformed_case(name, content))
 
 
+def fence_case(content, line):
+    def test(self):
+        self.malformed("195.md", content)
+        self.assertIn(f"changelog.d/195.md:{line}: a fragment carries no code block; "
+                      "inline backticks only", self.tree.run("--list")[1])
+    return test
+
+
+for case, content, line in (("backtick_fence", "```\n", 1),
+                            ("backtick_fence_with_info", "- A change.\n\n```rust\nlet x = 1;\n```\n", 3),
+                            ("tilde_fence", "~~~\n", 1),
+                            ("long_backtick_fence", "````\n", 1),
+                            ("fence_after_bullet", "- ```\n", 1),
+                            ("fence_in_blockquote_list", "> - ~~~\n", 1),
+                            ("indented_fence", "- A change.\n    ```\n", 2)):
+    setattr(Malformed, f"test_{case}_is_refused_by_name", fence_case(content, line))
+
+
 def allowed_fragment_case(content):
     def test(self):
         self.tree.write("changelog.d/195.md", content)
@@ -469,6 +492,10 @@ for case, content in (("stars_rule_after_text", "Foo\n***\n"),
                       ("ten_digit_number_prefix", "1234567890. # x\n"),
                       ("inline_hashtag", "A #hashtag inside a line.\n"),
                       ("inline_backticks", "Use `# comment` inline.\n"),
+                      ("two_backticks", "``code with a ` inside`` is inline.\n"),
+                      ("bullet_inline_code", "- `code` inline.\n"),
+                      ("two_tildes", "~~struck~~ text.\n"),
+                      ("inline_triple_backticks", "A ```x``` run inside a line.\n"),
                       ("tab_indented_bullet_continuation", "- A change.\n\tContinued text.\n"),
                       ("url_fragment", "https://example.invalid/path#fragment\n")):
     setattr(Assembly, f"test_{case}_is_allowed", allowed_fragment_case(content))
