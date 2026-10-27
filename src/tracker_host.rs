@@ -1911,7 +1911,8 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// so that re-ask does not fetch on every pass; on a tick whose header
 /// moved at or below the row's height the row is loaded and asked once
 /// (one header read, one merkle path), as any mined row with a verdict
-/// is, and its served re-ask reads `recheck` for good.
+/// is, and the fresh proof clears the re-ask, so the served re-ask reads
+/// `null` until a later replay derives `recheck` again.
 /// The toolbox's own rows are never written. The stack's wallet charter,
 /// section 1: about a transaction the wallet believes only the tracker's
 /// word, and each action hosts one tracker state.
