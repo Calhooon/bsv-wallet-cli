@@ -6,6 +6,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::fixture::Fixture;
+use super::worlds::WORLDS;
+use crate::wire_support::read_fixture;
+
 // ---------------------------------------------------------------------------
 // The manifest: the recorded set, so a fixture lost or added by hand is a
 // failure, not a silent pass.
@@ -64,4 +68,41 @@ pub(crate) fn judge_manifest(dir: &Path) -> Result<Vec<String>, Vec<String>> {
     } else {
         Err(faults)
     }
+}
+
+/// The fixtures the manifest names, in name order; a fixture of an unknown
+/// world is a panic naming it.
+fn read_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, Vec<String>> {
+    let mut files = judge_manifest(dir)?;
+    files.sort();
+    Ok(files
+        .into_iter()
+        .map(|name| {
+            let fixture: Fixture = read_fixture(&dir.join(&name));
+            // A world the run does not know fails before any is built.
+            assert!(
+                WORLDS.contains(&fixture.world.as_str()),
+                "{name}: unknown world `{}`: the worlds are {}",
+                fixture.world,
+                WORLDS.join(", ")
+            );
+            (name, fixture)
+        })
+        .collect())
+}
+
+/// The fixtures the manifest names, read: a set that is not the recorded
+/// one, or an empty one, is the replay's failure.
+pub(crate) fn recorded_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, String> {
+    let fixtures = read_fixtures(dir).map_err(|faults| {
+        format!(
+            "the fixtures under {} are not the recorded set:\n{}",
+            dir.display(),
+            faults.join("\n")
+        )
+    })?;
+    if fixtures.is_empty() {
+        return Err(format!("no fixture under {}", dir.display()));
+    }
+    Ok(fixtures)
 }

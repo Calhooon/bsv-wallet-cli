@@ -1059,6 +1059,19 @@ async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_wit
     ))
     .await;
     assert!(asked, "the offered coin must reach the toolbox");
+    assert_toolbox_named_change_refusal(result).await;
+
+    let (result, asked) =
+        at_the_door(create_action(&wallet, args, "gate.local", &opts(1, false))).await;
+    assert!(!asked, "the own-change hold must precede the toolbox");
+    assert_own_change_hold(result, &txid);
+    assert_eq!(stored_rows(wallet.storage()).await, before);
+}
+
+/// The toolbox's refusal of a named change coin, as the server serves it:
+/// a 400 `VALIDATION_ERROR` whose message keeps the toolbox's validation
+/// prefix and the input reference; its wording is printed, never pinned.
+async fn assert_toolbox_named_change_refusal<T: std::fmt::Debug>(result: Result<T, GateError>) {
     assert!(
         matches!(
             &result,
@@ -1080,10 +1093,11 @@ async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_wit
     );
     assert!(message.contains("inputs[0]"), "{message}");
     eprintln!("toolbox named-change refusal: {message}");
+}
 
-    let (result, asked) =
-        at_the_door(create_action(&wallet, args, "gate.local", &opts(1, false))).await;
-    assert!(!asked, "the own-change hold must precede the toolbox");
+/// The gate's own hold of a named change coin when `SPEND_OWN_CHANGE=0`:
+/// one named-input refusal listing the coin as our own unmined change.
+fn assert_own_change_hold<T: std::fmt::Debug>(result: Result<T, GateError>, txid: &str) {
     let Err(GateError::Refused(refusal)) = result else {
         panic!("expected the gate's own-change hold: {result:?}");
     };
@@ -1096,7 +1110,6 @@ async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_wit
         held.reason,
         "depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0"
     );
-    assert_eq!(stored_rows(wallet.storage()).await, before);
 }
 
 /// Explicit inputs under the guard: a coin the caller names that the gate

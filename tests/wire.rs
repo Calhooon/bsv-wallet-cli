@@ -32,15 +32,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use wire_harness::cases::record_all;
-use wire_harness::fixture::{j, normalize, normalize_text, Fixture};
+use wire_harness::fixture::{answered_differently, j, normalize, normalize_text, Fixture};
 use wire_harness::judge::{app_codes_in_source, judge_coverage, APP_CODES, UNPRODUCED};
-use wire_harness::manifest::{judge_manifest, Manifest, MANIFEST};
+use wire_harness::manifest::{judge_manifest, recorded_fixtures, Manifest, MANIFEST};
 use wire_harness::recorder::{get, Recorder};
 use wire_harness::text_report::{
     message_difference, print_text_diffs, recording_difference, text_diff_line, write_text_diff,
 };
-use wire_harness::worlds::{known_world, resolve, World, WORLDS};
-use wire_support::{diff, on_runtime, read_fixture, Resp, J};
+use wire_harness::worlds::{known_world, resolve, World};
+use wire_support::{on_runtime, read_fixture, Resp, J};
 
 // ---------------------------------------------------------------------------
 // Record or replay.
@@ -48,27 +48,6 @@ use wire_support::{diff, on_runtime, read_fixture, Resp, J};
 
 fn wire_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire")
-}
-
-/// The fixtures the manifest names, in name order; a fixture of an unknown
-/// world is a panic naming it.
-fn read_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>, Vec<String>> {
-    let mut files = judge_manifest(dir)?;
-    files.sort();
-    Ok(files
-        .into_iter()
-        .map(|name| {
-            let fixture: Fixture = read_fixture(&dir.join(&name));
-            // A world the run does not know fails before any is built.
-            assert!(
-                WORLDS.contains(&fixture.world.as_str()),
-                "{name}: unknown world `{}`: the worlds are {}",
-                fixture.world,
-                WORLDS.join(", ")
-            );
-            (name, fixture)
-        })
-        .collect())
 }
 
 /// Whether `WIRE_RECORD` asks for a recording: `1` records, unset
@@ -144,16 +123,7 @@ async fn record(dir: &Path) -> String {
 async fn replay(dir: &Path, report_text: bool) -> Result<Replay, String> {
     // The permission audit is the process's: each pass starts it empty.
     bsv_wallet_cli::server::audit::reset();
-    let fixtures = read_fixtures(dir).map_err(|faults| {
-        format!(
-            "the fixtures under {} are not the recorded set:\n{}",
-            dir.display(),
-            faults.join("\n")
-        )
-    })?;
-    if fixtures.is_empty() {
-        return Err(format!("no fixture under {}", dir.display()));
-    }
+    let fixtures = recorded_fixtures(dir)?;
     let mut worlds: HashMap<String, World> = HashMap::new();
     let mut served: HashMap<String, J> = HashMap::new();
     let mut failures = Vec::new();
@@ -174,14 +144,7 @@ async fn replay(dir: &Path, report_text: bool) -> Result<Replay, String> {
                     continue;
                 }
             }
-            let want = serde_json::to_string_pretty(&fixture.response).unwrap();
-            let got = serde_json::to_string_pretty(&got).unwrap();
-            failures.push(format!(
-                "{file}: {} {} answered differently (- fixture, + served)\n{}",
-                fixture.request.method,
-                fixture.request.path,
-                diff(&want, &got)
-            ));
+            failures.push(answered_differently(file, fixture, &got));
         }
     }
     let missing = judge_coverage(&fixtures);
@@ -410,7 +373,7 @@ fn two_message_only_differences_report_two_markers() {
     const SECOND: &str = "083-createAction.inputNotOffered.json";
     let tmp = copy_corpus();
     let first = plant_into(tmp.path(), TEXT_FIXTURE, |r| {
-        plant_message(r, "planted one")
+        plant_message(r, "planted one");
     });
     let second = plant_into(tmp.path(), SECOND, |r| plant_message(r, "planted two"));
     let served = |r: Resp| {
@@ -535,7 +498,12 @@ fn text_reporting_keeps_every_other_response_detail() {
     success.status = 200;
     text.status = 200;
     assert!(message_difference(&success, &text).is_none());
+    assert_script_fault_detail_stays_strict();
+}
 
+/// The internalize refusal's detail after `spend refused at offset ` (the
+/// offset and the script reason) stays strict inside a moved message.
+fn assert_script_fault_detail_stays_strict() {
     let mut detail: Fixture =
         read_fixture(&wire_dir().join("103-internalizeAction.badUnlock.json"));
     let expected = detail.response.clone();

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::wire_support::{replace_number, Normalizer, Req, Resp, J};
+use crate::wire_support::{diff, replace_number, Normalizer, Req, Resp, J};
 
 /// `serde_json::json!` into [`J`], its keys in the order written (the
 /// macro's map sorts them; a request is sent as recorded either way).
@@ -120,4 +120,17 @@ pub(crate) fn normalize_text(s: &str) -> String {
     let s = replace_number(s, "127.0.0.1:", "<port>", true);
     let s = replace_number(&s, "os error ", "<errno>", true);
     replace_number(&s, " min old", "<minutes>", false)
+}
+
+/// A strict difference: the fixture's request and the line diff of the
+/// recorded response against the served one.
+pub(crate) fn answered_differently(file: &str, fixture: &Fixture, got: &Resp) -> String {
+    let want = serde_json::to_string_pretty(&fixture.response).unwrap();
+    let got = serde_json::to_string_pretty(got).unwrap();
+    format!(
+        "{file}: {} {} answered differently (- fixture, + served)\n{}",
+        fixture.request.method,
+        fixture.request.path,
+        diff(&want, &got)
+    )
 }
