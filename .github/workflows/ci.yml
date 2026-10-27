@@ -365,7 +365,32 @@ jobs:
         run: |
           rev="$REV"
           base=()
-          if [ -n "$rev" ] && git show "$rev:docs/ratchets.json" > "$RUNNER_TEMP/base-ratchets.json" 2>/dev/null; then
+          has_base=false
+          if [ -n "$rev" ]; then
+            record="$rev:docs/ratchets.json"
+            # A failed read is not proof of absence: a bad ref or corrupt
+            # object must fail. Git versions return 1 or 128 for a missing
+            # path; confirm the named path is absent from a readable tree.
+            if LC_ALL=C git cat-file -e "$record" 2> "$RUNNER_TEMP/base-record-error"; then
+              if ! git show "$record" > "$RUNNER_TEMP/base-ratchets.json"; then
+                echo "::error::ratchet: git show failed for $record"
+                exit 1
+              fi
+              has_base=true
+            else
+              code=$?
+              if { [ "$code" -eq 1 ] || [ "$code" -eq 128 ]; } \
+                && grep -Eq 'does not exist|Not a valid object name|exists on disk, but not in' "$RUNNER_TEMP/base-record-error" \
+                && entries=$(git ls-tree "$rev" -- docs/ratchets.json) && [ -z "$entries" ]; then
+                : # Only a missing path may take the notice branch below.
+              else
+                cat "$RUNNER_TEMP/base-record-error" >&2
+                echo "::error::ratchet: git cat-file -e failed for $record (exit $code)"
+                exit 1
+              fi
+            fi
+          fi
+          if [ "$has_base" = true ]; then
             echo "ratchet: the base record is $rev:docs/ratchets.json"
             base=(--base "$RUNNER_TEMP/base-ratchets.json")
             python3 tools/ratchet --fingerprint > "$RUNNER_TEMP/head-fingerprint.json"
@@ -389,7 +414,7 @@ jobs:
               (
                 # The job's own target dir: the scratch worktree would otherwise
                 # build the workspace cold a second time under its own target/.
-                export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+                export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$GITHUB_WORKSPACE/target}"
                 cd "$base_tree"
                 git checkout "$rev" -- tools/ratchet tools/ratchet.d
                 git -c user.name=ratchet -c user.email=ratchet@invalid -c commit.gpgsign=false \

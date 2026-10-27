@@ -23,6 +23,8 @@ The base comparison (#126) covers a base above, equal to and below the tree,
 a raised PR record, a key the base predates and an unrecorded key. Only a tree
 below its own record gets the re-record hint. Non-object JSON records are
 refused by name under --check, --record and --base.
+The CI notice is limited to a path absent from a readable tree; invalid
+refs, failed object reads and failed git show calls stop before measurement.
 Each case copies the tool into a git tree
 of its own under $TMPDIR and runs it with a stub `cargo` and `rustc` on PATH
 that print a chosen version and no warning, so no real build runs. Run by the
@@ -32,6 +34,7 @@ CI job ratchet: python3 tools/test_ratchet.py
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -126,6 +129,18 @@ class Tree:
         r = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", "\n".join(shell)],
                            cwd=self.root, env=env, capture_output=True, text=True)
         return r.returncode, (r.stdout + r.stderr).strip()
+
+    def fail_git(self, args, message, code):
+        """Fail one Git operation, delegating every other call to real Git."""
+        real_git = shutil.which("git")
+        path = os.path.join(self.bin, "git")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n"
+                    f'if [ "$*" = {shlex.quote(" ".join(args))} ]; then\n'
+                    f"  printf '%s\\n' {shlex.quote(message)} >&2\n"
+                    f"  exit {code}\nfi\n"
+                    f'exec {shlex.quote(real_git)} "$@"\n')
+        os.chmod(path, 0o755)
 
     def recorded(self, toolchain):
         """A record under `toolchain`, committed."""
@@ -780,6 +795,66 @@ class SchemaMove(Case):
         self.assertEqual(code, 2, out)
         self.assertIn("--schema-move needs --record", out)
         self.note(code, out)
+
+
+class BaseRecordLookup(Case):
+    def setUp(self):
+        super().setUp()
+        self.tree.recorded(OLD)
+        self.tree.git("tag", "case-base")
+        os.remove(os.path.join(self.tree.bin, "measured"))
+
+    def missing_record(self):
+        code, out = self.tree.run_ci_step("HEAD~1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("::notice::no base record (HEAD~1)", out)
+        self.assertIn("ratchet: no number above the record", out)
+        self.assertNotIn("ratchet: the base record is", out)
+        self.assertNotIn("::error::", out)
+        self.assertTrue(self.tree.measured())
+        self.note(code, out)
+
+    def failed_lookup(self, rev, operation):
+        code, out = self.tree.run_ci_step(rev)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"::error::ratchet: git {operation} failed for {rev}:docs/ratchets.json", out)
+        self.assertNotIn("::notice::", out)
+        self.assertFalse(self.tree.measured())
+        self.note(code, out)
+
+    def test_ci_an_absent_record_takes_the_notice_and_checks_the_record_alone(self):
+        self.missing_record()
+
+    def test_ci_an_absent_record_with_cat_file_exit_one_takes_the_notice(self):
+        for message in ("fatal: path 'docs/ratchets.json' does not exist in 'HEAD~1'",
+                        "fatal: Not a valid object name HEAD~1:docs/ratchets.json",
+                        "fatal: path 'docs/ratchets.json' exists on disk, but not in 'HEAD~1'"):
+            with self.subTest(message=message):
+                self.tree.fail_git(["cat-file", "-e", "HEAD~1:docs/ratchets.json"], message, 1)
+                self.missing_record()
+
+    def test_ci_a_bogus_ref_fails_by_name_without_a_notice(self):
+        self.failed_lookup("not-a-real-ratchet-ref", "cat-file -e")
+
+    def test_ci_a_cat_file_fault_fails_by_name_without_a_notice(self):
+        self.tree.fail_git(["cat-file", "-e", "case-base:docs/ratchets.json"],
+                           "fatal: unable to read object: input/output error", 1)
+        self.failed_lookup("case-base", "cat-file -e")
+
+    def test_ci_an_unreadable_existing_object_is_not_an_absent_path(self):
+        self.tree.fail_git(["cat-file", "-e", "case-base:docs/ratchets.json"],
+                           "fatal: Not a valid object name case-base:docs/ratchets.json", 1)
+        self.failed_lookup("case-base", "cat-file -e")
+
+    def test_ci_a_git_show_transport_failure_fails_by_name_without_a_notice(self):
+        self.tree.fail_git(["show", "case-base:docs/ratchets.json"],
+                           "fatal: simulated transport failure", 1)
+        self.failed_lookup("case-base", "show")
+
+    def test_ci_a_git_show_corrupt_object_fails_by_name_without_a_notice(self):
+        self.tree.fail_git(["show", "case-base:docs/ratchets.json"],
+                           "fatal: simulated corrupt object", 128)
+        self.failed_lookup("case-base", "show")
 
 
 class BaseInstrumentGuards(Case):
