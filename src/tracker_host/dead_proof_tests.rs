@@ -76,6 +76,49 @@ fn assert_idle(report: &TickReport) {
     assert!(report.faults.is_empty());
 }
 
+/// The stored word, height and re-ask are `want`.
+async fn assert_word(storage: &StorageSqlx, txid: &str, want: (&str, Option<u32>, Option<&str>)) {
+    let (word, height, reask) = stored_word(storage, txid).await.unwrap().unwrap();
+    assert_eq!((word.as_str(), height, reask.as_deref()), want);
+}
+
+/// A row's path and mark: `bump`, `asks`, `next_ask_at`.
+async fn mark_of(storage: &StorageSqlx, txid: &str) -> (Option<String>, u32, Option<Timestamp>) {
+    let row = load_row(storage, txid).await.unwrap().unwrap();
+    (row.bump, row.asks, row.next_ask_at)
+}
+
+/// The header at 900 moves to one whose root is `root`, under a tip at
+/// 901: the pass at 102 reads `moved_from` 900.
+async fn moved_at_900(
+    storage: &StorageSqlx,
+    services: &MockWalletServices,
+    root: &str,
+) -> TickReport {
+    services.set_header_for_height(header(900, root, 0));
+    services.set_tip_header(super::tests::header_with_hash(901, &"aa".repeat(32), 0));
+    let moved = pass(storage, services, 102).await;
+    assert_eq!(moved.moved_from, Some(900));
+    moved
+}
+
+/// The pass adopted `txid` alone, as `mined` from the toolbox's path at
+/// 900, with no fault and no merkle fetch, its mark cleared.
+async fn assert_adopted_at_900(
+    storage: &StorageSqlx,
+    services: &MockWalletServices,
+    report: &TickReport,
+    txid: &str,
+) {
+    assert_eq!(report.adopted_mined, vec![txid.to_string()]);
+    assert!(report.faults.is_empty());
+    assert_eq!(services.call_count("get_merkle_path"), 0);
+    assert_eq!(
+        mark_of(storage, txid).await,
+        (Some(path_of(txid, 900)), 0, None)
+    );
+}
+
 async fn proven_dead(txid: &str, word: &str, height: u32) -> (StorageSqlx, MockWalletServices) {
     let (storage, user) = wallet_storage().await;
     proven_coin(&storage, user, txid, height, 1_000).await;
@@ -414,30 +457,18 @@ async fn a_header_move_at_the_toolbox_height_checks_an_unparseable_dead_row_agai
     let txid = "dd".repeat(31) + "e0";
     let (storage, services) = mismatched_at_900(&txid).await;
     unparseable(&storage, &txid).await;
+    let stands = vec![proof_stands_of(&txid, "conflicted")];
     let first = pass(&storage, &services, 100).await;
-    assert_eq!(first.faults, vec![proof_stands_of(&txid, "conflicted")]);
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap(),
-        ("conflicted".into(), None, None)
-    );
+    assert_eq!(first.faults, stands);
+    assert_word(&storage, &txid, ("conflicted", None, None)).await;
     assert_idle(&pass(&storage, &services, 101).await);
 
     // The header at 900, the toolbox's `proven_txs.height`, moves.
-    services.set_header_for_height(header(900, &"ef".repeat(32), 0));
-    services.set_tip_header(super::tests::header_with_hash(901, &"aa".repeat(32), 0));
-    let moved = pass(&storage, &services, 102).await;
-    assert_eq!(moved.moved_from, Some(900));
-    assert_eq!(moved.faults, vec![proof_stands_of(&txid, "conflicted")]);
+    let moved = moved_at_900(&storage, &services, &"ef".repeat(32)).await;
+    assert_eq!(moved.faults, stands);
     assert!(moved.adopted_mined.is_empty());
-    let row = load_row(&storage, &txid).await.unwrap().unwrap();
-    assert_eq!(
-        (row.bump, row.asks, row.next_ask_at),
-        (None, 2, Some(102 + 1_200))
-    );
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap(),
-        ("conflicted".into(), None, None)
-    );
+    assert_eq!(mark_of(&storage, &txid).await, (None, 2, Some(102 + 1_200)));
+    assert_word(&storage, &txid, ("conflicted", None, None)).await;
     assert_idle(&pass(&storage, &services, 103).await);
 }
 
@@ -446,7 +477,13 @@ fn proof_stands_of(txid: &str, word: &str) -> String {
 }
 
 async fn unparseable(storage: &StorageSqlx, txid: &str) {
-    sqlx::query("UPDATE proven_txs SET merkle_path = X'00' WHERE txid = ?")
+    toolbox_path(storage, txid, &[0]).await;
+}
+
+/// The toolbox's `proven_txs.merkle_path` for `txid`, rewritten in place.
+async fn toolbox_path(storage: &StorageSqlx, txid: &str, path: &[u8]) {
+    sqlx::query("UPDATE proven_txs SET merkle_path = ? WHERE txid = ?")
+        .bind(path)
         .bind(txid)
         .execute(storage.writer())
         .await
@@ -616,62 +653,32 @@ async fn a_new_creator_tracked_without_its_path_is_adopted_after_the_toolbox_rep
     proven_coin(&storage, user, &txid, 900, 1_000).await;
     services.set_header_for_height(header(900, &txid, 0));
     // The toolbox holds the path as TSC JSON, which does not parse as BUMP.
-    let json = format!(
-        r#"{{"index":0,"txOrId":"{txid}","target":"{}","nodes":[]}}"#,
-        "bb".repeat(32)
-    );
-    sqlx::query("UPDATE proven_txs SET merkle_path = ? WHERE txid = ?")
-        .bind(json.as_bytes())
-        .bind(&txid)
-        .execute(storage.writer())
-        .await
-        .unwrap();
+    let json = format!(r#"{{"index":0,"txOrId":"{txid}","nodes":[]}}"#);
+    toolbox_path(&storage, &txid, json.as_bytes()).await;
 
     let first = pass(&storage, &services, 100).await;
-    assert_eq!(
-        first.faults,
-        vec![format!(
-            "{txid}: the stored proof does not parse; tracked without it"
-        )]
-    );
-    let row = load_row(&storage, &txid).await.unwrap().unwrap();
-    assert_eq!((row.bump, row.asks, row.next_ask_at), (None, 1, Some(700)));
+    let said = format!("{txid}: the stored proof does not parse; tracked without it");
+    assert_eq!(first.faults, vec![said]);
+    assert_eq!(mark_of(&storage, &txid).await, (None, 1, Some(700)));
     // The row is served: its word, where with no row `/tx/{txid}` was 404.
     assert_eq!(served_word(&storage, &txid).await["word"], "unknown");
 
     // The toolbox's JSON-to-BUMP repair rewrites the path in place.
-    sqlx::query("UPDATE proven_txs SET merkle_path = ? WHERE txid = ?")
-        .bind(MerklePath::from_coinbase_txid(&txid, 900).to_binary())
-        .bind(&txid)
-        .execute(storage.writer())
-        .await
-        .unwrap();
+    let repaired = MerklePath::from_coinbase_txid(&txid, 900).to_binary();
+    toolbox_path(&storage, &txid, &repaired).await;
     // Inside the pause the row is not selected: tracked, never adopted.
     let inside = pass(&storage, &services, 101).await;
     assert!(inside.adopted_mined.is_empty() && inside.faults.is_empty());
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap().0,
-        "unknown"
-    );
+    assert_word(&storage, &txid, ("unknown", None, None)).await;
 
     // The pause passed: the repaired path is read and checks.
     let due = pass(&storage, &services, 100_000).await;
-    assert_eq!(due.adopted_mined, vec![txid.clone()]);
-    assert!(due.faults.is_empty());
-    assert_eq!(services.call_count("get_merkle_path"), 0);
-    let row = load_row(&storage, &txid).await.unwrap().unwrap();
-    assert_eq!(
-        (row.bump, row.asks, row.next_ask_at),
-        (Some(path_of(&txid, 900)), 0, None)
-    );
+    assert_adopted_at_900(&storage, &services, &due, &txid).await;
     assert_mined_readers(&storage, &services, &txid).await;
 
     let later = pass(&storage, &services, 10_000_000).await;
     assert!(later.adopted_mined.is_empty() && later.faults.is_empty());
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap(),
-        ("mined".into(), Some(900), None)
-    );
+    assert_word(&storage, &txid, ("mined", Some(900), None)).await;
 }
 
 #[tokio::test]
@@ -739,19 +746,9 @@ async fn a_marked_row_is_checked_again_when_its_header_moves_and_revived() {
     assert_idle(&pass(&storage, &services, 101).await);
 
     // The header at 900 moves to one whose root is the proof's.
-    services.set_header_for_height(header(900, &txid, 0));
-    services.set_tip_header(super::tests::header_with_hash(901, &"aa".repeat(32), 0));
-    let moved = pass(&storage, &services, 102).await;
+    let moved = moved_at_900(&storage, &services, &txid).await;
     println!("moved pass: {}", moved.summary());
-    assert_eq!(moved.moved_from, Some(900));
-    assert_eq!(moved.adopted_mined, vec![txid.clone()]);
-    assert!(moved.faults.is_empty());
-    assert_eq!(services.call_count("get_merkle_path"), 0);
-    let row = load_row(&storage, &txid).await.unwrap().unwrap();
-    assert_eq!(
-        (row.bump, row.asks, row.next_ask_at),
-        (Some(path_of(&txid, 900)), 0, None)
-    );
+    assert_adopted_at_900(&storage, &services, &moved, &txid).await;
     assert_eq!(
         stored_word(&storage, &txid).await.unwrap().unwrap().0,
         "mined"
