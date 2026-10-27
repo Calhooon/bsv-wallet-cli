@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "commit": "85f838c14dc93becab91f895737cbd94be8fbc8d",
+  "commit": "b5cb47a0edf5319ac995e7db881832cf015c665b",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "tool": {
-    "ratchet": "075b778699b9b564a88b615b220e20c6522b6d7351157b653c6a8b44a5822bce",
+    "ratchet": "ae79857f2d0b93de4f11413bdc31450793bc72eb4428ba494899cf5a4db6c8cb",
     "clippy_toml": "7277d8419d80a6030cc579d1bedd3cc70eb495dd53eaea9074a3d7482e787f96"
   },
   "ratchets": {
@@ -35,7 +35,7 @@
       },
       "src": {
         "files": 93,
-        "lines": 46611
+        "lines": 46688
       },
       "tests": {
         "files": 56,
@@ -46,7 +46,7 @@
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
-        "lines": 5074
+        "lines": 5151
       },
       {
         "path": "src/broadcast_verify.rs",
