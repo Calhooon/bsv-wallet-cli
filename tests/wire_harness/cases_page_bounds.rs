@@ -1,4 +1,4 @@
-//! The five paging doors' bounds and the unchanged signAction type refusal.
+//! The five paging doors' bounds and the unchanged unsigned type refusals.
 
 use super::recorder::{post, Recorder, G};
 use serde_json::{json, Value};
@@ -38,6 +38,15 @@ pub(crate) async fn record_page_bounds(r: &mut Recorder) {
         post(
             "/signAction",
             json!({"spends": {"0": {"unlockingScript": "00", "sequenceNumber": 4_294_967_296u64}}, "reference": "bm8tc3VjaC1yZWZlcmVuY2U="}),
+        ),
+    )
+    .await;
+    r.case(
+        "listActions.offsetAboveType",
+        "fresh",
+        post(
+            "/listActions",
+            json!({"labels": [], "offset": 4_294_967_296u64}),
         ),
     )
     .await;

@@ -31,19 +31,19 @@ async fn post_page(
     call: &str,
     args: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
-    post_page_from(app, call, args, "bounds.test").await
+    post_page_from(app, call, args, ("Originator", "bounds.test")).await
 }
 
 async fn post_page_from(
     app: axum::Router,
     call: &str,
     args: serde_json::Value,
-    originator: &str,
+    (header, originator): (&str, &str),
 ) -> (StatusCode, serde_json::Value) {
     let response = app
         .oneshot(
             axum::http::Request::post(format!("/{call}"))
-                .header("Originator", originator)
+                .header(header, originator)
                 .header("Content-Type", "application/json")
                 .body(axum::body::Body::from(serde_json::to_vec(&args).unwrap()))
                 .unwrap(),
@@ -143,9 +143,16 @@ fn page_handlers_share_one_guard_and_forward_original_args() {
     ] {
         let start = source.find(&format!("pub async fn {call}(")).unwrap();
         let handler = source[start..].split("\n}\n").next().unwrap();
+        let originator = handler
+            .find("let originator = extract_originator(&headers)?;")
+            .unwrap();
         let check = handler.find(guard).unwrap();
+        assert!(
+            originator < check,
+            "{call}: originator must precede the guard"
+        );
         let forwarded = handler
-            .find(&format!(".{call}(args, &extract_originator(&headers)?)"))
+            .find(&format!(".{call}(args, &originator)"))
             .unwrap();
         assert!(check < forwarded, "{call}: guard must precede the toolbox");
         assert!(
@@ -171,7 +178,8 @@ async fn page_refusals_precede_every_toolbox_entry() {
         for limit in [0, 10001, 10000] {
             let mut body = args.clone();
             body["limit"] = json!(limit);
-            let (_, body) = post_page_from(app.clone(), call, body, &"x".repeat(254)).await;
+            let (_, body) =
+                post_page_from(app.clone(), call, body, ("Originator", &"x".repeat(254))).await;
             let answer = body;
             let message = answer["message"].as_str().unwrap();
             if limit == 10000 {
@@ -186,6 +194,25 @@ async fn page_refusals_precede_every_toolbox_entry() {
                 );
                 assert!(!message.contains("originator"), "{call}: {answer}");
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn page_originator_is_extracted_before_limit_validation() {
+    let app = page_router().await;
+    for (call, args) in page_requests() {
+        for limit in [0, 10001] {
+            let mut args = args.clone();
+            args["limit"] = json!(limit);
+            let (status, body) =
+                post_page_from(app.clone(), call, args, ("Origin", "not-a-url")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{call}: {body}");
+            assert_eq!(
+                body,
+                json!({"code": "VALIDATION_ERROR", "message": "Origin header required"}),
+                "{call}"
+            );
         }
     }
 }
