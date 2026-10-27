@@ -3278,6 +3278,159 @@ async fn a_header_service_fault_is_read_once_more_and_is_could_not_verify_now() 
     assert_eq!(spent, 0, "nothing allocated");
 }
 
+/// The outage still holds a coin under a rule that would otherwise offer it.
+async fn assert_faulted_hold(coins: UserCoins<'_>, services: &MockWalletServices, word: &str) {
+    let assessment = assess(
+        coins,
+        services,
+        &opts(1, true).with_allow_received(true),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(assessment.offered.is_empty());
+    assert_eq!(assessment.held.len(), 1);
+    let held = &assessment.held[0];
+    println!("expected {word} under outage: {held:?}");
+    assert_eq!(
+        (
+            held.word.as_str(),
+            held.reason.as_str(),
+            held.headers_fault.as_deref()
+        ),
+        (
+            word,
+            "headers unavailable: Service error: mock: the chain tip header is unavailable",
+            Some("Service error: mock: the chain tip header is unavailable"),
+        )
+    );
+}
+
+/// A silent header service holds either stored shape, preserving the word.
+async fn assert_faulted_stale_creator(completed: bool) {
+    let (storage, user, basket) = storage_for(&("02".to_string() + &"ab".repeat(32))).await;
+    let txid = "e2".repeat(32);
+    if completed {
+        coin(&storage, (user, basket), &txid, false, Some(900), 6_000, 5).await;
+        crate::tracker_host::tests::stale_row(&storage, &txid, 900).await;
+    } else {
+        stale_coin(&storage, (user, basket), &txid, false).await;
+    }
+    let services = headers_with(&txid, 900, 900);
+    services.set_tip_unavailable();
+    let gate = opts(1, true).with_allow_received(true);
+    let reading = crate::tracker_host::read_creators(
+        &storage,
+        &services,
+        &gate.tracker,
+        &[(txid.clone(), None)],
+    )
+    .await
+    .unwrap()
+    .remove(&txid)
+    .unwrap();
+    println!("completed={completed}: {reading:?}");
+    assert!(reading.headers_fault);
+    assert_eq!(reading.depth, 0);
+    assert!(!reading.door && !reading.suspect);
+    assert_faulted_hold(UserCoins::new(&storage, user), &services, "stale").await;
+    assert_eq!(reading.word, "stale", "completed={completed}");
+    assert_eq!(
+        crate::tracker_host::stored_word(&storage, &txid)
+            .await
+            .unwrap()
+            .unwrap()
+            .0,
+        "stale",
+        "the read does not write the tracker"
+    );
+}
+
+#[tokio::test]
+async fn faulted_creator_keeps_stale_word_when_demoted() {
+    assert_faulted_stale_creator(false).await;
+}
+
+#[tokio::test]
+async fn faulted_creator_keeps_stale_word_when_completed() {
+    assert_faulted_stale_creator(true).await;
+}
+
+#[tokio::test]
+async fn faulted_creator_keeps_the_stored_mined_word() {
+    let (wallet, txid) = a_coin_under_an_outage(50_000).await;
+    crate::tracker_host::ensure_tables(wallet.storage())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO tracker_states (txid, bump, word, height, header_hash) \
+         VALUES (?, ?, 'mined', 900, ?)",
+    )
+    .bind(&txid)
+    .bind(crate::tracker_host::tests::path_of(&txid, 900))
+    .bind(header_with_hash(900, &txid, 0).hash)
+    .execute(wallet.storage().writer())
+    .await
+    .unwrap();
+    assert_faulted_hold(
+        UserCoins::from_wallet(&wallet).await.unwrap(),
+        wallet.services(),
+        "mined",
+    )
+    .await;
+}
+
+/// The toolbox's proof has no tracker word to preserve. With no build or
+/// hint input, its failed replay honestly reads `unknown`.
+#[tokio::test]
+async fn faulted_creator_without_a_tracker_row_reads_unknown() {
+    let (wallet, txid) = a_coin_under_an_outage(50_000).await;
+    assert_faulted_hold(
+        UserCoins::from_wallet(&wallet).await.unwrap(),
+        wallet.services(),
+        "unknown",
+    )
+    .await;
+    assert!(crate::tracker_host::stored_word(wallet.storage(), &txid)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn faulted_creator_is_held_before_any_word_or_rule_is_read() {
+    let txid = "e3".repeat(32);
+    for word in [
+        "unknown",
+        "built",
+        "announced",
+        "seen",
+        "mined",
+        "stale",
+        "rejected",
+        "conflicted",
+        "abandoned",
+    ] {
+        let reading = CreatorReading {
+            word,
+            depth: 42,
+            suspect: true,
+            door: true,
+            fault: Some("header service unavailable".to_string()),
+            headers_fault: true,
+        };
+        for gate in every_word(&txid) {
+            for origin in [Origin::Made, Origin::Received] {
+                assert_eq!(
+                    hold_reason(&reading, origin, (&txid, 0), &gate).as_deref(),
+                    Some("headers unavailable: header service unavailable"),
+                    "{word}, {origin:?}, {gate:?}"
+                );
+            }
+        }
+    }
+}
+
 /// A shortfall the faulted coins could not have covered is the funds'
 /// refusal whatever the service said: the coin is held on the fault (and
 /// read once more), but 500 sats never pay 1,000.
