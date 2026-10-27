@@ -85,8 +85,8 @@ use bsv_wallet_toolbox::monitor::ArcadeEventsTask;
 use bsv_wallet_toolbox::services::providers::arcade::statuses;
 use bsv_wallet_toolbox::{
     ArcadeSseClient, ArcadeStatusEvent, BroadcastMemory, BroadcastSeenRecord, BroadcastStatus,
-    LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx, Wallet,
-    WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
+    Chain, LockedInputReport, MonitorStorage, PoisonOutcome, PoisonReport, Services, StorageSqlx,
+    Wallet, WalletServices, BROADCAST_PROVIDER_CHAIN, BROADCAST_PROVIDER_NETWORK,
     BROADCAST_SEEN_STALE_SECS, BROADCAST_STATUS_MINED, BROADCAST_STATUS_SEEN,
     BROADCAST_STATUS_UNKNOWN, PROVIDER_ARCADE_V2,
 };
@@ -177,8 +177,8 @@ fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
 
 /// The Arcade SSE location for a wallet at `db_path`, when it runs in Arcade
 /// mode (mirrors `services_env::arcade_runtime`).
-pub fn arcade_sse_for(db_path: &str) -> Option<ArcadeSse> {
-    crate::services_env::arcade_runtime(db_path)
+pub fn arcade_sse_for(chain: Chain, db_path: &str) -> Option<ArcadeSse> {
+    crate::services_env::arcade_runtime(chain, db_path)
         .ok()
         .flatten()
         .map(|rt| ArcadeSse {
@@ -678,9 +678,10 @@ pub async fn run_served_pass<C: bsv_tracker::Clock>(
 /// Arcade SSE stream when it has one.
 pub fn spawn_serve_loop(
     wallet: std::sync::Arc<ServedWallet>,
+    chain: Chain,
     db_path: &str,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    spawn_served_loop(wallet, arcade_sse_for(db_path), false, false)
+    spawn_served_loop(wallet, arcade_sse_for(chain, db_path), false, false)
 }
 
 /// The served loop with the SSE stream named by the caller: `daemon` passes
