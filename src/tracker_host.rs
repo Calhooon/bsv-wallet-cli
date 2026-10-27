@@ -720,6 +720,20 @@ impl TrackedRow {
     }
 }
 
+/// Every label [`word_label`] produces, one per variant of the crate's
+/// [`Word`]: a stored word outside them is not one the host wrote.
+pub const WORD_LABELS: [&str; 9] = [
+    "unknown",
+    "built",
+    "announced",
+    "seen",
+    "mined",
+    "stale",
+    "rejected",
+    "conflicted",
+    "abandoned",
+];
+
 /// The tracker's word, as one lowercase label.
 pub fn word_label(word: &Word) -> &'static str {
     match word {
@@ -2288,21 +2302,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
         let word = fault
             .as_ref()
             .and(row.stored_word.as_deref())
-            .and_then(|stored| {
-                [
-                    "unknown",
-                    "built",
-                    "announced",
-                    "seen",
-                    "mined",
-                    "stale",
-                    "rejected",
-                    "conflicted",
-                    "abandoned",
-                ]
-                .into_iter()
-                .find(|label| *label == stored)
-            })
+            .and_then(|stored| WORD_LABELS.into_iter().find(|label| *label == stored))
             .unwrap_or_else(|| word_label(state.word()));
         readings.insert(
             row.txid.clone(),
@@ -3555,6 +3555,51 @@ pub(crate) mod tests {
             "mined"
         );
         (storage, services, clock)
+    }
+
+    /// `WORD_LABELS` is exactly the set `word_label` produces over the
+    /// crate's words (#286): each variant built here, and the mined word as
+    /// the host stores it after a checked proof (`Mined` has no public
+    /// constructor); a string outside the set is not a known label.
+    #[tokio::test]
+    async fn word_labels_are_exactly_the_labels_word_label_produces() {
+        let txid = "c4".repeat(32);
+        let (storage, _, _) = mined_at_900(&txid).await;
+        let mined = stored_word(&storage, &txid).await.unwrap().unwrap().0;
+        let mut produced: Vec<String> = [
+            Word::Unknown,
+            Word::Built,
+            Word::Announced,
+            Word::Seen,
+            Word::Stale,
+            Word::Rejected {
+                reason: "r".to_string(),
+            },
+            Word::Conflicted {
+                competitors: vec!["d5".repeat(32)],
+            },
+            Word::Abandoned,
+        ]
+        .iter()
+        .map(|word| word_label(word).to_string())
+        .chain([mined])
+        .collect();
+        for label in &produced {
+            assert!(
+                WORD_LABELS.contains(&label.as_str()),
+                "{label} not in WORD_LABELS"
+            );
+        }
+        produced.sort();
+        let mut known: Vec<String> = WORD_LABELS.iter().map(ToString::to_string).collect();
+        known.sort();
+        assert_eq!(
+            known, produced,
+            "WORD_LABELS holds a label word_label never produces"
+        );
+        for outside in ["", "Mined", "mined ", "orphaned"] {
+            assert!(!WORD_LABELS.contains(&outside), "{outside:?} read as known");
+        }
     }
 
     /// An event header, as the feed carries one.
