@@ -4,7 +4,7 @@
 
 ## References, at pins
 
-The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record: `git -C ~/bsv/brcs show 5119a9b:wallet/0100.md`. Its listOutputs module views admit a decimal-string balance and `spendable: false`; those JSON shapes wait for bsv-rs #105 at beta.2. This corpus records the ordinary basket view. The internalize-only 1,000-byte instruction bound already holds (fixture 123); createAction output instructions remain unbounded. The pin's varint changes are binary-wire changes and do not cross this JSON server. The beta.1 argument types do not change their JSON ranges or defaults; #198's paging checks are recorded in fixtures 129 to 140, and fixture 141 records signAction's unchanged type refusal.
+The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record: `git -C ~/bsv/brcs show 5119a9b:wallet/0100.md`. Its listOutputs module views admit a decimal-string balance and `spendable: false`; those JSON shapes wait for bsv-rs #105 at beta.2. This corpus records the ordinary basket view. The internalize-only 1,000-byte instruction bound already holds (fixture 123); createAction output instructions remain unbounded. The pin's varint changes are binary-wire changes and do not cross this JSON server. The beta.1 argument types do not change their JSON ranges or defaults; #198's paging checks are recorded in fixtures 129 to 140, fixture 141 records signAction's unchanged type refusal, and fixture 142 records listActions' unchanged offset type refusal.
 
 ## Reading a fixture
 
@@ -74,17 +74,19 @@ The corpus also records the framework's 400 and 422 text bodies.
 
 Fixtures 129 to 140 record the five paging calls at `limit: 10000` (200)
 and above it at `10001` (400 `VALIDATION_ERROR`), plus `listOutputs` with
-`limit: 0` and `offset: -1` (400). The limit messages preserve the reference's
-`at least 1 length.` and `no more than 10000 length.` words, followed by the
-bound and supplied value. Absent limits and offsets still pass untouched;
-fixtures 035, 036, 048, 053 and 054 retain their bytes. The negative-offset
-refusal is the #198 lane brief's policy, differing from the pinned BRC's
-signed `listOutputs.offset`; see [the recorded deviation](BRC-100-EXTENSIONS.md#deviations-on-the-owners-word).
+`limit: 0` (400) and `offset: -1` (200). The limit messages preserve the
+reference's `at least 1 length.` and `no more than 10000 length.` words,
+followed by the bound and supplied value. Absent limits and offsets still
+pass untouched; fixtures 035, 036, 048, 053 and 054 retain their bytes.
+Fixture 134 records BRC-100's newest-first paging (`wallet/0100.md:911`):
+the negative offset passes unchanged, returning an empty page with its true
+total in the fresh world. A served test with two stored outputs checks that
+`offset: -1` returns the newest one and `offset: 0` returns the oldest.
 Fixture 141, `signAction.sequenceNumberAboveType`, records axum's existing
 422 text for `4294967296`, before the handler: the `u32` type already enforces
-the BRC bound. Its transport shape belongs to #117 and #149. All 128 earlier
-fixtures remain byte-identical.
-
+the BRC bound. Fixture 142, `listActions.offsetAboveType`, records the same
+type boundary for its unsigned offset. Their transport shape belongs to
+#117 and #149. All 128 earlier fixtures remain byte-identical.
 
 `119-arc-callback.storeBusy.json` records the callback's typed store busy
 (#226), through the same `AppError::store_busy` arm as the host reads and
