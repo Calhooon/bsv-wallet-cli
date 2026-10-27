@@ -9,10 +9,17 @@
 //!
 //! The readers sit inside the calls, so the target serves the fuzzed status
 //! and body from a local socket under `/fz` and makes the calls
-//! (`Explorers::at`; `BroadcastVerifier::single_pass` over a configuration
-//! whose every base is the socket). The sources a case does not fuzz answer
-//! a clean 404 under `/quiet`, the broadcaster a 500 under `/arc`, so a
-//! verdict is the fuzzed reader's. The properties:
+//! (`Explorers::at`; for WhatsOnChain's and Bitails' indexes
+//! `BroadcastVerifier::single_pass` over a configuration whose every base is
+//! the socket and BananaBlocks off; for BananaBlocks' index
+//! `BroadcastVerifier::explicit` with `with_bananablocks`, a fresh provider
+//! at a turning base each case). `single_pass` takes its BananaBlocks
+//! provider from `Explorers::for_settings`, a process-wide cell the first
+//! verify case builds, so a base set there would hold for every later case
+//! of the run: it is always built off, and BananaBlocks' index is never
+//! reached through it. The sources a case does not fuzz answer a clean 404
+//! under `/quiet`, the broadcaster a 500 under `/arc`, so a verdict is the
+//! fuzzed reader's. The properties:
 //!
 //! - no reader panics;
 //! - a courier delivers only from a 200: WhatsOnChain's BEEF only as the
@@ -24,10 +31,12 @@
 //!   `Mined` from WhatsOnChain only for an integer `confirmations` of at
 //!   least 1, from Bitails only for an integer `blockHeight`;
 //! - BananaBlocks' index says `mined` or `known` only for a body about the
-//!   asked txid, and its silence is a gap, never a vote: with the two voting
-//!   indexes' clean 404s the answer is `Absent` unless it says `mined`.
+//!   asked txid, and its silence is a gap, never a vote: with the voting
+//!   index's clean 404 the answer is `Absent` unless it says `mined`.
 //!
 //! Input: byte 0 picks the reader, byte 1 the status, the rest is the body.
+//! With `EXPLORER_BODIES_VERDICT` set, each chain-index case prints its
+//! verdict to stderr (`verdict index=... status=... answer=... by=...`).
 //! The seeds are `examples/seed_corpus.rs`'s: for each reader one valid
 //! body, one malformed and one about another transaction.
 #![no_main]
@@ -138,35 +147,56 @@ enum Index {
 }
 
 /// One verification pass with `fuzzed` at the socket's `/fz` and every
-/// other source quiet.
+/// other source quiet. WhatsOnChain and Bitails go through `single_pass`
+/// with BananaBlocks off (the process's `Explorers` cell is built off by
+/// whichever of them runs first, and never at a base). BananaBlocks goes
+/// through `explicit` with a fresh provider at a turning base and a quiet
+/// WhatsOnChain-shaped index as the one voter.
 async fn verify(base: &str, fuzzed: Index) -> PresenceReport {
-    let at = |index: Index| {
-        if index == fuzzed {
-            format!("{base}/fz")
-        } else {
-            format!("{base}/quiet")
-        }
-    };
-    let (woc, bitails) = (at(Index::WhatsOnChain), at(Index::Bitails));
-    let bananablocks = bananablocks_base(&at(Index::BananaBlocks));
     let arc = format!("{base}/arc");
-    let config = Config::from_pairs(&[
-        ("ARC_URL", arc.as_str()),
-        ("ARC_GORILLAPOOL_URL", ""),
-        ("WOC_BASE", woc.as_str()),
-        ("BITAILS_BASE", bitails.as_str()),
-        ("BANANABLOCKS_BASE", bananablocks.as_str()),
-    ])
-    .expect("the configuration");
-    BroadcastVerifier::single_pass(Chain::Main, &config)
-        .verify_report(txid())
-        .await
+    let quiet = format!("{base}/quiet");
+    let fz = format!("{base}/fz");
+    let report = if fuzzed == Index::BananaBlocks {
+        BroadcastVerifier::explicit(true, &arc, Some(&quiet))
+            .with_bananablocks(&bananablocks_base(&fz))
+            .verify_report(txid())
+            .await
+    } else {
+        let at = |index: Index| if index == fuzzed { &fz } else { &quiet };
+        let config = Config::from_pairs(&[
+            ("ARC_URL", arc.as_str()),
+            ("ARC_GORILLAPOOL_URL", ""),
+            ("WOC_BASE", at(Index::WhatsOnChain).as_str()),
+            ("BITAILS_BASE", at(Index::Bitails).as_str()),
+            ("BANANABLOCKS_BASE", ""),
+        ])
+        .expect("the configuration");
+        BroadcastVerifier::single_pass(Chain::Main, &config)
+            .verify_report(txid())
+            .await
+    };
+    if std::env::var_os("EXPLORER_BODIES_VERDICT").is_some() {
+        let index = match fuzzed {
+            Index::WhatsOnChain => "whatsonchain",
+            Index::Bitails => "bitails",
+            Index::BananaBlocks => "bananablocks",
+        };
+        let status = local().answer.lock().expect("the answer").0;
+        eprintln!(
+            "verdict index={index} status={status} answer={:?} by={:?}",
+            report.chain_index, report.chain_index_by
+        );
+    }
+    report
 }
 
-/// The body as the readers take it (`reqwest`'s `text()`: UTF-8, an
-/// invalid sequence replaced).
+/// The body as the readers take it: `reqwest`'s `text()`, which decodes a
+/// body with no charset through `encoding_rs`'s UTF-8 `decode`: a byte-order
+/// mark is sniffed and dropped (a UTF-16 one decodes the rest as UTF-16), an
+/// invalid sequence replaced. `from_utf8_lossy` keeps a BOM, so it is not
+/// the readers' text.
 fn text(body: &[u8]) -> String {
-    String::from_utf8_lossy(body).into_owned()
+    encoding_rs::UTF_8.decode(body).0.into_owned()
 }
 
 fn json(body: &[u8]) -> Option<serde_json::Value> {
