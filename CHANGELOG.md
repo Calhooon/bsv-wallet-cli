@@ -5,6 +5,8 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## [Unreleased]
 
+## [0.19.0-beta.1] - 2026-10-27
+
 ### Beta.1: bsv-rs =0.9.0-beta.1 and bsv-wallet-toolbox-rs =0.14.0-beta.1 together on beta (#140)
 
 Pin those two crates and bsv-tracker =0.9.0-beta.1 together: one bsv-rs in the
@@ -138,6 +140,83 @@ removal of toolbox_words wait for beta.2, with the old stored JSON read then.
 - Refuse supplied paging limits outside 1 to 10000 at the JSON door (#198): `limit: 0` and `limit > 10000` on `listActions`, `listOutputs`, `listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` move from beta's 200 to 400 `VALIDATION_ERROR`, with the reference's `at least 1 length.` or `no more than 10000 length.` wording and the bound/value. One shared check runs before the toolbox, after extracting the originator; the door clamps nothing and leaves absent limits and offsets untouched. Negative `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging (`wallet/0100.md:911,926` at `5119a9b`), with `-1` starting at the newest output. `signAction.spends.*.sequenceNumber` is bounded by its `u32` type; axum's above-type 422 and its #117/#149 transport questions stay unchanged. Fixtures 129 to 142 record the five calls' limit boundary, a zero limit, the accepted negative offset and the sequence-number and unsigned-offset type refusals; all 128 earlier fixtures are byte-identical. Served tests check exact limit errors, absent defaults, original argument forwarding, originator precedence and newest-first paging on two stored outputs. The toolbox's limit clamp remains [toolbox #226](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/226).
 
 - A settled chain-feed row stores the header its recheck stood on (#258, from PR 256's review). On beta, a kept reorg or invalidation that settled on a same-root tip cleared its events but retained the deactivated checked header's hash. An invalidation of the block the coin now sits in then selected no row and left the coin offered. Delivery now records the snapshot's matching-root header when a plain mined row settles from a deactivated checked header, in both storage loops, through the existing upsert. What moves from beta: an invalidation of that new block selects the settled row and holds its coin; nothing else. The stored height, proof, word and re-ask rules, #233's deactivated set and replay invariant, and the vectors are unchanged. Tests: `tracker_host::tests::{a_settled_reorg_tracks_the_new_header_and_holds_its_invalidated_coin, a_settled_invalidation_tracks_the_new_header_and_holds_its_invalidated_coin, an_immediate_settle_tracks_the_new_header_and_holds_its_invalidated_coin, plain_mined_without_kept_events_stores_its_checked_header}`. The delivery regressions fail on beta with `moved=[]` and the coin offered; the existing #206, #228 and #233 tests remain byte for byte. A stack follow-up could make bsv-tracker's matching recheck replace the checked header itself; the crate is unchanged here.
+
+- **The ratchet's base comparison and record refusals have planted cases (#126).**
+  A base above or equal to the tree passes; a lower base, a PR record above
+  the base, or an unrecorded key fails. The re-record hint compares the tree
+  with its own record, so a completed re-record stays silent even when the
+  base is higher. Array, string and null records are refused by name under
+  `--check`, `--record` and `--base`, without a traceback. CI reports no base
+  record only when the path is absent; an invalid ref or failed Git read
+  fails the step. The schema rule and older-schema refusal from #127 remain
+  covered by their existing cases.
+
+- **`docs/ratchets.json` names its instrument; `tools/ratchet --check` refuses a record another tool made (#127).**
+  The record (schema 2) carries `tool`: the sha256 of `tools/ratchet`
+  and `tools/ratchet.d/clippy.toml` as HEAD holds them. `--fingerprint`
+  prints those hashes; a working-copy edit of either file is refused
+  before measuring. `--check` exits 1 when the fingerprint differs,
+  asking for a re-record in its own commit after the tool's, in the same PR,
+  with the reason in its message. Missing or malformed fingerprints are
+  named as "names no instrument (schema N)", and the check header keeps
+  `-dirty` for other uncommitted changes. A `--base` record of another tool
+  or an older schema still warns and skips comparing the two records.
+  CI then checks the PR's tree with the base's own tool against the base's
+  record; a raised number fails. The PR's tool still checks its own record.
+  A separate re-record with beta's schema-1 tool lowered four numbers
+  (clippy_pedantic 834 to 825, functions_over_60_lines 89 to 86,
+  duplicated_tokens 32643 to 32572, missing_docs 150 to 148).
+  The following `--record --schema-move` added the fingerprint under
+  schema 2 without changing any number.
+
+- **`tools/ratchet --record` refuses a toolchain other than the record's (#132).**
+  A re-record under rustc 1.95.0 wrote a record (clippy_pedantic 871 against
+  847 under the pinned 1.98.1) that CI's `--check` then refused to compare.
+  `--record` now reads the existing `docs/ratchets.json` first and, when this
+  run's rustc or clippy differs from the record's, exits 1 with the message
+  `--check` gives and writes nothing. A toolchain move is explicit:
+  `--record --toolchain-move` accepts the difference and says the toolchain
+  moved from the record's to this run's. With no record, `--record` writes
+  one. Its success line names the toolchain it measured under. Planted cases
+  in `tools/test_ratchet.py`, on a stub toolchain.
+
+- `tools/differential` isolates concurrent runs (#192): per-run base worktrees and default output directories carry random suffixes, and each pair chooses and reports five free ports outside the registry after building, just before recording. The per-SHA base build cache remains shared under an exclusive `fcntl.flock` on `<target>/.differential.lock`, held through both builds and copies of `bsv-wallet` and `bsv-wallet-mcp` to the run's output directory; recordings use those copies. A head built by the tool is copied too and needs a private `CARGO_TARGET_DIR`. Each run removes only its own worktree. `--ports A,B,C,F,S` requests explicit ports, with registry ports refused by name. Cross-run comparisons normalize recorded ports by role, but are not zero tests because their root keys differ; a zero test is within one run. Regression tests cover occupied ports, same-second output paths, overlapping worktree cleanup, explicit-port validation, cache replacement after copying, lock release on failure, head copies, late port selection and cross-run comparisons; the suite remains 24 scenarios. The CI job is unaffected: one comparison pair per job. The one port the tool does not own is scenario 20's fixed UI port 9321: two runs whose scenario 20 overlap fail closed (exit 2); stagger them.
+
+- **Changelog fragments (#195).** Each change gets its own `changelog.d/` file
+  to avoid conflicts between independent landings. `tools/changelog` validates
+  entries, checks watched paths against added fragments, and assembles releases
+  in number and filename order while carrying the existing Unreleased body
+  verbatim. The ratchet job checks PRs using the current `no-changelog` label;
+  the release and lane instructions describe the new workflow.
+
+- **The spend gate holds on the suspect mark for every word (#211).**
+  `hold_reason` read the mark in its `mined` arm alone, so a `stale` or
+  pending creator carrying it would have been offered under its rule, where
+  the stack's `Wallet.offerableUnder` refuses the mark whatever the word.
+  The mark is now read at one site, after a fault and before the door,
+  with the same reason (`suspect: a fork or an unresolved split at or
+  below its height`). Unit tests hold a suspect `stale`, `seen`, `built`
+  and `mined` reading under every rule. No reading the tracker crate or
+  the host can produce today carries the mark on a word other than
+  `mined`, so no served answer, gate vector or wire fixture changes.
+
+- **Keep the stored creator word on a header-service fault (#212).** A held
+  coin now lists the tracker's stored word (`stale` or `mined`), never the
+  interrupted replay's starting label. The hold, its reason and retry pause
+  are unchanged. With no tracker row, a toolbox proof alone still reads
+  `unknown`. Regression tests cover both stale store shapes, stored mined
+  words, proof-only creators, other check faults and fault precedence.
+  Wire fixture `084-createAction.headersUnavailable.json` changes `built`
+  to its stored `mined` in the hold and message; every other fixture,
+  including the gate vectors and divergence list, is byte-identical.
+
+- A dead-worded tracker row the toolbox proves is handed its stored proof once by the tick (#215). The existing bounded adoption query also selects `rejected`, `conflicted` and `abandoned` rows with no path; a root that checks writes `mined` with its height and header hash, preserving the row's hints, chain events and node verdict. The served word follows within one tick, subject to the shared 100-creator bound; new creators are adopted before dead rows are retried, so a dead row whose proof keeps failing never holds one back. A failed proof leaves the dead row untouched and names it in the report; an unanswered header retries next tick without a fault. Nine `tracker_host::dead_proof_tests` cover one-tick conflict revival, served proof evidence and the spend door, rejected root mismatch, no-proof rows, an unanswered header then recovery, malformed and above-tip paths, existing paths, the mixed adoption bound and failing dead rows behind a new creator. A second tick neither reloads nor re-asks the revived mined row. No fixture or vector moves: the door already replayed the proof and read it mined.
+
+- **`tools/changelog` refuses a fence line in a fragment (#282).** A fragment line that, after the heading rule's prefix stripping, begins with three or more backticks or tildes is refused by file and line ("a fragment carries no code block; inline backticks only"): an unclosed fence would have rendered every release heading below it in CHANGELOG.md as code. Two backticks stay inline and allowed.
+
+- **The tracker host's word labels in one constant (#286).** `WORD_LABELS` beside `word_label` holds its nine labels; the stored-word fallback in `read_creators` reads it in place of a hand-copied list, and a test holds the constant to exactly the labels `word_label` produces. No behaviour moves.
+
+- **Wire gate text reporting (#290).** The toolbox's dependents gate can set `WIRE_TEXT_DIFF=report` to report a refusal's changed message on one JSON-quoted `TEXT-DIFF:` line while status, class, headers, field order, offset, reason and stored state remain strict. Our CI and the consumers' recordings keep byte-for-byte comparison; reported rows await re-recording at the next pin. Unit tests check toolbox refusal classes and print toolbox-owned sentences instead of pinning their wording.
 
 ## [0.18.2] - 2026-10-26
 
