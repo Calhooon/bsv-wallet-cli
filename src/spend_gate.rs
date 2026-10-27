@@ -525,8 +525,11 @@ pub struct HeldCoin {
     /// `txid.vout`.
     pub outpoint: String,
     pub satoshis: u64,
-    /// The creator's tracker word (`mined`, `unknown`, `built`, ...), or
-    /// the transaction's status for a named unspendable record (`nosend`,
+    /// The creator's tracker word (`mined`, `unknown`, `built`, ...), using
+    /// its stored word when the creator's check faults. With no tracker
+    /// row, a fault leaves the replay's label (`unknown` for a toolbox
+    /// proof alone). The fault still decides the hold before the word.
+    /// A named unspendable record lists the transaction's status (`nosend`,
     /// `unsigned`, `sending`, ...). A failed named coin reads `failed`
     /// whatever its flag; a live coin reads its creator only with flag 1.
     /// `locked` names a coin an action of ours consumed as an input;

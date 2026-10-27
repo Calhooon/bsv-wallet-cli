@@ -2094,7 +2094,8 @@ pub async fn spend_guard<V: WalletServices + ?Sized, C: Clock>(
 /// ([`crate::spend_gate`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatorReading {
-    /// The tracker's word after the guard, as its label.
+    /// The tracker's word after the guard, as its label. On a check fault,
+    /// the known stored word, or the replay's label if none is held.
     pub word: &'static str,
     /// How deep the creator's block is under the tip (the tip is 1); 0 for
     /// a word with no block.
@@ -4830,7 +4831,7 @@ pub(crate) mod tests {
     /// reading it produces: a plain deep creator is offered; a shallow one,
     /// a suspect one, one under an open split with no mark on its row, and
     /// one whose tip could not be read are not. The fault's reading has its
-    /// door closed (its replay faults, the word stays `built`, unmarked): a
+    /// door closed (its replay faults, the stored word is `mined`, unmarked): a
     /// closed door is the guard's answer when it cannot look.
     #[tokio::test]
     async fn the_offered_method_is_the_stored_answer_on_every_kind_of_reading() {

@@ -341,7 +341,8 @@ domain (own change, live pre-broadcast statuses and a non-default basket),
 where their readings differ. The allocation's candidate filter and listing
 are unchanged; respend's exact inputs share the named reading.
 When no offered coin covers the action, the refusal lists every coin held
-back: its outpoint, the word, the origin (`made` or `received`), its age in
+back: its outpoint, the word (the stored tracker word when its creator's
+check faults), the origin (`made` or `received`), its age in
 minutes since the wallet learned of it, and why (`depth 1: 0 blocks`,
 `received, no proof; offered under allowPending: received`,
 `own change, SPEND_OWN_CHANGE=0`,
@@ -359,7 +360,11 @@ headers: no chain scan, no explorer.
 A coin whose creator the guard could not check because the header service
 did not answer (its tip, or a header the check needs: a transport fault, an
 outage) is held `headers unavailable: <the service's own error>` and marked
-as held on the service, no verdict on the coin (0.18.0, #59, seen on the
+as held on the service. Its listed word stays the stored tracker word
+(`stale` or `mined`, for example), while the fault takes precedence over
+that word. With no tracker row, the word is the replay's label: `unknown`
+for a toolbox proof alone, because the tracker never stored a word for it
+(#212). There is no verdict on the coin (0.18.0, #59, seen on the
 0.17.1 gate and on LOW's funder the same day: a two-second blink held every
 coin and the caller read `INSUFFICIENT_FUNDS` as a balance). The guard reads
 those creators once more after a two-second pause, once per call, and when
