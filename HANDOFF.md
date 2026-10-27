@@ -1285,3 +1285,151 @@ tonight for the certificate count); #277 the beta.2 pin; the floor raise for
 handlers.rs after tonight's record (#174); #243, #215, #212, #211, #195 (the
 CHANGELOG fragments, worth doing before the next busy day), #192, #191, #193
 by the queue; #196 closes with the tag.
+
+2026-10-27 (12:0xZ to 23:0xZ): THE TWO TAGS, THE PRODUCTION RESTARTS, THE
+HYGIENE PASS, THE GATE ON MAIN AND THE CI BALANCE. The session was cut at
+08:3xZ and resumed at 12:04Z; the chains, the watchers and one fix lane were
+relaunched from their pushed heads. The owner's words of the day, verbatim
+through the keeper: "arc is old af... we use arcade now for everyting" and
+"arc is just deprecated, arcade is the standard" (#300: Arcade the default
+broadcaster, GorillaPool's ARC never a rung, classic behind the deprecated
+knob ARC_MODE=classic for the hermetic stub until #299); "why are we doing
+nightly shit still... its a waste of resources" (#303: the Nightly's schedule
+gone on both lines, the measurement on dispatch, one before a minor tag, none
+for a prerelease); "I liked your reccomendtaions so those are approval" (the
+beta.2 standing word, the restarts, the certificate count 46 on #277); "idk
+you gotta find it man" (3322's wallet is ~/bsv/bob-wallet); "yeah do both of
+cours e" (the hygiene pass and its scheme); "no merge to main until god tier
+and 110% confidence nothing breaks and we in conformance with other SDKs and
+all other sdk issues are logged on their repos" (THE GATE ON MAIN); "I like
+all of your recommendations... as recommended" (19.3: #313's --from, the two
+standing words on upstream PRs and Worker fixes, the daemons' restarts on a
+released build the CLI's own); "sick of seeing all these CI failures... why
+are none of them passing... they are all so hardcore and slowing us down"
+(THE CI BALANCE).
+
+The tags. v0.18.2 from main e7844c4 at 13:53Z by the keeper on the second
+gate's 23 of 23 (net cost 2,170 sats, Arcade the first rung, the funder's
+three `broadcast accepted name=ArcadeV2`, zero GorillaPool lines; the record
+under /Volumes/Lanes/out/bsv-wallet-cli/gate-0182c/), on the index at
+14:18:24Z; v0.19.0-beta.1 from beta 687f0b6 at 13:40Z (pinned bsv-rs
+=0.9.0-beta.1, toolbox =0.14.0-beta.1, bsv-tracker =0.9.0-beta.1), on the
+index at 14:17:41Z; the announcement to the dependents' captains per
+RELEASING 1b (LOW's fleet, the stack's witness, the apps' payers; LOW stays
+pinned through Wave E and moves by its section 8 recipe after the canary
+day). #196 closed with the tag.
+
+The restarts and the shared-binary rule. 3322 (~/bsv/bob-wallet), 3396
+(~/.bsv-stack-coin-read, --db wallet.db) and the funder (3320) restarted at
+14:22Z on the released 0.18.2 from ~/.cargo/bin, each logging
+post_beef_ladder mode="arcade" first. That install replaced the shared binary
+under two LOW collect jobs (bsv-low #922) and bsv-dd's gift sender (its
+version guard refused the next launch): THE STUDIO RULE from here, a program
+never replaces a binary another program runs; every seat pins its own root.
+Each seat holds its own copy of 0.18.2 since 14:55Z (bob-wallet/bin,
+.bsv-stack-coin-read/bin as a real file, e2e-funder/bin; sha 8be4b2d5...);
+the funder restarted from its own at 14:57Z, 3396 at 15:27Z on the keeper's
+call (pid 3354), 3322 at 20:04Z on the word that restarts on a released
+build are the CLI's own (pid 25390); no daemon on this Mac runs from the
+shared bin. The next release installs with --root per seat (memory:
+shared-binary-rule).
+
+Landed on beta today, each hand-closed with its record: #243, #198, #195,
+#192, #212, #211, #285, #215, #282, #132, #286, #127, #126, #290 (before the
+cut), then #138 (PR 307, the CORS layer outside the bearer), #301 (PR 306,
+the fuzz crate's pins and a stable CI check; explorer_bodies fuzzing the five
+readers; the fix round: the BananaBlocks case built through
+explicit(...).with_bananablocks per case), the floors (PR 308 c3af6f1 from
+the last scheduled Nightly, run 40473522272: broadcast_verify 86, explorers
+82, handlers 100, spend_gate 90, tracker_host 75; 1,062 of 1,168 mutants
+judged, shards 18 and 19's baselines timed out at 0bd48af, the score
+unaffected; #173, #174, #124 closed, #175 at 75; the dictated fold PR 314),
+#119 (PR 309, the harness's relinquishOutput body), #300's beta half (PR 312
+fae65b1: main's 0.18.2 content as ONE LINEAR PORT COMMIT because beta's
+protection requires a linear history and the lane's merge-shaped branch
+could not land; then the typed ArcMode; the lesson: a stable patch comes to
+beta as a cherry-pick backport, never a merge), #171 (PR 318 507ea28, the
+MCP's typed Config read once with --config redacted, words.rs by #[path],
+the arch scan's roots src and mcp/src; a one-line rebase round), #292 (PR
+326 3d0cd8e, the adoption pass's failing rows marked and paused, the
+regression the review caught fixed: a repaired path adopted on its due
+check), the NORTH-STAR folds (PR 317, PR 319), the CI balance (PR 323
+7b32844). On main: PR 302 (#300), PR 304 (the Nightly's schedule), PR 320
+(the .env.example docs patch), PR 324 (the CI balance), PR 325 (bench.yml
+and differential.yml registered). #303 closed (the schedule gone on both
+lines).
+
+THE HYGIENE PASS (#316, the record with the snapshot of every issue's former
+labels and milestone): milestones name the lines (0.18.x the stable line;
+0.19.0-beta.2 the pin and what lands with it; 0.19.0 Phases 0 and 1, the
+divergences read, the line's bugs, REACHED ONLY AT THE GATE; hardening
+Phases 2 to 6 with the phase as a label: phase-2-spend-path to
+phase-6-desktop); the Phase 0 to 6 milestones closed, 0.20 and 0.21 re-cut
+away on the gate's word; the labels the stack's six (parity, divergence,
+bug, design, docs, ci) with api-break as CI's switch, refactor and
+no-changelog the switches CI reads, dependencies Dependabot's, and
+toolbox-dependent and stack-charter kept as qualifiers; twenty labels
+deleted. #4, #7, #39 closed by pointer (#23 kept: its ask has no other
+home); the oracle's six epics #69, #72, #74, #76, #107, #110 closed with
+records. The three numbers at 17:02Z: open 55, without a milestone 0,
+without a label 0.
+
+THE GATE ON MAIN (verbatim above): beta merges into main only when every
+scoreboard row reads at target with recorded evidence, every phase has
+exited, the gates and the production reads are green, and conformance with
+the other SDKs is proven (the divergence list empty, or every row carrying a
+filing number on the other SDK's repository or the word "ours" with its
+reading); never at a phase exit. 0.18.x keeps its patch releases from main;
+0.19.0-beta.N continue on beta. Written in docs/NORTH-STAR.md (PR 319), on
+#316 and in memory.
+
+THE CI BALANCE (beta 7b32844, main fb683dd and ae3c710): a push runs exactly
+the required set (ten on beta, seven on main), the same as a pull request,
+nothing more; bench.yml, differential.yml, nightly.yml and build-macos.yml
+run on workflow_dispatch and once before a tag (RELEASING step 4), each with
+its badge, README's first badge ci.yml on main; a run a newer push cancels
+is never a red; a refactor PR's differential is the lane's REPORT line and
+its cold review's own run (lanes rule 11).
+
+Findings filed today: #310 (beta's suite runs within 50 s of cargo-mutants'
+300 s limit: a dispatch would judge nothing and show twenty green shards;
+before the next dispatch), #311 (#174's second half), #313 (LOW's and
+bsv-dd's: a received coin named under the scoped word is offered but the
+allocator orders proven coins first; the owner ruled a --from flag; the lane
+found the named-input door cannot spend a managed coin, the toolbox and the
+reference refusing it; RE-SCOPED with the keeper and the toolbox captain to
+toolbox #353, a must-spend list on create_action_offering, the CLI's --from
+the thin wrapper after it lands; no new owner word needed), #315 (the change
+floor is a quarter of the basket's minimum, 2,500 sat by default), #321 (the
+MCP refuses a blank URL where the main crate treats blank as unset), #322
+(the toolbox captain's: the classic branch names its own URL at the pin),
+#327 (actions and outputs page nothing: limit 100 hard-coded, the oldest
+served; bsv-dd), #328 (the tracker's pause under the daemon's feed, for the
+owner). The lesson of #313 is in memory: a mechanism put under a ruling is
+traced to the end of the path and driven by a test first.
+
+THE BETA.2 PIN (#277, the brief complete with every intake: bsv-rs #329's
+Some(originator) at 59 lines, #331's verify(&tracker, fee, None) (no CLI
+call), #339's review-actions shape, #354's unsigned-answer refusal; the
+toolbox's #295 allocators, #298, #301, #280, #291, #269 (the certifier's
+x-bsv-auth-identity-key), #317 both halves (mainnet() refusing without
+with_arcade: nine CLI sites; #322), #300's clientNonce shape, #307's
+includeInputs, #313's purposeless coins, #304, #312/#357/#359's BRC-177
+label refusals and texts; the fuzz crate's pins; the toolbox's dependents
+check dispatched before the PR since their push run no longer reads our
+pins): bsv-rs's 0.9.0-beta.2 bump follows its #331's fourth fold (the index
+about 23:3xZ at the earliest), the toolbox's 0.14.0-beta.2 ready word two to
+three hours after its pin lands, the common hour then; the chain
+(chain-lane.sh p1-277-pin-beta2) fires on that hour. 18.10: bsv-rs beta.3
+accepts a legacy minimal-length-key HMAC tag on a miss (#379), our verifyHmac
+door inheriting it at that pin.
+
+Open after today: #277 (the pin), #310 before any dispatch, #299 (the stub
+plays Arcade), #313 after toolbox #353, #142 (the bench baseline, Phase 2's
+exit needs it), #155 and #194 (toolbox-dependent), #178, #173-era follow-ups
+#175 and #311, the flakes #191 and #193, the divergences #146 to #149, #117,
+#122, #118, the structure work #78, #79, #82, #84, #101, and the hardening
+milestone's 21. Production: 3322 pid 25390, 3396 pid 3354, the funder pid
+62391, each on its own copy of 0.18.2 with Arcade first; the witness tick at
+12:30Z tomorrow is the production read of Arcade. The keeper writes the
+fleet's checkpoint page at 09:00Z from the three numbers.
