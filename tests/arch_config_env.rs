@@ -1,8 +1,9 @@
-//! Rule A7 (#80): no environment read outside `src/config.rs`. The
-//! configuration is loaded once at start (`Config::load`, and
-//! `RelaySettings::load` for the relay binary) and everything after reads
+//! Rule A7 (#80): no environment read outside `src/config.rs`, and in the
+//! MCP companion outside `mcp/src/config.rs` (#171). The configuration is
+//! loaded once at start (`Config::load`, and `RelaySettings::load` for the
+//! relay binary; the MCP's own `Config::load`) and everything after reads
 //! the `Config` it was given: a command, the server, the spend gate per
-//! request. The allowlist is empty and stays so.
+//! request, an MCP tool. The allowlist is empty and stays so.
 //!
 //! A read is a call, by any path, as a method or bare after a `use`, of a
 //! door to the process environment: `std::env`'s `var(`, `var_os(`,
@@ -16,8 +17,8 @@ mod arch_support;
 
 use arch_support::{calls_any, imports, Rule};
 
-/// The one file that reads the environment.
-const HOMES: &[&str] = &["src/config.rs"];
+/// The one file of each crate that reads the environment.
+const HOMES: &[&str] = &["src/config.rs", "mcp/src/config.rs"];
 
 /// The doors to the environment, by name.
 const READS: &[&str] = &[
@@ -36,13 +37,13 @@ const ALLOWED: &[(&str, usize, &str)] = &[
 ];
 
 const RULE: Rule = Rule {
-    name: "A7: no env read outside src/config.rs",
+    name: "A7: no env read outside src/config.rs and mcp/src/config.rs",
     homes: HOMES,
     allowed: ALLOWED,
     sites: |l| calls_any(l, READS) + imports(l, READS),
 };
 
 #[test]
-fn the_environment_is_read_only_in_src_config_rs() {
+fn the_environment_is_read_only_in_the_config_modules() {
     RULE.check();
 }

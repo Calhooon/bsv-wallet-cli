@@ -14,8 +14,9 @@ mod arch_support;
 
 use arch_support::{calls_any, imports, Rule};
 
-/// The file that may read the environment freely.
-const HOMES: &[&str] = &["src/config.rs"];
+/// The files that may read the environment freely: each crate's config
+/// module (#171 added the MCP companion's).
+const HOMES: &[&str] = &["mcp/src/config.rs", "src/config.rs"];
 
 /// The readers, by name.
 const READS: &[&str] = &["var", "var_os"];
