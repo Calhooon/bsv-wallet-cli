@@ -93,7 +93,7 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ("src/spend_guard.rs", 17, "the spend guard's reads"),
     (
         "src/tracker_host.rs",
-        62,
+        61,
         "the tracker host's reads and writes",
     ),
 ];

@@ -1907,12 +1907,16 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     now: Timestamp,
     report: &mut TickReport,
 ) -> Result<()> {
+    // The dead-word list matches `spend_gate::hold_reason`; a row with a
+    // path already held is left to the usual replay and chain-event paths.
     let found = sqlx::query(
-        "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path \
+        "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path, s.word \
          FROM transactions t \
          JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
+         LEFT JOIN tracker_states s ON s.txid = lower(t.txid) \
          WHERE t.txid IS NOT NULL AND t.status = 'completed' \
-           AND NOT EXISTS (SELECT 1 FROM tracker_states s WHERE s.txid = lower(t.txid)) \
+           AND (s.txid IS NULL OR (s.word IN ('rejected', 'conflicted', 'abandoned') \
+                                  AND s.bump IS NULL)) \
            AND EXISTS (SELECT 1 FROM outputs o \
                        WHERE o.transaction_id = t.transaction_id AND o.spent_by IS NULL) \
          GROUP BY lower(t.txid) ORDER BY MIN(t.transaction_id) LIMIT ?",
@@ -1922,28 +1926,23 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     .await?;
     let mut rows = Vec::with_capacity(found.len());
     for r in &found {
-        let txid: String = r.get("txid");
-        let path: Option<Vec<u8>> = r.get("merkle_path");
-        let Some(path) = path
-            .as_deref()
-            .and_then(|bytes| MerklePath::from_binary(bytes).ok())
-        else {
-            report.faults.push(format!(
-                "{txid}: the stored proof does not parse; not adopted"
-            ));
-            continue;
-        };
-        rows.push(TrackedRow {
-            built: r.get::<i64, _>("made") != 0,
-            bump: Some(path.to_hex()),
-            ..TrackedRow::new(&txid)
-        });
+        if let Some(row) = proven_row(storage, r, report).await? {
+            rows.push(row);
+        }
     }
     snapshot
         .extend(services, rows.iter().filter_map(TrackedRow::proof_height))
         .await;
     for row in rows {
         let (state, fault) = row.replay(params, &*snapshot);
+        if row.stored_word.is_some() && (fault.is_some() || !matches!(state.word(), Word::Mined(_)))
+        {
+            // No answer from the service is no verdict on the stored proof.
+            if !matches!(fault, Some(CheckError::Headers(_))) {
+                report.faults.push(proof_stands(&row));
+            }
+            continue;
+        }
         match fault {
             None if matches!(state.word(), Word::Mined(_)) => {
                 report.adopted_mined.push(row.txid.clone());
@@ -1976,6 +1975,50 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
         store_row(storage, &row, &state, now).await?;
     }
     Ok(())
+}
+
+/// Load a selected dead row intact, or build a newly adopted creator's row.
+/// The query's dead words are the list in `spend_gate::hold_reason`.
+async fn proven_row(
+    storage: &StorageSqlx,
+    found: &sqlx::sqlite::SqliteRow,
+    report: &mut TickReport,
+) -> Result<Option<TrackedRow>> {
+    let txid: String = found.get("txid");
+    let mut row = if found.get::<Option<String>, _>("word").is_some() {
+        let Some(row) = load_row(storage, &txid).await? else {
+            return Ok(None);
+        };
+        row
+    } else {
+        TrackedRow {
+            built: found.get::<i64, _>("made") != 0,
+            ..TrackedRow::new(&txid)
+        }
+    };
+    let path: Option<Vec<u8>> = found.get("merkle_path");
+    let Some(path) = path
+        .as_deref()
+        .and_then(|bytes| MerklePath::from_binary(bytes).ok())
+    else {
+        report.faults.push(if row.stored_word.is_some() {
+            proof_stands(&row)
+        } else {
+            format!("{txid}: the stored proof does not parse; not adopted")
+        });
+        return Ok(None);
+    };
+    row.bump = Some(path.to_hex());
+    Ok(Some(row))
+}
+
+/// A failed proof cannot replace the stored dead word.
+fn proof_stands(row: &TrackedRow) -> String {
+    format!(
+        "{}: the stored proof does not check; its {} stands",
+        row.txid,
+        row.stored_word.as_deref().unwrap_or("unknown")
+    )
 }
 
 /// Record in the wallet what a pass's re-announces got accepted (E4): the
@@ -2862,6 +2905,9 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         moved,
     })
 }
+
+#[cfg(test)]
+mod dead_proof_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
