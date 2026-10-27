@@ -39,7 +39,7 @@ Each line is the phase's issues and its exit test. The epic gives no exit line p
 | 5, hardening | #97 #98 #99 | the chaos suite runs on every PR, two builds of a tag are identical and signed with an SBOM, and RELEASING.md carries the canary and rollback policy |
 | 6, the engine API and the desktop app | #102 #103 #104 #105 | `bsv-wallet-core` builds with no axum and no clap, and the desktop app and both scenario drivers pass the same scenarios |
 
-Since the hygiene pass of 2026-10-27 (#316) the milestones name the releases (`0.19.0-beta.2`; `0.19.0` for Phases 0 and 1; `0.20` for Phases 2 and 3; `0.21` for Phases 4 to 6) and the labels are the stack's six; each phase's later issues stand under its heading in the queue below, which ranks them all.
+Since the hygiene pass of 2026-10-27 (#316) the milestones name the lines (`0.19.0-beta.N` on beta; `0.19.0`, reached only at the gate, for Phases 0 and 1; `hardening` for Phases 2 to 6, each issue carrying its phase label) and the labels are the stack's six; each phase's later issues stand under its heading in the queue below, which ranks them all. The gate on main is the owner's word of 2026-10-27: "no merge to main until god tier and 110% confidence nothing breaks and we in conformance with other SDKs and all other sdk issues are logged on their repos". Beta merges into main only when every scoreboard row reads at target with recorded evidence, every phase has exited, the gates and the production reads are green, and conformance with the other SDKs is proven (the divergence list empty, or every row carrying a filing number on the other SDK's repository or the word "ours" with its reading); never at a phase exit.
 
 ## 4. The scoreboard
 
@@ -138,7 +138,7 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 
 ## 7. Pointers
 
-- The epic and its phases: #106; the milestones name the releases since #316 (`0.19.0` holds Phases 0 and 1, `0.20` Phases 2 and 3, `0.21` Phases 4 to 6; `0.19.0-beta.2` the pin).
+- The epic and its phases: #106; the milestones name the lines since #316 (`0.19.0` holds Phases 0 and 1 and is reached only at the gate, `hardening` Phases 2 to 6 with the phase as a label; `0.19.0-beta.2` the pin).
 - The machine: `~/bsv/bsv-stack-lean/docs/charters/wallet.md` and `lean/Wallet.lean`; the six tests: `~/bsv/bsv-stack-lean/docs/BSV-NORTH-STAR.md` lines 25 to 36.
 - The oracle's records: [ratchets.json](ratchets.json) and [RATCHETS.md](RATCHETS.md); [WIRE.md](WIRE.md) and [MANIFEST.json](../tests/wire/MANIFEST.json); [NIGHTLY.md](NIGHTLY.md) and [nightly.yml](../.github/workflows/nightly.yml); [ARCHITECTURE.md](ARCHITECTURE.md); the e2e harness [run.js](../tests/e2e/run.js). Coming with their PRs: `docs/ARCH-RULES.md` and `tests/arch_*.rs` (#73), `docs/DEPENDENTS.md` (#110), `benches/baseline.json` (#71), `docs/E2E-HERMETIC.md` (#74), `docs/BRC-100-EXTENSIONS.md` (#100).
 - The tools: [tools/ratchet](../tools/ratchet), [tools/scoreboard](../tools/scoreboard), [tools/check-links](../tools/check-links) (every relative link in `docs/**/*.md` resolves, and an anchor names a heading of its target), and [tools/check-cites](../tools/check-cites) (the architecture's named citations and file-table line counts agree with its pinned commit); the CI job `ratchet` runs them. The planted cases are `tools/test_scoreboard.py`, `tools/test_check_links.py` and `tools/test_check_cites.py`, run by the same job.
