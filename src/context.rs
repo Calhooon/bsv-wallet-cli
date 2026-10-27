@@ -40,7 +40,7 @@ impl WalletContext {
         storage.make_available().await?;
 
         // Shared env-driven services config (CHAINTRACKS_URL, ARC_URL,
-        // ARC_MODE=arcade, TAAL keys, callback token) — see services_env.rs.
+        // ARC_MODE, callback token) — see services_env.rs.
         let services = {
             let opts = services_env::services_options_from_env(chain, db)?;
             Services::with_options(chain, opts)?
