@@ -2,6 +2,12 @@
 """Planted cases for tools/changelog (#195), each in its own git repository
 under $TMPDIR, with a base and a head commit. No network or bytecode in the
 checkout. Run by the CI job ratchet: python3 -B tools/test_changelog.py
+
+The simple heading rule deliberately refuses some lines that CommonMark
+would not render as headings: "    # x", "#hashtag", "- - -", "Foo\n- - -",
+and "# comment" inside a fenced block. Indentation and fences never exempt
+a line. The retired test_a_plain_rule_after_a_blank_line_is_allowed is now
+test_dash_rule_after_blank_line_is_refused_by_name; use "***" for a rule.
 """
 
 from datetime import datetime, timezone
@@ -342,12 +348,12 @@ class Assembly(Case):
             self.skipTest("this user can write read-only directories")
         self.assemble(code=1, needle="changelog.d: cannot delete fragments")
 
-    def test_a_plain_rule_after_a_blank_line_is_allowed(self):
-        self.tree.write("changelog.d/195.md", "A paragraph.\n\n---\n\nAnother paragraph.\n")
+    def test_a_stars_rule_after_a_blank_line_is_allowed(self):
+        self.tree.write("changelog.d/195.md", "A paragraph.\n\n***\n\nAnother paragraph.\n")
         self.tree.commit()
         self.result(0, "changelog.d/195.md", "--list")
         self.assemble()
-        self.assertIn("A paragraph.\n\n---\n\nAnother paragraph.",
+        self.assertIn("A paragraph.\n\n***\n\nAnother paragraph.",
                       (self.tree.root / "CHANGELOG.md").read_text())
 
     def test_existing_version_is_refused_without_writes(self):
@@ -405,18 +411,41 @@ for case, name, content in (
         ("whitespace", "195.md", " \t\n"),
         ("heading", "195.md", "- A change.\n\n## Release\n"),
         ("indented_heading", "195.md", "   ### Release\n"),
-        ("setext_dash_heading", "195.md", "Oops\n---\n"),
-        ("setext_equals_heading", "195.md", "Oops\n===\n"),
+        ("setext_dash_heading", "195.md", "Foo\n---\n"),
+        ("setext_equals_heading", "195.md", "Foo\n===\n"),
         ("single_dash_setext_heading", "195.md", "Foo\n-\n"),
         ("single_equals_setext_heading", "195.md", "Foo\n=\n"),
+        ("standalone_dash_rule", "195.md", "---\n"),
+        ("standalone_equals_rule", "195.md", "===\n"),
+        ("dash_rule_after_blank_line", "195.md", "A paragraph.\n\n---\n\nAnother paragraph.\n"),
+        ("equals_rule_after_blank_line", "195.md", "Foo\n\n===\n"),
+        ("spaced_dash_rule", "195.md", "- - -\n"),
+        ("spaced_dash_rule_after_text", "195.md", "Foo\n- - -\n"),
+        ("spaced_equals_rule", "195.md", "= = =\n"),
+        ("single_dash_with_trailing_whitespace", "195.md", "- \t\n"),
         ("list_item_heading", "195.md", "- ## Release\n"),
         ("star_list_item_heading", "195.md", "  * ### Release\n"),
         ("plus_list_item_heading", "195.md", "+ # Release\n"),
         ("ordered_dot_heading", "195.md", "1. # x\n"),
         ("ordered_paren_heading", "195.md", "1) # x\n"),
+        ("nine_digit_ordered_heading", "195.md", "123456789) # x\n"),
         ("blockquote_heading", "195.md", "> # x\n"),
+        ("nested_blockquote_heading", "195.md", "> > # x\n"),
+        ("compact_blockquote_heading", "195.md", ">># x\n"),
+        ("blockquote_list_heading", "195.md", "> - # x\n"),
+        ("list_blockquote_heading", "195.md", "- > # x\n"),
+        ("indented_containers_heading", "195.md", "    >     -     1) # x\n"),
         ("blockquote_setext_heading", "195.md", "> Foo\n> ---\n"),
         ("nested_list_heading", "195.md", "- - # x\n"),
+        ("nested_bullet_heading", "195.md", "- x\n  - # y\n"),
+        ("bullet_continuation_heading", "195.md", "- x\n    # y\n"),
+        ("ordered_continuation_heading", "195.md", "1. x\n    # y\n"),
+        ("bullet_continuation_setext_heading", "195.md", "- foo\n    ---\n"),
+        ("tab_continuation_setext_heading", "195.md", "- Foo\n\t---\n"),
+        ("four_space_indented_heading", "195.md", "    # x\n"),
+        ("tab_indented_heading", "195.md", "\t# x\n"),
+        ("line_start_hashtag", "195.md", "#hashtag\n"),
+        ("fenced_comment", "195.md", "```\n# comment\n```\n"),
         ("empty_list_heading_at_eof", "195.md", "- #"),
         ("non_utf8", "195.md", b"- Invalid \xff\n")):
     setattr(Malformed, f"test_{case}_is_refused_by_name", malformed_case(name, content))
@@ -433,9 +462,14 @@ def allowed_fragment_case(content):
 
 
 for case, content in (("stars_rule_after_text", "Foo\n***\n"),
+                      ("standalone_stars_rule", "***\n"),
                       ("ordinary_bold_bullet", "- **bold**: text\n"),
                       ("negative_number_in_prose", "-1 sats\n"),
                       ("decimal_number_in_prose", "1.5 BSV\n"),
+                      ("ten_digit_number_prefix", "1234567890. # x\n"),
+                      ("inline_hashtag", "A #hashtag inside a line.\n"),
+                      ("inline_backticks", "Use `# comment` inline.\n"),
+                      ("tab_indented_bullet_continuation", "- A change.\n\tContinued text.\n"),
                       ("url_fragment", "https://example.invalid/path#fragment\n")):
     setattr(Assembly, f"test_{case}_is_allowed", allowed_fragment_case(content))
 
