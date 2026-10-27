@@ -3,34 +3,9 @@
 //! keeps every refusal (#80).
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::fmt;
 use std::str::FromStr;
 
-use super::{shown_url, ConfigError, Secret};
-
-/// The environment as it was read at start, by name: what each group
-/// parses, what [`Source`] and the fleet's uniformity check read. Its
-/// `Debug` prints how many variables it holds, never a name or a value.
-#[derive(Clone, Default)]
-pub(crate) struct Raw(BTreeMap<String, String>);
-
-impl fmt::Debug for Raw {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Raw({} variables)", self.0.len())
-    }
-}
-
-impl Raw {
-    pub(crate) fn read(vars: impl IntoIterator<Item = (String, String)>) -> Self {
-        Self(vars.into_iter().collect())
-    }
-
-    /// The value as set, when it is set.
-    pub(crate) fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(String::as_str)
-    }
-}
+use super::{shown_url, ConfigError, Raw, Secret};
 
 /// The environment being parsed into its settings: the snapshot, and every
 /// setting refused so far. A refused setting reads as unset (its default),
@@ -63,7 +38,7 @@ impl<'a> Reader<'a> {
 
     /// The value as set, when it is set.
     pub(crate) fn get(&self, name: &str) -> Option<&'a str> {
-        self.raw.0.get(name).map(String::as_str)
+        self.raw.get(name)
     }
 
     /// The value when it is set and not blank, trimmed.
