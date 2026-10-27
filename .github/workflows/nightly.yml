@@ -20,9 +20,11 @@ name: Nightly
 # (`gh workflow run nightly.yml --ref beta`) runs the ref it names. One file
 # serves both lines: on beta the cron is inert, and when beta merges into main
 # at the next minor the schedule still measures beta.
+# The owner's word (2026-10-27): no schedule. The measurement runs on dispatch
+# (`gh workflow run nightly.yml --ref beta`), before each minor tag as RELEASING
+# names it and on demand; a scheduled night cost about twenty-five runner-hours,
+# starved the pull requests' checks and read in the afternoon.
 on:
-  schedule:
-    - cron: "0 3 * * *"
   workflow_dispatch:
 
 permissions:

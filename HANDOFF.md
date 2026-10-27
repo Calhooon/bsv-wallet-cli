@@ -782,3 +782,506 @@ against the real routes beyond the probes.
 #39 backstop fetches proofs from an explorer (rule 21); #38 self-send
 relinquishes sats; #23 reconcile asks an explorer; #7 Arcade consumer; #4
 install docs. Seven local branches are not in main and have not been triaged.
+
+2026-10-23 (the evening into the night of the 24th UTC): THE NORTH-STAR
+PROGRAMME OPENED, AND PHASE 0 (THE ORACLE) LANDED ON BETA. John's word:
+"I love it all go", "sky is the limit", "god tier north star on all
+fronts", "keep going and going", "beta branches for all these". The
+programme is epic #106: a measured scoreboard, seven milestones (Phase 0
+the oracle to Phase 6 the engine API and the desktop app), issues #69 to
+#156 by now, a `beta` line for the programme with `main` the stable line
+(#107, PR 108), the loop (a lane returns the change, the proof and the
+nothing-changed evidence; a cold review on another model; one PR per
+concern; cold paths on green, hot paths with full proof), the never-without-
+the-owner list, BRC-100 at the line's pin ed1b015 with upstream 5119a9b
+cited where it differs. The same programme on the two libraries (toolbox
+epic #80, bsv-rs epic #101) and on the Cloudflare layer (epics in the six
+workers and bsv-middleware-rs), the dependents mapped to the apps. John
+started captain-bsv-rs and captain-bsv-wallet-toolbox-rs; the keeper keeps
+the stack, the line, the pins, the matrix, the gate vectors (stack #184:
+conformance/wallet-gate-vectors.json, 490 rows) and the Cloudflare repos;
+the division is on the stack's rulings page. The localhost page
+http://127.0.0.1:8790/ (from /Volumes/Lanes/out/bsv-wallet-cli/north-star)
+draws the layers, the repos on the stack's machines, the dependents and the
+loop, with three nano-banana-2.1 images paid through the x402 skill (3 x
+239,446 sats from the MetaNet desktop wallet on 3321).
+
+0.18.1 (main 3858d21, PR 128): the two pin moves only, toolbox =0.13.0 and
+bsv-rs =0.8.2; the probe's move onto is_utxo_with_spender was built,
+reviewed and held back (the review found two ladder gaps the move would
+expose: toolbox #96, its fix toolbox PR 101; the probe moves in the patch
+that pins 0.13.1). The gate 23/23 (run 20261024T001317Z), net 2,200; the
+tag v0.18.1 is John's word. main into beta went the same night, late (PR
+150: the pins, fuzz/ following them, one nightly.yml for both lines): a
+lane noticed beta still pinned 0.12.1 and 0.8.1 a day after the patch; the
+rule is now in the captain's memory: the main-into-beta PR opens the night
+the patch lands.
+
+THE ORACLE WAVE on beta, each PR by cold review (eight reviews caught real
+defects; the counts are the reviews' findings closed before landing):
+- the lane rules and briefs (docs/lanes/README.md: foreground only, the
+  26.5 SDK, the references at pins, rule 11 the differential line);
+- the architecture rules as tests: six rules on one Rule runner, allowlists
+  of (file, count, reason) tuples that only shrink, test code read as the
+  ratchet reads it (#73, PR 111);
+- the ratchets: seven numbers that may only fall, the record under the
+  pinned toolchain 1.98.1, compared against the base ref; `ratchet` a
+  required check (#72, PRs 112, 134, 135, 137; follow-ups #126 #127 #132
+  #133);
+- the wire fixtures: 106 recorded calls and refusals with a manifest,
+  replayed by the required `wire` job; the known server defects table
+  (#69, PR 121);
+- the consumers' recorded calls: 48 over seven dependents, in
+  tests/wire_consumers/ with docs/DEPENDENTS.md; one tests/wire_support
+  for both replays (#110, PR 116);
+- the fuzz targets and the mutation nightly (#75, #76, PR 123; the
+  registration on main PR 139 then PR 151, since the first copy had two
+  `with:` per step and could not parse; the first dispatched night was
+  cancelled at 03:05Z because its 25 jobs took the whole runner pool and
+  every PR check sat queued: #144 caps it; five shards finished at about
+  45 minutes each);
+- the architecture document (#83, PR 114) and the unwraps judged (#85, PR
+  115; 33 to 7 in shipped code);
+- the hermetic e2e: the 23 scenarios on a local stub of the header
+  service, the explorers and the broadcaster, a wall that fails the run on
+  any attempt to leave the machine, 23/23 in ten seconds on the runner;
+  the knobs WOC_BASE, BITAILS_BASE, ARC_GORILLAPOOL_URL follow
+  BANANABLOCKS_BASE's and ARC_URL's pattern and are open to John's change
+  before the next minor (#74, PR 131; toolbox #98 asks the providers'
+  knobs; #136 the OS-level egress block);
+- the benches with the CI runner's baseline as the gate: the reference is
+  always the base's entry, an appended run above the margin over it is an
+  error, a pin-move re-record is a warning, the bench job pinned to the
+  toolchain, warn-only until an entry carries five runs (#71, PR 125, five
+  reviews; #142 the nightly bench run that fills the entries);
+- BRC-100 at the pin: docs/brc100/fields.json (313 fields at ed1b015,
+  each with its line), docs/BRC-100-EXTENSIONS.md (41 extensions with
+  reasons, 68 gaps, the host routes apart, the deviations section empty
+  with its rule), tests/brc100.rs fails naming a served key that is
+  neither the BRC's nor listed, and a dead or malformed row (#100, PR 143);
+  the gaps became #145 (privileged dropped on getPublicKey and the crypto
+  calls: a privileged request quietly got the everyday key), #146
+  (hashToDirectlyVerify ignored), #147 (createAction's sendWith,
+  noSendChange, knownTxids, returnTXIDOnly, version unread), #148
+  (createSignature requires counterparty), #149 (the refusal body's shape
+  against the BRC's), and #122 item 8 (the certificate shapes, bsv-rs's);
+- the differential harness: tools/differential runs the base build and
+  the head on the hermetic suite with the same keys and stub, records
+  every call, command and the stub's per-provider counts, and diffs byte
+  for byte with an explicit exclusion list; signatures compared push by
+  push; no recording holds a key; an incomplete recording its own exit;
+  the CI job reports on every PR and fails a `refactor` PR once toolbox
+  #105 is pinned (#70, PR 152, three reviews; follow-ups #156). Head
+  against beta: 0 differences over 335 calls and 35 commands. The floor
+  (the same binary twice) is nonzero from scenario 22 on: the toolbox's
+  change pick tied on LENGTH(input_beef), which signature length moves
+  (toolbox #105, in a lane the same night), and its RNG cannot be seeded
+  (toolbox #106, John's word on the constructor shape);
+- docs/NORTH-STAR.md with tools/scoreboard (the table rendered from the
+  records in the tree, --check against the base so no count falls and no
+  key vanishes, the arch rows counted from the tests' allowlist literals)
+  and tools/check-links, two steps in the ratchet job; the ranked research
+  queue every brief cites (#77, PR 141, three reviews; landed last with
+  one re-render).
+
+THE ADVISORY: at about 03:30Z RUSTSEC-2026-0387 (crypto-bigint 0.5.5,
+timing variability, through k256 0.13.4 through bsv-rs) turned the
+required `deny` job red on every line of every stack repo on k256 0.13;
+the fix is crypto-bigint 0.7.6, which means k256 0.14. The keeper ruled
+the ignore entry with its reason into the stack template within the hour;
+PRs 153 (main) and 154 (beta) adopted deny.toml and the stamp byte for
+byte; the bsv-rs captain has the k256 0.14 move as bsv-rs PR 127 (#125;
+no public type moves; the RFC 6979 high-digest seeding moved to the
+reference's) for a 0.8.3 John tags, after which the CLI's pin moves and
+the entry leaves.
+
+What the reviews caught before landing, this night: a fail-open scanner,
+a gameable bench baseline (four times, four ways), a record under the
+wrong toolchain, a missing-fixture pass, the hermetic wall failing open, a
+workflow file that did not parse, a stranger's payment fixture that
+verified nothing, a differential recording that held the root keys in
+plain text, a scriptSig renamed as one atom so a wrong sighash byte on
+every input passed as zero differences, a table a blank line ended
+silently, a CI step whose exit mapping never ran under bash -e. And the
+one that matters for money, from the fixtures: the internalize door
+accepts an unproven payment whose unlocking script does not verify (#140;
+toolbox #103 codes the verifier's verdict).
+
+The lessons (memory lane-landing-lessons): lanes in the foreground only;
+private target dirs; zsh modifiers in refspecs (twice more tonight); the
+ratchet's toolchain; serial landing with a lock, a waiter that cannot
+match its own command line; a required check must exist on the base; the
+nightly starves the PRs; main into beta the same night; a RustSec
+advisory reddens deny everywhere at once and only the template may answer.
+
+Open after the wave: John's words (v0.18.1 tag; toolbox #66 questions 5
+to 9; toolbox #106's constructor shape under toolbox #80; the 0.13.1 and
+bsv-rs 0.8.3 tags when their captains ask; pool logins on the box); the
+ratchet re-record on beta (two numbers fell under the record); the first
+full night on beta and the three mutation floors from it; Phase 1 next by
+the queue in docs/NORTH-STAR.md: #78 one spend function (the differential
+line holds its proof), #79 the evidence layer, #80 typed config, #81 typed
+errors, #84 observability; #130 the stack's gate vectors; #133 the harness
+files; #145 to #149 the BRC-100 gaps (hot path: #145 first).
+
+2026-10-24 (the day after the oracle wave): PHASE 1 UNDER WAY ON BETA, the
+first full night measured, the gate's first two money findings closed. From
+midnight UTC beta took the oracle wave's last landings and then, by the queue
+in docs/NORTH-STAR.md, one PR per concern, each through a cold review on
+another model, a fix lane for its findings and a re-check:
+- #81 typed errors (PR 167; src/server/error.rs Kind, one status and code per
+  refusal by variant; A8 keeps error words out of the served layer);
+- #80 typed config (PR 169, three reviews: credentials redacted in URLs, an
+  empty secret shown as empty, a malformed knob no longer blocking `config`),
+  and its loose ends #172 (PR 188: --json nulls and booleans, services_env.rs
+  parses nothing, CHAINTRACKS_URL=off stays the string off by the captain's
+  word, the webhook token the one effective value that moved and why it is
+  safe);
+- #133 the harness files split into directory modules (PR 160, rebased twice
+  as beta moved under it; a split is a move, a module prefix is a path);
+- #130 the stack's 490 wallet-gate vectors replayed on every PR (PR 161; the
+  divergences file exact, 302 over 64 rows in five clusters; the keeper read
+  each: four ours, one the replay's label);
+- #165 the gate reads the store's coin word (PR 189: a coin the store marks
+  not spendable is held as `lost` before the creator is read and before the
+  toolbox's allocation; the money finding: under acceptDelayedBroadcast the
+  toolbox did not check spendable, so a lost coin the gate offered could be
+  spent; now tested at the door; 24 rows left);
+- #166 a named coin the wallet does not hold refused at the gate on every
+  path (PR 200; the keeper's reading: a caller-carried inputBEEF input is not
+  the gate's question, the exception holds only when the carried transaction
+  verifies and the input is the caller's to sign; 14 rows left);
+- #164 the spend guard no longer clears a fork's suspect mark (PR 205, three
+  rounds: the guard refuses a suspect creator as it stands and feeds the
+  tracker nothing, the keeper's reading; the fix uncovered three door rows the
+  replay had read from the gate's whole hold, mark included, where the Lean
+  checks the mark apart from the door: the captain's word made it the
+  replay's projection, not a finding, and CreatorReading carries the door
+  with the mark set aside; the ratchet's pedantic lint then made the gate's
+  answer a method; 129 over 24 rows remain for #162 and #163; the re-check's
+  hazard on the invalidated-block path is #206);
+- #145 privileged read on the nine key, crypto and key-linkage calls and
+  refused with 501 PRIVILEGED_NOT_SUPPORTED until a privileged key exists
+  (PR 190, two reviews and two re-checks: refused before the audit, a
+  non-boolean 422, the array bodies beta accepted still 200; the certificate
+  calls' silent downgrade is the toolbox's: toolbox #142, CLI #194);
+- hardening: #170 RELAY_POLL_SECS=0 refused at load (PR 180), #120 the daemon
+  observes its server task (PR 181, three reviews), #182 the fleet's monitors
+  stop under the grace (PR 185), #168 abortAction's busy answer (PR 202, one arm and
+  a busy-read fixture; its rebase after PR 200 raised duplicated_tokens with
+  no conflict, a fix lane shared the shape; its review found the two host routes serving a busy
+  store as 500, #203, and that no hermetic busy scenario exists, #204), the
+  version line beta was missing (PR 183);
+- the ratchet record follows the day (PR 207, merged 6cac3be past midnight
+  UTC: duplicated_tokens 32786 to 32759, missing_docs 154 to 150, the six
+  others equal; its first record, taken at 150a8d5, read 42 under the tree
+  once PR 205 landed under it, so the record was measured again on 45e0e48
+  by a fix lane and re-checked number for number: a re-record PR is measured
+  on the head it lands on, last in its queue);
+- the nightly: the first full night (run 40074725488) measured spend_gate
+  87.1, explorers 74.2, broadcast_verify 75.5, handlers 74.2, tracker_host
+  72.6; the floors moved to the measured values (PR 176, six reviews: a floor
+  only rises, only in the commit whose tests earn it, its score must equal
+  the formula from its counts; #178 ties the record to the run); the matrix
+  capped at six shards in one group on beta and on main (PR 179; the schedule
+  runs main's file); the raises are #173 #174 #175.
+
+The differential floor: against toolbox 0.13.0 the same binary twice read 0,
+0, 13 and 34 over the day, every nonzero run starting at scenario 22's coin
+tie; against the toolbox's beta tip 40cabb9 (toolbox #105, the change pick
+ending on output_id) two pairs read 0 over 335 calls and 35 commands, and again two pairs of
+0 at the toolbox's later tip 00c2e94 (every toolbox oracle PR landed; asked by
+its captain, evidence under /Volumes/Lanes/out/bsv-wallet-cli/diff-00c2e94). The
+`refactor` label's hard fail turns on in the patch that pins the release
+carrying it (#196, with toolbox #96's probe move and #157's CLI half).
+
+The keeper's words today, recorded on the issues: the vectors move only with
+a scenario draft and a landing sha, a newly differing row is a finding on its
+own side; the BRC pin of record moves ed1b015 to 5119a9b (#199, next
+release, never ahead of the line); bsv-rs #149's varints never cross the
+CLI's JSON wire, the bound does (#198); and, relayed by the toolbox captain,
+the bsv-rs pin's one word is 0.9.0-beta.1 on the index, not a 0.8.3 tag (#198
+and #199 are reread against that when John tags).
+
+The landing lessons of the day (memory lane-landing-lessons): a landing
+script must test the rebase itself, not a pipeline ending in tail (PR 160
+sat two hours in a stuck checkout); a rebase without conflicts can still not
+compile (PR 161 after the config merge: grep the open branches for a moved
+name); the scheduled nightly runs main's workflow file; every pair of
+landings conflicts on CHANGELOG's Unreleased top (#195, fragments); a merge
+into beta never closes its issue (hand close, every time).
+
+Issues filed from the reviews: #178 #184 #186 #187 #191 #192 #193 #194 #195
+#196 #197 #198 #199 #201 #203 #204 #206 (an invalidated block's own recheck reads
+the invalidated header: the mark can clear at delivery); toolbox #141 (the BEEF dump writer) and #142.
+Closed: #75 #120 #130 #133 #144 #145 #164 #165 #166 #168 #170 #172 #182.
+
+Open after the day: John's words (v0.18.1; the toolbox 0.13.1 and bsv-rs
+0.8.3 tags; toolbox #106's constructor shape; toolbox #66 Q5-Q9; the model
+rule to the two captains directly); #162 (its lane running at the close,
+the keeper's reading already on the issue: a stale creator ranks as seen at
+the door) then #163 by the sequence; #79 the evidence layer and #84 observability next by the queue;
+#78 one spend function once toolbox #105 is pinned.
+
+2026-10-25 (the night after the Phase 1 day, from midnight UTC): THE GATE'S
+LAST TWO CLUSTERS, by the sequence, each a lane, a cold review on Opus, a
+landing behind the one before:
+- #162 a stale creator ranks as seen at the door (PR 209, 08df657; the
+  keeper's reading on the issue: the owner's ruling 7a (b) of 2026-10-20, the
+  Lean's doorWord; the gate read `stale` beside the dead words and held it
+  "never offered"; now the pending tier's reading: our own change under
+  SPEND_OWN_CHANGE, a received coin under the action's plain or scoped word,
+  the hold naming the word, `stale: its block left the chain; ...`; the dead
+  words byte for byte; HEADERS_UNAVAILABLE untouched; 57 differences over 12
+  rows left the list, 129/24 to 72/12; the review's minor findings filed:
+  #210 the stale wording's doc gaps and ARCHITECTURE's drifted line numbers,
+  #211 the suspect mark read before the word for every word (hardening, not
+  reachable with bsv-tracker 0.8.0), #212 the `built` label on a stale
+  creator held under a header-service fault; the review's own finding on the
+  store: the toolbox keeps a creator whose proof a reorg took as `unproven`
+  with the proof row gone under the daemon and `completed` with its old
+  proof under serve, and allocates the demoted shape then refuses it as
+  "stored ancestry incomplete": the gate offers it, the toolbox's word is the
+  toolbox's);
+- #163 the lineage rule (PR 213, two rounds: the walk over our own store,
+  outputs.spent_by forward from the dead actions, one recursive read for the
+  whole call, nothing written, a cycle ends the walk; the replay builds the
+  conflicted parent P from the row's flag; the list ends empty, 0 over 0
+  rows, and the dead_lineage column is answered; the toolbox at 0.13.0 reads
+  no lineage at allocation and refuses a child only at its BEEF walk when the
+  parent is `failed` in its own store, never on the tracker's `conflicted`:
+  the walk is the CLI's until toolbox #42's; the review on Opus found the
+  walk and the door reading one creator two ways: a stored dead tracker word
+  beside a proof the toolbox holds is dead for the walk and mined for the
+  door, which checks the proof against the headers and lets it outrank the
+  verdict, so P was offered while its child was held for P; the Lean's
+  Tracker.onProof_of_rootChecks (a checked proof outranks every word;
+  dead_onChain is chain events only) and State.skel (the lineage reads the
+  same a.tracker.word the door reads) make the door's reading the charter's,
+  and the fix lane gives the walk one reading with the door: a dead
+  candidate with no proof is dead as stored, one with a proof is read
+  through read_creators and dead only when that reading is not mined; also
+  the joins on lower(txid), "an action of this wallet, made or received",
+  the stored abandoned word named; the second re-check found the two
+  readings still split on the header-service retry: the walk read a
+  candidate under its own snapshot and the door re-read the creator after
+  the pause, so P's coin was offered after the retry while D stayed held for
+  P; round three moves the candidates' read into the gate's own readings
+  map, one call with the first batch of creators, the one retry re-reading
+  both, the dead set derived after it, and lineage.rs reads no headers; the
+  fix lane's read-only finding, that a stored dead word beside a toolbox
+  proof is never corrected in tracker_states while the door reads it mined
+  each call, is #215; the third re-check found the named createAction
+  door's older outer retry re-called assess_named only for a coin held on
+  headers_fault, which a lineage hold never carries, so under one outage the
+  allocation offered D after its retry and the named door refused it naming
+  P; round four moves the retry into assess_named through the one helper,
+  creators and candidates in one call, and the outer re-call goes; respend's
+  exact inputs never retried and stay so; cognitive_complexity fell 20 to
+  19 along the way, a record for its own PR; the fourth re-check said merge
+  and PR 213 landed at 1c82737, 04:43Z: 641 tests, 20 lineage tests, the
+  differential inside the floor; its minors are #216 (the silent-throughout
+  test does not prove the retry ran; "each door" covers respend, which reads
+  once; a long doc line) and #217 (a candidate holding a proof costs the
+  pause on every door call even when it is no ancestor of the coins judged:
+  filter the candidates to the judged coins' ancestors), and ARCHITECTURE's
+  other stale spend_gate.rs pointers are noted on #210; the lane worktrees
+  and targets removed, 39 GB);
+- #197 the scoped word's check reads a named coin's transaction status
+  before lost (PR 218; the lane put the status first of all, before spent by
+  and frozen, and claimed the Lean's coinWord read backwards; the review on
+  Opus caught the claim and asked the owner for the order; the captain's
+  ruling on the issue: the Lean's coinWord order, frozen, the lock (spent
+  by, lost), the creator's word, with `lost` qualified to a completed or
+  unproven transaction as the offer path reads it, since a failed
+  transaction's spendable = 0 is the toolbox's own write at the failure; the
+  fix lane took the ruled order with the lost qualifier written once; the
+  second re-check found the docs skipping own change, which the code reads
+  before frozen beside not-ours (ruled: the scoped word's domain, read before
+  the coin's word begins), two promised outcomes with no row (a spent coin of
+  a failed transaction, a nosend coin with spendable = 0) and a test helper
+  copying the toolbox's failure write instead of calling it; round three
+  took those, and the third re-check asked for a row at every boundary of
+  the order (a frozen own-change coin, a spent coin with spendable = 0, a
+  spent and frozen coin, whose word moved from beta's "spent by" to frozen,
+  the Lean's first read, now said in the CHANGELOG); round four, on Codex
+  gpt-6.1-sol, added the rows (14, every adjacent swap failing a row; the
+  re-check ran nine orders and planted twelve coins, all as ruled) and its
+  only finding was the trailer `GPT-6`, which the captain reworded to the
+  exact model with the tree unchanged (46aea0c); landed 81d31b5, 07:27Z;
+  one word moved from beta, a spent and frozen coin reads frozen; the same
+  gap on the named door is #219; the lane worktrees and targets removed);
+- #201 every gate lookup scoped to the authenticated user (PR 220, the lane
+  on Codex gpt-6.1-sol by cca's pick, run on the box: one helper
+  UserCoins::query with WHERE o.user_id = ? for the named inputs, the scoped
+  word, the offers, the spent and lost listings and respend's lookup, the id
+  from the wallet as the toolbox finds it; two-user tests, four, each
+  failing with the filter removed five ways; the toolbox's own allocation
+  checks the owner (create_action.rs:1483 find_output_by_outpoint(user_id),
+  storage_sqlx.rs:897), so nothing to file there; the review on Opus found
+  the CHANGELOG claiming "every spend-gate output read" while the lineage
+  walk and the rule labels still read the whole store: the wording narrowed
+  in a fix round (on Codex again; the trailers reworded to the exact
+  model, the tree unchanged), the two reads filed as #221 with
+  frozen_outpoints noted there; the second re-check's one finding, the PR
+  body's opening sentence, the captain edited; landed c462da4, 08:27Z);
+- the ratchet record (cognitive 20 to 19 and duplicated_tokens 32759 to
+  32643 by the night's PRs, the six others equal): its lane, routed to
+  the box by cca's load rule, blocked at once, no pool account has a login
+  on the box for Opus (John's pending item); two reruns went to the box
+  again because zsh passed the chain script's `--host studio` as one word;
+  the third, with cca's CCA_NO_PEER=1, runs on the studio on Codex
+  gpt-6.1-sol (lane p1-ratchet-record3): PR 222, measured on c462da4,
+  cognitive 20 to 19 and duplicated_tokens 32759 to 32643, the six others
+  equal; the review re-measured it number for number and its one finding
+  was the Codex trailer against the review brief's two-model list, which is
+  not the rule (the trailer names the model the lane ran on): landed on the
+  captain's word, 462ff67, 08:4xZ; beta's record after the night:
+  duplicated_tokens 32643, missing_docs 150, clippy_pedantic 834,
+  unwrap_expect_outside_tests 6, files_over_800_lines 10,
+  tests_files_over_800_lines 3, functions_over_60_lines 89,
+  cognitive_complexity_over_25 19;
+- the HANDOFF addendum for the 24th into main (PR 208, 03e7af3).
+
+The night's lessons (memory lane-landing-lessons, gate-vectors-pin-protocol):
+one word per creator, the door's: any gate rule that reads a creator's word
+goes through read_creators' replay when a proof is held, never the stored
+tracker word alone (the Lean's State.skel and the door read the same word;
+a checked proof outranks every word; dead_onChain is chain events only); a
+review of an order change asks for a row at every adjacent boundary, the
+test helper calling the real store write, and every moved word named in the
+CHANGELOG, so brief it that way up front (#197 took four rounds for one
+function's order); cca may place a lane on Codex, so every brief and review
+brief names the three trailer forms (Claude Opus 5.5, Claude Fable 5.1,
+GPT-6.1 Sol (gpt-6.1-sol)), and a trailer-only reword on an identical tree
+is the captain's; cca routes a loaded studio's lanes to the box, where no
+pool account is logged in for Claude, so a Claude chain sets CCA_NO_PEER=1
+(and in zsh an unquoted ${VAR:+--host $VAR} is one word).
+
+Filed: #210 #211 #212 #214 (README:282 still hands a named absent outpoint
+to the toolbox, #166 made it the gate's 400) #215 (a stored dead word beside
+a toolbox proof is never corrected in tracker_states) #216 #217 #219 (the
+named door reads a failed input as lost) #221 (the lineage walk, the rule
+labels and frozen_outpoints read the whole store). Closed: #162 #163 #197
+#201.
+
+Open after the night: John's words (v0.18.1; the toolbox 0.13.1 and bsv-rs
+0.9.0-beta.1 tags, #198 and #199 reread against the index then; toolbox
+#106's constructor shape; toolbox #66 Q5-Q9; the pool logins on the box;
+the model rule to the two captains directly). The gate's divergence list
+against the stack's 490 vectors is EMPTY; a newly differing row is a finding
+on its own side (the pin protocol). Next by the queue: #203 #204 #206 (the
+hardening and the host routes' busy answer), #210 to #212, #214 to #217,
+#219, #221 (the gate's follow-ups), #186 #187 #184 #191 #193 #192 #195, #196
+on 0.13.1, #194 (toolbox #142) and #155 (toolbox #141) at their pins, #157
+with 0.13.1; the programme: #79 the evidence layer, #84 observability, #78
+one spend function once toolbox #105 is pinned, #173 to #175 the mutation
+floors, #171.
+
+2026-10-26 (the second day of Phase 1 on beta): THE PIN LANDED, THE CI BALANCE,
+THE NIGHTLY'S FIX, 0.18.2 ON MAIN UNTAGGED. The owner's words of the morning,
+on a decision brief of seven items: 0.18.1 is never published and the next
+patch is 0.18.2 (bsv-rs =0.8.3 for k256 0.14, toolbox =0.13.1, the probe's one
+ladder pass, #157's bound); tag toolbox 0.13.1; one pin PR on beta moving the
+prereleases together, then v0.19.0-beta.1 from beta after a green night; the
+model rule written into cca's RULES.md (Fable on the account expiring soonest
+within a day, else Opus 5.5 on the week-soonest account; a lane names a model
+only on that rule or his word); "the reference" explained (the BRC first, the
+TypeScript reference at a pinned commit only where the BRC is silent, codes
+over words, divergences recorded). The keeper then relayed his "love it... yes
+to all" on five process rulings: record landings batched, a documentation-only
+fold lands on the standing MERGE without a re-check, a reference-shape change
+needs no new word, one message an hour per captain, decisions through the
+keeper's daily brief.
+
+Landed on beta today, each through a cold review on Opus and a fix round where
+the review asked (beta from caf72ac to f4bdab3): PR 253 (the three
+version-agnostic tests, after beta's ratchet refused a doc comment main's CI
+never checked); #221 (PR 252: the gate's last four store-wide reads are the
+user's); #244 (PR 245: the retire guard reads the proof's presence; the PR had
+been closed unmerged by a landing script's unconditional branch delete on a
+draft, restored, and the scripts now mark a reviewed draft ready and delete only
+on MERGED); #247 (PR 254: respend refuses a phantom whose request holds a
+proof, through the guard's shared reader); #228 (PR 256: a tip settles a kept
+reorg whose root a new header carries; the first round stored every unmoved
+row and a stored verdict made a row churn, narrowed to plain mined); #232 (PR
+260: a split key's hash lowercased at delivery and on read; a slice at byte 6
+panicked on a malformed stored key, then A5's text rule refused strip_prefix,
+written as an equality on the first six bytes with its reason recorded); #204
+(PR 259: hermetic scenario 24 holds wallet A's store busy from a second
+process; under WAL no outside lock refuses a reader with BUSY, the ask amended
+to the two write doors' 503 and the reads' availability; three rounds: a
+write-side probe for an outlived lock, the shared GET's contract kept so the
+stranger guard still refuses a 401 daemon, and the differential's self-test
+pinned at 24 by the captain); #248 (PR 263: the relay poller keeps its cursor
+below an item that met a busy store, with the interval reset first since tokio
+fires a missed tick and the next together); #249 (PR 268: the callback route's
+8 s deadline under Arcade's 10 s, the message truthful about the header service,
+the split state a retry converges proven on the rows); #258 (PR 270: a settled
+row stores the header the recheck stood on, since bsv-tracker's recheck never
+replaces its checked header; bsv-tracker #30 filed); #237 (PR 262: a carried
+input naming no signer, or a mismatched length, refused at the gate with the
+reference's words, fixtures 121 and 122; the wire recorder split into section
+functions when the flat list crossed the complexity ceiling); #234 (PR 261: a
+named change coin stays offered by the gate as the Lean's guard offers it, the
+toolbox's refusal the served answer, fixture 120, the keeper citing the
+reference's createAction.ts); #174 (PR 273: the ten handlers.rs mutants the
+Nightly missed each caught by a behaviour test, the floor staying 74 until the
+night's record); main into beta (PR 272: the six 0.18.2 commits, fixture 123
+for #157's bound; two changelog text folds under ruling (b)); THE PIN (PR 274:
+bsv-rs =0.9.0-beta.1, toolbox =0.14.0-beta.1 and bsv-tracker =0.9.0-beta.1
+together, one bsv-rs in the lock, after the first launch found bsv-tracker
+0.8.0 pinned to bsv-rs ^0.8 and the keeper cut the tracker's prerelease in two
+hours; the underReceivedRule label on both received doors, the abort class on
+the accepting-word sentences alone after the review caught a prefix match that
+would have moved every abort refusal, fixture 103 flipped onto the verifier's
+refusal, #235's agreement matrix with its one deferral the keeper read as not
+a defect, the seed knob behind the hermetic wall, every BEEF already
+parents-first; #140 and #235 closed, the beta.2 checklist gathered as #277);
+PR 276 (the signAction guard test driven with a deferred caller input, so the
+toolbox's dependents gate reads green against our beta, which it now does on
+its own, run 40415011255, and fails their run whenever our beta breaks against
+their tree); #265 (PR 275: an empty unlockingScript and a zero length refused
+with the reference's words, the handler's hex refusal in the reference's
+sentences down to UTF-16 counting and U+FEFF trimming, fixtures 125 to 128,
+the at-bound acceptance the keeper's scenario needed).
+
+On main: PR 264 (0.18.2: the two pins, the probe's one pass, #157's bound, the
+deny template adopted with the advisory entry gone; two Opus reviews) landed
+at 07adfcb; the mainnet gate ran once and read 18 of 23 because GorillaPool's
+ARC held every submission at ANNOUNCED for over thirteen minutes, the funder's
+own transaction included, while WhatsOnChain's node accepted the same
+transactions at once and all 44 valid descendants followed (the funder's
+accounting real, 136,634 to 134,464 sats); the tag waits on the owner's word
+on a second run. The CI balance (PRs 266, 267, 269): a pull request runs
+exactly the required set (the keeper patched both protections: macOS off, the
+hermetic e2e required on beta), the bench and the differential on every push
+against the push's before and on the tag's run, the differential on a PR only
+under the refactor label, Dependabot at most two open with its one bsv-stack
+group; the first push run under it green on all thirteen jobs. The checkout's
+binary symlinks repointed at a 0.18.2 build after an older target was removed.
+
+Across the stack: bsv-rs 0.9.0-beta.1 on the index (the gate's reading sent:
+clean, no finding); #137's twenty refusal classes as the reference's WERR table
+(the host map pinned by class name; INVALID_BEEF and UNSPENDABLE_COIN fold at
+beta.2; the four not-found doors by the keeper's reading); #105's substrate
+shapes; toolbox 0.13.1 and 0.14.0-beta.1 on the index on the owner's tags;
+toolbox #66, #106, #163, #169, #177 landed with their shapes recorded; the
+toolbox's #200, #201, #211, #212, #202, #203 (certificates issued before it
+must be re-issued: the owner's note for beta.2) for the next prerelease; the
+keeper's readings on #234, #237, fixture 103's row (status, class, offset and
+reason, never the host's code string) and fixture 124. The lessons in memory:
+a brief's proof list runs the tools' own self-tests; A5's shrink-only
+allowlist; a mainnet gate failing on explorer listing is judged at the
+broadcaster first; main's harness ignores BSV_WALLET_BIN; a review brief never
+takes the chain's output name; a pin moves every dependent crate; cca refuses
+to reuse a lane name whose branch holds commits; the box runs out of ephemeral
+ports under parallel lanes.
+
+Open after the day: the owner's words (the second gate run and the v0.18.2
+tag; the v0.19.0-beta.1 tag after tonight's Nightly, in the keeper's brief;
+the certificate re-issue at beta.2; the production daemon on 3322 was down
+tonight for the certificate count); #277 the beta.2 pin; the floor raise for
+handlers.rs after tonight's record (#174); #243, #215, #212, #211, #195 (the
+CHANGELOG fragments, worth doing before the next busy day), #192, #191, #193
+by the queue; #196 closes with the tag.
