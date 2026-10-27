@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "commit": "c462da43a568d2ca3436d52341c76362a71f9446",
+  "commit": "93dfcc0604ca7c901d858dc3ba6366ae52ff97f0",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "ratchets": {
-    "clippy_pedantic": 834,
+    "clippy_pedantic": 825,
     "unwrap_expect_outside_tests": 6,
     "files_over_800_lines": 10,
     "tests_files_over_800_lines": 3,
-    "functions_over_60_lines": 89,
+    "functions_over_60_lines": 86,
     "cognitive_complexity_over_25": 19,
-    "duplicated_tokens": 32643,
-    "missing_docs": 150
+    "duplicated_tokens": 32572,
+    "missing_docs": 148
   },
   "detail": {
     "sources": {
@@ -30,31 +30,31 @@
         "lines": 1106
       },
       "src": {
-        "files": 80,
-        "lines": 40398
+        "files": 93,
+        "lines": 46611
       },
       "tests": {
-        "files": 53,
-        "lines": 13496
+        "files": 56,
+        "lines": 14220
       }
     },
-    "test_files": 75,
+    "test_files": 89,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
-        "lines": 3680
-      },
-      {
-        "path": "src/commands/cleanup_abandoned.rs",
-        "lines": 2894
+        "lines": 5074
       },
       {
         "path": "src/broadcast_verify.rs",
         "lines": 2501
       },
       {
+        "path": "src/commands/cleanup_abandoned.rs",
+        "lines": 2379
+      },
+      {
         "path": "src/spend_gate.rs",
-        "lines": 1886
+        "lines": 2054
       },
       {
         "path": "src/broadcast_reconcile.rs",
@@ -62,11 +62,11 @@
       },
       {
         "path": "src/server/handlers.rs",
-        "lines": 1200
+        "lines": 1270
       },
       {
         "path": "src/commands/sync.rs",
-        "lines": 978
+        "lines": 966
       },
       {
         "path": "mcp/src/main.rs",
@@ -74,7 +74,7 @@
       },
       {
         "path": "src/server/broadcast_follow_up.rs",
-        "lines": 903
+        "lines": 914
       },
       {
         "path": "src/commands/reproof.rs",
@@ -84,15 +84,15 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 3133
+        "lines": 3737
       },
       {
         "path": "src/tracker_words_witnesses.rs",
-        "lines": 966
+        "lines": 1272
       },
       {
         "path": "src/chain_feed_tests.rs",
-        "lines": 937
+        "lines": 956
       }
     ],
     "unwrap_expect_by_file": {
@@ -102,25 +102,26 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 505,
+    "duplicated_blocks": 512,
     "clippy_pedantic_by_lint": {
-      "clippy::doc_markdown": 239,
-      "clippy::uninlined_format_args": 168,
-      "clippy::missing_errors_doc": 83,
-      "clippy::must_use_candidate": 67,
+      "clippy::doc_markdown": 225,
+      "clippy::uninlined_format_args": 167,
+      "clippy::missing_errors_doc": 82,
+      "clippy::must_use_candidate": 69,
       "clippy::cast_possible_truncation": 42,
       "clippy::cast_sign_loss": 39,
       "clippy::cast_possible_wrap": 34,
       "clippy::cast_lossless": 29,
-      "clippy::redundant_closure_for_method_calls": 26,
+      "clippy::redundant_closure_for_method_calls": 27,
       "clippy::map_unwrap_or": 18,
-      "clippy::similar_names": 10,
       "clippy::needless_raw_string_hashes": 9,
+      "clippy::similar_names": 9,
       "clippy::unreadable_literal": 9,
       "clippy::semicolon_if_nothing_returned": 7,
       "clippy::items_after_statements": 6,
       "clippy::format_push_string": 5,
       "clippy::cast_precision_loss": 4,
+      "clippy::default_trait_access": 4,
       "clippy::needless_pass_by_value": 4,
       "clippy::return_self_not_must_use": 4,
       "clippy::single_match_else": 4,
@@ -130,6 +131,7 @@
       "clippy::stable_sort_primitive": 3,
       "clippy::match_same_arms": 2,
       "clippy::ref_option": 2,
+      "clippy::used_underscore_binding": 2,
       "clippy::wildcard_imports": 2,
       "clippy::assigning_clones": 1,
       "clippy::comparison_chain": 1,
@@ -137,8 +139,7 @@
       "clippy::if_not_else": 1,
       "clippy::missing_panics_doc": 1,
       "clippy::range_plus_one": 1,
-      "clippy::unused_async_trait_impl": 1,
-      "clippy::used_underscore_binding": 1
+      "clippy::unused_async_trait_impl": 1
     }
   }
 }
