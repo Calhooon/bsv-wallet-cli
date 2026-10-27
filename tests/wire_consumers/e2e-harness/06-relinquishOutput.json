@@ -10,20 +10,21 @@
       "origin": "http://e2e-test"
     },
     "json": {
-      "txid": "3333333333333333333333333333333333333333333333333333333333333333",
-      "vout": 0,
-      "basket": "default"
+      "basket": "default",
+      "output": "3333333333333333333333333333333333333333333333333333333333333333.0"
     }
   },
   "response": {
-    "status": 422,
+    "status": 200,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://e2e-test",
       "access-control-expose-headers": "retry-after",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "text": "Failed to deserialize the JSON body into the target type: missing field `output` at line 1 column 103"
+    "json": {
+      "relinquished": true
+    }
   }
 }
