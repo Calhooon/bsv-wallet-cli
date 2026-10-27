@@ -168,8 +168,10 @@ class WalletClient {
     return this.post('listActions', { labels: [], ...opts });
   }
 
+  // BRC-100 relinquishOutput takes { basket, output } with the output an
+  // outpoint string "txid.vout" (bsv-rs RelinquishOutputArgs, #119).
   async relinquishOutput(txid, vout, basket) {
-    return this.post('relinquishOutput', { txid, vout, basket });
+    return this.post('relinquishOutput', { basket, output: `${txid}.${vout}` });
   }
 
   // --- Certificates ---

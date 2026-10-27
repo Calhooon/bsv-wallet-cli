@@ -72,14 +72,19 @@ module.exports = {
     }
 
     // --- Relinquish nonexistent output ---
+    // The body is the served shape (#119): the server takes it and answers
+    // with its word, a 200 carrying `relinquished` or a coded refusal, never
+    // the 422 of a body it cannot read. The balance check below holds it to
+    // moving nothing.
     try {
-      await walletA.client.relinquishOutput(
+      const r = await walletA.client.relinquishOutput(
         'deadbeef'.repeat(8), 0, 'default',
       );
-      // May or may not error — just shouldn't crash
-      assert(true, 'Relinquish nonexistent handled');
+      assert(typeof r.relinquished === 'boolean',
+        `Relinquish nonexistent must answer relinquished: ${JSON.stringify(r)}`);
     } catch (e) {
-      assert(true, 'Relinquish nonexistent correctly rejected');
+      assert(e.status !== 422 && typeof (e.body || {}).code === 'string',
+        `Relinquish nonexistent must be a coded refusal, not an unread body: ${e.message}`);
     }
 
     // --- Balance unchanged after all errors ---
