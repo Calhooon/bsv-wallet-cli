@@ -10,7 +10,10 @@
   "response": {
     "status": 401,
     "headers": {
-      "content-type": "application/json"
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
       "code": "UNAUTHORIZED",
