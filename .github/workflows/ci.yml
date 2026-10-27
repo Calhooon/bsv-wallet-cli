@@ -1,11 +1,18 @@
 name: CI
 
 # The machine gate. Branch protection on main requires the check names below:
-# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling), the two
-# `Build (...)` checks that were already required, and `deny` (the paved road's
-# cargo-deny gate over the stack's template, adopted at 0.13.x). Renaming a job removes its
-# context and blocks every PR until the protection is updated. Every action is
-# pinned by commit sha.
+# `Test`, `Rustfmt`, `Clippy`, `vectors` (the four of the ruling),
+# `Build (ubuntu-latest)`, `deny` (the paved road's cargo-deny gate over the
+# stack's template, adopted at 0.13.x) and `locks`. A push to main or beta runs
+# exactly that set, the same as a pull request, nothing more (the owner's word
+# of 2026-10-27: "sick of seeing all these CI failures... they are all so
+# hardcore and slowing us down"). The measurements run on workflow_dispatch and
+# once before a tag, each in its own workflow with its own badge, never on the
+# push run: `nightly.yml` (the mutation score and the fuzz hours, #303) and
+# `build-macos.yml`; beta also carries `bench.yml` and `differential.yml`;
+# RELEASING.md names the hour. A run a newer push cancels (the concurrency
+# group below) is never a red. Renaming a job removes its context and blocks
+# every PR until the protection is updated. Every action is pinned by commit sha.
 on:
   pull_request:
     branches: [main, beta]
@@ -61,11 +68,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Ubuntu decides a pull request (the required check); macOS builds on
-        # every push and on the tag's run, where the release binaries are made
-        # (the keeper's rule of 2026-10-26: a PR runs exactly the required set;
-        # Build (macos-latest) left the required set on main and beta that day).
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        # Ubuntu alone on every event (the owner's word of 2026-10-27: a push runs
+        # exactly the required set, the same as a pull request, nothing more);
+        # the macOS build is build-macos.yml on workflow_dispatch; the tag's Binaries
+        # job in release.yml builds the macOS targets.
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
