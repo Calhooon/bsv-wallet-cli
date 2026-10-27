@@ -551,7 +551,10 @@ async fn unparseable_proofs_never_hold_back_a_new_creator_or_a_revival() {
     assert!(report.adopted_mined.is_empty() && report.adopted_proof_failed.is_empty());
     for txid in &broken {
         let row = load_row(&storage, txid).await.unwrap().unwrap();
-        assert_eq!((row.built, row.bump, row.asks), (false, None, 0));
+        assert_eq!(
+            (row.built, row.bump, row.asks, row.next_ask_at),
+            (false, None, 1, Some(700))
+        );
         assert_eq!(
             stored_word(&storage, txid).await.unwrap().unwrap(),
             ("unknown".into(), None, None)
@@ -569,6 +572,72 @@ async fn unparseable_proofs_never_hold_back_a_new_creator_or_a_revival() {
         let word = stored_word(&storage, txid).await.unwrap().unwrap();
         assert_eq!((word.0.as_str(), word.1), ("mined", Some(height)));
     }
+}
+
+#[tokio::test]
+async fn a_new_creator_tracked_without_its_path_is_adopted_after_the_toolbox_repairs_it() {
+    let (storage, user) = wallet_storage().await;
+    let services = services();
+    let txid = "e1".repeat(32);
+    proven_coin(&storage, user, &txid, 900, 1_000).await;
+    services.set_header_for_height(header(900, &txid, 0));
+    // The toolbox holds the path as TSC JSON, which does not parse as BUMP.
+    let json = format!(
+        r#"{{"index":0,"txOrId":"{txid}","target":"{}","nodes":[]}}"#,
+        "bb".repeat(32)
+    );
+    sqlx::query("UPDATE proven_txs SET merkle_path = ? WHERE txid = ?")
+        .bind(json.as_bytes())
+        .bind(&txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+
+    let first = pass(&storage, &services, 100).await;
+    assert_eq!(
+        first.faults,
+        vec![format!(
+            "{txid}: the stored proof does not parse; tracked without it"
+        )]
+    );
+    let row = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!((row.bump, row.asks, row.next_ask_at), (None, 1, Some(700)));
+    // The row is served: its word, where with no row `/tx/{txid}` was 404.
+    assert_eq!(served_word(&storage, &txid).await["word"], "unknown");
+
+    // The toolbox's JSON-to-BUMP repair rewrites the path in place.
+    sqlx::query("UPDATE proven_txs SET merkle_path = ? WHERE txid = ?")
+        .bind(MerklePath::from_coinbase_txid(&txid, 900).to_binary())
+        .bind(&txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    // Inside the pause the row is not selected: tracked, never adopted.
+    let inside = pass(&storage, &services, 101).await;
+    assert!(inside.adopted_mined.is_empty() && inside.faults.is_empty());
+    assert_eq!(
+        stored_word(&storage, &txid).await.unwrap().unwrap().0,
+        "unknown"
+    );
+
+    // The pause passed: the repaired path is read and checks.
+    let due = pass(&storage, &services, 100_000).await;
+    assert_eq!(due.adopted_mined, vec![txid.clone()]);
+    assert!(due.faults.is_empty());
+    assert_eq!(services.call_count("get_merkle_path"), 0);
+    let row = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!(
+        (row.bump, row.asks, row.next_ask_at),
+        (Some(path_of(&txid, 900)), 0, None)
+    );
+    assert_mined_readers(&storage, &services, &txid).await;
+
+    let later = pass(&storage, &services, 10_000_000).await;
+    assert!(later.adopted_mined.is_empty() && later.faults.is_empty());
+    assert_eq!(
+        stored_word(&storage, &txid).await.unwrap().unwrap(),
+        ("mined".into(), Some(900), None)
+    );
 }
 
 /// A conflicted row at 900 whose stored proof misses the header there.
