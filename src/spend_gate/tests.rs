@@ -1030,6 +1030,8 @@ fn named_input(txid: &str) -> bsv_sdk::wallet::CreateActionInput {
 /// #234: offerability and the caller's right to name managed change are
 /// separate rules. The toolbox speaks after the gate offers; disabling
 /// the own-change rule holds the same coin before the toolbox is asked.
+/// The sentence is the toolbox's and follows the reference (#290): keep
+/// its served class, prefix and input reference, and print its wording.
 #[tokio::test]
 async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_without_the_rule() {
     let root = PrivateKey::random();
@@ -1057,13 +1059,27 @@ async fn a_named_change_coin_is_offered_then_refused_by_the_toolbox_and_held_wit
     ))
     .await;
     assert!(asked, "the offered coin must reach the toolbox");
-    let Err(GateError::Wallet(bsv_sdk::Error::WalletError(message))) = result else {
-        panic!("expected the toolbox's named-change refusal: {result:?}");
-    };
-    assert_eq!(
-        message,
-        format!("Validation error: inputs[0]: cannot spend change output {txid}:0 directly. Change is managed by the wallet.")
+    assert!(
+        matches!(
+            &result,
+            Err(GateError::Wallet(bsv_sdk::Error::WalletError(_)))
+        ),
+        "expected the toolbox's named-change refusal: {result:?}"
     );
+    let (status, _, body) =
+        crate::test_support::response_answer(axum::response::IntoResponse::into_response(
+            crate::server::error::AppError::from_gate_error(result.unwrap_err()),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "VALIDATION_ERROR");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("wallet error: Validation error: "),
+        "{message}"
+    );
+    assert!(message.contains("inputs[0]"), "{message}");
+    eprintln!("toolbox named-change refusal: {message}");
 
     let (result, asked) =
         at_the_door(create_action(&wallet, args, "gate.local", &opts(1, false))).await;
