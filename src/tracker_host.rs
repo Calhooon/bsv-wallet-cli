@@ -54,9 +54,11 @@
 //! row with no path of its own ([`adopt_proven`]). A checking root revives
 //! its stored word to `mined`; a failed check leaves the word standing and
 //! is stored once with its pause, so the row is not selected again until
-//! the pause passes or a header at or below its proof moves. A new creator whose path does
-//! not parse or hold is tracked without it under the same mark, and
-//! adopted when a later check reads a path that holds. Adoption and
+//! the pause passes or a header at or below the toolbox's
+//! `proven_txs.height` moves (the two clearing rules, alike for a path
+//! that parsed and one that did not). A new creator whose path does not
+//! parse or hold is tracked without it under the same mark, and adopted
+//! when a later check reads a path that holds. Adoption and
 //! revival share one [`MAX_ADOPT_PER_PASS`] bound, which a failing row
 //! never holds twice in a row.
 //!
@@ -1932,9 +1934,8 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// row, or a `rejected`, `conflicted` or `abandoned` row with no `bump`
 /// whose check is due (below), or a marked `unknown` or `built` row with
 /// no `bump` (a creator tracked without its path) whose check is due on
-/// the same rule. The stored path is replayed as the row's
-/// input against the headers of the moment, as the guard's
-/// [`read_creators`] replays it: a root that checks gives the row the word
+/// the same rule. The stored path is replayed as the row's input against
+/// the headers of the moment, as the guard's [`read_creators`] replays it: a root that checks gives the row the word
 /// `mined` at its height with that path as its evidence; a root that does
 /// not meet the header at its height gives a new row with the pending
 /// re-ask `proofFailed`, which the next pass runs (the path dropped, a
@@ -1950,9 +1951,8 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// JSON-to-BUMP repair) adopts the row as `mined`. Such a txid's
 /// `/tx/{txid}` serves the row's word (`unknown` or `built`) until then,
 /// where with no row it was 404: the row is what keeps it out of the
-/// limit. A header the
-/// service could not give, or a height above its tip, adopts nothing this
-/// pass.
+/// limit. A header the service could not give, or a height above its tip,
+/// adopts nothing this pass.
 ///
 /// An existing dead row is revived only when the replay ends `mined` with
 /// no check fault. A check that fails (a path that does not parse or does
@@ -1964,11 +1964,14 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// pause, up to 64 times the age threshold). The row is checked again when
 /// that pause has passed, which reads any path the toolbox wrote since
 /// (it rewrites one on a re-anchor, a repair or a sync), or on a pass whose
-/// header moved at or below the stored proof's height (`moved_from`,
-/// without the feed). Until then the query does not select it, so a
-/// failing row is reported once per check and the limit is never spent on
-/// it again: [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292). A
-/// service outage waits for the next pass without a fault. New creators are
+/// header moved at or below the toolbox's `proven_txs.height`
+/// (`moved_from`, without the feed). That height is the toolbox's column,
+/// not the path's, so a row whose path does not parse (no re-ask, the
+/// pause its only stored mark) is also checked again on such a move.
+/// Until then the query does not select it, so a failing row is reported
+/// once per check and the limit is never spent on it again:
+/// [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292). A service
+/// outage waits for the next pass without a fault. New creators are
 /// selected before dead rows. A revived row's verdict remains history:
 /// replaying it after the proof leaves `mined` with `Reask::Recheck`. The
 /// tick does not load an unchanged mined row, so that re-ask does not fetch

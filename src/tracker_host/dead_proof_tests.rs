@@ -86,12 +86,7 @@ async fn proven_dead(txid: &str, word: &str, height: u32) -> (StorageSqlx, MockW
 /// One pass at 100 reports the dead row's failing proof, and adopts nothing.
 async fn rejected_stands_once(storage: &StorageSqlx, services: &impl WalletServices, txid: &str) {
     let report = pass(storage, services, 100).await;
-    assert_eq!(
-        report.faults,
-        vec![format!(
-            "{txid}: the stored proof does not check; its rejected stands"
-        )]
-    );
+    assert_eq!(report.faults, vec![proof_stands_of(txid, "rejected")]);
     assert!(report.adopted_mined.is_empty() && report.adopted_proof_failed.is_empty());
 }
 
@@ -407,8 +402,47 @@ async fn an_unparseable_toolbox_proof_marks_the_dead_row_once() {
     let txid = "c7".repeat(32);
     let (storage, services) = proven_dead(&txid, "rejected", 900).await;
     unparseable(&storage, &txid).await;
-    // No proof parsed, so the crate gives no re-ask: the pause is the mark.
+    // No proof parsed, so the crate gives no re-ask and the stored mark is
+    // the pause. The query's second clearing rule reads the toolbox's
+    // `proven_txs.height`, not the path's, so a header move at or below it
+    // checks the row again too (the next test).
     assert_marked(&storage, &services, &txid, None).await;
+}
+
+#[tokio::test]
+async fn a_header_move_at_the_toolbox_height_checks_an_unparseable_dead_row_again() {
+    let txid = "dd".repeat(31) + "e0";
+    let (storage, services) = mismatched_at_900(&txid).await;
+    unparseable(&storage, &txid).await;
+    let first = pass(&storage, &services, 100).await;
+    assert_eq!(first.faults, vec![proof_stands_of(&txid, "conflicted")]);
+    assert_eq!(
+        stored_word(&storage, &txid).await.unwrap().unwrap(),
+        ("conflicted".into(), None, None)
+    );
+    assert_idle(&pass(&storage, &services, 101).await);
+
+    // The header at 900, the toolbox's `proven_txs.height`, moves.
+    services.set_header_for_height(header(900, &"ef".repeat(32), 0));
+    services.set_tip_header(super::tests::header_with_hash(901, &"aa".repeat(32), 0));
+    let moved = pass(&storage, &services, 102).await;
+    assert_eq!(moved.moved_from, Some(900));
+    assert_eq!(moved.faults, vec![proof_stands_of(&txid, "conflicted")]);
+    assert!(moved.adopted_mined.is_empty());
+    let row = load_row(&storage, &txid).await.unwrap().unwrap();
+    assert_eq!(
+        (row.bump, row.asks, row.next_ask_at),
+        (None, 2, Some(102 + 1_200))
+    );
+    assert_eq!(
+        stored_word(&storage, &txid).await.unwrap().unwrap(),
+        ("conflicted".into(), None, None)
+    );
+    assert_idle(&pass(&storage, &services, 103).await);
+}
+
+fn proof_stands_of(txid: &str, word: &str) -> String {
+    format!("{txid}: the stored proof does not check; its {word} stands")
 }
 
 async fn unparseable(storage: &StorageSqlx, txid: &str) {
