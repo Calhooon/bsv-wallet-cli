@@ -167,3 +167,191 @@ fn the_tools_are_the_29_and_the_five() {
         );
     }
 }
+
+// ── The configuration (#171) ───────────────────────────────────
+
+use config::{Source, DEFAULT_WALLET_ORIGIN, DEFAULT_WALLET_URL};
+
+fn config(pairs: &[(&str, &str)]) -> Result<Config, config::Refused> {
+    Config::from_vars(
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string())),
+    )
+}
+
+/// The `--config` row of `name`, split on whitespace.
+fn row(table: &str, name: &str) -> Vec<String> {
+    table
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some(name))
+        .unwrap_or_else(|| panic!("no {name} row in {table}"))
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn an_empty_environment_is_the_defaults() {
+    let c = config(&[("PATH", "/bin"), ("ROOT_KEY", "not ours")]).unwrap();
+    assert_eq!(c.wallet_url, DEFAULT_WALLET_URL);
+    assert_eq!(c.wallet_url, "http://localhost:3322");
+    assert_eq!(c.wallet_origin, DEFAULT_WALLET_ORIGIN);
+    assert_eq!(c.wallet_origin, "http://localhost");
+    assert_eq!(c.relay_url, None);
+    assert_eq!(c.relay_admin_token, None);
+    assert_eq!(c.rust_log, None);
+    let table = c.table();
+    assert_eq!(
+        row(&table, "WALLET_URL"),
+        ["WALLET_URL", "http://localhost:3322", "default"]
+    );
+    assert_eq!(
+        row(&table, "WALLET_ORIGIN"),
+        ["WALLET_ORIGIN", "http://localhost", "default"]
+    );
+    assert_eq!(row(&table, "RELAY_URL"), ["RELAY_URL", "-", "default"]);
+    assert_eq!(
+        row(&table, "RELAY_ADMIN_TOKEN"),
+        ["RELAY_ADMIN_TOKEN", "-", "default"]
+    );
+    assert_eq!(
+        row(&table, "RUST_LOG"),
+        ["RUST_LOG", "error,bsv_wallet_mcp=info", "default"]
+    );
+    assert!(
+        !table.contains("ROOT_KEY") && !table.contains("PATH"),
+        "{table}"
+    );
+    assert_eq!(table.lines().count(), 1 + config::NAMES.len());
+}
+
+#[test]
+fn each_variable_set_is_read_from_the_environment() {
+    let c = config(&[
+        ("WALLET_URL", "http://127.0.0.1:3370"),
+        ("WALLET_ORIGIN", "http://e2e-test"),
+        ("RELAY_URL", "http://127.0.0.1:3390/"),
+        ("RELAY_ADMIN_TOKEN", "admin-token-bytes"),
+        ("RUST_LOG", "debug"),
+    ])
+    .unwrap();
+    assert_eq!(c.wallet_url, "http://127.0.0.1:3370");
+    assert_eq!(c.wallet_origin, "http://e2e-test");
+    assert_eq!(c.relay_url.as_deref(), Some("http://127.0.0.1:3390/"));
+    assert_eq!(
+        c.relay_admin_token.as_ref().map(config::Secret::expose),
+        Some("admin-token-bytes")
+    );
+    assert_eq!(c.rust_log.as_deref(), Some("debug"));
+    for name in config::NAMES {
+        assert_eq!(c.source(name), Source::Env, "{name}");
+    }
+    let table = c.table();
+    assert_eq!(
+        row(&table, "RELAY_ADMIN_TOKEN"),
+        ["RELAY_ADMIN_TOKEN", "<set>", "env"]
+    );
+    assert_eq!(
+        row(&table, "RUST_LOG"),
+        ["RUST_LOG", "debug,bsv_wallet_mcp=info", "env"]
+    );
+
+    // The server is built from it as `main` builds it: the relay without
+    // its trailing slash, the bearer passed through.
+    let mcp = WalletMcp::from_config(&c);
+    assert_eq!(
+        (mcp.url.as_str(), mcp.origin.as_str()),
+        ("http://127.0.0.1:3370", "http://e2e-test")
+    );
+    assert_eq!(mcp.relay_url.as_deref(), Some("http://127.0.0.1:3390"));
+    assert_eq!(mcp.relay_admin_token.as_deref(), Some("admin-token-bytes"));
+}
+
+#[test]
+fn an_empty_relay_url_is_no_relay_and_an_empty_token_none() {
+    let c = config(&[("RELAY_URL", ""), ("RELAY_ADMIN_TOKEN", "")]).unwrap();
+    assert_eq!(c.relay_url, None);
+    assert_eq!(c.relay_admin_token, None);
+    assert_eq!(c.source("RELAY_URL"), Source::Env);
+    let table = c.table();
+    assert_eq!(row(&table, "RELAY_URL"), ["RELAY_URL", "-", "env"]);
+    assert_eq!(
+        row(&table, "RELAY_ADMIN_TOKEN"),
+        ["RELAY_ADMIN_TOKEN", "empty", "env"]
+    );
+    let mcp = WalletMcp::from_config(&c);
+    assert_eq!((mcp.relay_url, mcp.relay_admin_token), (None, None));
+}
+
+#[test]
+fn the_printed_configuration_never_holds_a_credential() {
+    let token = "s3cr3t-admin-token-never-printed";
+    let c = config(&[
+        (
+            "WALLET_URL",
+            "http://user:pass-in-url@127.0.0.1:3370/?key=q-secret",
+        ),
+        ("RELAY_URL", "https://relay-user:relay-pass@relay.test/"),
+        ("RELAY_ADMIN_TOKEN", token),
+    ])
+    .unwrap();
+    let table = c.table();
+    for bytes in [token, "pass-in-url", "q-secret", "relay-pass"] {
+        assert!(!table.contains(bytes), "{bytes} in {table}");
+    }
+    assert!(!format!("{c:?}").contains(token));
+    assert_eq!(
+        row(&table, "WALLET_URL"),
+        ["WALLET_URL", "http://<set>@127.0.0.1:3370/?<set>", "env"]
+    );
+    assert_eq!(
+        row(&table, "RELAY_URL"),
+        ["RELAY_URL", "https://<set>@relay.test/", "env"]
+    );
+}
+
+#[test]
+fn a_malformed_value_is_refused_by_name_and_every_one_together() {
+    let config::Refused { errors, config: c } = config(&[
+        ("WALLET_URL", "localhost:3322"),
+        ("WALLET_ORIGIN", " "),
+        ("RELAY_URL", "ftp://user:pw@relay.test"),
+        ("RELAY_ADMIN_TOKEN", "admin"),
+    ])
+    .unwrap_err();
+    let c = *c;
+    let names: Vec<_> = errors.iter().map(|e| e.variable).collect();
+    assert_eq!(names, ["WALLET_URL", "WALLET_ORIGIN", "RELAY_URL"]);
+    assert_eq!(
+        errors[0].to_string(),
+        "WALLET_URL is \"localhost:3322\", which is not an http or https URL: \
+         set it so, or unset it for the default"
+    );
+    assert!(!errors[2].to_string().contains("pw"), "{}", errors[2]);
+    // `--config` still prints, each refused setting at its default and
+    // marked, the rest as read.
+    assert_eq!(c.wallet_url, DEFAULT_WALLET_URL);
+    assert_eq!(c.relay_url, None);
+    assert_eq!(c.refused(), &errors[..]);
+    let table = c.table();
+    assert_eq!(
+        row(&table, "RELAY_URL"),
+        [
+            "RELAY_URL",
+            "ftp://<set>@relay.test",
+            "env",
+            "REFUSED:",
+            "not",
+            "an",
+            "http",
+            "or",
+            "https",
+            "URL"
+        ]
+    );
+    assert_eq!(
+        row(&table, "RELAY_ADMIN_TOKEN"),
+        ["RELAY_ADMIN_TOKEN", "<set>", "env"]
+    );
+}
