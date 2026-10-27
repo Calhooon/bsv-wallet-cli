@@ -104,27 +104,35 @@ async fn page_defaults_stay_absent() {
 }
 
 #[tokio::test]
-async fn page_offset_negative() {
-    let (status, body) = post_page(
-        page_router().await,
-        "listOutputs",
-        json!({"basket": "default", "offset": -1}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body,
-        json!({
-            "code": "VALIDATION_ERROR",
-            "message": "Validation error: offset: at least 0 length. (offset 0 to 4294967295, got -1)",
-        })
-    );
+async fn page_negative_offset_reaches_toolbox_newest_first() {
+    use crate::test_support::coins::{coin, storage_for_named};
+
+    let key = bsv_sdk::primitives::PrivateKey::random();
+    let (storage, user, basket) =
+        storage_for_named(&key.public_key().to_hex(), "page-bounds").await;
+    for (txid, satoshis) in [("ab".repeat(32), 100), ("cd".repeat(32), 200)] {
+        coin(&storage, (user, basket), &txid, false, None, satoshis, 1).await;
+    }
+    let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
+    let app = crate::server::make_router(wallet, crate::server::ServerConfig::default());
+    for (offset, satoshis) in [(-1, 200), (0, 100)] {
+        let (status, body) = post_page(
+            app.clone(),
+            "listOutputs",
+            json!({"basket": "default", "offset": offset, "limit": 1}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["totalOutputs"], 2);
+        assert_eq!(body["outputs"].as_array().unwrap().len(), 1);
+        assert_eq!(body["outputs"][0]["satoshis"], satoshis);
+    }
 }
 
 #[test]
 fn page_handlers_share_one_guard_and_forward_original_args() {
     let source = include_str!("../../handlers.rs");
-    let guard = "check_page_bounds(args.limit, args.offset.map(i64::from))?;";
+    let guard = "check_page_bounds(args.limit)?;";
     assert_eq!(source.matches(guard).count(), 5);
     for call in [
         "list_actions",
@@ -180,17 +188,4 @@ async fn page_refusals_precede_every_toolbox_entry() {
             }
         }
     }
-    let (status, body) = post_page_from(
-        app,
-        "listOutputs",
-        json!({"basket": "default", "offset": -1}),
-        &"x".repeat(254),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let answer = body;
-    assert!(answer["message"]
-        .as_str()
-        .unwrap()
-        .starts_with("Validation error: offset:"));
 }
