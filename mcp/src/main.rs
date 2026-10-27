@@ -9,6 +9,10 @@
 //! (`GET /pull`) and `register` (`POST /register`, the relay's admin bearer
 //! `RELAY_ADMIN_TOKEN`) on the callback relay at RELAY_URL
 //! (`bsv-wallet-relay`). No route is added to either server.
+//!
+//! The variables are read once at start into a typed [`Config`]
+//! (`config.rs`, #171); `bsv-wallet-mcp --config` prints each with its
+//! source, the admin token redacted.
 
 use reqwest::Client;
 use rmcp::{
@@ -18,7 +22,10 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::env;
+
+mod config;
+
+use config::Config;
 
 // ── Server struct ──────────────────────────────────────────────
 
@@ -523,6 +530,19 @@ impl WalletMcp {
         }
     }
 
+    /// The server the configuration names: the wallet, its origin, and the
+    /// relay with its admin bearer when one is named.
+    #[must_use]
+    pub fn from_config(config: &Config) -> Self {
+        Self::new(config.wallet_url.clone(), config.wallet_origin.clone()).with_relay(
+            config.relay_url.clone(),
+            config
+                .relay_admin_token
+                .as_ref()
+                .map(|t| t.expose().to_string()),
+        )
+    }
+
     /// Name the callback relay (`RELAY_URL`) and its admin bearer
     /// (`RELAY_ADMIN_TOKEN`).
     pub fn with_relay(mut self, url: Option<String>, admin_token: Option<String>) -> Self {
@@ -907,24 +927,33 @@ impl ServerHandler for WalletMcp {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(refused) if config::asked() => *refused.config,
+        Err(refused) => {
+            for e in &refused.errors {
+                eprintln!("{e}");
+            }
+            std::process::exit(1);
+        }
+    };
+    if config::asked() {
+        print!("{}", config.table());
+        std::process::exit(i32::from(!config.refused().is_empty()));
+    }
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("bsv_wallet_mcp=info".parse().expect("a literal directive")),
-        )
+        .with_env_filter(config.log_filter())
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
 
-    let url = env::var("WALLET_URL").unwrap_or_else(|_| "http://localhost:3322".into());
-    let origin = env::var("WALLET_ORIGIN").unwrap_or_else(|_| "http://localhost".into());
-
-    tracing::info!("Starting bsv-wallet-mcp → {url}");
-
-    let server = WalletMcp::new(url, origin).with_relay(
-        env::var("RELAY_URL").ok().filter(|u| !u.is_empty()),
-        env::var("RELAY_ADMIN_TOKEN").ok(),
+    tracing::info!(
+        "Starting bsv-wallet-mcp → {}",
+        config::shown_url(&config.wallet_url)
     );
+
+    let server = WalletMcp::from_config(&config);
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("Failed to start MCP server: {e}");
     })?;
