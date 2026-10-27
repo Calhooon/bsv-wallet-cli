@@ -52,8 +52,11 @@
 //! Beside adopting creators the toolbox already proved, each pass hands
 //! that stored proof to an existing `rejected`, `conflicted` or `abandoned`
 //! row with no path of its own ([`adopt_proven`]). A checking root revives
-//! its stored word to `mined`; a failed check leaves the row untouched.
-//! Adoption and revival share one [`MAX_ADOPT_PER_PASS`] bound.
+//! its stored word to `mined`; a failed check leaves the word standing and
+//! is stored once with its pause, so the row is not selected again until
+//! the pause passes or a header at or below its proof moves. Adoption and
+//! revival share one [`MAX_ADOPT_PER_PASS`] bound, which a failing row
+//! never holds twice in a row.
 //!
 //! # What the header service pushes
 //!
@@ -1924,27 +1927,44 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// them, and revive dead rows with no path of their own. Its monitor's
 /// backstop, `check_for_proofs`, moves a transaction to `completed` with
 /// `proven_tx_id` set. Candidates create a coin we hold and have no tracker
-/// row, or a `rejected`, `conflicted` or `abandoned` row with no `bump`. The
-/// stored path is replayed as the row's input against the headers of the
-/// moment, as the guard's [`read_creators`] replays it: a root that checks
-/// gives the row the word `mined` at its height with that path as its
-/// evidence; a root that does not meet the header at its height gives a row
-/// with the pending re-ask `proofFailed`, which the next pass runs (the
-/// path dropped, a fresh one asked for). A header the service could not
-/// give, or a stored path that does not parse, adopts nothing this pass.
-/// An existing dead row is stored only when the replay ends `mined` with
-/// no check fault; otherwise its word and inputs stand. A service outage
-/// waits for the next pass without a fault; a failed proof names the row
-/// in the report. New creators are selected before dead rows, so a dead
-/// row whose proof keeps failing is reported again every pass, bounded by
-/// the limit and after every new creator, and never holds one back. Its
-/// verdict remains history: replaying it after the proof leaves `mined`
-/// with `Reask::Recheck`. The tick does not load an unchanged mined row,
-/// so that re-ask does not fetch on every pass; on a tick whose header
-/// moved at or below the row's height the row is loaded and asked once
-/// (one header read, one merkle path), as any mined row with a verdict
-/// is, and the fresh proof clears the re-ask, so the served re-ask reads
-/// `null` until a later replay derives `recheck` again.
+/// row, or a `rejected`, `conflicted` or `abandoned` row with no `bump`
+/// whose check is due (below). The stored path is replayed as the row's
+/// input against the headers of the moment, as the guard's
+/// [`read_creators`] replays it: a root that checks gives the row the word
+/// `mined` at its height with that path as its evidence; a root that does
+/// not meet the header at its height gives a new row with the pending
+/// re-ask `proofFailed`, which the next pass runs (the path dropped, a
+/// fresh one asked for). A new creator whose stored path does not parse,
+/// or does not hold for its txid, is tracked without it: its row holds the
+/// word its hints give and no `bump`, and the tick treats it as any of the
+/// wallet's rows (a proof is asked for when its hints make one due); the
+/// guard still replays the toolbox's path at every read. A header the
+/// service could not give, or a height above its tip, adopts nothing this
+/// pass.
+///
+/// An existing dead row is revived only when the replay ends `mined` with
+/// no check fault. A check that fails (a path that does not parse or does
+/// not hold, a root that does not meet the header, a replay that ends
+/// anything but `mined`) leaves its dead word standing, never revived, and
+/// stores the failure once: no `bump`, the crate's re-ask for it
+/// (`proofFailed` at the proof's height when the path parsed), and one
+/// more ask with its pause (`asks`, `next_ask_at`: the tick's doubling
+/// pause, up to 64 times the age threshold). The row is checked again when
+/// that pause has passed, which reads any path the toolbox wrote since
+/// (it rewrites one on a re-anchor, a repair or a sync), or on a pass whose
+/// header moved at or below the stored proof's height (`moved_from`,
+/// without the feed). Until then the query does not select it, so a
+/// failing row is reported once per check and the limit is never spent on
+/// it again: [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292). A
+/// service outage waits for the next pass without a fault. New creators are
+/// selected before dead rows. A revived row's verdict remains history:
+/// replaying it after the proof leaves `mined` with `Reask::Recheck`. The
+/// tick does not load an unchanged mined row, so that re-ask does not fetch
+/// on every pass; on a tick whose header moved at or below the row's
+/// height the row is loaded and asked once (one header read, one merkle
+/// path), as any mined row with a verdict is, and the fresh proof clears
+/// the re-ask, so the served re-ask reads `null` until a later replay
+/// derives `recheck` again.
 /// The toolbox's own rows are never written. The stack's wallet charter,
 /// section 1: about a transaction the wallet believes only the tracker's
 /// word, and each action hosts one tracker state.
