@@ -31,13 +31,17 @@ const HERMETIC_FUNDER_PORT = 3373;
 /** The keys that would reach a real service, dropped under the flag. */
 const DROPPED = [
   'WOC_API_KEY', 'BITAILS_API_KEY', 'TAAL_API_KEY', 'MAIN_TAAL_API_KEY',
-  'ARC_MODE', 'ARCADE', 'BREAK_GLASS_EXPLORER_HEADERS', 'PUBLIC_CALLBACK_URL',
+  'ARCADE', 'BREAK_GLASS_EXPLORER_HEADERS', 'PUBLIC_CALLBACK_URL',
 ];
 
 function applyEnv() {
   for (const k of DROPPED) delete process.env[k];
   const forced = {
     CHAINTRACKS_URL: STUB_BASES.chaintracks,
+    // Arcade is the wallet's default broadcaster (#300); the stub plays
+    // classic ARC only until #299 gives it an Arcade face, so the run names
+    // the deprecated classic mode explicitly, never by dropping the mode.
+    ARC_MODE: 'classic',
     ARC_URL: STUB_BASES.arc,
     ARC_GORILLAPOOL_URL: '',
     BANANABLOCKS_BASE: STUB_BASES.bananablocks,
