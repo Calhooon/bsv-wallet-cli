@@ -60,7 +60,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
 | arch rule A1 allowlist | 0 files, 0 sites |  | `tests/arch_env_reads.rs` ALLOWED |
-| arch rule A2 allowlist | 14 files, 262 sites |  | `tests/arch_sql_sites.rs` ALLOWED |
+| arch rule A2 allowlist | 14 files, 261 sites |  | `tests/arch_sql_sites.rs` ALLOWED |
 | arch rule A3 allowlist | 6 files, 48 sites |  | `tests/arch_explorer_sites.rs` ALLOWED |
 | arch rule A4 allowlist | 4 files, 4 sites |  | `tests/arch_no_unwrap.rs` ALLOWED |
 | arch rule A5 allowlist | 6 files, 11 sites |  | `tests/arch_no_prefix_errors.rs` ALLOWED |

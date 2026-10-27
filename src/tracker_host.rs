@@ -49,6 +49,12 @@
 //! which holds no feed, the pass keeps the last twelve tips and reads the
 //! mined rows at or above a header that moved.
 //!
+//! Beside adopting creators the toolbox already proved, each pass hands
+//! that stored proof to an existing `rejected`, `conflicted` or `abandoned`
+//! row with no path of its own ([`adopt_proven`]). A checking root revives
+//! its stored word to `mined`; a failed check leaves the row untouched.
+//! Adoption and revival share one [`MAX_ADOPT_PER_PASS`] bound.
+//!
 //! # What the header service pushes
 //!
 //! The daemon's chain-event feed ([`crate::chain_feed`]) hands each
@@ -1218,9 +1224,9 @@ pub struct TickReport {
     pub tracked: usize,
     /// The wallet's own unproven transactions tracked for the first time.
     pub adopted: usize,
-    /// Proven creators of coins we hold, tracked for the first time from
-    /// the toolbox's stored proof replayed against the headers of the
-    /// moment: `mined` when its root checks.
+    /// Proven creators of coins we hold, newly tracked or revived from a
+    /// dead word by the toolbox's stored proof replayed against the headers
+    /// of the moment: `mined` when its root checks.
     pub adopted_mined: Vec<String>,
     /// The same, whose stored root does not meet the header at its height:
     /// tracked with the re-ask `proofFailed`, no word written.
@@ -1879,13 +1885,14 @@ async fn stored_beef(storage: &StorageSqlx, txid: &str) -> Result<Option<Vec<u8>
     Ok(Some(beef.to_binary()))
 }
 
-/// Proven creators adopted per pass at most (`adopt_proven`).
+/// Proven creators adopted or revived per pass at most (`adopt_proven`).
 pub const MAX_ADOPT_PER_PASS: usize = 100;
 
 /// Track the creators the toolbox proved before the tracker held a row for
-/// them (its monitor's backstop, `check_for_proofs`, moves a transaction to
-/// `completed` with `proven_tx_id` set): every `completed` transaction with
-/// a stored proof that creates a coin we hold and has no tracker row. The
+/// them, and revive dead rows with no path of their own. Its monitor's
+/// backstop, `check_for_proofs`, moves a transaction to `completed` with
+/// `proven_tx_id` set. Candidates create a coin we hold and have no tracker
+/// row, or a `rejected`, `conflicted` or `abandoned` row with no `bump`. The
 /// stored path is replayed as the row's input against the headers of the
 /// moment, as the guard's [`read_creators`] replays it: a root that checks
 /// gives the row the word `mined` at its height with that path as its
@@ -1893,12 +1900,19 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// with the pending re-ask `proofFailed`, which the next pass runs (the
 /// path dropped, a fresh one asked for). A header the service could not
 /// give, or a stored path that does not parse, adopts nothing this pass.
+/// An existing dead row is stored only when the replay ends `mined` with
+/// no check fault; otherwise its word and inputs stand. A service outage
+/// waits for the next pass without a fault; a failed proof names the row
+/// in the report. Its verdict remains history: replaying it after the
+/// proof leaves `mined` with `Reask::Recheck`. The tick does not load an
+/// unchanged mined row, so that re-ask does not fetch on every pass.
 /// The toolbox's own rows are never written. The stack's wallet charter,
 /// section 1: about a transaction the wallet believes only the tracker's
 /// word, and each action hosts one tracker state.
 ///
-/// Load: one store query per pass, and one header read per height not
-/// already read this pass, for at most [`MAX_ADOPT_PER_PASS`] creators.
+/// Load: one selection query per pass, the existing row loader for each
+/// revival, and one header read per height not already read this pass,
+/// for at most [`MAX_ADOPT_PER_PASS`] creators across both kinds.
 async fn adopt_proven<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
@@ -2192,9 +2206,10 @@ fn fault_text(fault: &CheckError) -> String {
 
 /// Run the spend guard over many creators against one read of the headers:
 /// the tip once, and one header per height a stored path names. Each
-/// creator is the tracked row when the tracker holds one, else the
-/// toolbox's stored merkle path (`proven_txs`, given here as its bytes)
-/// replayed as a row's input: a stored proof is checked again against the
+/// creator replays its tracked row when the tracker holds one, filling a
+/// missing path from the toolbox's stored merkle path (`proven_txs`, given
+/// here as its bytes). With no row the path is replayed as a new row's
+/// input: a stored proof is checked again against the
 /// headers of the moment, never trusted by age. A creator with neither
 /// reads `unknown`. Nothing is written: the tracker's rows are not stored
 /// back and no row is adopted.
