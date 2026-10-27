@@ -5,11 +5,16 @@ name: CI
 # `Clippy`, `vectors` (the four of the ruling), `Build (ubuntu-latest)`,
 # `deny` (the paved road's cargo-deny gate over the stack's template, adopted
 # at 0.13.x) and `locks`; on beta those and `ratchet`, `wire` (#69) and
-# `e2e-hermetic`. `Build (macos-latest)`, `bench` (#71) and `differential`
-# (#70) run on push and on the tag's run, the differential also on a PR
-# labelled `refactor`. Renaming a job removes its
-# context and blocks every PR until the protection is updated. Every action is
-# pinned by commit sha.
+# `e2e-hermetic`. A push to beta or main runs exactly that set, the same as a
+# pull request, nothing more (the owner's word of 2026-10-27: "sick of seeing
+# all these CI failures... they are all so hardcore and slowing us down").
+# The measurements run on workflow_dispatch and once before a tag, each in its
+# own workflow with its own badge, never on the push run: `bench.yml` (#71),
+# `differential.yml` (#70), `nightly.yml` (the mutation score and the fuzz
+# hours, #303) and `build-macos.yml`; RELEASING.md names the hour. A run a
+# newer push cancels (the concurrency group below) is never a red. Renaming a
+# job removes its context and blocks every PR until the protection is updated.
+# Every action is pinned by commit sha.
 on:
   pull_request:
     branches: [main, beta]
@@ -65,11 +70,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Ubuntu decides a pull request (the required check); macOS builds on
-        # every push and on the tag's run, where the release binaries are made
-        # (the keeper's rule of 2026-10-26: a PR runs exactly the required set;
-        # Build (macos-latest) left the required set on main and beta that day).
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        # Ubuntu alone on every event (the owner's word of 2026-10-27: a push runs
+        # exactly the required set, the same as a pull request, nothing more);
+        # the macOS build is build-macos.yml on workflow_dispatch; the tag's Binaries
+        # job in release.yml builds the macOS targets.
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -200,86 +205,6 @@ jobs:
       - name: No fixture was written by the run
         run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
 
-  # The hot path's benches (#71). tools/bench-compare --ci holds the gate's
-  # profile, margin, sample floor and history floor as constants; nothing
-  # here names them (docs/BENCHES.md). The job checks out the PR's head and
-  # stamps the candidate baseline with that sha, measures into a directory
-  # of its own, and checks the tree's benches/baseline.json against the
-  # base ref's (read as the ratchet job reads its record: the base branch's
-  # tip on a PR, the commit before on a push): a changed margin, a dropped
-  # entry or bench id, a rewritten run, or a new run that does not match
-  # this run's measure or is over the base's reference fails. The reference is the base's entry, never the
-  # tree's; the comparison gates once the base's entry for this runner's CPU
-  # carries five runs; until then it warns and passes, and with no base
-  # nothing is gated. A runner CPU with no entry gates nothing and says so
-  # in an annotation and the step summary. The artifact bench-baseline is
-  # the candidate the captain commits: the base's file with this run appended.
-  bench:
-    name: bench
-    # On push to beta and main and on a tag, never on a pull request: a PR's
-    # merge is decided by the jobs branch protection requires; the bench's
-    # baseline compare reads the push's `before` (the keeper's balance of
-    # 2026-10-26, the owner's word: "there has gotta be a balance").
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      # Over any rust-toolchain.toml a PR adds; the tool refuses another rustc -V.
-      RUSTUP_TOOLCHAIN: 1.98.1
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: 1.98.1
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - name: The gate's planted cases
-        run: python3 tools/test_bench_compare.py
-
-      - name: No p99 above the base's baseline
-        env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
-          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
-          BENCH_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          rev=""
-          if [ -n "$BASE_REF" ]; then
-            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-            rev="origin/$BASE_REF"
-          elif [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ]; then
-            if git fetch --no-tags --depth=1 origin "$BEFORE"; then
-              rev="$BEFORE"
-            else
-              echo "::warning::the commit before the push ($BEFORE) is not fetchable"
-            fi
-          fi
-          base=()
-          if [ -n "$rev" ]; then
-            # A base with no baseline file is a baseline with no entry.
-            git show "$rev:benches/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null \
-              || : > "$RUNNER_TEMP/base-baseline.json"
-            echo "bench: the base baseline is $rev:benches/baseline.json"
-            base=(--base "$RUNNER_TEMP/base-baseline.json")
-          fi
-          mkdir -p "$RUNNER_TEMP/bench/results"
-          BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci "${base[@]}" \
-            --out "$RUNNER_TEMP/bench/baseline.json"
-
-      - name: Keep the measured JSON and the candidate baseline
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: bench-baseline
-          path: ${{ runner.temp }}/bench/
-          if-no-files-found: warn
-
-  # The paved road's deny job, from bsv-stack-lean template/ci.yml: deny.toml is
-  # the template byte for byte (its sha256 stamped in template/stack.toml), then
-  # cargo-deny 0.20.2 from a temporary root checks advisories, bans, licenses and
-  # sources against the committed lock.
   deny:
     name: deny
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
@@ -627,189 +552,3 @@ jobs:
           name: e2e-hermetic-kept
           path: ${{ runner.temp }}/e2e/
           if-no-files-found: ignore
-
-  # The differential oracle (#70, docs/DIFFERENTIAL.md): the PR's base branch
-  # at its tip and the PR's head, both built here with the ratchet's pinned
-  # toolchain, each run once through the hermetic suite with the same keys,
-  # ports and stub, the two recordings compared byte for byte after the
-  # normalizations tools/differential lists (`--exclusions`). It is to fail
-  # on differences only when the PR carries the label `refactor` (a feature
-  # PR changes outputs by design, and its differences are its review's
-  # reading). Toolbox #105's deterministic tie and #106's seeded storage are
-  # pinned, with a zero same-binary floor, so REFACTOR_FAILS is enabled.
-  # A failed build or suite run, or an incomplete recording (exit 3), fails
-  # it either way. The labels are read when the differential step runs, with
-  # `gh pr view --json labels`, never from the event payload (a re-run reuses
-  # the payload of the event that started it): a label added after the run
-  # started counts on a re-run of this job. Label changes do not trigger CI
-  # (labeled/unlabeled would re-run, and cancel, every job of this workflow).
-  # Not a required check yet: the captain decides after it has run a week.
-  # The report is the run's artifact `differential`, and its DIFFERENTIAL
-  # line is in the summary.
-  differential:
-    name: differential
-    # On a pull request only when it carries the `refactor` label (the label
-    # is what the run can fail on); on every push to beta and main against the
-    # push's `before` (the keeper's balance of 2026-10-26); a later push to the
-    # same branch cancels an earlier push's run, so the record kept is the last
-    # landing's. A lane runs the differential locally before its PR and its
-    # cold review runs it again: those two witnesses stand on every PR; this
-    # job is the third, on the refactor ones.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'refactor')
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      pull-requests: read
-    env:
-      NODE_USE_ENV_PROXY: '1'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: 1.98.1
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      # The base's tree in a worktree beside the checkout, built into the same
-      # target dir before the head (the dependencies are shared), its two
-      # binaries copied out before the head's build replaces them.
-      - name: Build the base (a PR's base branch at its tip; a push's `before`)
-        env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
-          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
-        run: |
-          set -euo pipefail
-          if [ -n "$BASE_REF" ]; then
-            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-            rev="origin/$BASE_REF"
-          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
-               && git fetch --no-tags --depth=1 origin "$BEFORE"; then
-            # A push: the previous tip of the branch, fetched by its sha.
-            rev="$BEFORE"
-          else
-            # A new branch, a tag (workflow_call), or a `before` the remote no
-            # longer serves: the commit before this one (as bench and ratchet
-            # fall back), fetched by this sha alone, never every branch.
-            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-              echo "::warning::the push's before ($BEFORE) could not be fetched; the base is HEAD~1"
-            fi
-            git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
-            rev="HEAD~1"
-          fi
-          git worktree add --detach "$RUNNER_TEMP/base-src" "$rev"
-          echo "base: $(git -C "$RUNNER_TEMP/base-src" log --oneline -1)"
-          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
-          (cd "$RUNNER_TEMP/base-src" && cargo build --release --locked && cargo build --release --locked -p bsv-wallet-mcp)
-          mkdir -p "$RUNNER_TEMP/bin-base"
-          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-base/"
-
-      - name: Build the head
-        run: |
-          set -euo pipefail
-          cargo build --release --locked
-          cargo build --release --locked -p bsv-wallet-mcp
-          mkdir -p "$RUNNER_TEMP/bin-head"
-          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-head/"
-
-      # Node 24 for NODE_USE_ENV_PROXY, and scenario 20's Chromium, as the
-      # e2e-hermetic job has them.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: '24'
-
-      - name: Install the harness's dependency (Playwright)
-        working-directory: tests/e2e
-        run: npm ci
-
-      - name: The tool's own tests (its planted cases)
-        run: python3 tools/test_differential.py -v
-
-      - name: The differential step's exit mapping (a stand-in tool, each code and label)
-        run: bash tools/test_differential_step.sh
-
-      - name: Cache Playwright's Chromium
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
-
-      - name: Install Chromium
-        working-directory: tests/e2e
-        run: npx playwright install --with-deps chromium
-
-      - name: Run the differential
-        env:
-          # Toolbox #105 and #106 are pinned; the seeded floor is zero.
-          REFACTOR_FAILS: 'true'
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        # The shell runs with -e (GitHub's `bash -e {0}`, and the set below
-        # says so): the tool's exit is captured with `&& code=0 || code=$?`,
-        # never a bare call then `code=$?`, which -e aborts on exit 1 before
-        # the mapping reads it. tools/test_differential_step.sh runs this
-        # body against a stand-in tool for each exit code and label state.
-        run: |
-          set -euo pipefail
-          # The PR's labels now, not the event's (a label added after the
-          # run started counts on a re-run). A failed read is no "no label".
-          if [ -n "${PR_NUMBER:-}" ]; then
-            if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
-                --jq '[.labels[].name] | index("refactor") != null'); then
-              echo "::error::the PR's labels could not be read (gh pr view)"
-              exit 1
-            fi
-          else
-            # A push: no PR, no label; the report is recorded, never failed.
-            REFACTOR=false
-          fi
-          echo "label refactor: $REFACTOR (read at run time)"
-          out="$RUNNER_TEMP/differential"
-          mkdir -p "$out"
-          python3 tools/differential \
-            --base-bin "$RUNNER_TEMP/bin-base/bsv-wallet" \
-            --head-bin "$RUNNER_TEMP/bin-head/bsv-wallet" \
-            --out "$out" && code=0 || code=$?
-          line=$(grep '^DIFFERENTIAL:' "$out/report.txt" 2>/dev/null || echo "DIFFERENTIAL: no report (exit $code)")
-          {
-            echo "### differential"
-            echo
-            echo "\`$line\`"
-            echo
-            echo "label refactor: $REFACTOR (read at run time); the refactor failure: $([ "$REFACTOR_FAILS" = true ] && echo on || echo 'held until bsv-wallet-toolbox-rs #105'); the report is the artifact \`differential\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$code" -eq 3 ]; then
-            echo "::error::$line: a recording is not a whole run (its INCOMPLETE lines in the report)"
-            exit 1
-          fi
-          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
-            echo "::error::a build's suite run failed (exit $code); see the report and the run logs"
-            exit 1
-          fi
-          if [ "$code" -eq 1 ]; then
-            if [ "$REFACTOR" = "true" ] && [ "$REFACTOR_FAILS" = "true" ]; then
-              echo "::error::$line on a PR labelled refactor"
-              exit 1
-            fi
-            if [ "$REFACTOR" = "true" ]; then
-              echo "::warning::$line on a PR labelled refactor: reported, the failure held until bsv-wallet-toolbox-rs #105 is pinned; read it against the floor pair's (docs/DIFFERENTIAL.md)"
-            else
-              echo "::notice::$line (no refactor label: reported, not failed)"
-            fi
-            exit 0
-          fi
-          echo "::notice::$line"
-
-      # The report, the recordings and the run logs; never the wallets'
-      # directories a failed run keeps under --out (their .env holds the
-      # root keys). The recordings name each key <root-key:SEAT>.
-      - name: Keep the report and the recordings
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: differential
-          path: |
-            ${{ runner.temp }}/differential/
-            !${{ runner.temp }}/differential/*-wallets/
-          if-no-files-found: warn

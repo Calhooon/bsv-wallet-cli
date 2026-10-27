@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The differential job's step "Run the differential" (#70), run outside
-# GitHub: its script body is read from .github/workflows/ci.yml as it stands
+# GitHub: its script body is read from .github/workflows/differential.yml as it stands
 # and run under the runner's shells (`bash -e`, GitHub's default for a run
 # step, and `bash -e -o pipefail`, the explicit `shell: bash`) against a
 # stand-in `gh` (the label read) and a stand-in `python3` (tools/differential,
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CI="${DIFFERENTIAL_STEP_CI:-$ROOT/.github/workflows/ci.yml}"
+CI="${DIFFERENTIAL_STEP_CI:-$ROOT/.github/workflows/differential.yml}"
 WORK=$(mktemp -d "${TMPDIR:-${RUNNER_TEMP:-/tmp}}/differential-step.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 

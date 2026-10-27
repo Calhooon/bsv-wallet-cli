@@ -1,0 +1,214 @@
+# The differential against the base (tools/differential). The owner's word of 2026-10-27: a push and a pull request run exactly the required set; the differential runs on workflow_dispatch and once before a tag (RELEASING.md), never on the push run; a refactor lane's REPORT and its cold review carry the PR's differential (docs/lanes/README.md rule 11).
+name: differential
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "A branch on origin to measure against (empty: the commit before HEAD)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      base:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read # the label read through gh, when a PR number is given
+
+# One run per ref at a time; a dispatched measurement is never cancelled by a later one.
+concurrency:
+  group: differential-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The differential oracle (#70, docs/DIFFERENTIAL.md): the PR's base branch
+  # at its tip and the PR's head, both built here with the ratchet's pinned
+  # toolchain, each run once through the hermetic suite with the same keys,
+  # ports and stub, the two recordings compared byte for byte after the
+  # normalizations tools/differential lists (`--exclusions`). It is to fail
+  # on differences only when the PR carries the label `refactor` (a feature
+  # PR changes outputs by design, and its differences are its review's
+  # reading). Toolbox #105's deterministic tie and #106's seeded storage are
+  # pinned, with a zero same-binary floor, so REFACTOR_FAILS is enabled.
+  # A failed build or suite run, or an incomplete recording (exit 3), fails
+  # it either way. The labels are read when the differential step runs, with
+  # `gh pr view --json labels`, never from the event payload (a re-run reuses
+  # the payload of the event that started it): a label added after the run
+  # started counts on a re-run of this job. Label changes do not trigger CI
+  # (labeled/unlabeled would re-run, and cancel, every job of this workflow).
+  # Not a required check yet: the captain decides after it has run a week.
+  # The report is the run's artifact `differential`, and its DIFFERENTIAL
+  # line is in the summary.
+  differential:
+    name: differential
+    # On a pull request only when it carries the `refactor` label (the label
+    # is what the run can fail on); on every push to beta and main against the
+    # push's `before` (the keeper's balance of 2026-10-26); a later push to the
+    # same branch cancels an earlier push's run, so the record kept is the last
+    # landing's. A lane runs the differential locally before its PR and its
+    # cold review runs it again: those two witnesses stand on every PR; this
+    # job is the third, on the refactor ones.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      NODE_USE_ENV_PROXY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # The base's tree in a worktree beside the checkout, built into the same
+      # target dir before the head (the dependencies are shared), its two
+      # binaries copied out before the head's build replaces them.
+      - name: Build the base (a PR's base branch at its tip; a push's `before`)
+        env:
+          BASE_REF: ${{ inputs.base }}
+          BEFORE: ''
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            rev="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git fetch --no-tags --depth=1 origin "$BEFORE"; then
+            # A push: the previous tip of the branch, fetched by its sha.
+            rev="$BEFORE"
+          else
+            # A new branch, a tag (workflow_call), or a `before` the remote no
+            # longer serves: the commit before this one (as bench and ratchet
+            # fall back), fetched by this sha alone, never every branch.
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              echo "::warning::the push's before ($BEFORE) could not be fetched; the base is HEAD~1"
+            fi
+            git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
+            rev="HEAD~1"
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base-src" "$rev"
+          echo "base: $(git -C "$RUNNER_TEMP/base-src" log --oneline -1)"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+          (cd "$RUNNER_TEMP/base-src" && cargo build --release --locked && cargo build --release --locked -p bsv-wallet-mcp)
+          mkdir -p "$RUNNER_TEMP/bin-base"
+          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-base/"
+
+      - name: Build the head
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          cargo build --release --locked -p bsv-wallet-mcp
+          mkdir -p "$RUNNER_TEMP/bin-head"
+          cp target/release/bsv-wallet target/release/bsv-wallet-mcp "$RUNNER_TEMP/bin-head/"
+
+      # Node 24 for NODE_USE_ENV_PROXY, and scenario 20's Chromium, as the
+      # e2e-hermetic job has them.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+
+      - name: Install the harness's dependency (Playwright)
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: The tool's own tests (its planted cases)
+        run: python3 tools/test_differential.py -v
+
+      - name: The differential step's exit mapping (a stand-in tool, each code and label)
+        run: bash tools/test_differential_step.sh
+
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
+
+      - name: Install Chromium
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the differential
+        env:
+          # Toolbox #105 and #106 are pinned; the seeded floor is zero.
+          REFACTOR_FAILS: 'true'
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # The shell runs with -e (GitHub's `bash -e {0}`, and the set below
+        # says so): the tool's exit is captured with `&& code=0 || code=$?`,
+        # never a bare call then `code=$?`, which -e aborts on exit 1 before
+        # the mapping reads it. tools/test_differential_step.sh runs this
+        # body against a stand-in tool for each exit code and label state.
+        run: |
+          set -euo pipefail
+          # The PR's labels now, not the event's (a label added after the
+          # run started counts on a re-run). A failed read is no "no label".
+          if [ -n "${PR_NUMBER:-}" ]; then
+            if ! REFACTOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels \
+                --jq '[.labels[].name] | index("refactor") != null'); then
+              echo "::error::the PR's labels could not be read (gh pr view)"
+              exit 1
+            fi
+          else
+            # A push: no PR, no label; the report is recorded, never failed.
+            REFACTOR=false
+          fi
+          echo "label refactor: $REFACTOR (read at run time)"
+          out="$RUNNER_TEMP/differential"
+          mkdir -p "$out"
+          python3 tools/differential \
+            --base-bin "$RUNNER_TEMP/bin-base/bsv-wallet" \
+            --head-bin "$RUNNER_TEMP/bin-head/bsv-wallet" \
+            --out "$out" && code=0 || code=$?
+          line=$(grep '^DIFFERENTIAL:' "$out/report.txt" 2>/dev/null || echo "DIFFERENTIAL: no report (exit $code)")
+          {
+            echo "### differential"
+            echo
+            echo "\`$line\`"
+            echo
+            echo "label refactor: $REFACTOR (read at run time); the refactor failure: $([ "$REFACTOR_FAILS" = true ] && echo on || echo 'held until bsv-wallet-toolbox-rs #105'); the report is the artifact \`differential\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -eq 3 ]; then
+            echo "::error::$line: a recording is not a whole run (its INCOMPLETE lines in the report)"
+            exit 1
+          fi
+          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+            echo "::error::a build's suite run failed (exit $code); see the report and the run logs"
+            exit 1
+          fi
+          if [ "$code" -eq 1 ]; then
+            if [ "$REFACTOR" = "true" ] && [ "$REFACTOR_FAILS" = "true" ]; then
+              echo "::error::$line on a PR labelled refactor"
+              exit 1
+            fi
+            if [ "$REFACTOR" = "true" ]; then
+              echo "::warning::$line on a PR labelled refactor: reported, the failure held until bsv-wallet-toolbox-rs #105 is pinned; read it against the floor pair's (docs/DIFFERENTIAL.md)"
+            else
+              echo "::notice::$line (no refactor label: reported, not failed)"
+            fi
+            exit 0
+          fi
+          echo "::notice::$line"
+
+      # The report, the recordings and the run logs; never the wallets'
+      # directories a failed run keeps under --out (their .env holds the
+      # root keys). The recordings name each key <root-key:SEAT>.
+      - name: Keep the report and the recordings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: differential
+          path: |
+            ${{ runner.temp }}/differential/
+            !${{ runner.temp }}/differential/*-wallets/
+          if-no-files-found: warn
