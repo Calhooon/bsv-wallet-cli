@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "commit": "b5cb47a0edf5319ac995e7db881832cf015c665b",
+  "commit": "5ff11bd50d3b86b1290e457344a450230cbea160",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
   },
   "tool": {
-    "ratchet": "ae79857f2d0b93de4f11413bdc31450793bc72eb4428ba494899cf5a4db6c8cb",
+    "ratchet": "d12e32ca6ddeeea91c5b63fd78e015343458cb9ebf0150a21927f8ec57a5b38d",
     "clippy_toml": "7277d8419d80a6030cc579d1bedd3cc70eb495dd53eaea9074a3d7482e787f96"
   },
   "ratchets": {
