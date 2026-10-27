@@ -4,6 +4,8 @@
 //! `cargo test --test wire` replays every fixture against the router,
 //! in-process (`tower::ServiceExt::oneshot`, no socket for the wallet), and
 //! fails on any byte of difference after normalization, printing the diff.
+//! `WIRE_TEXT_DIFF=report` reports only a refusal's message-text differences
+//! for the toolbox's dependents gate; the default comparison stays strict.
 //! `WIRE_RECORD=1 cargo test --test wire` re-records every fixture from the
 //! cases below and the manifest `tests/wire/MANIFEST.json` (the recorded
 //! set), then fails with the word to replay; nothing else re-records. See
@@ -83,6 +85,91 @@ fn record_word(value: Option<&str>) -> bool {
     }
 }
 
+/// Only the dependents gate opts in. A recording never accepts this word.
+fn text_diff_requested(recording: bool) -> bool {
+    text_diff_word(std::env::var("WIRE_TEXT_DIFF").ok().as_deref(), recording)
+}
+
+fn text_diff_word(value: Option<&str>, recording: bool) -> bool {
+    match value {
+        None => false,
+        Some("report") if !recording => true,
+        Some("report") => panic!("WIRE_TEXT_DIFF=report is refused with WIRE_RECORD=1: a recording is never lenient"),
+        Some(other) => panic!(
+            "WIRE_TEXT_DIFF is `{other}`: `report` reports message-text differences, unset is strict, and nothing else is a word"
+        ),
+    }
+}
+
+/// Keep the ordered body, status and contract headers. The internalize
+/// note in MANIFEST names the offset and script reason: that entire detail
+/// after `spend refused at offset ` must also stay equal.
+fn message_difference<'a>(want: &'a Resp, got: &'a Resp) -> Option<(&'a str, &'a str)> {
+    if !(400..600).contains(&want.status) || want.text.is_some() || got.text.is_some() {
+        return None;
+    }
+    let expected = want.json.as_ref()?;
+    let actual = got.json.as_ref()?;
+    if expected.get("code")?.as_str()? != actual.get("code")?.as_str()? {
+        return None;
+    }
+    let expected = expected.get("message")?.as_str()?;
+    let actual = actual.get("message")?.as_str()?;
+    let detail = |s: &'a str| {
+        s.split_once("spend refused at offset ")
+            .map(|(_, tail)| tail)
+    };
+    if expected == actual || detail(expected) != detail(actual) {
+        return None;
+    }
+    let mut same = want.clone();
+    same.json
+        .as_mut()?
+        .set_pointer("/message", J::Str(actual.to_string()));
+    (same == *got).then_some((expected, actual))
+}
+
+fn text_diff_line(file: &str, expected: &str, actual: &str) -> String {
+    format!(
+        "TEXT-DIFF: {file} {} {}",
+        serde_json::to_string(expected).unwrap(),
+        serde_json::to_string(actual).unwrap()
+    )
+}
+
+/// Recording comparison keeps even the file's whitespace and envelope.
+/// Only the JSON-quoted message may be replaced in the committed bytes.
+fn recording_difference(file: &str, want: &[u8], got: &[u8]) -> Option<String> {
+    let expected: Fixture = serde_json::from_slice(want).ok()?;
+    let actual: Fixture = serde_json::from_slice(got).ok()?;
+    let (expected, actual) = message_difference(&expected.response, &actual.response)?;
+    let replaced = std::str::from_utf8(want).ok()?.replacen(
+        &serde_json::to_string(expected).unwrap(),
+        &serde_json::to_string(actual).unwrap(),
+        1,
+    );
+    (replaced.as_bytes() == got).then(|| text_diff_line(file, expected, actual))
+}
+
+/// Bypass the test runner's success-output capture so the gate sees the
+/// marker. The replay and fresh recording report the same row only once.
+fn print_text_diffs(lines: &[String]) {
+    use std::io::Write;
+    static PRINTED: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
+    let mut printed = PRINTED.lock().unwrap();
+    for line in lines {
+        if printed.insert(line.clone()) {
+            writeln!(std::io::stdout().lock(), "{line}").unwrap();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Replay {
+    summary: String,
+    text_diffs: Vec<String>,
+}
+
 /// Record every case into `dir` (the old fixtures and manifest removed
 /// before). A recording never passes: the message says to replay it.
 async fn record(dir: &Path) -> String {
@@ -114,7 +201,7 @@ async fn record(dir: &Path) -> String {
 }
 
 /// Replay every fixture the manifest names: the failures, or the counts.
-async fn replay(dir: &Path) -> Result<String, String> {
+async fn replay(dir: &Path, report_text: bool) -> Result<Replay, String> {
     // The permission audit is the process's: each pass starts it empty.
     bsv_wallet_cli::server::audit::reset();
     let fixtures = read_fixtures(dir).map_err(|faults| {
@@ -130,6 +217,7 @@ async fn replay(dir: &Path) -> Result<String, String> {
     let mut worlds: HashMap<String, World> = HashMap::new();
     let mut served: HashMap<String, J> = HashMap::new();
     let mut failures = Vec::new();
+    let mut text_diffs = Vec::new();
     for (file, fixture) in &fixtures {
         if !worlds.contains_key(&fixture.world) {
             worlds.insert(fixture.world.clone(), World::build(&fixture.world).await);
@@ -140,6 +228,12 @@ async fn replay(dir: &Path) -> Result<String, String> {
             served.insert(file.clone(), body);
         }
         if got != fixture.response {
+            if report_text {
+                if let Some((expected, actual)) = message_difference(&fixture.response, &got) {
+                    text_diffs.push(text_diff_line(file, expected, actual));
+                    continue;
+                }
+            }
             let want = serde_json::to_string_pretty(&fixture.response).unwrap();
             let got = serde_json::to_string_pretty(&got).unwrap();
             failures.push(format!(
@@ -152,17 +246,22 @@ async fn replay(dir: &Path) -> Result<String, String> {
     }
     let missing = judge_coverage(&fixtures);
     let summary = format!(
-        "{} fixtures replayed, {} differ, {} coverage gaps",
+        "{} fixtures replayed, {} differ, {} coverage gaps, {} text differences reported",
         fixtures.len(),
         failures.len(),
-        missing.len()
+        missing.len(),
+        text_diffs.len()
     );
     if failures.is_empty() && missing.is_empty() {
-        Ok(summary)
+        Ok(Replay {
+            summary,
+            text_diffs,
+        })
     } else {
         Err(format!(
-            "{summary}\n{}\n{}\n(a change on purpose: WIRE_RECORD=1 cargo test --test wire, then a \
+            "{summary}\n{}\n{}\n{}\n(a change on purpose: WIRE_RECORD=1 cargo test --test wire, then a \
              replay, in its own commit; see docs/WIRE.md)",
+            text_diffs.join("\n"),
             failures.join("\n"),
             missing.join("\n")
         ))
@@ -174,12 +273,17 @@ async fn replay(dir: &Path) -> Result<String, String> {
 #[test]
 fn wire() {
     let dir = wire_dir();
-    if record_requested() {
+    let recording = record_requested();
+    let report_text = text_diff_requested(recording);
+    if recording {
         let message = on_runtime(move || async move { record(&dir).await });
         panic!("{message}");
     }
-    match on_runtime(move || async move { replay(&dir).await }) {
-        Ok(summary) => println!("{summary}"),
+    match on_runtime(move || async move { replay(&dir, report_text).await }) {
+        Ok(replayed) => {
+            print_text_diffs(&replayed.text_diffs);
+            println!("{}", replayed.summary);
+        }
         Err(message) => panic!("\n{message}"),
     }
 }
@@ -194,6 +298,7 @@ fn wire() {
 /// are identical, and the cases have not drifted from the fixtures).
 #[test]
 fn a_recording_is_not_a_replay() {
+    let report_text = text_diff_requested(record_requested());
     let tmp = tempfile::TempDir::new().unwrap();
     let dir = tmp.path().to_path_buf();
     let message = on_runtime(move || async move { record(&dir).await });
@@ -206,16 +311,28 @@ fn a_recording_is_not_a_replay() {
         sorted
     });
     let dir = tmp.path().to_path_buf();
-    let replayed = on_runtime(move || async move { replay(&dir).await });
+    let replayed = on_runtime(move || async move { replay(&dir, report_text).await });
     assert!(replayed.is_ok(), "the second run: {replayed:?}");
+    let mut text_diffs = Vec::new();
     for name in listed.iter().map(String::as_str).chain([MANIFEST]) {
         let recorded = std::fs::read(tmp.path().join(name)).unwrap();
         let committed = std::fs::read(wire_dir().join(name)).unwrap_or_default();
+        if recorded != committed && report_text && name != MANIFEST {
+            if let Some(line) = recording_difference(name, &committed, &recorded) {
+                text_diffs.push(line);
+                continue;
+            }
+        }
         assert!(
             recorded == committed,
             "{name}: a fresh recording differs from tests/wire (WIRE_RECORD=1, then replay)"
         );
     }
+    print_text_diffs(&text_diffs);
+    println!(
+        "fresh recording: {} text differences reported",
+        text_diffs.len()
+    );
 }
 
 /// `WIRE_RECORD=1` records, unset replays, and any other value is refused
@@ -236,6 +353,210 @@ fn only_one_word_records() {
             "{message}"
         );
     }
+}
+
+/// The report word is explicit, including when an empty value was set.
+#[test]
+fn only_one_word_reports_text_differences() {
+    assert!(!text_diff_word(None, false));
+    assert!(text_diff_word(Some("report"), false));
+    for other in ["", "1", "true", "REPORT"] {
+        let payload = std::panic::catch_unwind(|| text_diff_word(Some(other), false))
+            .expect_err("only `report` may opt in");
+        let message = payload.downcast_ref::<String>().unwrap();
+        assert!(message.contains(&format!("WIRE_TEXT_DIFF is `{other}`")));
+    }
+}
+
+/// Refuse the two knobs together before a recording can change any file.
+#[test]
+fn a_recording_never_reports_text_differences() {
+    assert!(!text_diff_word(None, true));
+    let payload = std::panic::catch_unwind(|| text_diff_word(Some("report"), true))
+        .expect_err("a recording is never lenient");
+    let message = payload.downcast_ref::<&str>().unwrap();
+    assert!(message.contains("WIRE_TEXT_DIFF=report"));
+    assert!(message.contains("WIRE_RECORD=1"));
+}
+
+const TEXT_FIXTURE: &str = "066-arc-callback.badJson.json";
+
+/// Each planted response lives in a copy; the committed corpus is untouched.
+fn plant_response(change: impl FnOnce(&mut Resp)) -> (tempfile::TempDir, Resp) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    for entry in std::fs::read_dir(wire_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), tmp.path().join(entry.file_name())).unwrap();
+    }
+    let path = tmp.path().join(TEXT_FIXTURE);
+    let mut fixture: Fixture = read_fixture(&path);
+    let original = fixture.response.clone();
+    change(&mut fixture.response);
+    std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+    (tmp, original)
+}
+
+fn replay_copy(dir: &Path, report_text: bool) -> Result<Replay, String> {
+    let dir = dir.to_path_buf();
+    on_runtime(move || async move { replay(&dir, report_text).await })
+}
+
+fn assert_response_difference(refused: &str, detail: &str) {
+    assert!(refused.contains(&format!(
+        "{TEXT_FIXTURE}: POST /arc-callback answered differently"
+    )));
+    assert!(refused.contains(detail));
+    assert!(!refused.contains(&format!("TEXT-DIFF: {TEXT_FIXTURE} ")));
+}
+
+/// A real replay refuses a changed message by default and reports exactly
+/// one JSON-quoted line for that fixture under the gate's word.
+#[test]
+fn a_message_only_difference_fails_strict_and_reports_under_the_knob() {
+    let planted = "planted \"words\"\nsecond line";
+    let (tmp, original) = plant_response(|r| {
+        r.json
+            .as_mut()
+            .unwrap()
+            .set_pointer("/message", J::Str(planted.to_string()));
+    });
+    let strict = replay_copy(tmp.path(), false).unwrap_err();
+    assert!(strict.contains(&format!(
+        "{TEXT_FIXTURE}: POST /arc-callback answered differently"
+    )));
+    assert!(!strict.contains("TEXT-DIFF:"));
+    let report = replay_copy(tmp.path(), true).unwrap();
+    let expected = format!(
+        "TEXT-DIFF: {TEXT_FIXTURE} \"planted \\\"words\\\"\\nsecond line\" \"EOF while parsing a value at line 1 column 8\""
+    );
+    let lines: Vec<_> = report
+        .text_diffs
+        .iter()
+        .filter(|line| line.starts_with(&format!("TEXT-DIFF: {TEXT_FIXTURE} ")))
+        .collect();
+    assert_eq!(lines, vec![&expected]);
+    assert!(report.summary.contains(&format!(
+        "{} text differences reported",
+        report.text_diffs.len()
+    )));
+    assert_eq!(
+        original.json.unwrap().get("message").unwrap().as_str(),
+        Some("EOF while parsing a value at line 1 column 8")
+    );
+}
+
+/// A changed refusal class remains a failure even in the gate's mode.
+#[test]
+fn a_code_difference_fails_under_the_knob() {
+    let (tmp, _) = plant_response(|r| {
+        r.json
+            .as_mut()
+            .unwrap()
+            .set_pointer("/code", J::Str("OTHER".to_string()));
+    });
+    let refused = replay_copy(tmp.path(), true).unwrap_err();
+    assert_response_difference(&refused, "OTHER");
+}
+
+/// A message change never masks another changed field or its line diff.
+#[test]
+fn a_message_and_another_field_difference_fail_under_the_knob() {
+    let (tmp, _) = plant_response(|r| {
+        r.json
+            .as_mut()
+            .unwrap()
+            .set_pointer("/message", J::Str("changed".to_string()));
+        r.headers.insert("retry-after".to_string(), "9".to_string());
+    });
+    let refused = replay_copy(tmp.path(), true).unwrap_err();
+    assert_response_difference(&refused, "retry-after");
+}
+
+/// Refusal text is the only exception: status, headers, JSON types, nested
+/// values and key order, text bodies and successful bodies stay strict.
+#[test]
+fn text_reporting_keeps_every_other_response_detail() {
+    let want: Fixture = read_fixture(&wire_dir().join("083-createAction.inputNotOffered.json"));
+    let mut text = want.response.clone();
+    text.json
+        .as_mut()
+        .unwrap()
+        .set_pointer("/message", J::Str("changed".to_string()));
+    assert!(message_difference(&want.response, &text).is_some());
+    let mut variants = Vec::new();
+    let mut status = text.clone();
+    status.status = 409;
+    variants.push(status);
+    let mut headers = text.clone();
+    headers.headers.clear();
+    variants.push(headers);
+    for (pointer, value) in [
+        ("/code", J::Null),
+        ("/message", J::Null),
+        ("/held/0/reason", J::Str("changed".to_string())),
+    ] {
+        let mut changed = text.clone();
+        changed.json.as_mut().unwrap().set_pointer(pointer, value);
+        variants.push(changed);
+    }
+    let mut reordered = text.clone();
+    let J::Obj(fields) = reordered.json.as_mut().unwrap() else {
+        unreachable!()
+    };
+    fields.reverse();
+    variants.push(reordered);
+    let mut raw = text.clone();
+    raw.text = Some("changed".to_string());
+    variants.push(raw);
+    for changed in variants {
+        assert!(message_difference(&want.response, &changed).is_none());
+    }
+    let mut success = want.response.clone();
+    success.status = 200;
+    text.status = 200;
+    assert!(message_difference(&success, &text).is_none());
+
+    let mut detail: Fixture =
+        read_fixture(&wire_dir().join("103-internalizeAction.badUnlock.json"));
+    let expected = detail.response.clone();
+    let message = expected
+        .json
+        .as_ref()
+        .unwrap()
+        .get("message")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    for changed in [
+        message.replace("offset 176", "offset 177"),
+        message.replace("OP_EQUALVERIFY", "OP_EQUAL"),
+    ] {
+        detail
+            .response
+            .json
+            .as_mut()
+            .unwrap()
+            .set_pointer("/message", J::Str(changed));
+        assert!(message_difference(&expected, &detail.response).is_none());
+    }
+}
+
+/// Fresh recording leniency cannot hide a changed request, envelope,
+/// whitespace, or manifest. Only the quoted response message may move.
+#[test]
+fn a_recording_reports_only_the_message_bytes() {
+    let path = wire_dir().join(TEXT_FIXTURE);
+    let want = std::fs::read_to_string(path).unwrap();
+    let got = want.replace("EOF while parsing a value at line 1 column 8", "changed");
+    assert_eq!(recording_difference(TEXT_FIXTURE, want.as_bytes(), got.as_bytes()), Some(format!("TEXT-DIFF: {TEXT_FIXTURE} \"EOF while parsing a value at line 1 column 8\" \"changed\"")));
+    for changed in [
+        format!("{got}\n"),
+        got.replace("POST", "PUT"),
+        got.replace("BAD_JSON", "OTHER"),
+    ] {
+        assert!(recording_difference(TEXT_FIXTURE, want.as_bytes(), changed.as_bytes()).is_none());
+    }
+    assert!(recording_difference(MANIFEST, b"{}", b"{\n}").is_none());
 }
 
 /// A fixture missing from disk, a file not in the manifest, and a file
@@ -283,7 +604,7 @@ fn the_manifest_judges_the_set_on_disk() {
 
     // The replay refuses the set before any world is built, naming each.
     let at = dir.to_path_buf();
-    let refused = on_runtime(move || async move { replay(&at).await }).unwrap_err();
+    let refused = on_runtime(move || async move { replay(&at, false).await }).unwrap_err();
     for name in ["002-b.json", "003-c.json", "notes.txt"] {
         assert!(refused.contains(name), "{refused}");
     }
@@ -327,7 +648,7 @@ fn a_fixture_of_an_unknown_world_fails_the_replay() {
     .unwrap();
     let dir = tmp.path().to_path_buf();
     let outcome =
-        std::panic::catch_unwind(|| on_runtime(move || async move { replay(&dir).await }));
+        std::panic::catch_unwind(|| on_runtime(move || async move { replay(&dir, false).await }));
     let message = match outcome {
         Err(payload) => payload
             .downcast_ref::<String>()
