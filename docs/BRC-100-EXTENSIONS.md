@@ -12,7 +12,6 @@ Only JSON keys are judged. The transport (HTTP methods, headers, status codes, t
 
 The `internalizeAction` basket insertion's `customInstructions` bound is the reference's rule, not an extension: at `edf6e03`, `validateInternalizeActionArgs` limits it to 1,000 UTF-8 bytes and throws `WERR_INVALID_PARAMETER`. Since 0.18.2, [fixture 123](../tests/wire/123-internalizeAction.customInstructionsBound.json) records 1,001 bytes refused as HTTP 400 `VALIDATION_ERROR`, with `customInstructions: no more than 1000 length.` and the measured byte count. The served-handler tests also check that nothing is stored. `createAction` output instructions remain unbounded. No table row changes.
 
-
 The five paging calls' `limit` bounds are BRC-100's own: 1 to 10000, with 10
 when absent (`wallet/0100.md:277,808,925,1291,1386,1429` at `5119a9b`). The
 JSON door checks supplied values before the toolbox (#198), returning 400
@@ -21,9 +20,9 @@ and the supplied value. The four unsigned offsets already have their type's
 0 to 4294967295 bound (`:274,809,1292,1387,1430`); absent paging fields still
 reach the toolbox unchanged. `signAction.spends.*.sequenceNumber` is already
 bounded by its `u32` type (`:728,744`), so its handler is unchanged. These
-constraints add no JSON key and no extension-table row. The separately
-requested negative `listOutputs.offset` refusal is recorded under deviations
-below because this pin explicitly permits negative offsets.
+constraints add no JSON key and no extension-table row. Negative
+`listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
+(`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
 ## Extensions: 41 rows
 
@@ -217,21 +216,6 @@ What BRC-100 leaves to the realisation (line 298; its ABI, lines 1533 on, is a b
 
 ## Deviations on the owner's word
 
-The #198 lane brief of 2026-10-26 directs the JSON door to refuse a negative
-`listOutputs.offset`, with `Validation error: offset: at least 0 length.
-(offset 0 to 4294967295, got <n>)`. This is a requested CLI policy difference:
-BRC-100 at `5119a9b` explicitly describes negative offsets as reverse ordering
-(`wallet/0100.md:911`) and declares `offset?: number` (`:926`), while the
-reference validator at `edf6e03` supplies no minimum
-(`packages/sdk/src/wallet/validationHelpers.ts:1648`). The pinned toolbox
-already implements the reverse ordering
-(`src/storage/sqlx/storage_sqlx/list_outputs.rs:18-23`, 0.14.0-beta.1).
-Measured at the served door, `offset: -1` moves from beta's 200 to the 400
-recorded in fixture 134. The instruction's claim that this is BRC-100's own
-nonnegative bound does not match the pinned source; it is not attributed to
-that source here. No extension-table row is added because the keys stay the
-same. The `i32` type's upper-range refusal is unchanged; the existing
-bsv-rs #293 and toolbox #226 follow-ups require the same source distinction.
-
+None.
 
 The rule: we stay with BRC-100 at the pin. A change to a BRC-100 shape (a field renamed, moved, retyped or dropped, beyond adding a listed extension) is proposed as a named deviation with its measurement (what it saves or fixes, measured) and lands only on the owner's word, recorded here with the date of the word, the measurement and the PR. An entry above in "Extensions" or "Gaps" that is a disagreement with the BRC is not a deviation: it is a defect or a choice awaiting its decision (#122), recorded as served.

@@ -394,7 +394,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
 
-`listActions`, `listOutputs`, `listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` require each supplied `limit` to be in `1..=10000`, and `listOutputs` also refuses a negative `offset`; each violation is `400 VALIDATION_ERROR` before the toolbox, while omitted paging fields remain omitted.
+`listActions`, `listOutputs`, `listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` require each supplied `limit` to be in `1..=10000`; each violation is `400 VALIDATION_ERROR` before the toolbox, while omitted paging fields remain omitted. A negative `listOutputs.offset` passes through unchanged for BRC-100's newest-first paging (`-1` starts at the newest output).
 
 `abortAction` is refused with `409 CONFLICT` once a broadcaster took the
 transaction, including an `unfail` request or a request holding a proof
