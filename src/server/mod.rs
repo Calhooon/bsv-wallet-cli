@@ -51,8 +51,8 @@ pub struct TlsConfig {
 /// Server configuration (auth, TLS, etc.)
 #[derive(Clone)]
 pub struct ServerConfig {
-    /// Optional bearer token. When set, all requests must include
-    /// `Authorization: Bearer <token>`. When None, auth is disabled.
+    /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
+    /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
@@ -243,7 +243,6 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let gate = crate::spend_gate::GateOptions::from_config(&config.settings);
 
     Router::new()
-        // Existing 5 endpoints
         // Status endpoints accept BOTH GET and POST: @bsv/sdk's HTTPWalletJSON substrate
         // POSTs every method (incl. these), while curl/CLI clients GET them. Supporting
         // both makes the server wire-compatible with browser WalletClient connections.
@@ -335,13 +334,14 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         // ARC/Arcade proof-delivery webhook (callback-token auth, exempt from
         // wallet bearer auth — see auth_middleware).
         .route("/arc-callback", post(arc_callback))
-        // The last layer added runs first: body limit, trace, the
-        // extensions, then auth BEFORE the body is read (an uncapped BEEF
-        // door is open only to the wallet's own caller), then the body.
+        // The last layer added runs first: body limit, trace, extensions, CORS
+        // (it answers each OPTIONS, a preflight carries no bearer, and rides a
+        // 401 so a browser reads it: #138), auth BEFORE the body is read (an
+        // uncapped BEEF door is open only to the wallet's own caller), the body.
         .layer(middleware::from_fn_with_state(wallet.clone(), heal_owed))
-        .layer(cors)
         .layer(middleware::from_fn(lenient_json_body))
         .layer(middleware::from_fn(auth_middleware))
+        .layer(cors)
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
