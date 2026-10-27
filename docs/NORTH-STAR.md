@@ -98,7 +98,7 @@ A lane takes the highest open line it can work; **every lane brief cites the que
 - Q5: #126 ratchet: a unit test for `check()` against a base record; the base comparison has never executed; waits on nothing.
 - Q6: #127 ratchet: a tool fingerprint in the record; a PR that edits the tool changes what is counted unseen; waits on Q5 (the same function, landed in turn).
 - Q7: #132 ratchet `--record` refuses a toolchain other than the pinned one; a re-record under the wrong toolchain is written today; waits on Q6 (the same file, landed in turn).
-- Q8: #124 raise `src/explorers.rs`'s mutation floor to 80; one of four floors below 80 since the first full night (its row in section 4; the others are #173, #174, #175); the night on `beta` measured it at 74.2 (`docs/scoreboard/mutants.json`); waits on nothing.
+- Q8: #124 raise `src/explorers.rs`'s mutation floor to 80; its ask is met: run 40473522272, the last scheduled Nightly, measured it at 82.6 and its floor is 82 (`docs/scoreboard/mutants.json`, its row in section 4), and PR 308 closes it. One floor stays below 80: `src/tracker_host.rs` at 75 (75.4 measured) against #175's ask of 80; #173 and #174 are met (86 and 100); waits on nothing.
 - Q9: #119 the e2e harness's `relinquishOutput` body shape; the harness sends a body the server answers 422; waits on #110 (its exit test is a consumers' fixture).
 - Q10: #122 the places the served shape disagrees with BRC-100 or itself; each a recorded decision; waits on Q2, and each shape change on the owner's word.
 - Q11: #117 the refusal shape `HTTPWalletJSON` expects; Zanaadu and teragunv2 read our refusals as transport errors; waits on Q2 and the owner's word (the wire contract).

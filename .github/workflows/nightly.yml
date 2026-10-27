@@ -278,9 +278,13 @@ jobs:
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
       # header). The measured night: run 40473522272, the last scheduled one
-      # (#303), every mutant judged on beta at 2f8e6cf (2026-10-27,
-      # cargo-mutants 27.1.0, no timeout; docs/scoreboard/mutants.json). Each
-      # floor is that score rounded down. One line a file:
+      # (#303), on beta at 2f8e6cf (2026-10-27, cargo-mutants 27.1.0, no
+      # mutant timed out; docs/scoreboard/mutants.json). It judged 1,062 of
+      # 1,168 mutants: shards 18 and 19 checked out 0bd48af and their
+      # baselines timed out (#310), so 106 of handlers.rs's second copy (lines
+      # 650 to 1248) were never judged; the first copy judged the same 106 (95
+      # unviable, 11 caught), so its score stands. Each floor is the record's
+      # score rounded down. One line a file:
       # - spend_gate.rs: 90.7 measured, floor 90.
       # - tracker_host.rs: 75.4 measured, floor 75; #175 raises it to 80.
       # - server/handlers.rs: 100.0 measured, floor 100 (#174).

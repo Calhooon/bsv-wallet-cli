@@ -41,16 +41,20 @@ A target that stops (a panic, a failed property, a timeout, out of memory) and l
 3. **The first measurement** (`--base`). A provisional floor at the base whose file the tree's record measures may fall once, and then to exactly its score rounded down, never lower (and by 1 never higher), with a notice naming the file and both floors.
 4. **The provisional notice.** A floor with no measurement is allowed as provisional and held to no score; every `--check` prints a notice naming it.
 
-The first full night on `beta` (run 40074725488, dispatched 2026-10-24 at `93f160f`, cargo-mutants 27.1.0, no timeout; the record is [`docs/scoreboard/mutants.json`](scoreboard/mutants.json)):
+The last scheduled night (run 40473522272, on `beta` at `2f8e6cf` on 2026-10-27, cargo-mutants 27.1.0, no mutant timed out; the schedule is gone since #303; the record is [`docs/scoreboard/mutants.json`](scoreboard/mutants.json)):
 
 | file | caught | timeout | missed | unviable | score | floor | raised by |
 |---|---:|---:|---:|---:|---:|---:|---|
-| `src/spend_gate.rs` | 169 | 0 | 25 | 7 | 87.1 | 80 | stays 80: one night is not a trend; 85 when a second night holds 87.1 |
-| `src/explorers.rs` | 46 | 0 | 16 | 16 | 74.2 | 69 | #124 |
-| `src/broadcast_verify.rs` | 148 | 0 | 48 | 36 | 75.5 | 75 | #173 |
-| `src/server/handlers.rs` | 92 | 0 | 32 | 252 | 74.2 | 74 | #174 |
-| `src/tracker_host.rs` | 170 | 0 | 64 | 38 | 72.6 | 72 | #175 |
+| `src/spend_gate.rs` | 225 | 0 | 23 | 13 | 90.7 | 90 | the second night: 87.1, then 90.7 |
+| `src/explorers.rs` | 38 | 0 | 8 | 14 | 82.6 | 82 | #124 (asked 80, met) |
+| `src/broadcast_verify.rs` | 144 | 0 | 22 | 34 | 86.7 | 86 | #173 (asked 80, met) |
+| `src/server/handlers.rs` | 79 | 0 | 0 | 143 | 100.0 | 100 | #174 (asked 80, met) |
+| `src/tracker_host.rs` | 202 | 0 | 66 | 51 | 75.4 | 75 | #175 (asks 80) |
 
-The floors of `broadcast_verify.rs`, `handlers.rs` and `tracker_host.rs` were provisional (80, never measured) until that night, which failed on them. #75's lane run (2026-10-23, 281 mutants: 214 caught, 46 missed, 21 unviable, no timeout) set `explorers.rs` at 69 from its 69.7. The scoreboard's measured column (`docs/NORTH-STAR.md`) is rendered from the record; a later night is recorded there by the captain, in the shape `tools/scoreboard`'s header defines.
+The night judged 1,062 of its 1,168 mutants. Shards 18 and 19 checked out `0bd48af`, beta having moved under the run, and both unmutated baselines ran past the 300 s test limit (136 s and 139 s of build, then 300 s of test; #310), so their 106 mutants were never judged ("Found 59 mutants to test" and "Found 47 mutants to test" in their logs). They are the tail of `handlers.rs`'s second copy, lines 650 to 1248: the file is compiled into the library and the binary, so cargo-mutants mutates it twice, and the 58 second-copy mutants that ran are name for name the head of the first copy, with the same outcomes. The first copy judged the same 106 (95 unviable, 11 caught), so `handlers.rs`'s score stands: a full run would most likely read 90 caught, 0 missed, 238 unviable, still 100.0. The record keeps the counts as judged.
+
+`spend_gate.rs` stayed at 80 after the first night (87.1), since one night is not a trend; two nights have now held it above 85 (87.1, then 90.7), and its floor rises to the second night's 90.
+
+The first full night (run 40074725488, dispatched 2026-10-24 at `93f160f`) measured `spend_gate.rs` 87.1, `explorers.rs` 74.2, `broadcast_verify.rs` 75.5, `handlers.rs` 74.2 and `tracker_host.rs` 72.6, and set the floors at 80, 69, 75, 74 and 72. The floors of `broadcast_verify.rs`, `handlers.rs` and `tracker_host.rs` were provisional (80, never measured) until that night, which failed on them. #75's lane run (2026-10-23, 281 mutants: 214 caught, 46 missed, 21 unviable, no timeout) set `explorers.rs` at 69 from its 69.7. The scoreboard's measured column (`docs/NORTH-STAR.md`) is rendered from the record; a later measurement is recorded there by the captain, in the shape `tools/scoreboard`'s header defines, from a dispatched run's own artifacts.
 
 A surviving mutant is a place a lane could change the code and no test would notice. On a hot path it becomes an issue (or a line on the file's raise-the-floor issue): the mutant's name and diff from the artifact, and the test that would kill it. The fix is a test, never an exclusion; a mutant that is equivalent (no behaviour can tell it apart) is named in the issue with the reason, and only then skipped by an `exclude_re` line in `.cargo/mutants.toml` that names that issue.
