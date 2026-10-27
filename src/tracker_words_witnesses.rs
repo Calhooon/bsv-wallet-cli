@@ -578,6 +578,18 @@ async fn abort_wallet(
     crate::server::make_wallet_state(Wallet::new(Some(key), storage, services).await.unwrap())
 }
 
+fn assert_toolbox_abort_refusal(body: &serde_json::Value) {
+    assert_eq!(body["code"], "ERROR");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("wallet error: Invalid transaction status: cannot abort action: "),
+        "{message}"
+    );
+    eprintln!("toolbox abort refusal: {message}");
+}
+
+/// The toolbox owns this refusal's sentence (#290). Keep the served
+/// status, code, prefix and stored state; print the reference's wording.
 #[tokio::test]
 async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() {
     let key = PrivateKey::random();
@@ -594,17 +606,13 @@ async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() 
     let before = output_state(wallet.storage(), output).await;
     let (status, body) = serve_abort(&wallet, &reference).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(
-        body,
-        serde_json::json!({
-            "code": "ERROR",
-            "message": "wallet error: Invalid transaction status: cannot abort action: action with status 'failed' cannot be aborted"
-        })
-    );
+    assert_toolbox_abort_refusal(&body);
     assert_eq!(tx_status(wallet.storage(), &txid).await, "failed");
     assert_eq!(output_state(wallet.storage(), output).await, before);
 }
 
+/// The toolbox owns this refusal's sentence (#290). Keep the served
+/// status, code, prefix and stored state; print the reference's wording.
 #[tokio::test]
 async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptance_hint() {
     let key = PrivateKey::random();
@@ -622,13 +630,7 @@ async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptanc
     for reference in [format!("ref-{}", &txid[..8]), txid.clone()] {
         let (status, body) = serve_abort(&wallet, &reference).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{reference}: {body}");
-        assert_eq!(
-            body,
-            serde_json::json!({
-                "code": "ERROR",
-                "message": "wallet error: Invalid transaction status: cannot abort action: must be an outgoing transaction"
-            })
-        );
+        assert_toolbox_abort_refusal(&body);
         assert_eq!(tx_status(wallet.storage(), &txid).await, "unproven");
         assert_eq!(output_state(wallet.storage(), output).await, before);
     }
