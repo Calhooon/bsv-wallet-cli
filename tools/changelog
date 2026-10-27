@@ -23,8 +23,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 FRAGMENT = re.compile(r"([0-9]+)(?:-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)?\.md")
-HEADING = re.compile(r"(?m)^ {0,3}#{1,6}(?:[ \t]+|$)|^\s*[-*+]\s+#{1,6}\s")
-SETEXT = re.compile(r"(?m)^[^\r\n]*\S[^\r\n]*\r?\n {0,3}(?:=+|-{2,})\s*$")
+CONTAINER = re.compile(r"^ {0,3}(?:>[ \t]?|[-*+][ \t]+|[0-9]{1,9}[.)][ \t]+)")
+HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
+SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 NUMBER = r"(?:0|[1-9][0-9]*)"
 PRE = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}(?:-{PRE}(?:\.{PRE})*)?"
@@ -41,6 +42,17 @@ def read_utf8(path):
         return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise Refused(f"{path.relative_to(ROOT)}: cannot read UTF-8 ({error})") from error
+
+
+def has_heading(content):
+    previous = ""
+    for line in content.splitlines():
+        while match := CONTAINER.match(line):
+            line = line[match.end():]
+        if HEADING.match(line) or (previous.strip() and SETEXT.fullmatch(line)):
+            return True
+        previous = line
+    return False
 
 
 def fragments():
@@ -62,16 +74,14 @@ def fragments():
         content = read_utf8(path)
         if not content.strip():
             raise Refused(f"{name}: empty fragment")
-        if HEADING.search(content) or SETEXT.search(content):
+        if has_heading(content):
             raise Refused(f"{name}: a fragment must not contain a heading")
         entries.append((int(match[1]), path, content))
     return sorted(entries, key=lambda entry: (entry[0], entry[1].name))
 
 
-def diff_paths(base, added=False):
+def diff_paths(base):
     command = ["git", "diff", "--no-renames", "--raw", "--no-abbrev", "-z"]
-    if added:
-        command.append("--diff-filter=A")
     command += [f"{base}...HEAD", "--"]
     try:
         result = subprocess.run(command, cwd=ROOT, capture_output=True)
@@ -92,18 +102,48 @@ def diff_paths(base, added=False):
     return paths
 
 
+def fragment_blobs(revision):
+    try:
+        result = subprocess.run(["git", "ls-tree", "-r", "-z", revision, "--", "changelog.d/"],
+                                cwd=ROOT, capture_output=True)
+    except OSError as error:
+        print(f"changelog: cannot read git tree for {revision}: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    if result.returncode:
+        why = result.stderr.decode("utf-8", errors="replace").strip()
+        print(f"changelog: cannot read git tree for {revision}: {why}", file=sys.stderr)
+        raise SystemExit(2)
+    blobs = {}
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, name = record.split(b"\t", 1)
+        _, kind, blob = metadata.split()
+        path = name.decode("utf-8", errors="surrogateescape")
+        if kind == b"blob" and FRAGMENT.fullmatch(path[len("changelog.d/"):]):
+            blobs[path] = blob
+    return blobs
+
+
 def check(base, allow_missing):
     changed = diff_paths(base)
-    added = diff_paths(base, added=True)
     entries = fragments()  # Even the label cannot excuse a malformed fragment.
     watched = sorted(p for p in changed if p == "Cargo.toml" or p.startswith(WATCHED))
-    # A byte-identical fragment move is not a new entry. An edited replacement
-    # is, even when git's similarity heuristic would otherwise call it a rename.
-    removed = {old for path, (old, _, status) in changed.items()
-               if status == b"D" and path.startswith("changelog.d/")
-               and FRAGMENT.fullmatch(path[len("changelog.d/"):])}
-    present = {path.relative_to(ROOT).as_posix() for _, path, _ in entries}
-    present = {path for path in present.intersection(added) if added[path][1] not in removed}
+    base_blobs = fragment_blobs(base)
+    head_blobs = fragment_blobs("HEAD")
+    originals = {}
+    for path, blob in base_blobs.items():
+        originals.setdefault(blob, path)
+    # Presence in the trees decides additions, independent of rename/copy detection.
+    present = set()
+    for _, path, _ in entries:
+        name = path.relative_to(ROOT).as_posix()
+        if name not in head_blobs or name in base_blobs:
+            continue
+        if original := originals.get(head_blobs[name]):
+            print(f"changelog: {name} repeats {original} byte for byte; write the change's own entry")
+        else:
+            present.add(name)
     if not watched:
         print("changelog: no watched paths changed")
     elif present:

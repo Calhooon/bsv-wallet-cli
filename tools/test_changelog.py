@@ -183,6 +183,34 @@ class WatchedChanges(Case):
         self.assertIn("R", self.tree.git("diff", "--name-status", self.tree.base))
         self.check(0, "added fragment: changelog.d/195.md")
 
+    def copy_fragment(self, content, renames="true"):
+        self.tree.git("config", "diff.renames", renames)
+        self.tree.write("changelog.d/10.md", "- Change A.\n")
+        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.write("changelog.d/11.md", content)
+        self.tree.write("src/lib.rs", "// changed\n")
+        self.tree.commit()
+
+    def test_identical_fragment_copy_does_not_count_as_a_new_entry(self):
+        self.copy_fragment("- Change A.\n")
+        self.assertIn("C100\tchangelog.d/10.md\tchangelog.d/11.md",
+                      self.tree.git("diff", "--name-status", "-C", "-C", self.tree.base))
+        out = self.check(1, "changelog.d/11.md repeats changelog.d/10.md byte for byte; "
+                         "write the change's own entry")
+        self.assertIn("src/lib.rs", out)
+
+    def test_fragment_copy_with_one_byte_changed_counts_as_a_new_entry(self):
+        self.copy_fragment("- Change B.\n")
+        self.check(0, "added fragment: changelog.d/11.md")
+
+    def test_identical_fragment_copy_does_not_count_with_copy_detection_enabled(self):
+        self.copy_fragment("- Change A.\n", renames="copies")
+        self.assertIn("C100\tchangelog.d/10.md\tchangelog.d/11.md",
+                      self.tree.git("diff", "--name-status", "-C", "-C", self.tree.base))
+        out = self.check(1, "changelog.d/11.md repeats changelog.d/10.md byte for byte; "
+                         "write the change's own entry")
+        self.assertIn("src/lib.rs", out)
+
     def test_renamed_fragment_is_not_new_with_rename_detection_enabled(self):
         self.tree.git("config", "diff.renames", "true")
         self.tree.write("changelog.d/100.md", "- An existing change.\n")
@@ -191,7 +219,9 @@ class WatchedChanges(Case):
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
         self.assertIn("R100", self.tree.git("diff", "--name-status", self.tree.base))
-        self.check(1, "src/lib.rs")
+        out = self.check(1, "changelog.d/195.md repeats changelog.d/100.md byte for byte; "
+                         "write the change's own entry")
+        self.assertIn("src/lib.rs", out)
 
     def test_an_unknown_base_is_exit_2_even_with_the_label(self):
         self.tree.commit()
@@ -377,11 +407,37 @@ for case, name, content in (
         ("indented_heading", "195.md", "   ### Release\n"),
         ("setext_dash_heading", "195.md", "Oops\n---\n"),
         ("setext_equals_heading", "195.md", "Oops\n===\n"),
+        ("single_dash_setext_heading", "195.md", "Foo\n-\n"),
+        ("single_equals_setext_heading", "195.md", "Foo\n=\n"),
         ("list_item_heading", "195.md", "- ## Release\n"),
         ("star_list_item_heading", "195.md", "  * ### Release\n"),
         ("plus_list_item_heading", "195.md", "+ # Release\n"),
+        ("ordered_dot_heading", "195.md", "1. # x\n"),
+        ("ordered_paren_heading", "195.md", "1) # x\n"),
+        ("blockquote_heading", "195.md", "> # x\n"),
+        ("blockquote_setext_heading", "195.md", "> Foo\n> ---\n"),
+        ("nested_list_heading", "195.md", "- - # x\n"),
+        ("empty_list_heading_at_eof", "195.md", "- #"),
         ("non_utf8", "195.md", b"- Invalid \xff\n")):
     setattr(Malformed, f"test_{case}_is_refused_by_name", malformed_case(name, content))
+
+
+def allowed_fragment_case(content):
+    def test(self):
+        self.tree.write("changelog.d/195.md", content)
+        self.tree.commit()
+        self.result(0, "changelog.d/195.md", "--list")
+        self.assemble()
+        self.assertIn(content, (self.tree.root / "CHANGELOG.md").read_text())
+    return test
+
+
+for case, content in (("stars_rule_after_text", "Foo\n***\n"),
+                      ("ordinary_bold_bullet", "- **bold**: text\n"),
+                      ("negative_number_in_prose", "-1 sats\n"),
+                      ("decimal_number_in_prose", "1.5 BSV\n"),
+                      ("url_fragment", "https://example.invalid/path#fragment\n")):
+    setattr(Assembly, f"test_{case}_is_allowed", allowed_fragment_case(content))
 
 
 def invalid_version_case(version):
