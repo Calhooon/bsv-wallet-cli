@@ -61,6 +61,21 @@ paths and URLs your own:
 `RELAY_URL` and `RELAY_ADMIN_TOKEN` are optional; without `RELAY_URL` the
 three relay tools answer that no relay is named and ask nothing.
 
+The variables are read once at start. `bsv-wallet-mcp --config` prints each
+with its value and its source (`env` or `default`), and exits:
+
+| Variable | Default | |
+|---|---|---|
+| `WALLET_URL` | `http://localhost:3322` | the wallet's HTTP server; an http or https URL |
+| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank |
+| `RELAY_URL` | none | the callback relay; unset or empty is no relay |
+| `RELAY_ADMIN_TOKEN` | none | the relay's admin bearer, printed `<set>` (or `empty`) |
+| `RUST_LOG` | `error` | the log filter, to stderr; `bsv_wallet_mcp=info` is always added |
+
+A URL's userinfo and query print as `<set>`. A malformed value is refused at
+start, by name, every one together; `--config` still prints, marks the
+refused rows and exits 1.
+
 ## Use and configuration
 
 The CLI offers initialization, address and balance reads, transaction creation,
