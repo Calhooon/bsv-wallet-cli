@@ -424,9 +424,7 @@ pub async fn create_action(
             .send_with_results
             .and_then(|r| serde_json::to_value(r).ok()),
         signable_transaction: result.signable_transaction.map(|st| {
-            // The SDK stores reference as Vec<u8> from String.into_bytes().
-            // Reverse that to get the original reference string that
-            // signAction/abortAction can look up in the pending tx cache.
+            // BRC-100's Base64String is the storage handle's twelve bytes.
             let reference = crate::spend_gate::reference_string(&st.reference);
             McSignableTransaction {
                 tx: st.tx,

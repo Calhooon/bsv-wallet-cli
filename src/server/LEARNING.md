@@ -1,7 +1,7 @@
 # Learning — server
 
 ## Lessons Learned
-- **[2026-02-24]** The `signableTransaction.reference` field caused a nasty double-encoding bug. The SDK stores it as `Vec<u8>` via `String.into_bytes()`, and our hex serde would re-encode the bytes. Fix: `String::from_utf8(st.reference)` in `handlers.rs:293` reverses `.into_bytes()` to recover the original cache key. Without this, `signAction`/`abortAction` silently fail to find the pending transaction.
+- **[2026-10-28, #277] Signable reference:** toolbox 0.14.0-beta.2 holds twelve decoded bytes. BRC-100 serves their base64 text through `spend_gate::reference_string`; `signAction` and `abortAction` receive that text unchanged. The beta.1 UTF-8 recovery is retired (toolbox #285, bsv-rs #105).
 - **[2026-02-24]** `inputs: Some(vec![])` is not the same as `inputs: None` in `createAction`. Empty vec means "auto-select UTXOs for me"; `None` may trigger different SDK behavior. This distinction is invisible in JSON but critical for correct wallet operation.
 - **[2026-02-24]** Batches 4-6 (transaction, certificate, discovery endpoints) pass SDK arg types directly through serde — no `Mc*` wrapper structs needed because those SDK types already derive `Deserialize`. Batches 1-3 (crypto, core) require manual `Mc*` wrappers in `types.rs` because the SDK types lack serde derives. Before adding a new endpoint, check if the SDK type has serde — it determines your entire approach.
 
