@@ -194,7 +194,7 @@ The worlds use the toolbox's real `Services`, pointed at the stubs, not its `Moc
 
 ## The beta.2 pin (#277)
 
-The corpus now has 157 rows. Bsv-rs #105 flattens key-linkage results and
+The corpus now has 160 rows. Bsv-rs #105 flattens key-linkage results and
 certificate list entries, spells the certificate type `type`, and carries
 key-linkage bytes as arrays. The positive direct-acquisition row uses a
 32-byte type and serial number with a canonical DER signature; the earlier
@@ -215,6 +215,14 @@ bound as 200: this path does not invoke the binary writer or decrypt fields
 (toolbox #374). Row 157 refuses a 73-byte non-DER signature at its argument
 gate. `tests/certificate_pin.rs` separately checks the certificate type's
 1 MiB field, 16 MiB frame and 72-byte signature bounds and verify-false.
+
+Rows 158 to 160 close finding 3: a stored encrypted certificate field and
+master key, `proveCertificate` with `fieldsToReveal: []` returning an empty
+keyring, and a 31-byte serial refused before recovery (toolbox #240).
+The serial fixture reaches the public argument validator (#311), which
+already enforces exactly 32 bytes before the helper. The empty disclosure
+previously released all stored fields. The new rows preserve every older
+fixture's number and are recorded with their reasons in the manifest.
 
 Discovery rows 053, 054 and 137 to 140 retain their bytes and carry the reason
 "toolbox #388 (CLI #331)" in the manifest. Both successful discovery calls

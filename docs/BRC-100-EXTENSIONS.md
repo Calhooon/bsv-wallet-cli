@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 13 rows
+## Extensions: 19 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -40,9 +40,15 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `held.ageMinutes` | The coin's age in minutes. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `held.reason` | The rule that holds it. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `coin` | The coin a 409 `UNSPENDABLE_COIN` names (its stored ancestry is incomplete). | 0.16.0 (#44) |
+| `createAction` | refusal | `isError` | The typed review envelope marker. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `reviewActionResults` | The reference review evidence, retained from the typed carrier. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `reviewActionResults.txid` | The transaction under review. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `reviewActionResults.status` | The review outcome. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `reviewActionResults.competingTxs` | The competing transaction IDs. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `sendWithResults` | The action send results, including an empty list. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-13 extensions.
+19 extensions.
 
 ## Gaps: 49 rows
 
@@ -131,8 +137,15 @@ Fields the server's types can serve that no fixture shows. Each is an extension 
 | `internalizeAction` | response | `broadcast` | The same word on the payment's post, with `createAction`'s sub-keys. | 43376b8 (#66) |
 | `internalizeAction` | response | `broadcast.hint.words.error` | When the post itself errs (`internalize_action.rs`'s `serviceError` on a services fault), the toolbox writes the words as `[{"error": ...}]`, the fault's text. | 43376b8 (#66) |
 | `listCertificates` | response | `certificates.keyring` | bsv-rs's `CertificateResult` carries it when set; no fixture's certificate has one. | the initial release, feb0dd0 |
-| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; no fixture proves a certificate (049 is the refusal of one with no master keyring). | the initial release, feb0dd0 |
+| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; fixture 159 proves an empty disclosure, but the toolbox leaves this optional member absent (049 still refuses a missing master keyring). | the initial release, feb0dd0 |
 | `proveCertificate` | response | `verifier` | As `certificate`. | the initial release, feb0dd0 |
+
+## Certificate disclosure at beta.2
+
+| endpoint | request | served result | reading |
+|---|---|---|---|
+| `proveCertificate` | `fieldsToReveal: []` | 200 with `keyringForVerifier: {}`, even with a stored field and master key | Toolbox #240 closes the prior disclosure of every field; fixture 159 records the empty keyring, with no field recovery. |
+| `proveCertificate` | a serial that decodes to 31 bytes | 400 `VALIDATION_ERROR` before field recovery | Toolbox #240 requires exactly 32 bytes; the served #311 argument validator enforces that bound earlier, recorded in fixture 160. Direct acquisition uses the same bound. |
 
 ## Host routes: 5 rows
 

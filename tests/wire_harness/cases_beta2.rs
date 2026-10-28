@@ -9,6 +9,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     sign_bound(r).await;
     labels_and_remittance(r).await;
     certificate_bounds(r).await;
+    super::cases_certificate_privacy::record(r).await;
 }
 
 async fn sign_bound(r: &mut Recorder) {

@@ -98,6 +98,9 @@ impl Recorder {
         let mut text = serde_json::to_string_pretty(&Manifest {
             fixtures: self.written.clone(),
             notes: [
+                ("158-acquireCertificate.revealFields.json".into(), "Finding 3, toolbox #240: store a real encrypted field and master key for the empty-disclosure witness.".into()),
+                ("159-proveCertificate.emptyFields.json".into(), "Finding 3, toolbox #240: fieldsToReveal [] returns an empty keyring; beta.1 disclosed every stored field.".into()),
+                ("160-proveCertificate.shortSerial.json".into(), "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check.".into()),
                 ("147-createAction.doubleSpendReview.json".into(), "Finding 1 (#277, host map #140, bsv-rs #339): HTTP 400 with isError, numeric code 5 and all present review-action members; absent optional members stay omitted.".into()),
                 ("053-discoverByIdentityKey.ok.json".into(), "Empty discovery: toolbox #388 (CLI #331); the published certifier_info returns None.".into()),
                 ("054-discoverByAttributes.ok.json".into(), "Empty discovery: toolbox #388 (CLI #331); no host trust-setting input exists.".into()),
