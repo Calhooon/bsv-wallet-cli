@@ -1760,7 +1760,7 @@ async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     assessment: &Assessment,
 ) -> bsv_sdk::Result<CreateActionResult> {
     let answer = wallet
-        .create_action_offering(args, Some(originator), &assessment.offer())
+        .create_action_offering(args, Some(originator), &assessment.offer(), &[])
         .await;
     #[cfg(test)]
     let _ = tests::AT_THE_DOOR.try_with(|at| at());
