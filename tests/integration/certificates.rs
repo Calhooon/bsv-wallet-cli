@@ -3,6 +3,46 @@
 use crate::support::{post_json, post_json_ok, setup};
 use serde_json::{json, Value};
 
+/// A signed certificate and decryptable keyring for the served identity.
+pub(crate) async fn signed_acquisition(
+    client: &reqwest::Client,
+    base: &str,
+    serial: [u8; 32],
+) -> Value {
+    use bsv_sdk::auth::certificates::{Certificate, MasterCertificate};
+    use bsv_sdk::primitives::{to_base64, PrivateKey, PublicKey};
+    use bsv_sdk::wallet::{Outpoint, ProtoWallet};
+
+    let identity = post_json_ok(
+        client,
+        &format!("{base}/getPublicKey"),
+        json!({"identityKey":true}),
+    )
+    .await;
+    let subject = PublicKey::from_hex(identity["publicKey"].as_str().unwrap()).unwrap();
+    let issuer = PrivateKey::from_hex(&format!("{:064x}", 1)).unwrap();
+    let (fields, keyring) = MasterCertificate::create_certificate_fields(
+        &ProtoWallet::new(Some(issuer.clone())),
+        &subject,
+        [("name".into(), "test".into())].into_iter().collect(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut cert = Certificate::new([6; 32], serial, subject, issuer.public_key())
+        .with_revocation_outpoint(Some(Outpoint::new([0x33; 32], 0)))
+        .with_fields(fields.clone());
+    cert.sign(&issuer).unwrap();
+    assert!(cert.verify().unwrap());
+    json!({"type":to_base64(&[6;32]),"certifier":issuer.public_key().to_hex(),
+        "acquisitionProtocol":"direct","fields":fields,"serialNumber":to_base64(&serial),
+        "revocationOutpoint":format!("{}.0","33".repeat(32)),
+        "signature":hex::encode(cert.signature.unwrap()),
+        "keyringRevealer":"certifier","keyringForSubject":keyring})
+}
+
 // =============================================================================
 // Batch 5: Certificates
 // =============================================================================
@@ -39,17 +79,7 @@ async fn test_certificate_full_lifecycle() {
     let cert = post_json_ok(
         &client,
         &format!("{base}/acquireCertificate"),
-        json!({
-            "type": cert_type,
-            "certifier": certifier,
-            "acquisitionProtocol": "direct",
-            "fields": {"name": "test"},
-            "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-            "revocationOutpoint": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.0",
-            "signature": "3006020101020101",
-            "keyringRevealer": "certifier",
-            "keyringForSubject": {}
-        }),
+        signed_acquisition(&client, &base, [7; 32]).await,
     )
     .await;
     assert!(cert["type"].is_string(), "should have certificateType");

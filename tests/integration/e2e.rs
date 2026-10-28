@@ -192,25 +192,13 @@ async fn e2e_certificate_lifecycle() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let serial_input = bsv_sdk::primitives::to_base64(&bsv_sdk::primitives::hash::sha256(
-        format!("e2e-{ts}").as_bytes(),
-    ));
+    let serial_input = bsv_sdk::primitives::hash::sha256(format!("e2e-{ts}").as_bytes());
 
     // Acquire
     let cert = post_json_ok(
         &client,
         &format!("{base}/acquireCertificate"),
-        json!({
-            "type": cert_type,
-            "certifier": certifier,
-            "acquisitionProtocol": "direct",
-            "fields": {"email": "test@example.com"},
-            "serialNumber": serial_input,
-            "revocationOutpoint": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.0",
-            "signature": "3006020101020101",
-            "keyringRevealer": "certifier",
-            "keyringForSubject": {}
-        }),
+        crate::certificates::signed_acquisition(&client, &base, serial_input).await,
     )
     .await;
     let serial = cert["serialNumber"].as_str().expect("serialNumber");
