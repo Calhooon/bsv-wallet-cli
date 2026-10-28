@@ -376,23 +376,23 @@ impl IntoResponse for AppError {
 /// Keep absent optional members absent. The reference's competing BEEF is
 /// a Uint8Array, whose JSON has numeric object keys, unlike the action's tx.
 fn review_body(review: &bsv_sdk::wallet::ReviewActionsRefusal) -> serde_json::Value {
-    let mut results = json!(review.review_action_results);
-    for (result, typed) in results
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .zip(&review.review_action_results)
-    {
-        if let Some(bytes) = &typed.competing_beef {
-            result["competingBeef"] = serde_json::Value::Object(
-                bytes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, byte)| (i.to_string(), json!(byte)))
-                    .collect(),
-            );
-        }
-    }
+    let results: Vec<_> = review
+        .review_action_results
+        .iter()
+        .map(|typed| {
+            let mut result = json!(typed);
+            if let Some(bytes) = &typed.competing_beef {
+                result["competingBeef"] = serde_json::Value::Object(
+                    bytes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, byte)| (i.to_string(), json!(byte)))
+                        .collect(),
+                );
+            }
+            result
+        })
+        .collect();
     let mut body = json!({
         "isError": true, "code": 5, "message": review.message,
         "reviewActionResults": results, "sendWithResults": review.send_with_results,
