@@ -163,7 +163,7 @@ async fn an_invalid_beef_over_the_old_body_cap_is_refused_at_its_byte() {
     let (status, got) = post(&format!("{base}/internalizeAction"), body, None).await;
 
     assert_eq!(status, 400, "{got}");
-    assert_eq!(got["code"], "INVALID_BEEF", "{got}");
+    assert_eq!(got["code"], "VALIDATION_ERROR", "{got}");
     let message = got["message"].as_str().unwrap_or_default();
     assert!(
         message.contains(&format!("Invalid BEEF at byte {at}"))
