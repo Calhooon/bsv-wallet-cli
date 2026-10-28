@@ -226,6 +226,7 @@ impl AppError {
         match e {
             // The toolbox's `StoreBusy`, typed across the boundary (#44).
             bsv_sdk::Error::WalletBusy { .. } => (Kind::StoreBusy, None),
+            bsv_sdk::Error::WalletReviewActions(_) => (Kind::Conflict, None),
             // A toolbox refusal whose variant the boundary erased.
             bsv_sdk::Error::WalletError(text) => {
                 let kind = Kind::of_erased(toolbox_words::class(text));
@@ -256,9 +257,10 @@ impl AppError {
                 let coin = Some(outpoint.trim().to_string()).filter(|c| !c.is_empty());
                 return (Kind::UnspendableCoin, coin);
             }
-            T::Duplicate { .. } | T::InvalidOperation(_) | T::InvalidTransactionStatus(_) => {
-                Kind::Conflict
-            }
+            T::Duplicate { .. }
+            | T::InvalidOperation(_)
+            | T::InvalidTransactionStatus(_)
+            | T::ReviewActions(_) => Kind::Conflict,
             T::InvalidBeef { .. } | T::SpendRefused { .. } => Kind::InvalidBeef,
             T::ValidationError(_) | T::InvalidArgument(_) => Kind::Validation,
             T::StorageError(_) | T::DatabaseError(_) | T::Internal(_) => Kind::Internal,

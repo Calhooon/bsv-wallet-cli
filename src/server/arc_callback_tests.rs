@@ -212,18 +212,8 @@ async fn arc_callback_deadline_served_default_is_eight_seconds() {
     assert_eq!(arc_rows(storage, &case.txid).await, landed);
 }
 
-/// A busy store under the served default answers 503 STORE_BUSY within the
-/// deadline and its margin, in one of two shapes, both right by the keeper's
-/// reading of #285 (the typed busy is the door's word and is served at once;
-/// the deadline is for work that is not a busy store):
-/// - the typed busy after one busy_timeout: toolbox #205 and later commit the
-///   statuses and the memory hint in one write transaction;
-/// - the deadline's message at eight seconds: 0.14.0-beta.1 waits twice, the
-///   swallowed memory write and then the request UPDATE, about ten seconds.
-///
-/// The test asserts the shape that arrived and prints which. The deadline's
-/// shape also proves the toolbox had not answered: its second wait is still
-/// pending, so draining the cancelled write takes at least a second.
+/// Toolbox #205 commits the status and hint in one transaction: the served
+/// default must return typed busy after one wait, before the host deadline.
 #[tokio::test]
 async fn arc_callback_busy_store_under_the_served_default() {
     let mut case = seeded_callback("SEEN_ON_NETWORK", None).await;
@@ -250,35 +240,10 @@ async fn arc_callback_busy_store_under_the_served_default() {
             &json!("STORE_BUSY")
         ),
     );
-    let deadline_message = format!(
-        "the arc-callback deadline of {ARC_CALLBACK_DEADLINE:?} elapsed before the toolbox answered (the store or the header service)"
-    );
-    if body["message"] == "apply_event: Store busy: sqlite code 5" {
-        eprintln!("busy store, served default: typed busy after {elapsed:.3?} (one wait)");
-        assert!(elapsed >= wait, "the writer did not wait: {elapsed:?}");
-        assert!(elapsed < ARC_CALLBACK_DEADLINE, "{elapsed:?}");
-    } else {
-        assert_eq!(body["message"], json!(deadline_message));
-        assert!(elapsed >= ARC_CALLBACK_DEADLINE, "{elapsed:?}");
-        // The cancelled request UPDATE is still waiting in SQLite. The writer
-        // has one connection, so a statement that reads no table queues
-        // behind it: with the lock held, the UPDATE fails rather than lands.
-        // Two waits take about ten seconds, so about two remain after the
-        // deadline; a drain shorter than one second means the toolbox had
-        // already answered and the handler waited out the deadline itself.
-        let drained = Instant::now();
-        sqlx::query("SELECT 1")
-            .execute(storage.writer())
-            .await
-            .unwrap();
-        let drain = drained.elapsed();
-        eprintln!("the cancelled write drained after {drain:.3?}");
-        assert!(
-            drain >= Duration::from_secs(1),
-            "the toolbox's second wait was not still pending when the deadline fired: drained after {drain:?}"
-        );
-        eprintln!("busy store, served default: the deadline after {elapsed:.3?} (two waits)");
-    }
+    assert_eq!(body["message"], "apply_event: Store busy: sqlite code 5");
+    eprintln!("busy store, served default: typed busy after {elapsed:.3?} (one wait)");
+    assert!(elapsed >= wait, "the writer did not wait: {elapsed:?}");
+    assert!(elapsed < ARC_CALLBACK_DEADLINE, "{elapsed:?}");
     assert!(
         elapsed < ARC_CALLBACK_DEADLINE + Duration::from_secs(1),
         "{elapsed:?}"

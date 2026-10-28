@@ -2397,7 +2397,7 @@ mod tests {
             sources.iter().map(|s| &s.url_template).collect::<Vec<_>>()
         );
         let defaults = main_sources(&plane, None);
-        assert!(defaults.iter().any(|s| s.name == "arc-gorillapool"));
+        assert!(!defaults.iter().any(|s| s.name == "arc-gorillapool"));
     }
 
     /// #50: a 429 at WhatsOnChain moves the question on at once, and

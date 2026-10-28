@@ -75,8 +75,8 @@ pub(crate) async fn coin(
         .unwrap();
     }
     sqlx::query(
-        "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, created_at, updated_at) \
-         VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?)",
+        "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, derivation_prefix, derivation_suffix, output_description, created_at, updated_at) \
+         VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'dGVzdA==', 'Y29pbg==', 'c', ?, ?)",
     )
     .bind(user)
     .bind(tx_row)
