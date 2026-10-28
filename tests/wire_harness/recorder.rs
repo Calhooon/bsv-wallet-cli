@@ -98,6 +98,7 @@ impl Recorder {
         let mut text = serde_json::to_string_pretty(&Manifest {
             fixtures: self.written.clone(),
             notes: [
+                ("147-createAction.doubleSpendReview.json".into(), "Finding 1 (#277, host map #140, bsv-rs #339): HTTP 400 with isError, numeric code 5 and all present review-action members; absent optional members stay omitted.".into()),
                 ("053-discoverByIdentityKey.ok.json".into(), "Empty discovery: toolbox #388 (CLI #331); the published certifier_info returns None.".into()),
                 ("054-discoverByAttributes.ok.json".into(), "Empty discovery: toolbox #388 (CLI #331); no host trust-setting input exists.".into()),
                 ("137-discoverByIdentityKey.limitAtBound.json".into(), "Empty discovery at the page bound: toolbox #388 (CLI #331).".into()),

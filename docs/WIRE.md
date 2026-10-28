@@ -60,9 +60,23 @@ Beyond the byte comparison, the replay fails when the corpus stops covering:
 - each of the 28 BRC-100 calls the router serves,
 - the five host routes (`/permission-audit`, `/permission-audit/reset`, `/chain-feed`, `/tx/{txid}`, `/arc-callback`),
 - every world named above (a world no fixture is served from is a gap),
-- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 `VALIDATION_ERROR`, 400 `INVALID_BEEF`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 404 `NOT_FOUND`, 409 `UNSPENDABLE_COIN` (with `coin`), 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
+- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 numeric `5` (`REVIEW_ACTIONS`), 400 `VALIDATION_ERROR`, 400 `INVALID_BEEF`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 404 `NOT_FOUND`, 409 `UNSPENDABLE_COIN` (with `coin`), 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
 
 `APP_CODES` is typed by hand, but it is checked against the source: `every_app_error_code_is_judged` reads every `(StatusCode::NAME, "CODE")` of `Kind::answer` in `src/server/error.rs`, the one table of the served layer's statuses and codes (#81), and fails unless `APP_CODES` and `UNPRODUCED` together are exactly that set, at the same statuses. A code added to the source with no fixture fails it by name, and so does one gone from the source.
+
+| class in the pinned host map (#140) | status | served code and evidence |
+|---|---|---|
+| `REVIEW_ACTIONS` | 400 | numeric `5`, `isError: true`, `reviewActionResults`, `sendWithResults`, and present `txid`, `tx`, `noSendChange` |
+
+The pinned host map (#140) serves the typed `REVIEW_ACTIONS` carrier as
+`HTTPWalletJSON.ts` serializes it: HTTP 400 with `isError: true`, numeric
+`code: 5`, `message`, `reviewActionResults` and `sendWithResults`. The
+optional `txid` (hex), `tx` (byte array) and `noSendChange` (outpoint strings)
+are omitted when absent. Each review result retains its competing txids
+and BEEF; competing BEEF uses the reference's numeric-key byte object.
+The code census reads numeric as well as string codes. The served-body
+round trip through bsv-rs beta.2's `HttpWalletJson` checks all five members.
+Ordinary message classification stays under CLI #330 (toolbox #404).
 
 Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
 
@@ -191,7 +205,8 @@ served classes pending CLI #330 (toolbox #404).
 Rows 143 to 146 declare ten unlocking bytes, refuse eleven without consuming
 the unsigned action, list that state and complete it with a shorter script
 (toolbox #216). Rows 147 and 148 take a coin while the gate reads its headers,
-then record the toolbox's typed review refusal as 409 `CONFLICT` and the
+then record the toolbox's typed review refusal as HTTP 400, numeric code `5`,
+and the
 remaining state (#245/#264, bsv-rs #339). Rows 149 to 154 cover BRC-177 grammar
 and capability refusals, and remittance exclusivity before BEEF work.
 
