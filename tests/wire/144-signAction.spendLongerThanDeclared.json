@@ -1,0 +1,41 @@
+{
+  "world": "pin-spend",
+  "request": {
+    "method": "POST",
+    "path": "/signAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "options": {
+        "noSend": true
+      },
+      "reference": "<bound>",
+      "spends": {
+        "0": {
+          "unlockingScript": "5151515151515151515151"
+        }
+      }
+    },
+    "bind": {
+      "/reference": {
+        "file": "143-createAction.tenByteDeclaration.json",
+        "pointer": "/signableTransaction/reference"
+      }
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "wallet error: Validation error: The args parameter must be spend unlockingScript length 22 exceeds expected length 10"
+    }
+  }
+}

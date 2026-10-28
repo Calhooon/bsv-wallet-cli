@@ -26,18 +26,16 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "linkage": {
-        "encryptedLinkage": "<hex:160>",
-        "encryptedLinkageProof": "<hex:98>",
-        "prover": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
-        "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-        "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
-      },
-      "protocol": {
-        "securityLevel": "2",
-        "protocolName": "wire test"
-      },
-      "keyId": "1",
+      "encryptedLinkage": "<bytes:80>",
+      "encryptedLinkageProof": "<bytes:49>",
+      "prover": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
+      "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "protocolID": [
+        2,
+        "wire test"
+      ],
+      "keyID": "1",
       "proofType": 0
     }
   }

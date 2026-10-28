@@ -8,15 +8,15 @@
     },
     "json": {
       "certificate": {
-        "certificateType": "dGVzdA==",
         "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
         "fields": {
-          "name": "wire"
+          "name": "d2lyZQ=="
         },
         "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-        "serialNumber": "AQID",
-        "signature": "deadbeef",
-        "subject": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+        "signature": "3006020101020101",
+        "subject": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
       },
       "fieldsToReveal": [
         "name"

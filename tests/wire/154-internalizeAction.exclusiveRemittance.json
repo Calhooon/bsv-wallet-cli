@@ -1,0 +1,42 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/internalizeAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "wire remittance guards",
+      "outputs": [
+        {
+          "insertionRemittance": {
+            "basket": "wire"
+          },
+          "outputIndex": 0,
+          "paymentRemittance": {
+            "derivationPrefix": "eA==",
+            "derivationSuffix": "eA==",
+            "senderIdentityKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          },
+          "protocol": "basket insertion"
+        }
+      ],
+      "tx": []
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "wallet error: Validation error: The output remittance parameter must be only insertionRemittance for basket insertion"
+    }
+  }
+}

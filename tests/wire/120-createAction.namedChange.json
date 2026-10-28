@@ -35,7 +35,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: inputs[0]: cannot spend change output 2222222222222222222222222222222222222222222222222222222222222222:0 directly. Change is managed by the wallet."
+      "message": "wallet error: Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet."
     }
   }
 }

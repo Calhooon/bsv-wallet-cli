@@ -11,7 +11,7 @@
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
       ],
       "types": [
-        "dGVzdA=="
+        "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
       ]
     }
   },
@@ -28,16 +28,14 @@
       "totalCertificates": 1,
       "certificates": [
         {
-          "certificate": {
-            "certificateType": "dGVzdA==",
-            "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
-            "serialNumber": "AQID",
-            "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-            "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-            "signature": "deadbeef",
-            "fields": {
-              "name": "wire"
-            }
+          "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
+          "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
+          "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+          "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
+          "signature": "3006020101020101",
+          "fields": {
+            "name": "d2lyZQ=="
           },
           "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         }

@@ -10,25 +10,28 @@
       "acquisitionProtocol": "direct",
       "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "fields": {
-        "name": "wire"
+        "name": "d2lyZQ=="
       },
       "keyringForSubject": {},
       "keyringRevealer": "certifier",
       "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
       "serialNumber": "AQID",
-      "signature": "deadbeef",
-      "type": "dGVzdA=="
+      "signature": "3006020101020101",
+      "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
     }
   },
   "response": {
-    "status": 422,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "text": "Failed to deserialize the JSON body into the target type: missing field `certificateType` at line 1 column 344"
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "wallet error: Validation error: The serialNumber parameter must be at least 32 bytes"
+    }
   }
 }
