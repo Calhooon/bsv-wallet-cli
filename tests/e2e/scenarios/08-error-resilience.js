@@ -4,11 +4,17 @@
  * Must not lose money or corrupt state.
  */
 
+const { execSync } = require('child_process');
+const { BSV } = require('../lib/setup');
+
 module.exports = {
   name: 'error-resilience',
   description: 'Bad inputs must fail gracefully without losing money (0 sats)',
 
   async run(walletA, walletB, assert) {
+    // #330 and --from ship together; the differential also drives beta.2.
+    const typedRefusals = execSync(`"${BSV}" send --help`, { encoding: 'utf-8', stdio: 'pipe' }).includes('--from');
+    const invalidBeef = typedRefusals ? 'VALIDATION_ERROR' : 'INVALID_BEEF';
     const balanceBefore = await walletA.client.balance();
 
     // --- Send more than balance ---
@@ -55,7 +61,7 @@ module.exports = {
       );
       assert(false, 'Garbage BEEF should fail');
     } catch (e) {
-      assert(e.status === 400 && e.body?.code === 'INVALID_BEEF',
+      assert(e.status === 400 && e.body?.code === invalidBeef,
         `Garbage must reach the BEEF reader: ${e.message}`);
     }
 
@@ -68,7 +74,7 @@ module.exports = {
       );
       assert(false, 'Truncated BEEF should fail');
     } catch (e) {
-      assert(e.status === 400 && e.body?.code === 'INVALID_BEEF',
+      assert(e.status === 400 && e.body?.code === invalidBeef,
         `Truncated BEEF must reach the BEEF reader: ${e.message}`);
     }
 
