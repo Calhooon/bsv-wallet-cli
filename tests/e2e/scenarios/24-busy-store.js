@@ -14,6 +14,10 @@ const { WalletClient, ANYONE_KEY, buildP2PKH } = require('../lib/wallet-client')
 const hermetic = require('../lib/hermetic');
 
 const BUSY_MS = 5_000; // toolbox 0.13.0: STORE_BUSY_CEILING_MS
+// 1,000 output + 2,500 change floor (#315, #334) + 500 fee allowance.
+// Toolbox 0.14.0-beta.2 fees.rs: a 108-byte input script + two P2PKH outputs
+// = 227 bytes; ceil(227 * 101 / 1,000) = 23 sats at the default 101 sat/kB.
+const MIN_EXTERNAL_INPUT_SATOSHIS = 4_000;
 
 async function within(promise, ms, message) {
   let timer;
@@ -129,8 +133,8 @@ module.exports = {
     let source = await funder.listOutputs('default', hermetic.enabled
       ? { include: 'entire transactions', limit: 10_000 }
       : { limit: 50 });
-    const external = source.outputs.find(o => o.satoshis >= 2_000);
-    assert(external, 'the funder has an external input of at least 2000 sats');
+    const external = source.outputs.find(o => o.satoshis >= MIN_EXTERNAL_INPUT_SATOSHIS);
+    assert(external, `the funder has an external input of at least ${MIN_EXTERNAL_INPUT_SATOSHIS} sats to cover the output, change floor and fee`);
     if (!hermetic.enabled) {
       // Fetch BEEF only for the selected coin, not the live funder's history.
       source = await funder.listOutputs('default', {
