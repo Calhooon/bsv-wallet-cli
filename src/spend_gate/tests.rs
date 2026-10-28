@@ -1388,7 +1388,7 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
         args
     };
     let direct = wallet
-        .create_action_offering(template(), Some("gate.local"), &lazy.offer())
+        .create_action_offering(template(), Some("gate.local"), &lazy.offer(), &[])
         .await
         .expect_err("the big coin alone cannot be carried");
     assert!(crate::toolbox_words::is_unspendable(&direct), "{direct}");
@@ -1524,7 +1524,12 @@ async fn an_offer_at_the_cap_runs_and_one_past_sqlites_limit_does_not() {
             .collect()
     };
     let result = wallet
-        .create_action_offering(template(), Some("gate.local"), &ids(2 * OFFER_CAP - 64))
+        .create_action_offering(
+            template(),
+            Some("gate.local"),
+            &ids(2 * OFFER_CAP - 64),
+            &[],
+        )
         .await
         .expect("twice the cap, less a margin, is under the limit");
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
@@ -1536,7 +1541,7 @@ async fn an_offer_at_the_cap_runs_and_one_past_sqlites_limit_does_not() {
         .await
         .unwrap();
     let err = wallet
-        .create_action_offering(template(), Some("gate.local"), &ids(32_767))
+        .create_action_offering(template(), Some("gate.local"), &ids(32_767), &[])
         .await
         .expect_err("past SQLite's bound-variable limit");
     println!("{err}");
