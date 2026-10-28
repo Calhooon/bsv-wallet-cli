@@ -561,30 +561,11 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
 }
 
 impl World {
-    /// The worlds, by name:
-    /// - `fresh`: an empty wallet, no bearer, the header stub up.
-    /// - `auth`: `fresh` behind the bearer [`WIRE_BEARER`].
-    /// - `callback`: `fresh` with the ARC callback token [`WIRE_CALLBACK`].
-    /// - `tracked`: the tracker's words for a mined and a pending
-    ///   transaction, and one coin of ours the chain feed froze.
-    /// - `received`: one received coin whose creator is mined, header stub
-    ///   up.
-    /// - `headers-down`: `received`, the header service answering 500.
-    /// - `broken`: `fresh` with the `outputs` table gone (a store fault).
-    /// - `broken-host`: `fresh` with the tracker's rows unreadable (the
-    ///   feed status not JSON, the states table without its columns).
-    /// - `busy`: a file store whose write lock another connection holds.
-    /// - `busy-read`: a file store no reader can open: it is opened on
-    ///   SQLite's dotfile locking, which has no shared memory and so no
-    ///   WAL, and another connection holds its one lock.
-    /// - `funded`: four mined coins the wallet can sign for
-    ///   ([`FUNDED_COINS`]), the header stub answering the blocks of the
-    ///   stranger's payments ([`Payment`]) and of the puzzle ([`PUZZLE`]),
-    ///   and a broadcaster that takes every post ([`arc_stub`]).
-    /// - `named-change`: a completed made change coin. The other worlds
-    ///   seed incoming coins, and their spends make no change.
-    ///
-    /// Any other name is a panic naming it.
+    /// Construct a named world from WORLDS. The ordinary worlds are empty,
+    /// authenticated, tracked, received, faulty or funded. The named-change
+    /// and abort-unproven worlds isolate their guards. Pin-spend holds a
+    /// stored caller puzzle, and review-race takes that coin during a header
+    /// read so the toolbox must recheck it under its write transaction.
     pub(crate) async fn build(name: &str) -> World {
         known_world(name);
         let mut keep: Vec<Box<dyn std::any::Any + Send>> = Vec::new();

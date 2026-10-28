@@ -360,34 +360,7 @@ fn a_malformed_value_is_refused_by_name_and_every_one_together() {
 /// direct acquisition and selective proof need. Discovery stays empty (#331).
 #[tokio::test]
 async fn certificate_tools_carry_the_published_shape() {
-    let app = Router::new()
-        .route(
-            "/acquireCertificate",
-            post(|Json(body): Json<Value>| async { Json(body) }),
-        )
-        .route(
-            "/listCertificates",
-            post(|Json(body): Json<Value>| async { Json(body) }),
-        )
-        .route(
-            "/proveCertificate",
-            post(|Json(body): Json<Value>| async { Json(body) }),
-        )
-        .route(
-            "/relinquishCertificate",
-            post(|Json(body): Json<Value>| async { Json(body) }),
-        )
-        .route(
-            "/discoverByIdentityKey",
-            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
-        )
-        .route(
-            "/discoverByAttributes",
-            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+    let (base, task) = certificate_stub().await;
     let mcp = WalletMcp::new(base, "http://localhost".into());
     let body = json!({"type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=", "certifier": "key",
         "serialNumber": "serial", "signature": "3006020101020101", "revocationOutpoint": "outpoint",
@@ -443,4 +416,36 @@ async fn certificate_tools_carry_the_published_shape() {
         );
     }
     task.abort();
+}
+
+async fn certificate_stub() -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route(
+            "/acquireCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/listCertificates",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/proveCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/relinquishCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/discoverByIdentityKey",
+            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
+        )
+        .route(
+            "/discoverByAttributes",
+            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+    (base, task)
 }
