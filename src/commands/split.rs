@@ -18,33 +18,46 @@ pub async fn run(
     ctx: &WalletContext,
     count: u32,
     allow_pending: crate::spend_gate::AllowPending,
+    from: &[(String, u32)],
 ) -> Result<()> {
     if count < 2 {
         anyhow::bail!("Split count must be at least 2");
     }
 
-    // Get current outputs to find total balance
-    let list = ctx
-        .wallet
-        .list_outputs(
-            ListOutputsArgs {
-                basket: "default".to_string(),
-                tags: None,
-                tag_query_mode: None,
-                include: None,
-                include_custom_instructions: None,
-                include_tags: None,
-                include_labels: None,
-                limit: None,
-                offset: None,
-                seek_permission: None,
-            },
-            Some("bsv-wallet-cli"),
-        )
-        .await?;
+    let (total_sats, utxo_count) = if from.is_empty() {
+        // Get current outputs to find total balance
+        let list = ctx
+            .wallet
+            .list_outputs(
+                ListOutputsArgs {
+                    basket: "default".to_string(),
+                    tags: None,
+                    tag_query_mode: None,
+                    include: None,
+                    include_custom_instructions: None,
+                    include_tags: None,
+                    include_labels: None,
+                    limit: None,
+                    offset: None,
+                    seek_permission: None,
+                },
+                Some("bsv-wallet-cli"),
+            )
+            .await?;
 
-    let total_sats: u64 = list.outputs.iter().map(|o| o.satoshis).sum();
-    let utxo_count = list.outputs.len();
+        (
+            list.outputs.iter().map(|o| o.satoshis).sum::<u64>(),
+            list.outputs.len(),
+        )
+    } else {
+        (
+            crate::spend_gate::refused_as_json(
+                crate::spend_gate::from_satoshis(&ctx.wallet, from).await,
+                ctx.json_output,
+            )?,
+            from.len(),
+        )
+    };
 
     if utxo_count == 0 || total_sats == 0 {
         anyhow::bail!(
@@ -175,11 +188,12 @@ pub async fn run(
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
     let result = crate::spend_gate::refused_as_json(
-        crate::spend_gate::create_action(
+        crate::spend_gate::create_action_from(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
             &ctx.gate().with_allow_pending(allow_pending),
+            from,
         )
         .await,
         ctx.json_output,

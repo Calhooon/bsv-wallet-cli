@@ -71,6 +71,11 @@ pub enum Commands {
         /// a proof is held as without the word
         #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
         coins: Vec<String>,
+        /// Spend this managed coin (repeatable). --coin only scopes the
+        /// received rule; --from selects the coins to spend. An unmined
+        /// receipt still needs --allow-pending received
+        #[arg(long, value_name = "TXID:VOUT")]
+        from: Vec<String>,
     },
     /// Replace an accepted, silent transaction with a spend back to this wallet.
     /// Refuses while a status source holds the original; proof decides its fate.
@@ -254,6 +259,11 @@ pub enum Commands {
         /// a proof is held as without the word
         #[arg(long = "coin", value_name = "TXID:VOUT", requires = "allow_pending")]
         coins: Vec<String>,
+        /// Split these managed coins (repeatable). --coin only scopes the
+        /// received rule; --from selects the coins to spend. An unmined
+        /// receipt still needs --allow-pending received
+        #[arg(long, value_name = "TXID:VOUT")]
+        from: Vec<String>,
     },
     /// Show blockchain service status
     Services,

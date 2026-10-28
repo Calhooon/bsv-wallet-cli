@@ -225,7 +225,7 @@ impl<'a> UserCoins<'a> {
     fn query(self) -> QueryBuilder<'static, Sqlite> {
         let mut query = QueryBuilder::new(
             "SELECT o.output_id, t.txid, o.vout, o.satoshis, o.spent_by, o.spendable, \
-                    o.change, t.is_outgoing, t.status, b.name AS basket, \
+                    o.change, o.provided_by, t.is_outgoing, t.status, b.name AS basket, \
                     CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
                     COALESCE(s.txid, s.reference) AS holder, s.status AS spender_status, \
                     p.merkle_path, o.locking_script, o.derivation_prefix, \
@@ -254,6 +254,9 @@ impl<'a> UserCoins<'a> {
             .await?)
     }
 }
+
+mod from;
+pub use from::{create_action_from, from_satoshis};
 
 mod lineage;
 pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, DEAD_LINEAGE};

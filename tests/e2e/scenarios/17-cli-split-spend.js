@@ -14,6 +14,8 @@ module.exports = {
 
   async run(walletA, walletB, assert) {
     const SPLIT_COUNT = 3;
+    // The differential also drives the previous binary, before #313 exists.
+    const supportsFrom = execSync(`"${BSV}" send --help`, { encoding: 'utf-8', stdio: 'pipe' }).includes('--from');
 
     // ─── Record A's pre-split state ───
     const balanceBefore = await walletA.client.balance();
@@ -25,9 +27,12 @@ module.exports = {
 
     assert(balanceBefore > 1000, `A needs balance > 1000 to split, has ${balanceBefore}`);
 
+    const splitCoin = outputsBefore.outputs.find(o => o.spendable !== false).outpoint.replace('.', ':');
+    const splitFrom = supportsFrom ? `--from ${splitCoin}` : '';
+    // The named coin is mandatory; the remaining wallet coins stay available.
     // ─── Split into 3 UTXOs via CLI ───
     const splitRaw = execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json split --allow-pending received --count ${SPLIT_COUNT}`,
+      `cd "${walletA.dir}" && "${BSV}" --json split --allow-pending received ${splitFrom} --count ${SPLIT_COUNT}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
     const splitResult = parseCliJson(splitRaw);
@@ -65,8 +70,11 @@ module.exports = {
     // ─── Spend from a split output to prove it's truly spendable ───
     // Send a small amount from A to B — this uses split outputs as inputs
     const sendAmount = 1000;
+    const sendCoin = spendableAfterSplit.find(o => o.outpoint.startsWith(splitResult.txid)).outpoint;
+
+    const sendFrom = supportsFrom ? `--from ${sendCoin.replace('.', ':')}` : '';
     const sendRaw = execSync(
-      `cd "${walletA.dir}" && "${BSV}" --json send --allow-pending received "${walletB.address}" ${sendAmount}`,
+      `cd "${walletA.dir}" && "${BSV}" --json send --allow-pending received ${sendFrom} "${walletB.address}" ${sendAmount}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
     const sendResult = parseCliJson(sendRaw);
@@ -75,6 +83,9 @@ module.exports = {
       'Spend from split output must produce valid txid');
     assert(sendResult.beef && sendResult.beef.startsWith('01010101'),
       'Spend must return AtomicBEEF');
+
+    const remaining = await walletA.client.listOutputs('default', { limit: 10000, includeEnvelope: false });
+    if (supportsFrom) assert(!remaining.outputs.some(o => o.outpoint === sendCoin), '--from spends the named split output');
 
     // B internalizes via CLI fund
     execSync(
