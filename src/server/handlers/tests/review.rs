@@ -106,12 +106,7 @@ async fn http_wallet_json_reads_served_review_actions() {
             .await
             .unwrap();
     });
-    let client = HttpWalletJson::with_client(
-        reqwest::Client::builder().no_proxy().build().unwrap(),
-        Some("test.local".into()),
-        Some(url),
-    )
-    .unwrap();
+    let client = HttpWalletJson::new(Some("test.local".into()), Some(url)).unwrap();
     let result = client
         .create_action(
             serde_json::from_value::<CreateActionArgs>(json!({"description": "review reader"}))
