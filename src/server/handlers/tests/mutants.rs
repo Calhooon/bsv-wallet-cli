@@ -71,6 +71,7 @@ impl World {
         let router = Router::new()
             .route("/createAction", post(create_action))
             .route("/signAction", post(sign_action))
+            .route("/abortAction", post(abort_action))
             .route("/getPublicKey", post(get_public_key))
             .layer(Extension(Arc::new(tokio::sync::Mutex::new(()))))
             .layer(Extension(verifier))
@@ -383,4 +384,46 @@ async fn delete_protocol_security_level_zero_arm_mutant() {
         .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert!(PublicKey::from_hex(answer["publicKey"].as_str().unwrap()).is_ok());
+}
+
+/// BRC-100 0100.md:718, 745, 769: the reference stays Base64String through
+/// the served create/sign/abort flow (toolbox #285, bsv-rs #105).
+#[tokio::test]
+async fn deferred_reference_round_trips_create_sign_and_abort_as_base64() {
+    let w = World::new(Presence::Unknown, false).await;
+    let mut request = w.request(&json!({"signAndProcess": false, "noSend": true}));
+    request["inputs"][0] =
+        json!({"outpoint": format!("{}.0", w.funding), "unlockingScriptLength": 1});
+    let (status, created) = w.serve("/createAction", request).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let reference = created["signableTransaction"]["reference"]
+        .as_str()
+        .unwrap();
+    let raw = bsv_sdk::primitives::from_base64(reference).unwrap();
+    assert_eq!(raw.len(), 12);
+    assert_eq!(bsv_sdk::primitives::to_base64(&raw), reference);
+    let stored: String =
+        sqlx::query_scalar("SELECT reference FROM transactions WHERE status = 'unsigned'")
+            .fetch_one(w.wallet.storage().pool())
+            .await
+            .unwrap();
+    assert_eq!(stored, reference);
+    let (status, signed) = w
+        .serve(
+            "/signAction",
+            json!({
+                "reference": reference,
+                "spends": {"0": {"unlockingScript": "51"}},
+                "options": {"noSend": true}
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed}");
+    assert!(signed["txid"].is_string(), "{signed}");
+    let (status, aborted) = w
+        .serve("/abortAction", json!({"reference": reference}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{aborted}");
+    assert_eq!(aborted["aborted"], true);
+    assert_eq!(w.calls.posts.load(Ordering::SeqCst), 0);
 }

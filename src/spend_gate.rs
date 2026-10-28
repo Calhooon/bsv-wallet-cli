@@ -863,7 +863,7 @@ impl Assessment {
 /// The toolbox's `reference` string of a signable transaction, as
 /// `signAction` / `abortAction` take it back.
 pub fn reference_string(reference: &[u8]) -> String {
-    String::from_utf8(reference.to_vec()).unwrap_or_else(|_| hex::encode(reference))
+    bsv_sdk::primitives::to_base64(reference)
 }
 
 /// The rule each action of the user `user_id` was created under, by txid;
