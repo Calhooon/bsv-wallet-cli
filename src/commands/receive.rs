@@ -295,7 +295,7 @@ pub(crate) mod tests {
     /// The courier's bytes (a transaction with one input whose parent the
     /// BEEF does not carry, unproven) are refused as invalid BEEF by the
     /// toolbox's internalize door, the refusal names the txid and the
-    /// courier, and nothing is stored. Assert the typed reader refusal,
+    /// courier, and nothing is stored. Assert the typed internalize refusal,
     /// then the CLI's context with that Display unchanged (#290, #330).
     #[tokio::test]
     async fn l2_stub_refusal_names_txid_courier_reason_and_stores_nothing() {
@@ -303,11 +303,15 @@ pub(crate) mod tests {
         let (txid, body) = stub(&ctx, 17);
         let route = format!("/tx/{txid}/beef");
         let courier = Fixture::start(&[(&route, 200, &body)], 500).await;
-        let refusal =
-            crate::atomic_beef::refuse_invalid_bytes(&hex::decode(&body).unwrap()).unwrap_err();
+        let refusal = fund::internalize_beef(&ctx, &hex::decode(&body).unwrap(), 0)
+            .await
+            .unwrap_err();
         assert!(matches!(
-            refusal.downcast_ref::<bsv_wallet_toolbox::Error>(),
-            Some(bsv_wallet_toolbox::Error::InvalidBeef { .. })
+            refusal.downcast_ref::<bsv_sdk::Error>(),
+            Some(bsv_sdk::Error::WalletRefusal {
+                class: bsv_sdk::WalletRefusalClass::InvalidParameter,
+                ..
+            })
         ));
         let expected = format!("refused tx {txid} from WhatsOnChain: {refusal}");
         // Exercise both output discovery and an explicitly named output.
