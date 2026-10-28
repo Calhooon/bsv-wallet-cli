@@ -1433,3 +1433,83 @@ milestone's 21. Production: 3322 pid 25390, 3396 pid 3354, the funder pid
 62391, each on its own copy of 0.18.2 with Arcade first; the witness tick at
 12:30Z tomorrow is the production read of Arcade. The keeper writes the
 fleet's checkpoint page at 09:00Z from the three numbers.
+
+2026-10-28 (01:5xZ to 12:5xZ): THE BETA.2 PIN LANDED AND ITS MAINNET GATE
+PASSED. The common hour came in two halves: bsv-rs 0.9.0-beta.2 and
+bsv-tracker 0.9.0-beta.2 on the index at 01:51Z and 01:59Z, the toolbox's
+0.14.0-beta.2 at 08:52:46Z after its tag moved once to a workflow-permission
+fix (a job in a called workflow may not ask a permission the caller does not
+grant; our release.yml grants ci.yml exactly what it asks, checked on both
+lines). A watcher fired the pin lane on the index's answer at 08:53Z.
+
+The lane blocked twice, each time on a true fact. First, the published toolbox
+erases every ordinary refusal to WalletError(String) at the WalletInterface
+boundary (error.rs:352-365; toolbox #185 never reached the package) and its
+certifier_info returns None so both discover doors answer nothing (toolbox
+#388): the #277 intake had promised a typed host map and a host-supplied
+trust setting the package never had. The ruling, under the owner's standing
+hour: the pin lands against the package AS PUBLISHED; the gaps are #330 (the
+typed host map, blocked on toolbox #404) and #331 (discovery trust settings,
+blocked on toolbox #388), each landing at the first publish that carries its
+fix, never a text-matched imitation. Second, two gates the brief had asked for
+before the PR were not the PR's: the toolbox's Dependents workflow had no
+branch input (toolbox #405, landed the same day; run 40679043409 against the
+branch then failed on create_action_offering's fourth argument, toolbox
+#353's must-spend list behind their tag, red by construction until the CLI
+pin that carries it, #313), and the patched-tip build fails inside the toolbox
+on bsv-rs's ordered maps (toolbox #406, their beta.3 re-pin). PR 332 was
+opened by the captain from the lane's prepared body (29 commits by the end:
+the three pins in both workspaces, 56 originator sites to Some, the classic
+ARC construction, the base64 reference, the certificate JSON at bsv-rs #268's
+shape, the review-actions carrier, 160 wire rows re-recorded in two named
+commits, a beta.1-shaped tracker row still read), a cold review on Opus found
+six things (the review-actions body in the reference's code-5 shape, the hex
+tx rows, five bsv-rs and two toolbox changelog entries missed at the intake,
+unticked items, scenario 08's bad BEEF refused before the BEEF, one changelog
+name), a fix round closed all six, the re-check said merge, and it landed at
+11:29:55Z as beta b101d67. #277 and #322 closed by hand with the record; the
+toolbox's dependents doc carries the pin row and both expected-red runs
+beside our green CI.
+
+The mainnet gate ran once on b101d67 at 11:36Z: 23 of 24, net 2,200 sats.
+Scenario 24 (busy-store, beta-only, its mainnet branch's first run) chose a
+funder coin that could not cover the change outputs the allocator opens
+toward the basket's desired count (the reference's rule: a quarter of the
+10,000 minimum first, then 10,000 each until six coins; #315), so it pulled
+all four of A's coins. #334: the scenario now computes that demand at run
+time from A's own database and picks the funder's largest coin that clears
+it (PR 335, a fixed threshold found insufficient by the cold review, the
+run-time rule in the fix round), landed 12:43Z as beta 8a41565. The gate ran
+once more at 12:46Z: 24 of 24, net 2,185 sats, Arcade first, the funder on
+its own 0.18.2 copy with its database untouched, the test wallets on the
+pin; the hour went to the bsv-rs captain (the canary's last step) and the
+keeper. #336: the funder's largest mid-run coin (17,399) is too close to the
+demand (14,023); a standing coin the funding never spends.
+
+Two production facts for the owner's brief, confirmed by both reviews in the
+toolbox's code: certificates issued before toolbox #203's scheme change must
+be re-issued before production takes a build carrying it (the 46 of one
+certifier, 2026-03-29 to 31; a 0.19.0 release step on the owner's word;
+production on 0.18.2 untouched), and certificates --reverify audits signatures
+only, so #333 asks for the keyring detector and names the re-issue tool (the
+acquire door in its issuance form, then relinquish). The keeper put two
+questions on the brief with a recommendation the captain shares: one toolbox
+0.14.0-beta.3 at bsv-rs beta.3's common hour carrying #404 (landed on their
+beta at a9bb733 the same afternoon: typed WalletRefusal at the boundary,
+texts unchanged, the SDK's Display losing its "wallet error: " prefix), #353
+and #374, the CLI's one pin PR taking #330 and #313 together; #388 later.
+
+Lessons kept: a pin brief reads the package, never the intake's promise; a
+proof the other side's workflow cannot serve is not this PR's gate; a
+beta-only scenario's mainnet branch gets its first run at the line's first
+gate, so a lane that adds one sizes its live inputs against the documented
+floors; cca refuses an existing worktree folder without --reuse (the chain
+scripts take CCA_REUSE=1, and chain-fix.sh CCA_WT=<worktree>); the CLI signs
+nothing with the Chronicle hash type (the gift claim at 0x41 and 0xc3, the
+respend replacement through bsv-rs's P2PKH template, all version 1).
+
+Open after the day: the owner's two answers; the toolbox's beta.3 (its list
+before it lands) and bsv-rs's beta.3 (the ordered maps reach us only through
+serde key order; #404's &self receivers touch no CLI site; the auth transport
+texts match nothing of ours); #310 before any Nightly dispatch; #313 and #330
+at the next pin; #331 and #333 on 0.19.0; #336 before the next gate.
