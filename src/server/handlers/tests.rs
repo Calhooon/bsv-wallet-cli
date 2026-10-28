@@ -1,6 +1,5 @@
 //! The answer's rule (#44): the store busy is 503 `STORE_BUSY` with
 //! `Retry-After: 1` by its type only; every other fault keeps its word and status.
-
 use super::*;
 use crate::test_support::response_answer;
 use axum::http::StatusCode;
