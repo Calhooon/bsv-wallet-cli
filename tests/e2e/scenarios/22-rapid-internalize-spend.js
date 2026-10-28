@@ -34,11 +34,13 @@ module.exports = {
       `A needs at least ${sendAmount * cycles} sats, has ${aBalanceBefore}`);
 
     for (let i = 0; i < cycles; i++) {
-      const tag = `e2e22-cycle${i}`;
+      const tag = Buffer.from(`e2e22-cycle${i}`).toString('base64');
+      const fwd = Buffer.from('fwd').toString('base64');
+      const ret = Buffer.from('ret').toString('base64');
 
       // A sends to B
       const bPubkey = await walletB.client.getPublicKey(
-        [2, '3241645161d8'], `${tag} fwd`, ANYONE_KEY, true,
+        [2, '3241645161d8'], `${tag} ${fwd}`, ANYONE_KEY, true,
       );
 
       const fwdResult = await walletA.client.createAction([{
@@ -54,14 +56,14 @@ module.exports = {
         protocol: 'wallet payment',
         paymentRemittance: {
           derivationPrefix: tag,
-          derivationSuffix: 'fwd',
+          derivationSuffix: fwd,
           senderIdentityKey: ANYONE_KEY,
         },
       }], `E2E.22 cycle ${i + 1}: internalize from A`);
 
       // B immediately spends the internalized output back to A
       const aPubkey = await walletA.client.getPublicKey(
-        [2, '3241645161d8'], `${tag} ret`, ANYONE_KEY, true,
+        [2, '3241645161d8'], `${tag} ${ret}`, ANYONE_KEY, true,
       );
 
       const retResult = await walletB.client.createAction([{
@@ -77,7 +79,7 @@ module.exports = {
         protocol: 'wallet payment',
         paymentRemittance: {
           derivationPrefix: tag,
-          derivationSuffix: 'ret',
+          derivationSuffix: ret,
           senderIdentityKey: ANYONE_KEY,
         },
       }], `E2E.22 cycle ${i + 1}: internalize return from B`);

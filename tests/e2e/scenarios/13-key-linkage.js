@@ -20,12 +20,13 @@ module.exports = {
       verifier: bKey,
     });
 
-    assert(linkageResp.linkage !== undefined, 'counterparty linkage should include linkage object');
-    assert(linkageResp.linkage.prover, 'linkage should include prover');
-    assert(linkageResp.linkage.verifier, 'linkage should include verifier');
-    assert(linkageResp.linkage.counterparty, 'linkage should include counterparty');
-    assert(linkageResp.linkage.encryptedLinkage, 'linkage should include encryptedLinkage');
-    assert(linkageResp.linkage.encryptedLinkageProof, 'linkage should include encryptedLinkageProof');
+    const linkage = linkageResp.linkage || linkageResp; // beta.1 / beta.2 (#105)
+    assert(linkage, 'counterparty linkage is present');
+    assert(linkage.prover, 'linkage should include prover');
+    assert(linkage.verifier, 'linkage should include verifier');
+    assert(linkage.counterparty, 'linkage should include counterparty');
+    assert(linkage.encryptedLinkage, 'linkage should include encryptedLinkage');
+    assert(linkage.encryptedLinkageProof, 'linkage should include encryptedLinkageProof');
     assert(linkageResp.revelationTime, 'response should include revelationTime');
 
     // --- BRC-70: revealSpecificKeyLinkage ---
@@ -36,12 +37,13 @@ module.exports = {
       keyID: '1',
     });
 
-    assert(specificResp.linkage !== undefined, 'specific linkage should include linkage object');
-    assert(specificResp.linkage.prover, 'specific linkage should include prover');
-    assert(specificResp.linkage.verifier, 'specific linkage should include verifier');
-    assert(specificResp.linkage.counterparty, 'specific linkage should include counterparty');
-    assert(specificResp.linkage.encryptedLinkage, 'specific linkage should include encryptedLinkage');
-    assert(specificResp.protocol, 'specific linkage should include protocol');
+    const specific = specificResp.linkage || specificResp;
+    assert(specific, 'specific linkage is present');
+    assert(specific.prover, 'specific linkage should include prover');
+    assert(specific.verifier, 'specific linkage should include verifier');
+    assert(specific.counterparty, 'specific linkage should include counterparty');
+    assert(specific.encryptedLinkage, 'specific linkage should include encryptedLinkage');
+    assert(specificResp.protocolID || specificResp.protocol, 'specific linkage includes its protocol');
 
     // --- Invalid input: bad counterparty key should return a clear error ---
     try {
