@@ -188,6 +188,21 @@ The router is driven in-process (`tower::ServiceExt::oneshot`). The header servi
 
 The worlds use the toolbox's real `Services`, pointed at the stubs, not its `MockWalletServices` (whose `post_beef_success` the ARC stub stands in for): the router's state is `Arc<Wallet<StorageSqlx, Services>>`, a concrete type, and the brief allows no change under `src/` for it.
 
+The remaining #277 intake was re-read in the fix round (finding 4):
+bsv-rs #262 does not re-sign direct acquisitions; #280's retained signed
+Peer text is not reconstructed by the host; #285's correctly rounded
+number reader is feature-unified, with the host's integer field types and
+bounds unchanged. Toolbox #202's remote storage wire has no direct CLI
+caller. Bsv-rs #240's non-exhaustive stream enums have no CLI matches;
+the toolbox's fallback refuses an unknown verdict. Bsv-rs #246 concerns
+the binary wallet certificate writer; direct JSON acquisition's separate
+field-size gap stays toolbox #374. The #105 shape moves were checked
+toward HTTPWalletJSON, with no away-moving served byte found. The CLI
+calls no #310/#315 IdentityClient publication helper; its explicit
+proveCertificate path is covered above. Toolbox #395's internalize
+verifier is uncapped at this published pin, without a host memory-limit
+parameter. PR 332 has one checked line per item with these findings.
+
 ## The judge, judged
 
 `tests/wire.rs` carries planted cases beside the replay: `AppError`'s codes in the source and the judged and unproduced lists agree in both directions; a recording run into a temporary directory ends with the word to replay and never passes, a second run replays it clean, and every file it wrote is the committed one byte for byte by default; a `WIRE_RECORD` other than `1` is refused by name; a message-only change in a copy of the corpus fails in strict mode and reports the exact JSON-quoted marker under `WIRE_TEXT_DIFF=report`; a changed `code`, or a message changed with another field, still fails with a line diff; changed status, headers, key order, nested reasons, the noted offset and script reason, and non-JSON or successful bodies remain strict; `WIRE_TEXT_DIFF=1`, an empty value, and the report word alongside `WIRE_RECORD=1` are refused by name; the fresh-recording comparison reports only changed message bytes, never a changed request, envelope, whitespace or manifest; a manifest with a listed file missing, a file on disk unlisted, and a stray non-JSON file names all three, and the replay refuses that set naming them; a fixture of an unknown world fails the replay naming the file and the world; the normalizer keeps each placeholder's shape and leaves a non-volatile key whole. The runs share one lock, since the permission audit is the process's.
