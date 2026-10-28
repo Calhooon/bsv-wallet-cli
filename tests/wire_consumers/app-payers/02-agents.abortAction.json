@@ -14,7 +14,7 @@
     }
   },
   "response": {
-    "status": 404,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://localhost",
@@ -23,8 +23,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "NOT_FOUND",
-      "message": "wallet error: Entity not found: transaction with id reference or txid '3333333333333333333333333333333333333333333333333333333333333333'"
+      "code": "VALIDATION_ERROR",
+      "message": "Entity not found: transaction with id reference or txid '3333333333333333333333333333333333333333333333333333333333333333'"
     }
   }
 }
