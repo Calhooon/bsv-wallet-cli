@@ -429,10 +429,7 @@ fn p2pkh(hash: &[u8]) -> Vec<u8> {
     [&[0x76, 0xa9, 0x14][..], hash, &[0x88, 0xac][..]].concat()
 }
 
-/// A stranger's payment ([`Payment`]): (its mined parent, the child's
-/// `AtomicBEEF`). The spend is checked here, before it is offered: a valid
-/// one verifies (its script runs true, its parent's proof at its height),
-/// the bad one does not.
+/// A [`Payment`]'s mined parent and child `AtomicBEEF`, checked before serving.
 pub(crate) async fn stranger_payment(
     payment: Payment,
     wallet: &PrivateKey,
@@ -465,11 +462,9 @@ pub(crate) async fn stranger_payment(
         ))
         .unwrap();
     child.sign().await.unwrap();
-    // Parity-mode replay of the planted payment (parent and mock tip at
-    // 899_905..=899_907), checking the good/bad specimens before serving.
-    // bsv-rs 0.9.0-beta.3 Transaction::verify has no flag argument, so this
-    // stays in parity mode; a node-word check needs per-input
-    // Spend::set_flags(ScriptFlags::standard(era)) with the planted coin's era.
+    // Parity-mode replay checks the planted good/bad payment specimens.
+    // A node-word check needs spend-era flags plus coin-era UTXO bits per input;
+    // see docs/ARCHITECTURE.md for the combined-word rule.
     let verified = child
         .verify(
             &bsv_sdk::transaction::AlwaysValidChainTracker::new(at),

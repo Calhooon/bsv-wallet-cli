@@ -481,9 +481,15 @@ side by `l2_stub_refusal_names_txid_courier_reason_and_stores_nothing`,
 request for the transaction's own post.
 The CLI judges no transaction itself; the toolbox's internalize door owns
 the verdict, with its move to the node's word per input
-(`ScriptFlags::standard(era)` through `Spend::set_flags`, the era from the
-coin's proven height or the tip) on the toolbox's lane
-([toolbox #422](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/422)).
+on the toolbox's lane
+([toolbox #422](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/422),
+[#432](https://github.com/Calhooon/bsv-wallet-toolbox-rs/pull/432)).
+With [bsv-rs 0.9.0-beta.3 `ScriptFlags`](https://github.com/Calhooon/bsv-rs/blob/v0.9.0-beta.3/src/script/flags.rs),
+compose that word through `from_bits` and apply it with `Spend::set_flags`:
+the transaction-level flags from the spend's era (the tip's era, or tip+1
+for an unproven transaction; read by the hash-type gate) plus the per-input
+`UTXO_AFTER_GENESIS` and `UTXO_AFTER_CHRONICLE` bits from the coin's
+proven-height era (read by the opcode gates and the number bound).
 
 **Hop 3, the answer and the word.** The answer is `accepted` with, when the
 toolbox's post of the internalized transaction drew no accepting word, the
