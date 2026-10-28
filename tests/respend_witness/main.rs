@@ -89,10 +89,11 @@ async fn store_child_first_beef(storage: &StorageSqlx, txid: &str) {
     // Reordering the public vector after sorting keeps that flag clear.
     beef.txs.reverse();
     let child_first = beef.to_binary();
+    // Bsv-rs #240 accepts valid BEEF regardless of transaction order.
     assert!(Beef::from_binary(&child_first)
         .unwrap()
         .verify_structure()
-        .is_err());
+        .is_ok());
     for table in ["transactions", "proven_tx_reqs"] {
         sqlx::query(&format!("UPDATE {table} SET input_beef=? WHERE txid=?"))
             .bind(&child_first)
@@ -104,7 +105,7 @@ async fn store_child_first_beef(storage: &StorageSqlx, txid: &str) {
 }
 
 #[tokio::test]
-async fn respend_sorts_a_child_first_stored_input_beef_before_judging() {
+async fn respend_accepts_child_first_stored_input_beef() {
     let f = fixture().await;
     let phantom = descendant_phantom(&f).await;
     let storage = f.wallet.storage();
@@ -116,7 +117,7 @@ async fn respend_sorts_a_child_first_stored_input_beef_before_judging() {
     headed(&absent, &f.funding);
     let replacement = build_and_post(storage, &absent, &f.root, &phantom, &["mock"])
         .await
-        .expect("stored child-first ancestry must be sorted before the held-order judge");
+        .expect("stored child-first ancestry remains usable at the beta.2 pin");
     assert_eq!(absent.call_count("post_beef"), 1);
     let after: (String, String) = sqlx::query_as("SELECT t.status,r.status FROM transactions t JOIN proven_tx_reqs r ON r.txid=t.txid WHERE t.txid=?")
         .bind(&phantom).fetch_one(storage.pool()).await.unwrap();
