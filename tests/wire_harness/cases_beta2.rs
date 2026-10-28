@@ -48,7 +48,9 @@ async fn sign_bound(r: &mut Recorder) {
             post("/createAction", body),
         )
         .await;
-    assert_eq!(review.value("/code"), "CONFLICT");
+    assert_eq!(review.value("/code"), 5);
+    assert_eq!(review.value("/isError"), true);
+    assert!(review.value("/reviewActionResults").is_array());
     r.case(
         "listActions.afterDoubleSpendReview",
         "review-race",

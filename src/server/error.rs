@@ -43,6 +43,8 @@ pub enum Kind {
     UnspendableCoin,
     /// The wallet's state refuses a well-formed request.
     Conflict,
+    /// Completed action results require review, with their typed evidence.
+    ReviewActions,
     /// A store or internal fault.
     Internal,
     /// A service, network or broadcast fault.
@@ -76,6 +78,7 @@ impl Kind {
             Kind::NotFound => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             Kind::UnspendableCoin => (StatusCode::CONFLICT, "UNSPENDABLE_COIN"),
             Kind::Conflict => (StatusCode::CONFLICT, "CONFLICT"),
+            Kind::ReviewActions => (StatusCode::BAD_REQUEST, "5"),
             Kind::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
             Kind::Service => (StatusCode::BAD_GATEWAY, "SERVICE_ERROR"),
             Kind::BroadcastRejected => (StatusCode::BAD_GATEWAY, "BROADCAST_REJECTED"),
@@ -135,6 +138,8 @@ pub struct AppError {
     refusal: Option<Box<crate::spend_gate::Refusal>>,
     /// The coin an `UnspendableCoin` refusal names.
     coin: Option<String>,
+    /// The reference's five review-action members, never inferred from words.
+    review: Option<Box<bsv_sdk::wallet::ReviewActionsRefusal>>,
 }
 
 impl AppError {
@@ -145,6 +150,7 @@ impl AppError {
             message: message.into(),
             refusal: None,
             coin: None,
+            review: None,
         }
     }
 
@@ -226,7 +232,7 @@ impl AppError {
         match e {
             // The toolbox's `StoreBusy`, typed across the boundary (#44).
             bsv_sdk::Error::WalletBusy { .. } => (Kind::StoreBusy, None),
-            bsv_sdk::Error::WalletReviewActions(_) => (Kind::Conflict, None),
+            bsv_sdk::Error::WalletReviewActions(_) => (Kind::ReviewActions, None),
             // A toolbox refusal whose variant the boundary erased.
             bsv_sdk::Error::WalletError(text) => {
                 let kind = Kind::of_erased(toolbox_words::class(text));
@@ -257,10 +263,10 @@ impl AppError {
                 let coin = Some(outpoint.trim().to_string()).filter(|c| !c.is_empty());
                 return (Kind::UnspendableCoin, coin);
             }
-            T::Duplicate { .. }
-            | T::InvalidOperation(_)
-            | T::InvalidTransactionStatus(_)
-            | T::ReviewActions(_) => Kind::Conflict,
+            T::Duplicate { .. } | T::InvalidOperation(_) | T::InvalidTransactionStatus(_) => {
+                Kind::Conflict
+            }
+            T::ReviewActions(_) => Kind::ReviewActions,
             T::InvalidBeef { .. } | T::SpendRefused { .. } => Kind::InvalidBeef,
             T::ValidationError(_) | T::InvalidArgument(_) => Kind::Validation,
             T::StorageError(_) | T::DatabaseError(_) | T::Internal(_) => Kind::Internal,
@@ -278,19 +284,38 @@ impl AppError {
             ..Self::new(kind, message)
         }
     }
+
+    fn from_sdk(e: &bsv_sdk::Error) -> Self {
+        let (kind, coin) = Self::of_sdk(e);
+        let mut error = Self::typed(kind, coin, e.to_string());
+        if let bsv_sdk::Error::WalletReviewActions(review) = e {
+            error.review = Some(review.clone());
+        }
+        error
+    }
+
+    fn from_toolbox(e: &bsv_wallet_toolbox::Error) -> Self {
+        if let bsv_wallet_toolbox::Error::SdkError(sdk) = e {
+            return Self::from_sdk(sdk);
+        }
+        let (kind, coin) = Self::of_toolbox(e);
+        let mut error = Self::typed(kind, coin, e.to_string());
+        if let bsv_wallet_toolbox::Error::ReviewActions(review) = e {
+            error.review = Some(review.clone());
+        }
+        error
+    }
 }
 
 impl From<bsv_sdk::Error> for AppError {
     fn from(e: bsv_sdk::Error) -> Self {
-        let (kind, coin) = Self::of_sdk(&e);
-        Self::typed(kind, coin, e.to_string())
+        Self::from_sdk(&e)
     }
 }
 
 impl From<bsv_wallet_toolbox::Error> for AppError {
     fn from(e: bsv_wallet_toolbox::Error) -> Self {
-        let (kind, coin) = Self::of_toolbox(&e);
-        Self::typed(kind, coin, e.to_string())
+        Self::from_toolbox(&e)
     }
 }
 
@@ -299,14 +324,15 @@ impl From<bsv_wallet_toolbox::Error> for AppError {
 /// unclassified.
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
-        let (kind, coin) = if let Some(sdk) = e.downcast_ref::<bsv_sdk::Error>() {
-            Self::of_sdk(sdk)
+        let mut error = if let Some(sdk) = e.downcast_ref::<bsv_sdk::Error>() {
+            Self::from_sdk(sdk)
         } else if let Some(toolbox) = e.downcast_ref::<bsv_wallet_toolbox::Error>() {
-            Self::of_toolbox(toolbox)
+            Self::from_toolbox(toolbox)
         } else {
-            (Kind::Unclassified, None)
+            Self::new(Kind::Unclassified, e.to_string())
         };
-        Self::typed(kind, coin, e.to_string())
+        error.message = e.to_string();
+        error
     }
 }
 
@@ -322,6 +348,9 @@ impl IntoResponse for AppError {
             "request error"
         );
         let mut body = json!({"code": code, "message": self.message});
+        if let Some(review) = &self.review {
+            body = review_body(review);
+        }
         if let Some(refusal) = &self.refusal {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
@@ -341,4 +370,41 @@ impl IntoResponse for AppError {
             None => (status, Json(body)).into_response(),
         }
     }
+}
+
+/// #140's host map: HTTPWalletJSON.ts at edf6e03 reads HTTP 400/code 5.
+/// Keep absent optional members absent. The reference's competing BEEF is
+/// a Uint8Array, whose JSON has numeric object keys, unlike the action's tx.
+fn review_body(review: &bsv_sdk::wallet::ReviewActionsRefusal) -> serde_json::Value {
+    let mut results = json!(review.review_action_results);
+    for (result, typed) in results
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(&review.review_action_results)
+    {
+        if let Some(bytes) = &typed.competing_beef {
+            result["competingBeef"] = serde_json::Value::Object(
+                bytes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, byte)| (i.to_string(), json!(byte)))
+                    .collect(),
+            );
+        }
+    }
+    let mut body = json!({
+        "isError": true, "code": 5, "message": review.message,
+        "reviewActionResults": results, "sendWithResults": review.send_with_results,
+    });
+    if let Some(txid) = &review.txid {
+        body["txid"] = json!(hex::encode(txid));
+    }
+    if let Some(tx) = &review.tx {
+        body["tx"] = json!(tx);
+    }
+    if let Some(change) = &review.no_send_change {
+        body["noSendChange"] = json!(change);
+    }
+    body
 }

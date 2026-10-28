@@ -55,7 +55,8 @@ const HOST_ROUTES: [&str; 5] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 13] = [
+pub(crate) const APP_CODES: [(u16, &str); 14] = [
+    (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "INVALID_BEEF"),
     (400, "ERROR"),
@@ -154,8 +155,13 @@ pub(crate) fn judge_coverage(fixtures: &[(String, Fixture)]) -> Vec<String> {
     let codes: BTreeSet<(u16, String)> = fixtures
         .iter()
         .filter_map(|(_, f)| {
-            let code = f.response.json.as_ref()?.get("code")?.as_str()?;
-            Some((f.response.status, code.to_string()))
+            let code = f.response.json.as_ref()?.get("code")?;
+            let code = match code {
+                crate::wire_support::J::Str(code) => code.clone(),
+                crate::wire_support::J::Num(code) => code.to_string(),
+                _ => return None,
+            };
+            Some((f.response.status, code))
         })
         .collect();
     let mut missing = Vec::new();
