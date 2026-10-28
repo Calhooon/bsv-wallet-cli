@@ -22,12 +22,13 @@ module.exports = {
     const outputsBefore = await walletA.client.listOutputs('default', {
       limit: 10000, includeEnvelope: false,
     });
-    const utxoCountBefore = (outputsBefore.outputs || [])
-      .filter(o => o.spendable !== false).length;
+    const spendableBefore = (outputsBefore.outputs || []).filter(o => o.spendable !== false);
+    const utxoCountBefore = spendableBefore.length;
 
     assert(balanceBefore > 1000, `A needs balance > 1000 to split, has ${balanceBefore}`);
 
-    const splitCoin = outputsBefore.outputs.find(o => o.spendable !== false).outpoint.replace('.', ':');
+    const largest = spendableBefore.reduce((a, b) => a.satoshis >= b.satoshis ? a : b);
+    const splitCoin = largest.outpoint.replace('.', ':');
     const splitFrom = supportsFrom ? `--from ${splitCoin}` : '';
     // The named coin is mandatory; the remaining wallet coins stay available.
     // ─── Split into 3 UTXOs via CLI ───
@@ -54,6 +55,8 @@ module.exports = {
     const spendableAfterSplit = (outputsAfterSplit.outputs || [])
       .filter(o => o.spendable !== false);
     const utxoCountAfterSplit = spendableAfterSplit.length;
+    if (supportsFrom) assert(!spendableAfterSplit.some(o => o.outpoint === largest.outpoint),
+      '--from spends the named coin during split');
 
     assert(utxoCountAfterSplit >= SPLIT_COUNT,
       `After split, should have >= ${SPLIT_COUNT} UTXOs, got ${utxoCountAfterSplit}`);
