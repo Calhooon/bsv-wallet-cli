@@ -533,8 +533,8 @@ jobs:
         working-directory: tests/e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Check the hermetic BEEF codecs
-        run: node --test tests/e2e/stub/tx.test.js
+      - name: Check the hermetic BEEF codecs and kept-template demand
+        run: node --test tests/e2e/stub/tx.test.js tests/e2e/24-busy-store.test.js
 
       - name: Run the 24 scenarios against the stub
         env:
