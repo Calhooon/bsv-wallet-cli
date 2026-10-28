@@ -431,6 +431,7 @@ pub(crate) async fn stranger_payment(
         .verify(
             &bsv_sdk::transaction::AlwaysValidChainTracker::new(at),
             None,
+            None,
         )
         .await
         .unwrap_or(false);

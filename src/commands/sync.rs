@@ -245,7 +245,7 @@ async fn sync_leads<V: WalletServices>(
                                     }
                                 },
                             },
-                            "bsv-wallet-cli",
+                            Some("bsv-wallet-cli"),
                         )
                         .await
                     {
@@ -388,7 +388,7 @@ async fn known_outpoints(ctx: &WalletContext) -> Result<HashSet<String>> {
                     offset: Some(offset),
                     seek_permission: None,
                 },
-                "bsv-wallet-cli",
+                Some("bsv-wallet-cli"),
             )
             .await?;
         let n = res.outputs.len() as u32;

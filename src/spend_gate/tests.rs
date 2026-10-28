@@ -1388,7 +1388,7 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
         args
     };
     let direct = wallet
-        .create_action_offering(template(), "gate.local", &lazy.offer())
+        .create_action_offering(template(), Some("gate.local"), &lazy.offer())
         .await
         .expect_err("the big coin alone cannot be carried");
     assert!(crate::toolbox_words::is_unspendable(&direct), "{direct}");
@@ -1524,16 +1524,19 @@ async fn an_offer_at_the_cap_runs_and_one_past_sqlites_limit_does_not() {
             .collect()
     };
     let result = wallet
-        .create_action_offering(template(), "gate.local", &ids(2 * OFFER_CAP - 64))
+        .create_action_offering(template(), Some("gate.local"), &ids(2 * OFFER_CAP - 64))
         .await
         .expect("twice the cap, less a margin, is under the limit");
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     wallet
-        .abort_action(bsv_sdk::wallet::AbortActionArgs { reference }, "gate.local")
+        .abort_action(
+            bsv_sdk::wallet::AbortActionArgs { reference },
+            Some("gate.local"),
+        )
         .await
         .unwrap();
     let err = wallet
-        .create_action_offering(template(), "gate.local", &ids(32_767))
+        .create_action_offering(template(), Some("gate.local"), &ids(32_767))
         .await
         .expect_err("past SQLite's bound-variable limit");
     println!("{err}");
@@ -1678,7 +1681,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     assert!(rules_of(wallet.storage(), user).await.unwrap().is_empty());
 
     let list = wallet
-        .list_actions(list_args(), "gate.local")
+        .list_actions(list_args(), Some("gate.local"))
         .await
         .unwrap();
     let rules = action_rules(wallet.storage(), user).await.unwrap();
@@ -1693,7 +1696,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
             bsv_sdk::wallet::AbortActionArgs {
                 reference: reference.clone(),
             },
-            "gate.local",
+            Some("gate.local"),
         )
         .await
         .unwrap();
@@ -1742,7 +1745,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let rules = action_rules(wallet.storage(), user).await.unwrap();
     assert!(rules.by_txid.is_empty() && rules.by_template.is_empty());
     let list = wallet
-        .list_actions(list_args(), "gate.local")
+        .list_actions(list_args(), Some("gate.local"))
         .await
         .unwrap();
     let shown = listed(serde_json::to_value(&list).unwrap(), &rules);
@@ -2233,7 +2236,7 @@ async fn create_action_beside_a_monitor_shaped_writer_answers_no_store_error() {
                 if let Err(e) = wallet
                     .abort_action(
                         bsv_sdk::wallet::AbortActionArgs { reference },
-                        "store-busy.local",
+                        Some("store-busy.local"),
                     )
                     .await
                 {
@@ -2363,7 +2366,7 @@ async fn the_daemons_monitor_and_its_served_create_action_share_one_writer() {
         wallet
             .abort_action(
                 bsv_sdk::wallet::AbortActionArgs { reference },
-                "one-store.local",
+                Some("one-store.local"),
             )
             .await
             .unwrap_or_else(|e| panic!("round {round}: abortAction: {e}"));

@@ -88,7 +88,7 @@ pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
     let recorded: Option<std::result::Result<bool, String>> = match outcome.record.clone() {
         Some(record) => Some(
             ctx.wallet
-                .internalize_action(record, "bsv-wallet-cli")
+                .internalize_action(record, Some("bsv-wallet-cli"))
                 .await
                 .map(|result| result.accepted)
                 .map_err(|e| e.to_string()),

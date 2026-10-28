@@ -1,3 +1,8 @@
+//! CLI wallet calls retain their existing originator names at the beta.2
+//! pin: `Some("bsv-wallet-cli")`, or the existing command/engine-specific
+//! name. A request's required header supplies the served door's `Some`.
+//! No local caller changes an empty name into `None` (#329, #318, #323).
+
 use std::sync::Arc;
 
 use anyhow::Result;

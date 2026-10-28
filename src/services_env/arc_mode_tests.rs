@@ -7,8 +7,7 @@ use super::*;
 use crate::broadcast_verify::post_beef_ladder;
 use crate::config::{Config, Flags, Refused};
 use bsv_wallet_toolbox::{
-    PROVIDER_ARCADE_V2, PROVIDER_BITAILS, PROVIDER_GORILLAPOOL_ARC, PROVIDER_TAAL_ARC,
-    PROVIDER_WHATSONCHAIN,
+    PROVIDER_ARCADE_V2, PROVIDER_BITAILS, PROVIDER_TAAL_ARC, PROVIDER_WHATSONCHAIN,
 };
 
 /// The configuration of `pairs` on `chain`, with `CHAINTRACKS_URL=off`, as
@@ -61,11 +60,10 @@ fn classic_is_the_one_opt_out() {
     ] {
         let opts = built(Chain::Main, &pairs).unwrap();
         assert!(!opts.arcade_v2, "{pairs:?}");
-        assert_eq!(
-            opts.arc_url,
-            ServicesOptions::mainnet().arc_url,
-            "{pairs:?}"
-        );
+        assert_eq!(opts.arc_url, "https://arc.taal.com", "{pairs:?}");
+        let services = bsv_wallet_toolbox::Services::with_options(Chain::Main, opts).unwrap();
+        assert!(services.arc_taal.is_some(), "{pairs:?}");
+        assert!(services.arcade.is_none(), "{pairs:?}");
     }
     // ARC_MODE wins over ARCADE when both are set.
     let opts = built(Chain::Main, &[("ARC_MODE", "classic"), ("ARCADE", "1")]).unwrap();
@@ -105,7 +103,7 @@ fn an_unknown_mode_is_refused_by_name() {
 
 #[test]
 fn gorillapool_arc_is_never_a_rung() {
-    assert!(ServicesOptions::mainnet().arc_gorillapool_url.is_some());
+    assert!(ServicesOptions::mainnet().arc_gorillapool_url.is_none());
     for chain in [Chain::Main, Chain::Test] {
         // A testnet wallet in Arcade mode names its endpoint.
         let arcade: &[(&str, &str)] = match chain {
@@ -249,22 +247,16 @@ fn testnet_arcade_without_arc_url_is_refused_by_name() {
 }
 
 #[test]
-fn the_taal_warning_names_the_provider_that_still_posts() {
+fn the_taal_warning_names_the_removed_classic_provider() {
     assert!(TAAL_KEY_UNUSED_WARNING.contains("arc is just deprecated, arcade is the standard"));
-    assert!(TAAL_KEY_UNUSED_WARNING.contains("toolbox #317"));
-    assert!(!TAAL_KEY_UNUSED_WARNING.contains("no classic ARC rung runs"));
+    assert!(TAAL_KEY_UNUSED_WARNING.contains("no classic ARC provider runs"));
 }
 
 #[test]
 fn the_post_ladder_reads_arcade_first() {
     assert_eq!(
         post_beef_ladder(&built(Chain::Main, &[]).unwrap()),
-        [
-            PROVIDER_ARCADE_V2,
-            PROVIDER_TAAL_ARC,
-            PROVIDER_BITAILS,
-            PROVIDER_WHATSONCHAIN
-        ]
+        [PROVIDER_ARCADE_V2, PROVIDER_BITAILS, PROVIDER_WHATSONCHAIN]
     );
     assert_eq!(
         post_beef_ladder(&built(Chain::Main, &[("ARC_MODE", "classic")]).unwrap()),
@@ -285,11 +277,6 @@ fn the_post_ladder_reads_arcade_first() {
     // The toolbox's own default, for the rule the ladder mirrors.
     assert_eq!(
         post_beef_ladder(&ServicesOptions::mainnet()),
-        [
-            PROVIDER_TAAL_ARC,
-            PROVIDER_GORILLAPOOL_ARC,
-            PROVIDER_BITAILS,
-            PROVIDER_WHATSONCHAIN
-        ]
+        [PROVIDER_ARCADE_V2, PROVIDER_BITAILS, PROVIDER_WHATSONCHAIN]
     );
 }

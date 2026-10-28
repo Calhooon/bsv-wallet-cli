@@ -645,7 +645,7 @@ mod tests {
         let record = outcome.record.expect("an accepted claim is recorded");
         assert_eq!(record.outputs.len(), 2, "the gift and the change");
         let recorded = wallet
-            .internalize_action(record, "bsv-wallet-cli")
+            .internalize_action(record, Some("bsv-wallet-cli"))
             .await
             .unwrap();
         assert!(recorded.accepted);

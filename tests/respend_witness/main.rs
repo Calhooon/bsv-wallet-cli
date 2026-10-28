@@ -66,7 +66,7 @@ async fn descendant_phantom(f: &world::Fixture) -> String {
                 version: None,
                 labels: None,
             },
-            "bsv-wallet-cli",
+            Some("bsv-wallet-cli"),
         )
         .await
         .unwrap();
@@ -182,7 +182,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     let verified = Transaction::from_beef(&input_beef.to_binary(), Some(&replacement)).unwrap();
     assert!(
         verified
-            .verify(absent.get_chain_tracker().await.unwrap(), None)
+            .verify(absent.get_chain_tracker().await.unwrap(), None, None)
             .await
             .unwrap(),
         "replacement signatures must execute with the proven source"
@@ -293,7 +293,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
                     ..Default::default()
                 }),
             },
-            "bsv-wallet-cli",
+            Some("bsv-wallet-cli"),
         )
         .await
         .unwrap();

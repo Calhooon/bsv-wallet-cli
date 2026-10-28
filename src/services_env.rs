@@ -52,6 +52,16 @@ pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it t
      deployment), or to `off` to run with none (every merkle proof is then refused). There is \
      no default header service.";
 
+/// The CLI's explicit classic endpoints (#322). Toolbox beta.2 defaults to
+/// Arcade, so a classic caller must never inherit its `arc_url` default.
+/// Classic ARC is deprecated and remains for callers that select it.
+pub const fn classic_arc_url(chain: Chain) -> &'static str {
+    match chain {
+        Chain::Main => "https://arc.taal.com",
+        Chain::Test => "https://arc-test.taal.com",
+    }
+}
+
 /// Resolve the header service from `CHAINTRACKS_URL` as the configuration
 /// read it.
 ///
@@ -345,8 +355,8 @@ pub fn callback_token_path(db_path: &str) -> PathBuf {
 
 /// What a wallet in Arcade mode is told, once, when a TAAL key is set.
 pub const TAAL_KEY_UNUSED_WARNING: &str = "is set but unused in Arcade mode (arc is just \
-     deprecated, arcade is the standard); the toolbox's TAAL provider posts unauthenticated \
-     until toolbox #317; remove the knob";
+     deprecated, arcade is the standard); no classic ARC provider runs in Arcade mode; \
+     remove the knob";
 
 /// Build `ServicesOptions` from the configuration (the ONE shared helper).
 ///
@@ -420,9 +430,7 @@ fn services_options_quiet(
         // Arcade V2 mode: explicit flag on ServicesOptions (never inferred
         // from the URL). The TAAL keys are unused in Arcade mode (arc is just
         // deprecated, arcade is the standard): no classic ARC config is
-        // passed. The toolbox's TAAL provider still sits behind Arcade
-        // (services.rs 672-685) and posts unauthenticated until toolbox #317
-        // drops it.
+        // passed. Toolbox #317 builds no classic ARC provider in this mode.
         warn_unused_taal_keys(settings);
         let arcade_config = ArcadeConfig {
             callback_token: Some(runtime.callback_token.clone()),
@@ -432,12 +440,16 @@ fn services_options_quiet(
         opts.arc_config = None;
         opts = opts.with_arcade(runtime.url, Some(arcade_config));
     } else {
-        // Classic ARC: honor ARC_URL override, else keep the chain default.
+        // The CLI names its own deprecated classic endpoint. The toolbox's
+        // default is Arcade at beta.2, including when ARC_URL is unset.
         let arc_url = settings
             .arc_url
             .clone()
-            .unwrap_or_else(|| opts.arc_url.clone());
-        opts = opts.with_arc(arc_url, classic_arc_config(settings));
+            .unwrap_or_else(|| classic_arc_url(chain).to_string());
+        #[allow(deprecated)] // Explicit classic mode, including the hermetic ARC stub (#322).
+        {
+            opts = opts.with_classic_arc(arc_url, classic_arc_config(settings));
+        }
     }
 
     Ok(opts)

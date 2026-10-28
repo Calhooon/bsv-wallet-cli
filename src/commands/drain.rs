@@ -137,7 +137,7 @@ async fn sum_spendable(ctx: &WalletContext) -> Result<(u64, u32)> {
                     offset: Some(offset),
                     seek_permission: None,
                 },
-                "bsv-wallet-cli",
+                Some("bsv-wallet-cli"),
             )
             .await?;
         for o in &res.outputs {

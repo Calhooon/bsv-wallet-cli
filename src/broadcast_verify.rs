@@ -406,10 +406,8 @@ impl AbsenceVotes {
 /// The postBeef providers the toolbox builds from `opts` (as
 /// `services_env::services_options` built them), in its order, by their
 /// names, which `services_env` logs once at start: the rule of
-/// `Services::with_options` in toolbox 0.14.0-beta.1 (`services.rs`
-/// 775-805), which logs no provider list of its own. In Arcade mode the
-/// classic TAAL provider stays behind Arcade, pointed at TAAL's URL, until
-/// toolbox #317 drops it. Here, beside the plane the verifier mirrors, since
+/// `Services::with_options` in toolbox 0.14.0-beta.2. In Arcade mode no
+/// classic ARC provider is built (#317). Here, beside the plane the verifier mirrors, since
 /// the ladder names the explorers that are also broadcasters (A3).
 #[must_use]
 #[allow(dead_code)] // the binary's copy of this module: called by the library's `services_env`
@@ -417,10 +415,11 @@ pub fn post_beef_ladder(opts: &ServicesOptions) -> Vec<&'static str> {
     let mut ladder = Vec::new();
     if opts.arcade_v2 {
         ladder.push(PROVIDER_ARCADE_V2);
-    }
-    ladder.push(PROVIDER_TAAL_ARC);
-    if opts.arc_gorillapool_url.is_some() {
-        ladder.push(PROVIDER_GORILLAPOOL_ARC);
+    } else {
+        ladder.push(PROVIDER_TAAL_ARC);
+        if opts.arc_gorillapool_url.is_some() {
+            ladder.push(PROVIDER_GORILLAPOOL_ARC);
+        }
     }
     ladder.push(PROVIDER_BITAILS);
     ladder.push(PROVIDER_WHATSONCHAIN);
@@ -1245,10 +1244,7 @@ fn normalize_base(url: &str) -> String {
 }
 
 fn taal_arc_url(chain: Chain) -> &'static str {
-    match chain {
-        Chain::Main => "https://arc.taal.com",
-        Chain::Test => "https://arc-test.taal.com",
-    }
+    crate::services_env::classic_arc_url(chain)
 }
 
 #[cfg(test)]

@@ -179,7 +179,7 @@ pub async fn start(
                         offset: None,
                         seek_permission: None,
                     },
-                    "bsv-wallet-daemon",
+                    Some("bsv-wallet-daemon"),
                 )
                 .await
             {

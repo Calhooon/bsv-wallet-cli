@@ -170,7 +170,7 @@ async fn unspent_txids_with_their_beef<W: WalletInterface>(
                     offset: Some(offset),
                     seek_permission: None,
                 },
-                "bsv-wallet-cli",
+                Some("bsv-wallet-cli"),
             )
             .await?;
         let n = res.outputs.len() as u32;

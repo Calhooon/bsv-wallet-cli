@@ -39,7 +39,7 @@ pub async fn run(
                 offset: None,
                 seek_permission: None,
             },
-            "bsv-wallet-cli",
+            Some("bsv-wallet-cli"),
         )
         .await?;
 
@@ -293,7 +293,7 @@ async fn self_internalize<W: WalletInterface + ?Sized>(
                 labels: Some(vec!["split".to_string()]),
                 seek_permission: None,
             },
-            "bsv-wallet-cli",
+            Some("bsv-wallet-cli"),
         )
         .await
     {

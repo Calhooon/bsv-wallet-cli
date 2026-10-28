@@ -49,7 +49,7 @@ pub(crate) async fn internalize_beef(
 
     let result = ctx
         .wallet
-        .internalize_action(args, "bsv-wallet-cli")
+        .internalize_action(args, Some("bsv-wallet-cli"))
         .await?;
     Ok(result.accepted)
 }

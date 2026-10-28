@@ -74,7 +74,7 @@ fn internalize_action(c: &mut Criterion) {
                 assert_eq!(coin_count(wallet).await, coins);
                 let (accepted, d) = timed(calls, async {
                     let subject = atomic_subject(&args.tx);
-                    let result = wallet.internalize_action(args, "bench.local").await;
+                    let result = wallet.internalize_action(args, Some("bench.local")).await;
                     if let Some(txid) = subject {
                         post_word(wallet.storage(), &txid).await;
                     }

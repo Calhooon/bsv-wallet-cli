@@ -152,7 +152,7 @@ fn page_handlers_share_one_guard_and_forward_original_args() {
             "{call}: originator must precede the guard"
         );
         let forwarded = handler
-            .find(&format!(".{call}(args, &originator)"))
+            .find(&format!(".{call}(args, Some(&originator))"))
             .unwrap();
         assert!(check < forwarded, "{call}: guard must precede the toolbox");
         assert!(
@@ -184,7 +184,7 @@ async fn page_refusals_precede_every_toolbox_entry() {
             let message = answer["message"].as_str().unwrap();
             if limit == 10000 {
                 assert!(
-                    message.contains("originator exceeds maximum length"),
+                    message.contains("The originator parameter must be no more than 250 length."),
                     "{call}: {answer}"
                 );
             } else {

@@ -21,7 +21,10 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
             seek_permission: None,
         };
 
-        let result = ctx.wallet.list_outputs(args, "bsv-wallet-cli").await?;
+        let result = ctx
+            .wallet
+            .list_outputs(args, Some("bsv-wallet-cli"))
+            .await?;
 
         for output in &result.outputs {
             balance += output.satoshis;
