@@ -40,6 +40,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_internalize_at_bound(r).await;
     super::cases_page_bounds::record_page_bounds(r).await;
     super::cases_beta2::record(r).await;
+    super::cases_beta3::record(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.
@@ -116,11 +117,12 @@ fn typed(type_key: &str, rest: &serde_json::Value) -> serde_json::Value {
 
 /// An `acquireCertificate` body, the `direct` protocol.
 fn acquire_body(type_key: &str) -> serde_json::Value {
-    let rest = serde_json::json!({"certifier": G, "acquisitionProtocol": "direct",
-        "fields": {"name": "d2lyZQ=="}, "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "3006020101020101",
-        "keyringRevealer": "certifier", "keyringForSubject": {}});
-    typed(type_key, &rest)
+    let mut body = super::certificate_material::body(7, b"wire");
+    if type_key != "type" {
+        let kind = body.as_object_mut().unwrap().remove("type").unwrap();
+        body[type_key] = kind;
+    }
+    body
 }
 
 /// A `relinquishCertificate` body.

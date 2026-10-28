@@ -666,6 +666,7 @@ fn the_normalizer_keeps_the_shape() {
         "held": [{"ageMinutes": 1234, "reason": "5 min old"}],
         "txid": "ab".repeat(32),
         "nested": {"ciphertext": null},
+        "keyringForVerifier": {"name": "AQID", "role": "AAAAAA=="},
     }));
     let want = j(json!({
         "ciphertext": "<bytes:4>",
@@ -676,6 +677,7 @@ fn the_normalizer_keeps_the_shape() {
         "held": [{"ageMinutes": "<uint:4>", "reason": "<minutes> min old"}],
         "txid": "ab".repeat(32),
         "nested": {"ciphertext": null},
+        "keyringForVerifier": {"name": "<string:4>", "role": "<string:8>"},
     }));
     assert_eq!(normalize(body).compact(), want.compact());
     assert_eq!(
@@ -727,7 +729,7 @@ fn internalize_verifies_the_script_before_storing_a_payment() {
         let refused = world.serve_raw(&bad.request).await.0;
         assert_eq!(refused.status, 400);
         let body = as_value(refused);
-        assert_eq!(body["code"], "INVALID_BEEF");
+        assert_eq!(body["code"], "VALIDATION_ERROR");
         assert!(body["message"]
             .as_str()
             .unwrap()

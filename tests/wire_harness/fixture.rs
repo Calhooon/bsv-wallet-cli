@@ -105,8 +105,8 @@ pub(crate) const NORMALIZER: Normalizer = Normalizer {
     text: normalize_text,
 };
 
-fn volatile(key: &str, v: &J) -> Option<String> {
-    VOLATILE_KEYS.contains(&key).then(|| shape(v))
+fn volatile(key: &str, parent: Option<&str>, v: &J) -> Option<String> {
+    (VOLATILE_KEYS.contains(&key) || parent == Some("keyringForVerifier")).then(|| shape(v))
 }
 
 pub(crate) fn normalize(v: J) -> J {

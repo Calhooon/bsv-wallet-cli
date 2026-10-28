@@ -72,9 +72,10 @@ pub(crate) const APP_CODES: [(u16, &str); 12] = [
 
 /// The router's own codes (`src/server/mod.rs`), by status; each must be
 /// answered at least once.
-const ROUTER_CODES: [(u16, &str); 7] = [
+const ROUTER_CODES: [(u16, &str); 8] = [
     (401, "UNAUTHORIZED"),
     (404, "CALLBACK_DISABLED"),
+    (404, "NOT_FOUND"),
     (400, "BAD_JSON"),
     (400, "BAD_PAYLOAD"),
     (413, "TOO_LARGE"),
