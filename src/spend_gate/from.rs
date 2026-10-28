@@ -82,6 +82,27 @@ async fn assessment_from<V: WalletServices + ?Sized>(
     let named = resolve(coins, from).await?;
     let inputs: Vec<_> = from.iter().cloned().map(NamedInput::from).collect();
     let held = assess_named(coins, services, opts, &inputs, &[], None, true).await?;
+    reject_held(held)?;
+    let mut assessment = assess_inner(coins, services, opts, None, false)
+        .await
+        .map_err(GateError::Gate)?;
+    // Named coins already passed the same gate. Reserve their slots within
+    // the offer cap so a small named coin cannot be dropped by value ranking.
+    let ids: Vec<_> = named.iter().map(|(id, _)| *id).collect();
+    verify_final(&assessment, &ids, from)?;
+    let rest = assessment
+        .offered
+        .iter()
+        .copied()
+        .filter(|(id, _)| !ids.contains(id))
+        .take(OFFER_CAP - named.len())
+        .collect::<Vec<_>>();
+    assessment.offered = named;
+    assessment.offered.extend(rest);
+    Ok((assessment, ids))
+}
+
+fn reject_held(held: Vec<HeldCoin>) -> std::result::Result<(), GateError> {
     if !held.is_empty() {
         let headers_fault = held
             .iter()
@@ -96,22 +117,69 @@ async fn assessment_from<V: WalletServices + ?Sized>(
             headers_fault,
         }));
     }
-    let mut assessment = assess_inner(coins, services, opts, None, false)
-        .await
-        .map_err(GateError::Gate)?;
-    // Named coins already passed the same gate. Reserve their slots within
-    // the offer cap so a small named coin cannot be dropped by value ranking.
-    let ids: Vec<_> = named.iter().map(|(id, _)| *id).collect();
-    let rest = assessment
-        .offered
-        .iter()
-        .copied()
-        .filter(|(id, _)| !ids.contains(id))
-        .take(OFFER_CAP - named.len())
-        .collect::<Vec<_>>();
-    assessment.offered = named;
-    assessment.offered.extend(rest);
-    Ok((assessment, ids))
+    Ok(())
+}
+
+fn verify_final(
+    assessment: &Assessment,
+    ids: &[i64],
+    from: &[(String, u32)],
+) -> std::result::Result<(), GateError> {
+    reject_held(
+        assessment
+            .held
+            .iter()
+            .filter(|coin| ids.contains(&coin.output_id))
+            .cloned()
+            .collect(),
+    )?;
+    for (i, id) in ids.iter().enumerate() {
+        if !assessment.offered.iter().any(|(offered, _)| offered == id)
+            && !assessment.unread.contains(id)
+        {
+            return Err(invalid(
+                &format!("{}:{}", from[i].0, from[i].1),
+                "no longer offered by the final assessment",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_named_coin_lost_between_assessments_is_not_added_back() {
+        let mut assessment = Assessment {
+            offered: vec![(1, 20)],
+            ..Default::default()
+        };
+        let from = vec![("aa".repeat(32), 0)];
+        assert!(matches!(
+            verify_final(&assessment, &[2], &from),
+            Err(GateError::Scope(_))
+        ));
+        assessment.unread.push(2);
+        assert!(
+            verify_final(&assessment, &[2], &from).is_ok(),
+            "the cap may omit an otherwise offered coin"
+        );
+        assessment.held.push(HeldCoin {
+            outpoint: format!("{}.0", from[0].0),
+            satoshis: 5,
+            word: "unknown".into(),
+            origin: Origin::Received,
+            age_minutes: 1,
+            reason: "headers unavailable".into(),
+            headers_fault: Some("offline".into()),
+            output_id: 2,
+        });
+        assert!(matches!(
+            verify_final(&assessment, &[2], &from),
+            Err(GateError::Refused(_))
+        ));
+    }
 }
 
 async fn resolve(
