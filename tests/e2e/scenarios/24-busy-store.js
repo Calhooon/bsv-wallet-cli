@@ -18,6 +18,7 @@ const BUSY_MS = 5_000; // toolbox 0.13.0: STORE_BUSY_CEILING_MS
 // = 227 bytes; ceil(227 * 101 / 1,000) = 23 sats at the default 101 sat/kB.
 // Keep the 500-sat margin for additional change outputs and fee rounding.
 const EXTERNAL_INPUT_FEE_ALLOWANCE = 23 + 500;
+const EXTERNAL_INPUT_MIN_MARGIN = 10_000;
 
 async function within(promise, ms, message) {
   let timer;
@@ -101,10 +102,92 @@ async function holdWriter(db, assert) {
   return { release, confirmReleased };
 }
 
+// Keep the allocator target at one only while assembling the unsigned template.
+// Split's self-internalized outputs have purpose=receive (internalize_action.rs:
+// 461-462), so SPEND_OWN_CHANGE alone does not make them count in this query.
+async function keepExternalTemplate(walletA, outputs, pending, assert) {
+  const db = path.join(walletA.dir, 'wallet.db');
+  // Mirror toolbox 0.14.0-beta.2 mod.rs:333-340 and allocation.rs:21-31,59-96:
+  // this request requires spendable change and has no received-pending rule.
+  const readBasket = () => JSON.parse(execFileSync('sqlite3', ['-batch', '-bail', '-json',
+      db,
+      `SELECT b.basket_id, b.number_of_desired_utxos, b.minimum_desired_utxo_value,
+        (SELECT COUNT(*) FROM outputs o
+         JOIN transactions t ON o.transaction_id = t.transaction_id
+         WHERE o.user_id = b.user_id AND o.basket_id = b.basket_id
+           AND o.change = 1 AND t.status IN ('completed', 'unproven')
+           AND o.type = 'P2PKH' AND o.provided_by = 'storage'
+           AND o.purpose IN ('change', 'receive')
+           AND COALESCE(o.derivation_prefix, '') <> ''
+           AND COALESCE(o.derivation_suffix, '') <> ''
+           AND (t.status = 'completed' OR COALESCE(o.purpose, '') <> 'receive' OR 0)
+           AND o.spendable = 1) AS available
+       FROM output_baskets b JOIN users u ON b.user_id = u.user_id
+       WHERE b.name = 'default' AND u.identity_key = '${walletA.identityKey}';`],
+    { encoding: 'utf8', timeout: BUSY_MS }))[0];
+  const original = readBasket();
+  assert(original, 'A has a default basket for the allocator demand');
+  const setDesired = desired => execFileSync('sqlite3', ['-batch', '-bail', db,
+    `UPDATE output_baskets SET number_of_desired_utxos = ${desired} WHERE basket_id = ${original.basket_id};`],
+  { encoding: 'utf8', timeout: BUSY_MS });
+  try {
+    setDesired(1);
+    const basket = readBasket();
+    assert(basket.number_of_desired_utxos === 1, 'the kept template has a one-change target');
+    const desired = basket.number_of_desired_utxos;
+    const available = basket.available;
+    const initial = basket.minimum_desired_utxo_value;
+    const first = Math.max(1, Math.floor(initial / 4));
+    // change.rs:78-87,318-345 opens the target's change outputs regardless of
+    // surplus, and any positive surplus opens one even when the target is met.
+    const target = Math.max(desired - available, 1);
+    assert(target === 1, 'the kept template needs one change output for every available count');
+    const outputSatoshis = outputs[0].satoshis;
+    const demand = outputSatoshis + EXTERNAL_INPUT_FEE_ALLOWANCE
+      + first + Math.max(target - 1, 0) * initial;
+    const funder = new WalletClient(FUNDER_PORT, 'funder');
+    let source = await funder.listOutputs('default', hermetic.enabled
+      ? { include: 'entire transactions', limit: 10_000 }
+      : { limit: 10_000 });
+    assert(source.outputs.length === source.totalOutputs, 'the funder list includes every coin for largest-input selection');
+    const external = source.outputs.reduce((largest, coin) =>
+      !largest || coin.satoshis > largest.satoshis ? coin : largest, null);
+    const fundingDemand = `external input demand=${demand} sats (output=${outputSatoshis}, desired=${desired}, available=${available}, target=${target}, first=${first}, initial=${initial}, fee=${EXTERNAL_INPUT_FEE_ALLOWANCE}=23+500); funder largest=${external?.satoshis ?? 'none'} sats`;
+    const margin = external ? external.satoshis - demand : null;
+    const fundingMargin = `${fundingDemand}; margin=${margin ?? 'none'} sats (minimum=${EXTERNAL_INPUT_MIN_MARGIN})`;
+    console.log(`       ${fundingMargin}`);
+    assert(external && margin >= EXTERNAL_INPUT_MIN_MARGIN, fundingMargin);
+    if (!hermetic.enabled) {
+      // Fetch BEEF only for the selected coin, not the live funder's history.
+      source = await funder.listOutputs('default', {
+        include: 'entire transactions', limit: 1, offset: source.outputs.indexOf(external),
+      });
+      assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
+    }
+    const beef = source.BEEF || source.beef; // beta.2 bytes / beta.1 hex (#105)
+    assert(beef, 'the funder has BEEF for the unsigned template');
+    const kept = await walletA.client.post('createAction', {
+      outputs, description: 'E2E.24 kept unsigned template',
+      inputs: [{ outpoint: external.outpoint, unlockingScriptLength: 108, inputDescription: 'External input, never signed' }],
+      inputBEEF: Array.isArray(beef) ? beef : Array.from(Buffer.from(beef, 'hex')),
+      options: { signAndProcess: false, randomizeOutputs: false },
+    });
+    if (kept.signableTransaction?.reference) pending.add(kept.signableTransaction.reference);
+    return kept;
+  } finally {
+    setDesired(original.number_of_desired_utxos);
+    const restored = readBasket();
+    assert(restored.number_of_desired_utxos === original.number_of_desired_utxos,
+      "A's desired change count is restored before testing the busy store");
+    console.log(`       desired change count ${original.number_of_desired_utxos} -> 1 -> ${restored.number_of_desired_utxos}; restored before the WAL writer`);
+  }
+}
+
 module.exports = {
   name: 'busy-store',
   description: 'External WAL writer: busy write doors retry, read doors stay available; release restores all five (0 sats)',
   hermetic: true,
+  keepExternalTemplate,
 
   async run(walletA, walletB, assert) {
     try { execFileSync('sqlite3', ['--version'], { stdio: 'pipe', timeout: BUSY_MS }); }
@@ -129,55 +212,6 @@ module.exports = {
     // run, making the next createAction 402 before it reaches SQLite. Supply
     // an external input for the kept template instead: the funder's existing
     // change, read with its BEEF, never signed or spent by this scenario.
-    // Mirror toolbox 0.14.0-beta.2 src/storage/sqlx/create_action/mod.rs:333-340
-    // and allocation.rs:21-31,59-96. The kept client.post below has no delayed
-    // broadcast or received rule: require spendable, allow_received = false.
-    const [basket] = JSON.parse(execFileSync('sqlite3', ['-batch', '-bail', '-json',
-      path.join(walletA.dir, 'wallet.db'),
-      `SELECT b.number_of_desired_utxos, b.minimum_desired_utxo_value,
-        (SELECT COUNT(*) FROM outputs o
-         JOIN transactions t ON o.transaction_id = t.transaction_id
-         WHERE o.user_id = b.user_id AND o.basket_id = b.basket_id
-           AND o.change = 1 AND t.status IN ('completed', 'unproven')
-           AND o.type = 'P2PKH' AND o.provided_by = 'storage'
-           AND o.purpose IN ('change', 'receive')
-           AND COALESCE(o.derivation_prefix, '') <> ''
-           AND COALESCE(o.derivation_suffix, '') <> ''
-           AND (t.status = 'completed' OR COALESCE(o.purpose, '') <> 'receive' OR 0)
-           AND o.spendable = 1) AS available
-       FROM output_baskets b JOIN users u ON b.user_id = u.user_id
-       WHERE b.name = 'default' AND u.identity_key = '${walletA.identityKey}';`],
-    { encoding: 'utf8', timeout: BUSY_MS }));
-    assert(basket, 'A has a default basket for the allocator demand');
-    const desired = basket.number_of_desired_utxos;
-    const available = basket.available;
-    const initial = basket.minimum_desired_utxo_value;
-    const first = Math.max(1, Math.floor(initial / 4));
-    // change.rs:78-87,318-345 opens the target's change outputs regardless of
-    // surplus, and any positive surplus opens one even when the target is met.
-    const target = Math.max(desired - available, 1);
-    const outputSatoshis = outputs[0].satoshis;
-    const demand = outputSatoshis + EXTERNAL_INPUT_FEE_ALLOWANCE
-      + first + Math.max(target - 1, 0) * initial;
-    const funder = new WalletClient(FUNDER_PORT, 'funder');
-    let source = await funder.listOutputs('default', hermetic.enabled
-      ? { include: 'entire transactions', limit: 10_000 }
-      : { limit: 10_000 });
-    assert(source.outputs.length === source.totalOutputs, 'the funder list includes every coin for largest-input selection');
-    const external = source.outputs.reduce((largest, coin) =>
-      !largest || coin.satoshis > largest.satoshis ? coin : largest, null);
-    const fundingDemand = `external input demand=${demand} sats (output=${outputSatoshis}, desired=${desired}, available=${available}, target=${target}, first=${first}, initial=${initial}, fee=${EXTERNAL_INPUT_FEE_ALLOWANCE}=23+500); funder largest=${external?.satoshis ?? 'none'} sats`;
-    assert(external && external.satoshis >= demand, fundingDemand);
-    console.log(`       ${fundingDemand}`);
-    if (!hermetic.enabled) {
-      // Fetch BEEF only for the selected coin, not the live funder's history.
-      source = await funder.listOutputs('default', {
-        include: 'entire transactions', limit: 1, offset: source.outputs.indexOf(external),
-      });
-      assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
-    }
-    const beef = source.BEEF || source.beef; // beta.2 bytes / beta.1 hex (#105)
-    assert(beef, 'the funder has BEEF for the unsigned template');
     const pending = new Set();
     const db = path.join(walletA.dir, 'wallet.db');
     let inserted = false;
@@ -206,12 +240,7 @@ module.exports = {
         `INSERT OR IGNORE INTO tracker_states (txid, built, word) VALUES ('${txid}', 0, 'unknown'); SELECT changes();`],
       { encoding: 'utf8', timeout: BUSY_MS }).trim() === '1';
       await client.get(`tx/${txid}`);
-      const kept = await client.post('createAction', {
-        outputs, description: 'E2E.24 kept unsigned template',
-        inputs: [{ outpoint: external.outpoint, unlockingScriptLength: 108, inputDescription: 'External input, never signed' }],
-        inputBEEF: Array.isArray(beef) ? beef : Array.from(Buffer.from(beef, 'hex')),
-        options: { signAndProcess: false, randomizeOutputs: false },
-      });
+      const kept = await keepExternalTemplate(walletA, outputs, pending, assert);
       const reference = kept.signableTransaction?.reference;
       assert(reference, 'createAction returns the kept unsigned reference');
       pending.add(reference);

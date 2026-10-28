@@ -68,6 +68,8 @@ The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets
 
 A dedicated funder wallet on port 3320 provides initial funds and receives sweep-back after each run.
 
+E2E.24 temporarily sets fresh wallet A's default basket's desired change count to one while creating its kept unsigned template, then restores the original count in `finally` before testing the WAL writer. The allocator's target is therefore one for any available count, including zero: the runtime query still reads A's basket minimum and eligible change count, giving `demand = 1,000 + max(1, floor(minimum / 4)) + 23 + 500`, or 4,023 sats at the default 10,000-sat minimum. The scenario reads the funder's largest default-basket coin and prints both amounts and their margin, requiring at least 10,000 sats of margin (a coin of at least 14,023 sats at the default minimum). It only reads that coin and its BEEF; no standing reserve, extra funding or split is needed, and the 5,000-sat run cost cap is unchanged (#336).
+
 - **Location**: `e2e-funder/` directory (gitignored — contains wallet.db and .env)
 - **Port**: 3320 (configurable via `FUNDER_PORT` env var)
 - **Default funding**: 100,000 sats per run (configurable via `FUND_AMOUNT` env var; scenario 22 needs 50,000 in wallet A at its start and the scenarios before it move about 40,000 out of A). The run refuses at start when the funder holds less than the funding plus 1,000.
