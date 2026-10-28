@@ -2153,7 +2153,7 @@ fn proof_stands(row: &TrackedRow) -> String {
 /// scans the chain for it. Each outcome is added to `report.stored`.
 pub async fn record_accepted<W: WalletInterface>(wallet: &W, report: &mut TickReport) {
     for (txid, args) in std::mem::take(&mut report.on_accept) {
-        let line = match serde_json::from_str::<InternalizeActionArgs>(&args) {
+        let line = match stored_follow_up::read(&args) {
             Ok(args) => match wallet.internalize_action(args, Some("bsv-wallet-cli")).await {
                 Ok(result) if result.accepted => format!("{txid}: recorded in the wallet"),
                 Ok(_) => format!("{txid}: the wallet did not accept its own transaction"),
@@ -2169,6 +2169,8 @@ pub async fn record_accepted<W: WalletInterface>(wallet: &W, report: &mut TickRe
         report.stored.push(line);
     }
 }
+
+mod stored_follow_up;
 
 // ---------------------------------------------------------------------------
 // The spend guard
