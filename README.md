@@ -9,9 +9,18 @@ A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
-published**. It pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.1**, **bsv-rs =0.9.0-beta.1** and **bsv-tracker =0.9.0-beta.1**;
-[Cargo.lock](Cargo.lock) carries those versions.
+published**. This beta branch pins
+**bsv-wallet-toolbox-rs =0.14.0-beta.2**, **bsv-rs =0.9.0-beta.2** and **bsv-tracker =0.9.0-beta.2**;
+[Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
+
+The [#277 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/277) is a
+blocked checkpoint: the published toolbox still erases ordinary refusal
+classes ([#404](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/404))
+and exposes no discovery trust-setting input
+([#388](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/388)). The
+certificate and fixture migrations and release proof are not complete.
+Certificates issued through the toolbox before its corrected field-encryption
+scheme must be re-issued; the pin does not migrate their old keyrings.
 
 ## Install and inspect
 
@@ -132,7 +141,7 @@ The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](
 | `BANANABLOCKS_BASE` | BananaBlocks API base: unset is the chain's default (`https://bananablocks.com/api/v1`, `https://test.bananablocks.com/api/v1`), empty turns the rung off, a URL moves it; BananaBlocks takes no key and paces itself at 60 requests a minute |
 | `WOC_BASE` | the base of the CLI's own WhatsOnChain rungs: unset or blank is the chain's default (`https://api.whatsonchain.com/v1/bsv/main`, `.../test`), a URL moves it (the hermetic e2e run points it at its stub); the toolbox's own WhatsOnChain provider takes no base |
 | `BITAILS_BASE` | the base of the CLI's own Bitails rung: unset or blank is the chain's default (`https://api.bitails.io`, `https://test-api.bitails.io`), a URL moves it; the toolbox's own Bitails provider takes no base |
-| `ARC_GORILLAPOOL_URL` | the GorillaPool ARC's base, a third-party store the broadcast verifier asks and never a broadcaster (#300): unset is the toolbox's default (`https://arc.gorillapool.io` on mainnet, none on testnet), empty or blank leaves GorillaPool out, a URL moves it |
+| `ARC_GORILLAPOOL_URL` | the GorillaPool ARC's base, a third-party store the broadcast verifier asks and never a broadcaster (#300): unset is the toolbox's default (none on either chain at beta.2), empty or blank leaves GorillaPool out, a URL moves it |
 
 A set value of `BANANABLOCKS_BASE`, `WOC_BASE`, `BITAILS_BASE` or
 `ARC_GORILLAPOOL_URL` that is not blank and not an `http` or `https` URL is
@@ -146,13 +155,11 @@ of 2026-10-27: "arc is old af... we use arcade now for everyting"):
 |---|---|
 | `ARC_MODE` | `arcade` by default (unset, blank, or `arcade` in any case): Arcade V2, EF-only submits, its SSE status stream and push proofs. A blank value is unset, so a blank `ARC_MODE=` line in a `.env` is Arcade (or `ARCADE` decides). `classic` (any case) is the toolbox's classic ARC ladder and is deprecated ("arc is just deprecated, arcade is the standard", the owner's wording of 2026-10-27): kept for the hermetic stub until #299, never a default or a failover. Any other value is refused at start, naming the variable; `bsv-wallet config` prints the mode in effect, `arcade (default)` or `classic`, with its source |
 | `ARCADE` | the older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic, any other value refused at start by name |
-| `ARC_URL` | in Arcade mode the Arcade endpoint (default the toolbox's `ARCADE_V2_MAINNET`; blank is unset). There is no testnet Arcade default: a `--testnet` wallet in Arcade mode without `ARC_URL` is refused by name where its services are built ("no testnet Arcade default; set ARC_URL (or ARC_MODE=classic, deprecated)"), never pointed at mainnet Arcade, and its broadcast verifier asks nothing. In classic mode the ARC URL (default the chain's TAAL ARC) |
-| `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode a set key is unused and logged once at warn (the toolbox's TAAL provider posts unauthenticated until toolbox #317) |
+| `ARC_URL` | in Arcade mode the Arcade endpoint (default the toolbox's `ARCADE_V2_MAINNET`; blank is unset). There is no testnet Arcade default: a `--testnet` wallet in Arcade mode without `ARC_URL` is refused by name where its services are built ("no testnet Arcade default; set ARC_URL (or ARC_MODE=classic, deprecated)"), never pointed at mainnet Arcade, and its broadcast verifier asks nothing. In classic mode the ARC URL (default the CLI's explicit TAAL endpoint: `https://arc.taal.com` on mainnet, `https://arc-test.taal.com` on testnet) |
+| `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode a set key is unused and logged once at warn (no classic ARC provider runs in Arcade mode) |
 
-The postBeef providers in Arcade mode, as the code builds them, are four, in
-this order: ArcadeV2, TaalArcBeef (the toolbox's classic TAAL provider,
-pointed at TAAL's ARC and posting unauthenticated until toolbox #317 drops
-it), Bitails, WhatsOnChain; toolbox 0.14.0-beta.1 posts to every one in
+The postBeef providers in Arcade mode, as the code builds them, are three, in
+this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.2 posts to every one in
 parallel and keeps each answer (its default `PromiseAll`). GorillaPool's ARC
 is never one of them, in either mode (the keeper's reading: a rung of no gate
 and no courier); BananaBlocks keeps its explorer rung, which is not ARC.
