@@ -1,7 +1,19 @@
 //! CLI #313: named managed coins travel through the offering call, never inputs.
-use super::*;
+use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult};
+use bsv_sdk::WalletRefusalClass;
+use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletServices};
+use sqlx::Row;
+
+use super::{
+    action_rule_labels, assess_inner, assess_named, check_action_scope, create_action,
+    named_refusal, offered_status, refusal, service_error, Assessment, GateError, GateOptions,
+    HeldCoin, NamedInput, Refusal, UserCoins, NAMED_INPUT_REFUSED, NOT_HELD, OFFER_CAP,
+};
 
 /// The value of named managed coins, used to size a CLI split.
+///
+/// # Errors
+/// Returns the named coin's refusal or a storage fault when it cannot be read.
 pub async fn from_satoshis<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
     from: &[(String, u32)],
@@ -21,6 +33,9 @@ pub async fn from_satoshis<V: WalletServices + Send + Sync + 'static>(
 
 /// Create an action spending every named managed coin, subject to the gate.
 /// Empty `from` keeps the ordinary door, including its lazy assessment.
+///
+/// # Errors
+/// Returns a named coin's refusal, a gate fault or the toolbox's action error.
 pub async fn create_action_from<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
     mut args: CreateActionArgs,
@@ -44,13 +59,7 @@ pub async fn create_action_from<V: WalletServices + Send + Sync + 'static>(
         .await
         .map_err(GateError::Gate)?;
     let (assessment, ids) = assessment_from(coins, wallet.services(), opts, from).await?;
-    strip_rule_label(&mut args.labels);
-    if opts.allow_pending.is_on() {
-        args.labels.get_or_insert_with(Vec::new).extend([
-            RECEIVED_PENDING_LABEL.to_string(),
-            TOOLBOX_RECEIVED_LABEL.to_string(),
-        ]);
-    }
+    action_rule_labels(&mut args, &opts.allow_pending);
     let outputs = args.outputs.iter().flatten().map(|o| o.satoshis).sum();
     match wallet
         .create_action_offering(args, Some(originator), &assessment.offer(), &ids)
@@ -73,12 +82,7 @@ async fn assessment_from<V: WalletServices + ?Sized>(
     opts: &GateOptions,
     from: &[(String, u32)],
 ) -> std::result::Result<(Assessment, Vec<i64>), GateError> {
-    if let Some(error) = check_scope(coins, opts.allow_pending.named())
-        .await
-        .map_err(GateError::Gate)?
-    {
-        return Err(GateError::Scope(error));
-    }
+    check_action_scope(coins, opts).await?;
     let named = resolve(coins, from).await?;
     let inputs: Vec<_> = from.iter().cloned().map(NamedInput::from).collect();
     let held = assess_named(coins, services, opts, &inputs, &[], None, true).await?;
@@ -181,7 +185,10 @@ async fn resolve(
         if let Some(why) = why {
             return Err(invalid(&outpoint, why));
         }
-        resolved.push((id, row.get::<i64, _>("satoshis").max(0) as u64));
+        resolved.push((
+            id,
+            u64::try_from(row.get::<i64, _>("satoshis")).unwrap_or_default(),
+        ));
     }
     Ok(resolved)
 }
@@ -198,6 +205,7 @@ fn invalid(outpoint: &str, why: &str) -> GateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spend_gate::Origin;
     #[test]
     fn a_named_coin_lost_between_assessments_is_not_added_back() {
         let mut assessment = Assessment {

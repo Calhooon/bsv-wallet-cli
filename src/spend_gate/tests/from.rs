@@ -1,6 +1,45 @@
 //! #313: the actual allocator and signer spend a named receipt beside a proven coin.
 use super::*;
 
+fn draft_payment(satoshis: u64) -> CreateActionArgs {
+    let mut args = pay(satoshis);
+    let options = args.options.as_mut().unwrap();
+    options.no_send = Some(true);
+    options.randomize_outputs = Some(false);
+    args
+}
+
+async fn matching_proven_coin(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    row: &sqlx::sqlite::SqliteRow,
+    user: i64,
+    basket: i64,
+) -> i64 {
+    let lock: Vec<u8> = row.get("locking_script");
+    let (proven, id) = mined_coin_with_lock(
+        wallet.storage(),
+        (user, basket),
+        0xbb,
+        50_000,
+        901,
+        &hex::encode(lock),
+    )
+    .await;
+    wallet
+        .services()
+        .set_header_for_height(header(901, &proven, 0));
+    sqlx::query(
+        "UPDATE outputs SET derivation_prefix = ?, derivation_suffix = ? WHERE output_id = ?",
+    )
+    .bind(row.get::<String, _>("derivation_prefix"))
+    .bind(row.get::<String, _>("derivation_suffix"))
+    .bind(id)
+    .execute(wallet.storage().writer())
+    .await
+    .unwrap();
+    id
+}
+
 async fn funded_receipt() -> (Wallet<StorageSqlx, MockWalletServices>, String, i64) {
     let wallet = wallet_with_signable_funding().await;
     let user = UserCoins::from_wallet(&wallet).await.unwrap();
@@ -23,34 +62,9 @@ async fn funded_receipt() -> (Wallet<StorageSqlx, MockWalletServices>, String, i
         .execute(wallet.storage().writer())
         .await
         .unwrap();
-    let lock: Vec<u8> = row.get("locking_script");
-    let (proven, proven_id) = mined_coin_with_lock(
-        wallet.storage(),
-        (user.user_id(), basket),
-        0xbb,
-        50_000,
-        901,
-        &hex::encode(&lock),
-    )
-    .await;
-    wallet
-        .services()
-        .set_header_for_height(header(901, &proven, 0));
-    for id in [proven_id] {
-        sqlx::query(
-            "UPDATE outputs SET derivation_prefix = ?, derivation_suffix = ? WHERE output_id = ?",
-        )
-        .bind(row.get::<String, _>("derivation_prefix"))
-        .bind(row.get::<String, _>("derivation_suffix"))
-        .bind(id)
-        .execute(wallet.storage().writer())
-        .await
-        .unwrap();
-    }
-    let mut args = pay(4_000);
-    args.outputs.as_mut().unwrap()[0].locking_script = lock;
-    args.options.as_mut().unwrap().no_send = Some(true);
-    args.options.as_mut().unwrap().randomize_outputs = Some(false);
+    let proven_id = matching_proven_coin(&wallet, &row, user.user_id(), basket).await;
+    let mut args = draft_payment(4_000);
+    args.outputs.as_mut().unwrap()[0].locking_script = row.get("locking_script");
     let receipt = wallet
         .create_action_offering(args, Some("from.test"), &[source], &[source])
         .await
@@ -72,9 +86,7 @@ async fn funded_receipt() -> (Wallet<StorageSqlx, MockWalletServices>, String, i
 async fn named_receipt_requires_the_rule_then_is_signed_with_proven_coin_untouched() {
     let (wallet, receipt, proven_id) = funded_receipt().await;
     let from = vec![(receipt.clone(), 0)];
-    let mut args = pay(1_000);
-    args.options.as_mut().unwrap().no_send = Some(true);
-    args.options.as_mut().unwrap().randomize_outputs = Some(false);
+    let args = draft_payment(1_000);
     let plain = opts(1, true);
     let refused = create_action_from(&wallet, args.clone(), "from.test", &plain, &from)
         .await

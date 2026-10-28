@@ -594,10 +594,7 @@ impl World {
         }
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
         if name == "tracker-fault" {
-            wallet
-                .storage()
-                .set_chain_tracker(std::sync::Arc::new(super::tracker_fault::Unavailable))
-                .await;
+            super::tracker_fault::Unavailable::install(wallet.storage()).await;
         }
         // The wallet is opened (its opening writes made), then the lock.
         if name == "busy" || name == "busy-read" {

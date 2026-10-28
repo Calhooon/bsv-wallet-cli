@@ -1783,12 +1783,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
         .map_err(GateError::Gate)?;
     // A scoped word names coins this wallet could spend under it, or it is
     // the caller's error (#63), before anything is read for the action.
-    if let Some(error) = check_scope(coins, opts.allow_pending.named())
-        .await
-        .map_err(GateError::Gate)?
-    {
-        return Err(GateError::Scope(error));
-    }
+    check_action_scope(coins, opts).await?;
     let named: Vec<NamedInput<'_>> = args.inputs.iter().flatten().map(NamedInput::from).collect();
     if !named.is_empty() {
         let carried = carried_txids(args.input_beef.as_deref());
@@ -1821,14 +1816,31 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // A caller's own copy of the label is stripped first (F4 of the #44 CLI
     // review): only the door's word writes it.
     let mut args = args;
+    action_rule_labels(&mut args, &opts.allow_pending);
+    run_gated(coins, wallet, args, originator, opts).await
+}
+
+async fn check_action_scope(
+    coins: UserCoins<'_>,
+    opts: &GateOptions,
+) -> std::result::Result<(), GateError> {
+    if let Some(error) = check_scope(coins, opts.allow_pending.named())
+        .await
+        .map_err(GateError::Gate)?
+    {
+        return Err(GateError::Scope(error));
+    }
+    Ok(())
+}
+
+fn action_rule_labels(args: &mut CreateActionArgs, rule: &AllowPending) {
     strip_rule_label(&mut args.labels);
-    if opts.allow_pending.is_on() {
+    if rule.is_on() {
         args.labels.get_or_insert_with(Vec::new).extend([
             RECEIVED_PENDING_LABEL.to_string(),
             TOOLBOX_RECEIVED_LABEL.to_string(),
         ]);
     }
-    run_gated(coins, wallet, args, originator, opts).await
 }
 
 /// The transactions a caller's `inputBEEF` carries whole (not a txid-only

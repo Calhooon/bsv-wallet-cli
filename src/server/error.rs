@@ -214,7 +214,7 @@ impl AppError {
         )
     }
 
-    /// A classed refusal or fault. Generic WalletError has no typed family.
+    /// A classed refusal or fault. Generic `WalletError` has no typed family.
     fn of_sdk(e: &bsv_sdk::Error) -> Kind {
         match e {
             bsv_sdk::Error::WalletBusy { .. } => Kind::StoreBusy,
@@ -225,7 +225,7 @@ impl AppError {
         }
     }
 
-    /// Storage callers retain their fault type; wallet callers use of_sdk.
+    /// Storage callers retain their fault type; wallet callers use `of_sdk`.
     fn of_toolbox(e: &bsv_wallet_toolbox::Error) -> Kind {
         use bsv_wallet_toolbox::Error as T;
         match e {
