@@ -138,7 +138,8 @@ module.exports = {
       });
       assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
     }
-    assert(source.beef, 'the funder has BEEF for the unsigned template');
+    const beef = source.BEEF || source.beef; // beta.2 bytes / beta.1 hex (#105)
+    assert(beef, 'the funder has BEEF for the unsigned template');
     const pending = new Set();
     const db = path.join(walletA.dir, 'wallet.db');
     let inserted = false;
@@ -170,7 +171,7 @@ module.exports = {
       const kept = await client.post('createAction', {
         outputs, description: 'E2E.24 kept unsigned template',
         inputs: [{ outpoint: external.outpoint, unlockingScriptLength: 108, inputDescription: 'External input, never signed' }],
-        inputBEEF: Array.from(Buffer.from(source.beef, 'hex')),
+        inputBEEF: Array.isArray(beef) ? beef : Array.from(Buffer.from(beef, 'hex')),
         options: { signAndProcess: false, randomizeOutputs: false },
       });
       const reference = kept.signableTransaction?.reference;

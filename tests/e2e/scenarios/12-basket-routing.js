@@ -19,6 +19,7 @@ module.exports = {
   async run(walletA, walletB, assert) {
     const amount = 1_000;
     const basketName = 'e2e-test-basket';
+    const suffix = Buffer.from('e2eBasket12').toString('base64');
 
     // Step 1: Verify basket starts empty on B
     const before = await walletB.client.listOutputs(basketName);
@@ -29,7 +30,7 @@ module.exports = {
 
     // Step 2: Get B's derived key for P2PKH
     const bKey = await walletB.client.getPublicKey(
-      [2, '3241645161d8'], 'SfKxPIJNgdI= e2eBasket12', ANYONE_KEY, true,
+      [2, '3241645161d8'], `SfKxPIJNgdI= ${suffix}`, ANYONE_KEY, true,
     );
     const lockingScript = buildP2PKH(bKey.publicKey);
 
@@ -80,7 +81,7 @@ module.exports = {
         protocol: 'wallet payment',
         paymentRemittance: {
           derivationPrefix: 'SfKxPIJNgdI=',
-          derivationSuffix: 'e2eBasket12',
+          derivationSuffix: suffix,
           senderIdentityKey: ANYONE_KEY,
         },
       }], 'recover basket output to default');

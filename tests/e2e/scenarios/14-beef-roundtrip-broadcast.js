@@ -21,6 +21,9 @@ module.exports = {
   description: 'createAction produces valid BEEF that miners accept (round-trip)',
 
   async run(walletA, walletB, assert) {
+    const prefix = Buffer.from('e2e-beef-14').toString('base64');
+    const payment = Buffer.from('payment-1').toString('base64');
+    const returned = Buffer.from('return-1').toString('base64');
     // Get B's identity key for payment derivation
     const bIdentity = await walletB.client.identityKey();
     assert(bIdentity && bIdentity.length === 66, `B identity key should be 66 hex chars, got ${bIdentity?.length}`);
@@ -31,7 +34,7 @@ module.exports = {
     // Use ANYONE_KEY + forSelf=true (same pattern as scenario 01)
     const bPubkey = await walletB.client.getPublicKey(
       [2, '3241645161d8'],       // BRC-29 payment protocol
-      'e2e-beef-14 payment-1',   // unique key_id for this scenario
+      `${prefix} ${payment}`,   // unique key_id for this scenario
       ANYONE_KEY,                // counterparty = anyone (standard payment derivation)
       true,                      // forSelf = true (B derives own receiving key)
     );
@@ -63,8 +66,8 @@ module.exports = {
         outputIndex: 0, // first output is our payment
         protocol: 'wallet payment',
         paymentRemittance: {
-          derivationPrefix: 'e2e-beef-14',
-          derivationSuffix: 'payment-1',
+          derivationPrefix: prefix,
+          derivationSuffix: payment,
           senderIdentityKey: ANYONE_KEY,
         },
       }],
@@ -75,7 +78,7 @@ module.exports = {
     // (the UTXO's BEEF ancestry must be valid for B's createAction to broadcast)
     const aPubkey = await walletA.client.getPublicKey(
       [2, '3241645161d8'],
-      'e2e-beef-14 return-1',
+      `${prefix} ${returned}`,
       ANYONE_KEY,
       true,
     );
@@ -102,8 +105,8 @@ module.exports = {
         outputIndex: 0,
         protocol: 'wallet payment',
         paymentRemittance: {
-          derivationPrefix: 'e2e-beef-14',
-          derivationSuffix: 'return-1',
+          derivationPrefix: prefix,
+          derivationSuffix: returned,
           senderIdentityKey: ANYONE_KEY,
         },
       }],
