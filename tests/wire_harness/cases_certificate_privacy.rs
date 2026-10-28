@@ -7,7 +7,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     // Public fixture material: AES-GCM with fixed 32-byte nonces, field key
     // [13; 32], and the wire world's root. The master key uses BRC-42 protocol
     // [2, "certificate field encryption"], key ID "name", counterparty G.
-    let acquired = r.case("acquireCertificate.revealFields", "fresh", post("/acquireCertificate", json!({
+    let acquired = r.case("acquireCertificate.revealFields", "certificate-privacy", post("/acquireCertificate", json!({
         "type": CERT_TYPE, "serialNumber": bsv_sdk::primitives::to_base64(&[11; 32]),
         "certifier": G, "acquisitionProtocol": "direct", "keyringRevealer": "certifier",
         "revocationOutpoint": format!("{}.0", "33".repeat(32)), "signature": "3006020101020101",
@@ -18,7 +18,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     let empty = r
         .case(
             "proveCertificate.emptyFields",
-            "fresh",
+            "certificate-privacy",
             post(
                 "/proveCertificate",
                 json!({
@@ -35,7 +35,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     let short = r
         .case(
             "proveCertificate.shortSerial",
-            "fresh",
+            "certificate-privacy",
             post(
                 "/proveCertificate",
                 json!({

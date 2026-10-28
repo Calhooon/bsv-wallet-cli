@@ -34,8 +34,9 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 15] = [
+pub(crate) const WORLDS: [&str; 16] = [
     "fresh",
+    "certificate-privacy",
     "auth",
     "callback",
     "tracked",
