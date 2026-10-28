@@ -9,6 +9,8 @@ pub(crate) async fn record(r: &mut Recorder) {
     description_arguments(r).await;
     internalize_order(r).await;
     linkage_aliases(r).await;
+    // bsv-rs 0.9.0-beta.3 src/auth/certificates/bounds.rs:26 and
+    // master.rs:325-329: exactly MAX_DECRYPTED_FIELD_BYTES is accepted (#343).
     let acquired = r
         .case(
             "acquireCertificate.decryptedFieldAtBound",

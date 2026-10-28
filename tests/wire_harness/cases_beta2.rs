@@ -101,8 +101,10 @@ async fn labels_and_remittance(r: &mut Recorder) {
 }
 
 async fn certificate_bounds(r: &mut Recorder) {
-    // #374 verifies every field. The serialized 1 MiB boundary is not a
-    // decryptable field: its plaintext exceeds 64 KiB (CLI #343).
+    // This signed 1 MiB text passes construction and verification. bsv-rs
+    // 0.9.0-beta.3 src/auth/certificates/bounds.rs:26 defines the 64 KiB
+    // plaintext bound applied at master.rs:325-329; its 786,384 plaintext
+    // bytes exceed that bound during toolbox #374's keyring proof (#343).
     let at_bound = super::certificate_material::body(8, &vec![b'x'; 786_384]);
     assert_eq!(
         at_bound["fields"]["name"].as_str().unwrap().len(),

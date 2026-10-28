@@ -188,8 +188,19 @@ At the beta.3 pin (#338), invalid BEEF uses `InvalidParameter` and serves
 `VALIDATION_ERROR`; incomplete managed ancestry uses `InvalidOperation` and
 serves `CONFLICT`. The former `coin` extension cannot be recovered from the
 SDK's class/message pair and is removed (#330, #342). Review-action fields
-retain PR 332's carrier. The direct certificate door verifies the signature
-and decrypts every field before storage (toolbox #374): the serialized 1 MiB
-boundary is refused by the 64 KiB plaintext bound (#343), while the valid
-64 KiB plaintext fixture is stored. Discovery still serves no entries; #331
+retain PR 332's carrier. The direct certificate door constructs a
+`MasterCertificate` (canonical base64 per field), verifies the signature
+(including `Certificate::to_binary`'s 1 MiB encoded-field bound), then proves
+the keyring by decrypting every field before storage (toolbox 0.14.0-beta.3
+`src/wallet/direct_acquire.rs:167-197`, called from `wallet.rs:2557-2563`).
+The published bsv-rs 0.9.0-beta.3 also defines
+`MAX_DECRYPTED_FIELD_BYTES = 64 * 1024` in
+`src/auth/certificates/bounds.rs:26` and applies it to decrypted plaintext
+in `master.rs:325-329`. This 64 KiB limit comes from the pinned SDK (#343).
+Fixture 155's signed 1 MiB encoded field passes construction and verification,
+then its 786,384 plaintext bytes exceed that SDK limit. Fixture 156's
+1,048,577-byte non-canonical base64 fails construction before verification;
+fixture 157's 73-byte non-DER signature fails argument validation before
+construction. Fixtures 173 and 174 store and read back a valid field with
+exactly 65,536 plaintext bytes. Discovery still serves no entries; #331
 remains its own change.
