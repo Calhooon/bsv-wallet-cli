@@ -156,7 +156,10 @@
     "154-internalizeAction.exclusiveRemittance.json",
     "155-acquireCertificate.fieldAtBound.json",
     "156-acquireCertificate.fieldAboveBound.json",
-    "157-acquireCertificate.signatureAboveBound.json"
+    "157-acquireCertificate.signatureAboveBound.json",
+    "158-acquireCertificate.revealFields.json",
+    "159-proveCertificate.emptyFields.json",
+    "160-proveCertificate.shortSerial.json"
   ],
   "notes": {
     "053-discoverByIdentityKey.ok.json": "Empty discovery: toolbox #388 (CLI #331); the published certifier_info returns None.",
@@ -169,6 +172,10 @@
     "139-discoverByAttributes.limitAtBound.json": "Empty discovery at the page bound: toolbox #388 (CLI #331).",
     "140-discoverByAttributes.limitAboveBound.json": "The host refuses the page bound before empty discovery: toolbox #388 (CLI #331).",
     "141-signAction.sequenceNumberAboveType.json": "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
-    "142-listActions.offsetAboveType.json": "The u32 argument type refuses offset 4294967296 before listActions is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198."
+    "142-listActions.offsetAboveType.json": "The u32 argument type refuses offset 4294967296 before listActions is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
+    "147-createAction.doubleSpendReview.json": "Finding 1 (#277, host map #140, bsv-rs #339): HTTP 400 with isError, numeric code 5 and all present review-action members; absent optional members stay omitted.",
+    "158-acquireCertificate.revealFields.json": "Finding 3, toolbox #240: store a real encrypted field and master key for the empty-disclosure witness.",
+    "159-proveCertificate.emptyFields.json": "Finding 3, toolbox #240: fieldsToReveal [] returns an empty keyring; beta.1 disclosed every stored field.",
+    "160-proveCertificate.shortSerial.json": "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check."
   }
 }

@@ -32,6 +32,7 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
   | world | what it is |
   |---|---|
   | `fresh` | an empty wallet, no bearer, the header stub up (tip 900010) |
+  | `certificate-privacy` | an empty wallet whose only certificate carries the field and master key for the empty-disclosure witness |
   | `auth` | `fresh` behind a bearer token |
   | `callback` | `fresh` with an ARC callback token |
   | `tracked` | the tracker's words for a mined and a pending transaction, and one coin the chain feed froze |

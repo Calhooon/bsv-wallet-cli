@@ -1,0 +1,39 @@
+{
+  "world": "certificate-privacy",
+  "request": {
+    "method": "POST",
+    "path": "/proveCertificate",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "certificate": {
+        "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "fields": {
+          "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg682dOrgyFyWensRFxTzrqpydQXlSJQWqZPBQA2aQ=="
+        },
+        "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
+        "serialNumber": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCw==",
+        "signature": "3006020101020101",
+        "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
+        "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
+      },
+      "fieldsToReveal": [],
+      "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "wallet error: Validation error: The certificate.serialNumber parameter must be at least 32 bytes"
+    }
+  }
+}
