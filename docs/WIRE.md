@@ -6,7 +6,7 @@ A refusal fixture names the status, the reference's class, the offset and reason
 
 ## References, at pins
 
-The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record: `git -C ~/bsv/brcs show 5119a9b:wallet/0100.md`. Its listOutputs module views admit a decimal-string balance and `spendable: false`; those JSON shapes wait for bsv-rs #105 at beta.2. This corpus records the ordinary basket view. The internalize-only 1,000-byte instruction bound already holds (fixture 123); createAction output instructions remain unbounded. The pin's varint changes are binary-wire changes and do not cross this JSON server. The beta.1 argument types do not change their JSON ranges or defaults; #198's paging checks are recorded in fixtures 129 to 140, fixture 141 records signAction's unchanged type refusal, and fixture 142 records listActions' unchanged offset type refusal.
+The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record: `git -C ~/bsv/brcs show 5119a9b:wallet/0100.md`. Its listOutputs module views admit a decimal-string balance and `spendable: false`; bsv-rs #105 supplies those JSON shapes at beta.2. This corpus records the ordinary basket view. The internalize-only 1,000-byte instruction bound already holds (fixture 123); createAction output instructions remain unbounded. The pin's varint changes are binary-wire changes and do not cross this JSON server. The beta.1 argument types do not change their JSON ranges or defaults; #198's paging checks are recorded in fixtures 129 to 140, fixture 141 records signAction's unchanged type refusal, and fixture 142 records listActions' unchanged offset type refusal.
 
 ## Reading a fixture
 
@@ -99,8 +99,8 @@ remain byte-identical.
 
 `120-createAction.namedChange.json` records the toolbox's refusal after the
 gate offers a named coin of our own change (#234): `400 VALIDATION_ERROR`,
-with `wallet error: Validation error: inputs[0]: cannot spend change output txid:vout directly. Change is managed by the wallet.`
-and the named outpoint in the message. The request omits `allowPending`.
+with `wallet error: Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet.`
+(toolbox #241), naming the input index. The request omits `allowPending`.
 This is the served decision, explained in [A word after the door](GATE-VECTORS.md#a-word-after-the-door).
 The dedicated world supplies made change because the existing seeded coins
 are incoming and the funded spends leave none. It is recorded last;
@@ -116,13 +116,13 @@ CORS headers (`access-control-allow-credentials`, `-expose-headers`,
 `vary`), so a browser's script reads the 401 instead of a network error.
 All 138 other fixtures remain byte-identical.
 
-## Known server defects, recorded as served
+## Closed server defect, retained in the corpus
 
 A fixture records what the server answers, defect included; the fix changes the fixture in its own commit, and the reviewer sees the answer move.
 
-| fixture | what is served | why it is a defect | issue |
+| fixture | what is served | closed defect | issue |
 |---|---|---|---|
-| `103-internalizeAction.badUnlock.json` | `accepted: true` for a payment whose only input's unlocking script is `OP_0` against a P2PKH lock (its spend fails, `OP_EQUALVERIFY`) | neither the server nor the toolbox (=0.13.0) runs the payment's scripts: `internalizeAction` checks the BEEF's proofs, not that the transaction spends what it names. Here the broadcaster takes every post; a real one would refuse it, and the toolbox reads a refusal on its post as a hint, not a refusal of the payment | to be filed (the unverified-spend issue (#140)) |
+| `103-internalizeAction.badUnlock.json` | `400 INVALID_BEEF`, the verifier's offset and OP_EQUALVERIFY reason, nothing stored | beta.0 accepted the invalid spend. Toolbox #103 closed it at the beta.1 pin; beta.2 retains the class because ordinary refusals are still erased | #140, #277; typed mapping deferred to #330 |
 
 ## Changing a fixture on purpose
 
@@ -177,3 +177,31 @@ The worlds use the toolbox's real `Services`, pointed at the stubs, not its `Moc
 ## The judge, judged
 
 `tests/wire.rs` carries planted cases beside the replay: `AppError`'s codes in the source and the judged and unproduced lists agree in both directions; a recording run into a temporary directory ends with the word to replay and never passes, a second run replays it clean, and every file it wrote is the committed one byte for byte by default; a `WIRE_RECORD` other than `1` is refused by name; a message-only change in a copy of the corpus fails in strict mode and reports the exact JSON-quoted marker under `WIRE_TEXT_DIFF=report`; a changed `code`, or a message changed with another field, still fails with a line diff; changed status, headers, key order, nested reasons, the noted offset and script reason, and non-JSON or successful bodies remain strict; `WIRE_TEXT_DIFF=1`, an empty value, and the report word alongside `WIRE_RECORD=1` are refused by name; the fresh-recording comparison reports only changed message bytes, never a changed request, envelope, whitespace or manifest; a manifest with a listed file missing, a file on disk unlisted, and a stray non-JSON file names all three, and the replay refuses that set naming them; a fixture of an unknown world fails the replay naming the file and the world; the normalizer keeps each placeholder's shape and leaves a non-volatile key whole. The runs share one lock, since the permission audit is the process's.
+
+## The beta.2 pin (#277)
+
+The corpus now has 157 rows. Bsv-rs #105 flattens key-linkage results and
+certificate list entries, spells the certificate type `type`, and carries
+key-linkage bytes as arrays. The positive direct-acquisition row uses a
+32-byte type and serial number with a canonical DER signature; the earlier
+spelling probes still show the class served when their arguments refuse.
+`INVALID_BEEF`, `UNSPENDABLE_COIN` and the four not-found doors keep their
+served classes pending CLI #330 (toolbox #404).
+
+Rows 143 to 146 declare ten unlocking bytes, refuse eleven without consuming
+the unsigned action, list that state and complete it with a shorter script
+(toolbox #216). Rows 147 and 148 take a coin while the gate reads its headers,
+then record the toolbox's typed review refusal as 409 `CONFLICT` and the
+remaining state (#245/#264, bsv-rs #339). Rows 149 to 154 cover BRC-177 grammar
+and capability refusals, and remittance exclusivity before BEEF work.
+
+Rows 155 and 156 record direct acquisition at and above the 1 MiB field
+bound as 200: this path does not invoke the binary writer or decrypt fields
+(toolbox #374). Row 157 refuses a 73-byte non-DER signature at its argument
+gate. `tests/certificate_pin.rs` separately checks the certificate type's
+1 MiB field, 16 MiB frame and 72-byte signature bounds and verify-false.
+
+Discovery rows 053, 054 and 137 to 140 retain their bytes and carry the reason
+"toolbox #388 (CLI #331)" in the manifest. Both successful discovery calls
+return empty arrays on this package; above-bound requests stop at the host's
+page guard. No trust configuration is added.

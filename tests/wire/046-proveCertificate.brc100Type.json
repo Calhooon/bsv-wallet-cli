@@ -10,13 +10,13 @@
       "certificate": {
         "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
         "fields": {
-          "name": "wire"
+          "name": "d2lyZQ=="
         },
         "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-        "serialNumber": "AQID",
-        "signature": "deadbeef",
+        "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+        "signature": "3006020101020101",
         "subject": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-        "type": "dGVzdA=="
+        "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
       },
       "fieldsToReveal": [
         "name"
@@ -25,14 +25,17 @@
     }
   },
   "response": {
-    "status": 422,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "text": "Failed to deserialize the JSON body into the target type: certificate: missing field `certificateType` at line 1 column 354"
+    "json": {
+      "code": "ERROR",
+      "message": "wallet error: Certificate not found with the provided arguments"
+    }
   }
 }

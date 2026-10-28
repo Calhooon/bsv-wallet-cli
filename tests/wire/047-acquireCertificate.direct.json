@@ -8,16 +8,16 @@
     },
     "json": {
       "acquisitionProtocol": "direct",
-      "certificateType": "dGVzdA==",
       "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "fields": {
-        "name": "wire"
+        "name": "d2lyZQ=="
       },
       "keyringForSubject": {},
       "keyringRevealer": "certifier",
       "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-      "serialNumber": "AQID",
-      "signature": "deadbeef"
+      "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+      "signature": "3006020101020101",
+      "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
     }
   },
   "response": {
@@ -30,14 +30,14 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "certificateType": "dGVzdA==",
+      "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
       "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
-      "serialNumber": "AQID",
+      "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
       "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-      "signature": "deadbeef",
+      "signature": "3006020101020101",
       "fields": {
-        "name": "wire"
+        "name": "d2lyZQ=="
       }
     }
   }
