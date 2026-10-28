@@ -491,6 +491,7 @@ pub fn services(chaintracks: String, arc: String) -> Services {
         .with_chaintracks_url(chaintracks)
         .without_bananablocks();
     options.arc_url = arc;
+    options.arcade_v2 = false; // The wire fixture serves classic ARC (#317).
     options.arc_gorillapool_url = None;
     Services::with_options(Chain::Main, options).unwrap()
 }

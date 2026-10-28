@@ -355,3 +355,92 @@ fn a_malformed_value_is_refused_by_name_and_every_one_together() {
         ["RELAY_ADMIN_TOKEN", "<set>", "env"]
     );
 }
+
+/// The six certificate tools carry the beta.2 JSON, including the keys
+/// direct acquisition and selective proof need. Discovery stays empty (#331).
+#[tokio::test]
+async fn certificate_tools_carry_the_published_shape() {
+    let app = Router::new()
+        .route(
+            "/acquireCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/listCertificates",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/proveCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/relinquishCertificate",
+            post(|Json(body): Json<Value>| async { Json(body) }),
+        )
+        .route(
+            "/discoverByIdentityKey",
+            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
+        )
+        .route(
+            "/discoverByAttributes",
+            post(|| async { Json(json!({"totalCertificates": 0, "certificates": []})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+    let mcp = WalletMcp::new(base, "http://localhost".into());
+    let body = json!({"type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=", "certifier": "key",
+        "serialNumber": "serial", "signature": "3006020101020101", "revocationOutpoint": "outpoint",
+        "fields": {"name": "d2lyZQ=="}, "keyringRevealer": "certifier", "keyringForSubject": {"name": "a2V5"},
+        "acquisitionProtocol": "direct"});
+    let acquired = text(
+        mcp.acquire_certificate(Parameters(serde_json::from_value(body.clone()).unwrap()))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(acquired, body);
+    let proof = json!({"certificate": body, "verifier": "key", "fieldsToReveal": ["name"]});
+    assert_eq!(
+        text(
+            mcp.prove_certificate(Parameters(serde_json::from_value(proof.clone()).unwrap()))
+                .await
+                .unwrap()
+        ),
+        proof
+    );
+    let listed = text(
+        mcp.list_certificates(Parameters(serde_json::from_value(json!({})).unwrap()))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(listed["limit"], 10);
+    let relinquished = text(
+        mcp.relinquish_certificate(Parameters(
+            serde_json::from_value(
+                json!({"type": "type", "serialNumber": "serial", "certifier": "key"}),
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(relinquished["type"], "type");
+    for found in [
+        mcp.discover_by_identity_key(Parameters(
+            serde_json::from_value(json!({"identityKey": "key"})).unwrap(),
+        ))
+        .await
+        .unwrap(),
+        mcp.discover_by_attributes(Parameters(
+            serde_json::from_value(json!({"attributes": {"name": "wire"}})).unwrap(),
+        ))
+        .await
+        .unwrap(),
+    ] {
+        assert_eq!(
+            text(found),
+            json!({"totalCertificates": 0, "certificates": []})
+        );
+    }
+    task.abort();
+}

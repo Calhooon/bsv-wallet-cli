@@ -2,6 +2,7 @@ pub mod actions;
 pub mod address;
 pub mod backup;
 pub mod balance;
+pub mod certificates;
 pub mod cleanup_abandoned;
 pub mod compact;
 pub mod config;

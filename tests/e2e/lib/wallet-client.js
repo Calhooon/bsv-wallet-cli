@@ -177,7 +177,7 @@ class WalletClient {
   // --- Certificates ---
   async acquireCertificate(certificateType, certifier, fields, opts = {}) {
     return this.post('acquireCertificate', {
-      certificateType,
+      type: certificateType,
       certifier,
       acquisitionProtocol: 'direct',
       fields,
@@ -198,7 +198,7 @@ class WalletClient {
   }
 
   async relinquishCertificate(certificateType, serialNumber, certifier) {
-    return this.post('relinquishCertificate', { certificateType, serialNumber, certifier });
+    return this.post('relinquishCertificate', { type: certificateType, serialNumber, certifier });
   }
 
   // --- Discovery ---

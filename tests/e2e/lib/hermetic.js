@@ -102,6 +102,11 @@ if (enabled) { applyEnv(); guardFetch(); }
  */
 const KNOWN_WALLED = {
   'CONNECT api.whatsonchain.com:443': "the toolbox's WhatsOnChain provider (no base knob, toolbox #98)",
+  // The published wallet constructs these resolvers without a host knob.
+  // Calls still run and pin the empty result under toolbox #388 (CLI #331).
+  'CONNECT overlay-us-1.bsvb.tech:443': 'certificate discovery resolver, toolbox #388 (CLI #331)',
+  'CONNECT overlay-eu-1.bsvb.tech:443': 'certificate discovery resolver, toolbox #388 (CLI #331)',
+  'CONNECT overlay-ap-1.bsvb.tech:443': 'certificate discovery resolver, toolbox #388 (CLI #331)',
   'CONNECT api.bitails.io:443': "the toolbox's Bitails provider (no base knob, toolbox #98)",
 };
 
