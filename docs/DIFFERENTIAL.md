@@ -76,6 +76,13 @@ so a non-refactor PR reports the difference as a warning under the job's
 existing exit mapping. A failed build, failed suite or incomplete recording
 still fails. Each re-recorded fixture and reason belongs in the pin PR.
 
+PR 332's fix round (#277 finding 5) restores scenario 08's BEEF coverage:
+both malformed inputs include a valid payment remittance and must answer
+`INVALID_BEEF`. The earlier pin recording's two `error-resilience` rows
+(`INVALID_BEEF` to `VALIDATION_ERROR`) reflected the remittance check
+short-circuiting before BEEF. They disappear in the corrected recording;
+no normalization or exclusion is added for them.
+
 ## The label rule and CI
 
 The workflow `differential` (`.github/workflows/differential.yml`) runs on `workflow_dispatch` (`gh workflow run differential.yml --ref beta -f base=<branch>`; empty, the commit before HEAD) and once before a tag (RELEASING.md), never on a push or a pull request (the owner's word of 2026-10-27: a push and a PR run exactly the required set). A refactor PR's differential is the lane's REPORT line and its cold review's own run (docs/lanes/README.md, rule 11). The workflow builds the PR's base branch at its tip and the PR's head with the pinned toolchain 1.98.1, runs `tools/differential --base-bin ... --head-bin ...`, writes the `DIFFERENTIAL:` line to the run's summary, and uploads the report and both recordings as the artifact `differential`. The job is unchanged by #192: it runs one comparison pair per job.

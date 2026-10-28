@@ -37,27 +37,39 @@ module.exports = {
     }
 
     // --- Internalize garbage bytes ---
+    // #277 finding 5: pass the remittance gate so these test the BEEF reader.
+    const badBeefOutput = {
+      outputIndex: 0,
+      protocol: 'wallet payment',
+      paymentRemittance: {
+        derivationPrefix: 'ZXJyb3I=',
+        derivationSuffix: 'YmVlZg==',
+        senderIdentityKey: walletB.identityKey,
+      },
+    };
     try {
       await walletA.client.internalizeAction(
         [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01],
-        [{ outputIndex: 0, protocol: 'wallet payment' }],
+        [badBeefOutput],
         'garbage',
       );
       assert(false, 'Garbage BEEF should fail');
     } catch (e) {
-      assert(true, 'Garbage BEEF correctly rejected');
+      assert(e.status === 400 && e.body?.code === 'INVALID_BEEF',
+        `Garbage must reach the BEEF reader: ${e.message}`);
     }
 
     // --- Internalize valid AtomicBEEF prefix but truncated ---
     try {
       await walletA.client.internalizeAction(
         [0x01, 0x01, 0x01, 0x01, 0x00, 0x00], // magic prefix but no txid or beef
-        [{ outputIndex: 0, protocol: 'wallet payment' }],
+        [badBeefOutput],
         'truncated',
       );
       assert(false, 'Truncated BEEF should fail');
     } catch (e) {
-      assert(true, 'Truncated BEEF correctly rejected');
+      assert(e.status === 400 && e.body?.code === 'INVALID_BEEF',
+        `Truncated BEEF must reach the BEEF reader: ${e.message}`);
     }
 
     // --- Decrypt with no matching key ---
