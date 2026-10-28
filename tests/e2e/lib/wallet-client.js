@@ -212,9 +212,9 @@ class WalletClient {
 
   // --- High-level helpers ---
 
-  /** Get spendable balance in satoshis. */
-  async balance() {
-    const r = await this.listOutputs('default', { limit: 10000, includeEnvelope: false });
+  /** Get a basket's spendable balance in satoshis. */
+  async balance(basket = 'default') {
+    const r = await this.listOutputs(basket, { limit: 10000, includeEnvelope: false });
     const outputs = r.outputs || [];
     if (Array.isArray(outputs)) {
       return outputs
@@ -258,7 +258,7 @@ class WalletClient {
       satoshis,
       outputDescription: description,
       tags: ['e2e-test'],
-    }], description, opts);
+    }, ...(opts.additionalOutputs || [])], description, opts);
 
     // Find which vout matches the recipient's script
     const vout = findVoutByScript(result.tx, lockingScript, satoshis);

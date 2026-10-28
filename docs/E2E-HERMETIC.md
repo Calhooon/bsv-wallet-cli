@@ -280,11 +280,18 @@ The scenario adds about 12 seconds to `e2e-hermetic`, including the exclusive
 attempt, rather than the roughly 25 seconds five blocked doors would need.
 
 Before the lock, A builds an unsigned template paying its own address, with
-an external input from the funder's existing change and its BEEF. It is never
-signed or broadcast. Using an external input leaves A's sole coin available
-for the spend-door check when scenario 24 runs alone. In a live run, the
-funder read lists at most 50 coins and requests the BEEF for only the chosen
-coin of at least 2,000 sats. The hermetic read is unchanged. A temporary local
+the funder's 15,000-sat `e2e-external` coin and its BEEF. The ordinary funding
+transfer creates that coin when absent, on both the live and hermetic paths;
+later runs reuse it. Ordinary funding selects only the default basket, and
+no scenario signs, spends or sweeps the named coin. Its BEEF is read through
+`listOutputs` with `include: 'entire transactions'` on the same basket.
+Only a missing named coin permits default-basket fallback, with `WARNING #336`.
+The template is never signed or broadcast. Its temporary one-change target
+keeps demand at 4,023 sats for the default basket minimum, leaving 10,977 sats
+of margin; A's basket setting is restored before the lock. The demand line
+prints the source basket and enforces at least 10,000 sats of margin.
+Using an external input leaves A's sole coin available for the spend-door
+check when scenario 24 runs alone. A temporary local
 `unknown` tracker row, only if absent, lets the transaction view read an
 existing txid; the row is removed afterward without asserting a proof or a
 mined word. Under the hermetic flag the stub mines that existing transaction;

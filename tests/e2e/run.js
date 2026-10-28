@@ -20,7 +20,7 @@ const hermetic = require('./lib/hermetic');
 // Under DIFF_RECORD the run is recorded (lib/record.js, tools/differential);
 // ./lib/setup wraps the binary's commands before the scenarios load.
 const record = require('./lib/record');
-const { startWallet, fundWallet, sweepToFunder, teardownWallet, FUNDER_PORT } = require('./lib/setup');
+const { startWallet, fundWallet, sweepToFunder, teardownWallet, FUNDER_PORT, FUNDER_EXTERNAL_BASKET, FUNDER_EXTERNAL_SATOSHIS } = require('./lib/setup');
 const { WalletClient } = require('./lib/wallet-client');
 const path = require('path');
 const fs = require('fs');
@@ -49,6 +49,7 @@ async function main() {
   let walletA, walletB;
   const results = [];
   let funderBalanceBefore;
+  let funderExternalOutpoint;
   // A failure before or between the scenarios (the funder's refusal of the
   // funding, a wallet that would not start): the run is a failure, named
   // here, never a "0/0 passed" exit 0.
@@ -82,7 +83,8 @@ async function main() {
       process.exit(1);
     }
 
-    funderBalanceBefore = await funder.balance();
+    // The named coin remains the funder's money, outside its change basket.
+    funderBalanceBefore = await funder.balance() + await funder.balance(FUNDER_EXTERNAL_BASKET);
 
     console.log('');
     console.log('================================================================');
@@ -108,15 +110,12 @@ async function main() {
     // Fund wallet A. Scenario 22 needs 50,000 in A at its start and the
     // scenarios before it move about 40,000 out of A (to B, and fees), so a
     // full run funds 100,000; the sweeps bring all but fees back. The funder
-    // must hold the funding and its fee, or the run stops here, before any
-    // wallet is started or any sat moves.
+    // must hold the funding, a missing external coin and fee headroom;
+    // fundWallet checks the default basket before creating that one transfer.
     const fundAmount = parseInt(process.env.FUND_AMOUNT || '100000');
-    if (funderBalanceBefore < fundAmount + 1_000) {
-      console.error(`ERROR: funder holds ${funderBalanceBefore.toLocaleString()} sats; a run funds ${fundAmount.toLocaleString()} and needs ${(fundAmount + 1_000).toLocaleString()} (FUND_AMOUNT lowers it; scenario 22 needs 50,000 in A at its start)`);
-      process.exit(1);
-    }
     console.log(`  Funding A with ${fundAmount.toLocaleString()} sats from funder...`);
     const funded = await fundWallet(walletA, fundAmount);
+    funderExternalOutpoint = funded.externalOutpoint;
     console.log(`  Funded: txid=${funded.txid.slice(0, 16)}...`);
 
     const aBalance = await walletA.client.balance();
@@ -216,7 +215,19 @@ async function main() {
 
     // Final accounting
     const funderClient = new WalletClient(FUNDER_PORT, 'funder');
-    const funderBalanceAfter = await funderClient.balance();
+    const externalAfter = await funderClient.listOutputs(FUNDER_EXTERNAL_BASKET, { limit: 10_000 });
+    const funderBalanceAfter = await funderClient.balance() + externalAfter.outputs
+      .filter(coin => coin.spendable !== false).reduce((sum, coin) => sum + coin.satoshis, 0);
+    if (funderExternalOutpoint) {
+      const retained = externalAfter.outputs.some(coin => coin.outpoint === funderExternalOutpoint
+        && coin.spendable !== false && coin.satoshis === FUNDER_EXTERNAL_SATOSHIS);
+      if (!retained) {
+        fatal ??= new Error(`#336: the ${FUNDER_EXTERNAL_BASKET} coin was spent or lost during the run`);
+        console.log(`  FATAL: ${fatal.message}`);
+      } else {
+        console.log(`  Funder external input retained after sweeps: basket=${FUNDER_EXTERNAL_BASKET}; coin=${FUNDER_EXTERNAL_SATOSHIS} sats`);
+      }
+    }
 
     // The hermetic run's stats: every call each stub provider answered,
     // every attempt to leave the machine the wall refused, every route the
