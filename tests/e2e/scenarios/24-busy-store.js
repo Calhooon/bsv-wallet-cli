@@ -9,7 +9,7 @@
  */
 const { spawn, execFileSync } = require('child_process');
 const path = require('path');
-const { FUNDER_PORT } = require('../lib/setup');
+const { FUNDER_PORT, FUNDER_EXTERNAL_BASKET, FUNDER_EXTERNAL_SATOSHIS } = require('../lib/setup');
 const { WalletClient, ANYONE_KEY, buildP2PKH } = require('../lib/wallet-client');
 const hermetic = require('../lib/hermetic');
 
@@ -146,24 +146,29 @@ async function keepExternalTemplate(walletA, outputs, pending, assert) {
     const demand = outputSatoshis + EXTERNAL_INPUT_FEE_ALLOWANCE
       + first + Math.max(target - 1, 0) * initial;
     const funder = new WalletClient(FUNDER_PORT, 'funder');
-    let source = await funder.listOutputs('default', hermetic.enabled
-      ? { include: 'entire transactions', limit: 10_000 }
-      : { limit: 10_000 });
-    assert(source.outputs.length === source.totalOutputs, 'the funder list includes every coin for largest-input selection');
-    const external = source.outputs.reduce((largest, coin) =>
-      !largest || coin.satoshis > largest.satoshis ? coin : largest, null);
-    const fundingDemand = `external input demand=${demand} sats (output=${outputSatoshis}, desired=${desired}, available=${available}, target=${target}, first=${first}, initial=${initial}, fee=${EXTERNAL_INPUT_FEE_ALLOWANCE}=23+500); funder largest=${external?.satoshis ?? 'none'} sats`;
+    let sourceBasket = FUNDER_EXTERNAL_BASKET;
+    let source = await funder.listOutputs(sourceBasket, { limit: 10_000 });
+    assert(source.outputs.length === source.totalOutputs, `the ${sourceBasket} inventory includes every coin`);
+    let external = source.outputs.find(coin =>
+      coin.spendable !== false && coin.satoshis === FUNDER_EXTERNAL_SATOSHIS);
+    if (!external) {
+      console.warn(`       WARNING #336: no ${FUNDER_EXTERNAL_SATOSHIS}-sat coin in funder basket ${sourceBasket}; falling back to the default basket's largest coin`);
+      sourceBasket = 'default';
+      source = await funder.listOutputs(sourceBasket, { limit: 10_000 });
+      assert(source.outputs.length === source.totalOutputs, 'the funder list includes every coin for largest-input selection');
+      external = source.outputs.filter(coin => coin.spendable !== false).reduce((largest, coin) =>
+        !largest || coin.satoshis > largest.satoshis ? coin : largest, null);
+    }
+    const fundingDemand = `external input demand=${demand} sats (output=${outputSatoshis}, desired=${desired}, available=${available}, target=${target}, first=${first}, initial=${initial}, fee=${EXTERNAL_INPUT_FEE_ALLOWANCE}=23+500); funder basket=${sourceBasket}; coin=${external?.satoshis ?? 'none'} sats`;
     const margin = external ? external.satoshis - demand : null;
     const fundingMargin = `${fundingDemand}; margin=${margin ?? 'none'} sats (minimum=${EXTERNAL_INPUT_MIN_MARGIN})`;
     console.log(`       ${fundingMargin}`);
     assert(external && margin >= EXTERNAL_INPUT_MIN_MARGIN, fundingMargin);
-    if (!hermetic.enabled) {
-      // Fetch BEEF only for the selected coin, not the live funder's history.
-      source = await funder.listOutputs('default', {
-        include: 'entire transactions', limit: 1, offset: source.outputs.indexOf(external),
-      });
-      assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
-    }
+    // Read the selected coin's BEEF from the same basket on both paths.
+    source = await funder.listOutputs(sourceBasket, {
+      include: 'entire transactions', limit: 1, offset: source.outputs.indexOf(external),
+    });
+    assert(source.outputs[0]?.outpoint === external.outpoint, 'the selected funder coin is unchanged while reading its BEEF');
     const beef = source.BEEF || source.beef; // beta.2 bytes / beta.1 hex (#105)
     assert(beef, 'the funder has BEEF for the unsigned template');
     const kept = await walletA.client.post('createAction', {
@@ -210,8 +215,8 @@ module.exports = {
     const outputs = [{ lockingScript: buildP2PKH(key.publicKey), satoshis: 1_000, outputDescription: 'E2E.24 unsigned self output' }];
     // An ordinary template reserves A's sole funding coin in the standalone
     // run, making the next createAction 402 before it reaches SQLite. Supply
-    // an external input for the kept template instead: the funder's existing
-    // change, read with its BEEF, never signed or spent by this scenario.
+    // the funder's e2e-external coin, read with its BEEF, never signed or
+    // spent by this scenario. Its basket keeps it outside ordinary funding.
     const pending = new Set();
     const db = path.join(walletA.dir, 'wallet.db');
     let inserted = false;

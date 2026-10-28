@@ -18,6 +18,9 @@ const fs = require('fs');
 const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./wallet-client');
 const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
 const FUNDER_PORT = parseInt(process.env.FUNDER_PORT || '3320');
+// Kept outside the allocator's default basket for E2E.24's unsigned input.
+const FUNDER_EXTERNAL_BASKET = 'e2e-external';
+const FUNDER_EXTERNAL_SATOSHIS = 15_000;
 const FUNDER_DIR = process.env.FUNDER_DIR || path.resolve(__dirname, '..', '..', '..', 'e2e-funder');
 // Where a test wallet's directory is made (`/tmp` as before; E2E_WALLET_TMP
 // moves it, which the hermetic run does and CI reads for its artifacts).
@@ -112,8 +115,43 @@ async function fundWallet(wallet, satoshis) {
   // those, the one spend the funder makes under it (its own just-broadcast
   // top-ups, whose ancestry it checked at internalize).
   const funderClient = new WalletClient(FUNDER_PORT, 'funder');
-  const result = await funderClient.transferTo(wallet.client, satoshis, 'e2e funding', { allowPending: 'received' });
-  return { txid: result.txid, sats: satoshis };
+  const inventory = await funderClient.listOutputs(FUNDER_EXTERNAL_BASKET, { limit: 10_000 });
+  if (inventory.outputs.length !== inventory.totalOutputs) {
+    throw new Error(`#336: incomplete ${FUNDER_EXTERNAL_BASKET} inventory`);
+  }
+  const existing = inventory.outputs.find(coin =>
+    coin.spendable !== false && coin.satoshis === FUNDER_EXTERNAL_SATOSHIS);
+  const required = satoshis + (existing ? 0 : FUNDER_EXTERNAL_SATOSHIS) + 1_000;
+  const available = await funderClient.balance();
+  if (available < required) {
+    throw new Error(`funder default basket holds ${available} sats; funding needs ${required} (${satoshis} for A, ${existing ? 0 : FUNDER_EXTERNAL_SATOSHIS} for ${FUNDER_EXTERNAL_BASKET}, 1000 fee headroom; #336)`);
+  }
+  const additionalOutputs = [];
+  if (!existing) {
+    const key = await funderClient.getPublicKey(
+      [2, '3241645161d8'], 'SfKxPIJNgdI= NaGLC6fMH50=', ANYONE_KEY, true,
+    );
+    // Toolbox 0.14.0-beta.2 create_action/mod.rs:150,333-340 supplies only
+    // the default basket to the allocator; allocation.rs:77-79,388-410
+    // restricts both its count and its coin selection to that basket ID.
+    // This is the funder's own spendable output, never allocator change.
+    additionalOutputs.push({
+      lockingScript: buildP2PKH(key.publicKey),
+      satoshis: FUNDER_EXTERNAL_SATOSHIS,
+      basket: FUNDER_EXTERNAL_BASKET,
+      outputDescription: 'E2E.24 external input, never signed or swept',
+    });
+  }
+  const result = await funderClient.transferTo(wallet.client, satoshis, 'e2e funding', {
+    allowPending: 'received', additionalOutputs,
+  });
+  const after = await funderClient.listOutputs(FUNDER_EXTERNAL_BASKET, { limit: 10_000 });
+  const external = after.outputs.find(coin => coin.spendable !== false
+    && coin.satoshis === FUNDER_EXTERNAL_SATOSHIS
+    && (!existing || coin.outpoint === existing.outpoint));
+  if (!external) throw new Error(`#336: funding did not retain the ${FUNDER_EXTERNAL_BASKET} coin`);
+  console.log(`  Funder external input: basket=${FUNDER_EXTERNAL_BASKET}; coin=${external.satoshis} sats; ${existing ? 'reused' : 'created with funding transfer'}`);
+  return { txid: result.txid, sats: satoshis, externalOutpoint: external.outpoint };
 }
 
 /**
@@ -250,4 +288,4 @@ function parseCliJson(output) {
   return JSON.parse(trimmed.slice(start, end + 1));
 }
 
-module.exports = { startWallet, fundWallet, sweepToFunder, teardownWallet, extractJson, parseCliJson, BSV, FUNDER_PORT };
+module.exports = { startWallet, fundWallet, sweepToFunder, teardownWallet, extractJson, parseCliJson, BSV, FUNDER_PORT, FUNDER_EXTERNAL_BASKET, FUNDER_EXTERNAL_SATOSHIS };
