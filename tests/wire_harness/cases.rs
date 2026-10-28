@@ -468,13 +468,10 @@ async fn record_certificates(r: &mut Recorder) {
         .case(
             "acquireCertificate.direct",
             "fresh",
-            post("/acquireCertificate", {
-                let mut body = acquire_body("type");
-                body["serialNumber"] = "AQID".into();
-                body
-            }),
+            post("/acquireCertificate", acquire_body("type")),
         )
         .await;
+    assert_eq!(acquired.value("/type"), CERT_TYPE);
     r.case(
         "listCertificates.one",
         "fresh",
