@@ -17,7 +17,10 @@ pub async fn run(ctx: &WalletContext, basket: Option<&str>, tag: Option<&str>) -
         seek_permission: None,
     };
 
-    let result = ctx.wallet.list_outputs(args, "bsv-wallet-cli").await?;
+    let result = ctx
+        .wallet
+        .list_outputs(args, Some("bsv-wallet-cli"))
+        .await?;
 
     if ctx.json_output {
         println!("{}", serde_json::to_string_pretty(&result)?);

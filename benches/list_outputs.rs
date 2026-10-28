@@ -38,7 +38,8 @@ fn list_outputs(c: &mut Criterion) {
             &rt,
             ("list_outputs", "limit100", coins),
             async |calls| {
-                let (result, d) = timed(calls, wallet.list_outputs(args(), "bench.local")).await;
+                let (result, d) =
+                    timed(calls, wallet.list_outputs(args(), Some("bench.local"))).await;
                 assert_eq!(result.unwrap().outputs.len(), 100);
                 d
             },

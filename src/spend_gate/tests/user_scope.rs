@@ -301,7 +301,7 @@ async fn another_users_template_never_hides_our_rule() {
     }
     let list = w
         .wallet
-        .list_actions(list_args(), "gate.local")
+        .list_actions(list_args(), Some("gate.local"))
         .await
         .unwrap();
     let rules = action_rules(storage, me).await.unwrap();

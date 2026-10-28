@@ -173,7 +173,7 @@ pub(crate) async fn fixture() -> Fixture {
                     ..Default::default()
                 }),
             },
-            "bsv-wallet-cli",
+            Some("bsv-wallet-cli"),
         )
         .await
         .unwrap();

@@ -1060,7 +1060,9 @@ async fn a_coin_whose_transaction_drew_an_immediate_refusal_is_not_selected() {
     let (storage, root, p, coin) = refused_coin().await;
     crate::spend_guard::run(&storage).await.unwrap();
     let wallet = Wallet::new(Some(root), storage, accepting()).await.unwrap();
-    let outcome = wallet.create_action(pay_args(), "witness.local").await;
+    let outcome = wallet
+        .create_action(pay_args(), Some("witness.local"))
+        .await;
     assert!(
         outcome.is_err(),
         "the refused coin was selected: {:?}",
@@ -1135,7 +1137,7 @@ async fn the_same_coin_is_selected_once_a_status_source_holds_its_transaction() 
     crate::spend_guard::run(&storage).await.unwrap();
     let wallet = Wallet::new(Some(root), storage, accepting()).await.unwrap();
     let result = wallet
-        .create_action(pay_args(), "witness.local")
+        .create_action(pay_args(), Some("witness.local"))
         .await
         .expect("the coin is selectable again");
     let spent_by: Option<i64> =
@@ -1245,7 +1247,7 @@ async fn a_refused_create_action_is_answered_with_the_word_built_and_its_hint() 
     .await
     .unwrap();
     let result = wallet
-        .create_action(pay_args(), "witness.local")
+        .create_action(pay_args(), Some("witness.local"))
         .await
         .expect("a broadcaster's refusal is not an error");
     let txid = result.txid.expect("the txid");

@@ -189,7 +189,7 @@ pub async fn get_public_key(
         ));
     }
     let result = wallet
-        .get_public_key(args, &originator)
+        .get_public_key(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
 
@@ -251,7 +251,7 @@ pub async fn create_signature(
         &originator,
     ));
     let result = wallet
-        .create_signature(args, &originator)
+        .create_signature(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
 
@@ -453,7 +453,7 @@ pub async fn internalize_action(
     let output_count = args.outputs.len();
     let subject = super::post_word::atomic_subject(&args.tx);
     let result = wallet
-        .internalize_action(args, &originator)
+        .internalize_action(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
 
@@ -697,7 +697,7 @@ pub async fn get_height(
     State(wallet): State<WalletState>,
 ) -> Result<Json<GetHeightResult>, AppError> {
     let result = wallet
-        .get_height("localhost")
+        .get_height(Some("localhost"))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -708,7 +708,7 @@ pub async fn get_network(
     State(wallet): State<WalletState>,
 ) -> Result<Json<GetNetworkResult>, AppError> {
     let result = wallet
-        .get_network("localhost")
+        .get_network(Some("localhost"))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -719,7 +719,7 @@ pub async fn get_version(
     State(wallet): State<WalletState>,
 ) -> Result<Json<GetVersionResult>, AppError> {
     let result = wallet
-        .get_version("localhost")
+        .get_version(Some("localhost"))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -730,7 +730,7 @@ pub async fn wait_for_authentication(
     State(wallet): State<WalletState>,
 ) -> Result<Json<AuthenticatedResult>, AppError> {
     let result = wallet
-        .wait_for_authentication("localhost")
+        .wait_for_authentication(Some("localhost"))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -748,7 +748,7 @@ pub async fn get_header_for_height(
 ) -> Result<Json<GetHeaderResult>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet
-        .get_header_for_height(args, &originator)
+        .get_header_for_height(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -786,7 +786,7 @@ pub async fn verify_signature(
         seek_permission: None,
     };
     let result = wallet
-        .verify_signature(args, &originator)
+        .verify_signature(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(json!({ "valid": result.valid })))
@@ -821,7 +821,7 @@ pub async fn encrypt(
         &originator,
     ));
     let result = wallet
-        .encrypt(args, &originator)
+        .encrypt(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(json!({ "ciphertext": result.ciphertext })))
@@ -856,7 +856,7 @@ pub async fn decrypt(
         &originator,
     ));
     let result = wallet
-        .decrypt(args, &originator)
+        .decrypt(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(json!({ "plaintext": result.plaintext })))
@@ -895,7 +895,7 @@ pub async fn create_hmac(
         &originator,
     ));
     let result = wallet
-        .create_hmac(args, &originator)
+        .create_hmac(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(json!({ "hmac": result.hmac.to_vec() })))
@@ -931,7 +931,7 @@ pub async fn verify_hmac(
         seek_permission: None,
     };
     let result = wallet
-        .verify_hmac(args, &originator)
+        .verify_hmac(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(json!({ "valid": result.valid })))
@@ -950,7 +950,7 @@ pub async fn sign_action(
     let originator = extract_originator(&headers)?;
     let reference = args.reference.clone();
     let result = wallet
-        .sign_action(args, &originator)
+        .sign_action(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
@@ -1000,20 +1000,23 @@ pub async fn abort_action(
             ),
         ));
     }
-    let result = wallet.abort_action(args, &originator).await.map_err(|e| {
-        // Toolbox 0.14's accepting-word sentences (#165) alone name this
-        // hint and conflict, including unproven without a proof. Other
-        // abort refusals keep beta's answer until beta.2's typed classes.
-        let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
-        let mut err = AppError::from(e);
-        if on_chain_evidence {
-            err = err.with_hint(
-                "the wallet holds an accepting word for this transaction; it stays \
+    let result = wallet
+        .abort_action(args, Some(&originator))
+        .await
+        .map_err(|e| {
+            // Toolbox 0.14's accepting-word sentences (#165) alone name this
+            // hint and conflict, including unproven without a proof. Other
+            // abort refusals keep beta's answer until beta.2's typed classes.
+            let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
+            let mut err = AppError::from(e);
+            if on_chain_evidence {
+                err = err.with_hint(
+                    "the wallet holds an accepting word for this transaction; it stays \
                  until a proof, node verdict or competitor's checked proof decides it",
-            );
-        }
-        err
-    })?;
+                );
+            }
+            err
+        })?;
     Ok(Json(result))
 }
 
@@ -1033,7 +1036,7 @@ pub async fn list_actions(
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_actions(args, &originator)
+        .list_actions(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     let user = crate::spend_gate::UserCoins::from_wallet(&wallet)
@@ -1093,7 +1096,7 @@ pub async fn list_outputs(
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_outputs(args, &originator)
+        .list_outputs(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1112,7 +1115,7 @@ pub async fn relinquish_output(
     let originator = extract_originator(&headers)?;
     let _guard = spending_lock.lock().await;
     let result = wallet
-        .relinquish_output(args, &originator)
+        .relinquish_output(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1130,7 +1133,7 @@ pub async fn acquire_certificate(
 ) -> Result<Json<WalletCertificate>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet
-        .acquire_certificate(args, &originator)
+        .acquire_certificate(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1145,7 +1148,7 @@ pub async fn list_certificates(
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .list_certificates(args, &originator)
+        .list_certificates(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1159,7 +1162,7 @@ pub async fn prove_certificate(
 ) -> Result<Json<ProveCertificateResult>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet
-        .prove_certificate(args, &originator)
+        .prove_certificate(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1173,7 +1176,7 @@ pub async fn relinquish_certificate(
 ) -> Result<Json<RelinquishCertificateResult>, AppError> {
     let originator = extract_originator(&headers)?;
     let result = wallet
-        .relinquish_certificate(args, &originator)
+        .relinquish_certificate(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1192,7 +1195,7 @@ pub async fn discover_by_identity_key(
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .discover_by_identity_key(args, &originator)
+        .discover_by_identity_key(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1207,7 +1210,7 @@ pub async fn discover_by_attributes(
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
     let result = wallet
-        .discover_by_attributes(args, &originator)
+        .discover_by_attributes(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1233,7 +1236,7 @@ pub async fn reveal_counterparty_key_linkage(
         privileged_reason: req.privileged_reason,
     };
     let result = wallet
-        .reveal_counterparty_key_linkage(args, &originator)
+        .reveal_counterparty_key_linkage(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))
@@ -1260,7 +1263,7 @@ pub async fn reveal_specific_key_linkage(
         privileged_reason: req.privileged_reason,
     };
     let result = wallet
-        .reveal_specific_key_linkage(args, &originator)
+        .reveal_specific_key_linkage(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
     Ok(Json(result))

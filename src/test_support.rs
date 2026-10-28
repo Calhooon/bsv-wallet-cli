@@ -33,6 +33,7 @@ pub fn mock_services(url: &str) -> bsv_wallet_toolbox::Services {
     use bsv_wallet_toolbox::{Chain, Services, ServicesOptions};
     let options = ServicesOptions {
         arc_url: url.to_string(),
+        arcade_v2: false, // This local fixture serves classic ARC (#317).
         arc_gorillapool_url: None,
         ..ServicesOptions::mainnet()
             .with_chaintracks_url(url.to_string())

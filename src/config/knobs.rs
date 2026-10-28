@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain, ServicesOptions};
+use bsv_wallet_toolbox::{services::ARCADE_V2_MAINNET, Chain};
 use serde::{Serialize, Serializer};
 
 use super::{shown_url, ArcMode, Config, HeaderService, Secret, Source};
@@ -177,11 +177,8 @@ impl Config {
             (Some(url), _, _) => Value::Text(shown_url(url)),
             (None, ArcMode::Arcade, Chain::Main) => Value::Text(ARCADE_V2_MAINNET.to_string()),
             (None, ArcMode::Arcade, Chain::Test) => Value::None("unset"),
-            (None, ArcMode::Classic, Chain::Main) => {
-                Value::Text(ServicesOptions::mainnet().arc_url)
-            }
-            (None, ArcMode::Classic, Chain::Test) => {
-                Value::Text(ServicesOptions::testnet().arc_url)
+            (None, ArcMode::Classic, chain) => {
+                Value::Text(crate::services_env::classic_arc_url(chain).to_string())
             }
         };
         let mode = match s.arc_mode {
