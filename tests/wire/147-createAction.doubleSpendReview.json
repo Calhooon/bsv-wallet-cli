@@ -142,7 +142,7 @@
     }
   },
   "response": {
-    "status": 409,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -151,8 +151,19 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "CONFLICT",
-      "message": "Undelayed createAction or signAction results require review."
+      "code": 5,
+      "isError": true,
+      "message": "Undelayed createAction or signAction results require review.",
+      "reviewActionResults": [
+        {
+          "competingTxs": [
+            "7777777777777777777777777777777777777777777777777777777777777777"
+          ],
+          "status": "doubleSpend",
+          "txid": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "sendWithResults": []
     }
   }
 }
