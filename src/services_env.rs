@@ -582,10 +582,7 @@ mod tests {
         let main = ExplorerBases::defaults(Chain::Main);
         assert_eq!(main.woc, "https://api.whatsonchain.com/v1/bsv/main");
         assert_eq!(main.bitails, "https://api.bitails.io");
-        assert_eq!(
-            main.gorillapool.as_deref(),
-            Some("https://arc.gorillapool.io")
-        );
+        assert_eq!(main.gorillapool, None);
         let test = ExplorerBases::defaults(Chain::Test);
         assert_eq!(test.woc, "https://api.whatsonchain.com/v1/bsv/test");
         assert_eq!(test.bitails, "https://test-api.bitails.io");
@@ -616,7 +613,7 @@ mod tests {
     fn gorillapool_unset_is_the_default_and_empty_is_out() {
         let at =
             |v: Option<&str>| ExplorerBases::configured(Chain::Main, None, None, v).gorillapool;
-        assert_eq!(at(None).as_deref(), Some("https://arc.gorillapool.io"));
+        assert_eq!(at(None), None);
         assert_eq!(at(Some("")), None);
         assert_eq!(
             at(Some("https://gp.example")).as_deref(),

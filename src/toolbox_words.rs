@@ -1,11 +1,12 @@
 //! The toolbox's refusals that reach this crate as words only (#81).
 //!
-//! The stack pins are `bsv-rs` =0.9.0-beta.1,
-//! `bsv-wallet-toolbox-rs` =0.14.0-beta.1 and `bsv-tracker` =0.9.0-beta.1.
+//! The stack pins are `bsv-rs` =0.9.0-beta.2,
+//! `bsv-wallet-toolbox-rs` =0.14.0-beta.2 and `bsv-tracker` =0.9.0-beta.2.
 //! The toolbox converts its error at the
 //! `WalletInterface` boundary (`impl From<Error> for bsv_rs::Error`, its
 //! `src/error.rs`): `StoreBusy` becomes bsv-rs's typed `WalletBusy`, an
-//! `SdkError` passes its bsv-rs error through, and every other variant
+//! `SdkError` passes its bsv-rs error through, `ReviewActions` keeps its
+//! typed carrier, and every other variant
 //! becomes `WalletError(<its Display>)`; its wallet also builds
 //! `WalletError(format!(..))` itself. Every served door and the spend gate
 //! call the wallet through the trait, so `InsufficientFunds`,
@@ -24,8 +25,12 @@
 //! and spent-output refusals; those keep beta's unclassified 400 ERROR
 //! without a hint. No retired network-presence sentence is read.
 //!
-//! Typed refusal classes (bsv-rs #137 and toolbox #185) replace these
-//! reads at beta.2. This pin does not anticipate their host mapping.
+//! Published toolbox 4cfe31ca still erases ordinary refusals at
+//! `src/error.rs:352-365`. CLI #330 tracks their typed host map (toolbox
+//! #404). Every prefix below and both accepting-abort sentences were read
+//! against beta.2's Display and formatting sites: none changed. The four
+//! not-found doors, INVALID_BEEF and UNSPENDABLE_COIN keep their served
+//! classes until that typed conversion lands; no new text match is added.
 //!
 //! Two words of the table, `insufficient funds:` and `not found:`, are
 //! produced by neither pinned library; they stay
@@ -59,7 +64,7 @@ pub enum Erased {
 }
 
 /// Each word a toolbox Display begins with, and the class it names. The
-/// words are the Display texts at =0.14.0-beta.1 up to their variable
+/// words are the Display texts at =0.14.0-beta.2 up to their variable
 /// fields; they do not overlap, so the order decides nothing. Accepting
 /// abort sentences are read separately, never by their common prefix.
 pub const WORDS: &[(&str, Erased)] = &[
@@ -126,8 +131,8 @@ pub fn is_unspendable(e: &bsv_sdk::Error) -> bool {
     e.to_string().contains("Unspendable coin:")
 }
 
-/// The erased accepting-word refusal at the beta.1 abort door (#165).
-/// The typed classes replace this word read at beta.2 (bsv-rs #137).
+/// The erased accepting-word refusal at the abort door (#165).
+/// CLI #330 tracks replacing this read when the toolbox preserves its type.
 #[must_use]
 pub fn is_abort_on_chain_evidence(e: &bsv_sdk::Error) -> bool {
     matches!(e, bsv_sdk::Error::WalletError(text) if accepting_abort(text))
