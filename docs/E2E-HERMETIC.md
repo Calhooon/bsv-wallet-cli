@@ -66,8 +66,8 @@ request), which the stub refuses with 403 and counts under `leaks`:
   localhost to the wall.)
 
 The binary sees a fault ("could not look", never a verdict) and the run sees
-the host in its stats. A walled attempt at any target other than the two the
-toolbox gives no knob for (below) fails the run, as does a stats read that
+the host in its stats. A walled attempt at any target other than the declared
+hosts the toolbox gives no knob for (below) fails the run, as does a stats read that
 fails and any route the stub does not play.
 
 What the wall is not: an OS-level block. The runner's egress is open; a client
@@ -94,7 +94,7 @@ gate (`max_acceptable_proof_height`, written by the monitor) is closed under
 ## The routes the stub serves
 
 Each answers in the shape the toolbox's provider or the CLI's rung parses
-(`bsv-wallet-toolbox-rs` 0.14.0-beta.1 `src/services/providers/*.rs`,
+(`bsv-wallet-toolbox-rs` 0.14.0-beta.2 `src/services/providers/*.rs`,
 `src/explorers.rs`, `src/broadcast_verify.rs`). A fault injected for a provider
 (`POST /_stub/fault`) is served before any of its routes.
 
@@ -175,7 +175,7 @@ funding block is proven by the BUMP inside its BEEF instead.
 - **The toolbox's WhatsOnChain and Bitails providers** keep their default bases
   (`api.whatsonchain.com`, `api.bitails.io`): `ServicesOptions` takes no
   `whatsonchain_base` or `bitails_base` (toolbox #98 asks for the knobs). So
-  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.14.0-beta.1,
+  in the toolbox's ladders (`bsv-wallet-toolbox-rs` 0.14.0-beta.2,
   `Services::with_options`) these rungs never run hermetically today; each
   reaches the wall, is refused, and the ladder moves on (to BananaBlocks,
   which the stub serves, or to the stub's ARC):
@@ -187,22 +187,28 @@ funding block is proven by the BUMP inside its BEEF instead.
   (WhatsOnChain, Bitails; off unless `BREAK_GLASS_EXPLORER_HEADERS`, which the
   run drops). The harness names these two walled targets,
   `CONNECT api.whatsonchain.com:443` and `CONNECT api.bitails.io:443`
-  (`KNOWN_WALLED` in `lib/hermetic.js`), and tolerates walled attempts at them
-  only; a walled attempt at any other target fails the run, so a new leak
-  elsewhere is seen. The 24-scenario run under `serve` walls 168, all known
-  and none served: 84 to WhatsOnChain and 84 to Bitails, one of each beside
+  (`KNOWN_WALLED` in `lib/hermetic.js`) alongside the three overlay hosts
+  below; a walled attempt at any other target fails the run. The beta.2
+  24-scenario run under `serve` walls 180, all known and none served: 84 to
+  WhatsOnChain and 84 to Bitails, one of each beside
   each of the stub ARC's 84 `POST /v1/tx`, the toolbox's postBeef posting to
   every provider in parallel (its `PromiseAll`); the CLI's own rungs, which the
-  stub serves, answer every read ahead of them (2026-10-27, PR 312). When
+  stub serves, answer every read ahead of them (2026-10-28, #277). When
   #98 lands, `services_env.rs` passes `WOC_BASE` and `BITAILS_BASE` through
-  and `KNOWN_WALLED` empties.
-- **Overlay discovery** (`discoverByIdentityKey`, `discoverByAttributes`): the
-  toolbox builds `HttpLookupResolver::mainnet()` inline, whose SLAP tracker
-  hosts are bsv-rs defaults, and the wallet takes no resolver of the caller's.
-  Scenario 06 skips its discovery step under the flag and prints why; the rest
-  of the certificate lifecycle runs. The stack keeper's item: a resolver or
-  tracker list the wallet takes (`HttpLookupResolver::with_endpoints` exists),
-  then the stub plays a SLAP tracker and `ls_identity` host.
+  and these two entries can leave `KNOWN_WALLED`.
+- **Overlay discovery** (`discoverByIdentityKey`, `discoverByAttributes`): scenario
+  06 and MCP scenario 21 now execute both calls and assert empty results at
+  beta.2, with toolbox #388 (CLI #331) as the reason. The wallet constructs
+  its resolver internally. Its three mainnet SLAP hosts are explicitly
+  counted as known walled attempts alongside the explorer hosts:
+  `overlay-us-1.bsvb.tech:443`, `overlay-eu-1.bsvb.tech:443` and
+  `overlay-ap-1.bsvb.tech:443`, four calls each in the full run. Every
+  CONNECT is still refused, so no overlay request leaves the machine.
+  The local certificate stub sends `x-bsv-auth-identity-key`. The lifecycle
+  imports its signed answer through direct acquisition because the published
+  issuance URL validator requires public HTTPS, then verifies the BRC-52
+  signature and decrypts the selected field with the #203 symmetric key.
+
 - **The chain-feed SSE** (`daemon`'s tenant loop): not subscribed by `serve`,
   not served.
 - **Arcade V2**, the wallet's default broadcaster (#300): the stub plays
@@ -308,7 +314,7 @@ funding BUMP against a header the stub serves, the same check as on mainnet.
 T3 (fast and cheap): no sats, no explorer rate limits, no network latency. T4
 (the rule in script or math): the merkle root, the BUMP and the TSC fold are
 computed, not recorded. T5 (fewer trusted words): a walled attempt outside the
-two named targets, an unserved route or unread stats fails the run, and the
+declared targets, an unserved route or unread stats fails the run, and the
 seed's root check is shown to refuse a forged root; the stub's double-spend answer is derived from its own
 spends, not asserted. T6 (executable): `E2E_HERMETIC=1 node tests/e2e/run.js`.
 

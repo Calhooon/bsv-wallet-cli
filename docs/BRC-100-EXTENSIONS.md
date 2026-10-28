@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 41 rows
+## Extensions: 13 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -40,39 +40,11 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `held.ageMinutes` | The coin's age in minutes. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `held.reason` | The rule that holds it. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `coin` | The coin a 409 `UNSPENDABLE_COIN` names (its stored ancestry is incomplete). | 0.16.0 (#44) |
-| `acquireCertificate` | request | `certificateType` | bsv-rs's `AcquireCertificateArgs` names the BRC's `type` so; a request with `type` alone is a 422 (#122 item 1). | the initial release, feb0dd0 |
-| `acquireCertificate` | response | `certificateType` | bsv-rs's `WalletCertificate` names the BRC's `type` so (#122 item 1). | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate` | bsv-rs's `CertificateResult` nests each certificate under `certificate` where the BRC has its fields flat on the entry (lines 1300 to 1306) (#122 item 8). | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.certificateType` | The nested certificate's type, under bsv-rs's name (#122 item 1). | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.subject` | The nested certificate's field. | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.serialNumber` | The nested certificate's field. | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.certifier` | The nested certificate's field. | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.revocationOutpoint` | The nested certificate's field. | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.signature` | The nested certificate's field. | the initial release, feb0dd0 |
-| `listCertificates` | response | `certificates.certificate.fields` | The nested certificate's field. | the initial release, feb0dd0 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
-| `proveCertificate` | request | `certificate.certificateType` | bsv-rs's `WalletCertificate` names the BRC's `type` so (#122 item 1). | the initial release, feb0dd0 |
-| `relinquishCertificate` | request | `certificateType` | bsv-rs's `RelinquishCertificateArgs` names the BRC's `type` so (#122 item 1). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage` | bsv-rs's result nests the linkage where the BRC is flat (lines 1012 to 1017) (#122 item 2). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage.prover` | The BRC's `prover`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage.verifier` | The BRC's `verifier`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage.counterparty` | The BRC's `counterparty`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage.encryptedLinkage` | The BRC's `encryptedLinkage`, nested, a hex string where the BRC has bytes (#122 item 2). | the initial release, feb0dd0 |
-| `revealCounterpartyKeyLinkage` | response | `linkage.encryptedLinkageProof` | The BRC's `encryptedLinkageProof`, nested, a hex string (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage` | bsv-rs's result nests the linkage where the BRC is flat (lines 1044 to 1051) (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage.prover` | The BRC's `prover`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage.verifier` | The BRC's `verifier`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage.counterparty` | The BRC's `counterparty`, nested (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage.encryptedLinkage` | The BRC's `encryptedLinkage`, nested, a hex string (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `linkage.encryptedLinkageProof` | The BRC's `encryptedLinkageProof`, nested, a hex string (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `protocol` | The BRC's `protocolID` (line 1047), as an object where the BRC has `[level, name]` (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `protocol.securityLevel` | The object's level (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `protocol.protocolName` | The object's name (#122 item 2). | the initial release, feb0dd0 |
-| `revealSpecificKeyLinkage` | response | `keyId` | The BRC's `keyID` (line 1048), with a lowercase `d` (#122 item 2). | the initial release, feb0dd0 |
 
-41 extensions.
+13 extensions.
 
-## Gaps: 72 rows
+## Gaps: 49 rows
 
 Fields the BRC names that we do not read or do not serve. A request gap is a field the handler's type does not read (serde drops it) or refuses; a response gap is a field the BRC's shape has that the served body does not. An optional response field we never set (`context` of an error, `BEEF` of a `listOutputs` asked for no transactions) is not a gap.
 
@@ -97,65 +69,47 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 | `createSignature` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `verifySignature` | request | `hashToDirectlyVerify` | not read: the handler passes the toolbox no hash (`hash_to_directly_verify: None`) | #146 |
 | `verifySignature` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
-| `acquireCertificate` | request | `type` | refused, 422; `certificateType` is read | #122 item 1 |
-| `proveCertificate` | request | `certificate.type` | refused, 422; `certificate.certificateType` is read | #122 item 1 |
 | `acquireCertificate` | request | `privileged` | carried unread; the everyday key | #194 |
 | `acquireCertificate` | request | `privilegedReason` | carried unread | #194 |
 | `proveCertificate` | request | `privileged` | read for the permission check only; the verifier's keyring is built with the everyday key | #194 |
 | `proveCertificate` | request | `privilegedReason` | carried unread | #194 |
-| `relinquishCertificate` | request | `type` | refused, 422; `certificateType` is read | #122 item 1 |
-| `acquireCertificate` | response | `type` | `certificateType` | #122 item 1 |
-| `listCertificates` | response | `certificates.type` | `certificates.certificate.certificateType` | #122 item 1 |
-| `listCertificates` | response | `certificates.subject` | `certificates.certificate.subject` | #122 item 8 |
-| `listCertificates` | response | `certificates.serialNumber` | `certificates.certificate.serialNumber` | #122 item 8 |
-| `listCertificates` | response | `certificates.certifier` | `certificates.certificate.certifier` | #122 item 8 |
-| `listCertificates` | response | `certificates.revocationOutpoint` | `certificates.certificate.revocationOutpoint` | #122 item 8 |
-| `listCertificates` | response | `certificates.signature` | `certificates.certificate.signature` | #122 item 8 |
-| `listCertificates` | response | `certificates.fields` | `certificates.certificate.fields` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.type` | `certificates.certificate.certificateType` (bsv-rs's `IdentityCertificate`; no fixture holds one) | #122 item 1 |
-| `discoverByIdentityKey` | response | `certificates.subject` | `certificates.certificate.subject` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.serialNumber` | `certificates.certificate.serialNumber` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifier` | `certificates.certificate.certifier` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.revocationOutpoint` | `certificates.certificate.revocationOutpoint` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.signature` | `certificates.certificate.signature` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.fields` | `certificates.certificate.fields` | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo` | left out when unset: bsv-rs 0.8.1's `IdentityCertificate` makes it `Option` with `skip_serializing_if`, where the BRC requires it (line 1401); no fixture holds one | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.name` | left out with `certifierInfo`; required in it by bsv-rs as by the BRC (line 1402) | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.iconUrl` | left out when unset: `Option` in bsv-rs's `IdentityCertifier`, required by the BRC (line 1403) | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.description` | left out when unset: `Option` in bsv-rs's `IdentityCertifier`, required by the BRC (line 1404) | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.trust` | left out with `certifierInfo`; required in it by bsv-rs as by the BRC (line 1405) | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.publiclyRevealedKeyring` | left out when unset: `Option` with `skip_serializing_if` in bsv-rs's `IdentityCertificate`, required by the BRC (line 1407) | #122 item 8 |
-| `discoverByIdentityKey` | response | `certificates.decryptedFields` | left out when unset: `Option` with `skip_serializing_if` in bsv-rs's `IdentityCertificate`, required by the BRC (line 1411) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.type` | `certificates.certificate.certificateType` (as `discoverByIdentityKey`) | #122 item 1 |
-| `discoverByAttributes` | response | `certificates.subject` | `certificates.certificate.subject` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.serialNumber` | `certificates.certificate.serialNumber` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifier` | `certificates.certificate.certifier` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.revocationOutpoint` | `certificates.certificate.revocationOutpoint` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.signature` | `certificates.certificate.signature` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.fields` | `certificates.certificate.fields` | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifierInfo` | left out when unset: bsv-rs 0.8.1's `IdentityCertificate` makes it `Option` with `skip_serializing_if`, where the BRC requires it (line 1444); no fixture holds one | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.name` | left out with `certifierInfo`; required in it by bsv-rs as by the BRC (line 1445) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.iconUrl` | left out when unset: `Option` in bsv-rs's `IdentityCertifier`, required by the BRC (line 1446) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.description` | left out when unset: `Option` in bsv-rs's `IdentityCertifier`, required by the BRC (line 1447) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.trust` | left out with `certifierInfo`; required in it by bsv-rs as by the BRC (line 1448) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.publiclyRevealedKeyring` | left out when unset: `Option` with `skip_serializing_if` in bsv-rs's `IdentityCertificate`, required by the BRC (line 1450) | #122 item 8 |
-| `discoverByAttributes` | response | `certificates.decryptedFields` | left out when unset: `Option` with `skip_serializing_if` in bsv-rs's `IdentityCertificate`, required by the BRC (line 1454) | #122 item 8 |
-| `revealCounterpartyKeyLinkage` | response | `prover` | `linkage.prover` | #122 item 2 |
-| `revealCounterpartyKeyLinkage` | response | `verifier` | `linkage.verifier` | #122 item 2 |
-| `revealCounterpartyKeyLinkage` | response | `counterparty` | `linkage.counterparty` | #122 item 2 |
-| `revealCounterpartyKeyLinkage` | response | `encryptedLinkage` | `linkage.encryptedLinkage`, hex | #122 item 2 |
-| `revealCounterpartyKeyLinkage` | response | `encryptedLinkageProof` | `linkage.encryptedLinkageProof`, hex | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `prover` | `linkage.prover` | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `verifier` | `linkage.verifier` | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `counterparty` | `linkage.counterparty` | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `protocolID` | `protocol`, an object | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `keyID` | `keyId` | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `encryptedLinkage` | `linkage.encryptedLinkage`, hex | #122 item 2 |
-| `revealSpecificKeyLinkage` | response | `encryptedLinkageProof` | `linkage.encryptedLinkageProof`, hex | #122 item 2 |
+| `discoverByIdentityKey` | response | `certificates.type` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.subject` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.serialNumber` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifier` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.revocationOutpoint` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.signature` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.fields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifierInfo` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifierInfo.name` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifierInfo.iconUrl` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifierInfo.description` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.certifierInfo.trust` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.publiclyRevealedKeyring` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByIdentityKey` | response | `certificates.decryptedFields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.type` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.subject` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.serialNumber` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifier` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.revocationOutpoint` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.signature` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.fields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.name` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.iconUrl` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.description` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.trust` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.publiclyRevealedKeyring` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.decryptedFields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
 
-72 gaps, each with its issue: 19 are #122's items 1 and 2 (bsv-rs's `certificateType` and its key-linkage shapes); 32 are #122 item 8 (the certificate's fields nested under `certificate`, 18, and the discover calls' fields the BRC requires and bsv-rs makes optional, 14); 8 are #145's `seekPermission`, held unread while every originator is granted (its `privileged` and `privilegedReason` rows left with the refusal below); 4 are #194 (`privileged` and `privilegedReason` on `acquireCertificate` and `proveCertificate`, not honoured; the toolbox's half is bsv-wallet-toolbox-rs #142); 5 are #147 (`createAction`'s `version` and options); one is #146 (`hashToDirectlyVerify`); one is #148 (`createSignature`'s required `counterparty`); 2 are #149 (the refusal's `status` and `description`). None is fixed here. Beside the table, two disagreements of value, not of field: `getVersion` answers the toolbox's version, not this wallet's (#122 item 6), and the 422 and 400 rejections are the framework's text, not a JSON body (#122 item 3). The others of #122 (items 4, 5, 7) are of codes and statuses, which `tests/wire.rs` judges.
+The certificate type and flat list-entry gaps close at beta.2 (bsv-rs #105,
+#268). Discovery still returns no entries because published toolbox
+`certifier_info` always returns `None`: toolbox #388 (CLI #331). The discovery
+rows record this missing behavior; no trust setting is added. Key-linkage results are also flat at beta.2.
+Privileged-request and refusal-envelope gaps retain their existing issues.
+`getVersion` still answers the toolbox's own version (#122 item 6).
 
-## Served by the source, not in the corpus: 20 rows
+## Served by the source, not in the corpus: 18 rows
 
 Fields the server's types can serve that no fixture shows. Each is an extension the day a fixture serves it: the test then fails until the row moves to the extensions table.
 
@@ -177,10 +131,8 @@ Fields the server's types can serve that no fixture shows. Each is an extension 
 | `internalizeAction` | response | `broadcast` | The same word on the payment's post, with `createAction`'s sub-keys. | 43376b8 (#66) |
 | `internalizeAction` | response | `broadcast.hint.words.error` | When the post itself errs (`internalize_action.rs`'s `serviceError` on a services fault), the toolbox writes the words as `[{"error": ...}]`, the fault's text. | 43376b8 (#66) |
 | `listCertificates` | response | `certificates.keyring` | bsv-rs's `CertificateResult` carries it when set; no fixture's certificate has one. | the initial release, feb0dd0 |
-| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; no fixture proves a certificate (049 is the refusal of one without a master keyring). | the initial release, feb0dd0 |
+| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; no fixture proves a certificate (049 is the refusal of one with no master keyring). | the initial release, feb0dd0 |
 | `proveCertificate` | response | `verifier` | As `certificate`. | the initial release, feb0dd0 |
-| `discoverByIdentityKey` | response | `certificates.certificate` | bsv-rs's `IdentityCertificate` nests as `listCertificates` does (#122 item 8); the fixtures discover none. | the initial release, feb0dd0 |
-| `discoverByAttributes` | response | `certificates.certificate` | As `discoverByIdentityKey`. | the initial release, feb0dd0 |
 
 ## Host routes: 5 rows
 
@@ -209,7 +161,7 @@ This wallet holds one keyring and no privileged key. The field is read, never ig
 What BRC-100 leaves to the realisation (line 298; its ABI, lines 1533 on, is a binary framing this server does not serve) and this server answers over HTTP:
 
 - Each call is `POST /<call>` with the args as the JSON body; the five calls with no args (`isAuthenticated`, `waitForAuthentication`, `getHeight`, `getNetwork`, `getVersion`) also answer `GET`, for curl and the CLI.
-- The BRC's `originator` parameter is the `Origin` header (its host) or the `Originator` header; a call that needs it and has neither is a 400.
+- The BRC's `originator` parameter is the `Origin` header (its host) or the `Originator` header; a call that needs it and has neither is a 400, mirroring the reference's Node HTTP substrate ([keeper reading #298](https://github.com/Calhooon/bsv-wallet-cli/issues/298)). Each served wallet call passes that value as `Some(&originator)` at beta.2.
 - An optional bearer (`AUTH_TOKEN`) guards every route but `/arc-callback`: 401 `UNAUTHORIZED`.
 - `Retry-After` on a 503: `1` for `STORE_BUSY`, `2` for `HEADERS_UNAVAILABLE` (the header service's fault, 0.18.0, #59); CORS exposes it.
 - The refusal codes and their statuses are listed in `docs/WIRE.md` and judged by `tests/wire.rs`.
