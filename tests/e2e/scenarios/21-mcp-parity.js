@@ -169,12 +169,22 @@ module.exports = {
       assert(mcpVersion.version === httpVersion.version,
         `MCP version must match HTTP version`);
 
+      // The same empty discovery contract through MCP: toolbox #388 (CLI #331).
+      for (const [tool, args] of [
+        ['discover_by_identity_key', { identityKey: httpKey }],
+        ['discover_by_attributes', { attributes: { role: 'e2e-tester' } }],
+      ]) {
+        const discovered = await mcp.callTool(tool, args);
+        assert(discovered.totalCertificates === 0 && discovered.certificates.length === 0,
+          `${tool}: empty discovery at the published beta.2 pin`);
+      }
+
       return {
         txid: null,
         sats: 0,
         wocConfirmed: 'n/a',
         tools: tools.length,
-        tests: 11,
+        tests: 13,
         balance: mcpBalance.satoshis,
       };
 

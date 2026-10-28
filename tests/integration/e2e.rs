@@ -183,7 +183,7 @@ async fn e2e_certificate_lifecycle() {
         return;
     };
 
-    let cert_type = "ZTJlLXRlc3Q="; // base64("e2e test")
+    let cert_type = "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="; // base64("e2e test")
     let certifier = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     // Use a unique serial per run (timestamp-based) to avoid UNIQUE constraint from previous runs.
     // relinquishCertificate soft-deletes, so the DB row persists and blocks re-insertion.
@@ -192,20 +192,22 @@ async fn e2e_certificate_lifecycle() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let serial_input = format!("e2e-{}", ts);
+    let serial_input = bsv_sdk::primitives::to_base64(&bsv_sdk::primitives::hash::sha256(
+        format!("e2e-{ts}").as_bytes(),
+    ));
 
     // Acquire
     let cert = post_json_ok(
         &client,
         &format!("{base}/acquireCertificate"),
         json!({
-            "certificateType": cert_type,
+            "type": cert_type,
             "certifier": certifier,
             "acquisitionProtocol": "direct",
             "fields": {"email": "test@example.com"},
             "serialNumber": serial_input,
             "revocationOutpoint": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.0",
-            "signature": "deadbeef",
+            "signature": "3006020101020101",
             "keyringRevealer": "certifier",
             "keyringForSubject": {}
         }),
@@ -230,7 +232,7 @@ async fn e2e_certificate_lifecycle() {
         &client,
         &format!("{base}/relinquishCertificate"),
         json!({
-            "certificateType": cert_type,
+            "type": cert_type,
             "serialNumber": serial,
             "certifier": certifier
         }),

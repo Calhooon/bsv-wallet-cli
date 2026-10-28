@@ -344,26 +344,34 @@ pub struct GetHeaderForHeightParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AcquireCertificateParams {
-    /// Certificate type identifier (e.g. "agent-authorization")
+    /// Certificate type, base64 encoding exactly 32 bytes
     #[serde(rename = "type")]
     pub certificate_type: String,
-    /// Subject's identity key (66-char hex compressed pubkey)
-    pub subject: String,
     /// Certifier's identity key (66-char hex compressed pubkey)
     pub certifier: String,
-    /// Unique serial number for this certificate
-    #[serde(rename = "serialNumber")]
-    pub serial_number: String,
-    /// Revocation outpoint (txid + vout as 72-char hex), or zeros if none
-    #[serde(rename = "revocationOutpoint")]
-    pub revocation_outpoint: String,
-    /// Certifier's signature over the certificate
-    pub signature: String,
-    /// Certificate fields as key-value pairs (e.g. {"name": "MyAgent", "capabilities": "tools,wallet"})
+    /// Serial number, base64 encoding 32 bytes; required for direct acquisition
+    #[serde(rename = "serialNumber", skip_serializing_if = "Option::is_none")]
+    pub serial_number: Option<String>,
+    /// Revocation outpoint, txid.vout; required for direct acquisition
+    #[serde(rename = "revocationOutpoint", skip_serializing_if = "Option::is_none")]
+    pub revocation_outpoint: Option<String>,
+    /// DER signature in hex; required for direct acquisition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Field values: base64 ciphertext for direct acquisition, plaintext for issuance
     pub fields: Value,
     /// Acquisition protocol: "direct" or "issuance"
     #[serde(rename = "acquisitionProtocol", default = "default_direct")]
     pub acquisition_protocol: String,
+    /// Public HTTPS certifier URL; required for issuance
+    #[serde(rename = "certifierUrl", skip_serializing_if = "Option::is_none")]
+    pub certifier_url: Option<String>,
+    /// "certifier" or its compressed public key; required for direct acquisition
+    #[serde(rename = "keyringRevealer", skip_serializing_if = "Option::is_none")]
+    pub keyring_revealer: Option<String>,
+    /// Map of field names to base64 encrypted keys; required for direct acquisition
+    #[serde(rename = "keyringForSubject", skip_serializing_if = "Option::is_none")]
+    pub keyring_for_subject: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -389,6 +397,8 @@ pub struct ProveCertificateParams {
     /// Field names to selectively reveal, e.g. ["name", "capabilities"]
     #[serde(rename = "fieldsToReveal")]
     pub fields_to_reveal: Vec<String>,
+    /// Verifier's compressed public key in hex
+    pub verifier: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -411,9 +421,9 @@ pub struct DiscoverByIdentityKeyParams {
     /// Max results to return (default 10)
     #[serde(default = "default_10")]
     pub limit: u64,
-    /// Optional certificate type filter
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub certificate_type: Option<String>,
+    /// Pagination offset
+    #[serde(default)]
+    pub offset: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -423,9 +433,9 @@ pub struct DiscoverByAttributesParams {
     /// Max results to return (default 10)
     #[serde(default = "default_10")]
     pub limit: u64,
-    /// Optional certificate type filter
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub certificate_type: Option<String>,
+    /// Pagination offset
+    #[serde(default)]
+    pub offset: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -812,7 +822,9 @@ impl WalletMcp {
 
     // ── Discovery ──────────────────────────────────────────────
 
-    #[tool(description = "Find certificates by identity key (BRC-56 peer discovery).")]
+    #[tool(
+        description = "Find certificates by identity key. This beta.2 build returns an empty list: toolbox #388 (CLI #331)."
+    )]
     async fn discover_by_identity_key(
         &self,
         p: Parameters<DiscoverByIdentityKeyParams>,
@@ -820,7 +832,9 @@ impl WalletMcp {
         self.post("discoverByIdentityKey", args(&p.0)).await
     }
 
-    #[tool(description = "Find certificates by attributes (BRC-56 peer discovery).")]
+    #[tool(
+        description = "Find certificates by attributes. This beta.2 build returns an empty list: toolbox #388 (CLI #331)."
+    )]
     async fn discover_by_attributes(
         &self,
         p: Parameters<DiscoverByAttributesParams>,

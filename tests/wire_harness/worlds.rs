@@ -34,7 +34,7 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 13] = [
+pub(crate) const WORLDS: [&str; 15] = [
     "fresh",
     "auth",
     "callback",
@@ -46,6 +46,8 @@ pub(crate) const WORLDS: [&str; 13] = [
     "busy",
     "busy-read",
     "funded",
+    "pin-spend",
+    "review-race",
     "named-change",
     "abort-unproven",
 ];
@@ -218,6 +220,40 @@ async fn seed_funded(
     }
     roots.insert(PUZZLE.1, puzzle_parent().0.id());
     roots
+}
+
+/// The review fixture needs a stored caller coin, so the signed action's
+/// spender is visible to the next createAction (toolbox #245/#264).
+async fn seed_puzzle(storage: &StorageSqlx, identity: &str) {
+    let rows = Rows::open(storage, identity).await;
+    let (puzzle, _) = puzzle_parent();
+    let txid = puzzle.id();
+    let proven = rows
+        .proven(
+            &txid,
+            PUZZLE.1,
+            &txid,
+            bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, PUZZLE.1).to_binary(),
+            puzzle.to_binary(),
+        )
+        .await;
+    rows.coin(Coin {
+        status: "completed",
+        txid: &txid,
+        made: false,
+        proven: Some(proven),
+        satoshis: PUZZLE.2,
+        description: "a caller puzzle",
+        raw: puzzle.to_binary(),
+        lock: hex::decode(PUZZLE_LOCK).unwrap(),
+        derivation: None,
+    })
+    .await;
+    sqlx::query("UPDATE outputs SET change = 0, type = 'custom' WHERE txid = ?")
+        .bind(txid)
+        .execute(&rows.pool)
+        .await
+        .unwrap();
 }
 
 /// A seeded world's way into the store: the wallet's user, its default
@@ -518,7 +554,8 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
         description: "a received coin",
         raw: stub,
         lock: hex::decode(P2PKH).unwrap(),
-        derivation: None,
+        // Reach the ancestry check through #295's managed-coin predicate.
+        derivation: Some("Zml4dHVyZQ=="),
     })
     .await;
 }
@@ -554,7 +591,7 @@ impl World {
         let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
         let storage = World::store(name, &mut keep).await;
         let roots = World::fill(name, &storage, &key).await;
-        let services = World::services(name, roots).await;
+        let services = World::services(name, roots, &storage).await;
         if name == "tracked" {
             bsv_wallet_cli::tracker_host::deliver_chain_event(
                 &storage,
@@ -634,6 +671,11 @@ impl World {
             "tracked" => seed(storage, &identity, true).await,
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" => return seed_funded(storage, &identity, key).await,
+            "pin-spend" | "review-race" => {
+                let roots = seed_funded(storage, &identity, key).await;
+                seed_puzzle(storage, &identity).await;
+                return roots;
+            }
             "abort-unproven" | "named-change" => {
                 Rows::open(storage, &identity)
                     .await
@@ -681,9 +723,14 @@ impl World {
     }
 
     /// The toolbox's services, pointed at the world's stubs.
-    async fn services(name: &str, roots: HashMap<u32, String>) -> Services {
+    async fn services(name: &str, roots: HashMap<u32, String>, storage: &StorageSqlx) -> Services {
         let stub = header_stub(name == "headers-down", roots, RECEIVED).await;
-        let arc = if name == "funded" {
+        let stub = if name == "review-race" {
+            super::review_race::headers(stub, storage.writer().clone()).await
+        } else {
+            stub
+        };
+        let arc = if matches!(name, "funded" | "pin-spend") {
             arc_stub().await
         } else {
             CLOSED.to_string()

@@ -32,7 +32,7 @@ async fn test_list_certificates_empty() {
 #[tokio::test]
 async fn test_certificate_full_lifecycle() {
     let (base, client, _tmp) = setup().await;
-    let cert_type = "dGVzdA=="; // base64("test")
+    let cert_type = "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="; // base64("test")
     let certifier = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
     // Step 1: Acquire certificate (direct protocol)
@@ -40,22 +40,19 @@ async fn test_certificate_full_lifecycle() {
         &client,
         &format!("{base}/acquireCertificate"),
         json!({
-            "certificateType": cert_type,
+            "type": cert_type,
             "certifier": certifier,
             "acquisitionProtocol": "direct",
             "fields": {"name": "test"},
-            "serialNumber": "AQID",
+            "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
             "revocationOutpoint": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.0",
-            "signature": "deadbeef",
+            "signature": "3006020101020101",
             "keyringRevealer": "certifier",
             "keyringForSubject": {}
         }),
     )
     .await;
-    assert!(
-        cert["certificateType"].is_string(),
-        "should have certificateType"
-    );
+    assert!(cert["type"].is_string(), "should have certificateType");
     assert!(cert["certifier"].is_string(), "should have certifier");
     assert!(cert["subject"].is_string(), "should have subject");
     let serial = cert["serialNumber"]
@@ -81,7 +78,7 @@ async fn test_certificate_full_lifecycle() {
     assert!(
         certs
             .iter()
-            .any(|c| c["certificate"]["serialNumber"].as_str() == Some(serial)),
+            .any(|c| c["serialNumber"].as_str() == Some(serial)),
         "listed certificates should include our acquired cert (serial={})",
         serial
     );
@@ -91,7 +88,7 @@ async fn test_certificate_full_lifecycle() {
         &client,
         &format!("{base}/relinquishCertificate"),
         json!({
-            "certificateType": cert_type,
+            "type": cert_type,
             "serialNumber": serial,
             "certifier": certifier
         }),
@@ -128,12 +125,12 @@ async fn test_prove_certificate_not_found() {
         &format!("{base}/proveCertificate"),
         json!({
             "certificate": {
-                "certificateType": "dGVzdA==",
+                "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
                 "subject": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-                "serialNumber": "AQID",
+                "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
                 "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
                 "revocationOutpoint": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.0",
-                "signature": "deadbeef",
+                "signature": "3006020101020101",
                 "fields": {"name": "test"}
             },
             "fieldsToReveal": ["name"],
@@ -161,8 +158,8 @@ async fn test_relinquish_certificate_not_found() {
         &client,
         &format!("{base}/relinquishCertificate"),
         json!({
-            "certificateType": "dGVzdA==",
-            "serialNumber": "AQID",
+            "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
+            "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
             "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         }),
     )

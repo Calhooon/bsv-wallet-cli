@@ -99,6 +99,9 @@ async fn main() -> Result<()> {
             let ctx = open().await?;
             commands::identity::run(&ctx).await?;
         }
+        Commands::Certificates { .. } => {
+            commands::certificates::run(&open().await?).await?;
+        }
         Commands::Balance => {
             let ctx = open().await?;
             commands::balance::run(&ctx).await?;

@@ -39,6 +39,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     record_empty_signer_refusals(r).await;
     record_internalize_at_bound(r).await;
     super::cases_page_bounds::record_page_bounds(r).await;
+    super::cases_beta2::record(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.
@@ -116,8 +117,8 @@ fn typed(type_key: &str, rest: &serde_json::Value) -> serde_json::Value {
 /// An `acquireCertificate` body, the `direct` protocol.
 fn acquire_body(type_key: &str) -> serde_json::Value {
     let rest = serde_json::json!({"certifier": G, "acquisitionProtocol": "direct",
-        "fields": {"name": "wire"}, "serialNumber": "AQID",
-        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
+        "fields": {"name": "d2lyZQ=="}, "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "3006020101020101",
         "keyringRevealer": "certifier", "keyringForSubject": {}});
     typed(type_key, &rest)
 }
@@ -126,15 +127,15 @@ fn acquire_body(type_key: &str) -> serde_json::Value {
 fn relinquish_body(type_key: &str) -> serde_json::Value {
     typed(
         type_key,
-        &serde_json::json!({"serialNumber": "AQID", "certifier": G}),
+        &serde_json::json!({"serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "certifier": G}),
     )
 }
 
 /// A `proveCertificate` body for a certificate the wallet does not hold.
 fn prove_unheld_body(type_key: &str) -> serde_json::Value {
-    let rest = serde_json::json!({"subject": G, "serialNumber": "AQID", "certifier": G,
-        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "deadbeef",
-        "fields": {"name": "wire"}});
+    let rest = serde_json::json!({"subject": G, "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "certifier": G,
+        "revocationOutpoint": format!("{UNKNOWN}.0"), "signature": "3006020101020101",
+        "fields": {"name": "d2lyZQ=="}});
     serde_json::json!({"certificate": typed(type_key, &rest), "fieldsToReveal": ["name"], "verifier": G})
 }
 
@@ -438,12 +439,16 @@ async fn record_unknown_references(r: &mut Recorder) {
 }
 
 /// Certificates. BRC-100 names the certificate's type `type`; the
-/// server's types take `certificateType` (found by this corpus, #69): the
-/// BRC's spelling is recorded as served, then the server's, in order:
+/// beta.2 types now take `type` too (#268, #105). These requests record
+/// the same spelling at all four doors, in order:
 /// acquire, list, prove, relinquish.
 async fn record_certificate_spelling(r: &mut Recorder) {
     for (path, body) in [
-        ("/acquireCertificate", acquire_body("type")),
+        ("/acquireCertificate", {
+            let mut body = acquire_body("type");
+            body["serialNumber"] = "AQID".into();
+            body
+        }),
         ("/relinquishCertificate", relinquish_body("type")),
         ("/proveCertificate", prove_unheld_body("type")),
     ] {
@@ -463,7 +468,11 @@ async fn record_certificates(r: &mut Recorder) {
         .case(
             "acquireCertificate.direct",
             "fresh",
-            post("/acquireCertificate", acquire_body("certificateType")),
+            post("/acquireCertificate", {
+                let mut body = acquire_body("type");
+                body["serialNumber"] = "AQID".into();
+                body
+            }),
         )
         .await;
     r.case(
@@ -492,7 +501,7 @@ async fn record_certificates(r: &mut Recorder) {
     r.case(
         "relinquishCertificate.held",
         "fresh",
-        post("/relinquishCertificate", relinquish_body("certificateType")),
+        post("/relinquishCertificate", relinquish_body("type")),
     )
     .await;
 }
@@ -503,13 +512,13 @@ async fn record_unknown_certificates_and_discovery(r: &mut Recorder) {
     r.case(
         "relinquishCertificate.unknown",
         "fresh",
-        post("/relinquishCertificate", relinquish_body("certificateType")),
+        post("/relinquishCertificate", relinquish_body("type")),
     )
     .await;
     r.case(
         "proveCertificate.unknown",
         "fresh",
-        post("/proveCertificate", prove_unheld_body("certificateType")),
+        post("/proveCertificate", prove_unheld_body("type")),
     )
     .await;
     r.case(

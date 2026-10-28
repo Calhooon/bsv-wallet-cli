@@ -44,6 +44,12 @@ pub enum Commands {
     },
     /// Show public key and address
     Identity,
+    /// Check stored certificate signatures after the beta.2 pin, without changing them
+    Certificates {
+        /// Reverify every stored certificate and report checked and failed counts
+        #[arg(long, required = true)]
+        reverify: bool,
+    },
     /// Show spendable balance
     Balance,
     /// Show BRC-29 funding address
