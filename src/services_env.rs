@@ -55,6 +55,7 @@ pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it t
 /// The CLI's explicit classic endpoints (#322). Toolbox beta.2 defaults to
 /// Arcade, so a classic caller must never inherit its `arc_url` default.
 /// Classic ARC is deprecated and remains for callers that select it.
+#[must_use]
 pub const fn classic_arc_url(chain: Chain) -> &'static str {
     match chain {
         Chain::Main => "https://arc.taal.com",

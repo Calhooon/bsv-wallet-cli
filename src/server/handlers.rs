@@ -100,6 +100,11 @@ fn level_num(l: SecurityLevel) -> u8 {
     }
 }
 
+/// BRC-100 gives HMAC and signature verification the same result shape.
+fn valid_response(valid: bool) -> Json<serde_json::Value> {
+    Json(json!({ "valid": valid }))
+}
+
 /// Extract originator from Origin or Originator header
 fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
     if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
@@ -170,7 +175,8 @@ pub async fn get_public_key(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         for_self: req.for_self,
         privileged: req.privileged,
@@ -776,7 +782,8 @@ pub async fn verify_signature(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         for_self: req.for_self,
         privileged: req.privileged,
@@ -787,7 +794,7 @@ pub async fn verify_signature(
         .verify_signature(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
-    Ok(Json(json!({ "valid": result.valid })))
+    Ok(valid_response(result.valid))
 }
 
 /// POST /encrypt
@@ -804,7 +811,8 @@ pub async fn encrypt(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
@@ -839,7 +847,8 @@ pub async fn decrypt(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
@@ -878,7 +887,8 @@ pub async fn create_hmac(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
@@ -922,7 +932,8 @@ pub async fn verify_hmac(
         key_id: req.key_id,
         counterparty: req
             .counterparty
-            .map(|s| parse_counterparty(&s))
+            .as_deref()
+            .map(parse_counterparty)
             .transpose()?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
@@ -932,7 +943,7 @@ pub async fn verify_hmac(
         .verify_hmac(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
-    Ok(Json(json!({ "valid": result.valid })))
+    Ok(valid_response(result.valid))
 }
 
 // =============================================================================
