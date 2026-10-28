@@ -386,7 +386,7 @@ async fn delete_protocol_security_level_zero_arm_mutant() {
     assert!(PublicKey::from_hex(answer["publicKey"].as_str().unwrap()).is_ok());
 }
 
-/// BRC-100 0100.md:718, 745, 769: the reference stays Base64String through
+/// BRC-100 0100.md:718, 745, 769: the reference stays `Base64String` through
 /// the served create/sign/abort flow (toolbox #285, bsv-rs #105).
 #[tokio::test]
 async fn deferred_reference_round_trips_create_sign_and_abort_as_base64() {
