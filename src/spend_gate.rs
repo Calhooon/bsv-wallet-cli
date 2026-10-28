@@ -179,8 +179,8 @@ use serde::Serialize;
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
 
 use crate::server::error::Kind;
-use crate::toolbox_words;
 use crate::tracker_host::{read_creators, CreatorReading, TickOptions};
+use bsv_sdk::WalletRefusalClass;
 
 /// The outputs of one authenticated user. A gate read requires this scope;
 /// an outpoint belonging only to another user is absent from it.
@@ -1990,8 +1990,26 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         Ok(result) => return Ok(result),
         // An unspendable coin in the lazy offer: the coins not read may
         // cover without it (F7 of the #44 CLI review).
-        Err(e) if lazy && toolbox_words::is_unspendable(&e) => {}
-        Err(e) if !toolbox_words::is_insufficient(&e) => return Err(GateError::Wallet(e)),
+        Err(e)
+            if lazy
+                && matches!(
+                    e,
+                    bsv_sdk::Error::WalletRefusal {
+                        class: WalletRefusalClass::InvalidOperation,
+                        ..
+                    }
+                ) => {}
+        Err(e)
+            if !matches!(
+                e,
+                bsv_sdk::Error::WalletRefusal {
+                    class: WalletRefusalClass::InsufficientFunds,
+                    ..
+                }
+            ) =>
+        {
+            return Err(GateError::Wallet(e))
+        }
         Err(e) if !lazy => return Err(refusal(coins, &first, &e, outputs).await),
         Err(_) => {}
     }
@@ -2002,7 +2020,15 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         .map_err(GateError::Gate)?;
     match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
-        Err(e) if toolbox_words::is_insufficient(&e) => {
+        Err(e)
+            if matches!(
+                e,
+                bsv_sdk::Error::WalletRefusal {
+                    class: WalletRefusalClass::InsufficientFunds,
+                    ..
+                }
+            ) =>
+        {
             Err(refusal(coins, &full, &e, outputs).await)
         }
         Err(e) => Err(GateError::Wallet(e)),
@@ -2035,10 +2061,10 @@ async fn refusal(
         } else {
             None
         };
-    // The toolbox's own line: a `WalletError`'s text without bsv-rs's
+    // The toolbox's own line: a typed refusal's message without bsv-rs's
     // `wallet error: ` Display, any other error as it displays.
     let toolbox = match e {
-        bsv_sdk::Error::WalletError(text) => text.clone(),
+        bsv_sdk::Error::WalletRefusal { message, .. } => message.clone(),
         other => other.to_string(),
     };
     GateError::Refused(Refusal {

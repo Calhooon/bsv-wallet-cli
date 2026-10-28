@@ -184,7 +184,10 @@ async fn another_users_lost_and_spent_coins_never_enter_a_refusal() {
         .unwrap();
     assert_eq!(locked(owner).await.unwrap().len(), 1);
     assert!(locked(caller).await.unwrap().is_empty());
-    let error = bsv_sdk::Error::WalletError("Insufficient funds".into());
+    let error = bsv_sdk::Error::WalletRefusal {
+        class: bsv_sdk::WalletRefusalClass::InsufficientFunds,
+        message: "Insufficient funds".into(),
+    };
     let GateError::Refused(refused) = refusal(caller, &Assessment::default(), &error, 1_000).await
     else {
         panic!("expected a funds refusal");

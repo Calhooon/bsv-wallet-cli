@@ -2,9 +2,8 @@
 //! of its message. `starts_with(` and `strip_prefix(` in the shipped code,
 //! whatever the argument (a literal, a const, a UFCS `str::starts_with(s,
 //! ..)`), are counted file by file, each file that holds one with its count
-//! and why. Since #81 the one error site is `src/toolbox_words.rs`, the
-//! words of the toolbox refusals the `WalletInterface` boundary erases; the
-//! served layer's own rule is A8 (`tests/arch_no_error_words.rs`). A text
+//! and why. No error site is exempt since #330; the served layer's
+//! own rule is A8 (`tests/arch_no_error_words.rs`). A text
 //! rule cannot tell an error message from a header scheme or a byte
 //! prefix, so each reason says which its sites are.
 
@@ -42,11 +41,7 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         2,
         "the Authorization header's `Bearer ` scheme, not an error",
     ),
-    (
-        "src/toolbox_words.rs",
-        1,
-        "the toolbox's words where the WalletInterface boundary erases its variant (#81): one read of the WORDS table, which goes when bsv-rs carries a refusal's class and the toolbox maps its variants to it (the upstream issues the module names)",
-    ),
+
 ];
 
 const RULE: Rule = Rule {

@@ -1,9 +1,7 @@
 //! Rule A8 (#81): in the served layer (`src/server/`) no error is
 //! classified by its words. A refusal's status and code come from its
 //! `Kind` (`src/server/error.rs`), reached from a typed error by its
-//! variant; a toolbox refusal the `WalletInterface` boundary erases to text
-//! is read in `src/toolbox_words.rs`, outside this rule's scope and counted
-//! by A5. Counted: a string test (`starts_with(`, `strip_prefix(`,
+//! variant and the toolbox's preserved reference class (#330). Counted: a string test (`starts_with(`, `strip_prefix(`,
 //! `ends_with(`, `strip_suffix(`, `contains(`, `find(`, `rfind(`,
 //! `matches(`, `split_once(`) whose receiver is an error's text: a call of
 //! `to_string()` or `message()`, or a binding the served layer gives an

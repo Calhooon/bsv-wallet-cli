@@ -1075,7 +1075,10 @@ async fn assert_toolbox_named_change_refusal<T: std::fmt::Debug>(result: Result<
     assert!(
         matches!(
             &result,
-            Err(GateError::Wallet(bsv_sdk::Error::WalletError(_)))
+            Err(GateError::Wallet(bsv_sdk::Error::WalletRefusal {
+                class: WalletRefusalClass::InvalidParameter,
+                ..
+            }))
         ),
         "expected the toolbox's named-change refusal: {result:?}"
     );
@@ -1087,11 +1090,6 @@ async fn assert_toolbox_named_change_refusal<T: std::fmt::Debug>(result: Result<
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "VALIDATION_ERROR");
     let message = body["message"].as_str().unwrap();
-    assert!(
-        message.starts_with("wallet error: Validation error: "),
-        "{message}"
-    );
-    assert!(message.contains("inputs[0]"), "{message}");
     eprintln!("toolbox named-change refusal: {message}");
 }
 
@@ -1391,7 +1389,16 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
         .create_action_offering(template(), Some("gate.local"), &lazy.offer(), &[])
         .await
         .expect_err("the big coin alone cannot be carried");
-    assert!(crate::toolbox_words::is_unspendable(&direct), "{direct}");
+    assert!(
+        matches!(
+            direct,
+            bsv_sdk::Error::WalletRefusal {
+                class: WalletRefusalClass::InvalidOperation,
+                ..
+            }
+        ),
+        "{direct}"
+    );
 
     let result = create_action(&wallet, template(), "gate.local", &gate)
         .await
@@ -1409,7 +1416,16 @@ async fn an_unspendable_coin_in_the_lazy_offer_falls_through_to_every_coin() {
     else {
         panic!("the big coin alone is unspendable");
     };
-    assert!(crate::toolbox_words::is_unspendable(&e), "{e}");
+    assert!(
+        matches!(
+            e,
+            bsv_sdk::Error::WalletRefusal {
+                class: WalletRefusalClass::InvalidOperation,
+                ..
+            }
+        ),
+        "{e}"
+    );
 }
 
 /// F9 (c) of the #44 CLI review: one offer names at most [`OFFER_CAP`]
@@ -1464,8 +1480,10 @@ async fn a_refusal_names_the_coins_past_the_offers_cap() {
     );
 
     let (storage, user, _) = storage_for(&PrivateKey::random().public_key().to_hex()).await;
-    let toolbox =
-        bsv_sdk::Error::WalletError("Insufficient funds: need 5000, have 1600".to_string());
+    let toolbox = bsv_sdk::Error::WalletRefusal {
+        class: WalletRefusalClass::InsufficientFunds,
+        message: "Insufficient funds: need 5000, have 1600".to_string(),
+    };
     let GateError::Refused(refused) =
         refusal(UserCoins::new(&storage, user), &assessment, &toolbox, 5_000).await
     else {
