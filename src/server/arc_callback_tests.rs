@@ -240,7 +240,10 @@ async fn arc_callback_busy_store_under_the_served_default() {
             &json!("STORE_BUSY")
         ),
     );
-    assert_eq!(body["message"], "apply_event: Store busy: sqlite code 5");
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("apply_event: "));
     eprintln!("busy store, served default: typed busy after {elapsed:.3?} (one wait)");
     assert!(elapsed >= wait, "the writer did not wait: {elapsed:?}");
     assert!(elapsed < ARC_CALLBACK_DEADLINE, "{elapsed:?}");

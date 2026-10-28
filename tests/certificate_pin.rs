@@ -42,11 +42,9 @@ async fn reverify_command_counts_good_and_bad_signatures_without_changing_certif
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("wallet.db");
     let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+    let identity = root.public_key().to_hex();
     let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-    storage
-        .migrate("certificate-pin", &root.public_key().to_hex())
-        .await
-        .unwrap();
+    storage.migrate("certificate-pin", &identity).await.unwrap();
     storage.make_available().await.unwrap();
     let wallet = Wallet::new(
         Some(root.clone()),
