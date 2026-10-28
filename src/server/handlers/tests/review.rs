@@ -81,7 +81,7 @@ async fn review_actions_serves_code_five_and_preserves_all_members() {
     .await;
 }
 
-/// Drive the pinned HTTP reader against the actual IntoResponse body.
+/// Drive the pinned HTTP reader against the actual `IntoResponse` body.
 #[tokio::test]
 async fn http_wallet_json_reads_served_review_actions() {
     let expected = review();
@@ -93,19 +93,7 @@ async fn http_wallet_json_reads_served_review_actions() {
             async move { AppError::from(bsv_sdk::Error::WalletReviewActions(Box::new(review))) }
         }),
     );
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let (stop, stopped) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = stopped.await;
-            })
-            .await
-            .unwrap();
-    });
+    let (url, server) = crate::test_support::serve_router(app).await;
     let client = HttpWalletJson::new(Some("test.local".into()), Some(url)).unwrap();
     let result = client
         .create_action(
@@ -114,8 +102,8 @@ async fn http_wallet_json_reads_served_review_actions() {
             Some("test.local"),
         )
         .await;
-    stop.send(()).unwrap();
-    server.await.unwrap();
+    server.abort();
+    let _ = server.await;
     match result {
         Err(bsv_sdk::Error::WalletReviewActions(actual)) => assert_eq!(*actual, expected),
         other => panic!("expected typed review with the same five members, got {other:?}"),

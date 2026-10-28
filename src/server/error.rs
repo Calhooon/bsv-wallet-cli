@@ -374,9 +374,9 @@ impl IntoResponse for AppError {
     }
 }
 
-/// #140's host map: HTTPWalletJSON.ts at edf6e03 reads HTTP 400/code 5.
+/// #140's host map: `HTTPWalletJSON.ts` at edf6e03 reads HTTP 400/code 5.
 /// Keep absent optional members absent. The reference's competing BEEF is
-/// a Uint8Array, whose JSON has numeric object keys, unlike the action's tx.
+/// a `Uint8Array`, whose JSON has numeric object keys, unlike the action's tx.
 fn review_body(review: &bsv_sdk::wallet::ReviewActionsRefusal) -> serde_json::Value {
     let results: Vec<_> = review
         .review_action_results
