@@ -504,8 +504,8 @@ async fn the_abort_door_refuses_a_transaction_a_broadcaster_took() {
     assert_eq!(spendable, 0, "the coin stays locked");
 }
 
-/// Toolbox #165 at beta.1: status alone is an accepting word; the host's
-/// proof guard does not read it. The typed refusal reaches 409 after erasure.
+/// Status alone holds this abort at the toolbox, while the host's proof
+/// guard does not read it. Beta.3 retains the reference's `InvalidParameter`.
 #[tokio::test]
 async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() {
     let key = PrivateKey::random();
@@ -534,14 +534,17 @@ async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() 
     )
     .await
     .unwrap_err();
-    let bsv_wallet_toolbox::Error::InvalidTransactionStatus(message) = &error else {
-        panic!("expected accepting-word refusal: {error:?}");
-    };
-    assert!(message.starts_with("cannot abort action:"), "{message}");
-    let erased = bsv_sdk::Error::from(error);
+    let classed = bsv_sdk::Error::from(error);
+    assert!(matches!(
+        classed,
+        bsv_sdk::Error::WalletRefusal {
+            class: bsv_sdk::WalletRefusalClass::InvalidParameter,
+            ..
+        }
+    ));
     let response =
-        axum::response::IntoResponse::into_response(crate::server::error::AppError::from(erased));
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+        axum::response::IntoResponse::into_response(crate::server::error::AppError::from(classed));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(tx_status(&storage, &txid).await, "unproven");
     assert_eq!(output_state(&storage, output).await, before);
 }
@@ -579,20 +582,15 @@ async fn abort_wallet(
 }
 
 fn assert_toolbox_abort_refusal(body: &serde_json::Value) {
-    assert_eq!(body["code"], "ERROR");
+    assert_eq!(body["code"], "VALIDATION_ERROR");
     let message = body["message"].as_str().unwrap();
-    assert!(
-        message.starts_with("wallet error: Invalid transaction status: cannot abort action: "),
-        "{message}"
-    );
     eprintln!("toolbox abort refusal: {message}");
 }
 
-/// The toolbox owns this refusal's sentence (#290). Keep the served
-/// status, code, prefix and stored state; print the reference's wording.
-/// The asserted 400 holds the missing acceptance hint: a hint is a 409.
+/// The toolbox owns this refusal's sentence (#290). Keep the class's
+/// served status and code and the stored state; print the reference's wording.
 #[tokio::test]
-async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() {
+async fn abort_failed_template_twice_keeps_validation_without_acceptance_hint() {
     let key = PrivateKey::random();
     let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
     let txid = "e3".repeat(32);
@@ -612,11 +610,10 @@ async fn abort_failed_template_twice_keeps_beta_error_without_acceptance_hint() 
     assert_eq!(output_state(wallet.storage(), output).await, before);
 }
 
-/// The toolbox owns this refusal's sentence (#290). Keep the served
-/// status, code, prefix and stored state; print the reference's wording.
-/// The asserted 400 holds the missing acceptance hint: a hint is a 409.
+/// The toolbox owns this refusal's sentence (#290). Keep the class's
+/// served status and code and the stored state; print the reference's wording.
 #[tokio::test]
-async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptance_hint() {
+async fn abort_incoming_by_reference_and_txid_keeps_validation_without_acceptance_hint() {
     let key = PrivateKey::random();
     let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
     let txid = "e4".repeat(32);
@@ -639,7 +636,7 @@ async fn abort_incoming_by_reference_and_txid_keeps_beta_error_without_acceptanc
 }
 
 #[tokio::test]
-async fn abort_accepting_status_keeps_conflict_and_acceptance_hint() {
+async fn abort_accepting_status_keeps_validation_without_inferred_hint() {
     let key = PrivateKey::random();
     let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
     let txid = "e5".repeat(32);
@@ -648,13 +645,9 @@ async fn abort_accepting_status_keeps_conflict_and_acceptance_hint() {
     let before = output_state(&storage, output).await;
     let wallet = abort_wallet(storage, key).await;
     let (status, body) = serve_abort(&wallet, &txid).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["code"], "CONFLICT");
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("records an acceptance and cannot be aborted"));
-    assert!(body["message"]
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_toolbox_abort_refusal(&body);
+    assert!(!body["message"]
         .as_str()
         .unwrap()
         .contains("(hint: the wallet holds an accepting word"));
@@ -805,14 +798,15 @@ async fn assert_agreement_row(word: &str, toolbox_refuses: bool, abort: bool) ->
         "{word}: abort={abort}: {result:?}"
     );
     if toolbox_refuses {
-        let bsv_wallet_toolbox::Error::InvalidTransactionStatus(message) = result.unwrap_err()
-        else {
-            panic!("{word}: wrong refusal class")
+        let error = bsv_sdk::Error::from(result.unwrap_err());
+        let expected = if abort && word.starts_with("fixture 124:") {
+            bsv_sdk::WalletRefusalClass::InvalidParameter
+        } else {
+            bsv_sdk::WalletRefusalClass::InvalidOperation
         };
         assert!(
-            message.contains("records an acceptance and cannot be aborted")
-                || message.contains("has a recorded acceptance ("),
-            "{word}: {message}"
+            matches!(error, bsv_sdk::Error::WalletRefusal { class, .. } if class == expected),
+            "{word}: {error}"
         );
         assert_eq!(tx_status(&storage, &txid).await, status, "{word}");
         assert_eq!(output_state(&storage, output).await, before, "{word}");
@@ -1068,10 +1062,16 @@ async fn a_coin_whose_transaction_drew_an_immediate_refusal_is_not_selected() {
         "the refused coin was selected: {:?}",
         outcome.map(|r| r.txid.map(hex::encode))
     );
-    let msg = outcome.err().unwrap().to_string();
+    let error = outcome.unwrap_err();
     assert!(
-        msg.to_ascii_lowercase().contains("insufficient funds"),
-        "{msg}"
+        matches!(
+            error,
+            bsv_sdk::Error::WalletRefusal {
+                class: bsv_sdk::WalletRefusalClass::InsufficientFunds,
+                ..
+            }
+        ),
+        "{error}"
     );
     let (spendable, spent_by): (i64, Option<i64>) =
         sqlx::query_as("SELECT spendable, spent_by FROM outputs WHERE output_id = ?")
