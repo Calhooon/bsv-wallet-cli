@@ -1513,3 +1513,78 @@ before it lands) and bsv-rs's beta.3 (the ordered maps reach us only through
 serde key order; #404's &self receivers touch no CLI site; the auth transport
 texts match nothing of ours); #310 before any Nightly dispatch; #313 and #330
 at the next pin; #331 and #333 on 0.19.0; #336 before the next gate.
+
+2026-10-28 (13:0xZ to 21:3xZ): THE BETA.3 PIN, LANDED THE SAME DAY WITH A
+GREEN GATE. The owner's word at 14:2xZ, verbatim through the keeper: "I like
+your reccomendtaion if its god tier and north star", read as 19.7 (b): one
+prerelease each at the common hour (bsv-rs 0.9.0-beta.3 at its tip after
+#429, the toolbox's 0.14.0-beta.3 against it carrying #404, #353 and #374),
+the CLI's ONE pin PR on the crates taking #330 and #313 together, the
+mainnet gate once, #331 after, nothing before the index hours; 19.8 stands
+(the pre-#203 certificate re-issue a 0.19.0 release step, #333 the
+detector). The hours: bsv-rs on the index 15:30:17Z (tag bf97cc74), the
+toolbox 19:34:31Z (tag aaaf2e2a), and a third nobody had named: the pin
+lane fired at 19:35Z on the toolbox's crate and blocked three minutes later
+on a package fact, right by its brief: bsv-tracker's newest crate pinned
+bsv-rs exactly at beta.2 while the toolbox's beta.3 pinned beta.3, so no
+lock could hold one bsv-rs (#341, the proof from the downloaded crates).
+The tracker is the keeper's own crate; its 0.9.0-beta.3 was cut by the
+keeper's hand inside the word already given (index 19:46:17Z, no code
+change), a watcher resumed the lane in its own worktree, and PR 345 landed
+at 21:11:41Z as beta 6e1a7bc: 23 commits, the three pins in both workspaces
+and locks, the typed host map with src/toolbox_words.rs deleted and every
+served class from bsv-rs's WalletRefusal carrier (#330), --from through the
+toolbox's must-spend list (#313), 174 wire rows and 48 consumer rows
+re-recorded with reasons, 490 gate vectors at 0 divergences, the hermetic
+suite 24/24, a differential of 112 attributed differences with the
+same-build floor at 0, the toolbox's Dependents green against the branch
+(their #405 input, the clone line read; plain on beta after), a cold review
+on Opus: merge. The gate ran once on 6e1a7bc at 21:16Z: 24 of 24, net 2,181
+sats, Arcade first, the funder on its own 0.18.2 copy. #338, #341, #330 and
+#313 closed by hand with the record; the 0.19.0-beta.3 milestone is empty,
+so the tag is the owner's word through the keeper.
+
+Between the two pins, the gate's own scenario got two fixes under one lesson
+(a beta-only scenario's mainnet branch runs first at the line's first gate):
+#334 (the scenario computes the allocator's demand for its kept
+external-input template from wallet A's own database, the basket's desired
+count and minimum and A's available change by the toolbox's own query, and
+picks the funder's largest coin that clears it; PR 335 at 12:43Z, beta
+8a41565) and #336 (A's desired count set to one around the template and
+restored, so the demand is 4,023 sats in every state, and a 15,000-sat coin
+in the funder's named basket e2e-external that the funding transfer carries
+once and the allocator never selects; PR 339 at 15:35Z, beta 1d8f4da); the
+beta.3 gate created that coin on mainnet for the first time and ran scenario
+24 with A at three coins, this morning's failing state, at a margin of
+10,977.
+
+Deferrals the pin lane filed as package facts, never imitated: #342 with
+bsv-rs #439 (typed evidence for generic faults and abort acceptance), #343
+(a 64 KiB decrypted-field figure that neither crate holds, by the toolbox
+captain's reading: ours to find and delete, a lane on it), #344 with toolbox
+#430 (relinquish of an unknown serial must refuse WERR_BAD_REQUEST as the
+reference does; the published zero-row success is their divergence). Three
+consumer refusals moved with the typed classes and were told: app-payers'
+abortAction of an unknown reference 400 VALIDATION_ERROR where 404 NOT_FOUND;
+low-fleet's potPayout and the x402 skill's refund VALIDATION_ERROR where
+INVALID_BEEF; all three without the generic SDK prefix; LOW's and bsv-dd's
+captains hold no matcher on them (LOW's funder already reads the class;
+bsv-dd's gift sender stays on 0.18.2), and the x402 skill's is on the
+owner's brief. The stack's rule of the day on live script verdicts (every
+live door judges under the node's word per input; the default script mode
+is parity only) is read on the CLI as #340: no interpreter of its own, every
+live judgment the toolbox's internalize door's, two test-only verifies named;
+a lane on it after the pin.
+
+Lessons kept: a pin set is every crate the manifest pins, and the pin's
+watcher and brief name each one's prerelease as a precondition (the
+tracker's hour was nobody's until it blocked); a proof the other side's
+workflow cannot serve is not this PR's gate, and one it can serve is run
+and its clone line read; a lane that blocks on a package fact pushes its
+branch and its evidence so the resume costs nothing; the keeper's hourly
+cap is kept by folding, never by silence on a stop.
+
+Open after the evening: the beta.3 tag (the owner's word); #340 and #343 in
+lanes; #331 on toolbox #388, #342 on bsv-rs #439, #344 on toolbox #430;
+#333 and the re-issue at 0.19.0; #316 and #315 on the beta.2 milestone (a
+record and a doc); the next pin's issue opens at the next prerelease's hour.
