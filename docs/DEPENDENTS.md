@@ -49,6 +49,12 @@ their beta.1 serde shape at that release. This branch now pins bsv-rs
 =0.9.0-beta.3. Ordinary refusals now retain their reference classes (#330); generic faults
 without a class remain ERROR (#342). The CLI-only --from wrapper uses the
 must-spend list (#313). Discovery trust settings still await CLI #331
-(toolbox #388). All consumer corpus changes are named
-in the pin recording commit. External consumers stay on their recorded
+(toolbox #388). The beta.3 consumer replay changes exactly three refusals:
+`app-payers/02-agents.abortAction.json` is now 400 `VALIDATION_ERROR` for the
+missing action; `low-fleet/11-internalizeAction.potPayout.json` and
+`x402-skill/07-internalizeAction.refund.json` retain 400 but now use
+`VALIDATION_ERROR` for invalid BEEF. All three lose the SDK's former
+`wallet error: ` prefix. Their requests and the other 45 consumer fixtures
+are byte-identical. These changes are named in the consumer recording commit.
+External consumers stay on their recorded
 versions until their captains move them.
