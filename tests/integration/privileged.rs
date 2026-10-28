@@ -249,13 +249,17 @@ async fn the_key_linkage_calls_read_an_array_body_by_position_as_before() {
     ];
     for (path, required) in calls {
         let url = format!("{base}/{path}");
-        let full = [required.clone(), vec![json!(false), json!("r")]].concat();
+        let full = [required.clone(), vec![json!(false), json!("reason")]].concat();
         for body in [required.clone(), full] {
             let resp = post_json(&client, &url, json!(body)).await;
             let status = resp.status().as_u16();
             let text = resp.text().await.unwrap();
             assert_eq!(status, 200, "{path} {body:?}: {text}");
         }
+        let short = [required.clone(), vec![json!(false), json!("r")]].concat();
+        let (status, served) = call(&client, &url, json!(short)).await;
+        assert_eq!(status, 400, "{path} {short:?}: {served}");
+        assert_eq!(served["code"], "VALIDATION_ERROR", "{path}");
         let refused = [required, vec![json!(true)]].concat();
         let (status, served) = call(&client, &url, json!(refused)).await;
         assert_eq!(status, 501, "{path} {refused:?}: {served}");

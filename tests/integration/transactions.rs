@@ -75,7 +75,7 @@ async fn test_create_action_insufficient_funds() {
     );
 }
 
-/// POST /signAction with invalid reference — should return 400.
+/// A missing pending sign session has the reference's `NotImplemented` class.
 #[tokio::test]
 async fn test_sign_action_invalid_reference() {
     let (base, client, _tmp) = setup().await;
@@ -90,10 +90,11 @@ async fn test_sign_action_invalid_reference() {
     .await;
     assert_eq!(
         resp.status(),
-        400,
-        "invalid signAction reference should return 400"
+        501,
+        "a missing signAction session is not implemented"
     );
     let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], "NOT_IMPLEMENTED");
     assert!(
         body["message"].is_string(),
         "error should have message field"
