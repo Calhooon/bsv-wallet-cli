@@ -14,10 +14,10 @@ const { WalletClient, ANYONE_KEY, buildP2PKH } = require('../lib/wallet-client')
 const hermetic = require('../lib/hermetic');
 
 const BUSY_MS = 5_000; // toolbox 0.13.0: STORE_BUSY_CEILING_MS
-// 1,000 output + 2,500 change floor (#315, #334) + 500 fee allowance.
 // Toolbox 0.14.0-beta.2 fees.rs: a 108-byte input script + two P2PKH outputs
 // = 227 bytes; ceil(227 * 101 / 1,000) = 23 sats at the default 101 sat/kB.
-const MIN_EXTERNAL_INPUT_SATOSHIS = 4_000;
+// Keep the 500-sat margin for additional change outputs and fee rounding.
+const EXTERNAL_INPUT_FEE_ALLOWANCE = 23 + 500;
 
 async function within(promise, ms, message) {
   let timer;
@@ -129,12 +129,46 @@ module.exports = {
     // run, making the next createAction 402 before it reaches SQLite. Supply
     // an external input for the kept template instead: the funder's existing
     // change, read with its BEEF, never signed or spent by this scenario.
+    // Mirror toolbox 0.14.0-beta.2 src/storage/sqlx/create_action/mod.rs:333-340
+    // and allocation.rs:21-31,59-96. The kept client.post below has no delayed
+    // broadcast or received rule: require spendable, allow_received = false.
+    const [basket] = JSON.parse(execFileSync('sqlite3', ['-batch', '-bail', '-json',
+      path.join(walletA.dir, 'wallet.db'),
+      `SELECT b.number_of_desired_utxos, b.minimum_desired_utxo_value,
+        (SELECT COUNT(*) FROM outputs o
+         JOIN transactions t ON o.transaction_id = t.transaction_id
+         WHERE o.user_id = b.user_id AND o.basket_id = b.basket_id
+           AND o.change = 1 AND t.status IN ('completed', 'unproven')
+           AND o.type = 'P2PKH' AND o.provided_by = 'storage'
+           AND o.purpose IN ('change', 'receive')
+           AND COALESCE(o.derivation_prefix, '') <> ''
+           AND COALESCE(o.derivation_suffix, '') <> ''
+           AND (t.status = 'completed' OR COALESCE(o.purpose, '') <> 'receive' OR 0)
+           AND o.spendable = 1) AS available
+       FROM output_baskets b JOIN users u ON b.user_id = u.user_id
+       WHERE b.name = 'default' AND u.identity_key = '${walletA.identityKey}';`],
+    { encoding: 'utf8', timeout: BUSY_MS }));
+    assert(basket, 'A has a default basket for the allocator demand');
+    const desired = basket.number_of_desired_utxos;
+    const available = basket.available;
+    const initial = basket.minimum_desired_utxo_value;
+    const first = Math.max(1, Math.floor(initial / 4));
+    // change.rs:78-87,318-345 opens the target's change outputs regardless of
+    // surplus, and any positive surplus opens one even when the target is met.
+    const target = Math.max(desired - available, 1);
+    const outputSatoshis = outputs[0].satoshis;
+    const demand = outputSatoshis + EXTERNAL_INPUT_FEE_ALLOWANCE
+      + first + Math.max(target - 1, 0) * initial;
     const funder = new WalletClient(FUNDER_PORT, 'funder');
     let source = await funder.listOutputs('default', hermetic.enabled
       ? { include: 'entire transactions', limit: 10_000 }
-      : { limit: 50 });
-    const external = source.outputs.find(o => o.satoshis >= MIN_EXTERNAL_INPUT_SATOSHIS);
-    assert(external, `the funder has an external input of at least ${MIN_EXTERNAL_INPUT_SATOSHIS} sats to cover the output, change floor and fee`);
+      : { limit: 10_000 });
+    assert(source.outputs.length === source.totalOutputs, 'the funder list includes every coin for largest-input selection');
+    const external = source.outputs.reduce((largest, coin) =>
+      !largest || coin.satoshis > largest.satoshis ? coin : largest, null);
+    const fundingDemand = `external input demand=${demand} sats (output=${outputSatoshis}, desired=${desired}, available=${available}, target=${target}, first=${first}, initial=${initial}, fee=${EXTERNAL_INPUT_FEE_ALLOWANCE}=23+500); funder largest=${external?.satoshis ?? 'none'} sats`;
+    assert(external && external.satoshis >= demand, fundingDemand);
+    console.log(`       ${fundingDemand}`);
     if (!hermetic.enabled) {
       // Fetch BEEF only for the selected coin, not the live funder's history.
       source = await funder.listOutputs('default', {
