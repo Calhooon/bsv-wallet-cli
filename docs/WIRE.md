@@ -281,9 +281,15 @@ The corpus has 174 rows. All moved and new files are named with their cause
 in the single recording commit. Toolbox #404 removes the SDK Display's generic
 wallet-error prefix from ordinary refusals, with statuses and codes from the
 class table above. Toolbox #374 requires valid signed, encrypted certificate
-material, including the disclosure fixtures; #343 records why the 1 MiB
-serialized field is refused even at its bound. Rows 173 and 174 prove storage
-at the 64 KiB decrypted bound. Rows 161 to 165 pin SDK #415/#420 validators;
+material, including the disclosure fixtures; #343 sources the 64 KiB
+decrypted-field bound in bsv-rs 0.9.0-beta.3
+`src/auth/certificates/bounds.rs:26` (`MAX_DECRYPTED_FIELD_BYTES = 64 * 1024`),
+applied at `master.rs:325-329` by toolbox 0.14.0-beta.3
+`src/wallet/direct_acquire.rs:188-197`. Row 155 passes construction and
+verification at the 1 MiB encoded-field bound, then fails that plaintext
+check. Row 156 is non-canonical base64 and fails construction before the
+separate verify bound; row 157 fails canonical-DER argument validation.
+Rows 173 and 174 prove storage at the SDK's decrypted bound. Rows 161 to 165 pin SDK #415/#420 validators;
 166 and 167 pin toolbox #383 descriptions; 168 pins #376's label before a bad
 derivation; 169 pins the tracker's typed transport fault; 170 and 171 pin SDK
 #427's compressed linkage aliases; 172 pins SDK #384's protocol before a bad

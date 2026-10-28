@@ -188,11 +188,14 @@
     "141-signAction.sequenceNumberAboveType.json": "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
     "142-listActions.offsetAboveType.json": "The u32 argument type refuses offset 4294967296 before listActions is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
     "147-createAction.doubleSpendReview.json": "Finding 1 (#277, host map #140, bsv-rs #339): HTTP 400 with isError, numeric code 5 and all present review-action members; absent optional members stay omitted.",
-    "155-acquireCertificate.fieldAtBound.json": "#338/#343: signed 1 MiB encrypted text verifies but exceeds the 64 KiB decrypted-field bound; typed InvalidParameter, nothing stored.",
-    "156-acquireCertificate.fieldAboveBound.json": "#338, toolbox #374: non-canonical base64 above 1 MiB is refused as typed InvalidParameter before storage.",
+    "155-acquireCertificate.fieldAtBound.json": "#343: signed 1 MiB canonical base64 passes construction and verification; its 786,384 plaintext bytes exceed bsv-rs 0.9.0-beta.3 src/auth/certificates/bounds.rs:26 (MAX_DECRYPTED_FIELD_BYTES = 64 * 1024), applied at master.rs:325-329 through toolbox 0.14.0-beta.3 src/wallet/direct_acquire.rs:188-197. Typed InvalidParameter, nothing stored.",
+    "156-acquireCertificate.fieldAboveBound.json": "#343: 1,048,577 bytes of non-canonical base64 fail bsv-rs 0.9.0-beta.3 MasterCertificate::new (src/auth/certificates/master.rs:54-55, bounds.rs:67-71) before verification or decryption. This row does not reach the separate 1 MiB to_binary bound. Typed InvalidParameter, nothing stored.",
+    "157-acquireCertificate.signatureAboveBound.json": "#343: the 73-byte non-DER signature fails toolbox 0.14.0-beta.3 src/wallet/direct_acquire.rs:99's canonical-DER argument check before MasterCertificate construction, verification or decryption. Typed InvalidParameter, nothing stored.",
     "158-acquireCertificate.revealFields.json": "Finding 3, toolbox #240: store a real encrypted field and master key for the empty-disclosure witness.",
     "159-proveCertificate.emptyFields.json": "Finding 3, toolbox #240: fieldsToReveal [] returns an empty keyring; beta.1 disclosed every stored field.",
     "160-proveCertificate.shortSerial.json": "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check.",
-    "169-internalizeAction.trackerTransportFault.json": "#330, toolbox #185: the tracker retains TransportFault::MayHaveBeenReceived through the SDK and serves SERVICE_ERROR, never a verdict."
+    "169-internalizeAction.trackerTransportFault.json": "#330, toolbox #185: the tracker retains TransportFault::MayHaveBeenReceived through the SDK and serves SERVICE_ERROR, never a verdict.",
+    "173-acquireCertificate.decryptedFieldAtBound.json": "#343: valid signed/encrypted field with exactly 65,536 plaintext bytes is stored at bsv-rs 0.9.0-beta.3 src/auth/certificates/bounds.rs:26's MAX_DECRYPTED_FIELD_BYTES, applied at master.rs:325-329 through toolbox 0.14.0-beta.3 src/wallet/direct_acquire.rs:188-197.",
+    "174-listCertificates.decryptedFieldAtBound.json": "#343: read back the encrypted certificate stored by fixture 173 at bsv-rs 0.9.0-beta.3 src/auth/certificates/bounds.rs:26's 64 KiB plaintext bound; no plaintext is stored or served."
   }
 }
