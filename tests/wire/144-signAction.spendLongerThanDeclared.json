@@ -35,7 +35,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: The args parameter must be spend unlockingScript length 22 exceeds expected length 10"
+      "message": "Validation error: The args parameter must be spend unlockingScript length 22 exceeds expected length 10"
     }
   }
 }

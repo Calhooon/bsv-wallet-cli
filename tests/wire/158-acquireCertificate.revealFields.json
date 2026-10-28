@@ -10,7 +10,7 @@
       "acquisitionProtocol": "direct",
       "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "fields": {
-        "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg682dOrgyFyWensRFxTzrqpydQXlSJQWqZPBQA2aQ=="
+        "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg682dOrgyFySrNdSWo+0tiB2M+coZe0Xg=="
       },
       "keyringForSubject": {
         "name": "Dw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw+yjKuVcDbO9efkiFXVtspIbhATgrV7c2cLwYAsCCu84144ctRgR9bnD68C86pkbKM="
@@ -18,7 +18,7 @@
       "keyringRevealer": "certifier",
       "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
       "serialNumber": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
-      "signature": "3006020101020101",
+      "signature": "30440220557d3dda6c8d03236d7848f3175a5397412726e53803f6d2605166f81af5fac80220708249a1b0088a04784bc097e4abe3f8114cb00b5a56a4be96e6f406ec4e56bf",
       "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
     }
   },
@@ -37,9 +37,9 @@
       "serialNumber": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
       "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-      "signature": "3006020101020101",
+      "signature": "30440220557d3dda6c8d03236d7848f3175a5397412726e53803f6d2605166f81af5fac80220708249a1b0088a04784bc097e4abe3f8114cb00b5a56a4be96e6f406ec4e56bf",
       "fields": {
-        "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg682dOrgyFyWensRFxTzrqpydQXlSJQWqZPBQA2aQ=="
+        "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg682dOrgyFySrNdSWo+0tiB2M+coZe0Xg=="
       }
     }
   }

@@ -31,7 +31,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: The labels parameter must be a valid BRC-177 noSend expiry label"
+      "message": "Validation error: The labels parameter must be a valid BRC-177 noSend expiry label"
     }
   }
 }

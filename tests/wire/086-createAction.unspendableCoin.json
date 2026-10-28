@@ -27,9 +27,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "UNSPENDABLE_COIN",
-      "coin": "6666666666666666666666666666666666666666666666666666666666666666.0",
-      "message": "wallet error: Unspendable coin: 6666666666666666666666666666666666666666666666666666666666666666.0: its stored ancestry is incomplete, ancestor(s) not stored: [6666666666666666666666666666666666666666666666666666666666666666]; createAction fetches none, and the wallet's other coins do not cover the action"
+      "code": "CONFLICT",
+      "message": "Unspendable coin: 6666666666666666666666666666666666666666666666666666666666666666.0: its stored ancestry is incomplete, ancestor(s) not stored: [6666666666666666666666666666666666666666666666666666666666666666]; createAction fetches none, and the wallet's other coins do not cover the action"
     }
   }
 }

@@ -5,7 +5,7 @@
     "path": "/getHeight"
   },
   "response": {
-    "status": 502,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-expose-headers": "retry-after",
@@ -13,7 +13,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "SERVICE_ERROR",
+      "code": "ERROR",
       "message": "wallet error: Service error: get_height: no header service gave the tip height (Service error: Chaintracks findChainTipHeaderHex failed: HTTP 500 Internal Server Error); no explorer is asked (set chaintracks_url or bhs_url)"
     }
   }
