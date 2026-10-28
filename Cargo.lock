@@ -340,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-rs"
-version = "0.9.0-beta.1"
+version = "0.9.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60d2464122d0b903eaeb66a99c76c52521ab994b21cbf294dec19e1348c8447d"
+checksum = "3349cc7514c6c5986de6d66890a425d6a23639e177813de0623b626dc584d8cb"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -350,10 +350,13 @@ dependencies = [
  "base64 0.22.1",
  "bs58",
  "cbc",
+ "crypto-bigint",
  "futures",
  "getrandom 0.2.17",
  "hex",
  "hmac 0.13.0",
+ "hyper",
+ "indexmap",
  "k256",
  "lazy_static",
  "num-bigint",
@@ -378,9 +381,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-tracker"
-version = "0.9.0-beta.1"
+version = "0.9.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4397c71f75b33979fc37f46df9c6e90dad705fa530f9f575c626a8acb0e40cb2"
+checksum = "254b5abd1a5d6c2cc38d10647319c296c53cf460c651cd4ed77efb3008b6623d"
 dependencies = [
  "bsv-rs",
  "serde",
@@ -433,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.14.0-beta.1"
+version = "0.14.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20629aa5b3add9352e3698152667fbb3b2a5e41e539b79f71ed8f16320cb428d"
+checksum = "c6c9901e88e7f3c5b7b78da989520f18bdb298a3f752c32fad4f0a171ca52909"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3743,7 +3746,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
