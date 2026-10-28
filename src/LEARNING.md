@@ -17,4 +17,5 @@
 - **[2026-02-24]** The `#[serde(alias = "protocolID")]` pattern is critical throughout `types.rs`. Serde's `rename_all = "camelCase"` converts `protocol_id` to `protocolId` (lowercase d), but the MetaNet Client sends `protocolID` (capital D). The alias accepts both. Same for `keyID`. Missing this alias causes silent deserialization failures with no error — the field just gets `None`/default.
 - **[2026-02-24]** GET endpoints (`isAuthenticated`, `getHeight`, `getNetwork`, `getVersion`, `waitForAuthentication`) don't require originator headers. POST endpoints always do. This split matches the MetaNet Client behavior — don't add originator extraction to GET handlers.
 - **[2026-02-24]** The `--json` flag propagates through `WalletContext.json_output` and every CLI command checks it for structured output. HTTP handlers always return JSON — the flag only affects CLI commands.
-- **[2026-10-24]** `AppError::classify` is gone (#81); the toolbox's erased words are read in `src/toolbox_words.rs` alone, and the served layer maps every typed error by its variant (`src/server/error.rs`).
+
+- **[2026-10-28]** Beta.3 preserves ordinary refusal classes; #330 deletes the text classifier. Generic untyped faults remain ERROR, with the missing typed detail tracked in #342.
