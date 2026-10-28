@@ -13,7 +13,7 @@
 //!
 //! The field names the shapes must keep are BRC-100's at the line's pin,
 //! bsv-blockchain/BRCs `5119a9b` (2026-10-19). Ordinary basket lists remain
-//! numeric; the module-specific JSON shapes wait for bsv-rs #105 at beta.2.
+//! numeric; bsv-rs #105 supplies the module-specific JSON shapes at beta.2.
 //! The internalize instruction bound is already recorded by fixture 123.
 //!
 //! Each fixture names its world (the wallet and the server config it is

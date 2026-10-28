@@ -485,7 +485,7 @@ jobs:
   # the harness's own fetch; Chromium by its launch args). The wall binds the
   # clients that honour it; the runner's egress is not blocked at the OS
   # (docs/E2E-HERMETIC.md, "The wall"). No sat moves; a walled attempt at a
-  # host other than the toolbox's two knobless providers, an unserved stub
+  # host other than the declared explorer and discovery hosts, an unserved stub
   # route or unread stats fails the run. The mainnet run stays the release
   # gate. On failure the kept wallet directories (keys and serve.log), the
   # stub's log and the run's log are uploaded.
