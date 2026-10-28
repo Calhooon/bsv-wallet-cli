@@ -1,7 +1,7 @@
-//! The beta.2 certificate bounds and the host's explicit, read-only reverify.
+//! Certificate bounds and the host's explicit, read-only legacy reverify.
 use bsv_sdk::auth::certificates::Certificate;
-use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::wallet::{AcquireCertificateArgs, WalletInterface};
+use bsv_sdk::primitives::{to_base64, PrivateKey};
+use bsv_sdk::wallet::Outpoint;
 use bsv_wallet_toolbox::{
     services::mock::MockWalletServices, StorageSqlx, Wallet, WalletStorageWriter,
 };
@@ -73,22 +73,26 @@ async fn reverify_command_counts_good_and_bad_signatures_without_changing_certif
 async fn seed(wallet: &Wallet<StorageSqlx, MockWalletServices>, root: &PrivateKey) {
     let issuer = PrivateKey::from_hex(&"02".repeat(32)).unwrap();
     for n in [7, 8] {
-        let mut cert = Certificate::new([6; 32], [n; 32], root.public_key(), issuer.public_key());
+        let mut cert = Certificate::new([6; 32], [n; 32], root.public_key(), issuer.public_key())
+            .with_revocation_outpoint(Some(Outpoint::new([0; 32], 0)));
         cert.set_field("name", "d2lyZQ==");
         cert.sign(&issuer).unwrap();
-        let mut args = serde_json::to_value(&cert).unwrap();
-        args["acquisitionProtocol"] = json!("direct");
-        args["keyringRevealer"] = json!("certifier");
-        args["keyringForSubject"] = json!({});
-        args["revocationOutpoint"] = json!(format!("{}.0", "00".repeat(32)));
-        if n == 8 {
-            args["signature"] = json!("3006020101020101");
-        }
-        wallet
-            .acquire_certificate(
-                serde_json::from_value::<AcquireCertificateArgs>(args).unwrap(),
-                Some("test.local"),
-            )
+        let signature = if n == 8 {
+            "3006020101020101".into()
+        } else {
+            hex::encode(cert.signature.unwrap())
+        };
+        // The audit reads legacy rows. Beta.3's acquire door correctly
+        // refuses the invalid row, so seed the earlier stored state directly.
+        let now = chrono::Utc::now();
+        let id = sqlx::query("INSERT INTO certificates (user_id, type, serial_number, certifier, subject, revocation_outpoint, signature, created_at, updated_at) SELECT user_id, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE identity_key = ?")
+            .bind(to_base64(&[6; 32])).bind(to_base64(&[n; 32]))
+            .bind(issuer.public_key().to_hex()).bind(root.public_key().to_hex())
+            .bind(format!("{}.0", "00".repeat(32))).bind(signature)
+            .bind(now).bind(now).bind(root.public_key().to_hex())
+            .execute(wallet.storage().writer()).await.unwrap().last_insert_rowid();
+        sqlx::query("INSERT INTO certificate_fields (certificate_id, user_id, field_name, field_value, master_key, created_at, updated_at) SELECT certificate_id, user_id, 'name', 'd2lyZQ==', '', ?, ? FROM certificates WHERE certificate_id = ?")
+            .bind(now).bind(now).bind(id).execute(wallet.storage().writer())
             .await
             .unwrap();
     }
