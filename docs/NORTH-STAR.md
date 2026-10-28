@@ -56,14 +56,14 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at 511a147 |
 | ratchet `duplicated_tokens` | 32486 |  | `docs/ratchets.json` at 511a147 |
 | ratchet `missing_docs` | 148 |  | `docs/ratchets.json` at 511a147 |
-| wire fixtures | 160 |  | `tests/wire/MANIFEST.json` |
+| wire fixtures | 174 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
 | arch rule A1 allowlist | 0 files, 0 sites |  | `tests/arch_env_reads.rs` ALLOWED |
 | arch rule A2 allowlist | 14 files, 261 sites |  | `tests/arch_sql_sites.rs` ALLOWED |
 | arch rule A3 allowlist | 6 files, 48 sites |  | `tests/arch_explorer_sites.rs` ALLOWED |
 | arch rule A4 allowlist | 4 files, 4 sites |  | `tests/arch_no_unwrap.rs` ALLOWED |
-| arch rule A5 allowlist | 6 files, 11 sites |  | `tests/arch_no_prefix_errors.rs` ALLOWED |
+| arch rule A5 allowlist | 5 files, 10 sites |  | `tests/arch_no_prefix_errors.rs` ALLOWED |
 | arch rule A6 allowlist | 5 files, 10 sites |  | `tests/arch_spawn_sites.rs` ALLOWED |
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |

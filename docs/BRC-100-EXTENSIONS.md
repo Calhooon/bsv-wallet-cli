@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 19 rows
+## Extensions: 18 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -39,7 +39,6 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `held.origin` | `received` or our own change. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `held.ageMinutes` | The coin's age in minutes. | 0.10.0 (e69291b) |
 | `createAction` | refusal | `held.reason` | The rule that holds it. | 0.10.0 (e69291b) |
-| `createAction` | refusal | `coin` | The coin a 409 `UNSPENDABLE_COIN` names (its stored ancestry is incomplete). | 0.16.0 (#44) |
 | `createAction` | refusal | `isError` | The typed review envelope marker. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults` | The reference review evidence, retained from the typed carrier. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults.txid` | The transaction under review. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
@@ -48,7 +47,7 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `sendWithResults` | The action send results, including an empty list. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-19 extensions.
+18 extensions.
 
 ## Gaps: 49 rows
 
@@ -111,7 +110,7 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 The certificate type and flat list-entry gaps close at beta.2 (bsv-rs #105,
 #268). Discovery still returns no entries because published toolbox
 `certifier_info` always returns `None`: toolbox #388 (CLI #331). The discovery
-rows record this missing behavior; no trust setting is added. Key-linkage results are also flat at beta.2.
+rows record this missing behavior; no trust setting is added. Key-linkage results are also flat at beta.3.
 Privileged-request and refusal-envelope gaps retain their existing issues.
 `getVersion` still answers the toolbox's own version (#122 item 6).
 
@@ -137,7 +136,7 @@ Fields the server's types can serve that no fixture shows. Each is an extension 
 | `internalizeAction` | response | `broadcast` | The same word on the payment's post, with `createAction`'s sub-keys. | 43376b8 (#66) |
 | `internalizeAction` | response | `broadcast.hint.words.error` | When the post itself errs (`internalize_action.rs`'s `serviceError` on a services fault), the toolbox writes the words as `[{"error": ...}]`, the fault's text. | 43376b8 (#66) |
 | `listCertificates` | response | `certificates.keyring` | bsv-rs's `CertificateResult` carries it when set; no fixture's certificate has one. | the initial release, feb0dd0 |
-| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; fixture 159 proves an empty disclosure, but the toolbox leaves this optional member absent (049 still refuses a missing master keyring). | the initial release, feb0dd0 |
+| `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; fixture 159 proves an empty disclosure, but the toolbox leaves this optional member absent (049 returns its selected encrypted keyring). | the initial release, feb0dd0 |
 | `proveCertificate` | response | `verifier` | As `certificate`. | the initial release, feb0dd0 |
 
 ## Certificate disclosure at beta.2
@@ -165,7 +164,7 @@ The callback relay is a binary of its own (`bsv-wallet-relay`, `src/relay.rs`): 
 
 BRC-100 names `privileged` and `privilegedReason` on `getPublicKey`, `encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature`, the two key-linkage calls and the certificate calls: `privileged: true` asks for the wallet's secondary, privileged keyring (line 42; line 325: "when implemented, a secondary and more secure set of keys is used instead of the primary ones"), and `privilegedReason` is the justification that accompanies it (lines 970 and 971: "required if this is a privileged operation").
 
-This wallet holds one keyring and no privileged key. The field is read, never ignored: on the seven calls above and the two key-linkage calls, `privileged: true` is refused with 501 `PRIVILEGED_NOT_SUPPORTED`, body `{"code": "PRIVILEGED_NOT_SUPPORTED", "message": "<call>: privileged is not supported: this wallet holds no privileged keyring, and a privileged request is never answered with the everyday key"}`, before any key is derived and before the call is recorded in the permission audit. Through 0.18.1 the seven calls dropped the field and the two key-linkage calls passed it to the toolbox, which drops it too, so a privileged request was answered with the everyday key. BRC-100 has no refusal code for a capability the wallet does not implement (its vocabulary at lines 315 to 317 is `ERR_MISSING_PARAMETER`, `ERR_INVALID_PARAMETER_VALUE`, `ERR_CONFLICTING_PARAMETERS`), so the code is named in the style of this server's others; 501 is HTTP's "does not support the functionality required". `privileged: false`, `null` or absent is the call as before, byte for byte. A non-boolean `privileged` (`"true"`, `1`) is a 422, the framework's text naming the field's path (`privileged: invalid type: ...`), on all nine calls; through 0.18.1 the seven calls dropped it and answered 200 with the everyday key. `privilegedReason` without `privileged: true` is read and ignored, as the BRC reads it: it accompanies a privileged request and changes nothing without one. The refusal stands until this wallet holds a privileged key. The certificate calls take bsv-rs's own argument types and are not refused: `proveCertificate` reads `privileged`, and the toolbox at 0.13.0 passes it to the permission check only (and to its certificate lookup, which drops it), then builds the verifier's keyring with the everyday key (`wallet.rs:2511`, `create_keyring_for_verifier`); `acquireCertificate` carries it unread. Their four rows are gaps, bsv-wallet-cli #194 (the toolbox's half is bsv-wallet-toolbox-rs #142).
+This wallet holds one keyring and no privileged key. The field is read, never ignored: on the seven calls above and the two key-linkage calls, `privileged: true` is refused with 501 `PRIVILEGED_NOT_SUPPORTED`, body `{"code": "PRIVILEGED_NOT_SUPPORTED", "message": "<call>: privileged is not supported: this wallet holds no privileged keyring, and a privileged request is never answered with the everyday key"}`, before any key is derived and before the call is recorded in the permission audit. Through 0.18.1 the seven calls dropped the field and the two key-linkage calls passed it to the toolbox, which drops it too, so a privileged request was answered with the everyday key. BRC-100 has no refusal code for a capability the wallet does not implement (its vocabulary at lines 315 to 317 is `ERR_MISSING_PARAMETER`, `ERR_INVALID_PARAMETER_VALUE`, `ERR_CONFLICTING_PARAMETERS`), so the code is named in the style of this server's others; 501 is HTTP's "does not support the functionality required". `privileged: false`, `null` or absent is the call as before, byte for byte. A non-boolean `privileged` (`"true"`, `1`) is a 422, the framework's text naming the field's path (`privileged: invalid type: ...`), on all nine calls; through 0.18.1 the seven calls dropped it and answered 200 with the everyday key. `privilegedReason` without `privileged: true` is passed to the SDK; at beta.3 its 5-to-50-byte validator runs when a reason is supplied, even without privilege. An absent reason preserves the ordinary call. The refusal stands until this wallet holds a privileged key. The certificate calls take bsv-rs's own argument types and are not refused: `proveCertificate` reads `privileged`, and the toolbox at 0.13.0 passes it to the permission check only (and to its certificate lookup, which drops it), then builds the verifier's keyring with the everyday key (`wallet.rs:2511`, `create_keyring_for_verifier`); `acquireCertificate` carries it unread. Their four rows are gaps, bsv-wallet-cli #194 (the toolbox's half is bsv-wallet-toolbox-rs #142).
 
 `seekPermission` stays unread on every call that names it: this server grants every originator (the permission audit records what a wallet with a human behind it would have prompted for; it does not refuse), so there is no permission to seek.
 
@@ -174,7 +173,7 @@ This wallet holds one keyring and no privileged key. The field is read, never ig
 What BRC-100 leaves to the realisation (line 298; its ABI, lines 1533 on, is a binary framing this server does not serve) and this server answers over HTTP:
 
 - Each call is `POST /<call>` with the args as the JSON body; the five calls with no args (`isAuthenticated`, `waitForAuthentication`, `getHeight`, `getNetwork`, `getVersion`) also answer `GET`, for curl and the CLI.
-- The BRC's `originator` parameter is the `Origin` header (its host) or the `Originator` header; a call that needs it and has neither is a 400, mirroring the reference's Node HTTP substrate ([keeper reading #298](https://github.com/Calhooon/bsv-wallet-cli/issues/298)). Each served wallet call passes that value as `Some(&originator)` at beta.2.
+- The BRC's `originator` parameter is the `Origin` header (its host) or the `Originator` header; a call that needs it and has neither is a 400, mirroring the reference's Node HTTP substrate ([keeper reading #298](https://github.com/Calhooon/bsv-wallet-cli/issues/298)). Each served wallet call passes that value as `Some(&originator)` at beta.3.
 - An optional bearer (`AUTH_TOKEN`) guards every route but `/arc-callback`: 401 `UNAUTHORIZED`.
 - `Retry-After` on a 503: `1` for `STORE_BUSY`, `2` for `HEADERS_UNAVAILABLE` (the header service's fault, 0.18.0, #59); CORS exposes it.
 - The refusal codes and their statuses are listed in `docs/WIRE.md` and judged by `tests/wire.rs`.
@@ -184,3 +183,13 @@ What BRC-100 leaves to the realisation (line 298; its ABI, lines 1533 on, is a b
 None.
 
 The rule: we stay with BRC-100 at the pin. A change to a BRC-100 shape (a field renamed, moved, retyped or dropped, beyond adding a listed extension) is proposed as a named deviation with its measurement (what it saves or fixes, measured) and lands only on the owner's word, recorded here with the date of the word, the measurement and the PR. An entry above in "Extensions" or "Gaps" that is a disagreement with the BRC is not a deviation: it is a defect or a choice awaiting its decision (#122), recorded as served.
+
+At the beta.3 pin (#338), invalid BEEF uses `InvalidParameter` and serves
+`VALIDATION_ERROR`; incomplete managed ancestry uses `InvalidOperation` and
+serves `CONFLICT`. The former `coin` extension cannot be recovered from the
+SDK's class/message pair and is removed (#330, #342). Review-action fields
+retain PR 332's carrier. The direct certificate door verifies the signature
+and decrypts every field before storage (toolbox #374): the serialized 1 MiB
+boundary is refused by the 64 KiB plaintext bound (#343), while the valid
+64 KiB plaintext fixture is stored. Discovery still serves no entries; #331
+remains its own change.

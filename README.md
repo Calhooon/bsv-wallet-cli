@@ -10,12 +10,12 @@ storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.2**, **bsv-rs =0.9.0-beta.2** and **bsv-tracker =0.9.0-beta.2**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.3**, **bsv-rs =0.9.0-beta.3** and **bsv-tracker =0.9.0-beta.3**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
-The [#277 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/277) uses the
-published beta.2 packages. Ordinary refusal classification stays as served
-until [#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330); certificate
+The [#338 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/338) uses the
+published beta.3 packages and maps ordinary refusals by their reference class
+([#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330)); certificate
 discovery returns empty results until
 [#331](https://github.com/Calhooon/bsv-wallet-cli/issues/331). Certificate JSON
 uses `type`, hex signatures and base64 keyrings. Run
@@ -161,7 +161,7 @@ of 2026-10-27: "arc is old af... we use arcade now for everyting"):
 | `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode a set key is unused and logged once at warn (no classic ARC provider runs in Arcade mode) |
 
 The postBeef providers in Arcade mode, as the code builds them, are three, in
-this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.2 posts to every one in
+this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.3 posts to every one in
 parallel and keeps each answer (its default `PromiseAll`). GorillaPool's ARC
 is never one of them, in either mode (the keeper's reading: a rung of no gate
 and no courier); BananaBlocks keeps its explorer rung, which is not ARC.
@@ -439,6 +439,14 @@ funds' refusal whatever the service said. A header the snapshot simply does
 not hold (a block above its tip) is not the service's fault and is not
 retried.
 
+`send` and `split` accept repeatable `--from txid:vout` to require those
+managed coins as inputs. `--coin` only scopes `--allow-pending received`;
+`--from` selects what is spent. An unmined receipt still needs the received
+rule, and a foreign, spent or unmanaged coin is refused by name. The toolbox
+allocates and signs the named coins as managed change, then funds any remainder
+and fee from the rest of the offer. `split --from` sizes its outputs from the
+named coins' total. The served createAction and MCP arguments are unchanged.
+
 ## The served answers
 
 A refused call answers `{"code", "message"}` (the gate's refusals add
@@ -446,34 +454,24 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 
 | status | `code` | when |
 |---|---|---|
-| 400 | `VALIDATION_ERROR`, `INVALID_BEEF`, `ERROR` | the caller's request (`Validation error:`, `Invalid argument:`; `Invalid BEEF at byte N`) |
-| 401 | `AUTHENTICATION_REQUIRED` | `Authentication required`, `Invalid identity key:` |
+| 400 | `VALIDATION_ERROR`, `ERROR` | a typed argument refusal, including invalid BEEF; an error with no typed class remains `ERROR` |
 | 402 | `INSUFFICIENT_FUNDS` | no offered coin covers the action; `held` lists every coin held back |
-| 403 | `ACCESS_DENIED`, `INPUT_NOT_OFFERED` | `Access denied:`; a named input the spend guard would hold |
-| 404 | `NOT_FOUND` | `Entity not found:` |
-| 409 | `CONFLICT` | `Duplicate entity:`, `Invalid operation:` |
-| 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
-| 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
-| 501 | `PRIVILEGED_NOT_SUPPORTED` | `privileged: true` on `getPublicKey`, the six crypto calls (`encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature`) or the two key-linkage calls: this wallet holds no privileged keyring, and a privileged request is never answered with the everyday key (#145) |
-| 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
+| 403 | `ACCESS_DENIED`, `INPUT_NOT_OFFERED` | an unauthorized operation; a named input the spend guard holds |
+| 404 | `NOT_FOUND` | the host's `/tx/{txid}` has no stored word |
+| 409 | `CONFLICT` | a typed invalid operation, including a managed coin with incomplete ancestry |
+| 500 | `INTERNAL_ERROR` | a typed internal or pre-door storage fault |
+| 501 | `NOT_IMPLEMENTED`, `PRIVILEGED_NOT_SUPPORTED` | an unsupported operation or missing sign session; a privileged request when no privileged keyring is held |
+| 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | a typed transport/service fault; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
 
 `listActions`, `listOutputs`, `listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` require each supplied `limit` to be in `1..=10000`; each violation is `400 VALIDATION_ERROR` before the toolbox, while omitted paging fields remain omitted. A negative `listOutputs.offset` passes through unchanged for BRC-100's newest-first paging (`-1` starts at the newest output).
 
-`abortAction` is refused with `409 CONFLICT` once a broadcaster took the
-transaction, including an `unfail` request or a request holding a proof
-whatever its status says, and an acceptance retained in the request's post
-history. An abort before any accepting word reaches the
-toolbox, which also refuses an unproven status without a proof as an accepting
-word (fixture 124). This arrives through the retained erased error table as
-409 `CONFLICT` with the accepting-word hint only when the abort refusal says
-`records an acceptance and cannot be aborted` or `has a recorded acceptance (`.
-Other abort refusals, including a failed template, an incoming action and
-spent outputs, keep beta's `400 ERROR` without that hint. The common
-`cannot abort action:` prefix is not an accepting word. CLI #330 tracks
-replacing this word read when the toolbox preserves ordinary refusal types;
-the reference class for a known but unabortable action is `INVALID_PARAMETER`.
+The host's abort pre-check retains `409 CONFLICT` for an action with stored
+acceptance. The toolbox's ordinary abort guards use `InvalidParameter`
+(`400 VALIDATION_ERROR`); its other state guards use `InvalidOperation`
+(`409 CONFLICT`). The SDK carries no separate abort-acceptance detail, so
+no hint is inferred from its text ([#342](https://github.com/Calhooon/bsv-wallet-cli/issues/342)).
 
 `503 STORE_BUSY` is answered by the error's type, never its words: the
 toolbox's `WalletBusy` from a wallet door, or a read or write of the spend

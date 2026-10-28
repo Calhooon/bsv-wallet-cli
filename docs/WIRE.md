@@ -65,13 +65,32 @@ Beyond the byte comparison, the replay fails when the corpus stops covering:
 - each of the 28 BRC-100 calls the router serves,
 - the five host routes (`/permission-audit`, `/permission-audit/reset`, `/chain-feed`, `/tx/{txid}`, `/arc-callback`),
 - every world named above (a world no fixture is served from is a gap),
-- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 numeric `5` (`REVIEW_ACTIONS`), 400 `VALIDATION_ERROR`, 400 `INVALID_BEEF`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 404 `NOT_FOUND`, 409 `UNSPENDABLE_COIN` (with `coin`), 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
+- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 numeric `5` (`REVIEW_ACTIONS`), 400 `VALIDATION_ERROR`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `NOT_IMPLEMENTED`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 404 `NOT_FOUND` (the host's missing transaction word), 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
 
 `APP_CODES` is typed by hand, but it is checked against the source: `every_app_error_code_is_judged` reads every `(StatusCode::NAME, "CODE")` of `Kind::answer` in `src/server/error.rs`, the one table of the served layer's statuses and codes (#81), and fails unless `APP_CODES` and `UNPRODUCED` together are exactly that set, at the same statuses. A code added to the source with no fixture fails it by name, and so does one gone from the source.
 
-| class in the pinned host map (#140) | status | served code and evidence |
+| class in the pinned host map (#330) | status | served code and evidence |
 |---|---|---|
-| `REVIEW_ACTIONS` | 400 | numeric `5`, `isError: true`, `reviewActionResults`, `sendWithResults`, and present `txid`, `tx`, `noSendChange` |
+| `UnsupportedAction` | 501 | `NOT_IMPLEMENTED` |
+| `InvalidHmac` | 400 | `VALIDATION_ERROR` |
+| `InvalidSignature` | 400 | `VALIDATION_ERROR` |
+| `ReviewActions` | 400 | `numeric 5, typed carrier below` |
+| `InvalidParameter` | 400 | `VALIDATION_ERROR` |
+| `InsufficientFunds` | 402 | `INSUFFICIENT_FUNDS` |
+| `AbortRefused` | 409 | `CONFLICT` |
+| `NotImplemented` | 501 | `NOT_IMPLEMENTED` |
+| `Internal` | 500 | `INTERNAL_ERROR` |
+| `InvalidOperation` | 409 | `CONFLICT` |
+| `UtxoReviewInconclusive` | 409 | `CONFLICT` |
+| `ActionBatchState` | 409 | `CONFLICT` |
+| `BroadcastUnavailable` | 502 | `SERVICE_ERROR` |
+| `InvalidMerkleRoot` | 400 | `VALIDATION_ERROR` |
+| `MissingParameter` | 400 | `VALIDATION_ERROR` |
+| `BadRequest` | 400 | `VALIDATION_ERROR` |
+| `NetworkChain` | 502 | `SERVICE_ERROR` |
+| `Unauthorized` | 403 | `ACCESS_DENIED` |
+| `NotActive` | 409 | `CONFLICT` |
+| `InvalidPublicKey` | 400 | `VALIDATION_ERROR` |
 
 The pinned host map (#140) serves the typed `REVIEW_ACTIONS` carrier as
 `HTTPWalletJSON.ts` serializes it: HTTP 400 with `isError: true`, numeric
@@ -80,15 +99,22 @@ optional `txid` (hex), `tx` (byte array) and `noSendChange` (outpoint strings)
 are omitted when absent. Each review result retains its competing txids
 and BEEF; competing BEEF uses the reference's numeric-key byte object.
 The code census reads numeric as well as string codes. The served-body
-round trip through bsv-rs beta.2's `HttpWalletJson` checks all five members.
-Ordinary message classification stays under CLI #330 (toolbox #404).
+round trip through bsv-rs beta.3's `HttpWalletJson` checks all five members.
+The ordinary classifier is deleted (#330). The table maps the published
+reference classes directly. Generic `WalletError` faults retain their Display
+and serve 400 ERROR; typed `TransportFault` serves 502 SERVICE_ERROR, with no
+busy promise. The missing typed fault family and abort-acceptance detail are
+recorded in CLI #342 and bsv-rs #439. Invalid BEEF folds into VALIDATION_ERROR,
+and incomplete ancestry into CONFLICT without the former coin member. Prove
+and abort use InvalidParameter; missing/expired sign sessions use
+NotImplemented. The published relinquish paths still return success for a
+missing row (#344), so no BadRequest is invented.
 
-Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
+Two `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
 
 | code | why no world produces it |
 |---|---|
-| 401 `AUTHENTICATION_REQUIRED` | the toolbox's `AuthenticationRequired` or `InvalidIdentityKey` (its words `Authentication required`, `Invalid identity key:` where the `WalletInterface` boundary erases the variant, `src/toolbox_words.rs`); the router serves one wallet with its key loaded, and no door the toolbox exposes asks it to authenticate another identity |
-| 403 `ACCESS_DENIED` | the toolbox's `AccessDenied` (`Access denied:`), its permission refusal; this server grants every originator (the permission audit records, it does not refuse) |
+| 403 `ACCESS_DENIED` | the reference's `Unauthorized` class, including the toolbox's permission refusal; this server grants every originator (the permission audit records, it does not refuse) |
 | 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
 
 The corpus also records the framework's 400 and 422 text bodies.
@@ -118,7 +144,7 @@ remain byte-identical.
 
 `120-createAction.namedChange.json` records the toolbox's refusal after the
 gate offers a named coin of our own change (#234): `400 VALIDATION_ERROR`,
-with `wallet error: Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet.`
+with `Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet.`
 (toolbox #241), naming the input index. The request omits `allowPending`.
 This is the served decision, explained in [A word after the door](GATE-VECTORS.md#a-word-after-the-door).
 The dedicated world supplies made change because the existing seeded coins
@@ -141,7 +167,7 @@ A fixture records what the server answers, defect included; the fix changes the 
 
 | fixture | what is served | closed defect | issue |
 |---|---|---|---|
-| `103-internalizeAction.badUnlock.json` | `400 INVALID_BEEF`, the verifier's offset and OP_EQUALVERIFY reason, nothing stored | beta.0 accepted the invalid spend. Toolbox #103 closed it at the beta.1 pin; beta.2 retains the class because ordinary refusals are still erased | #140, #277; typed mapping deferred to #330 |
+| `103-internalizeAction.badUnlock.json` | `400 VALIDATION_ERROR`, the verifier's offset and OP_EQUALVERIFY reason, nothing stored | beta.0 accepted the invalid spend. Toolbox #103 closed it at beta.1; #330 maps its typed InvalidParameter at beta.3 | #140, #277, #330 |
 
 ## Changing a fixture on purpose
 
@@ -180,6 +206,7 @@ The keys replaced, anywhere in a body (`VOLATILE_KEYS`); a `null` is kept as `nu
 | `revelationTime` | `/revealCounterpartyKeyLinkage` | the clock |
 | `ageMinutes` | a refusal's `held` coins | the clock, from the row's time; every seeded row is dated half an hour before its world is built, so the age has two digits on any day and `<uint:2>` is stable |
 | `reference` | `signableTransaction` of `/createAction` | the toolbox draws it at random |
+| each `keyringForVerifier` value | `/proveCertificate` | freshly encrypted for the verifier; every key, its order and each value's shape/length remain strict |
 
 Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ).
 
@@ -219,8 +246,8 @@ certificate list entries, spells the certificate type `type`, and carries
 key-linkage bytes as arrays. The positive direct-acquisition row uses a
 32-byte type and serial number with a canonical DER signature; the earlier
 spelling probes still show the class served when their arguments refuse.
-`INVALID_BEEF`, `UNSPENDABLE_COIN` and the four not-found doors keep their
-served classes pending CLI #330 (toolbox #404).
+At that historical pin ordinary refusals were erased; #330 below replaces
+that classifier at beta.3.
 
 Rows 143 to 146 declare ten unlocking bytes, refuse eleven without consuming
 the unsigned action, list that state and complete it with a shorter script
@@ -230,9 +257,8 @@ and the
 remaining state (#245/#264, bsv-rs #339). Rows 149 to 154 cover BRC-177 grammar
 and capability refusals, and remittance exclusivity before BEEF work.
 
-Rows 155 and 156 record direct acquisition at and above the 1 MiB field
-bound as 200: this path does not invoke the binary writer or decrypt fields
-(toolbox #374). Row 157 refuses a 73-byte non-DER signature at its argument
+At beta.2 rows 155 and 156 recorded 200 at and above the 1 MiB field
+bound; beta.3 now verifies and decrypts fields before storage (toolbox #374). Row 157 refuses a 73-byte non-DER signature at its argument
 gate. `tests/certificate_pin.rs` separately checks the certificate type's
 1 MiB field, 16 MiB frame and 72-byte signature bounds and verify-false.
 
@@ -248,3 +274,19 @@ Discovery rows 053, 054 and 137 to 140 retain their bytes and carry the reason
 "toolbox #388 (CLI #331)" in the manifest. Both successful discovery calls
 return empty arrays on this package; above-bound requests stop at the host's
 page guard. No trust configuration is added.
+
+## The beta.3 pin (#338)
+
+The corpus has 174 rows. All moved and new files are named with their cause
+in the single recording commit. Toolbox #404 removes the SDK Display's generic
+wallet-error prefix from ordinary refusals, with statuses and codes from the
+class table above. Toolbox #374 requires valid signed, encrypted certificate
+material, including the disclosure fixtures; #343 records why the 1 MiB
+serialized field is refused even at its bound. Rows 173 and 174 prove storage
+at the 64 KiB decrypted bound. Rows 161 to 165 pin SDK #415/#420 validators;
+166 and 167 pin toolbox #383 descriptions; 168 pins #376's label before a bad
+derivation; 169 pins the tracker's typed transport fault; 170 and 171 pin SDK
+#427's compressed linkage aliases; 172 pins SDK #384's protocol before a bad
+description. The existing certificate key order in 042 to 054 is inspected
+alongside the recording. SDK #379 is absent, so no BRC-56 HMAC tag is changed.
+Toolbox #388 is absent, and discovery remains #331's separate change.
