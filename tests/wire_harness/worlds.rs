@@ -34,7 +34,7 @@ pub(crate) const RECEIVED: &str =
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 16] = [
+pub(crate) const WORLDS: [&str; 17] = [
     "fresh",
     "certificate-privacy",
     "auth",
@@ -51,6 +51,7 @@ pub(crate) const WORLDS: [&str; 16] = [
     "review-race",
     "named-change",
     "abort-unproven",
+    "tracker-fault",
 ];
 
 /// The `funded` world's coins: (seed of the parent's input, height mined,
@@ -592,6 +593,12 @@ impl World {
             .unwrap();
         }
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
+        if name == "tracker-fault" {
+            wallet
+                .storage()
+                .set_chain_tracker(std::sync::Arc::new(super::tracker_fault::Unavailable))
+                .await;
+        }
         // The wallet is opened (its opening writes made), then the lock.
         if name == "busy" || name == "busy-read" {
             let lock = hold_write_lock(&storage_path(&keep), name == "busy-read").await;

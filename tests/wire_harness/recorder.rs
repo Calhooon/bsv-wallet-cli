@@ -98,6 +98,9 @@ impl Recorder {
         let mut text = serde_json::to_string_pretty(&Manifest {
             fixtures: self.written.clone(),
             notes: [
+                ("155-acquireCertificate.fieldAtBound.json".into(), "#338/#343: signed 1 MiB encrypted text verifies but exceeds the 64 KiB decrypted-field bound; typed InvalidParameter, nothing stored.".into()),
+                ("156-acquireCertificate.fieldAboveBound.json".into(), "#338, toolbox #374: non-canonical base64 above 1 MiB is refused as typed InvalidParameter before storage.".into()),
+                ("169-internalizeAction.trackerTransportFault.json".into(), "#330, toolbox #185: the tracker retains TransportFault::MayHaveBeenReceived through the SDK and serves SERVICE_ERROR, never a verdict.".into()),
                 ("158-acquireCertificate.revealFields.json".into(), "Finding 3, toolbox #240: store a real encrypted field and master key for the empty-disclosure witness.".into()),
                 ("159-proveCertificate.emptyFields.json".into(), "Finding 3, toolbox #240: fieldsToReveal [] returns an empty keyring; beta.1 disclosed every stored field.".into()),
                 ("160-proveCertificate.shortSerial.json".into(), "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check.".into()),
@@ -108,7 +111,7 @@ impl Recorder {
                 ("138-discoverByIdentityKey.limitAboveBound.json".into(), "The host refuses the page bound before empty discovery: toolbox #388 (CLI #331).".into()),
                 ("139-discoverByAttributes.limitAtBound.json".into(), "Empty discovery at the page bound: toolbox #388 (CLI #331).".into()),
                 ("140-discoverByAttributes.limitAboveBound.json".into(), "The host refuses the page bound before empty discovery: toolbox #388 (CLI #331).".into()),
-                ("103-internalizeAction.badUnlock.json".into(), "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 retains 400 INVALID_BEEF: published toolbox 4cfe31ca still erases ordinary refusals, toolbox #404 (CLI #330).".into()),
+                ("103-internalizeAction.badUnlock.json".into(), "Beta.3 (#330, toolbox #404): typed InvalidParameter serves HTTP 400 VALIDATION_ERROR; offset and script sentence are preserved, accepted false and nothing is stored.".into()),
                 ("127-internalizeAction.customInstructionsAtBound.json".into(), "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.".into()),
                 ("134-listOutputs.offsetNegative.json".into(), "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.".into()),
                 ("141-signAction.sequenceNumberAboveType.json".into(), "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.".into()),

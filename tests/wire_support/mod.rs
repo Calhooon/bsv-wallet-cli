@@ -292,13 +292,17 @@ pub struct Normalizer {
     pub kept_headers: &'static [&'static str],
     /// The placeholder for a key's value that differs on every run (a null
     /// is kept as served), or none for a key whose value is compared.
-    pub volatile: fn(&str, &J) -> Option<String>,
+    pub volatile: fn(&str, Option<&str>, &J) -> Option<String>,
     /// The rules inside any string.
     pub text: fn(&str) -> String,
 }
 
 impl Normalizer {
     pub fn json(&self, v: J) -> J {
+        self.walk(v, None)
+    }
+
+    fn walk(&self, v: J, parent: Option<&str>) -> J {
         match v {
             J::Obj(fields) => J::Obj(
                 fields
@@ -306,17 +310,17 @@ impl Normalizer {
                     .map(|(k, v)| {
                         let placeholder = match v {
                             J::Null => None,
-                            _ => (self.volatile)(&k, &v),
+                            _ => (self.volatile)(&k, parent, &v),
                         };
                         let v = match placeholder {
                             Some(p) => J::Str(p),
-                            None => self.json(v),
+                            None => self.walk(v, Some(&k)),
                         };
                         (k, v)
                     })
                     .collect(),
             ),
-            J::Arr(items) => J::Arr(items.into_iter().map(|v| self.json(v)).collect()),
+            J::Arr(items) => J::Arr(items.into_iter().map(|v| self.walk(v, parent)).collect()),
             J::Str(s) => J::Str((self.text)(&s)),
             other => other,
         }

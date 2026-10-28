@@ -101,18 +101,29 @@ async fn labels_and_remittance(r: &mut Recorder) {
 }
 
 async fn certificate_bounds(r: &mut Recorder) {
-    // Direct acquisition validates the shape but does not call Certificate's
-    // writer or decrypt fields (toolbox #374). Pin that boundary explicitly.
-    for (name, n, serial) in [
-        ("fieldAtBound", 1_048_576, 8),
-        ("fieldAboveBound", 1_048_577, 9),
+    // #374 verifies every field. The serialized 1 MiB boundary is not a
+    // decryptable field: its plaintext exceeds 64 KiB (CLI #343).
+    let at_bound = super::certificate_material::body(8, &vec![b'x'; 786_384]);
+    assert_eq!(
+        at_bound["fields"]["name"].as_str().unwrap().len(),
+        1_048_576
+    );
+    for (name, body) in [
+        ("fieldAtBound", at_bound),
+        ("fieldAboveBound", {
+            let mut body = super::certificate_material::body(9, b"wire");
+            body["fields"]["name"] = json!("A".repeat(1_048_577));
+            body
+        }),
     ] {
-        let certificate = r.case(&format!("acquireCertificate.{name}"), "fresh", post("/acquireCertificate",
-            json!({"type": CERT_TYPE, "certifier": G, "acquisitionProtocol": "direct",
-                "serialNumber": bsv_sdk::primitives::to_base64(&[serial; 32]),
-                "signature": "3006020101020101", "revocationOutpoint": format!("{}.0", "33".repeat(32)),
-                "fields": {"name": "A".repeat(n)}, "keyringRevealer": "certifier", "keyringForSubject": {}}))).await;
-        assert_eq!(certificate.value("/type"), CERT_TYPE);
+        let refused = r
+            .case(
+                &format!("acquireCertificate.{name}"),
+                "fresh",
+                post("/acquireCertificate", body),
+            )
+            .await;
+        assert_eq!(refused.value("/code"), "VALIDATION_ERROR");
     }
     let refused = r
         .case(

@@ -54,7 +54,7 @@ pub(crate) const NORMALIZER: Normalizer = Normalizer {
     text: normalize_text,
 };
 
-fn volatile(key: &str, _: &J) -> Option<String> {
+fn volatile(key: &str, _: Option<&str>, _: &J) -> Option<String> {
     VOLATILE_KEYS
         .iter()
         .find(|(k, _)| *k == key)
