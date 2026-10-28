@@ -29,15 +29,15 @@ function fieldCipher(name, value) {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   return { key, ciphertext: Buffer.concat([iv, cipher.update(value), cipher.final(), cipher.getAuthTag()]) };
 }
-async function issue(client, subject, legacy) {
+async function issue(client, subject) {
   const certifier = await client.identityKey();
   const fields = {}, keyring = {};
   for (const [name, value] of Object.entries(VALUES)) {
     const field = fieldCipher(name, value);
-    const encrypted = await client.encrypt(legacy ? Buffer.from(value) : field.key,
+    const encrypted = await client.encrypt(field.key,
       [2, 'certificate field encryption'], name, subject);
     keyring[name] = Buffer.from(encrypted.ciphertext).toString('base64');
-    fields[name] = legacy ? keyring[name] : field.ciphertext.toString('base64');
+    fields[name] = field.ciphertext.toString('base64');
   }
   const certificate = { type: TYPE, serialNumber: SERIAL, subject, certifier,
     revocationOutpoint: REVOCATION, fields };
@@ -51,8 +51,8 @@ async function start(client) {
     try {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { subject, legacy = false } = JSON.parse(body);
-      const issued = await issue(client, subject, legacy);
+      const { subject } = JSON.parse(body);
+      const issued = await issue(client, subject);
       res.writeHead(200, { 'content-type': 'application/json',
         'x-bsv-auth-identity-key': issued.certificate.certifier });
       res.end(JSON.stringify(issued));
@@ -60,9 +60,9 @@ async function start(client) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return {
-    async issue(subject, legacy = false) {
+    async issue(subject) {
       const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
-        method: 'POST', body: JSON.stringify({ subject, legacy }),
+        method: 'POST', body: JSON.stringify({ subject }),
       });
       if (!response.ok) throw new Error(await response.text());
       const issued = await response.json();

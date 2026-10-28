@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 //           revealSpecificKeyLinkage
 // =============================================================================
 
-/// POST /revealCounterpartyKeyLinkage with valid pubkeys — returns 200 with linkage object.
+/// POST /revealCounterpartyKeyLinkage returns the flat beta.2 linkage response.
 #[tokio::test]
 async fn test_reveal_counterparty_key_linkage() {
     let (base, client, _tmp) = setup().await;
@@ -22,26 +22,7 @@ async fn test_reveal_counterparty_key_linkage() {
         }),
     )
     .await;
-    let linkage = body
-        .get("linkage")
-        .expect("response should have linkage object");
-    assert!(
-        linkage["encryptedLinkage"].is_string(),
-        "linkage should have encryptedLinkage"
-    );
-    assert!(
-        linkage["encryptedLinkageProof"].is_string(),
-        "linkage should have encryptedLinkageProof"
-    );
-    assert!(linkage["prover"].is_string(), "linkage should have prover");
-    assert!(
-        linkage["verifier"].is_string(),
-        "linkage should have verifier"
-    );
-    assert!(
-        linkage["counterparty"].is_string(),
-        "linkage should have counterparty"
-    );
+    assert_linkage(&body, test_key);
     assert!(
         body["revelationTime"].is_string(),
         "response should have revelationTime"
@@ -89,26 +70,22 @@ async fn test_reveal_specific_key_linkage() {
         }),
     )
     .await;
-    let linkage = body
-        .get("linkage")
-        .expect("response should have linkage object");
-    assert!(
-        linkage["encryptedLinkage"].is_string(),
-        "linkage should have encryptedLinkage"
-    );
-    assert!(
-        linkage["encryptedLinkageProof"].is_string(),
-        "linkage should have encryptedLinkageProof"
-    );
-    assert!(linkage["prover"].is_string(), "linkage should have prover");
-    assert!(
-        linkage["verifier"].is_string(),
-        "linkage should have verifier"
-    );
-    assert!(
-        body.get("protocol").is_some(),
-        "response should have protocol"
-    );
+    assert_linkage(&body, test_key);
+    assert_eq!(body["protocolID"], json!([2, "tests"]));
+    assert_eq!(body["keyID"], "1");
+    assert_eq!(body["proofType"], 0);
+}
+
+fn assert_linkage(body: &Value, test_key: &str) {
+    assert!(body.get("linkage").is_none(), "linkage response is flat");
+    for name in ["encryptedLinkage", "encryptedLinkageProof"] {
+        let bytes = body[name].as_array().expect("linkage uses byte arrays");
+        assert!(!bytes.is_empty());
+        assert!(bytes.iter().all(|b| b.as_u64().is_some_and(|n| n <= 255)));
+    }
+    assert!(body["prover"].is_string());
+    assert_eq!(body["verifier"], test_key);
+    assert_eq!(body["counterparty"], test_key);
 }
 
 /// POST /revealSpecificKeyLinkage with invalid pubkey — returns 400.

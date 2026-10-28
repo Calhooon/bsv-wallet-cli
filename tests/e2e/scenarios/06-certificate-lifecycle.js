@@ -7,25 +7,15 @@ module.exports = {
     const bKey = await walletB.client.identityKey();
     const stub = await certifier.start(walletA.client);
     try {
-      let issued = await stub.issue(bKey);
-      let legacy = false;
-      const acquire = () => {
-        const { type, subject, ...fields } = issued.certificate;
-        return walletB.client.post('acquireCertificate', {
-          [legacy ? 'certificateType' : 'type']: type, ...fields,
-          acquisitionProtocol: 'direct', keyringRevealer: 'certifier', keyringForSubject: issued.keyring,
-        });
-      };
-      let cert;
-      try { cert = await acquire(); }
-      catch (error) {
-        // The differential drives beta.1 with this same harness. Only its exact
-        // missing-field refusal selects its recorded, pre-#203 scheme.
-        if (error.status !== 422 || !error.message.includes('missing field `certificateType`')) throw error;
-        legacy = true;
-        issued = await stub.issue(bKey, true);
-        cert = await acquire();
-      }
+      const issued = await stub.issue(bKey);
+      const { type, subject, ...fields } = issued.certificate;
+      const args = { type, ...fields, acquisitionProtocol: 'direct',
+        keyringRevealer: 'certifier', keyringForSubject: issued.keyring };
+      // The differential drives both pins with one request. Each serde reads
+      // its own type key; the ordinary beta.2 run sends only the BRC spelling.
+      if (process.env.DIFF_RECORD) args.certificateType = type;
+      const cert = await walletB.client.post('acquireCertificate', args);
+      const legacy = !Object.hasOwn(cert, 'type');
       assert(cert[legacy ? 'certificateType' : 'type'] === certifier.TYPE, 'certificate type is served');
       assert(cert.subject === bKey, 'the certificate names its subject');
       assert(typeof cert.signature === 'string' && /^[0-9a-f]+$/.test(cert.signature), 'signature is DER hex');
@@ -35,16 +25,14 @@ module.exports = {
       const certificate = entry.certificate || entry;
       const proof = await walletB.client.proveCertificate(certificate, aKey, ['role']);
       assert(Object.keys(proof.keyringForVerifier).join(',') === 'role', 'only the requested field key is revealed');
-      if (!legacy) {
-        const unwrapped = await walletA.client.decrypt(Buffer.from(proof.keyringForVerifier.role, 'base64'),
-          [2, 'certificate field encryption'], `${certifier.SERIAL} role`, bKey);
-        assert(certifier.decryptField(Buffer.from(unwrapped.plaintext), certificate.fields.role) === certifier.VALUES.role,
-          'the verifier decrypts the field with its symmetric key (toolbox #203)');
-        const verified = await walletA.client.verifySignature(certifier.unsigned(issued.certificate),
-          Buffer.from(cert.signature, 'hex'), [2, 'certificate signature'],
-          `${certifier.TYPE} ${certifier.SERIAL}`, 'anyone', true);
-        assert(verified.valid === true, 'the certificate signature verifies under the BRC-52 child key');
-      }
+      const unwrapped = await walletA.client.decrypt(Buffer.from(proof.keyringForVerifier.role, 'base64'),
+        [2, 'certificate field encryption'], `${certifier.SERIAL} role`, bKey);
+      assert(certifier.decryptField(Buffer.from(unwrapped.plaintext), certificate.fields.role) === certifier.VALUES.role,
+        'the verifier decrypts the field with its symmetric key (toolbox #203)');
+      const verified = await walletA.client.verifySignature(certifier.unsigned(issued.certificate),
+        Buffer.from(cert.signature, 'hex'), [2, 'certificate signature'],
+        `${certifier.TYPE} ${certifier.SERIAL}`, 'anyone', true);
+      assert(verified.valid === true, 'the certificate signature verifies under the BRC-52 child key');
       // Both calls run behind the proxy wall. Published trust lookup returns
       // None: toolbox #388 (CLI #331), never fabricated trust.
       for (const result of [await walletB.client.discoverByIdentityKey(bKey),
