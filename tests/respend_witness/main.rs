@@ -181,6 +181,11 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     .unwrap();
     input_beef.merge_raw_tx(raw.clone(), None);
     let verified = Transaction::from_beef(&input_beef.to_binary(), Some(&replacement)).unwrap();
+    // Parity-mode replay of the planted chain: its funding height 800 is
+    // synthetic, below the SDK's supported mainnet eras. This checks the
+    // replacement's signatures and ancestry, not a live node verdict.
+    // bsv-rs 0.9.0-beta.3 Transaction::verify has no flag argument; the node's
+    // word needs per-input Spend::set_flags(ScriptFlags::standard(era)).
     assert!(
         verified
             .verify(absent.get_chain_tracker().await.unwrap(), None, None)

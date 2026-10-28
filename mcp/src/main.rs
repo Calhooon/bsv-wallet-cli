@@ -745,7 +745,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Accept incoming payment. tx must be AtomicBEEF format byte array. A broadcaster's refusal of the incoming transaction is not an error: the answer is accepted, with broadcast {word: 'built', request, hint, inputs: 'locked'}; its coins are not spent by this wallet until a status source holds the transaction."
+        description = "Accept incoming payment. tx must be AtomicBEEF format byte array. The CLI judges no transaction itself; internalize verification belongs to the toolbox, with the node's word per input on the toolbox's lane (#422). A broadcaster's refusal of the incoming transaction is not an error: the answer is accepted, with broadcast {word: 'built', request, hint, inputs: 'locked'}; its coins are not spent by this wallet until a status source holds the transaction."
     )]
     async fn internalize_action(
         &self,

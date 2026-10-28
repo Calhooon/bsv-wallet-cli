@@ -479,6 +479,11 @@ side by `l2_stub_refusal_names_txid_courier_reason_and_stores_nothing`,
 `tests/integration.rs:866`). What it stores is a received transaction
 (`is_outgoing` 0), its outputs as coins of the default basket, and a
 request for the transaction's own post.
+The CLI judges no transaction itself; the toolbox's internalize door owns
+the verdict, with its move to the node's word per input
+(`ScriptFlags::standard(era)` through `Spend::set_flags`, the era from the
+coin's proven height or the tip) on the toolbox's lane
+([toolbox #422](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/422)).
 
 **Hop 3, the answer and the word.** The answer is `accepted` with, when the
 toolbox's post of the internalized transaction drew no accepting word, the

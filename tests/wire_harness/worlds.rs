@@ -465,6 +465,11 @@ pub(crate) async fn stranger_payment(
         ))
         .unwrap();
     child.sign().await.unwrap();
+    // Parity-mode replay of the planted payment (parent and mock tip at
+    // 899_905..=899_907), checking the good/bad specimens before serving.
+    // bsv-rs 0.9.0-beta.3 Transaction::verify has no flag argument, so this
+    // stays in parity mode; a node-word check needs per-input
+    // Spend::set_flags(ScriptFlags::standard(era)) with the planted coin's era.
     let verified = child
         .verify(
             &bsv_sdk::transaction::AlwaysValidChainTracker::new(at),
