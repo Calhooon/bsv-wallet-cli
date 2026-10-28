@@ -13,14 +13,16 @@ published**. This beta branch pins
 **bsv-wallet-toolbox-rs =0.14.0-beta.2**, **bsv-rs =0.9.0-beta.2** and **bsv-tracker =0.9.0-beta.2**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
-The [#277 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/277) is a
-blocked checkpoint: the published toolbox still erases ordinary refusal
-classes ([#404](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/404))
-and exposes no discovery trust-setting input
-([#388](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/388)). The
-certificate and fixture migrations and release proof are not complete.
-Certificates issued through the toolbox before its corrected field-encryption
-scheme must be re-issued; the pin does not migrate their old keyrings.
+The [#277 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/277) uses the
+published beta.2 packages. Ordinary refusal classification stays as served
+until [#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330); certificate
+discovery returns empty results until
+[#331](https://github.com/Calhooon/bsv-wallet-cli/issues/331). Certificate JSON
+uses `type`, hex signatures and base64 keyrings. Run
+`bsv-wallet certificates --reverify` once after upgrading to check stored
+signatures without changing certificates. Certificates issued through the
+toolbox before its corrected field-encryption scheme must be re-issued;
+this pin does not migrate their old keyrings.
 
 ## Install and inspect
 

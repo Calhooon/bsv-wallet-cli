@@ -18,7 +18,7 @@ src/
     types.rs       — MetaNet Client JSON request/response structs (the translation layer)
 ```
 
-**Dependency chain**: `bsv-wallet-cli` → `bsv-wallet-toolbox-rs` (wallet engine, SQLite storage, signing, broadcasting) → `bsv-rs` (WalletInterface trait, crypto primitives). The beta pins are bsv-wallet-toolbox-rs =0.14.0-beta.2, bsv-rs =0.9.0-beta.2 and bsv-tracker =0.9.0-beta.2, published on crates.io. Main never pins a prerelease.
+**Dependency chain**: `bsv-wallet-cli` → `bsv-wallet-toolbox-rs` (wallet engine, SQLite storage, signing, broadcasting) → `bsv-rs` (WalletInterface trait, crypto primitives). The beta.2 pin uses published bsv-wallet-toolbox-rs =0.14.0-beta.2, bsv-rs =0.9.0-beta.2 and bsv-tracker =0.9.0-beta.2; ordinary refusal types wait for CLI #330 and discovery trust settings for CLI #331. Main never pins a prerelease.
 
 ## Conventions
 
@@ -128,6 +128,6 @@ Net cost per run: ~3,000 sats (fees). Hard fail if net cost exceeds 5,000 sats.
 - **createAction signing modes**: `sign_and_process: true` + `noSend: false` = signed and broadcast (default). `noSend: true` = signed but not broadcast. `sign_and_process: false` = unsigned template for deferred signing via `signAction`. These are distinct flows — `noSend` is not a dry run.
 
 At the beta.1 pin, `post_beef` defaults to `PromiseAll`: every named
-broadcaster is asked and its word recorded. The explorer ladder above is
-unchanged. `E2E_RNG_SEED` is refused without the hermetic proxy wall; all
+broadcaster is asked and its word recorded. The explorer ladder above uses published toolbox =0.14.0-beta.2;
+GorillaPool is opt-in and the deprecated classic mode names its own endpoint. `E2E_RNG_SEED` is refused without the hermetic proxy wall; all
 production wallet and storage options leave their seed unset.
