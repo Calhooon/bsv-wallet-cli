@@ -3,26 +3,22 @@
 //! reached from a typed error by its variant (bsv-rs's `Error`, the
 //! toolbox's `Error`, the spend gate's `GateError`, the store busy by its
 //! type) or named by the handler that refuses; never from the words of a
-//! message. The one exception is a toolbox refusal the `WalletInterface`
-//! boundary erases to a `WalletError`'s text: its class is read in
-//! [`crate::toolbox_words`], the crate's one place that reads an error's
-//! words, with the upstream issue that would type it. The message served
-//! is the error's Display, as it was.
+//! message. Toolbox refusals retain their reference class through the SDK
+//! boundary (#330). Untyped faults stay unclassified; no message is a class.
+//! The served message is the error's Display.
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-use crate::toolbox_words::{self, Erased};
+use bsv_sdk::WalletRefusalClass;
 
 /// What a refusal is: one status and one code each (`answer`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// The caller's request does not parse or is refused as invalid.
     Validation,
-    /// A BEEF's bytes are invalid (the toolbox's `InvalidBeef`).
-    InvalidBeef,
     /// An error with no class of its own: bsv-rs's primitives, a transport
     /// fault (`WalletTransport`), a request field that does not decode, a
     /// toolbox refusal outside the table, the store's read before a door.
@@ -32,19 +28,14 @@ pub enum Kind {
     InsufficientFunds,
     /// A coin the caller named is held by the gate.
     InputNotOffered,
-    /// The toolbox asks for an identity it does not hold.
-    AuthenticationRequired,
     /// The toolbox's permission refusal.
     AccessDenied,
-    /// The toolbox's entity not found.
-    NotFound,
-    /// The wallet's own coin, its stored ancestry incomplete: neither a
-    /// shortfall nor the caller's bad input (toolbox 0.11.0).
-    UnspendableCoin,
     /// The wallet's state refuses a well-formed request.
     Conflict,
     /// Completed action results require review, with their typed evidence.
     ReviewActions,
+    /// The reference class says the operation is not implemented.
+    NotImplemented,
     /// A store or internal fault.
     Internal,
     /// A service, network or broadcast fault.
@@ -69,16 +60,13 @@ impl Kind {
     pub(crate) const fn answer(self) -> (StatusCode, &'static str) {
         match self {
             Kind::Validation => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
-            Kind::InvalidBeef => (StatusCode::BAD_REQUEST, "INVALID_BEEF"),
             Kind::Unclassified => (StatusCode::BAD_REQUEST, "ERROR"),
             Kind::InsufficientFunds => (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS"),
             Kind::InputNotOffered => (StatusCode::FORBIDDEN, "INPUT_NOT_OFFERED"),
-            Kind::AuthenticationRequired => (StatusCode::UNAUTHORIZED, "AUTHENTICATION_REQUIRED"),
             Kind::AccessDenied => (StatusCode::FORBIDDEN, "ACCESS_DENIED"),
-            Kind::NotFound => (StatusCode::NOT_FOUND, "NOT_FOUND"),
-            Kind::UnspendableCoin => (StatusCode::CONFLICT, "UNSPENDABLE_COIN"),
             Kind::Conflict => (StatusCode::CONFLICT, "CONFLICT"),
             Kind::ReviewActions => (StatusCode::BAD_REQUEST, "5"),
+            Kind::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED"),
             Kind::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
             Kind::Service => (StatusCode::BAD_GATEWAY, "SERVICE_ERROR"),
             Kind::BroadcastRejected => (StatusCode::BAD_GATEWAY, "BROADCAST_REJECTED"),
@@ -110,34 +98,41 @@ impl Kind {
         }
     }
 
-    /// The kind of a toolbox refusal's class.
-    const fn of_erased(class: Erased) -> Self {
+    /// The published reference's WERR class, never the message's words.
+    const fn of_refusal(class: WalletRefusalClass) -> Self {
+        use WalletRefusalClass as C;
         match class {
-            Erased::InsufficientFunds => Kind::InsufficientFunds,
-            Erased::AuthenticationRequired => Kind::AuthenticationRequired,
-            Erased::AccessDenied => Kind::AccessDenied,
-            Erased::NotFound => Kind::NotFound,
-            Erased::UnspendableCoin => Kind::UnspendableCoin,
-            Erased::Conflict => Kind::Conflict,
-            Erased::InvalidBeef => Kind::InvalidBeef,
-            Erased::Validation => Kind::Validation,
-            Erased::Internal => Kind::Internal,
-            Erased::Service => Kind::Service,
-            Erased::Unread => Kind::Unclassified,
+            C::InvalidParameter
+            | C::MissingParameter
+            | C::BadRequest
+            | C::InvalidMerkleRoot
+            | C::InvalidPublicKey
+            | C::InvalidHmac
+            | C::InvalidSignature => Self::Validation,
+            C::InsufficientFunds => Self::InsufficientFunds,
+            C::Unauthorized => Self::AccessDenied,
+            C::InvalidOperation
+            | C::ActionBatchState
+            | C::AbortRefused
+            | C::NotActive
+            | C::UtxoReviewInconclusive => Self::Conflict,
+            C::UnsupportedAction | C::NotImplemented => Self::NotImplemented,
+            C::Internal => Self::Internal,
+            C::BroadcastUnavailable | C::NetworkChain => Self::Service,
+            C::ReviewActions => Self::ReviewActions,
+            _ => Self::Unclassified,
         }
     }
 }
 
 /// A refusal as a door answers it: `{code, message}` at the kind's status,
-/// with the gate's listing or the unspendable coin when there is one.
+/// with the gate's listing when there is one.
 #[derive(Debug)]
 pub struct AppError {
     kind: Kind,
     message: String,
     /// The spend gate's refusal: every coin held back, and why.
     refusal: Option<Box<crate::spend_gate::Refusal>>,
-    /// The coin an `UnspendableCoin` refusal names.
-    coin: Option<String>,
     /// The reference's five review-action members, never inferred from words.
     review: Option<Box<bsv_sdk::wallet::ReviewActionsRefusal>>,
 }
@@ -149,7 +144,6 @@ impl AppError {
             kind,
             message: message.into(),
             refusal: None,
-            coin: None,
             review: None,
         }
     }
@@ -201,12 +195,6 @@ impl AppError {
         self
     }
 
-    /// Append an operator-facing recovery hint to the error message.
-    pub(crate) fn with_hint(mut self, hint: &str) -> Self {
-        self.message = format!("{} (hint: {})", self.message, hint);
-        self
-    }
-
     /// A broadcast no broadcaster took (`sendWithResults` `sending`), absent
     /// from the broadcaster it was submitted to and from an independent chain
     /// index after the full probe window, which this wallet then retired (the
@@ -226,68 +214,47 @@ impl AppError {
         )
     }
 
-    /// The kind of a bsv-rs error, by its variant, and the coin an
-    /// unspendable refusal names.
-    fn of_sdk(e: &bsv_sdk::Error) -> (Kind, Option<String>) {
+    /// A classed refusal or fault. Generic WalletError has no typed family.
+    fn of_sdk(e: &bsv_sdk::Error) -> Kind {
         match e {
-            // The toolbox's `StoreBusy`, typed across the boundary (#44).
-            bsv_sdk::Error::WalletBusy { .. } => (Kind::StoreBusy, None),
-            bsv_sdk::Error::WalletReviewActions(_) => (Kind::ReviewActions, None),
-            // A toolbox refusal whose variant the boundary erased.
-            bsv_sdk::Error::WalletError(text) => {
-                let kind = Kind::of_erased(toolbox_words::class(text));
-                let coin = (kind == Kind::UnspendableCoin)
-                    .then(|| toolbox_words::unspendable_coin(text))
-                    .flatten();
-                (kind, coin)
-            }
-            // `WalletTransport` (bsv-rs #73: no answer in a wallet's word)
-            // among them, served as before it had a type; the served
-            // wallet is in process and never gives one. bsv-rs's
-            // primitives, keys and BEEF faults likewise.
-            _ => (Kind::Unclassified, None),
+            bsv_sdk::Error::WalletBusy { .. } => Kind::StoreBusy,
+            bsv_sdk::Error::WalletReviewActions(_) => Kind::ReviewActions,
+            bsv_sdk::Error::WalletRefusal { class, .. } => Kind::of_refusal(*class),
+            bsv_sdk::Error::TransportFault { .. } => Kind::Service,
+            _ => Kind::Unclassified,
         }
     }
 
-    /// The kind of a toolbox error, by its variant; `StoreBusy` and
-    /// `SdkError` as the `WalletInterface` boundary gives them (bsv-rs's
-    /// `WalletBusy`, the bsv-rs error itself).
-    fn of_toolbox(e: &bsv_wallet_toolbox::Error) -> (Kind, Option<String>) {
+    /// Storage callers retain their fault type; wallet callers use of_sdk.
+    fn of_toolbox(e: &bsv_wallet_toolbox::Error) -> Kind {
         use bsv_wallet_toolbox::Error as T;
-        let kind = match e {
+        match e {
             T::InsufficientFunds { .. } => Kind::InsufficientFunds,
-            T::AuthenticationRequired | T::InvalidIdentityKey(_) => Kind::AuthenticationRequired,
-            T::AccessDenied(_) => Kind::AccessDenied,
-            T::NotFound { .. } => Kind::NotFound,
-            T::UnspendableCoin { outpoint, .. } => {
-                let coin = Some(outpoint.trim().to_string()).filter(|c| !c.is_empty());
-                return (Kind::UnspendableCoin, coin);
-            }
-            T::Duplicate { .. } | T::InvalidOperation(_) | T::InvalidTransactionStatus(_) => {
-                Kind::Conflict
-            }
+            T::AuthenticationRequired | T::AccessDenied(_) => Kind::AccessDenied,
+            T::InvalidIdentityKey(_)
+            | T::NotFound { .. }
+            | T::UserNotFound(_)
+            | T::InvalidBeef { .. }
+            | T::SpendRefused { .. }
+            | T::ValidationError(_)
+            | T::InvalidArgument(_) => Kind::Validation,
+            T::UnspendableCoin { .. }
+            | T::FailedAncestor { .. }
+            | T::Duplicate { .. }
+            | T::InvalidOperation(_)
+            | T::InvalidTransactionStatus(_)
+            | T::StorageNotAvailable => Kind::Conflict,
             T::ReviewActions(_) => Kind::ReviewActions,
-            T::InvalidBeef { .. } | T::SpendRefused { .. } => Kind::InvalidBeef,
-            T::ValidationError(_) | T::InvalidArgument(_) => Kind::Validation,
             T::StorageError(_) | T::DatabaseError(_) | T::Internal(_) => Kind::Internal,
             T::ServiceError(_) | T::NetworkError(_) | T::BroadcastFailed(_) => Kind::Service,
             T::StoreBusy { .. } => Kind::StoreBusy,
-            T::SdkError(e) => return Self::of_sdk(e),
+            T::SdkError(e) => Self::of_sdk(e),
             _ => Kind::Unclassified,
-        };
-        (kind, None)
-    }
-
-    fn typed(kind: Kind, coin: Option<String>, message: String) -> Self {
-        Self {
-            coin,
-            ..Self::new(kind, message)
         }
     }
 
     fn from_sdk(e: &bsv_sdk::Error) -> Self {
-        let (kind, coin) = Self::of_sdk(e);
-        let mut error = Self::typed(kind, coin, e.to_string());
+        let mut error = Self::new(Self::of_sdk(e), e.to_string());
         if let bsv_sdk::Error::WalletReviewActions(review) = e {
             error.review = Some(review.clone());
         }
@@ -300,8 +267,7 @@ impl AppError {
             error.message = e.to_string();
             return error;
         }
-        let (kind, coin) = Self::of_toolbox(e);
-        let mut error = Self::typed(kind, coin, e.to_string());
+        let mut error = Self::new(Self::of_toolbox(e), e.to_string());
         if let bsv_wallet_toolbox::Error::ReviewActions(review) = e {
             error.review = Some(review.clone());
         }
@@ -356,9 +322,6 @@ impl IntoResponse for AppError {
         if let Some(refusal) = &self.refusal {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
-        }
-        if let Some(coin) = &self.coin {
-            body["coin"] = json!(coin);
         }
         match self.kind.retry_after_secs() {
             // Retry after the pause. A callback deadline can leave partial

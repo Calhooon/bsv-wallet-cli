@@ -18,5 +18,4 @@ pub mod spend_guard;
 pub mod store;
 #[cfg(test)]
 pub(crate) mod test_support;
-pub mod toolbox_words;
 pub mod tracker_host;

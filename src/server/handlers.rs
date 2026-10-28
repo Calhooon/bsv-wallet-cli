@@ -1012,20 +1012,7 @@ pub async fn abort_action(
     let result = wallet
         .abort_action(args, Some(&originator))
         .await
-        .map_err(|e| {
-            // Toolbox 0.14's accepting-word sentences (#165) alone name this
-            // hint and conflict, including unproven without a proof. Other
-            // abort refusals keep beta's answer until beta.2's typed classes.
-            let on_chain_evidence = crate::toolbox_words::is_abort_on_chain_evidence(&e);
-            let mut err = AppError::from(e);
-            if on_chain_evidence {
-                err = err.with_hint(
-                    "the wallet holds an accepting word for this transaction; it stays \
-                 until a proof, node verdict or competitor's checked proof decides it",
-                );
-            }
-            err
-        })?;
+        .map_err(AppError::from)?;
     Ok(Json(result))
 }
 
