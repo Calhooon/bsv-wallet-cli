@@ -53,6 +53,10 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
 
 ## What the run judges
 
+The `certificate-privacy` world isolates rows 158 to 160 from the earlier
+field-bound certificates: the toolbox's certificate lookup takes a page of
+two before matching the serial. Its only certificate is the one being proved.
+
 The manifest, before any fixture is served: every file `MANIFEST.json` lists must be on disk, every file on disk must be listed, and nothing but `.json` fixtures may sit beside the manifest. A fixture deleted, a fixture added by hand, or a stray file is a failure naming it, not a silent pass.
 
 Beyond the byte comparison, the replay fails when the corpus stops covering:
