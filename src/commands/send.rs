@@ -11,6 +11,7 @@ pub async fn run(
     address: &str,
     satoshis: u64,
     allow_pending: crate::spend_gate::AllowPending,
+    from: &[(String, u32)],
 ) -> Result<()> {
     let lock = P2PKH::lock_from_address(address)?;
 
@@ -52,11 +53,12 @@ pub async fn run(
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
     let result = crate::spend_gate::refused_as_json(
-        crate::spend_gate::create_action(
+        crate::spend_gate::create_action_from(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
             &ctx.gate().with_allow_pending(allow_pending),
+            from,
         )
         .await,
         ctx.json_output,

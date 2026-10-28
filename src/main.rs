@@ -114,10 +114,12 @@ async fn main() -> Result<()> {
             satoshis,
             allow_pending,
             coins,
+            from,
         } => {
             let allow_pending = word(allow_pending, coins)?;
             let ctx = open().await?;
-            commands::send::run(&ctx, address, *satoshis, allow_pending).await?;
+            commands::send::run(&ctx, address, *satoshis, allow_pending, &named_coins(from)?)
+                .await?;
         }
         Commands::Respend { txid } => {
             let ctx = open().await?;
@@ -201,10 +203,11 @@ async fn main() -> Result<()> {
             count,
             allow_pending,
             coins,
+            from,
         } => {
             let allow_pending = word(allow_pending, coins)?;
             let ctx = open().await?;
-            commands::split::run(&ctx, *count, allow_pending).await?;
+            commands::split::run(&ctx, *count, allow_pending, &named_coins(from)?).await?;
         }
         Commands::Services => {
             commands::services::run(&config, cli.json).await?;
@@ -296,4 +299,10 @@ fn given_in(matches: &clap::ArgMatches, id: &str) -> Option<clap::parser::ValueS
 fn word(allow_pending: &Option<String>, coins: &[String]) -> Result<spend_gate::AllowPending> {
     spend_gate::AllowPending::from_cli(allow_pending.as_deref(), coins)
         .map_err(|e| anyhow::anyhow!("Invalid argument: {e}"))
+}
+
+fn named_coins(from: &[String]) -> Result<Vec<(String, u32)>> {
+    from.iter()
+        .map(|coin| spend_gate::parse_outpoint(coin).map_err(|e| anyhow::anyhow!("--from: {e}")))
+        .collect()
 }

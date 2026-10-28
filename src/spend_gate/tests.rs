@@ -11,6 +11,7 @@ use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
 mod carried;
+mod from;
 mod lineage;
 mod user_scope;
 
