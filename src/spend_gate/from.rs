@@ -146,42 +146,6 @@ fn verify_final(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn a_named_coin_lost_between_assessments_is_not_added_back() {
-        let mut assessment = Assessment {
-            offered: vec![(1, 20)],
-            ..Default::default()
-        };
-        let from = vec![("aa".repeat(32), 0)];
-        assert!(matches!(
-            verify_final(&assessment, &[2], &from),
-            Err(GateError::Scope(_))
-        ));
-        assessment.unread.push(2);
-        assert!(
-            verify_final(&assessment, &[2], &from).is_ok(),
-            "the cap may omit an otherwise offered coin"
-        );
-        assessment.held.push(HeldCoin {
-            outpoint: format!("{}.0", from[0].0),
-            satoshis: 5,
-            word: "unknown".into(),
-            origin: Origin::Received,
-            age_minutes: 1,
-            reason: "headers unavailable".into(),
-            headers_fault: Some("offline".into()),
-            output_id: 2,
-        });
-        assert!(matches!(
-            verify_final(&assessment, &[2], &from),
-            Err(GateError::Refused(_))
-        ));
-    }
-}
-
 async fn resolve(
     coins: UserCoins<'_>,
     from: &[(String, u32)],
@@ -229,4 +193,40 @@ fn invalid(outpoint: &str, why: &str) -> GateError {
         "a managed coin this wallet could spend",
         why,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_named_coin_lost_between_assessments_is_not_added_back() {
+        let mut assessment = Assessment {
+            offered: vec![(1, 20)],
+            ..Default::default()
+        };
+        let from = vec![("aa".repeat(32), 0)];
+        assert!(matches!(
+            verify_final(&assessment, &[2], &from),
+            Err(GateError::Scope(_))
+        ));
+        assessment.unread.push(2);
+        assert!(
+            verify_final(&assessment, &[2], &from).is_ok(),
+            "the cap may omit an otherwise offered coin"
+        );
+        assessment.held.push(HeldCoin {
+            outpoint: format!("{}.0", from[0].0),
+            satoshis: 5,
+            word: "unknown".into(),
+            origin: Origin::Received,
+            age_minutes: 1,
+            reason: "headers unavailable".into(),
+            headers_fault: Some("offline".into()),
+            output_id: 2,
+        });
+        assert!(matches!(
+            verify_final(&assessment, &[2], &from),
+            Err(GateError::Refused(_))
+        ));
+    }
 }

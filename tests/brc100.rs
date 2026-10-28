@@ -20,9 +20,10 @@ const SIDES: [&str; 3] = ["request", "response", "refusal"];
 /// `(call or "*", side, dotted path)`.
 type Key = (String, String, String);
 
-/// No relocated Record fields remain after beta.2 flattens certificate
-/// entries (bsv-rs #105). A future nested extension must be named here too.
-const NESTED_RECORDS: [(&str, &str, &str); 0] = [];
+/// The stored master keyring is a nested extension reached by beta.3's
+/// verified certificate fixture; its field names are a Record's keys.
+const NESTED_RECORDS: [(&str, &str, &str); 1] =
+    [("listCertificates", "response", "certificates.keyring")];
 
 /// What the BRC names: its calls, every field as a [`Key`] (the error
 /// structure under `*`, `refusal`) and its `Record` fields as keys (with

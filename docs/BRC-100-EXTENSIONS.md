@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 18 rows
+## Extensions: 19 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -45,9 +45,10 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `reviewActionResults.status` | The review outcome. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults.competingTxs` | The competing transaction IDs. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `sendWithResults` | The action send results, including an empty list. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `listCertificates` | response | `certificates.keyring` | The stored master keyring of a verified direct certificate; its keys form a Record. | #338, toolbox #374 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-18 extensions.
+19 extensions.
 
 ## Gaps: 49 rows
 
@@ -114,7 +115,7 @@ rows record this missing behavior; no trust setting is added. Key-linkage result
 Privileged-request and refusal-envelope gaps retain their existing issues.
 `getVersion` still answers the toolbox's own version (#122 item 6).
 
-## Served by the source, not in the corpus: 18 rows
+## Served by the source, not in the corpus: 17 rows
 
 Fields the server's types can serve that no fixture shows. Each is an extension the day a fixture serves it: the test then fails until the row moves to the extensions table.
 
@@ -135,7 +136,6 @@ Fields the server's types can serve that no fixture shows. Each is an extension 
 | `signAction` | response | `broadcast` | The same word on the signed template's post, with `createAction`'s sub-keys. | 43376b8 (#66) |
 | `internalizeAction` | response | `broadcast` | The same word on the payment's post, with `createAction`'s sub-keys. | 43376b8 (#66) |
 | `internalizeAction` | response | `broadcast.hint.words.error` | When the post itself errs (`internalize_action.rs`'s `serviceError` on a services fault), the toolbox writes the words as `[{"error": ...}]`, the fault's text. | 43376b8 (#66) |
-| `listCertificates` | response | `certificates.keyring` | bsv-rs's `CertificateResult` carries it when set; no fixture's certificate has one. | the initial release, feb0dd0 |
 | `proveCertificate` | response | `certificate` | bsv-rs's `ProveCertificateResult` carries it when set; fixture 159 proves an empty disclosure, but the toolbox leaves this optional member absent (049 returns its selected encrypted keyring). | the initial release, feb0dd0 |
 | `proveCertificate` | response | `verifier` | As `certificate`. | the initial release, feb0dd0 |
 
