@@ -159,12 +159,26 @@
     "157-acquireCertificate.signatureAboveBound.json",
     "158-acquireCertificate.revealFields.json",
     "159-proveCertificate.emptyFields.json",
-    "160-proveCertificate.shortSerial.json"
+    "160-proveCertificate.shortSerial.json",
+    "161-createSignature.shortProtocol.json",
+    "162-verifySignature.shortProtocol.json",
+    "163-createHmac.shortProtocol.json",
+    "164-verifyHmac.shortProtocol.json",
+    "165-verifySignature.malformedDer.json",
+    "166-createAction.descriptionTooShort.json",
+    "167-createAction.descriptionTooLong.json",
+    "168-internalizeAction.badLabelAndDerivation.json",
+    "169-internalizeAction.trackerTransportFault.json",
+    "170-revealSpecificKeyLinkage.anyone.json",
+    "171-revealSpecificKeyLinkage.self.json",
+    "172-internalizeAction.protocolBeforeDescription.json",
+    "173-acquireCertificate.decryptedFieldAtBound.json",
+    "174-listCertificates.decryptedFieldAtBound.json"
   ],
   "notes": {
     "053-discoverByIdentityKey.ok.json": "Empty discovery: toolbox #388 (CLI #331); the published certifier_info returns None.",
     "054-discoverByAttributes.ok.json": "Empty discovery: toolbox #388 (CLI #331); no host trust-setting input exists.",
-    "103-internalizeAction.badUnlock.json": "Beta.1: HTTP 400 INVALID_BEEF from erased SpendRefused; the reference class is INVALID_PARAMETER, offset and script sentence preserved, accepted false and nothing stored. Beta.2 retains 400 INVALID_BEEF: published toolbox 4cfe31ca still erases ordinary refusals, toolbox #404 (CLI #330).",
+    "103-internalizeAction.badUnlock.json": "Beta.3 (#330, toolbox #404): typed InvalidParameter serves HTTP 400 VALIDATION_ERROR; offset and script sentence are preserved, accepted false and nothing is stored.",
     "127-internalizeAction.customInstructionsAtBound.json": "Fixture 127 records acceptance of exactly 1000 UTF-8 bytes (250 four-byte characters). Fixture 128 listOutputs.customInstructionsAtBound records the stored output's customInstructions so every replay compares all 1000 bytes, covering steps 3 and 4 of 2026-10-24-wallet-internalize-custom-instructions-bound.md beside fixture 123's refusal.",
     "134-listOutputs.offsetNegative.json": "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.",
     "137-discoverByIdentityKey.limitAtBound.json": "Empty discovery at the page bound: toolbox #388 (CLI #331).",
@@ -174,8 +188,11 @@
     "141-signAction.sequenceNumberAboveType.json": "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
     "142-listActions.offsetAboveType.json": "The u32 argument type refuses offset 4294967296 before listActions is entered. This records axum's existing 422 text response; its transport shape belongs to #117 and #149, not #198.",
     "147-createAction.doubleSpendReview.json": "Finding 1 (#277, host map #140, bsv-rs #339): HTTP 400 with isError, numeric code 5 and all present review-action members; absent optional members stay omitted.",
+    "155-acquireCertificate.fieldAtBound.json": "#338/#343: signed 1 MiB encrypted text verifies but exceeds the 64 KiB decrypted-field bound; typed InvalidParameter, nothing stored.",
+    "156-acquireCertificate.fieldAboveBound.json": "#338, toolbox #374: non-canonical base64 above 1 MiB is refused as typed InvalidParameter before storage.",
     "158-acquireCertificate.revealFields.json": "Finding 3, toolbox #240: store a real encrypted field and master key for the empty-disclosure witness.",
     "159-proveCertificate.emptyFields.json": "Finding 3, toolbox #240: fieldsToReveal [] returns an empty keyring; beta.1 disclosed every stored field.",
-    "160-proveCertificate.shortSerial.json": "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check."
+    "160-proveCertificate.shortSerial.json": "Finding 3, toolbox #240/#311: a 31-byte serial is refused by the served argument gate before the helper's exact-32-byte check.",
+    "169-internalizeAction.trackerTransportFault.json": "#330, toolbox #185: the tracker retains TransportFault::MayHaveBeenReceived through the SDK and serves SERVICE_ERROR, never a verdict."
   }
 }

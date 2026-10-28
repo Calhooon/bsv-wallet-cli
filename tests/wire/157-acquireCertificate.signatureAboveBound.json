@@ -29,7 +29,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: The signature parameter must be a canonical DER-encoded ECDSA signature"
+      "message": "Validation error: The signature parameter must be a canonical DER-encoded ECDSA signature"
     }
   }
 }

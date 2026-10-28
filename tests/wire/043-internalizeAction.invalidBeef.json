@@ -37,8 +37,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "INVALID_BEEF",
-      "message": "wallet error: Invalid BEEF at byte 0: BadVersion"
+      "code": "VALIDATION_ERROR",
+      "message": "Invalid BEEF at byte 0: BadVersion"
     }
   }
 }

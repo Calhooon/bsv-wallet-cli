@@ -10,11 +10,11 @@
       "certificate": {
         "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
         "fields": {
-          "name": "d2lyZQ=="
+          "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg67wsi4t0i2MWzUYeMDBmoXZaFGDw=="
         },
         "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
         "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-        "signature": "3006020101020101",
+        "signature": "3045022100966a1acc6378e92139a86d0dcde8a681f81e7c2468dbda7da321bb476868f0bc0220744b0b6cfc5378deff44db35f963c8a451b0c4a0c05633128b3bf8b615ed8f27",
         "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
         "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY="
       },
@@ -25,7 +25,7 @@
     }
   },
   "response": {
-    "status": 400,
+    "status": 200,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -34,8 +34,9 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "ERROR",
-      "message": "wallet error: Certificate does not have a master keyring stored"
+      "keyringForVerifier": {
+        "name": "<string:108>"
+      }
     }
   }
 }

@@ -36,7 +36,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: The output remittance parameter must be only insertionRemittance for basket insertion"
+      "message": "Validation error: The output remittance parameter must be only insertionRemittance for basket insertion"
     }
   }
 }

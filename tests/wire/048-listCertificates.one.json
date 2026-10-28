@@ -33,9 +33,12 @@
           "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
           "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
           "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
-          "signature": "3006020101020101",
+          "signature": "3045022100966a1acc6378e92139a86d0dcde8a681f81e7c2468dbda7da321bb476868f0bc0220744b0b6cfc5378deff44db35f963c8a451b0c4a0c05633128b3bf8b615ed8f27",
           "fields": {
-            "name": "d2lyZQ=="
+            "name": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg67wsi4t0i2MWzUYeMDBmoXZaFGDw=="
+          },
+          "keyring": {
+            "name": "Dw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw+yjKuVcDbO9efkiFXVtspIbhATgrV7c2cLwYAsCCu84144ctRgR9bnD68C86pkbKM="
           },
           "verifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         }

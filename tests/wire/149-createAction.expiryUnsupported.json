@@ -31,7 +31,7 @@
     },
     "json": {
       "code": "CONFLICT",
-      "message": "wallet error: Invalid operation: Active storage does not support BRC-177 noSend expiry"
+      "message": "Invalid operation: Active storage does not support BRC-177 noSend expiry"
     }
   }
 }

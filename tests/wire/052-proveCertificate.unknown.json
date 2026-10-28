@@ -34,8 +34,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "ERROR",
-      "message": "wallet error: Certificate not found with the provided arguments"
+      "code": "VALIDATION_ERROR",
+      "message": "Certificate not found with the provided arguments"
     }
   }
 }

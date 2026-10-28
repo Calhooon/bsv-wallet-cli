@@ -35,7 +35,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "wallet error: Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet."
+      "message": "Validation error: The inputs[0] parameter must be an unmanaged input. Change outputs are managed by your wallet."
     }
   }
 }
