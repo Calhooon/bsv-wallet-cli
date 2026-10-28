@@ -296,7 +296,9 @@ impl AppError {
 
     fn from_toolbox(e: &bsv_wallet_toolbox::Error) -> Self {
         if let bsv_wallet_toolbox::Error::SdkError(sdk) = e {
-            return Self::from_sdk(sdk);
+            let mut error = Self::from_sdk(sdk);
+            error.message = e.to_string();
+            return error;
         }
         let (kind, coin) = Self::of_toolbox(e);
         let mut error = Self::typed(kind, coin, e.to_string());
