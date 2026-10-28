@@ -20,14 +20,9 @@ const SIDES: [&str; 3] = ["request", "response", "refusal"];
 /// `(call or "*", side, dotted path)`.
 type Key = (String, String, String);
 
-/// The `Record` fields we serve where the BRC has them elsewhere: bsv-rs's
-/// `CertificateResult` nests the BRC's `certificates.fields` under
-/// `certificate` (#122 item 8). Each is a row of the extensions table.
-const NESTED_RECORDS: [(&str, &str, &str); 1] = [(
-    "listCertificates",
-    "response",
-    "certificates.certificate.fields",
-)];
+/// No relocated Record fields remain after beta.2 flattens certificate
+/// entries (bsv-rs #105). A future nested extension must be named here too.
+const NESTED_RECORDS: [(&str, &str, &str); 0] = [];
 
 /// What the BRC names: its calls, every field as a [`Key`] (the error
 /// structure under `*`, `refusal`) and its `Record` fields as keys (with
