@@ -244,12 +244,10 @@ reach `from_gate_error` (`src/server/handlers.rs:234`: 503
 `INSUFFICIENT_FUNDS` with `offeredSatoshis` and `held`); a wallet error's
 busy variant reaches `from_wallet_error` (`src/server/handlers.rs:213`),
 and a pre-door store busy is read by `store::is_store_busy`
-(`src/store.rs:75`). The later #81 extraction into `src/server/error.rs`
-and `src/toolbox_words.rs` replaces the prefix mapping with `Kind::answer`
-and isolates the toolbox's erased error words in `toolbox_words::class`.
-Those modules did not exist at the pin; their mapping is held by the named
-tests `the_typed_mapping_serves_what_the_prefix_table_served` and
-`the_typed_wallet_busy_from_the_door_is_503_retry_after_one`.
+(`src/store.rs:75`). The later #81 extraction put the status table in `src/server/error.rs`.
+At beta.3, #330 removes the temporary text classifier and maps the published
+reference classes directly. `every_reference_class_has_a_host_answer` and
+`the_typed_wallet_busy_from_the_door_is_503_retry_after_one` hold that mapping.
 Under `--json` the
 commands print the same body and exit 1 (`refused_as_json`,
 `src/spend_gate.rs:570`; `busy_as_json`, `src/spend_gate.rs:598`).
@@ -720,7 +718,7 @@ files of this pinned map.
 
 Modules added after the pin and omitted from this table are `src/config.rs`,
 `src/config/knobs.rs`, `src/config/tests.rs`, `src/server/error.rs`,
-`src/toolbox_words.rs` and `src/commands/config.rs`.
+`src/spend_gate/from.rs` and `src/commands/config.rs`.
 
 ## 6. Where the next phases cut
 
@@ -750,10 +748,10 @@ above; this is the map of what is about to move.
 - **#81, typed errors.** Done after the pin: `AppError::classify` and its prefix table
   are gone; `Kind` (`src/server/error.rs`) holds a status and a code per
   refusal, every typed error reaches it by its variant, and arch rule A8
-  holds the served layer to it with an empty allowlist. What remains is
-  upstream: the toolbox's refusals arrive as a `WalletError`'s text
-  (the later `src/toolbox_words.rs`) until bsv-rs carries a refusal's class and the
-  toolbox maps its variants to it.
+  holds the served layer to it with an empty allowlist. At beta.3, #330
+  removes the remaining text classifier: the toolbox now preserves the
+  reference's typed refusal class. Generic faults without a class remain
+  ERROR, with richer typed fault and abort data tracked in #342.
 - **#86, the lock covers allocation only.** The FIFO lock's span
   (`spending_lock`, `src/server/handlers.rs:585-604`) shrinks to the offer and the
   allocation; the post of hop 6 and the probe of hop 8 run outside it.
