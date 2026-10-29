@@ -1,12 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./lib/wallet-client');
 const { fundWallet, FUNDER_EXTERNAL_BASKET, FUNDER_EXTERNAL_SATOSHIS } = require('./lib/setup');
-const { keepExternalTemplate } = require('./scenarios/24-busy-store');
+const { keepExternalTemplate, probeExclusive } = require('./scenarios/24-busy-store');
 
 // Exercise the scenario's real SQLite queries and cleanup without a server,
 // wallet binary, broadcast or funder. Only the HTTP clients are replaced.
@@ -213,4 +213,43 @@ test('funding headroom includes the reserve only when it is missing', async t =>
       });
     }
   }
+});
+
+// The EXCLUSIVE probe against a standalone WAL store, with and without a
+// second process holding an open connection after a SELECT (the served
+// store's idle reader pool). Only the behaviour is asserted, so the same
+// cases hold under the 3.51 shell and the 3.53+ shells (#357).
+async function walStore(t, { held }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-24-probe-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = path.join(dir, 'wallet.db');
+  execFileSync('sqlite3', ['-batch', '-bail', db,
+    'PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES(1);'], { encoding: 'utf8', timeout: 5_000 });
+  const logs = [];
+  t.mock.method(console, 'log', line => logs.push(line));
+  if (!held) return { db, logs };
+  const holder = spawn('sqlite3', ['-batch', db], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = new Promise(resolve => holder.once('close', resolve));
+  t.after(async () => { holder.stdin.end('.quit\n'); await exited; });
+  await new Promise((resolve, reject) => {
+    holder.stdout.on('data', chunk => { if (String(chunk).includes('E2E_READ')) resolve(); });
+    holder.once('close', code => reject(new Error(`holder exited ${code}`)));
+    holder.stdin.write("SELECT count(*) FROM t;\n.print E2E_READ\n");
+  });
+  return { db, logs };
+}
+
+test('the EXCLUSIVE probe is refused at BEGIN IMMEDIATE under an open WAL connection', async t => {
+  const { db, logs } = await walStore(t, { held: true });
+  probeExclusive(db, assert.ok);
+  assert.match(logs[0], /refused by the open WAL connections at BEGIN IMMEDIATE, nothing written \(exit [1-9]/);
+  assert.match(logs[0], /e2e_busy tables 0; sqlite3 \d+\.\d+/);
+  execFileSync('sqlite3', ['-batch', '-bail', db,
+    'PRAGMA busy_timeout=1000; BEGIN IMMEDIATE; ROLLBACK;'], { encoding: 'utf8', timeout: 5_000 });
+});
+
+test('the EXCLUSIVE probe fails the scenario when nothing holds the store', async t => {
+  const { db } = await walStore(t, { held: false });
+  assert.throws(() => probeExclusive(db, assert.ok),
+    /must stop at BEGIN IMMEDIATE and write nothing: exit 0, .*"E2E_EXCLUSIVE_TAKEN".*e2e_busy tables 0/);
 });

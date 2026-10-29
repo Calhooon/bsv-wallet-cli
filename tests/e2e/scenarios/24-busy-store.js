@@ -29,19 +29,39 @@ async function within(promise, ms, message) {
   } finally { clearTimeout(timer); }
 }
 
-async function holdWriter(db, assert) {
-  // Prove why the requested all-reader lock cannot be taken by a second
-  // process on this served store. Do not quietly substitute another lock.
-  let exclusive;
+const EXCLUSIVE_TAKEN = 'E2E_EXCLUSIVE_TAKEN';
+
+// Prove why the requested all-reader lock cannot be taken by a second
+// process on this served store. Do not quietly substitute another lock.
+// Assert on behaviour, never on the shell's words (#357): a 3.53+ shell
+// steps through sqlite3_format_query_result, whose reset clears the step's
+// SQLITE_BUSY before sqlite3_finalize, so the rest of one argument still
+// runs and the error it reports is a later statement's. One statement per
+// argument stops every shell at the failing statement, before the marker.
+function probeExclusive(db, assert) {
+  const version = execFileSync('sqlite3', ['--version'], { encoding: 'utf8', timeout: BUSY_MS }).trim();
+  let exclusive, taken;
   try {
-    execFileSync('sqlite3', ['-batch', '-bail', db,
-      'PRAGMA busy_timeout=1000; PRAGMA journal_mode; PRAGMA locking_mode=EXCLUSIVE; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS e2e_busy(x); INSERT INTO e2e_busy VALUES(1); ROLLBACK;'],
+    taken = execFileSync('sqlite3', ['-batch', '-bail', db,
+      'PRAGMA busy_timeout=1000;', 'PRAGMA journal_mode;', 'PRAGMA locking_mode=EXCLUSIVE;',
+      'BEGIN IMMEDIATE;', `.print ${EXCLUSIVE_TAKEN}`,
+      'CREATE TABLE IF NOT EXISTS e2e_busy(x);', 'INSERT INTO e2e_busy VALUES(1);', 'ROLLBACK;'],
     { encoding: 'utf8', timeout: BUSY_MS, stdio: 'pipe' });
   } catch (e) { exclusive = e; }
-  assert(exclusive && exclusive.status > 0 && /\(5\)/.test(String(exclusive.stderr))
-    && /\bwal\b/.test(String(exclusive.stdout)),
-  `sqlite3 EXCLUSIVE attempt must be SQLITE_BUSY on WAL: exit ${exclusive?.status}, ${exclusive?.stdout}, ${exclusive?.stderr}`);
-  console.log('       EXCLUSIVE locking_mode refused by the open WAL connections (SQLITE_BUSY); read doors must stay 200 under the normal writer');
+  const stdout = String(exclusive ? exclusive.stdout : taken).split('\n').map(line => line.trim());
+  const stderr = String(exclusive?.stderr ?? '').trim();
+  const tables = execFileSync('sqlite3', ['-batch', '-bail', db,
+    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='e2e_busy';"],
+  { encoding: 'utf8', timeout: BUSY_MS }).trim();
+  const record = `exit ${exclusive?.status ?? 0}, stdout ${JSON.stringify(stdout.filter(Boolean))}, stderr ${JSON.stringify(stderr)}, e2e_busy tables ${tables}; sqlite3 ${version}`;
+  assert(exclusive && exclusive.status > 0 && stdout.includes('wal') && stdout.includes('exclusive')
+    && !stdout.includes(EXCLUSIVE_TAKEN) && tables === '0',
+  `sqlite3 EXCLUSIVE attempt on the WAL store must stop at BEGIN IMMEDIATE and write nothing: ${record}`);
+  console.log(`       EXCLUSIVE locking_mode refused by the open WAL connections at BEGIN IMMEDIATE, nothing written (${record}); read doors must stay 200 under the normal writer`);
+}
+
+async function holdWriter(db, assert) {
+  probeExclusive(db, assert);
 
   const proc = spawn('sqlite3', ['-batch', '-bail', db], { stdio: ['pipe', 'pipe', 'pipe'] });
   let output = '', errors = '', heldAt;
@@ -193,6 +213,7 @@ module.exports = {
   description: 'External WAL writer: busy write doors retry, read doors stay available; release restores all five (0 sats)',
   hermetic: true,
   keepExternalTemplate,
+  probeExclusive,
 
   async run(walletA, walletB, assert) {
     try { execFileSync('sqlite3', ['--version'], { stdio: 'pipe', timeout: BUSY_MS }); }
