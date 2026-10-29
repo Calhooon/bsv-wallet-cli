@@ -11,14 +11,14 @@ if (!fs.existsSync(cli)) {
   process.exit(1);
 }
 
-const { folder, revision } = require('./lib/browsers');
-console.log(`Installing E2E Chromium revision ${revision} in ${folder}`);
+const { folder, why, revision } = require('./lib/browsers');
+console.log(`Installing E2E Chromium revision ${revision} in ${folder} (${why})`);
 const child = spawnSync(cli, ['install', 'chromium', ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: process.env,
 });
 if (child.error) console.error(`ERROR: ${cli}: ${child.error.message}`);
 if (child.status === 0) {
-  console.log(`Installed E2E Chromium revision ${revision} in ${folder}`);
+  console.log(`Installed E2E Chromium revision ${revision} in ${folder} (${why})`);
 }
 process.exit(child.status ?? 1);
