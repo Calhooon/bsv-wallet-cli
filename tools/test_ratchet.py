@@ -324,14 +324,18 @@ class CheckAgainstBase(Case):
         self.tree.recorded(OLD)
         code, out = self.check_base(base)
         self.assertEqual(code, 0, out)
-        self.assertNotIn("lower than the record", out)
+        self.assertNotIn("lower than the record (re-record in its own commit: tools/ratchet --record, "
+                         "then python3 -B tools/scoreboard --render, "
+                         "docs/NORTH-STAR.md's table committed with the record):", out)
         self.assertNotIn("re-record", out)
         self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
 
     def test_a_base_equal_to_the_tree_passes(self):
         code, out = self.check_base(self.tree.json())
         self.assertEqual(code, 0, out)
-        self.assertNotIn("lower than the record", out)
+        self.assertNotIn("lower than the record (re-record in its own commit: tools/ratchet --record, "
+                         "then python3 -B tools/scoreboard --render, "
+                         "docs/NORTH-STAR.md's table committed with the record):", out)
         self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
 
     def test_a_base_below_the_tree_fails_with_raised(self):
@@ -373,7 +377,9 @@ class CheckAgainstBase(Case):
         self.tree.commit("the PR record missing a ratchet")
         code, out = self.check_base(base)
         self.assertEqual(code, 1, out)
-        self.assertIn(f"UNRECORDED: {self.tree.record} does not hold unwrap_expect_outside_tests", out)
+        self.assertIn(f"UNRECORDED: {self.tree.record} does not hold unwrap_expect_outside_tests"
+                      " (record it in its own commit: tools/ratchet --record, "
+                      "then python3 -B tools/scoreboard --render)", out)
         self.assertIn("1 -> absent (a ratchet dropped)", out)
 
     def test_the_rerecord_hint_uses_the_record_even_with_a_different_base(self):
@@ -386,7 +392,9 @@ class CheckAgainstBase(Case):
         self.tree.commit("the record and base above the tree by different amounts")
         code, out = self.check_base(base)
         self.assertEqual(code, 0, out)
-        self.assertIn("lower than the record (re-record in its own commit", out)
+        self.assertIn("lower than the record (re-record in its own commit: tools/ratchet --record, "
+                      "then python3 -B tools/scoreboard --render, "
+                      "docs/NORTH-STAR.md's table committed with the record):", out)
         self.assertIn("unwrap_expect_outside_tests: 2 -> 1 (-1)", out)
         self.assertNotIn("unwrap_expect_outside_tests: 3 -> 1 (-2)", out)
 
@@ -961,6 +969,9 @@ class BaseInstrumentGuards(Case):
         self.assertEqual(code, 0, out)
         self.assertNotIn("::warning::", out)
         self.assertNotIn("another instrument's", out)
+        self.assertIn("lower than the record (re-record in its own commit: tools/ratchet --record, "
+                      "then python3 -B tools/scoreboard --render, "
+                      "docs/NORTH-STAR.md's table committed with the record):", out)
         self.assertIn("unwrap_expect_outside_tests: 1 -> 0 (-1)", out)
         self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
         self.note(code, tail(out))

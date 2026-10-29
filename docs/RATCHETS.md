@@ -57,9 +57,9 @@ Each number is a debt a reviewer cannot see growing one PR at a time: a panic pa
 1. Pick a number and a file (the `detail` lists say where the count lives).
 2. Fix it in its own PR, one concern (a refactor never carries a behavior change).
 3. Run `tools/ratchet --check`: it prints the number lower than the record.
-4. In its own commit of that PR, run `tools/ratchet --record` and commit `docs/ratchets.json`. The PR says it re-records and names each number that fell. A PR that does not say so does not touch `docs/ratchets.json`.
+4. In its own commit of that PR, run `tools/ratchet --record` and then `python3 -B tools/scoreboard --render`, committing `docs/ratchets.json` and `docs/NORTH-STAR.md`'s table together. The table is rendered from the record; CI's `ratchet` job's `scoreboard` step fails on a stale table (#77, #361). Prove it with `tools/ratchet --check` and `python3 -B tools/scoreboard --check`. The PR says it re-records and names each number that fell. A PR that does not say so does not touch `docs/ratchets.json`.
 
-A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record with `tools/ratchet --record --toolchain-move` (the only way `--record` accepts a toolchain other than the record's; it prints the toolchain moved from and to), and name every number that moved.
+A number may rise only by a PR that says why, re-records, and is landed by the captain on that word. Moving the toolchain is such a PR: bump the pin in the `ratchet` job, re-record with `tools/ratchet --record --toolchain-move` (the only way `--record` accepts a toolchain other than the record's; it prints the toolchain moved from and to), then run `python3 -B tools/scoreboard --render` and commit `docs/ratchets.json` and `docs/NORTH-STAR.md`'s table together in the re-record's own commit. The table is rendered from the record; CI's `ratchet` job's `scoreboard` step fails on a stale table (#77, #361). Prove it with `tools/ratchet --check` and `python3 -B tools/scoreboard --check`, and name every number that moved.
 
 
 ## Two file-length ratchets: the shipped code's and the test code's (2026-10-24)

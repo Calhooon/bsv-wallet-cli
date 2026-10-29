@@ -631,14 +631,14 @@ def check(now, path, base_path):
         if k in ref and tree[k] < ref[k]
     ]
     if better:
-        print("lower than the record (re-record in its own commit: tools/ratchet --record):")
+        print("lower than the record (re-record in its own commit: tools/ratchet --record, then python3 -B tools/scoreboard --render, docs/NORTH-STAR.md's table committed with the record):")
         print("\n".join(better))
     failed = False
     if unrecorded := [k for k in RATCHETS if k not in rec["ratchets"]]:
         # A base record may predate a ratchet (the PR that adds it), never
         # the record the tree is checked against: an unrecorded number gates nothing.
         print(f"UNRECORDED: {path} does not hold {', '.join(unrecorded)}"
-              " (record it in its own commit: tools/ratchet --record)")
+              " (record it in its own commit: tools/ratchet --record, then python3 -B tools/scoreboard --render)")
         failed = True
     if base_path and not base and (moved := [
         f"  {k}: record {rec['ratchets'][k]}, tree {tree[k]}"
