@@ -52,11 +52,12 @@ async function main() {
   // no stub, wallet or funder request is needed until this has passed.
   const browser = browsers.check();
   if (!browser.ok) {
-    console.error(`ERROR: E2E Chromium unavailable: folder=${browser.folder}; revision=${browser.revision}; executable=${browser.executable}. Run node tests/e2e/install-browsers.js`);
+    console.error(`ERROR: E2E Chromium unavailable: folder=${browser.folder}; reason=${browser.reason} (${browsers.why}); revision=${browser.revision}; executable=${browser.executable}. Run node tests/e2e/install-browsers.js`);
     console.error(browser.error.message.split('\n')[0]);
     process.exitCode = 1;
     return;
   }
+  console.log(`Chromium ${browser.revision} in ${browser.folder} (${browsers.why})`);
 
   let walletA, walletB;
   const results = [];
