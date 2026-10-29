@@ -5,6 +5,58 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## [Unreleased]
 
+## [0.19.0-beta.3] - 2026-10-29
+
+- **The e2e harness's `relinquishOutput` sends the served body (#119).**
+  It posted `{txid, vout, basket}` and the server answered 422 (missing
+  field `output`); it now posts BRC-100's `{basket, output: "txid.vout"}`.
+  Scenario 08 no longer passes on any answer: relinquishing an outpoint the
+  wallet does not hold must answer `relinquished` or a coded refusal, never
+  an unread body. The consumers' fixture `e2e-harness/06-relinquishOutput.json`
+  records a 200.
+
+- **A browser client reaches a wallet served under `AUTH_TOKEN` (#138).**
+  A CORS preflight carries no credentials, so the bearer, checked before
+  the CORS layer, refused every browser's `OPTIONS` with 401 and the
+  browser never sent its bearer. The CORS layer now wraps the bearer: it
+  answers every `OPTIONS` (200 with the CORS headers, as without a token),
+  and the bearer's 401 carries the CORS headers, so a browser's script reads
+  the refusal. Every other request still needs the bearer.
+
+- **`bsv-wallet-mcp` reads its configuration once, and `--config` prints it (#171).**
+  `WALLET_URL`, `WALLET_ORIGIN`, `RELAY_URL`, `RELAY_ADMIN_TOKEN` and
+  `RUST_LOG` are read at start into one typed configuration
+  (`mcp/src/config.rs`), with the defaults and filtering they had (an empty
+  `RELAY_URL` is no relay). A malformed value (a `WALLET_URL` or `RELAY_URL`
+  that is not an http or https URL, a blank `WALLET_ORIGIN`) is refused by
+  name at start, every one together, where it used to fail each call.
+  `bsv-wallet-mcp --config` prints every setting with its value and source,
+  the admin token as `<set>` (or `empty`) and a URL's credentials as `<set>`,
+  and exits 1 when one is refused. The architecture rules now scan
+  `mcp/src` too, so A7 sees the companion's reads; no count moved.
+
+- **The mutation floors rise to the last scheduled Nightly's measurement (#173, #174, #124, #175).** Run 40473522272 judged 1,062 of its 1,168 mutants on beta at `2f8e6cf`. The other 106 were never judged: shards 18 and 19 checked out `0bd48af` (beta had moved under the run) and their unmutated baselines ran past the 300 s test limit (#310). They are the tail of `src/server/handlers.rs`'s second copy (lines 650 to 1248; the file is compiled into the library and the binary, so it is mutated twice), and the first copy judged the same 106 at `2f8e6cf` (95 unviable, 11 caught), so the score stands: a full run would most likely read 90 caught, 0 missed, 238 unviable, still 100.0. `docs/scoreboard/mutants.json` is that run's record as judged, copied from its artifacts. The floors in `nightly.yml` are each file's score rounded down: `src/broadcast_verify.rs` 75 to 86 (#173, which asked 80), `src/server/handlers.rs` 74 to 100 (#174, which asked 80), `src/tracker_host.rs` 72 to 75 (#175 still asks 80), `src/spend_gate.rs` 80 to 90 and `src/explorers.rs` 69 to 82 (#124, which asked 80). The schedule is gone since #303, so the next floor moves only on a dispatched measurement's record.
+
+Pinned both workspaces and locks to bsv-rs =0.9.0-beta.2, bsv-wallet-toolbox-rs =0.14.0-beta.2 and bsv-tracker =0.9.0-beta.2. Stored tracker follow-ups accept beta.1 hex transactions and beta.2 byte arrays without rewriting rows. Wallet calls retain their originators through the optional argument, deprecated classic ARC names its endpoint independently of the Arcade default, and deferred references carry the twelve-byte handle as base64. Certificate JSON uses `type`, hex signatures, flat list entries and base64 keyrings; `certificates --reverify` explicitly checks stored signatures without changing certificates. Certificates issued through the toolbox before #203's field-encryption scheme need re-issue; old keyrings are not migrated. Typed double-spend review serves HTTP 400 with isError, numeric code 5 and the reference's five review-action members, omitting absent optional members. Ordinary refusal classification remains as served pending CLI #330 (toolbox #404); discovery returns empty results pending CLI #331 (toolbox #388), with no trust configuration added. An empty certificate disclosure returns an empty verifier keyring, and a serial outside 32 bytes is refused (toolbox #240). The corpus records the pin's certificate, reference, guard, overlong-spend (toolbox #216) and wording changes, including the direct-acquisition bounds still owed by toolbox #374.
+
+- **A proven creator whose stored proof fails its check no longer holds back every other adoption (#292).** The tick's adoption of the toolbox's proven creators left a creator whose `proven_txs` path does not parse, does not hold for its txid, or does not meet the header unstored and reported, so every pass selected it again; 100 such rows (the per-pass bound) held back every new creator and every dead-row revival for good. Each failure is now stored once and not selected again until its check is due: a new creator whose path does not parse or does not hold is tracked without it (its row holds the word its hints give, `unknown` received or `built` made, and no path; a mismatched root keeps its `proofFailed` row, as before); a `rejected`, `conflicted` or `abandoned` row keeps its word, is never revived by a failed check, and stores no path and the tracker's re-ask (`proof_failed@<height>` when the path parsed). Both carry one ask with the tick's doubling pause. Such a row is checked again once that pause passes (so a path the toolbox rewrites, such as its JSON-to-BUMP repair, is read, and a new creator whose path then holds is adopted as `mined`) or on a pass whose header moved at or below the toolbox's `proven_txs.height` (a row whose path does not parse included), and the fault is reported once per check. A header the service could not give, or a height above its tip, still waits for the next pass. `/tx/{txid}` for a new creator tracked without its path serves its row's word (`unknown` or `built`) where it was 404 before, since the row is what keeps it out of the bound. The gate's reading of a made creator tracked without its path moves its word from `unknown` to `built`, shown in a refusal's `held[].word`; its door, its fault and its hold reason do not move, and a dead row's reading does not move. No fixture or vector moves. New `tracker_host::dead_proof_tests` cover the starvation (100 unparseable creators ahead of a new creator and a revivable dead row: both adopted on the second pass, which reports no fault), a moved header reviving a marked row, a marked row checked again after its pause and revived from a rewritten path, a new creator adopted after the toolbox repairs its JSON path, a move checking an unparseable dead row again, and a made creator's reading; two of #215's dead-row tests now expect the mark.
+
+- **Arcade is the default broadcaster on beta, through the typed configuration (#300, main's PR 302 carried into beta).** The owner's word of 2026-10-27 ("arc is old af... we use arcade now for everyting") and the keeper's reading on #300 (GorillaPool's ARC is a rung of no gate and no courier). `ServicesSettings` carries one `ArcMode` in place of the two booleans: `ARC_MODE` unset, blank or `arcade` (any case) is Arcade; `classic` (any case) is deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; when `ARC_MODE` is unset the older `ARCADE` decides (`1`/`true`/`yes` Arcade, `0`/`false`/`no` classic); any other value of either is refused at start by name, and `bsv-wallet config` still prints the table with the row marked. `bsv-wallet config` prints the mode in effect, `arcade (default)` or `classic`, with its source. A blank `ARC_URL` is the Arcade default, and a `--testnet` wallet in Arcade mode without `ARC_URL` is refused by name where its services are built (there is no testnet Arcade default); its broadcast verifier asks nothing. GorillaPool's ARC leaves the toolbox's providers in both modes (`ARC_GORILLAPOOL_URL` stays the broadcast verifier's third-party store). In Arcade mode no classic ARC config is passed, and `TAAL_API_KEY` and `MAIN_TAAL_API_KEY`, now deprecated, are logged once as unused. The postBeef providers in Arcade mode are ArcadeV2, TaalArcBeef (the toolbox's, unauthenticated, until toolbox #317), Bitails and WhatsOnChain, logged once at start (`post_beef_ladder`). The hermetic harness now sets `ARC_MODE=classic` explicitly, since its stub plays classic ARC only until #299; `ARCADE` stays dropped. The served wire corpus and the gate vectors do not move.
+
+- **The fuzz crate builds on every PR, with the stack at the root's versions (#301).** The beta.1 pin had left `fuzz/Cargo.toml` at bsv-rs 0.8.2 and the toolbox 0.13.0, so two bsv-rs crates met in the fuzz graph and `brc29_remittance` stopped building; 0.18.2's probe move removed the spender rungs `explorer_bodies` fuzzed. The fuzz crate now pins the root's bsv-rs and toolbox and its lock holds one bsv-rs, one toolbox and one bsv-tracker at the root's versions; `explorer_bodies` fuzzes the bodies the CLI still reads (`receive`'s WhatsOnChain `/beef` and BananaBlocks `/hex` couriers, the broadcast verifier's WhatsOnChain, Bitails and BananaBlocks chain indexes), with new seeds for each. CI's `build` job checks every fuzz target against its lock on the pinned toolchain, and the `locks` job refuses a committed lock whose bsv-rs, toolbox or bsv-tracker differs from the root lock's. Nothing served changes.
+
+- **Named coins:** add repeatable `--from txid:vout` to `send` and `split`, using the toolbox must-spend list and the existing received-coin rule.
+
+- **Typed host refusals:** map the published reference classes directly and remove the message classifier, preserving the review-actions carrier.
+
+- **Test-only:** E2E.24 reads wallet A's default basket and eligible change count at run time, then selects the largest funder coin covering its 1,000-sat output, the allocator's full change target and a 23 + 500-sat fee allowance, keeping A's funds available (#315, #334).
+
+- **Test-only:** The E2E funding transfer creates a reusable 15,000-sat funder coin in `e2e-external` when absent, outside ordinary funding and sweeps; E2E.24 keeps its bounded unsigned-template demand, prints the source basket and requires at least 10,000 sats of margin, with a warning on default-basket fallback (#336).
+
+- **Beta.3 dependencies:** pin bsv-rs =0.9.0-beta.3, bsv-wallet-toolbox-rs =0.14.0-beta.3 and bsv-tracker =0.9.0-beta.3 together; record the published validators and verified certificate behavior.
+
+- **Script-verdict intent (#340)**: name the two test-only transaction checks as parity-mode replays and document the toolbox's pending node-word internalize rule; the CLI judges no transaction itself.
+
 ## [0.19.0-beta.1] - 2026-10-27
 
 ### Beta.1: bsv-rs =0.9.0-beta.1 and bsv-wallet-toolbox-rs =0.14.0-beta.1 together on beta (#140)
