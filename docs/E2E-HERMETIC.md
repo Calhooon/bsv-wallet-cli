@@ -222,9 +222,17 @@ funding block is proven by the BUMP inside its BEEF instead.
 - **Scenario 20's browser checks** need Playwright's pinned Chromium headless
   shell. After `npm ci` in `tests/e2e`, run
   `node tests/e2e/install-browsers.js` from the repository root (CI adds
-  `--with-deps`). The step installs into `tests/e2e/.browsers`, or the caller's
-  `PLAYWRIGHT_BROWSERS_PATH`, with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so it never
-  collects another program's builds. Before any stub or wallet starts or the
+  `--with-deps`), once per host, never by hand. `lib/browsers.js` resolves
+  one folder per host, in order: a non-empty `PLAYWRIGHT_BROWSERS_PATH` (the
+  Studio Mac exports `/Volumes/Lanes/targets/bsv-wallet-cli-playwright`);
+  else the standing checkout's `.cca/pw-browsers`, the parent of
+  `git rev-parse --git-common-dir`, which every linked worktree shares (on the
+  box `~/bsv/bsv-wallet-cli/.cca/pw-browsers`; CI caches it on its plain
+  checkout); else, without git, the worktree's own `tests/e2e/.browsers`. The
+  step installs there with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so it never collects
+  another program's builds; under Node 26.9.0 it hangs extracting the archive
+  (Playwright 1.58.2's bundled extract never settles), so run it with Node 22
+  or 24. The run prints the folder and why on its check line. Before any stub or wallet starts or the
   funder is asked, the harness uses Playwright's executable selector and
   registry to check the headless shell for those launch options; a missing
   build fails the run with its folder, revision, executable and install step.
