@@ -105,9 +105,9 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 
 ### Dependencies
 
-Scenario 20 (UI) requires Playwright; after `npm install`, the harness's install step uses its own `tests/e2e/.browsers` folder (override with `PLAYWRIGHT_BROWSERS_PATH`) and sets `PLAYWRIGHT_SKIP_BROWSER_GC=1`, so browser installs never collect another program's builds:
+Scenario 20 (UI) requires Playwright. Its Chromium lives in one folder per host, resolved in order: a non-empty `PLAYWRIGHT_BROWSERS_PATH` (the Studio Mac exports `/Volumes/Lanes/targets/bsv-wallet-cli-playwright`); else the standing checkout's `.cca/pw-browsers` (the parent of `git rev-parse --git-common-dir`, so every worktree on a host shares it; on the box `~/bsv/bsv-wallet-cli/.cca/pw-browsers`); else, without git, the worktree's own `tests/e2e/.browsers`. The run's check line names the folder and why. Install once per host with the harness's step, never by hand; it sets `PLAYWRIGHT_SKIP_BROWSER_GC=1`, so it never collects another program's builds. Under Node 26.9.0 the step hangs extracting the archive (Playwright 1.58.2's bundled extract); run it with Node 22 or 24:
 ```bash
-(cd tests/e2e && npm install)
+(cd tests/e2e && npm ci)
 node tests/e2e/install-browsers.js
 ```
 
