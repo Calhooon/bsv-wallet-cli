@@ -219,10 +219,17 @@ funding block is proven by the BUMP inside its BEEF instead.
   scenarios (the wallet checks a BUMP's root against the header, which the stub
   honours; the pinned toolbox runs bsv-rs's script verifier at internalize;
   the stub itself remains an inclusion oracle).
-- **Scenario 20's browser checks** need Playwright's Chromium; without it the
-  scenario's API checks run and the browser checks are skipped by the scenario
-  itself. CI installs Chromium; under the flag it runs behind the wall by its
-  launch args (above).
+- **Scenario 20's browser checks** need Playwright's pinned Chromium headless
+  shell. After `npm ci` in `tests/e2e`, run
+  `node tests/e2e/install-browsers.js` from the repository root (CI adds
+  `--with-deps`). The step installs into `tests/e2e/.browsers`, or the caller's
+  `PLAYWRIGHT_BROWSERS_PATH`, with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so it never
+  collects another program's builds. Before any stub or wallet starts or the
+  funder is asked, the harness uses Playwright's executable selector and
+  registry to check the headless shell for those launch options; a missing
+  build fails the run with its folder, revision, executable and install step.
+  The browser checks are required. Under the flag Chromium runs behind the
+  wall by the shared launch options in `lib/browsers.js` (above).
 - **A scenario that cannot be hermetic** says `hermetic: false` with a
   `hermeticReason` on its module; the runner skips it under the flag, prints
   the reason, and counts it as run. As of this writing no scenario needs it.

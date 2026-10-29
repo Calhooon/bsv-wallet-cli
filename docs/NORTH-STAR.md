@@ -74,7 +74,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | mutation floor `src/tracker_host.rs` | 75 | 75.4 at 2f8e6cf | `.github/workflows/nightly.yml` |
 | bench baseline | no baseline yet |  | `benches/baseline.json` |
 | e2e scenarios | 24 |  | `tests/e2e/scenarios/` |
-| hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/hermetic.js` |
+| hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/browsers.js` |
 <!-- scoreboard:end -->
 
 ## 5. The three crates and the stack
