@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "commit": "511a1472588a86fbdafd213e66e7045f692ba866",
+  "commit": "a8c0053337c5b8483c619a00b438996f72faec68",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -14,16 +14,16 @@
     "unwrap_expect_outside_tests": 4,
     "files_over_800_lines": 10,
     "tests_files_over_800_lines": 3,
-    "functions_over_60_lines": 86,
+    "functions_over_60_lines": 85,
     "cognitive_complexity_over_25": 19,
-    "duplicated_tokens": 32486,
+    "duplicated_tokens": 32382,
     "missing_docs": 148
   },
   "detail": {
     "sources": {
       "benches": {
         "files": 5,
-        "lines": 805
+        "lines": 806
       },
       "fuzz": {
         "files": 7,
@@ -31,26 +31,26 @@
       },
       "mcp/src": {
         "files": 3,
-        "lines": 1610
+        "lines": 1718
       },
       "src": {
-        "files": 94,
-        "lines": 46733
+        "files": 101,
+        "lines": 48221
       },
       "tests": {
-        "files": 57,
-        "lines": 14809
+        "files": 64,
+        "lines": 15415
       }
     },
-    "test_files": 90,
+    "test_files": 101,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
-        "lines": 5151
+        "lines": 5244
       },
       {
         "path": "src/broadcast_verify.rs",
-        "lines": 2501
+        "lines": 2577
       },
       {
         "path": "src/commands/cleanup_abandoned.rs",
@@ -58,19 +58,19 @@
       },
       {
         "path": "src/spend_gate.rs",
-        "lines": 2054
+        "lines": 2095
       },
       {
         "path": "src/broadcast_reconcile.rs",
-        "lines": 1802
+        "lines": 1803
       },
       {
         "path": "src/server/handlers.rs",
-        "lines": 1270
+        "lines": 1269
       },
       {
         "path": "mcp/src/main.rs",
-        "lines": 969
+        "lines": 983
       },
       {
         "path": "src/commands/sync.rs",
@@ -88,11 +88,11 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 3766
+        "lines": 3793
       },
       {
         "path": "src/tracker_words_witnesses.rs",
-        "lines": 1276
+        "lines": 1278
       },
       {
         "path": "src/chain_feed_tests.rs",
@@ -105,20 +105,20 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 510,
+    "duplicated_blocks": 509,
     "clippy_pedantic_by_lint": {
-      "clippy::doc_markdown": 225,
-      "clippy::uninlined_format_args": 167,
+      "clippy::doc_markdown": 223,
+      "clippy::uninlined_format_args": 166,
       "clippy::missing_errors_doc": 82,
       "clippy::must_use_candidate": 69,
       "clippy::cast_possible_truncation": 42,
       "clippy::cast_sign_loss": 39,
       "clippy::cast_possible_wrap": 34,
       "clippy::cast_lossless": 29,
-      "clippy::redundant_closure_for_method_calls": 27,
+      "clippy::redundant_closure_for_method_calls": 29,
       "clippy::map_unwrap_or": 18,
+      "clippy::similar_names": 10,
       "clippy::needless_raw_string_hashes": 9,
-      "clippy::similar_names": 9,
       "clippy::unreadable_literal": 9,
       "clippy::semicolon_if_nothing_returned": 7,
       "clippy::items_after_statements": 6,
