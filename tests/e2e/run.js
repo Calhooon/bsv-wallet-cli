@@ -45,7 +45,7 @@ async function main() {
   const browser = browsers.check();
   if (!browser.ok) {
     console.error(`ERROR: E2E Chromium unavailable: folder=${browser.folder}; revision=${browser.revision}; executable=${browser.executable}. Run node tests/e2e/install-browsers.js`);
-    console.error(browser.error.message);
+    console.error(browser.error.message.split('\n')[0]);
     process.exitCode = 1;
     return;
   }
