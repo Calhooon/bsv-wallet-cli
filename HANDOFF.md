@@ -1588,3 +1588,128 @@ Open after the evening: the beta.3 tag (the owner's word); #340 and #343 in
 lanes; #331 on toolbox #388, #342 on bsv-rs #439, #344 on toolbox #430;
 #333 and the re-issue at 0.19.0; #316 and #315 on the beta.2 milestone (a
 record and a doc); the next pin's issue opens at the next prerelease's hour.
+## 2026-10-29: the beta.3 tag, the Studio's browser rule on both lines,
+scenario 24's probe, the re-record's render, the pin brief's tells
+
+The day opened on a new profile (the session restart, the memory directory
+moved intact) with the owner's hygiene ruling applied: 42 GiB freed at
+15:53Z by this captain's own recorded paths, six directories named as not
+mine and left. Four rulings arrived through the keeper on the owner's "I
+agree with all your recommendations" (16:3xZ): 19.10, the keeper tags
+v0.19.0-beta.3 on a version commit, a version PR first; 19.11, the toolbox's
+`chain` field api-break rides the beta.4 pin; 20.2, #331 closes at beta.4 on
+toolbox #388; 20.4 (a), #342 at beta.4 on bsv-rs #439. The version PR (351;
+`Cargo.toml` 0.19.0-beta.3, the changelog assembled from fourteen fragments,
+the fuzz lock's one line authorized in a fix round) landed at 440cd39, and
+the keeper tagged it at 17:30:34Z: the Release run green at 17:46Z, the
+crate on the index at 17:40:34Z, the release object a prerelease. The gate
+on 440cd39 was a composite: 23 of 24 at 17:25Z, with scenario 20 failing
+because `~/Library/Caches/ms-playwright` had vanished under the owner's
+cache clearing, then scenario 20 alone at 17:29Z after a restore, 0 sats;
+the record says so plainly. #352 gave `release.yml` the prerelease mark from
+the tag's hyphen on both lines (PR 353, beta 0030013; PR 354 by cherry-pick,
+main 3ff6fdb), and corrected one statement of mine: the two lines'
+`release.yml` differ by one intended line (beta grants its CI call
+`pull-requests: read` for the ratchet and differential jobs; main has
+neither), read by diffing `origin/beta` against `origin/main`, never the
+local refs.
+
+The Studio's browser rule came from the keeper at 19:4xZ, after the shared
+Playwright cache lost a pinned build three times in a day (the owner's
+clearing, then two installs, since `npx playwright install` removes builds
+it reads as stale: my own 17:29Z restore of 1208 removed LOW's 1228, and
+LOW's bisect refused twice): a program that drives a browser sets
+`PLAYWRIGHT_BROWSERS_PATH` to a folder of its own and installs with
+`PLAYWRIGHT_SKIP_BROWSER_GC=1`; the harness checks its pinned build before
+any run and reinstalls by its own step in the gate's preflight. This
+program's folder on the Studio Mac is
+`/Volumes/Lanes/targets/bsv-wallet-cli-playwright` (standing; the cleanup
+never removes it); the gate script and the chain scripts export both
+variables. In the repo, #355: the harness sets the variable before
+Playwright is first required (a caller's value wins, else its own
+`tests/e2e/.browsers`), its step `node tests/e2e/install-browsers.js`
+installs through the local binary with the GC skipped, `run.js` checks the
+pinned headless build as Playwright's launch resolves it and refuses before
+any wallet is started or the funder asked, naming the folder, the revision
+and the step with Playwright's first line only; both workflows cache and
+install the harness's folder. PR 356 (beta a8c0053; two cold reviews on
+Opus, the first asking only the first-line refusal) and PR 359 on main
+(ed2dcc1; a port, since main's harness has no hermetic mode and its CI runs
+no harness: the cherry-picks kept with their conflict resolutions, the first
+lane's browser install in main's build job dropped by a commit on top, never
+a rewrite). The gate ran once on main's tip at 22:05Z: 23 of 23, net 2,155
+sats, scenario 20 under the program's folder; a first attempt exited on the
+gate script's own unset single-scenario hook before the harness started, 0
+sats.
+
+At 23:2xZ the keeper amended the rule per host: on every host a program
+keeps one standing browsers folder, its standing checkout's
+`.cca/pw-browsers` (gitignored), which the harness's default resolves to
+before any per-worktree fallback, so a lane on the box never installs into
+its own target folder; the box runs every scenario a lane runs. The two box
+lanes of the day had unpacked the CDN zips by hand after the step's unzip
+hung there twice, which leaves no record the preflight can check: the hang
+is a defect of the step, to fix on the box. That is #362, a lane on the box
+with the hermetic suite once, its main copy to follow as PR 359 did; the
+Studio's exported path stands as named.
+
+Found on the way, #357: scenario 24's EXCLUSIVE lock probe asserted on the
+sqlite3 shell's words, and a 3.53-or-later shell answers "no such table:
+e2e_busy" (exit 1) where 3.51 answers "database is locked (5)"; reproduced
+offline on a standalone WAL database with one open reader under the system
+3.51.0 and the Homebrew 3.53.1, and on the box's 3.54.0 where the #355 lane
+had failed it. The probe now asserts on behaviour (a non-zero exit, `wal`,
+no `e2e_busy` table afterwards, the holder's normal write next), proven
+under four shells with the mechanism sourced from the shell's code; PR 358,
+beta ea8fb49, a 24/24 hermetic run on the box. Two ratchet numbers had
+fallen since the record of 2026-10-27, with the beta.2 and beta.3 pins (#277
+and #338, the Rust that left with the typed host map), not with the day's
+harness changes, which touch no Rust: the lane I briefed with the wrong
+cause read the diffs and corrected the attribution, and the numbers
+(functions_over_60_lines 86 to 85, duplicated_tokens 32486 to 32382) were
+re-recorded in their own commit under the pinned toolchain (PR 360). Its
+first CI run went red at the ratchet job's scoreboard step: the table in
+docs/NORTH-STAR.md is rendered from the records, and tools/scoreboard's rule
+asks a PR that re-records to render it in the same PR, which my brief had
+not named (the precedent 406c579 predates the scoreboard) and the cold
+review, holding to the brief, had not checked. A fix round added the
+rendered table as a commit on top, landing as beta 82ce5c2 at 23:29Z
+(ea2b106 the record, 82ce5c2 the table). The procedure gap is #361: the
+tool's own hint, RATCHETS.md's step 4 and lanes README rule 5 name the
+render, by a PR after that landing, carrying the fingerprint re-record the
+tool edit forces with the table rendered in the same commit.
+
+The pin brief for beta.4 (#347) took the libraries' hours as tells: bsv-rs
+#447 (bsv-rs #439) at 455fe780 is #342's pin sha, its abort record and fault
+matched by class and family inside the pin PR, beta's typed map carrying
+both through its wildcard until then; #455's typed not-judged verdict costs
+this repo no arm (it matches neither `SpendRefusal` nor the stream's
+`Verdict`), and `Error::TransactionNotJudged` gets a typed arm on the input
+index and the cause; `ChainTip.genesis_height` deprecated hits the test
+tracker's literal and one reader under CI's `-D warnings`; #467's totals
+widen to u64 where four commands read them, two through an `i32` cast; #457,
+#459, #462, #468 and #471 touch nothing here. The 64 KiB question (#343)
+closed: neither SDK bounds a field value on the direct acquire path; the
+toolbox's #374 keyring proof is where the bound bites, now row D26 of their
+divergence table at a8107be2, and fixtures 155, 173 and 174 keep the
+behaviour and cite it at the pin. The toolbox landed #388 (6f234bc9, shape
+(b2)) for #331.
+
+Lessons kept: a lane launched without `--host` may run on the box (the
+branch comes back as `box/lane/<name>`; the box's toolchain differs, the
+captain's exports do not reach it, and the step's unzip hung there twice); a
+harness assertion on a tool's words is a bug waiting for a version; a pool
+account fault (a Codex token expired, a model refused) kills a launch in
+five seconds and is relaunched plainly, the account and the model never a
+captain's choice; a gate script's hooks are exercised unset before they
+guard a mainnet run; a brief that names a precedent also names the rules
+that postdate it (a re-record renders the scoreboard's table in the same
+PR), and a review brief asks for CI's own tool steps, never the record
+alone.
+
+Open after the evening: the beta.4 pin on its watcher (#347 with every tell;
+#331, #342, #344 ride it where the packages carry them); #333 and the
+certificate re-issue at 0.19.0; #350; #315 and #316 on the beta.2 milestone;
+the beta.1 release object's prerelease mark (the keeper's); #361 and #362 in
+lanes after the evening (the re-record procedure; the box's standing browser
+folder), their main copies after.
