@@ -112,10 +112,10 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 
 Scenario 24 requires the `sqlite3` CLI on `PATH`; its absence fails the scenario. See [the hermetic busy-store coverage](docs/E2E-HERMETIC.md#busy-store-coverage) for the WAL read limit and timing.
 
-Scenario 20 (UI) requires Playwright:
+Scenario 20 (UI) requires Playwright; after `npm install`, the harness's install step uses its own `tests/e2e/.browsers` folder (override with `PLAYWRIGHT_BROWSERS_PATH`) and sets `PLAYWRIGHT_SKIP_BROWSER_GC=1`, so browser installs never collect another program's builds:
 ```bash
-cd tests/e2e && npm install
-npx playwright install chromium
+(cd tests/e2e && npm install)
+node tests/e2e/install-browsers.js
 ```
 
 ### Budget

@@ -526,12 +526,11 @@ jobs:
       - name: Cache Playwright's Chromium
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ~/.cache/ms-playwright
+          path: tests/e2e/.browsers
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
 
       - name: Install Chromium
-        working-directory: tests/e2e
-        run: npx playwright install --with-deps chromium
+        run: node tests/e2e/install-browsers.js --with-deps
 
       - name: Check the hermetic BEEF codecs and kept-template demand
         run: node --test tests/e2e/stub/tx.test.js tests/e2e/24-busy-store.test.js
