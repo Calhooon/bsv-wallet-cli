@@ -12,6 +12,8 @@
  *   node run.js --skip-woc         # Skip WoC verification (faster)
  */
 
+// The browser folder must be set before any library or scenario can load Playwright.
+const browsers = require('./lib/browsers');
 const { startWallet, fundWallet, sweepToFunder, teardownWallet, FUNDER_PORT } = require('./lib/setup');
 const { WalletClient } = require('./lib/wallet-client');
 const path = require('path');
@@ -38,6 +40,16 @@ const toRun = scenarioFilter !== null
 const expected = dryRun ? 0 : toRun.length;
 
 async function main() {
+  // Resolution checks the headless executable without launching a browser:
+  // no wallet or funder request is needed until this has passed.
+  const browser = browsers.check();
+  if (!browser.ok) {
+    console.error(`ERROR: E2E Chromium unavailable: folder=${browser.folder}; revision=${browser.revision}; executable=${browser.executable}. Run node tests/e2e/install-browsers.js`);
+    console.error(browser.error.message);
+    process.exitCode = 1;
+    return;
+  }
+
   let walletA, walletB;
   const results = [];
   let funderBalanceBefore;

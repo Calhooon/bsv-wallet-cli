@@ -88,6 +88,24 @@ jobs:
       - name: Build MCP subcrate (release)
         run: cargo build --release --locked -p bsv-wallet-mcp
 
+      # Install the harness's pinned browser without starting the mainnet-only harness.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+
+      - name: Install the harness's dependency (Playwright)
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: tests/e2e/.browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
+
+      - name: Install Chromium
+        run: node tests/e2e/install-browsers.js --with-deps
+
   test:
     name: Test
     runs-on: ubuntu-latest

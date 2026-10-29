@@ -12,4 +12,5 @@
 .claude-docs-logs/
 e2e-funder/
 node_modules/
+tests/e2e/.browsers/
 graphify-out/

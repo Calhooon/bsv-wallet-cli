@@ -8,6 +8,7 @@
 const { spawn } = require('child_process');
 const { BSV } = require('../lib/setup');
 const { sleep } = require('../lib/woc');
+const { launchOptions } = require('../lib/browsers');
 
 module.exports = {
   name: 'ui-playwright',
@@ -88,76 +89,66 @@ module.exports = {
         'Mutation queries must be blocked');
 
       // ─── Playwright browser test ───
-      let playwrightAvailable = false;
-      let chromium;
-      try {
-        chromium = require('playwright').chromium;
-        playwrightAvailable = true;
-      } catch {
-        // Playwright not installed — skip browser tests
-      }
-
+      const { chromium } = require('playwright');
       let browserChecks = 0;
-      if (playwrightAvailable) {
-        const browser = await chromium.launch({ headless: true });
-        try {
-          const page = await browser.newPage();
-          await page.goto(`http://localhost:${UI_PORT}`, { waitUntil: 'networkidle' });
+      const browser = await chromium.launch(launchOptions());
+      try {
+        const page = await browser.newPage();
+        await page.goto(`http://localhost:${UI_PORT}`, { waitUntil: 'networkidle' });
 
-          // Verify page title
-          const title = await page.title();
-          assert(title.includes('Wallet Inspector'),
-            `Page title should contain 'Wallet Inspector', got '${title}'`);
+        // Verify page title
+        const title = await page.title();
+        assert(title.includes('Wallet Inspector'),
+          `Page title should contain 'Wallet Inspector', got '${title}'`);
+        browserChecks++;
+
+        // Verify header renders
+        const headerTitle = await page.textContent('.header-title');
+        assert(headerTitle && headerTitle.includes('Wallet Inspector'),
+          `Header should show 'Wallet Inspector', got '${headerTitle}'`);
+        browserChecks++;
+
+        // Verify logo
+        const logo = await page.textContent('.logo');
+        assert(logo === 'B', `Logo should be 'B', got '${logo}'`);
+        browserChecks++;
+
+        // Verify sidebar has table entries (loaded from /api/tables)
+        const sidebarItems = await page.$$('.sidebar-item');
+        assert(sidebarItems.length > 0,
+          `Sidebar should have table items, got ${sidebarItems.length}`);
+        browserChecks++;
+
+        // Verify header stats are populated (loaded from /api/stats)
+        const headerStats = await page.textContent('#headerStats');
+        assert(headerStats && headerStats.length > 0,
+          'Header stats should be populated');
+        browserChecks++;
+
+        // Verify navigation buttons exist
+        const dashBtn = await page.$('#navDashboard');
+        assert(dashBtn, 'Dashboard nav button should exist');
+        const schemaBtn = await page.$('#navSchema');
+        assert(schemaBtn, 'Schema nav button should exist');
+        const sqlBtn = await page.$('#navSql');
+        assert(sqlBtn, 'SQL Console nav button should exist');
+        browserChecks++;
+
+        // Click a table to load data
+        const firstItem = sidebarItems[0];
+        if (firstItem) {
+          await firstItem.click();
+          await page.waitForTimeout(1000);
+
+          // Verify main content area has a table
+          const mainContent = await page.textContent('#mainContent');
+          assert(mainContent && mainContent.length > 10,
+            'Main content should have table data after clicking a table');
           browserChecks++;
-
-          // Verify header renders
-          const headerTitle = await page.textContent('.header-title');
-          assert(headerTitle && headerTitle.includes('Wallet Inspector'),
-            `Header should show 'Wallet Inspector', got '${headerTitle}'`);
-          browserChecks++;
-
-          // Verify logo
-          const logo = await page.textContent('.logo');
-          assert(logo === 'B', `Logo should be 'B', got '${logo}'`);
-          browserChecks++;
-
-          // Verify sidebar has table entries (loaded from /api/tables)
-          const sidebarItems = await page.$$('.sidebar-item');
-          assert(sidebarItems.length > 0,
-            `Sidebar should have table items, got ${sidebarItems.length}`);
-          browserChecks++;
-
-          // Verify header stats are populated (loaded from /api/stats)
-          const headerStats = await page.textContent('#headerStats');
-          assert(headerStats && headerStats.length > 0,
-            'Header stats should be populated');
-          browserChecks++;
-
-          // Verify navigation buttons exist
-          const dashBtn = await page.$('#navDashboard');
-          assert(dashBtn, 'Dashboard nav button should exist');
-          const schemaBtn = await page.$('#navSchema');
-          assert(schemaBtn, 'Schema nav button should exist');
-          const sqlBtn = await page.$('#navSql');
-          assert(sqlBtn, 'SQL Console nav button should exist');
-          browserChecks++;
-
-          // Click a table to load data
-          const firstItem = sidebarItems[0];
-          if (firstItem) {
-            await firstItem.click();
-            await page.waitForTimeout(1000);
-
-            // Verify main content area has a table
-            const mainContent = await page.textContent('#mainContent');
-            assert(mainContent && mainContent.length > 10,
-              'Main content should have table data after clicking a table');
-            browserChecks++;
-          }
-
-        } finally {
-          await browser.close();
         }
+
+      } finally {
+        await browser.close();
       }
 
       return {
@@ -167,7 +158,7 @@ module.exports = {
         tables: tables.length,
         balance: stats.total_balance,
         utxos: stats.total_utxo_count,
-        playwrightAvailable,
+        playwrightAvailable: true,
         browserChecks,
       };
 
