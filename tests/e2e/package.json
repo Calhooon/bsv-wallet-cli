@@ -1,6 +1,9 @@
 {
   "private": true,
   "description": "E2E test dependencies for bsv-wallet-cli",
+  "engines": {
+    "node": "20 || 22 || 24"
+  },
   "dependencies": {
     "playwright": "^1.58.0"
   }
