@@ -230,9 +230,16 @@ funding block is proven by the BUMP inside its BEEF instead.
   box `~/bsv/bsv-wallet-cli/.cca/pw-browsers`; CI caches it on its plain
   checkout); else, without git, the worktree's own `tests/e2e/.browsers`. The
   step installs there with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so it never collects
-  another program's builds; under Node 26.9.0 it hangs extracting the archive
-  (Playwright 1.58.2's bundled extract never settles), so run it with Node 22
-  or 24. The run prints the folder and why on its check line. Before any stub or wallet starts or the
+  another program's builds. The proven Node majors in `tests/e2e/package.json`
+  are `20 || 22 || 24`: the Studio Mac's gate uses 20.19.5, the box's install
+  uses 22.23.3, and CI uses 24. Select one with `nvm use 22` (or put an
+  installed `node@22` on `PATH`). The box defaults to 26.9.0, under which
+  Playwright 1.58.2's zip extractor never finishes after "extracting archive"
+  (#366). The step refuses a Node outside the range before checking the local
+  binary or downloading; running under 26 remains allowed. Change the range
+  only with a Playwright bump whose extractor is re-tested on each host.
+  The run prints the folder, why and Node on its check line.
+  Before any stub or wallet starts or the
   funder is asked, the harness uses Playwright's executable selector and
   registry to check the headless shell for those launch options; a missing
   build fails the run with its folder, revision, executable and install step.

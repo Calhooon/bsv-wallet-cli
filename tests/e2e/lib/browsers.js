@@ -2,6 +2,12 @@
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+const version = process.versions.node;
+const major = Number(version.split('.')[0]);
+const allowed = require('../package.json').engines.node.split('||')
+  .map(value => Number(value.trim()));
+const node = { version, major, allowed, ok: allowed.includes(major) };
+
 const REASONS = {
   env: 'PLAYWRIGHT_BROWSERS_PATH',
   standing: 'standing checkout',
@@ -33,9 +39,17 @@ function resolve() {
 const { folder, reason } = resolve();
 process.env.PLAYWRIGHT_BROWSERS_PATH = folder;
 const why = REASONS[reason];
-const core = path.dirname(require.resolve('playwright-core/package.json'));
-const { revision } = require(path.join(core, 'browsers.json')).browsers
-  .find(browser => browser.name === 'chromium');
+
+// Leave dependency resolution until after the install step's Node and local
+// binary checks, so even a checkout without npm ci can name an unproven Node.
+function corePath() {
+  return path.dirname(require.resolve('playwright-core/package.json'));
+}
+
+function chromiumRevision() {
+  return require(path.join(corePath(), 'browsers.json')).browsers
+    .find(browser => browser.name === 'chromium').revision;
+}
 
 function launchOptions() {
   const options = { headless: true };
@@ -51,6 +65,8 @@ function check() {
   // Use the same selector and registry check as Chromium.launch, including
   // the headless shell and platform-specific path. executablePath() on the
   // public chromium object names the full browser, which headless does not use.
+  const core = corePath();
+  const revision = chromiumRevision();
   const { Chromium } = require(path.join(core, 'lib/server/chromium/chromium.js'));
   const { registry } = require(path.join(core, 'lib/server/registry/index.js'));
   const name = Chromium.prototype.getExecutableName(launchOptions());
@@ -64,4 +80,8 @@ function check() {
   }
 }
 
-module.exports = { folder, reason, why, revision, launchOptions, check };
+module.exports = {
+  folder, reason, why, node,
+  get revision() { return chromiumRevision(); },
+  launchOptions, check,
+};
