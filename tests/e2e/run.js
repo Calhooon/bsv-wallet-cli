@@ -49,7 +49,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`Chromium ${browser.revision} in ${browser.folder} (${browsers.why})`);
+  console.log(`Chromium ${browser.revision} in ${browser.folder} (${browsers.why}), Node v${browsers.node.version}`);
 
   let walletA, walletB;
   const results = [];
