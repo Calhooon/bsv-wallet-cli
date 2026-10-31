@@ -42,7 +42,7 @@ fn table(knobs: &[Knob]) -> String {
             "{:<name_width$}  {:<value_width$}  {}",
             k.name, k.value, k.source
         );
-        match k.refused {
+        match &k.refused {
             Some(expected) => out.push_str(&format!("{line}  REFUSED: not {expected}\n")),
             None => out.push_str(&format!("{line}\n")),
         }

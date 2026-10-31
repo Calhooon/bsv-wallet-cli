@@ -4,6 +4,17 @@ use bsv_wallet_toolbox::{Chain, StorageSqlx, WalletStorageWriter};
 
 use crate::brc29;
 
+/// The `.env` lines `init` writes after the key: the trust section (#331),
+/// commented, so the file names the knob and its shape. Unset, discovery
+/// answers the certificates of the chain's default certifiers.
+const TRUST_SETTINGS_NOTE: &str = "\
+# TRUST_SETTINGS: discovery's trusted certifiers and threshold, the reference's
+# trust settings JSON (#331). Unset: the chain's default certifiers. A
+# certifier's description is served cut to 50 bytes, under 5 bytes as
+# \"Trusted certifier\", and a missing iconUrl as the reference's favicon.
+# TRUST_SETTINGS='{\"trustLevel\":2,\"trustedCertifiers\":[{\"name\":\"...\",\"description\":\"...\",\"identityKey\":\"02...\",\"trust\":3,\"iconUrl\":\"https://...\"}]}'
+";
+
 pub async fn run(
     db_path: &str,
     key: Option<&str>,
@@ -31,7 +42,10 @@ pub async fn run(
     storage.migrate("bsv-wallet-cli", &identity_key).await?;
     storage.make_available().await?;
 
-    let env_content = format!("ROOT_KEY={}\n", private_key.to_hex());
+    // The wallet's other settings are the environment's (`bsv-wallet
+    // config` lists them); discovery's trust section is named here because
+    // unset is a choice, the chain's default certifiers (#331).
+    let env_content = format!("ROOT_KEY={}\n{TRUST_SETTINGS_NOTE}", private_key.to_hex());
     std::fs::write(".env", &env_content)?;
 
     println!("Wallet initialized!");

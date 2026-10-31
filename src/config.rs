@@ -194,13 +194,13 @@ fn hermetic_seed(raw: &Reader) -> Option<[u8; 32]> {
             .ok_or(ConfigError {
                 variable: "E2E_RNG_SEED",
                 value: "<set>".into(),
-                expected: "a 32-byte hexadecimal seed behind the hermetic wall",
+                expected: "a 32-byte hexadecimal seed behind the hermetic wall".into(),
             })
     } else {
         Err(ConfigError {
             variable: "E2E_RNG_SEED",
             value: "<set>".into(),
-            expected: "a seed used only with E2E_HERMETIC=1 and its loopback proxy wall",
+            expected: "a seed used only with E2E_HERMETIC=1 and its loopback proxy wall".into(),
         })
     })
 }
@@ -226,6 +226,70 @@ pub struct WalletSettings {
     pub rust_log: Option<String>,
     /// `-v, --verbose`.
     pub verbose: bool,
+    /// `TRUST_SETTINGS`: discovery's trusted certifiers and threshold
+    /// (#331), else the chain's default certifiers (the toolbox's).
+    pub trust: Option<Trust>,
+}
+
+/// `TRUST_SETTINGS` as read (#331): the reference's trust settings JSON,
+/// `{"trustLevel": n, "trustedCertifiers": [{"name", "description",
+/// "identityKey", "trust", "iconUrl"}]}` (toolbox `managers/settings_manager.rs`,
+/// the reference's `WalletSettingsManager.ts`), and the settings manager the
+/// wallet reads on every discovery call. The bounds are the manager's alone:
+/// it validates once, here, and its words are the knob's refusal.
+#[derive(Debug, Clone)]
+pub struct Trust {
+    /// The trust settings the manager accepted.
+    pub settings: bsv_wallet_toolbox::managers::TrustSettings,
+    /// The manager built from them.
+    pub manager: std::sync::Arc<bsv_wallet_toolbox::WalletSettingsManager>,
+}
+
+impl Trust {
+    /// The variable's name.
+    pub const VARIABLE: &'static str = "TRUST_SETTINGS";
+
+    /// Parse `value` and build the manager: a value that is not the
+    /// settings' JSON, or that the manager refuses, is refused by the
+    /// knob's name with the parser's or the manager's own words.
+    fn read(value: &str) -> Result<Self, ConfigError> {
+        use bsv_wallet_toolbox::managers::{TrustSettings, WalletSettings};
+        let refused = |expected: String| ConfigError {
+            variable: Self::VARIABLE,
+            value: value.to_string(),
+            expected: expected.into(),
+        };
+        let settings: TrustSettings = serde_json::from_str(value).map_err(|e| {
+            refused(format!(
+                "the reference's trust settings JSON, {{\"trustLevel\", \"trustedCertifiers\"}} ({e})"
+            ))
+        })?;
+        let manager = bsv_wallet_toolbox::WalletSettingsManager::new(Some(
+            bsv_wallet_toolbox::WalletSettingsManagerConfig {
+                default_settings: WalletSettings {
+                    trust_settings: settings.clone(),
+                    theme: None,
+                    currency: None,
+                    permission_mode: None,
+                },
+            },
+        ))
+        .map_err(|e| refused(format!("trust settings the wallet accepts ({e})")))?;
+        Ok(Self {
+            settings,
+            manager: std::sync::Arc::new(manager),
+        })
+    }
+
+    /// The knob list's value: how many certifiers, and the threshold.
+    #[must_use]
+    pub fn shown(&self) -> String {
+        format!(
+            "{} trusted certifier(s), trust level {}",
+            self.settings.trusted_certifiers.len(),
+            self.settings.trust_level
+        )
+    }
 }
 
 impl WalletSettings {
@@ -242,6 +306,7 @@ impl WalletSettings {
             rng_seed: hermetic_seed(raw),
             rust_log: raw.get("RUST_LOG").map(str::to_string),
             verbose: flags.verbose,
+            trust: raw.kept(raw.given(Trust::VARIABLE).map(Trust::read).transpose()),
         }
     }
 
@@ -258,10 +323,13 @@ impl WalletSettings {
         }
     }
 
-    /// The separate wallet stream, seeded alike by the hermetic harness.
+    /// The separate wallet stream, seeded alike by the hermetic harness, and
+    /// discovery's trust settings (toolbox #388, #331): `TRUST_SETTINGS`'s
+    /// manager, else none, the chain's default certifiers.
     pub fn options(&self) -> bsv_wallet_toolbox::WalletOptions {
         bsv_wallet_toolbox::WalletOptions {
             rng_seed: self.rng_seed,
+            settings_manager: self.trust.as_ref().map(|t| t.manager.clone()),
             ..Default::default()
         }
     }

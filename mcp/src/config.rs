@@ -209,7 +209,14 @@ impl Config {
     /// or `-`), or the value as set when it was refused, with the shape it
     /// must have.
     #[must_use]
-    pub fn knobs(&self) -> Vec<(&'static str, String, Source, Option<&'static str>)> {
+    pub fn knobs(
+        &self,
+    ) -> Vec<(
+        &'static str,
+        String,
+        Source,
+        Option<std::borrow::Cow<'static, str>>,
+    )> {
         let none = || "-".to_string();
         NAMES
             .iter()
@@ -232,7 +239,12 @@ impl Config {
                         self.rust_log.as_deref().unwrap_or("error")
                     ),
                 };
-                (name, value, self.source(name), refused.map(|e| e.expected))
+                (
+                    name,
+                    value,
+                    self.source(name),
+                    refused.map(|e| e.expected.clone()),
+                )
             })
             .collect()
     }
@@ -265,7 +277,7 @@ fn url(name: &'static str, value: &str) -> Result<String, ConfigError> {
         Err(ConfigError {
             variable: name,
             value: shown_url(value),
-            expected: "an http or https URL",
+            expected: "an http or https URL".into(),
         })
     }
 }
@@ -278,7 +290,7 @@ fn origin(name: &'static str, value: &str) -> Result<String, ConfigError> {
         Err(ConfigError {
             variable: name,
             value: value.to_string(),
-            expected: "an Origin header's value",
+            expected: "an Origin header's value".into(),
         })
     }
 }

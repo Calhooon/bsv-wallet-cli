@@ -7,6 +7,7 @@
 //! crate; it uses `std` alone, and reads no environment (each crate's
 //! config module does, the architecture rule A7).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -49,8 +50,10 @@ pub struct ConfigError {
     pub variable: &'static str,
     /// The value it holds (a URL's credentials `<set>`).
     pub value: String,
-    /// The shape it must have.
-    pub expected: &'static str,
+    /// The shape it must have: a fixed phrase, or a library's own words
+    /// for a value it validates (`TRUST_SETTINGS`, the wallet settings
+    /// manager's refusal, #331).
+    pub expected: Cow<'static, str>,
 }
 
 impl fmt::Display for ConfigError {
