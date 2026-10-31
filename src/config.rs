@@ -245,10 +245,16 @@ impl WalletSettings {
         }
     }
 
-    /// The storage stream; production has no seed.
+    /// The storage stream; production has no seed. The store's `chain` is
+    /// the wallet's (toolbox #435, the owner's 19.11): a fresh store's
+    /// settings row carries it and the live script word judges at that
+    /// chain's activation heights (toolbox #440). No host script verifier:
+    /// bsv-rs's interpreter judges (toolbox #450).
     pub fn storage_options(&self) -> bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
         bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
             rng_seed: self.rng_seed,
+            chain: self.chain,
+            script_verifier: None,
         }
     }
 

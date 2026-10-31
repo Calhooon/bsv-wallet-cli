@@ -43,7 +43,7 @@ pub fn deposit_address(root_key: &PrivateKey, chain: Chain) -> Result<String> {
         true,
     )?;
     Ok(match chain {
-        Chain::Test => derived.to_address_with_prefix(0x6f),
+        Chain::Test | Chain::Regtest => derived.to_address_with_prefix(0x6f),
         Chain::Main => derived.to_address(),
     })
 }

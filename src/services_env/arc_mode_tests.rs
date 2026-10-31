@@ -108,7 +108,7 @@ fn gorillapool_arc_is_never_a_rung() {
         // A testnet wallet in Arcade mode names its endpoint.
         let arcade: &[(&str, &str)] = match chain {
             Chain::Main => &[],
-            Chain::Test => &[("ARC_URL", "https://arcade-test.invalid")],
+            Chain::Test | Chain::Regtest => &[("ARC_URL", "https://arcade-test.invalid")],
         };
         for pairs in [
             arcade,

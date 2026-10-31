@@ -16,6 +16,7 @@ pub async fn run(config: &Config, json: bool) -> Result<()> {
     let chain_name = match chain {
         Chain::Main => "mainnet",
         Chain::Test => "testnet",
+        Chain::Regtest => "regtest",
     };
 
     match services.get_height().await {
