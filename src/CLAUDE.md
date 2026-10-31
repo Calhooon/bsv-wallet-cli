@@ -84,7 +84,7 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 
 **Environment variables consumed (read by `config.rs`):**
 - `ROOT_KEY` (required) — hex-encoded private key
-- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`ServicesSettings::header_service`, `services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
+- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`ServicesSettings::header_service`, `services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero; the wallet's own spends of its proven coins still reach allocation (the latest era), an incoming or caller-supplied BEEF with proofs is refused for want of headers, and discovery answers no overlay certificate (toolbox 0.14.0-beta.5, #372)
 - `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default) — `1`/`true`/`yes` lets the toolbox ask WhatsOnChain, then Bitails, for headers when the header service gives no answer, each call logged at warn
 - `WOC_API_KEY`, `BITAILS_API_KEY` (optional) — explorer keys passed to `ServicesOptions` (`WOC_API_KEY` also to the CLI's own WhatsOnChain rung in `explorers.rs`)
 - `BANANABLOCKS_BASE` — BananaBlocks API base: unset = the chain's default, empty = off (`services_env::ExplorerSettings`, the toolbox's `ServicesOptions::bananablocks_base`)

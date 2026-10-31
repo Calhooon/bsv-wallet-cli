@@ -10,7 +10,7 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven |
+//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service: every proof is refused and nothing is marked proven; the wallet's own spends of its proven coins still reach allocation, judged at the latest era; an incoming or caller-supplied BEEF with proofs is refused with the toolbox's text (`the merkle proofs of a BEEF the wallet did not sign need headers, and no header service is configured`); discovery answers no overlay certificate, the local and configured records still answering (toolbox 0.14.0-beta.5, #372) |
 //! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
 //! | `ARC_MODE` | The broadcaster mode: unset, blank or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; any other value is refused by name |
 //! | `ARCADE` | The older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic; any other value is refused by name |
@@ -49,7 +49,9 @@ use crate::config::{
 /// public URL to default to.
 pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it to the header \
      service that checks merkle roots (your chaintracks-cloudflare or rust-chaintracks \
-     deployment), or to `off` to run with none (every merkle proof is then refused). There is \
+     deployment), or to `off` to run with none (every merkle proof, and every BEEF with proofs \
+     the wallet did not sign, is then refused; its own spends of its proven coins proceed). \
+     There is \
      no default header service.";
 
 /// The CLI's explicit classic endpoints (#322). Toolbox beta.2 defaults to
@@ -69,8 +71,13 @@ pub const fn classic_arc_url(chain: Chain) -> &'static str {
 /// A URL is the header service. `off` returns `None`: the
 /// wallet has no chain tracker, and the toolbox refuses every proof that
 /// reaches it (webhook, SSE, monitor, relay) rather than take it on the
-/// broadcaster's word, so nothing is marked proven; only ever right for an
-/// offline or air-gapped run. Unset or empty is an error
+/// broadcaster's word, so nothing is marked proven. The wallet's own spends
+/// of its proven coins still reach allocation, judged at the latest era
+/// (toolbox 0.14.0-beta.5, #506); an incoming or caller-supplied BEEF with
+/// proofs is refused with the toolbox's text, `the merkle proofs of a BEEF
+/// the wallet did not sign need headers, and no header service is
+/// configured` (#509, #511); discovery answers no overlay certificate
+/// (#502). Only ever right for an offline or air-gapped run. Unset or empty is an error
 /// ([`CHAINTRACKS_URL_REQUIRED`]): there is no default.
 pub fn chaintracks_url_for(configured: Option<&HeaderService>) -> Result<Option<String>> {
     match configured {
@@ -87,7 +94,10 @@ pub const BREAK_GLASS_WARNING: &str = "BREAK_GLASS_EXPLORER_HEADERS is on: when 
 
 /// What a wallet with `CHAINTRACKS_URL=off` is told at startup.
 pub const CHAINTRACKS_OFF_WARNING: &str = "CHAINTRACKS_URL=off: no chain tracker, so every merkle \
-     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set";
+     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set; the wallet's \
+     own spends of its proven coins still proceed, a BEEF with proofs the wallet did not sign \
+     (an incoming payment, a caller's inputBEEF) is refused because its proofs need headers, and \
+     discovery answers no overlay certificate";
 
 /// Refuse a command whose job is to prove when no chain tracker is
 /// configured: it could only refuse every proof it met, so it exits
@@ -529,6 +539,10 @@ mod tests {
     fn the_off_warning_says_proofs_are_refused() {
         assert!(CHAINTRACKS_OFF_WARNING.contains("every merkle proof will be refused"));
         assert!(!CHAINTRACKS_OFF_WARNING.contains("stored"));
+        // Both halves of the offline setting (toolbox 0.14.0-beta.5, #372).
+        assert!(CHAINTRACKS_OFF_WARNING.contains("own spends of its proven coins still proceed"));
+        assert!(CHAINTRACKS_OFF_WARNING.contains("its proofs need headers"));
+        assert!(CHAINTRACKS_OFF_WARNING.contains("no overlay certificate"));
     }
 
     #[test]
