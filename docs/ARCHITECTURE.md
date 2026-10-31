@@ -480,16 +480,21 @@ side by `l2_stub_refusal_names_txid_courier_reason_and_stores_nothing`,
 (`is_outgoing` 0), its outputs as coins of the default basket, and a
 request for the transaction's own post.
 The CLI judges no transaction itself; the toolbox's internalize door owns
-the verdict, with its move to the node's word per input
-on the toolbox's lane
+the verdict under the node's word per input: toolbox 0.14.0-beta.4, pinned
+at #347, is the published version that carries it
 ([toolbox #422](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/422),
-[#432](https://github.com/Calhooon/bsv-wallet-toolbox-rs/pull/432)).
-With [bsv-rs 0.9.0-beta.3 `ScriptFlags`](https://github.com/Calhooon/bsv-rs/blob/v0.9.0-beta.3/src/script/flags.rs),
-compose that word through `from_bits` and apply it with `Spend::set_flags`:
-the transaction-level flags from the spend's era (the tip's era, or tip+1
-for an unproven transaction; read by the hash-type gate) plus the per-input
+[#432](https://github.com/Calhooon/bsv-wallet-toolbox-rs/pull/432); #340's
+clause closes with this pin). The word is bsv-rs 0.9.0-beta.4's
+`input_script_flags` from the store's `chain` (toolbox #440; the CLI's
+`StorageSqlxOptions.chain` is the wallet's chain flag, toolbox #435): the
+transaction-level flags from the spend's era (tip+1, the block it would be
+mined in; with no tip the latest era, toolbox #464) plus the per-input
 `UTXO_AFTER_GENESIS` and `UTXO_AFTER_CHRONICLE` bits from the coin's
-proven-height era (read by the opcode gates and the number bound).
+proven-height era, at that chain's own Genesis and Chronicle heights. The
+same toolbox judges a caller's `inputBEEF` at `createAction` (#426) and the
+wallet's own signed transaction at signing (#450); an input it cannot judge
+(a coin or spend before Genesis, the work budget) is refused as not judged
+(bsv-rs #452), never as invalid.
 
 **Hop 3, the answer and the word.** The answer is `accepted` with, when the
 toolbox's post of the internalized transaction drew no accepting word, the

@@ -10,14 +10,17 @@ storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.3**, **bsv-rs =0.9.0-beta.3** and **bsv-tracker =0.9.0-beta.3**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.4**, **bsv-rs =0.9.0-beta.4** and **bsv-tracker =0.9.0-beta.4**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
-The [#338 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/338) uses the
-published beta.3 packages and maps ordinary refusals by their reference class
-([#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330)); certificate
-discovery returns empty results until
-[#331](https://github.com/Calhooon/bsv-wallet-cli/issues/331). Certificate JSON
+The [#347 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/347) uses the
+published beta.4 packages and maps ordinary refusals by their reference class
+([#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330)) and the
+toolbox's typed faults by their family
+([#342](https://github.com/Calhooon/bsv-wallet-cli/issues/342)); certificate
+discovery answers the certifiers `TRUST_SETTINGS` trusts
+([#331](https://github.com/Calhooon/bsv-wallet-cli/issues/331)), the chain's
+default certifiers when it is unset. Certificate JSON
 uses `type`, hex signatures and base64 keyrings. Run
 `bsv-wallet certificates --reverify` once after upgrading to check stored
 signatures without changing certificates. Certificates issued through the
@@ -134,6 +137,21 @@ as an array of `{name, value, source}`, `value` `null` for no value (`-`,
 otherwise (`CHAINTRACKS_URL=off` is a value, the header service set off: the
 string `off`; unset or blank it is `null`); `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
+`TRUST_SETTINGS` (#331) is discovery's trust section: the reference's trust
+settings JSON, `{"trustLevel": 2, "trustedCertifiers": [{"name", "description",
+"identityKey", "trust", "iconUrl"}]}`, single-quoted in a `.env` (`init` writes
+the line commented). Unset, discovery trusts the chain's default certifiers.
+The toolbox's settings manager validates it once at start (trust level 1 to
+2560, a certifier's trust 1 to 10, a name of 1 to 100 bytes, a description of
+1 to 500, a compressed 66-hex key, at most 256 certifiers, absolute
+credential-free http(s) URLs) and its refusal is the knob's, in its words. The
+served `certifierInfo` is the wallet's transform of an entry, as the reference
+builds it: a missing `iconUrl` is served as `https://bsvblockchain.org/favicon.ico`,
+a description is cut at 50 bytes and trimmed, and one under 5 bytes is served
+as `Trusted certifier`; an entry whose description is 5 to 50 bytes and names
+its icon is served as configured. `bsv-wallet config` shows the row as
+`<n> trusted certifier(s), trust level <l>`.
+
 The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
 
 | variable | effect |
@@ -161,7 +179,7 @@ of 2026-10-27: "arc is old af... we use arcade now for everyting"):
 | `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode a set key is unused and logged once at warn (no classic ARC provider runs in Arcade mode) |
 
 The postBeef providers in Arcade mode, as the code builds them, are three, in
-this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.3 posts to every one in
+this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.4 posts to every one in
 parallel and keeps each answer (its default `PromiseAll`). GorillaPool's ARC
 is never one of them, in either mode (the keeper's reading: a rung of no gate
 and no courier); BananaBlocks keeps its explorer rung, which is not ARC.

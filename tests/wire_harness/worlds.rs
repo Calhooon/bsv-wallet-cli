@@ -650,7 +650,12 @@ impl World {
             super::certificate_material::body(7, b"wire"),
         );
         let (resp, _) = self.serve_raw(&acquire).await;
-        assert_eq!(resp.status, 200, "{:?}", resp.json.map(|j| serde_json::to_string(&j).unwrap()));
+        assert_eq!(
+            resp.status,
+            200,
+            "{:?}",
+            resp.json.map(|j| serde_json::to_string(&j).unwrap())
+        );
     }
 
     /// The world's store, migrated: a file under a temp directory `keep`

@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 19 rows
+## Extensions: 20 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -44,13 +44,14 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `reviewActionResults.txid` | The transaction under review. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults.status` | The review outcome. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults.competingTxs` | The competing transaction IDs. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `createAction` | refusal | `reviewActionResults.competingBeef` | The competitor's BEEF, the reference's `Uint8Array` as its JSON (numeric keys, a Record here), filled from the stored competitor and its proof or ancestry since toolbox #389, txid-only for a competitor the store lacks. HTTP 400, numeric code 5 under the pinned #140 host map. | #347, toolbox #389 |
 | `createAction` | refusal | `sendWithResults` | The action send results, including an empty list. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `listCertificates` | response | `certificates.keyring` | The stored master keyring of a verified direct certificate; its keys form a Record. | #338, toolbox #374 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-19 extensions.
+20 extensions.
 
-## Gaps: 49 rows
+## Gaps: 35 rows
 
 Fields the BRC names that we do not read or do not serve. A request gap is a field the handler's type does not read (serde drops it) or refuses; a response gap is a field the BRC's shape has that the served body does not. An optional response field we never set (`context` of an error, `BEEF` of a `listOutputs` asked for no transactions) is not a gap.
 
@@ -79,39 +80,25 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 | `acquireCertificate` | request | `privilegedReason` | carried unread | #194 |
 | `proveCertificate` | request | `privileged` | read for the permission check only; the verifier's keyring is built with the everyday key | #194 |
 | `proveCertificate` | request | `privilegedReason` | carried unread | #194 |
-| `discoverByIdentityKey` | response | `certificates.type` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.subject` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.serialNumber` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifier` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.revocationOutpoint` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.signature` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.fields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.name` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.iconUrl` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.description` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.certifierInfo.trust` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.publiclyRevealedKeyring` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByIdentityKey` | response | `certificates.decryptedFields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.type` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.subject` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.serialNumber` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifier` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.revocationOutpoint` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.signature` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.fields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifierInfo` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.name` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.iconUrl` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.description` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.certifierInfo.trust` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.publiclyRevealedKeyring` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
-| `discoverByAttributes` | response | `certificates.decryptedFields` | no entries: toolbox #388 (CLI #331); the beta.2 type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.type` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.subject` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.serialNumber` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifier` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.revocationOutpoint` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.signature` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.fields` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.name` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.iconUrl` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.description` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.certifierInfo.trust` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.publiclyRevealedKeyring` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
+| `discoverByAttributes` | response | `certificates.decryptedFields` | no entries: attribute discovery has no local leg and the overlay answers nothing behind the wall and in the wire harness (toolbox #388); the type has this BRC field | #331 |
 
 The certificate type and flat list-entry gaps close at beta.2 (bsv-rs #105,
-#268). Discovery still returns no entries because published toolbox
-`certifier_info` always returns `None`: toolbox #388 (CLI #331). The discovery
-rows record this missing behavior; no trust setting is added. Key-linkage results are also flat at beta.3.
+#268). At beta.4 identity discovery serves its certificate fields under the
+trust settings (#331, toolbox #388; fixture 175), so its rows leave this
+table; attribute discovery's stay, its answer empty without an overlay. Key-linkage results are also flat at beta.3.
 Privileged-request and refusal-envelope gaps retain their existing issues.
 `getVersion` still answers the toolbox's own version (#122 item 6).
 
@@ -191,16 +178,34 @@ SDK's class/message pair and is removed (#330, #342). Review-action fields
 retain PR 332's carrier. The direct certificate door constructs a
 `MasterCertificate` (canonical base64 per field), verifies the signature
 (including `Certificate::to_binary`'s 1 MiB encoded-field bound), then proves
-the keyring by decrypting every field before storage (toolbox 0.14.0-beta.3
-`src/wallet/direct_acquire.rs:167-197`, called from `wallet.rs:2557-2563`).
-The published bsv-rs 0.9.0-beta.3 also defines
+the keyring by decrypting every field before storage (toolbox 0.14.0-beta.4
+`src/wallet/direct_acquire.rs:174-197`, called from `wallet.rs:2598-2604`).
+The published bsv-rs 0.9.0-beta.4 also defines
 `MAX_DECRYPTED_FIELD_BYTES = 64 * 1024` in
 `src/auth/certificates/bounds.rs:26` and applies it to decrypted plaintext
 in `master.rs:325-329`. This 64 KiB limit comes from the pinned SDK (#343).
+The reference applies the bound at issuance and at decryption only
+(`MasterCertificate.ts` `createCertificateFields` and `decryptField`), and
+this stack also at direct acquisition through toolbox #374's keyring proof,
+a divergence from the reference's store-as-given (toolbox
+`docs/ARCHITECTURE.md` section 7, row D26 at a8107be2, toolbox PR #476).
 Fixture 155's signed 1 MiB encoded field passes construction and verification,
 then its 786,384 plaintext bytes exceed that SDK limit. Fixture 156's
 1,048,577-byte non-canonical base64 fails construction before verification;
 fixture 157's 73-byte non-DER signature fails argument validation before
 construction. Fixtures 173 and 174 store and read back a valid field with
-exactly 65,536 plaintext bytes. Discovery still serves no entries; #331
-remains its own change.
+exactly 65,536 plaintext bytes.
+
+At the beta.4 pin (#347) discovery answers under the wallet's trust settings
+(#331, toolbox #388): `TRUST_SETTINGS` names the trusted certifiers and the
+threshold, and `discoverByIdentityKey` answers a trusted certifier's
+certificates with `certifierInfo` (fixture 175; a stranger's is dropped,
+fixture 176). The served `certifierInfo` is the wallet's transform of the
+setting, as the reference builds it (toolbox `src/wallet/discovery_trust.rs`,
+the reference's `identityUtils.ts`): a missing `iconUrl` is served as
+`https://bsvblockchain.org/favicon.ico`, a description is cut at 50 bytes on a
+code point boundary and trimmed, and one under 5 bytes is served as `Trusted
+certifier`; so a setting's 1-to-500-byte description meets BRC-100's 5 to 50
+on every answer. Only identity discovery has a local leg: `discoverByAttributes`
+asks the overlay, which answers nothing behind the hermetic wall and in the
+wire harness, so its fixtures stay empty whatever the trust settings say.

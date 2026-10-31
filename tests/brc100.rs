@@ -21,9 +21,17 @@ const SIDES: [&str; 3] = ["request", "response", "refusal"];
 type Key = (String, String, String);
 
 /// The stored master keyring is a nested extension reached by beta.3's
-/// verified certificate fixture; its field names are a Record's keys.
-const NESTED_RECORDS: [(&str, &str, &str); 1] =
-    [("listCertificates", "response", "certificates.keyring")];
+/// verified certificate fixture; its field names are a Record's keys. The
+/// review's competing BEEF (toolbox #389, beta.4) is the reference's
+/// `Uint8Array` as its JSON, whose keys are byte offsets.
+const NESTED_RECORDS: [(&str, &str, &str); 2] = [
+    ("listCertificates", "response", "certificates.keyring"),
+    (
+        "createAction",
+        "refusal",
+        "reviewActionResults.competingBeef",
+    ),
+];
 
 /// What the BRC names: its calls, every field as a [`Key`] (the error
 /// structure under `*`, `refusal`) and its `Record` fields as keys (with
