@@ -41,6 +41,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_page_bounds::record_page_bounds(r).await;
     super::cases_beta2::record(r).await;
     super::cases_beta3::record(r).await;
+    super::cases_beta4::record(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.

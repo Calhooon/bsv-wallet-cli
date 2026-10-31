@@ -27,10 +27,12 @@ const FUNDER_DIR = process.env.FUNDER_DIR || path.resolve(__dirname, '..', '..',
 const WALLET_TMP = process.env.E2E_WALLET_TMP || '/tmp';
 
 /**
- * Initialize and start a wallet on a given port.
+ * Initialize and start a wallet on a given port. `env` names settings the
+ * wallet's `.env` carries beside the key `init` wrote (wallet B's
+ * TRUST_SETTINGS, #331), read by `serve` and every CLI command alike.
  * Returns { dir, proc, client, identityKey, address }.
  */
-async function startWallet(port, name) {
+async function startWallet(port, name, { env = {} } = {}) {
   // The port must be free. A process already answering there (another
   // wallet's daemon, a leftover) would take this wallet's requests: the
   // 2026-10-23 run funded someone's daemon on :3323 and swept its coins
@@ -50,6 +52,10 @@ async function startWallet(port, name) {
   // so two differential runs drive the same wallets.
   const key = record.rootKeyFor(name);
   execSync(`cd "${dir}" && "${BSV}" init${key ? ` --key ${key}` : ''}`, { stdio: 'pipe' });
+  for (const [variable, value] of Object.entries(env)) {
+    if (value.includes("'")) throw new Error(`${name}: ${variable} cannot be single-quoted in .env`);
+    fs.appendFileSync(path.join(dir, '.env'), `${variable}='${value}'\n`);
+  }
 
   // Start serve in background. The monitor daemon is NOT needed for test wallets
   // because internalized txs are spent via BEEF which includes the parent tx

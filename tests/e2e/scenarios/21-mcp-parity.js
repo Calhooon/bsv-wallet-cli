@@ -169,14 +169,20 @@ module.exports = {
       assert(mcpVersion.version === httpVersion.version,
         `MCP version must match HTTP version`);
 
-      // The same empty discovery contract through MCP: toolbox #388 (CLI #331).
-      for (const [tool, args] of [
-        ['discover_by_identity_key', { identityKey: httpKey }],
-        ['discover_by_attributes', { attributes: { role: 'e2e-tester' } }],
+      // The MCP's two discover tools answer the HTTP door's discovery
+      // (#331): wallet A reads no TRUST_SETTINGS and holds no certificate,
+      // so both are empty through either door.
+      for (const [tool, args, http] of [
+        ['discover_by_identity_key', { identityKey: httpKey },
+          () => walletA.client.discoverByIdentityKey(httpKey)],
+        ['discover_by_attributes', { attributes: { role: 'e2e-tester' } },
+          () => walletA.client.discoverByAttributes({ role: 'e2e-tester' })],
       ]) {
         const discovered = await mcp.callTool(tool, args);
-        assert(discovered.totalCertificates === 0 && discovered.certificates.length === 0,
-          `${tool}: empty discovery at the published beta.2 pin`);
+        const served = await http();
+        assert(discovered.totalCertificates === served.totalCertificates
+          && JSON.stringify(discovered.certificates) === JSON.stringify(served.certificates),
+          `${tool}: the MCP answers the HTTP door's discovery: ${JSON.stringify(discovered)} vs ${JSON.stringify(served)}`);
       }
 
       return {

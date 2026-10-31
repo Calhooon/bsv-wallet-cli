@@ -79,4 +79,14 @@ function decryptField(key, encoded) {
   cipher.setAuthTag(bytes.subarray(-16));
   return Buffer.concat([cipher.update(bytes.subarray(32, -16)), cipher.final()]).toString();
 }
-module.exports = { start, TYPE, SERIAL, VALUES, unsigned, decryptField };
+// The certifier's entry in a subject's TRUST_SETTINGS (#331, toolbox #388):
+// trust 3 over the reference's default threshold 2, a description within
+// BRC-100's 5 to 50 bytes and an icon named, so the served certifierInfo
+// is this entry (the toolbox cuts a longer description and fills a missing
+// icon: discovery_trust.rs).
+const INFO = { name: 'E2E Certifier', iconUrl: 'https://certifier.e2e.invalid/icon.png',
+  description: 'The e2e harness certifier', trust: 3 };
+function trustSettings(identityKey) {
+  return { trustLevel: 2, trustedCertifiers: [{ ...INFO, identityKey }] };
+}
+module.exports = { start, TYPE, SERIAL, VALUES, INFO, trustSettings, unsigned, decryptField };
