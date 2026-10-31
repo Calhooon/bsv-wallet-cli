@@ -38,7 +38,7 @@ async fn a_stored_proof_without_a_request_link_refuses_respend() {
         .execute(s.writer())
         .await
         .unwrap();
-    sqlx::query("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) SELECT txid,900900,0,?,?,?,raw_tx,created_at,updated_at FROM transactions WHERE transaction_id=?")
+    sqlx::query("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) SELECT txid,870900,0,?,?,?,raw_tx,created_at,updated_at FROM transactions WHERE transaction_id=?")
         .bind("aa".repeat(32))
         .bind(&f.phantom)
         .bind(proof(&f.phantom))
