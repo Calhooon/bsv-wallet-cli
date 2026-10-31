@@ -1,0 +1,45 @@
+{
+  "world": "trusted",
+  "request": {
+    "method": "POST",
+    "path": "/discoverByIdentityKey",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "identityKey": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalCertificates": 1,
+      "certificates": [
+        {
+          "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
+          "subject": "02505f234a81fe3af88625ebda259dbaec44c72b181e2f64735f8b8ec8d7cf7377",
+          "serialNumber": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+          "certifier": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "revocationOutpoint": "3333333333333333333333333333333333333333333333333333333333333333.0",
+          "signature": "3045022100966a1acc6378e92139a86d0dcde8a681f81e7c2468dbda7da321bb476868f0bc0220744b0b6cfc5378deff44db35f963c8a451b0c4a0c05633128b3bf8b615ed8f27",
+          "fields": {},
+          "certifierInfo": {
+            "name": "Wire Certifier",
+            "iconUrl": "https://wire.test/certifier.png",
+            "description": "The wire harness's certifier",
+            "trust": 3
+          },
+          "publiclyRevealedKeyring": {},
+          "decryptedFields": {}
+        }
+      ]
+    }
+  }
+}

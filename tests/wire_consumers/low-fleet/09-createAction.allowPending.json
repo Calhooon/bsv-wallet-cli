@@ -26,7 +26,7 @@
     }
   },
   "response": {
-    "status": 400,
+    "status": 500,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://localhost:5173",
@@ -35,7 +35,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "ERROR",
+      "code": "INTERNAL_ERROR",
       "message": "wallet error: Signing failed: Signing error: Derived pubkey hash160 7cc1e4648c07677ae0104b643691b6e0b813f2e1 does not match locking script hash160 dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa. Transaction aborted and UTXOs released."
     }
   }

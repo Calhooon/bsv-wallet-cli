@@ -11,7 +11,7 @@
     }
   },
   "response": {
-    "status": 400,
+    "status": 500,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -20,7 +20,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "ERROR",
+      "code": "INTERNAL_ERROR",
       "message": "wallet error: SQLx error: error returned from database: (code: 1) no such table: outputs"
     }
   }
