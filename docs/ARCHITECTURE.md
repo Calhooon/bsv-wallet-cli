@@ -440,7 +440,9 @@ reads the originator, maps the MetaNet body to `InternalizeActionArgs`
 `insertionRemittance` passed through, `basket` and `tags` kept) and strips
 the gate's rule label from the caller's labels
 (`strip_rule_label`, `src/server/handlers.rs:777-780`; `strip_rule_label`,
-`src/spend_gate.rs:746`), so a forged label grants nothing. The body cap is
+`src/spend_gate.rs:746`), so a forged label grants nothing. The strip
+compares a label after the toolbox's own normalization (ECMAScript trim,
+U+FEFF included, then lowercase), as the toolbox stores it. The body cap is
 off on this door (`DefaultBodyLimit`, `src/server/mod.rs:242-245`): a valid BEEF is never
 refused for its size, invalid bytes are refused at their offset
 (`served_beef_doors.rs`, `an_invalid_beef_over_the_old_body_cap_is_refused_at_its_byte`).

@@ -1758,6 +1758,8 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
             RECEIVED_PENDING_LABEL.to_string(),
             " Spend-Gate:Received-Pending ".to_string(),
             " underReceivedRule ".to_string(),
+            "\u{feff}spend-gate:received-pending".to_string(),
+            "\u{feff}underReceivedRule".to_string(),
             "mine".to_string(),
         ]);
         args.options = Some(CreateActionOptions {
@@ -1809,6 +1811,19 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let mut none = None;
     strip_rule_label(&mut none);
     assert_eq!(none, None);
+}
+
+/// Across every scalar value the strip's set departs from Unicode
+/// `White_Space` (`char::is_whitespace`) only at U+0085 and U+FEFF, as the
+/// toolbox's own set does (toolbox 0.14.0-beta.4 `src/wallet/label.rs:55-63`):
+/// a drift in either set is caught here.
+#[test]
+fn the_strip_trims_as_the_toolbox_trims_a_label() {
+    let differing: Vec<char> = (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .filter(|&c| is_ecmascript_whitespace(c) != c.is_whitespace())
+        .collect();
+    assert_eq!(differing, vec!['\u{0085}', '\u{FEFF}']);
 }
 
 /// The labels the toolbox stored on the action whose reference is
