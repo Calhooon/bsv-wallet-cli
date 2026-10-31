@@ -341,3 +341,27 @@ reached by a fixture; no recorded `createHmac` key has a leading-zero X
 coordinate (bsv-rs #379); the certificate key order in 042 to 054 is
 unchanged (serde_json without `preserve_order`). Row 145 stays the one known
 refusal of bsv-rs's result rows (R56, #371, ts-stack #1451).
+
+## The beta.5 pin (#376)
+
+The packages alone move no row: before the seed change below, the wire,
+consumers and BRC replays under bsv-rs 0.9.0-beta.5, toolbox 0.14.0-beta.5
+and bsv-tracker 0.9.0-beta.5 were clean. One row moves, for #371: the
+harness's seed wrote the literal `c` as every seeded coin's
+`output_description`, one byte under BRC-100's 5 to 2000 (R51), and now
+writes the coin's own reason (`a funded coin`, `a caller puzzle`, `a received
+coin`, `our change`). Row 145 (`listActions.afterOverlongSpend`) is the one
+fixture that shows a seeded coin's description: its stored unsigned
+template's input reads `a caller puzzle`. bsv-rs's R56 accepts an `unsigned`
+action's input with no `unlockingScript` from this pin (bsv-rs #491, PR #539),
+so row 145 now passes R51 and R56. Every recorded 200 answer of the wire and
+consumers corpora (97 wallet calls, their volatile values denormalized and
+fixture 159's bound certificate resolved) passes bsv-rs 0.9.0-beta.5's
+result rows; nine 200 rows are host routes no wallet client reads
+(`/permission-audit`, `/chain-feed`, `/tx/<txid>`, `/arc-callback`). No row
+reaches toolbox #509's hold text (every wire world carries a tracker), the
+discovery doors' chain evidence (toolbox #502: no world has an overlay, so
+053, 054, 137 to 140, 175 and 176 answer from the local and configured
+records), a work-budget refusal (bsv-rs #519), or a lenient or `05`-tagged
+key (bsv-rs #498, #550); row 026's non-hex key keeps its words, and the
+doors read a key argument as at beta.4 (#377).
