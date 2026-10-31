@@ -56,13 +56,14 @@ impl<T: ChainTracker> ChainTracker for TestChainTracker<T> {
         self.0.current_height().await
     }
 
+    /// The SDK mock's synthetic mainnet tip at the wrapped tracker's height
+    /// (median time past 1,700,000,000, mainnet's Genesis 620,538 and CSV
+    /// 419,328, no candidate block time): bsv-rs 0.9.0-beta.4 deprecates
+    /// `ChainTip.genesis_height` (#451), so the tip comes from the package
+    /// rather than a literal naming it.
     async fn mining_tip(&self) -> Result<Option<ChainTip>, ChainTrackerError> {
-        Ok(Some(ChainTip {
-            height: self.0.current_height().await?,
-            median_time_past: 1_700_000_000,
-            genesis_height: 620_538,
-            csv_height: 419_328,
-            next_block_time: None,
-        }))
+        MockChainTracker::new(self.0.current_height().await?)
+            .mining_tip()
+            .await
     }
 }

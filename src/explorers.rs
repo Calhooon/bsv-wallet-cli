@@ -126,7 +126,7 @@ impl Explorers {
         static TEST: OnceLock<Arc<Explorers>> = OnceLock::new();
         let cell = match chain {
             Chain::Main => &MAIN,
-            Chain::Test => &TEST,
+            Chain::Test | Chain::Regtest => &TEST,
         };
         cell.get_or_init(|| {
             Arc::new(Self::configured_at(

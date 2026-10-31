@@ -59,7 +59,7 @@ pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it t
 pub const fn classic_arc_url(chain: Chain) -> &'static str {
     match chain {
         Chain::Main => "https://arc.taal.com",
-        Chain::Test => "https://arc-test.taal.com",
+        Chain::Test | Chain::Regtest => "https://arc-test.taal.com",
     }
 }
 
@@ -134,7 +134,7 @@ impl ExplorerBases {
                 BITAILS_MAINNET_URL,
                 ServicesOptions::mainnet(),
             ),
-            Chain::Test => (
+            Chain::Test | Chain::Regtest => (
                 WOC_TESTNET_URL,
                 BITAILS_TESTNET_URL,
                 ServicesOptions::testnet(),
@@ -269,7 +269,7 @@ pub fn arcade_url_for(chain: Chain, arc_url: Option<&str>) -> Result<String> {
     match (arc_url.map(str::trim).filter(|s| !s.is_empty()), chain) {
         (Some(url), _) => Ok(url.to_string()),
         (None, Chain::Main) => Ok(ARCADE_V2_MAINNET.to_string()),
-        (None, Chain::Test) => anyhow::bail!("{NO_TESTNET_ARCADE_DEFAULT}"),
+        (None, Chain::Test | Chain::Regtest) => anyhow::bail!("{NO_TESTNET_ARCADE_DEFAULT}"),
     }
 }
 
@@ -390,7 +390,7 @@ fn services_options_quiet(
 ) -> Result<ServicesOptions> {
     let mut opts = match chain {
         Chain::Main => ServicesOptions::mainnet(),
-        Chain::Test => ServicesOptions::testnet(),
+        Chain::Test | Chain::Regtest => ServicesOptions::testnet(),
     };
 
     match settings.header_service()? {

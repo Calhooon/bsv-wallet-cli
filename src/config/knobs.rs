@@ -176,7 +176,7 @@ impl Config {
         let arc_url = match (&s.arc_url, s.arc_mode, self.chain()) {
             (Some(url), _, _) => Value::Text(shown_url(url)),
             (None, ArcMode::Arcade, Chain::Main) => Value::Text(ARCADE_V2_MAINNET.to_string()),
-            (None, ArcMode::Arcade, Chain::Test) => Value::None("unset"),
+            (None, ArcMode::Arcade, Chain::Test | Chain::Regtest) => Value::None("unset"),
             (None, ArcMode::Classic, chain) => {
                 Value::Text(crate::services_env::classic_arc_url(chain).to_string())
             }

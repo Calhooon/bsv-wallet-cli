@@ -472,15 +472,16 @@ mod tests {
                 original.current_height().await
             );
             let tip = tracker.mining_tip().await.unwrap().expect("mining context");
+            // Genesis is `ChainParams`'s since bsv-rs 0.9.0-beta.4 (#451);
+            // the tip's deprecated copy is not read.
             assert_eq!(
                 (
                     tip.height,
                     tip.median_time_past,
-                    tip.genesis_height,
                     tip.csv_height,
                     tip.next_block_time
                 ),
-                (900_001, 1_700_000_000, 620_538, 419_328, None)
+                (900_001, 1_700_000_000, 419_328, None)
             );
         }
     }
