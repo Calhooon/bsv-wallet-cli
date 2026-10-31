@@ -688,8 +688,20 @@ fn parse_counterparty(s: &str) -> Result<Counterparty> {
     match s {
         "self" => Ok(Counterparty::Self_),
         "anyone" => Ok(Counterparty::Anyone),
-        hex => Ok(Counterparty::Other(PublicKey::from_hex(hex)?)),
+        hex => Ok(Counterparty::Other(strict_public_key(hex)?)),
     }
+}
+
+/// A caller's key argument read strictly: even-length hex, then
+/// `PublicKey::from_bytes`, as `PublicKey::from_hex` read it through bsv-rs
+/// 0.9.0-beta.4 and in its words (#377). From beta.5 `from_hex` reads the
+/// reference's lenient `fromString` forms (bsv-rs #498: odd-length, hybrid,
+/// a coordinate at or above p), which the reference's wallet refuses at
+/// these arguments (`validatePublicKey`, ts-stack@edf6e03
+/// `sdk/src/wallet/validationHelpers.ts:185-196`); bsv-rs keeps its own
+/// strict reading crate-private.
+fn strict_public_key(hex: &str) -> bsv_sdk::Result<PublicKey> {
+    PublicKey::from_bytes(&bsv_sdk::primitives::from_hex(hex)?)
 }
 
 // =============================================================================
@@ -1225,9 +1237,8 @@ pub async fn reveal_counterparty_key_linkage(
         req.privileged_reason.as_deref(),
     )?;
     let args = WalletRevealCounterpartyArgs {
-        counterparty: PublicKey::from_hex(&req.counterparty)
-            .map_err(|e| anyhow::anyhow!("{}", e))?,
-        verifier: PublicKey::from_hex(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
+        counterparty: strict_public_key(&req.counterparty).map_err(|e| anyhow::anyhow!("{}", e))?,
+        verifier: strict_public_key(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
     };
@@ -1252,7 +1263,7 @@ pub async fn reveal_specific_key_linkage(
     )?;
     let args = WalletRevealSpecificArgs {
         counterparty: parse_counterparty(&req.counterparty)?,
-        verifier: PublicKey::from_hex(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
+        verifier: strict_public_key(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
         key_id: req.key_id,
         privileged: req.privileged,
