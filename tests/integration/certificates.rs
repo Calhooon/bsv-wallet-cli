@@ -180,11 +180,14 @@ async fn test_prove_certificate_not_found() {
     );
 }
 
-/// POST /relinquishCertificate with nonexistent cert — wallet returns 200 with relinquished: false.
+/// POST /relinquishCertificate with a nonexistent cert: since toolbox
+/// 0.14.0-beta.4 (#430, CLI #344) the wallet refuses before changing
+/// storage with the reference's words, class `BadRequest`, served 400
+/// `VALIDATION_ERROR`, where it answered `{relinquished: true}`.
 #[tokio::test]
 async fn test_relinquish_certificate_not_found() {
     let (base, client, _tmp) = setup().await;
-    let body = post_json_ok(
+    let resp = post_json(
         &client,
         &format!("{base}/relinquishCertificate"),
         json!({
@@ -194,9 +197,10 @@ async fn test_relinquish_certificate_not_found() {
         }),
     )
     .await;
-    assert!(
-        body["relinquished"].is_boolean(),
-        "response should have relinquished boolean, got: {:?}",
-        body
+    assert_eq!(resp.status().as_u16(), 400);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body,
+        json!({"code": "VALIDATION_ERROR", "message": "Result must exist and be unique."})
     );
 }
