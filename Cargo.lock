@@ -340,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-rs"
-version = "0.9.0-beta.3"
+version = "0.9.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ceb5bc2f2f6a119b87fb7c43c19b3bcdb816323637b5c2655356c59825c86f90"
+checksum = "7f450f58457142311bfbdceb8e6810d94c2d02554d5fc33bfc9b536721cd794b"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -366,8 +366,10 @@ dependencies = [
  "pbkdf2",
  "primeorder",
  "rand",
+ "regex",
  "reqwest",
  "ripemd",
+ "ryu-js",
  "serde",
  "serde_json",
  "sha1 0.11.0",
@@ -376,14 +378,15 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "unicode-normalization",
+ "url",
  "urlencoding",
 ]
 
 [[package]]
 name = "bsv-tracker"
-version = "0.9.0-beta.3"
+version = "0.9.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2e94f18f7e992f78480a695c85bac4b3638c2dc60f376be1d6f55027a75f106"
+checksum = "be3653b7c6f58472ef9ad076a87bf439f4be92c6edfd82a6cb6186fef07ecfd6"
 dependencies = [
  "bsv-rs",
  "serde",
@@ -436,9 +439,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.14.0-beta.3"
+version = "0.14.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df87d439f5a5d787465270d036fe16b6c752ebad4ddcf544f1b2836c1608d690"
+checksum = "f0a62dd009526a92038d80642f58949d794999c3a9c79cb3531ceffdeb86ae9e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -451,6 +454,7 @@ dependencies = [
  "indexmap",
  "once_cell",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "serde",
@@ -459,6 +463,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
  "zeroize",
 ]
@@ -2543,6 +2548,12 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
 
 [[package]]
 name = "same-file"
