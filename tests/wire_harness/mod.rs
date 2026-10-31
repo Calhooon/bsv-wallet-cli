@@ -20,4 +20,6 @@ pub(crate) mod recorder;
 pub(crate) mod review_race;
 pub(crate) mod text_report;
 pub(crate) mod tracker_fault;
+pub(crate) mod trust;
+pub(crate) mod world_names;
 pub(crate) mod worlds;
