@@ -240,7 +240,7 @@ impl AppError {
         use bsv_sdk::WalletFaultFamily as F;
         match family {
             F::Transport | F::Service => Kind::Service,
-            F::Storage | F::Internal => Kind::Internal,
+            // Storage, Internal, and any family a later package adds.
             _ => Kind::Internal,
         }
     }
@@ -256,10 +256,8 @@ impl AppError {
         use bsv_sdk::script::NotJudgedCause as C;
         match cause {
             C::PreGenesisCoin { .. } | C::PreGenesisSpend { .. } => Kind::Conflict,
-            C::TipHeightOverflow { .. }
-            | C::ZeroActivationHeight(_)
-            | C::SourceHeightOverflow { .. }
-            | C::WorkBudgetExceeded { .. } => Kind::Internal,
+            // TipHeightOverflow, ZeroActivationHeight, SourceHeightOverflow,
+            // WorkBudgetExceeded, and any cause a later package adds.
             _ => Kind::Internal,
         }
     }

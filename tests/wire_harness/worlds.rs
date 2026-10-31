@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use axum::Router;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_cli::server::{self, ServerConfig};
-use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet, WalletStorageWriter};
+use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 
 use super::fixture::NORMALIZER;
+pub(crate) use super::world_names::{known_world, WORLDS};
 use crate::wire_support::{header_stub, serve_local, services, Req, Resp, CLOSED, J, ROOT_KEY};
 
 // ---------------------------------------------------------------------------
@@ -32,29 +33,6 @@ pub(crate) const FROZEN: &str = "44444444444444444444444444444444444444444444444
 pub(crate) const RECEIVED: &str =
     "6666666666666666666666666666666666666666666666666666666666666666";
 pub(crate) const P2PKH: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
-
-/// The names of the worlds (see [`World::build`]).
-pub(crate) const WORLDS: [&str; 19] = [
-    "fresh",
-    "certificate-privacy",
-    "auth",
-    "callback",
-    "tracked",
-    "received",
-    "headers-down",
-    "broken",
-    "broken-host",
-    "busy",
-    "busy-read",
-    "funded",
-    "pin-spend",
-    "review-race",
-    "named-change",
-    "abort-unproven",
-    "tracker-fault",
-    "trusted",
-    "stranger",
-];
 
 /// The `funded` world's coins: (seed of the parent's input, height mined,
 /// satoshis, derivation suffix). Each parent is a one-leaf block of its own
@@ -570,6 +548,8 @@ impl World {
     /// and abort-unproven worlds isolate their guards. Pin-spend holds a
     /// stored caller puzzle, and review-race takes that coin during a header
     /// read so the toolbox must recheck it under its write transaction.
+    /// Trusted and stranger read their trust settings through the CLI's
+    /// typed config and hold the harness certificate (`super::trust`, #331).
     pub(crate) async fn build(name: &str) -> World {
         known_world(name);
         let mut keep: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
@@ -594,9 +574,7 @@ impl World {
             .await
             .unwrap();
         }
-        let wallet = Wallet::with_options(Some(key), storage, services, World::options(name))
-            .await
-            .unwrap();
+        let wallet = super::trust::wallet(name, key, storage, services).await;
         if name == "tracker-fault" {
             super::tracker_fault::Unavailable::install(wallet.storage()).await;
         }
@@ -615,47 +593,11 @@ impl World {
             _ => {}
         }
         let router = server::make_router(server::make_wallet_state(wallet), config);
-        let world = World {
+        super::trust::hold_the_harness_certificate(name, &router).await;
+        World {
             router,
             _keep: keep,
-        };
-        if matches!(name, "trusted" | "stranger") {
-            world.hold_the_harness_certificate().await;
         }
-        world
-    }
-
-    /// The wallet's options as the CLI's typed configuration builds them:
-    /// `trusted` and `stranger` read `TRUST_SETTINGS` (#331, toolbox #388),
-    /// every other world none (the chain's default certifiers).
-    fn options(name: &str) -> bsv_wallet_toolbox::WalletOptions {
-        match name {
-            "trusted" | "stranger" => bsv_wallet_cli::config::Config::from_pairs(&[(
-                "TRUST_SETTINGS",
-                &trust_settings(name),
-            )])
-            .unwrap()
-            .wallet
-            .options(),
-            _ => bsv_wallet_toolbox::WalletOptions::default(),
-        }
-    }
-
-    /// The harness's certificate (certifier [`super::recorder::G`], the
-    /// wallet its subject), acquired through the served door before any case
-    /// is recorded, so discovery has a certificate to answer.
-    async fn hold_the_harness_certificate(&self) {
-        let acquire = super::recorder::post(
-            "/acquireCertificate",
-            super::certificate_material::body(7, b"wire"),
-        );
-        let (resp, _) = self.serve_raw(&acquire).await;
-        assert_eq!(
-            resp.status,
-            200,
-            "{:?}",
-            resp.json.map(|j| serde_json::to_string(&j).unwrap())
-        );
     }
 
     /// The world's store, migrated: a file under a temp directory `keep`
@@ -769,33 +711,6 @@ impl World {
     pub(crate) async fn serve_raw(&self, req: &Req) -> (Resp, Option<J>) {
         NORMALIZER.serve(&self.router, req).await
     }
-}
-
-/// The trust settings of `trusted` and `stranger` (#331): one certifier at
-/// the reference's default threshold (2), its trust 3, its description
-/// within BRC-100's 5 to 50 bytes and its icon named, so the served
-/// `certifierInfo` is the configured entry (toolbox `discovery_trust.rs`
-/// cuts a longer description and fills a missing icon). `trusted` names
-/// the harness certificate's certifier; `stranger` names another key, so
-/// the same certificate is a stranger's.
-pub(crate) fn trust_settings(world: &str) -> String {
-    let (name, key) = match world {
-        "trusted" => ("Wire Certifier", super::recorder::G.to_string()),
-        _ => ("Other Certifier", stranger_key().public_key().to_hex()),
-    };
-    serde_json::json!({"trustLevel": 2, "trustedCertifiers": [{"name": name,
-        "description": "The wire harness's certifier", "identityKey": key, "trust": 3,
-        "iconUrl": "https://wire.test/certifier.png"}]})
-    .to_string()
-}
-
-/// A world's name is one of [`WORLDS`]; any other is a panic naming it.
-pub(crate) fn known_world(name: &str) {
-    assert!(
-        WORLDS.contains(&name),
-        "unknown world `{name}`: the worlds are {}",
-        WORLDS.join(", ")
-    );
 }
 
 /// The request with each bound value read from the body `served` holds for
