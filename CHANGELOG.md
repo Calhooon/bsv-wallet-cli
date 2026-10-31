@@ -5,6 +5,79 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## [Unreleased]
 
+## [0.19.0-beta.4] - 2026-10-31
+
+- **Discovery's trust settings (#331):** `TRUST_SETTINGS`, the reference's
+  trust settings JSON (`trustLevel` and `trustedCertifiers` with each
+  certifier's `name`, `description`, `identityKey`, `trust` and `iconUrl`),
+  supplies the wallet's settings manager (toolbox #388); unset, discovery
+  trusts the chain's default certifiers. The toolbox's manager validates it
+  once at start and its refusal is the knob's, by name, in its words.
+  `discoverByIdentityKey` answers a trusted certifier's certificates with
+  `certifierInfo` and drops a stranger's; the served `certifierInfo` is the
+  wallet's transform of the entry (a description cut to 50 bytes, under 5
+  bytes `Trusted certifier`, a missing icon the reference's favicon).
+  `bsv-wallet init` writes the knob commented in `.env`.
+
+- **Typed faults and the abort record (#342):** the toolbox's faults are
+  served by their family (bsv-rs #439): transport and service 502
+  `SERVICE_ERROR`, storage and internal 500 `INTERNAL_ERROR`, where they
+  answered 400 `ERROR`; the words are unchanged. An abort refused on stored
+  acceptance keeps its class's status and carries the recovery hint again,
+  selected on the typed record and naming its transaction, status and
+  accepting word when known. An input the stack could not judge is answered
+  by its cause: a coin or spend before Genesis 409 `CONFLICT`, the stack's
+  tip, activation heights or work budget 500.
+
+- **Relinquishing an unknown certificate (#344):** `relinquishCertificate`
+  of a certificate the wallet does not hold is refused before storage
+  changes, 400 `VALIDATION_ERROR` `Result must exist and be unique.` (the
+  reference's `BadRequest`, toolbox #430), where it answered
+  `{relinquished: true}`.
+
+- **The beta.4 pin (#347):** bsv-rs `=0.9.0-beta.4`, bsv-wallet-toolbox-rs
+  `=0.14.0-beta.4` and bsv-tracker `=0.9.0-beta.4`, one of each in both locks.
+  The store takes the wallet's chain (toolbox #435) and judges at that chain's
+  own Genesis and Chronicle heights (toolbox #440); labels are stored trimmed
+  and lowercased (toolbox #392); the wallet's own signed transaction and a
+  caller's `inputBEEF` are judged under the node's word before anything is
+  written or posted (toolbox #450, #426), and an input the stack cannot judge
+  is refused as not judged (bsv-rs #452); a double-spend review carries
+  `competingBeef` (toolbox #389). An attribute query now answers only
+  certificates the reference's matcher accepts (toolbox #474: fewer
+  certificates, a smaller `totalCertificates` possible). With
+  `CHAINTRACKS_URL=off` every signed spend is now refused at the toolbox's tip
+  read (#372). The spend gate strips its rule labels after the toolbox's own
+  normalization (ECMAScript trim, U+FEFF included, and Unicode lowercase),
+  closing the forgery the beta.4 toolbox's label normalization (toolbox #392,
+  toolbox #437) would otherwise open through a BOM-prefixed label (the cold
+  review's finding).
+
+- **E2E harness and CI:** Keep Playwright's Chromium in the harness's own
+  `tests/e2e/.browsers` folder (or `PLAYWRIGHT_BROWSERS_PATH`), install it with
+  `node tests/e2e/install-browsers.js` without collecting other browser builds,
+  and check the pinned headless executable before starting a wallet or asking
+  the funder. CI caches that folder and uses the same install step; missing
+  Chromium fails by name instead of failing after funding or skipping checks.
+
+- **Test-only:** E2E.24's EXCLUSIVE lock probe asserts on behaviour, never on the sqlite3 shell's words: one statement per argument, a non-zero exit before the marker after `BEGIN IMMEDIATE`, `wal` and `exclusive` printed, and no `e2e_busy` table afterwards; the shell's version and stderr are logged. A 3.53+ shell keeps running a multi-statement argument past a step's `SQLITE_BUSY` and reported the INSERT's "no such table" where 3.51 reported "database is locked (5)" (#357).
+
+- **E2E harness and CI:** Playwright's Chromium folder resolves per host: a
+  non-empty `PLAYWRIGHT_BROWSERS_PATH`, else the standing checkout's
+  `.cca/pw-browsers` (the parent of `git rev-parse --git-common-dir`, so every
+  linked worktree on a host shares its one folder), else, without git, the
+  worktree's own `tests/e2e/.browsers`. The harness's check line and the
+  install step name the folder and why; CI caches `.cca/pw-browsers`.
+  `node tests/e2e/install-browsers.js` hangs in the archive extraction under
+  Node 26.9.0 (Playwright 1.58.2's bundled extract); run it with Node 22 or 24.
+
+- **E2E harness and CI:** The browser install step refuses a Node outside
+  the proven `20 || 22 || 24` range before checking the local binary or
+  downloading anything. Its error names the Node, range and Playwright
+  version: Playwright 1.58.2's zip extractor never finishes under Node 26
+  (#366). Select a proven Node with `nvm use 22`. The run's Chromium check
+  line also names its Node; running under Node 26 remains supported.
+
 ## [0.19.0-beta.3] - 2026-10-29
 
 - **The e2e harness's `relinquishOutput` sends the served body (#119).**
