@@ -10,11 +10,11 @@ storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.4**, **bsv-rs =0.9.0-beta.4** and **bsv-tracker =0.9.0-beta.4**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.5**, **bsv-rs =0.9.0-beta.5** and **bsv-tracker =0.9.0-beta.5**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
-The [#347 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/347) uses the
-published beta.4 packages and maps ordinary refusals by their reference class
+The [#376 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/376) uses the
+published beta.5 packages and maps ordinary refusals by their reference class
 ([#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330)) and the
 toolbox's typed faults by their family
 ([#342](https://github.com/Calhooon/bsv-wallet-cli/issues/342)); certificate
@@ -191,7 +191,7 @@ of 2026-10-27: "arc is old af... we use arcade now for everyting"):
 | `TAAL_API_KEY`, `MAIN_TAAL_API_KEY` | deprecated: classic mode only (`Authorization: Bearer <key>`, raw `Authorization: <key>`); in Arcade mode a set key is unused and logged once at warn (no classic ARC provider runs in Arcade mode) |
 
 The postBeef providers in Arcade mode, as the code builds them, are three, in
-this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.4 posts to every one in
+this order: ArcadeV2, Bitails, WhatsOnChain; toolbox 0.14.0-beta.5 posts to every one in
 parallel and keeps each answer (its default `PromiseAll`). GorillaPool's ARC
 is never one of them, in either mode (the keeper's reading: a rung of no gate
 and no courier); BananaBlocks keeps its explorer rung, which is not ARC.
