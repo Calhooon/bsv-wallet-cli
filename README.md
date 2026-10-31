@@ -109,7 +109,16 @@ The server implements the wallet interface and serializes spending operations.
 Under `AUTH_TOKEN` a browser client passes the CORS preflight, which carries
 no credentials, and sends its bearer on the request (#138).
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
-feeds are hints until their evidence is checked.
+feeds are hints until their evidence is checked. `CHAINTRACKS_URL=off` runs
+with no header service: nothing is marked proven (every merkle proof is
+refused); the wallet's own spends of its proven coins still reach allocation
+and are judged at the latest era; an incoming or caller-supplied BEEF with
+proofs (`internalizeAction`, a `createAction` whose `inputBEEF` brings an
+unproven transaction) needs headers and is refused with the toolbox's text,
+`the merkle proofs of a BEEF the wallet did not sign need headers, and no
+header service is configured`; and discovery answers no overlay certificate,
+the local and configured records still answering (toolbox 0.14.0-beta.5:
+#506, #509, #511, #502; #372).
 
 `POST /arc-callback` receives ARC/Arcade status and proof deliveries behind
 the callback token. A store busy by type answers 503 `STORE_BUSY` with
@@ -134,8 +143,8 @@ set to nothing), a URL's userinfo and query as `<set>`, and `BANANABLOCKS_BASE`
 as the base in effect (the chain's default when unset); `--json` gives the same
 as an array of `{name, value, source}`, `value` `null` for no value (`-`,
 `unset`, `off`, `empty` in the table), `true` or `false` for a switch, a string
-otherwise (`CHAINTRACKS_URL=off` is a value, the header service set off: the
-string `off`; unset or blank it is `null`); `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
+otherwise (`CHAINTRACKS_URL=off` is a value, the header service set off, the
+offline setting above: the string `off`; unset or blank it is `null`); `daemon` and `serve` log the same list as one line at start. [GIFT.md](GIFT.md) documents gift flows and limits.
 
 `TRUST_SETTINGS` (#331) is discovery's trust section: the reference's trust
 settings JSON, `{"trustLevel": 2, "trustedCertifiers": [{"name", "description",
@@ -150,7 +159,10 @@ builds it: a missing `iconUrl` is served as `https://bsvblockchain.org/favicon.i
 a description is cut at 50 bytes and trimmed, and one under 5 bytes is served
 as `Trusted certifier`; an entry whose description is 5 to 50 bytes and names
 its icon is served as configured. `bsv-wallet config` shows the row as
-`<n> trusted certifier(s), trust level <l>`.
+`<n> trusted certifier(s), trust level <l>`. Discovery's overlay leg verifies
+each overlay output's chain evidence with the wallet's chain tracker at
+toolbox 0.14.0-beta.5 (toolbox #502), so with `CHAINTRACKS_URL=off` it
+answers no overlay certificate.
 
 The explorers ([src/config.rs](src/config.rs) reads them, [src/services_env.rs](src/services_env.rs) applies them; 0.17.0):
 
@@ -191,7 +203,7 @@ marker `post_beef_ladder`, `mode`, `broadcaster`, `providers`.
 
 `daemon` holds the header service's chain-event feed
 ([src/chain_feed.rs](src/chain_feed.rs)); the source is `CHAINTRACKS_URL`
-(required, no default; `off` has no feed). On start it replays from its stored
+(required, no default; `off` has no feed, and no proof is checked, as above). On start it replays from its stored
 cursor (0 at birth) through `GET /events?since=<cursor>` until `hasMore` is
 false, then holds `GET /events/stream?since=<cursor>`. Every envelope goes
 through the tracker's decoder and `Tracker::on_chain` with the new branch's

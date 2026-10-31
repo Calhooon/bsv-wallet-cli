@@ -47,8 +47,8 @@ async fn test_list_outputs_empty() {
 
 /// POST /createAction with outputs but no funding — should return 400.
 /// The wallet has a header service: since toolbox 0.14.0-beta.4 (#450) a
-/// signed create reads the tip before allocating, and services with none
-/// refuse it there (#372), a fault served 502 since #342, before funds.
+/// signed create reads the tip before allocating; since beta.5 services with
+/// none reach allocation too, judged at the latest era (#372).
 #[tokio::test]
 async fn test_create_action_insufficient_funds() {
     let (base, client, _tmp) =

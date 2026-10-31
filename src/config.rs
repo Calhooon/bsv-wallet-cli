@@ -312,7 +312,11 @@ impl WalletSettings {
 /// `CHAINTRACKS_URL` when it is set: the header service, or none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderService {
-    /// `off` (any case): no header service, so every proof is refused.
+    /// `off` (any case): no header service, so every proof is refused and
+    /// nothing is marked proven; the wallet's own spends of its proven coins
+    /// still reach allocation (judged at the latest era), an incoming or
+    /// caller-supplied BEEF with proofs is refused for want of headers, and
+    /// discovery answers no overlay certificate (toolbox 0.14.0-beta.5, #372).
     Off,
     /// The header service's URL, trimmed.
     Url(String),

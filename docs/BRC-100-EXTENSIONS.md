@@ -209,3 +209,8 @@ certifier`; so a setting's 1-to-500-byte description meets BRC-100's 5 to 50
 on every answer. Only identity discovery has a local leg: `discoverByAttributes`
 asks the overlay, which answers nothing behind the hermetic wall and in the
 wire harness, so its fixtures stay empty whatever the trust settings say.
+From toolbox 0.14.0-beta.5 (toolbox #502, its CHANGELOG's beta.5 entry) the
+overlay leg verifies each overlay output's chain evidence with the wallet's
+chain tracker and drops an output that fails; with no header service
+(`CHAINTRACKS_URL=off`) it asks no overlay, the local and configured records
+still answering.
