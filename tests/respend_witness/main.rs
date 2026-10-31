@@ -181,7 +181,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     .unwrap();
     input_beef.merge_raw_tx(raw.clone(), None);
     let verified = Transaction::from_beef(&input_beef.to_binary(), Some(&replacement)).unwrap();
-    // Parity-mode replay of signatures and ancestry at synthetic funding height 800.
+    // Parity-mode replay of signatures and ancestry at synthetic funding height 900,800 (past mainnet Genesis, 620,538: bsv-rs 0.9.0-beta.4 refuses a pre-Genesis spend height, #452).
     // A node-word check needs spend-era flags plus coin-era UTXO bits per input;
     // see docs/ARCHITECTURE.md for the combined-word rule.
     assert!(
@@ -224,16 +224,16 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
             .build(),
     );
     WalletStorageProvider::set_services(s, proof_services.clone() as Arc<dyn WalletServices>);
-    s.set_max_acceptable_proof_height(1000).await.unwrap();
+    s.set_max_acceptable_proof_height(901_000).await.unwrap();
     // Wrong active root: the same bytes and proof are no evidence yet.
-    s.set_chain_tracker(Arc::new(TestChainTracker::new(1000)))
+    s.set_chain_tracker(Arc::new(TestChainTracker::new(901_000)))
         .await;
     s.synchronize_transaction_statuses().await.unwrap();
     settle_proven(s, proof_services.as_ref()).await.unwrap();
     assert_eq!(words(&f).await, before);
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
-    let mut tracker = TestChainTracker::new(1000);
-    tracker.add_root(900, replacement.clone());
+    let mut tracker = TestChainTracker::new(901_000);
+    tracker.add_root(900_900, replacement.clone());
     s.set_chain_tracker(Arc::new(tracker)).await;
     s.synchronize_transaction_statuses().await.unwrap();
     // The competitor path is the sole writer of this word.
@@ -246,7 +246,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     s.ingest_merkle_proof(
         &replacement,
         &proof(&replacement),
-        900,
+        900_900,
         &"aa".repeat(32),
         None,
     )

@@ -10,6 +10,12 @@ use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
+/// The toolbox's opt-in label as a listing reads it back: since toolbox
+/// 0.14.0-beta.4 (#392) labels are stored in validateLabel's trimmed,
+/// lowercased form, and the opt-in matches after the same normalization
+/// (#437), so the gate's `underReceivedRule` is stored `underreceivedrule`.
+const STORED_RECEIVED_LABEL: &str = "underreceivedrule";
+
 mod carried;
 mod from;
 mod lineage;
@@ -1700,7 +1706,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+        vec![RECEIVED_PENDING_LABEL, STORED_RECEIVED_LABEL]
     );
     assert!(rules_of(wallet.storage(), user).await.unwrap().is_empty());
 
@@ -1726,7 +1732,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         .unwrap();
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+        vec![RECEIVED_PENDING_LABEL, STORED_RECEIVED_LABEL]
     );
 }
 
@@ -1791,7 +1797,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+        vec!["mine", RECEIVED_PENDING_LABEL, STORED_RECEIVED_LABEL]
     );
 
     let mut labels = Some(vec![
@@ -2643,7 +2649,7 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
         labels_of(wallet.storage(), &reference).await,
         vec![
             RECEIVED_PENDING_LABEL.to_string(),
-            TOOLBOX_RECEIVED_LABEL.to_string()
+            STORED_RECEIVED_LABEL.to_string()
         ]
     );
 }

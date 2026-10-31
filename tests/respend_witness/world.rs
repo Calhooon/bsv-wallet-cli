@@ -31,7 +31,7 @@ pub(crate) struct Fixture {
     pub(crate) funding: String,
 }
 
-/// The header service's view of the funding block: the header at 800
+/// The header service's view of the funding block: the header at 900,800
 /// carries the funding proof's root, so the spend gate's read of the
 /// respend's inputs (0.11.0, #29) finds the coin mined.
 pub(crate) fn headed(services: &MockWalletServices, funding: &str) {
@@ -43,7 +43,7 @@ pub(crate) fn headed(services: &MockWalletServices, funding: &str) {
         bits: 0x1d00_ffff,
         nonce: 0,
         hash: String::new(),
-        height: 800,
+        height: 900_800,
     });
 }
 
@@ -130,7 +130,7 @@ pub(crate) async fn fixture() -> Fixture {
         "INSERT INTO outputs (user_id,transaction_id,basket_id,vout,satoshis,locking_script,txid,type,spendable,change,derivation_prefix,derivation_suffix,provided_by,purpose,output_description,created_at,updated_at) VALUES (?,?,?,0,100000,?,?,'P2PKH',1,1,?,?,'storage','change','fixture',?,?) RETURNING output_id")
         .bind(user.user_id).bind(funding_row).bind(basket).bind(lock.to_binary()).bind(funding.id()).bind(prefix).bind(suffix).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     let funding_proof = MerklePath {
-        block_height: 800,
+        block_height: 900_800,
         path: vec![vec![MerklePathLeaf {
             offset: 0,
             hash: Some(funding.id()),
@@ -139,7 +139,7 @@ pub(crate) async fn fixture() -> Fixture {
         }]],
     }
     .to_binary();
-    let proven_id: i64 = sqlx::query_scalar("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) VALUES (?,800,0,?,?,?,?,?,?) RETURNING proven_tx_id")
+    let proven_id: i64 = sqlx::query_scalar("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) VALUES (?,900800,0,?,?,?,?,?,?) RETURNING proven_tx_id")
         .bind(funding.id()).bind("bb".repeat(32)).bind(funding.id()).bind(funding_proof).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     sqlx::query("UPDATE transactions SET proven_tx_id=? WHERE transaction_id=?")
         .bind(proven_id)
@@ -214,7 +214,7 @@ pub(crate) async fn coin_state(f: &Fixture, coin: i64) -> (bool, Option<i64>) {
 }
 pub(crate) fn proof(txid: &str) -> Vec<u8> {
     MerklePath {
-        block_height: 900,
+        block_height: 900_900,
         path: vec![vec![MerklePathLeaf {
             offset: 0,
             hash: Some(txid.into()),

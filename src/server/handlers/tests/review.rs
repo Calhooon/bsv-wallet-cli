@@ -6,9 +6,14 @@ use bsv_sdk::wallet::{
 
 fn review() -> ReviewActionsRefusal {
     use crate::test_support::{p2pkh, raw_tx, txid_of};
+    // The action's transaction carries its input's source: bsv-rs's HTTP
+    // JSON client holds a completed `tx` to the reference's evidence row
+    // (every input with its source transaction, bsv-rs #461) since beta.4.
     let mut beef = bsv_sdk::transaction::Beef::new();
-    let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, p2pkh([7; 20]))]);
+    let parent = raw_tx(&[(&"11".repeat(32), 0)], &[(2000, p2pkh([7; 20]))]);
+    let raw = raw_tx(&[(&txid_of(&parent), 0)], &[(1000, p2pkh([7; 20]))]);
     let id = txid_of(&raw);
+    beef.merge_raw_tx(parent, None);
     beef.merge_raw_tx(raw, None);
     let txid = hex::decode(&id).unwrap().try_into().unwrap();
     let mut competing = bsv_sdk::transaction::Beef::new();
