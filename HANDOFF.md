@@ -1713,3 +1713,227 @@ certificate re-issue at 0.19.0; #350; #315 and #316 on the beta.2 milestone;
 the beta.1 release object's prerelease mark (the keeper's); #361 and #362 in
 lanes after the evening (the re-record procedure; the box's standing browser
 folder), their main copies after.
+
+## 2026-10-30: #361, #362 and #366 on both lines, the two gates, the box's
+hygiene by name, the rows read and #371, the pin brief's tells
+
+The night ran on the box. The hygiene ruling first: `cca disk --host box`
+itemizes nothing per target (84 orphan targets, 214.9 GB, every program's)
+and ignores `--json` in either flag order, so a hygiene lane on the box
+removed this program's twelve finished targets by their recorded names
+(p1-355-browsers 4.7G, p1-355-browsers-fix 1.6G, p1-357-busyprobe 4.9G,
+p1-355-main 4.0G, p1-ratchet-rerecord 788M, review-355 1.6G, review-357
+588M, review-rerecord 688M, review-rerecord-fix 588M and three empty or
+small ones; the box's `/Volumes/Lanes` 556Gi to 574Gi free), the Studio's
+review-release-beta3 (1.3G) went the same way, and `cleanup-box.sh` now
+does it per landing (names only, the standing folders refused, `ls -d` and
+`du -sh` before each `rm -rf`, the lane's own listing the record), folded
+into the chain scripts under `CCA_HOST=box` once the running chains had
+finished (zsh reads a running script incrementally, so never while one
+runs; the eleven same-named processes on the Mac belong to other sessions).
+The standing request to the keeper is a per-path clean over cca's relay, so
+no model turn is spent on an `rm`.
+
+#361 (a re-record renders the scoreboard's table in its own commit, the
+`tools/ratchet` hint and `docs/RATCHETS.md` step 4 saying so, a test on the
+hint) landed as PR 364 at beta 4b39be9 (23:46Z on the 29th; a lane on the
+box, which needs `SDKROOT` at the 26.5 SDK to link; Opus review, one nit on
+a negative assertion taken as a commit); main carries neither tool, so no
+copy. #362 (one standing browsers folder per host) landed as PR 365 at beta
+4377492 (23:54Z): the resolver takes a non-empty `PLAYWRIGHT_BROWSERS_PATH`
+(reason `env`), else the standing checkout's `.cca/pw-browsers` from the
+parent of `git rev-parse --git-common-dir` (`standing`), else the
+worktree's `tests/e2e/.browsers` (`fallback`); `.gitignore` and the CI
+caches follow; the box's folder is `~/bsv/bsv-wallet-cli/.cca/pw-browsers`
+and scenario 20 passed under it; the hermetic suite once, 24/24 (2,138 sats
+on the stub). The lane found the hang's cause: Playwright 1.58.2's bundled
+zip extractor never finishes under Node 26.9.0, the box's default. Its main
+copy, PR 367 at main b90c671 (00:19Z), dropped `ci.yml` (main's CI runs no
+harness) and the two docs main lacks and merged the CLAUDE.md block; the
+gate once on b90c671: 23/23, net 2,170 sats, 00:21Z
+(`gate-20261030T002111Z.log`). #366 pinned the harness's Node: PR 368 at
+beta c1f7cd3 (00:4xZ) declares `engines` `20 || 22 || 24`, the three proven
+majors (the Studio's gate under nvm's default 20.19.5, the box's install
+under 22.23.3, CI's setup-node 24); `install-browsers.js` refuses a Node
+outside the range by name before the binary check and any download;
+`run.js` prints the Node on its check line and does not refuse on it, the
+suite having passed 24/24 under 26 in PR 365. The reproduction on the box:
+the unchanged step under 26.9.0 downloaded 170,206,961 bytes, stalled at
+"extracting archive" and was killed at 360 s; under 22.23.3 it completed in
+6.4 s. The main copy, PR 369 at main 6364e6b (00:58Z); the gate once on
+6364e6b: 23/23, net 2,170 sats, 01:00Z (`gate-20261030T010033Z.log`). Each
+issue was hand-closed with both landing records and its gate; each lane's
+and reviewer's target on the box was removed by name after its landing
+(588M+609M, 1.0G+1.0G, 3.4G, 822M+819M, 3.2G).
+
+The libraries' tells went on #347 each hour with an impact read and into
+the pin brief. bsv-rs landed #474, #468, #472 (00:10Z), #475, #476, #481
+(01:10Z), #482 and #461 (02:10Z), #484, #485, #486 (03:10Z); #488 is at
+its CI and #490 (the four result totals u64) was closed by the keeper on
+u32 at 03:2xZ, so the totals stay as they are and nothing moves here. bsv-rs's #480 was answered: this program never used
+`LocalKVStore`. #484 binds the binary wallet wire's readers, which this
+HTTP door never speaks. The toolbox's #474 (beta 08e418c1) filters
+`discoverByAttributes` by the reference's matcher before trust and paging:
+our three discover fixtures are empty fresh-world answers and do not move;
+the pin's fragment says the narrowing in one line; `regex` and
+`unicode-normalization` join its normal dependencies, already in the lock.
+#370 (0.19.0) is the proof that outlives a reading: every recorded answer
+through bsv-rs's result check by a test, after the pin.
+
+The reading itself was done tonight rather than left to the pin lane:
+bsv-rs's HTTP JSON result rows (its PR #461 for its #432, the 71 rows R03
+to R88 under that heading in its CHANGELOG, a landed PR's heading carrying
+the issue's number) against every recorded answer with a 200 status on
+beta (84 of 174). One refusal, fixture 145 under R56, is #371: under
+`includeInputUnlockingScripts` an unsigned action's input has no
+`unlockingScript`. That is the reference wallet's own answer (ts-stack
+edf6e03, `listActionsIdb.ts:77` and `:91`, `getRawTxOfKnownValidTransaction`
+then `input?.unlockingScript?.toHex()`, undefined for an action not yet
+known valid; the toolbox's `transactions.rs:420` at v0.14.0-beta.3 the
+port, line for line) and the reference SDK's own refusal
+(`WalletResultValidation.ts:2026-2035`, run on every result by
+`HTTPWalletJSON.ts:226`; bsv-rs's `lists.rs:187-201` the same rule). BRC-100
+is silent on an unsigned input, so the reference is the arbiter and the
+reference disagrees with itself. Nothing in this tree reads our server that
+way (the CLI's `actions` command leaves the flag unset, the MCP forwards
+raw JSON, the harness is its own client); any reference-SDK 3.2.0 client,
+and bsv-rs's `HttpWalletJson` from beta.4 on, refuses such a page from this
+wallet and the reference's wallet alike. The recommendation to the keeper
+(03:2xZ) was that the validator's rule follow the wallet's; the keeper read
+it at the pin, took it as filed (BRC-100 types the result's
+`unlockingScript` optional, `wallet/0100.md:819` at BRCs 5333fd4, so the validator
+over-requires against the BRC and the reference's own wallet) and filed it
+on the reference's tracker under the owner's name within the hour as
+ts-stack #1451, fixture 145 the witness, 21.4 of the owner's brief
+recording it. Until upstream settles it nothing moves on any side: the pin
+lane cites #371 and #1451, #370's test expects the one refusal by number,
+and neither library captain is asked for a change.
+
+The pin itself ran into the 31st. The watcher fired at 22:24Z on the three
+agreeing prereleases (bsv-rs 0.9.0-beta.4 on the index at 15:37Z, its tag
+moved three times by failed Release runs, 8623d807 to 0da1886d to 56d12075,
+so the brief's hand-pinned sha became a tag-at-read-time check; bsv-tracker
+0.9.0-beta.4 at 15:42Z; the toolbox's 0.14.0-beta.4 at eaced077, its host
+migration notes mapped to this tree in the brief, items (a) to (j)) and the
+chain died twice in two and three seconds: cca's rule 7 sent every code
+lane to Codex (the day's Codex share 33 of 81 under the half split),
+openai-2 sat at the week floor, openai-1 refused `gpt-6.1-sol` under a
+ChatGPT account (model_not_found), and nothing retried the refusal. Rules
+26 and 6 leave a captain no model and no account to name, so the note to
+the keeper was a STOP (02:45Z; the session itself had frozen from 22:24Z
+to 02:39Z). The owner's own word came at 02:4xZ: Codex cancelled, the pool
+moves on without it; applied as cca's `code_split` 0 through its own roster
+functions (backup `accounts.json.bak-2026-10-31-codex`), the picker then
+gave a Claude seat, and the chain relaunched at 02:49Z as
+`p1-347-pin-beta4-c`.
+
+The lane (Opus 5.5 by the rule, 1h46m) opened PR 373 at 1c39838: the pins
+in both workspaces and both locks with the index's checksums, each
+package's recorded commit equal to its tag's, serde_json without indexmap,
+one new crate (`ryu-js`); the beta.4 signatures (the store's chain, the
+owner's 19.11; no host script verifier, toolbox #450; `Chain::Regtest`; the
+test tracker's tip without the deprecated genesis copy and no
+`#[allow(deprecated)]`); #342 as three typed arms in `of_sdk` (a
+`WalletFault` by family, Transport and Service 502, Storage and Internal
+500; an `AbortAccepted` by its class with the record's hint; a
+`TransactionNotJudged` by cause, the pre-Genesis causes 409 and the
+stack's own 500), fixtures 085, 089 and 124 and LOW's 09 and 10 moving in
+status with their words unchanged; #344 as fixture 045's 400 refusal, 051
+unmoved because the toolbox's lookup counts soft-deleted rows as the
+reference's `verifyOne` does; #331 as `TRUST_SETTINGS` in the typed config,
+the toolbox's one validation, fixtures 175 and 176 and scenario 06's
+trusted assertion; fixture 147 gaining `competingBeef`; 145 untouched; the
+ratchet raised by the PR's own additions and fixed by moving code into
+modules, pedantic then 825 to 824; the differential against beta
+INCOMPLETE at 22 differences each tied (15 phases' tip reads to toolbox
+#450, two labels to #392, scenario 06's gap to #331) with the `--same`
+floor 0; the toolbox's Dependents run 41168196264 green on the branch; the
+hermetic suite once 24/24. The lane filed #372: with `CHAINTRACKS_URL=off`
+the beta.4 toolbox refuses every signed `createAction` at #450's own-word
+tip read (`own_word.rs:39`, against that function's doc at `:31-32`); the
+toolbox's captain confirmed it in the code and filed toolbox #506, the two
+readings to the owner through the keeper. The gate and production run with
+the header service, so neither is touched.
+
+The cold review on Opus (31m) sent the PR back for one fix:
+`strip_rule_label` trimmed with Rust's `trim()`, which keeps U+FEFF, while
+the beta.4 toolbox normalizes labels with ECMAScript trim (#392, #437), so
+`"\u{feff}spend-gate:received-pending"` and `"\u{feff}underReceivedRule"`
+passed the strip and were stored as the gate's own labels, a forged
+`underRule` without `allowPending`, confirmed by probe at the tip and
+absent at beta.3, whose toolbox kept the BOM. The fix lane (37m) made the
+test red first, then one commit on top (4340d97): the strip compares after
+the toolbox's normalization through a private `is_ecmascript_whitespace`
+equal to the package's `label.rs:10-35`, a unit test pinning the set
+against `char::is_whitespace` (U+0085 and U+FEFF), the two BOM labels in
+the forgery test, a changelog line, one sentence each in README and
+ARCHITECTURE; the body corrected (15 phases, toolbox #386 and bsv-rs #393
+ticked). The re-review on Opus (24m) reproduced the probe both ways and
+said merge; it also caught the review brief's stale "#331 absent" clause, a
+beta.3 clone, corrected before the re-review. PR 373 merged by rebase at
+06:15:50Z: beta a3855823, thirteen commits. The gate ran once on that tip
+at 06:22Z: 24 of 24, funder 116,718 to 114,571, net 2,147 sats (beta.3's
+2,181), the release build and the MCP (`-p bsv-wallet-mcp`,
+`BSV_WALLET_MCP_BIN`) in their own worktree and target, nothing kept.
+#331, #342, #344 and #347 closed by hand with the record; the merged sha
+and the gate's word to the keeper at 06:2xZ, who recorded 21.6 done; LOW's
+captain told of its two rows; toolbox #505 filed (expose `normalize_label`
+to hosts, the CLI's copy until then; labelled design, to the owner through
+the keeper). On #371 the bsv-rs captain's new fact was read to its source:
+fixture 145 also fails R51 on a one-byte `inputDescription`, which is the
+wire harness's own seed (`worlds.rs:335-337` writes `'c'` as every coin's
+output description), served through the mapping the toolbox and the
+reference share (`listActionsKnex.ts:237`, the spent output's description
+as the input's); a beta.5 change on our side with #370, nothing of the
+toolbox's. The eight finished folders (18G) went by their recorded paths.
+The tag is the owner's word through the keeper (22.4, cut now
+recommended): a version PR on beta, the beta.3 shape (f542012 with its
+fuzz-lock follow-up as one commit: the version in Cargo.toml and both
+locks, the eight fragments assembled, DEPENDENTS' version and consumer
+lines), is prepared by a lane with a cold review and HELD unmerged until
+the word reaches this captain through the keeper; then the keeper's chain
+tags its merge commit and the Release workflow publishes with the
+prerelease mark.
+
+Lessons kept: a library's landed PR is found in its changelog by its
+words, the heading carrying the issue's number; a bound in a library's
+binary wire is not a bound on this HTTP door, and the HTTP rows are read
+against the recorded answers by the captain before the pin, so the lane
+meets no surprise; a row the recorded answer breaks is a divergence issue
+naming the row, the fixture and every site, never a silent change, and
+when the reference disagrees with itself the witness goes to the reference
+tracker under the owner's name; the box's disk report names no target, so
+a hygiene lane's own listing per path is the record; a keeper's draft is
+checked against the record before it is sent (the engines range is
+20/22/24: the Studio's gate runs under 20); macOS has no `timeout`, the
+tool's own limit stands in; a lane on the box needs the 26.5 SDK to link.
+A pin brief cloned from the last pin's brief keeps the last pin's lines
+until each is re-read against the issue's done-whens: at 07:3xZ the beta.4
+checklist still said #331 was not in the PR (against the owner's 20.2 and
+its own first line) and named beta.3's fragments and beta.3's PR title,
+found and corrected before the watcher fired; the review brief carried the
+same clause to the reviewer, who caught it. A write-side bound looser than
+the read-side's is not a divergence until the transform between them is
+read: the trust settings' 1 to 500-byte description is served within
+BRC-100's 5 to 50 by both wallets' cut-and-fallback (the reference's
+identityUtils.ts, the toolbox's discovery_trust.rs), so nothing was filed.
+A pin that changes how a library normalizes a value the host compares
+(labels under ECMAScript trim) is a check on every host comparison of that
+value, not only on the fixtures; the cold review caught it this time, so
+the pin brief names it next time. A Codex seat refusing the roster's model
+kills every code lane in seconds, and the unblock is the owner's knob
+through the keeper, never a captain's `--model`. The workspace root's
+`cargo build --release` builds the root package only: the gate's MCP is
+`-p bsv-wallet-mcp` with `BSV_WALLET_MCP_BIN`. The harness's funder balance
+counts every spendable coin (116,718), the SwiftBar's default-basket sum
+(101,718) not the external basket's 15,000-sat coin: read the harness's
+own line.
+
+Open after the pin: the 0.19.0-beta.4 tag on the owner's word (22.4; the
+version PR held); #370 and #371 (the seed's descriptions, R56 under bsv-rs
+#539's landing, the [D] residue on ts-stack #1451); #372 with toolbox #506
+(the owner's reading of the off branch); toolbox #505; a docs-only fold
+for the stale `strip_rule_label` cites in docs/ARCHITECTURE.md (:442, I6);
+#333 and the certificate re-issue at 0.19.0; #350; #315 and #316 on the
+beta.2 milestone; the beta.1 release object's prerelease mark (the
+keeper's).
