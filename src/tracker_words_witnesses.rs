@@ -855,7 +855,9 @@ async fn prove_funding(storage: &StorageSqlx, tx: &Transaction) {
     use crate::test_support::TestChainTracker;
     use bsv_sdk::transaction::MerklePath;
     let txid = tx.id();
-    let height = 800;
+    // Past mainnet Genesis (620,538): since bsv-rs 0.9.0-beta.4 (#452) a
+    // spend height before it is not judged and the signer refuses.
+    let height = 900_800;
     let mut tracker = TestChainTracker::new(height + 100);
     tracker.add_root(height, txid.clone());
     storage.set_chain_tracker(Arc::new(tracker)).await;

@@ -2,7 +2,11 @@
 //! spend the gate refuses prints the refusal as one JSON object on stdout,
 //! `{code, message, offeredSatoshis, held}`, and exits 1. The binary is run
 //! as a user runs it, on a throwaway wallet made by `init` (no coin, so
-//! nothing is built, signed or broadcast) with `CHAINTRACKS_URL=off`.
+//! nothing is built, signed or broadcast) with its header service on a
+//! closed local port: since toolbox 0.14.0-beta.4 (#450) a signed create
+//! reads the tip before allocating, a tip read that faults judges at the
+//! latest era (#464), and `CHAINTRACKS_URL=off` (services with no header
+//! service) refuses every signed create at that read (#372).
 //! `drain` and `split` stop before the gate on an empty wallet; they print
 //! through the same calls (`spend_gate::refused_as_json`,
 //! `spend_gate::busy_as_json`). The store busy (#44) prints as the route's
@@ -18,7 +22,7 @@ fn wallet(dir: &TempDir) -> Command {
         .env_remove("ARC_MODE")
         .env_remove("ARCADE")
         .env_remove("ARC_URL")
-        .env("CHAINTRACKS_URL", "off")
+        .env("CHAINTRACKS_URL", "http://127.0.0.1:9")
         // Any request the run would make goes to a closed local port.
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("HTTP_PROXY", "http://127.0.0.1:9")
