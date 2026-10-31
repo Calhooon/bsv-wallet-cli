@@ -652,9 +652,10 @@ async fn abort_accepting_status_keeps_validation_with_the_records_hint() {
     let (status, body) = serve_abort(&wallet, &txid).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_toolbox_abort_refusal(&body);
-    assert!(body["message"].as_str().unwrap().contains(
-        "(hint: the wallet holds an accepting word for this transaction (status 'unproven')"
-    ));
+    assert!(body["message"].as_str().unwrap().contains(&format!(
+        "(hint: the wallet holds an accepting word for this transaction (transaction {txid}, \
+         status 'unproven')"
+    )));
     assert_eq!(tx_status(wallet.storage(), &txid).await, "unproven");
     assert_eq!(output_state(wallet.storage(), output).await, before);
 }

@@ -1,7 +1,9 @@
 //! The transaction workflow's endpoints against an unfunded wallet: listings,
 //! refusals, and the createAction options' passthrough.
 
-use crate::support::{post_json, post_json_ok, setup};
+use crate::support::{
+    local_header_service, post_json, post_json_ok, setup, setup_with_header_service,
+};
 use serde_json::{json, Value};
 
 // =============================================================================
@@ -44,9 +46,13 @@ async fn test_list_outputs_empty() {
 // =============================================================================
 
 /// POST /createAction with outputs but no funding — should return 400.
+/// The wallet has a header service: since toolbox 0.14.0-beta.4 (#450) a
+/// signed create reads the tip before allocating, and services with none
+/// refuse it there (#372), a fault served 502 since #342, before funds.
 #[tokio::test]
 async fn test_create_action_insufficient_funds() {
-    let (base, client, _tmp) = setup().await;
+    let (base, client, _tmp) =
+        setup_with_header_service(Some(local_header_service(900_000).await)).await;
     let resp = post_json(
         &client,
         &format!("{base}/createAction"),
