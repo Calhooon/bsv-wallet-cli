@@ -7,6 +7,7 @@ use crate::tracker_host::tests::{header, header_with_hash};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::{CreateActionOptions, CreateActionOutput, WalletInterface};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
+use bsv_wallet_toolbox::wallet::trim_ecmascript;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
@@ -1813,15 +1814,17 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     assert_eq!(none, None);
 }
 
-/// Across every scalar value the strip's set departs from Unicode
-/// `White_Space` (`char::is_whitespace`) only at U+0085 and U+FEFF, as the
-/// toolbox's own set does (toolbox 0.14.0-beta.4 `src/wallet/label.rs:55-63`):
-/// a drift in either set is caught here.
+/// The strip trims with the toolbox's own function (toolbox 0.14.0-beta.5
+/// `trim_ecmascript`, `src/wallet/label.rs:44`), whose set departs from
+/// Unicode `White_Space` (`char::is_whitespace`) only at U+0085 and U+FEFF
+/// across every scalar value, as its doc says: a drift in the toolbox's set
+/// is caught here.
 #[test]
 fn the_strip_trims_as_the_toolbox_trims_a_label() {
+    let mut buf = [0u8; 4];
     let differing: Vec<char> = (0..=u32::from(char::MAX))
         .filter_map(char::from_u32)
-        .filter(|&c| is_ecmascript_whitespace(c) != c.is_whitespace())
+        .filter(|&c| trim_ecmascript(c.encode_utf8(&mut buf)).is_empty() != c.is_whitespace())
         .collect();
     assert_eq!(differing, vec!['\u{0085}', '\u{FEFF}']);
 }

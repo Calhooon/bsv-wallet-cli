@@ -174,6 +174,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bsv_sdk::wallet::{CreateActionArgs, CreateActionResult};
 use bsv_tracker::Height;
+use bsv_wallet_toolbox::wallet::normalize_label;
 use bsv_wallet_toolbox::{StorageSqlx, Wallet, WalletServices};
 use serde::Serialize;
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
@@ -912,45 +913,19 @@ pub async fn label_in(
 /// rule without ever naming `allowPending`. Every door a caller's labels
 /// pass (the gate's `createAction`, the served `internalizeAction`) strips
 /// it; `signAction` takes no labels. A label is compared as the toolbox
-/// stores it ([`is_ecmascript_whitespace`]): a padding the toolbox trims
-/// and this strip kept would be stored as the gate's own label.
+/// stores it, through the toolbox's own normalization
+/// ([`normalize_label`], toolbox 0.14.0-beta.5 `src/wallet/label.rs:62`,
+/// public since toolbox #505): a padding the toolbox trims and this strip
+/// kept would be stored as the gate's own label.
 pub fn strip_rule_label(labels: &mut Option<Vec<String>>) {
     if let Some(labels) = labels.as_mut() {
         labels.retain(|l| {
-            let stored = l.trim_matches(is_ecmascript_whitespace).to_lowercase();
+            let stored = normalize_label(l);
             ![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
                 .iter()
                 .any(|rule| stored == rule.to_lowercase())
         });
     }
-}
-
-/// ECMAScript's `WhiteSpace` (TAB, VT, FF, ZWNBSP, every Zs) and
-/// `LineTerminator` (LF, CR, LS, PS): the set the toolbox trims a label
-/// with before it lowercases, stores and matches it (toolbox 0.14.0-beta.4
-/// `src/wallet/label.rs:10-35`, after ts-stack@edf6e03
-/// `sdk/src/wallet/validationHelpers.ts:385-387, 411`, validateLabel's
-/// `trim().toLowerCase()`). It departs from Rust's `str::trim` at U+FEFF
-/// (trimmed here only) and U+0085 (trimmed by Rust only). The toolbox's
-/// function is `pub(crate)`, so this crate carries the set until the
-/// toolbox exposes it.
-fn is_ecmascript_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\u{0009}'
-            | '\u{000B}'
-            | '\u{000C}'
-            | '\u{FEFF}'
-            | '\u{000A}'
-            | '\u{000D}'
-            | '\u{2028}'
-            | '\u{2029}'
-            // Zs (Unicode 16.0).
-            | '\u{0020}'
-            | '\u{00A0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
-    )
 }
 
 /// The rule a label names, if it is one of the gate's.
