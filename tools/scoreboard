@@ -45,6 +45,13 @@ malformed record as an absent one.
   .github/workflows/nightly.yml  the mutation floors: the JSON object of MUTANTS_FLOORS
   docs/scoreboard/mutants.json   the measured scores, written by the captain from the
                                  nightly's "Mutation score" summary (shape below)
+  fuzz/Cargo.toml                the fuzz targets: its [[bin]] tables' names, read with
+                                 tomllib, never a list written here
+  docs/scoreboard/fuzz.json      the fuzz hours, written by the captain or a lane from
+                                 the Nightly run it names (shape below)
+  docs/scoreboard/differential.json
+                                 the differential report, written by the captain or a
+                                 lane from the Differential run it names (shape below)
   benches/baseline.json          the bench baseline, tools/bench-compare's shape:
                                  {"profiles": {name: {"runs": [{"benches": {id:
                                  {"p50_us": n, "p99_us": n, ..}}}]}}}
@@ -78,16 +85,66 @@ never read as given, since the ceiling holds a floor under it. A file whose caug
 missed and timeout are all 0 is malformed. The table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
 
+docs/scoreboard/fuzz.json, the fuzz hours' rows, one per target of fuzz/Cargo.toml:
+
+  {
+    "schema": 1,
+    "commit": "<the full sha the night fuzzed>",
+    "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/<id>",
+    "date": "YYYY-MM-DD",
+    "targets": {
+      "beef_reader": {"seconds": 3600, "executions": 41000000,
+                      "corpus_added": 12, "crashes": 0}
+    }
+  }
+
+`seconds` is the target's fuzzing time in that run (a number above 0; the row's
+value is it in hours, to one place, the run's own and never a sum across runs);
+`executions`, `corpus_added` and `crashes` are the job's libFuzzer statistics and
+its summary's corpus additions, counts. The run is a URL under
+https://github.com/Calhooon/bsv-wallet-cli/actions/runs/, as the record of every
+census cell is (this record and the next; mutants.json predates the rule). A
+target the record names and the manifest does not is malformed; a target the
+manifest names and the record does not reads "unmeasured", as every target does
+while the file is absent. The measured column shows the counts and the commit; a
+crash count above 0 shows with its number, never hidden.
+
+docs/scoreboard/differential.json, the differential's row:
+
+  {
+    "schema": 1,
+    "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/<id>",
+    "date": "YYYY-MM-DD",
+    "base": "<the full sha of the base build>",
+    "head": "<the full sha of the head build>",
+    "differences": 0, "calls": 900, "commands": 40, "complete": true,
+    "same_floor": {"differences": 0, "calls": 900, "commands": 40}
+  }
+
+The figures of tools/differential's own verdict line, `DIFFERENTIAL: N differences
+over C calls and M commands`, with `complete` false when the line is INCOMPLETE
+(a recording that is not a whole run), and of the --same floor's line on the
+head. A complete report, and the floor, ran calls and commands: either at 0 is
+malformed, since tools/differential reads no calls or no commands as INCOMPLETE.
+The row's value is the differences, or INCOMPLETE and never a verdict when
+`complete` is false; while the file is absent it reads "no report yet".
+
 The values --json prints and --base reads: {"schema": 1, "values": {key: value}}.
 A key `floor:<file>`, `fixtures:wire`, `fixtures:consumers`, `consumers`,
 `e2e:scenarios`, `e2e:hermetic` (1 or 0) or `arch:rules` is a number that may
 not fall below the base's; a key `allowlist:<rule>:files` or
 `allowlist:<rule>:sites` is a number that may not rise above the base's; a key
-`arch:rule-ids`, `floor:files` or `consumers:names` is the sorted list of the
-rule ids, floored files or consumer names, and may not lose an element the
-base's holds (a count can be kept by a swap, a list cannot: renaming rule A3 to
+`arch:rule-ids`, `floor:files`, `consumers:names` or `fuzz:target-names` is the
+sorted list of the rule ids, floored files, consumer names or measured fuzz
+targets, and may not lose an element the base's holds (a count can be kept by a swap, a list cannot: renaming rule A3 to
 A9, or deleting A4's file and adding an empty A7, keeps `arch:rules` and loses
-an element). A key the base holds may not vanish from the tree, of any kind.
+an element). A key `fuzz:targets` (the count of the targets the fuzz record
+measures) or `differential:complete` (1 or 0) may not fall; a key
+`fuzz:<target>:crashes` or `differential:same_floor` (the floor's differences,
+whose only right value is 0) may not rise. A key `fuzz:<target>:seconds` is the
+latest run's seconds, which a later run of one hour replaces, so it is held to no
+direction: only to not vanishing. A key the base holds may not vanish from the
+tree, of any kind.
 The ratchets' own numbers are tools/ratchet's to compare.
 
 A key `floor:<file>:measured` (true or false) says whether
@@ -136,6 +193,9 @@ CONSUMERS = "tests/wire_consumers"
 ARCH_GLOB = "tests/arch_*.rs"
 NIGHTLY = ".github/workflows/nightly.yml"
 MUTANTS = "docs/scoreboard/mutants.json"
+FUZZ_MANIFEST = "fuzz/Cargo.toml"
+FUZZ = "docs/scoreboard/fuzz.json"
+DIFFERENTIAL = "docs/scoreboard/differential.json"
 BENCH = "benches/baseline.json"
 SCENARIOS = "tests/e2e/scenarios"
 HERMETIC_FILES = ["tests/e2e/run.js", "tests/e2e/lib/*.js"]
@@ -143,14 +203,20 @@ HERMETIC_FILES = ["tests/e2e/run.js", "tests/e2e/lib/*.js"]
 ABSENT = "not in the tree yet"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RUNS = "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/"
+RUN_URL = re.compile(r"^" + re.escape(RUNS) + r"\d+(/attempts/\d+)?$")
+TARGET = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # A key's direction: "floor" may not fall (nor leave the tree), "ceiling" may not rise.
-FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules)$")
-CEILING_KEYS = re.compile(r"^allowlist:A\d+:(files|sites)$")
+FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules"
+                        r"|fuzz:targets|differential:complete)$")
+CEILING_KEYS = re.compile(r"^(allowlist:A\d+:(files|sites)|fuzz:[^:]+:crashes|differential:same_floor)$")
+# A number held to no direction, only to not vanishing: the latest run's seconds.
+LATEST_KEYS = re.compile(r"^fuzz:[^:]+:seconds$")
 # A floor's flag: whether docs/scoreboard/mutants.json measured its file (a bool).
 MEASURED_KEYS = re.compile(r"^floor:.+:measured$")
 # A key whose value is a sorted list of names: it may not lose an element.
-LIST_KEYS = re.compile(r"^(arch:rule-ids|floor:files|consumers:names)$")
+LIST_KEYS = re.compile(r"^(arch:rule-ids|floor:files|consumers:names|fuzz:target-names)$")
 
 
 def path(name):
@@ -452,6 +518,121 @@ def mutation_rows():
     return rows
 
 
+def require_run(name, record, what):
+    run = record.get("run")
+    if not isinstance(run, str) or not RUN_URL.match(run):
+        fail(name, "run", f"must be the {what} run's URL, {RUNS}<id>")
+    return run
+
+
+def require_date(name, record):
+    if not isinstance(record.get("date"), str) or not DATE.match(record["date"]):
+        fail(name, "date", "must be YYYY-MM-DD")
+
+
+def require_count(name, field, v):
+    if not is_int(v) or v < 0:
+        fail(name, field, "must be a count (an integer at least 0)")
+    return v
+
+
+def fuzz_targets():
+    """The [[bin]] names of fuzz/Cargo.toml, in its order: the targets the Nightly runs."""
+    import tomllib
+    try:
+        manifest = tomllib.loads(path(FUZZ_MANIFEST).read_text())
+    except tomllib.TOMLDecodeError as e:
+        fail(FUZZ_MANIFEST, "(the file)", f"not TOML ({e})")
+    bins = manifest.get("bin")
+    if not isinstance(bins, list) or not bins:
+        fail(FUZZ_MANIFEST, "[[bin]]", "names no target")
+    names = []
+    for i, b in enumerate(bins):
+        if not isinstance(b, dict) or not isinstance(b.get("name"), str) or not TARGET.match(b["name"]):
+            fail(FUZZ_MANIFEST, f"[[bin]] {i + 1}", "must carry a name of letters, digits, _ and -")
+        names.append(b["name"])
+    if len(set(names)) != len(names):
+        fail(FUZZ_MANIFEST, "[[bin]]", "names a target twice")
+    return names
+
+
+def fuzz_rows():
+    if not path(FUZZ_MANIFEST).exists():
+        if path(FUZZ).exists():
+            fail(FUZZ, "(the file)", f"present, and {FUZZ_MANIFEST} is absent: no target to measure")
+        return [Row("fuzz hours", ABSENT, "", f"`{FUZZ_MANIFEST}`")]
+    targets, source = fuzz_targets(), f"`{FUZZ}`"
+    if not path(FUZZ).exists():
+        rows = [Row(f"fuzz hours `{t}`", "unmeasured", "", source) for t in targets]
+        rows[0].values.update({"fuzz:targets": 0, "fuzz:target-names": []})
+        return rows
+    record = require_object(FUZZ, "(the file)", load_json(FUZZ))
+    if record.get("schema") != 1:
+        fail(FUZZ, "schema", "must be 1")
+    commit = record.get("commit")
+    if not isinstance(commit, str) or not SHA.match(commit):
+        fail(FUZZ, "commit", "must be the full 40-hex sha the night fuzzed")
+    run = require_run(FUZZ, record, "Nightly")
+    require_date(FUZZ, record)
+    measured = require_object(FUZZ, "targets", record.get("targets"))
+    if not measured:
+        fail(FUZZ, "targets", "holds no target; a night that fuzzed nothing is not a record")
+    for t, entry in measured.items():
+        if t not in targets:
+            fail(FUZZ, f"targets.{t}", f"is not a target of {FUZZ_MANIFEST} ({', '.join(targets)})")
+        require_object(FUZZ, f"targets.{t}", entry)
+        if not is_num(entry.get("seconds")) or not entry["seconds"] > 0:
+            fail(FUZZ, f"targets.{t}.seconds", "must be a number of seconds above 0")
+        for n in ("executions", "corpus_added", "crashes"):
+            require_count(FUZZ, f"targets.{t}.{n}", entry.get(n))
+    rows = []
+    for t in targets:
+        e = measured.get(t)
+        if e is None:
+            rows.append(Row(f"fuzz hours `{t}`", "unmeasured", "", source))
+            continue
+        cell = (f"{e['executions']} executions, {e['corpus_added']} corpus, "
+                f"{e['crashes']} crashes at {commit[:7]}")
+        rows.append(Row(f"fuzz hours `{t}`", f"{e['seconds'] / 3600:.1f}", cell, run,
+                        {f"fuzz:{t}:seconds": e["seconds"], f"fuzz:{t}:crashes": e["crashes"]}))
+    names = sorted(t for t in targets if t in measured)
+    rows[0].values.update({"fuzz:targets": len(names), "fuzz:target-names": names})
+    return rows
+
+
+def differential_rows():
+    if not path(DIFFERENTIAL).exists():
+        return [Row("differential", "no report yet", "", f"`{DIFFERENTIAL}`")]
+    name = DIFFERENTIAL
+    record = require_object(name, "(the file)", load_json(name))
+    if record.get("schema") != 1:
+        fail(name, "schema", "must be 1")
+    run = require_run(name, record, "Differential")
+    require_date(name, record)
+    for side in ("base", "head"):
+        if not isinstance(record.get(side), str) or not SHA.match(record[side]):
+            fail(name, side, f"must be the full 40-hex sha of the {side} build")
+    for n in ("differences", "calls", "commands"):
+        require_count(name, n, record.get(n))
+    if not isinstance(record.get("complete"), bool):
+        fail(name, "complete", "must be true or false (false: the verdict line was INCOMPLETE)")
+    floor = require_object(name, "same_floor", record.get("same_floor"))
+    for n in ("differences", "calls", "commands"):
+        require_count(name, f"same_floor.{n}", floor.get(n))
+    for prefix, rec in (("", record), ("same_floor.", floor)):
+        for n in ("calls", "commands"):
+            if (rec is floor or record["complete"]) and rec[n] == 0:
+                fail(name, f"{prefix}{n}", "0 in a whole run; a run makes calls and commands, and "
+                     "tools/differential reads 0 of either as INCOMPLETE")
+    complete = record["complete"]
+    word = "complete" if complete else "INCOMPLETE"
+    cell = (f"{record['calls']} calls, {record['commands']} commands; "
+            f"the same-build floor {floor['differences']}; {word}")
+    value = str(record["differences"]) if complete else "INCOMPLETE"
+    return [Row(f"differential `{record['head'][:7]}` against `{record['base'][:7]}`", value, cell, run,
+                {"differential:same_floor": floor["differences"], "differential:complete": 1 if complete else 0})]
+
+
 def bench_rows():
     source = f"`{BENCH}`"
     if not path(BENCH).exists():
@@ -583,7 +764,7 @@ def e2e_rows():
 
 def rows():
     return (ratchet_rows() + wire_rows() + consumer_rows() + arch_rows()
-            + mutation_rows() + bench_rows() + e2e_rows())
+            + mutation_rows() + fuzz_rows() + bench_rows() + e2e_rows() + differential_rows())
 
 
 def table(all_rows):
@@ -620,7 +801,7 @@ def load_base(file):
         elif LIST_KEYS.match(key):
             if not isinstance(v, list) or not all(isinstance(e, str) and e for e in v):
                 fail(name, f"values.{key}", "must be a list of names")
-        elif FLOOR_KEYS.match(key) or CEILING_KEYS.match(key):
+        elif FLOOR_KEYS.match(key) or CEILING_KEYS.match(key) or LATEST_KEYS.match(key):
             if not is_num(v):
                 fail(name, f"values.{key}", "must be a number")
         else:
@@ -691,8 +872,11 @@ def falls(base, tree, scores):
         elif FLOOR_KEYS.match(key):
             if t < b:
                 out.append(f"{key}: {b:g} at the base, {t:g} in the tree; it may not fall")
+        elif LATEST_KEYS.match(key):
+            pass  # The latest run's own figure: held only to not vanishing (above).
         elif t > b:
-            out.append(f"{key}: {b:g} at the base, {t:g} in the tree; an allowlist may not grow")
+            why = "an allowlist may not grow" if key.startswith("allowlist:") else "it may not rise"
+            out.append(f"{key}: {b:g} at the base, {t:g} in the tree; {why}")
     return out, notices
 
 

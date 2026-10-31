@@ -63,6 +63,18 @@ module.exports = {
 MUTANTS = {"schema": 1, "commit": SHA, "run": "https://example.invalid/run/1", "date": "2026-10-23",
            "files": {"src/spend_gate.rs": {"score": 86.6, "caught": 194, "missed": 30,
                                            "timeout": 0, "unviable": 12}}}
+TARGETS = ["beef_reader", "brc29_remittance", "served_json", "explorer_bodies", "allow_pending"]
+FUZZ_MANIFEST = '[package]\nname = "fuzz"\n\n[workspace]\nmembers = ["."]\n' + "".join(
+    f'\n[[bin]]\nname = "{t}"\npath = "fuzz_targets/{t}.rs"\ntest = false\n' for t in TARGETS) + (
+    '\n[[example]]\nname = "seed_corpus"\npath = "examples/seed_corpus.rs"\n')
+RUN = "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/40500000001"
+FUZZ = {"schema": 1, "commit": SHA, "run": RUN, "date": "2026-11-01",
+        "targets": {"beef_reader": {"seconds": 3600, "executions": 41000000, "corpus_added": 12, "crashes": 0},
+                    "served_json": {"seconds": 5400, "executions": 900, "corpus_added": 0, "crashes": 2}}}
+HEAD = "1234567" + "f" * 33
+DIFF = {"schema": 1, "run": RUN.replace("01", "02"), "date": "2026-11-01", "base": SHA, "head": HEAD,
+        "differences": 0, "calls": 912, "commands": 41, "complete": True,
+        "same_floor": {"differences": 0, "calls": 912, "commands": 41}}
 BENCH = {"margin": 0.25, "profiles": {"dev-m": {"profile": "dev-m", "gate": True, "runs": [
     {"commit": SHA, "benches": {"gate/1": {"p50_us": 1.0, "p99_us": 2.0, "calls": 9}}}]}}}
 
@@ -81,6 +93,7 @@ class Tree:
             self.write(f"tests/e2e/scenarios/{i:02}-s.js", SCENARIO)
         self.write("tests/e2e/run.js", "const hermetic = require('./lib/hermetic');\n")
         self.write("tests/e2e/lib/hermetic.js", "const enabled = process.env.E2E_HERMETIC === '1';\n")
+        self.write("fuzz/Cargo.toml", FUZZ_MANIFEST)
         for c, n in (("mcp", 2), ("x402-skill", 1)):
             for i in range(n):
                 self.write(f"tests/wire_consumers/{c}/{i:02}.json", "{}")
@@ -841,6 +854,288 @@ class TheScoreIsItsCounts(Case):
             self.assertEqual(nightly, tool.mutation_score(e["caught"], e["missed"], e["timeout"]), row)
             self.assertEqual(nightly, e["score"], row)
         print(f"\n    agree: {len(self.real())} files, the nightly's table and mutation_score()", end=" ", file=sys.stderr)
+
+
+def edited(record, path, value):
+    """A copy of record with the field at path (a dotted list) set to value, or removed for DROP."""
+    out = json.loads(json.dumps(record))
+    *head, last = path
+    node = out
+    for k in head:
+        node = node[k]
+    if value is DROP:
+        node.pop(last)
+    else:
+        node[last] = value
+    return out
+
+
+DROP = object()
+
+
+class TheFuzzHoursAreTheNightsRecord(Case):
+    """(J) docs/scoreboard/fuzz.json, one row per target of fuzz/Cargo.toml, read
+    strictly; the targets are the manifest's, never a list in the tool."""
+
+    def fuzz_rows(self):
+        return [l for l in self.table().splitlines() if l.startswith("| fuzz hours")]
+
+    def with_record(self, record):
+        self.tree.write("docs/scoreboard/fuzz.json", json.dumps(record))
+
+    def test_a_missing_record_reads_unmeasured_for_each_manifest_target(self):
+        rows = self.fuzz_rows()
+        self.assertEqual(rows, [f"| fuzz hours `{t}` | unmeasured |  | `docs/scoreboard/fuzz.json` |" for t in TARGETS])
+
+    def test_the_targets_are_the_manifests(self):
+        self.tree.write("fuzz/Cargo.toml", FUZZ_MANIFEST + '\n[[bin]]\nname = "new_target"\npath = "x.rs"\n')
+        self.assertIn("| fuzz hours `new_target` | unmeasured |", self.table())
+        self.assertEqual(len(self.fuzz_rows()), 6)
+
+    def test_the_real_manifest_names_the_five_targets(self):
+        with open(os.path.join(REPO, "fuzz/Cargo.toml")) as f:
+            self.tree.write("fuzz/Cargo.toml", f.read())
+        self.assertEqual([l.split("`")[1] for l in self.fuzz_rows()], TARGETS)
+        print(f"\n    rows: {', '.join(TARGETS)}", end=" ", file=sys.stderr)
+
+    def test_a_present_record_renders_its_rows(self):
+        self.with_record(FUZZ)
+        rows = self.fuzz_rows()
+        self.assertIn(f"| fuzz hours `beef_reader` | 1.0 | 41000000 executions, 12 corpus, 0 crashes at abcdef0 | {RUN} |", rows)
+        self.assertIn("| fuzz hours `brc29_remittance` | unmeasured |  | `docs/scoreboard/fuzz.json` |", rows)
+        print(f"\n    row: {rows[0]}", end=" ", file=sys.stderr)
+
+    def test_a_crash_shows_with_its_number(self):
+        self.with_record(FUZZ)
+        self.assertIn(f"| fuzz hours `served_json` | 1.5 | 900 executions, 0 corpus, 2 crashes at abcdef0 | {RUN} |",
+                      self.fuzz_rows())
+
+    def test_the_values_are_the_runs(self):
+        self.with_record(FUZZ)
+        code, out = self.tree.run("--json")
+        vals = json.loads(out)["values"]
+        self.assertEqual(vals["fuzz:targets"], 2)
+        self.assertEqual(vals["fuzz:target-names"], ["beef_reader", "served_json"])
+        self.assertEqual((vals["fuzz:beef_reader:seconds"], vals["fuzz:served_json:crashes"]), (3600, 2))
+        self.assertNotIn("fuzz:allow_pending:seconds", vals)
+
+    def test_each_malformed_field_is_refused(self):
+        for path, value, needle in (
+                (["targets", "not_a_target"], dict(FUZZ["targets"]["beef_reader"]),
+                 "targets.not_a_target: is not a target of fuzz/Cargo.toml"),
+                (["targets", "beef_reader", "crashes"], -1, "targets.beef_reader.crashes: must be a count"),
+                (["targets", "beef_reader", "executions"], "41000000", "targets.beef_reader.executions: must be a count"),
+                (["targets", "beef_reader", "corpus_added"], 1.5, "targets.beef_reader.corpus_added: must be a count"),
+                (["targets", "beef_reader", "crashes"], True, "targets.beef_reader.crashes: must be a count"),
+                (["targets", "beef_reader", "seconds"], 0, "targets.beef_reader.seconds: must be a number of seconds above 0"),
+                (["targets", "beef_reader", "seconds"], "3600", "targets.beef_reader.seconds: must be a number"),
+                (["targets", "beef_reader"], 3600, "targets.beef_reader: must be an object"),
+                (["targets"], {}, "targets: holds no target"),
+                (["targets"], DROP, "targets: must be an object"),
+                (["commit"], SHA[:7], "commit: must be the full 40-hex sha"),
+                (["commit"], SHA.upper(), "commit: must be the full 40-hex sha"),
+                (["run"], "https://example.invalid/run/1", "run: must be the Nightly run's URL"),
+                (["run"], "https://github.com/Calhooon/other/actions/runs/1", "run: must be the Nightly run's URL"),
+                (["run"], RUN + "x", "run: must be the Nightly run's URL"),
+                (["date"], "2026-11-1", "date: must be YYYY-MM-DD"),
+                (["schema"], 2, "schema: must be 1")):
+            with self.subTest(path=path, value=value):
+                self.with_record(edited(FUZZ, path, value))
+                code, out = self.tree.run()
+                self.assertEqual(code, 1, out)
+                self.assertTrue(out.startswith(f"scoreboard: docs/scoreboard/fuzz.json: {needle}"), out)
+                self.assertNotIn("Traceback", out)
+                print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_an_empty_or_unparsable_record_is_refused(self):
+        self.tree.write("docs/scoreboard/fuzz.json", "")
+        self.refused("docs/scoreboard/fuzz.json: (the file): present and empty")
+        self.tree.write("docs/scoreboard/fuzz.json", "[]")
+        self.refused("docs/scoreboard/fuzz.json: (the file): must be an object")
+
+    def test_a_record_without_its_manifest_is_refused(self):
+        self.with_record(FUZZ)
+        self.tree.remove("fuzz/Cargo.toml")
+        self.refused("docs/scoreboard/fuzz.json: (the file): present, and fuzz/Cargo.toml is absent")
+
+    def test_a_malformed_manifest_is_refused(self):
+        self.tree.write("fuzz/Cargo.toml", '[package]\nname = "fuzz"\n')
+        self.refused("fuzz/Cargo.toml: [[bin]]: names no target")
+        self.tree.write("fuzz/Cargo.toml", FUZZ_MANIFEST + '\n[[bin]]\nname = "beef_reader"\n')
+        self.refused("fuzz/Cargo.toml: [[bin]]: names a target twice")
+        self.tree.write("fuzz/Cargo.toml", "[[bin]\n")
+        self.refused("fuzz/Cargo.toml: (the file): not TOML")
+
+
+class TheDifferentialIsItsReport(Case):
+    """(K) docs/scoreboard/differential.json, tools/differential's verdict line and
+    its --same floor, read strictly; an INCOMPLETE report is never a verdict."""
+
+    def row(self):
+        return [l for l in self.table().splitlines() if l.startswith("| differential")]
+
+    def with_record(self, record):
+        self.tree.write("docs/scoreboard/differential.json", json.dumps(record))
+
+    def test_a_missing_record_reads_no_report_yet(self):
+        self.assertEqual(self.row(), ["| differential | no report yet |  | `docs/scoreboard/differential.json` |"])
+
+    def test_a_present_record_renders_its_row(self):
+        self.with_record(DIFF)
+        row = f"| differential `1234567` against `abcdef0` | 0 | 912 calls, 41 commands; the same-build floor 0; complete | {DIFF['run']} |"
+        self.assertEqual(self.row(), [row])
+        print(f"\n    row: {row}", end=" ", file=sys.stderr)
+
+    def test_an_incomplete_record_is_never_a_verdict(self):
+        self.with_record(dict(DIFF, complete=False, differences=0, calls=0))
+        self.assertEqual(self.row(), [f"| differential `1234567` against `abcdef0` | INCOMPLETE | "
+                                      f"0 calls, 41 commands; the same-build floor 0; INCOMPLETE | {DIFF['run']} |"])
+
+    def test_the_values_are_the_reports(self):
+        self.with_record(dict(DIFF, same_floor=dict(DIFF["same_floor"], differences=3)))
+        vals = json.loads(self.tree.run("--json")[1])["values"]
+        self.assertEqual((vals["differential:same_floor"], vals["differential:complete"]), (3, 1))
+
+    def test_each_malformed_field_is_refused(self):
+        for path, value, needle in (
+                (["differences"], -1, "differences: must be a count"),
+                (["calls"], "912", "calls: must be a count"),
+                (["commands"], 4.5, "commands: must be a count"),
+                (["calls"], 0, "calls: 0 in a whole run"),
+                (["commands"], 0, "commands: 0 in a whole run"),
+                (["complete"], 1, "complete: must be true or false"),
+                (["complete"], DROP, "complete: must be true or false"),
+                (["same_floor"], 0, "same_floor: must be an object"),
+                (["same_floor", "differences"], -2, "same_floor.differences: must be a count"),
+                (["same_floor", "calls"], 0, "same_floor.calls: 0 in a whole run"),
+                (["base"], SHA[:39], "base: must be the full 40-hex sha of the base build"),
+                (["head"], DROP, "head: must be the full 40-hex sha of the head build"),
+                (["run"], "github.com/Calhooon/bsv-wallet-cli/actions/runs/1", "run: must be the Differential run's URL"),
+                (["run"], "https://github.com/Calhooon/bsv-wallet-cli/pull/1", "run: must be the Differential run's URL"),
+                (["date"], 20261101, "date: must be YYYY-MM-DD"),
+                (["schema"], "1", "schema: must be 1")):
+            with self.subTest(path=path, value=value):
+                self.with_record(edited(DIFF, path, value))
+                code, out = self.tree.run()
+                self.assertEqual(code, 1, out)
+                self.assertTrue(out.startswith(f"scoreboard: docs/scoreboard/differential.json: {needle}"), out)
+                self.assertNotIn("Traceback", out)
+                print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
+
+
+class TheCensusCellsHoldAgainstTheBase(Case):
+    """(J, K) --base: the measured fuzz targets may not fall nor lose a name, a crash
+    count and the same-build floor may not rise, completeness may not fall; the
+    latest run's seconds move freely."""
+
+    def checked(self, base):
+        code, out = self.tree.run("--render")
+        self.assertEqual(code, 0, out)
+        return self.tree.run("--check", "--base", base)
+
+    def refused_against(self, base, needle):
+        code, out = self.checked(base)
+        self.assertEqual(code, 1, out)
+        self.assertIn(needle, out)
+        print(f"\n    exit 1: {[l for l in out.splitlines() if needle in l][0]}", end=" ", file=sys.stderr)
+
+    def passes_against(self, base):
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    def write(self, fuzz=None, diff=None):
+        if fuzz is not None:
+            self.tree.write("docs/scoreboard/fuzz.json", json.dumps(fuzz))
+        if diff is not None:
+            self.tree.write("docs/scoreboard/differential.json", json.dumps(diff))
+
+    def test_the_same_records_pass(self):
+        self.write(FUZZ, DIFF)
+        self.passes_against(self.tree.values())
+
+    def test_a_new_record_passes_against_a_base_without_one(self):
+        base = self.tree.values()
+        self.write(FUZZ, DIFF)
+        self.passes_against(base)
+
+    def test_a_shorter_later_run_passes(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        self.write(edited(FUZZ, ["targets", "served_json", "seconds"], 600))
+        self.passes_against(base)
+
+    def test_a_measured_target_lost_is_refused(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        self.write(edited(FUZZ, ["targets", "served_json"], DROP))
+        self.refused_against(base, "fuzz:targets: 2 at the base, 1 in the tree; it may not fall")
+        self.refused_against(base, "fuzz:target-names: served_json at the base, gone from the tree")
+
+    def test_a_target_swapped_for_another_is_refused(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        swapped = edited(FUZZ, ["targets", "served_json"], DROP)
+        swapped["targets"]["allow_pending"] = FUZZ["targets"]["served_json"]
+        self.write(swapped)
+        self.refused_against(base, "fuzz:target-names: served_json at the base, gone from the tree")
+
+    def test_a_removed_fuzz_record_is_refused(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        self.tree.remove("docs/scoreboard/fuzz.json")
+        self.refused_against(base, "fuzz:targets: 2 at the base, 0 in the tree; it may not fall")
+        self.refused_against(base, "a key may not vanish: fuzz:beef_reader:seconds")
+
+    def test_a_crash_count_that_rises_is_refused(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        self.write(edited(FUZZ, ["targets", "beef_reader", "crashes"], 1))
+        self.refused_against(base, "fuzz:beef_reader:crashes: 0 at the base, 1 in the tree; it may not rise")
+
+    def test_a_crash_count_that_falls_passes(self):
+        self.write(FUZZ)
+        base = self.tree.values()
+        self.write(edited(FUZZ, ["targets", "served_json", "crashes"], 0))
+        self.passes_against(base)
+
+    def test_a_same_floor_that_rises_is_refused(self):
+        self.write(diff=DIFF)
+        base = self.tree.values()
+        self.write(diff=edited(DIFF, ["same_floor", "differences"], 1))
+        self.refused_against(base, "differential:same_floor: 0 at the base, 1 in the tree; it may not rise")
+
+    def test_a_report_that_turns_incomplete_is_refused(self):
+        self.write(diff=DIFF)
+        base = self.tree.values()
+        self.write(diff=dict(DIFF, complete=False))
+        self.refused_against(base, "differential:complete: 1 at the base, 0 in the tree; it may not fall")
+
+    def test_a_report_that_turns_complete_passes(self):
+        self.write(diff=dict(DIFF, complete=False))
+        base = self.tree.values()
+        self.write(diff=dict(DIFF, differences=4))
+        self.passes_against(base)
+
+    def test_a_removed_differential_record_is_refused(self):
+        self.write(diff=DIFF)
+        base = self.tree.values()
+        self.tree.remove("docs/scoreboard/differential.json")
+        self.refused_against(base, "a key may not vanish: differential:complete")
+        self.refused_against(base, "a key may not vanish: differential:same_floor")
+
+    def test_a_malformed_base_value_is_refused(self):
+        path = os.path.join(self.tree.root, "base.json")
+        self.tree.run("--render")
+        for key, v, needle in (("fuzz:beef_reader:seconds", "3600", "must be a number"),
+                               ("fuzz:target-names", "beef_reader", "must be a list of names"),
+                               ("differential:same_floor", None, "must be a number"),
+                               ("fuzz:beef_reader:minutes", 60, "is not a key this tool compares")):
+            with self.subTest(key=key):
+                with open(path, "w") as f:
+                    f.write(json.dumps({"schema": 1, "values": {key: v}}))
+                self.refused(f"values.{key}: {needle}", "--check", "--base", path)
 
 
 class TheConsumersCorpusIsReadWhereItLives(Case):
