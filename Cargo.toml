@@ -76,3 +76,8 @@ harness = false
 [[bench]]
 name = "list_outputs"
 harness = false
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
