@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "commit": "73986bceefbfe74519ddadc6bf4adbd1e46e821b",
+  "commit": "7040346a94ec1a98a9f28d1b6c2110fdb667e906",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -10,7 +10,7 @@
     "clippy_toml": "7277d8419d80a6030cc579d1bedd3cc70eb495dd53eaea9074a3d7482e787f96"
   },
   "ratchets": {
-    "clippy_pedantic": 825,
+    "clippy_pedantic": 824,
     "unwrap_expect_outside_tests": 4,
     "files_over_800_lines": 10,
     "tests_files_over_800_lines": 3,
@@ -31,18 +31,18 @@
       },
       "mcp/src": {
         "files": 3,
-        "lines": 1718
+        "lines": 1731
       },
       "src": {
-        "files": 101,
-        "lines": 48221
+        "files": 104,
+        "lines": 48661
       },
       "tests": {
-        "files": 64,
-        "lines": 15415
+        "files": 67,
+        "lines": 15546
       }
     },
-    "test_files": 101,
+    "test_files": 106,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
@@ -88,11 +88,11 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 3793
+        "lines": 3803
       },
       {
         "path": "src/tracker_words_witnesses.rs",
-        "lines": 1278
+        "lines": 1288
       },
       {
         "path": "src/chain_feed_tests.rs",
@@ -108,7 +108,7 @@
     "duplicated_blocks": 509,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 223,
-      "clippy::uninlined_format_args": 166,
+      "clippy::uninlined_format_args": 165,
       "clippy::missing_errors_doc": 82,
       "clippy::must_use_candidate": 69,
       "clippy::cast_possible_truncation": 42,
