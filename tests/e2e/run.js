@@ -22,6 +22,7 @@ const hermetic = require('./lib/hermetic');
 // Under DIFF_RECORD the run is recorded (lib/record.js, tools/differential);
 // ./lib/setup wraps the binary's commands before the scenarios load.
 const record = require('./lib/record');
+const certifier = require('./lib/certifier');
 const { startWallet, fundWallet, sweepToFunder, teardownWallet, FUNDER_PORT, FUNDER_EXTERNAL_BASKET, FUNDER_EXTERNAL_SATOSHIS } = require('./lib/setup');
 const { WalletClient } = require('./lib/wallet-client');
 const path = require('path');
@@ -116,7 +117,10 @@ async function main() {
     const portA = parseInt(process.env.WALLET_A_PORT || '3370');
     const portB = parseInt(process.env.WALLET_B_PORT || '3371');
     walletA = await startWallet(portA, 'wallet-A');
-    walletB = await startWallet(portB, 'wallet-B');
+    // Wallet B trusts wallet A as a certifier (#331): scenario 06's
+    // certificate is A's, so B's identity discovery answers it.
+    walletB = await startWallet(portB, 'wallet-B',
+      { env: { TRUST_SETTINGS: JSON.stringify(certifier.trustSettings(walletA.identityKey)) } });
     console.log(`  Wallet A: :${portA} (${walletA.identityKey.slice(0, 12)}...)  ${walletA.address}`);
     console.log(`  Wallet B: :${portB} (${walletB.identityKey.slice(0, 12)}...)  ${walletB.address}`);
 

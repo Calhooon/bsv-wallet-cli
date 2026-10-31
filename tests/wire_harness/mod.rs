@@ -7,6 +7,7 @@
 pub(crate) mod cases;
 pub(crate) mod cases_beta2;
 pub(crate) mod cases_beta3;
+pub(crate) mod cases_beta4;
 pub(crate) mod cases_certificate_privacy;
 pub(crate) mod cases_page_bounds;
 pub(crate) mod cases_routes;

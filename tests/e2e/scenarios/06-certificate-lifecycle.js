@@ -1,7 +1,7 @@
 const certifier = require('../lib/certifier');
 module.exports = {
   name: 'certificate-lifecycle',
-  description: 'BRC-52 signed certificate, selective proof, empty discovery and relinquish (0 sats)',
+  description: 'BRC-52 signed certificate, selective proof, trusted discovery and relinquish (0 sats)',
   async run(walletA, walletB, assert) {
     const aKey = await walletA.client.identityKey();
     const bKey = await walletB.client.identityKey();
@@ -33,12 +33,25 @@ module.exports = {
         Buffer.from(cert.signature, 'hex'), [2, 'certificate signature'],
         `${certifier.TYPE} ${certifier.SERIAL}`, 'anyone', true);
       assert(verified.valid === true, 'the certificate signature verifies under the BRC-52 child key');
-      // Both calls run behind the proxy wall. Published trust lookup returns
-      // None: toolbox #388 (CLI #331), never fabricated trust.
-      for (const result of [await walletB.client.discoverByIdentityKey(bKey),
-        await walletB.client.discoverByAttributes({ role: certifier.VALUES.role })]) {
-        if (!legacy) assert(result.totalCertificates === 0 && result.certificates.length === 0,
-          'discovery is empty: toolbox #388 (CLI #331)');
+      // Both calls run behind the proxy wall. Wallet B's TRUST_SETTINGS
+      // names wallet A, this certificate's certifier (#331, toolbox #388):
+      // identity discovery's local leg answers it with certifierInfo, the
+      // configured entry; attribute discovery has no local leg (it asks the
+      // overlay, which answers nothing behind the wall), so it stays empty.
+      const byIdentity = await walletB.client.discoverByIdentityKey(bKey);
+      const byAttributes = await walletB.client.discoverByAttributes({ role: certifier.VALUES.role });
+      if (!legacy) {
+        assert(byIdentity.totalCertificates === 1 && byIdentity.certificates.length === 1,
+          `identity discovery answers the trusted certifier's certificate (#331): ${JSON.stringify(byIdentity)}`);
+        const found = byIdentity.certificates[0];
+        assert(found.serialNumber === certifier.SERIAL && found.certifier === aKey && found.subject === bKey,
+          'the discovered certificate is the one wallet A issued to wallet B');
+        const info = found.certifierInfo || {};
+        assert(Object.keys(info).sort().join(',') === 'description,iconUrl,name,trust'
+          && Object.entries(certifier.INFO).every(([k, v]) => info[k] === v),
+          `certifierInfo is the configured entry (#331): ${JSON.stringify(found.certifierInfo)}`);
+        assert(byAttributes.totalCertificates === 0 && byAttributes.certificates.length === 0,
+          'attribute discovery is empty behind the proxy wall: it has no local leg (toolbox #388)');
       }
       const removed = await walletB.client.post('relinquishCertificate', {
         [legacy ? 'certificateType' : 'type']: certifier.TYPE, serialNumber: certifier.SERIAL, certifier: aKey,
@@ -47,7 +60,7 @@ module.exports = {
       const after = await walletB.client.listCertificates([aKey], [certifier.TYPE]);
       assert(after.totalCertificates === 0, 'no certificate remains');
       return { txid: null, sats: 0, wocConfirmed: 'n/a',
-        discovery: legacy ? 'beta.1 recorded answer' : 'empty: toolbox #388 (CLI #331)' };
+        discovery: legacy ? 'beta.1 recorded answer' : 'identity: the trusted certificate; attributes: empty behind the wall (#331)' };
     } finally { await stub.stop(); }
   },
 };
