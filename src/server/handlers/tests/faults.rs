@@ -106,8 +106,9 @@ async fn an_accepted_abort_keeps_its_class_and_carries_the_records_hint() {
 
 /// An input the stack could not judge (bsv-rs #452) is answered by its
 /// cause: a coin or spend before Genesis is the wallet's state (409), the
-/// stack's tip, activation heights, source height or work budget its own
-/// fault (500); never the caller's 400.
+/// stack's tip, activation heights, source height or work budget (per input
+/// or, since bsv-rs 0.9.0-beta.5's #519, per transaction) its own fault
+/// (500); never the caller's 400.
 #[tokio::test]
 async fn a_not_judged_input_is_answered_by_its_cause() {
     use bsv_sdk::script::NotJudgedCause as C;
@@ -143,6 +144,15 @@ async fn a_not_judged_input_is_answered_by_its_cause() {
                 input: 0,
                 budget: 1 << 31,
                 work_done: 1 << 31,
+            },
+            500,
+            "INTERNAL_ERROR",
+        ),
+        (
+            C::TransactionWorkBudgetExceeded {
+                input: 1,
+                limit: 1 << 31,
+                total: (1 << 31) + 1,
             },
             500,
             "INTERNAL_ERROR",
