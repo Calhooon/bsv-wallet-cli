@@ -333,7 +333,7 @@ impl Rows {
         .last_insert_rowid();
         sqlx::query(
             "INSERT INTO outputs (user_id, transaction_id, basket_id, vout, satoshis, locking_script, txid, type, spendable, change, provided_by, purpose, output_description, derivation_prefix, derivation_suffix, created_at, updated_at) \
-             VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', 'c', ?, ?, ?, ?)",
+             VALUES (?, ?, ?, 0, ?, ?, ?, 'P2PKH', 1, 1, 'storage', 'change', ?, ?, ?, ?, ?)",
         )
         .bind(self.user)
         .bind(tx_row)
@@ -341,6 +341,9 @@ impl Rows {
         .bind(satoshis)
         .bind(coin.lock)
         .bind(coin.txid)
+        // The coin's own reason, five bytes or more as BRC-100's
+        // descriptions are (R51); the literal 'c' it was fell short (#371).
+        .bind(coin.description)
         .bind(coin.derivation.map(|_| FUNDED_PREFIX))
         .bind(coin.derivation)
         .bind(now)
