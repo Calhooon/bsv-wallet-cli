@@ -257,7 +257,9 @@ impl AppError {
         match cause {
             C::PreGenesisCoin { .. } | C::PreGenesisSpend { .. } => Kind::Conflict,
             // TipHeightOverflow, ZeroActivationHeight, SourceHeightOverflow,
-            // WorkBudgetExceeded, and any cause a later package adds.
+            // WorkBudgetExceeded, TransactionWorkBudgetExceeded (bsv-rs
+            // 0.9.0-beta.5, #519: the per-transaction budget), and any cause
+            // a later package adds.
             _ => Kind::Internal,
         }
     }
