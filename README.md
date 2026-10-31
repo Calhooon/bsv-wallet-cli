@@ -23,7 +23,10 @@ discovery answers the certifiers `TRUST_SETTINGS` trusts
 default certifiers when it is unset. Certificate JSON
 uses `type`, hex signatures and base64 keyrings. Run
 `bsv-wallet certificates --reverify` once after upgrading to check stored
-signatures without changing certificates. Certificates issued through the
+signatures without changing certificates; at toolbox 0.14.0-beta.5 a
+certificate whose subject or certifier key is not a compressed key (`02` or
+`03` and 64 hex digits) fails the reverify, an uncompressed `04` key
+included (the package's CHANGELOG Fixed, bsv-rs #498). Certificates issued through the
 toolbox before its corrected field-encryption scheme must be re-issued;
 this pin does not migrate their old keyrings.
 
