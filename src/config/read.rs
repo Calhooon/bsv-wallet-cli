@@ -134,7 +134,7 @@ fn refused(variable: &'static str, value: &str, expected: &'static str) -> Confi
     ConfigError {
         variable,
         value: value.to_string(),
-        expected,
+        expected: expected.into(),
     }
 }
 

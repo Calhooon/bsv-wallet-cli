@@ -73,7 +73,7 @@ pub struct Knob {
     /// The shape the value must have, when it was refused at start (the
     /// value is then as set, and the setting reads as its default).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub refused: Option<&'static str>,
+    pub refused: Option<std::borrow::Cow<'static, str>>,
 }
 
 /// A secret as the knob list shows it, from its variable as set and the
@@ -117,7 +117,7 @@ impl Config {
                     name,
                     value: refused.map_or(value, |e| Value::Text(e.value.clone())),
                     source: self.source(name),
-                    refused: refused.map(|e| e.expected),
+                    refused: refused.map(|e| e.expected.clone()),
                 }
             })
             .collect()
@@ -163,6 +163,10 @@ impl Config {
                 },
             ),
             ("RUST_LOG", w.log_filter().0.into()),
+            (
+                "TRUST_SETTINGS",
+                w.trust.as_ref().map_or(NONE, |t| Value::Text(t.shown())),
+            ),
         ]
     }
 

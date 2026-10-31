@@ -34,7 +34,8 @@ impl ArcMode {
                     variable: "ARC_MODE",
                     value: mode.to_string(),
                     expected: "a broadcaster mode: `arcade` (the default) or `classic` \
-                               (deprecated, the hermetic stub's until #299)",
+                               (deprecated, the hermetic stub's until #299)"
+                        .into(),
                 }),
             },
             None => match raw.given("ARCADE").map(str::to_ascii_lowercase).as_deref() {
@@ -45,7 +46,8 @@ impl ArcMode {
                     variable: "ARCADE",
                     value: raw.get("ARCADE").unwrap_or_default().to_string(),
                     expected: "a broadcaster switch: `1`, `true` or `yes` (Arcade, the \
-                               default) or `0`, `false` or `no` (classic); prefer ARC_MODE",
+                               default) or `0`, `false` or `no` (classic); prefer ARC_MODE"
+                        .into(),
                 }),
             },
         };
