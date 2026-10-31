@@ -335,7 +335,9 @@ after the call), and `actions` and `/listActions` show it as `underRule:
 false`) carries the label from its creation through `signAction`; an aborted
 template keeps it. The label is the gate's alone: a caller's own
 `spend-gate:received-pending` or `underReceivedRule` (in any case) is stripped from `createAction`'s
-and `internalizeAction`'s labels, so it grants nothing. The records a 0.15
+and `internalizeAction`'s labels, so it grants nothing; the strip compares a label
+as the toolbox stores it, after ECMAScript trim (U+FEFF included) and
+lowercase. The records a 0.15
 store made (`spend_gate_actions`) keep answering. There is no environment
 variable for it.
 
