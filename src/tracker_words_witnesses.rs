@@ -505,7 +505,9 @@ async fn the_abort_door_refuses_a_transaction_a_broadcaster_took() {
 }
 
 /// Status alone holds this abort at the toolbox, while the host's proof
-/// guard does not read it. Beta.3 retains the reference's `InvalidParameter`.
+/// guard does not read it. Since beta.4 the refusal is the typed record of
+/// stored acceptance (bsv-rs #439, #342) keeping the reference's
+/// `InvalidParameter`, its transaction and status named.
 #[tokio::test]
 async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() {
     let key = PrivateKey::random();
@@ -535,13 +537,13 @@ async fn abort_unproven_without_a_proof_is_the_toolbox_accepting_word_refusal() 
     .await
     .unwrap_err();
     let classed = bsv_sdk::Error::from(error);
-    assert!(matches!(
-        classed,
-        bsv_sdk::Error::WalletRefusal {
-            class: bsv_sdk::WalletRefusalClass::InvalidParameter,
-            ..
+    match &classed {
+        bsv_sdk::Error::AbortAccepted(record) => {
+            assert_eq!(record.class, bsv_sdk::WalletRefusalClass::InvalidParameter);
+            assert_eq!(record.status.as_deref(), Some("unproven"));
         }
-    ));
+        other => panic!("expected the typed abort record, got {other:?}"),
+    }
     let response =
         axum::response::IntoResponse::into_response(crate::server::error::AppError::from(classed));
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -635,8 +637,11 @@ async fn abort_incoming_by_reference_and_txid_keeps_validation_without_acceptanc
     }
 }
 
+/// The status guard's refusal is the typed record (#342): its class keeps
+/// 400 `VALIDATION_ERROR`, and the recovery hint is selected on the record
+/// and names what it knows, never read from the message.
 #[tokio::test]
-async fn abort_accepting_status_keeps_validation_without_inferred_hint() {
+async fn abort_accepting_status_keeps_validation_with_the_records_hint() {
     let key = PrivateKey::random();
     let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
     let txid = "e5".repeat(32);
@@ -647,10 +652,9 @@ async fn abort_accepting_status_keeps_validation_without_inferred_hint() {
     let (status, body) = serve_abort(&wallet, &txid).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_toolbox_abort_refusal(&body);
-    assert!(!body["message"]
-        .as_str()
-        .unwrap()
-        .contains("(hint: the wallet holds an accepting word"));
+    assert!(body["message"].as_str().unwrap().contains(
+        "(hint: the wallet holds an accepting word for this transaction (status 'unproven')"
+    ));
     assert_eq!(tx_status(wallet.storage(), &txid).await, "unproven");
     assert_eq!(output_state(wallet.storage(), output).await, before);
 }
@@ -804,10 +808,14 @@ async fn assert_agreement_row(word: &str, toolbox_refuses: bool, abort: bool) ->
         } else {
             bsv_sdk::WalletRefusalClass::InvalidOperation
         };
-        assert!(
-            matches!(error, bsv_sdk::Error::WalletRefusal { class, .. } if class == expected),
-            "{word}: {error}"
-        );
+        // An abort refused on stored acceptance is the typed record since
+        // beta.4 (#342), its class the guard's; a retirement keeps the class.
+        let class = match &error {
+            bsv_sdk::Error::AbortAccepted(record) if abort => Some(record.class),
+            bsv_sdk::Error::WalletRefusal { class, .. } if !abort => Some(*class),
+            _ => None,
+        };
+        assert_eq!(class, Some(expected), "{word}: {error}");
         assert_eq!(tx_status(&storage, &txid).await, status, "{word}");
         assert_eq!(output_state(&storage, output).await, before, "{word}");
     }
