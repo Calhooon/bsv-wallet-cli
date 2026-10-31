@@ -44,6 +44,8 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
   | `busy-read` | a file store no reader can open: opened on SQLite's dotfile locking (no shared memory, so no WAL), its one lock held by another connection; carries the callback token and covers `abortAction`, `GET /chain-feed`, `GET /tx/{txid}` and `POST /arc-callback` answering 503 `STORE_BUSY` with `Retry-After: 1` |
   | `funded` | four mined coins the wallet can sign for (50,000, 40,000, 30,000, 20,000 sats, each a one-leaf block of its own that the header stub answers); the mined parents of three payments from a fixed stranger key and of a puzzle coin (`OP_1 OP_EQUAL`), whose blocks the header stub answers too; and a local ARC that takes every post |
   | `named-change` | one completed made change coin, offered under `SPEND_OWN_CHANGE=1`; the other worlds seed incoming coins and their spends make no change |
+  | `trusted` | `fresh` whose wallet reads `TRUST_SETTINGS` through the CLI's typed config, naming the harness certificate's certifier (#331), and holds that certificate |
+  | `stranger` | `trusted`'s certificate under settings naming another certifier |
 
 - **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
 - **`request.json`** is sent as its compact bytes with `content-type: application/json`; **`request.raw`** is sent byte for byte (a malformed body); **`request.fill`** is a body of that many spaces (an oversized one; the file carries the count, not the megabyte).
@@ -103,12 +105,27 @@ round trip through bsv-rs beta.3's `HttpWalletJson` checks all five members.
 The ordinary classifier is deleted (#330). The table maps the published
 reference classes directly. Generic `WalletError` faults retain their Display
 and serve 400 ERROR; typed `TransportFault` serves 502 SERVICE_ERROR, with no
-busy promise. The missing typed fault family and abort-acceptance detail are
-recorded in CLI #342 and bsv-rs #439. Invalid BEEF folds into VALIDATION_ERROR,
-and incomplete ancestry into CONFLICT without the former coin member. Prove
-and abort use InvalidParameter; missing/expired sign sessions use
-NotImplemented. The published relinquish paths still return success for a
-missing row (#344), so no BadRequest is invented.
+busy promise. Since the beta.4 pin (#342, bsv-rs #439) the toolbox's faults
+are typed, `WalletFault` by its family: `Transport` and `Service` serve 502
+SERVICE_ERROR (fixture 085), `Storage` and `Internal` 500 INTERNAL_ERROR
+(fixture 089), a family a later package adds 500; the Display is the same
+as the untyped fault's. An abort refused on stored acceptance is the typed
+`AbortAccepted` record: its status is its class's, as the table maps it
+(the status guard's `InvalidParameter` 400, the stored-acceptance guard's
+`InvalidOperation` 409), and the record selects the recovery hint served
+after the message, `(hint: the wallet holds an accepting word for this
+transaction (<its known transaction, status and accepting word>); it stays
+until a proof, node verdict or competitor's checked proof decides it)`
+(fixture 124), never read from the words. An input the stack could not
+judge (`TransactionNotJudged`, bsv-rs #452) is answered by its cause: a coin
+or spend before Genesis 409 CONFLICT, the tip, activation heights, source
+height or work budget 500 (no world reaches it; the toolbox's not-judged
+refusals at the doors are `SpendRefused`, `InvalidParameter`). Invalid BEEF
+folds into VALIDATION_ERROR, and incomplete ancestry into CONFLICT without
+the former coin member. Prove and abort use InvalidParameter; missing/expired
+sign sessions use NotImplemented. Relinquishing an unknown certificate is the
+toolbox's `BadRequest` refusal since beta.4 (#344, toolbox #430; fixture 045),
+`Result must exist and be unique.`, served 400 VALIDATION_ERROR.
 
 Two `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
 
@@ -270,10 +287,10 @@ already enforces exactly 32 bytes before the helper. The empty disclosure
 previously released all stored fields. The new rows preserve every older
 fixture's number and are recorded with their reasons in the manifest.
 
-Discovery rows 053, 054 and 137 to 140 retain their bytes and carry the reason
-"toolbox #388 (CLI #331)" in the manifest. Both successful discovery calls
-return empty arrays on this package; above-bound requests stop at the host's
-page guard. No trust configuration is added.
+Discovery rows 053, 054 and 137 to 140 retain their bytes: the fresh world
+holds no certificate whose subject they ask and reads no trust settings, and
+attribute discovery has no local leg; above-bound requests stop at the host's
+page guard. The trusted answer is the beta.4 pin's (below).
 
 ## The beta.3 pin (#338)
 
@@ -282,10 +299,15 @@ in the single recording commit. Toolbox #404 removes the SDK Display's generic
 wallet-error prefix from ordinary refusals, with statuses and codes from the
 class table above. Toolbox #374 requires valid signed, encrypted certificate
 material, including the disclosure fixtures; #343 sources the 64 KiB
-decrypted-field bound in bsv-rs 0.9.0-beta.3
+decrypted-field bound in bsv-rs 0.9.0-beta.4
 `src/auth/certificates/bounds.rs:26` (`MAX_DECRYPTED_FIELD_BYTES = 64 * 1024`),
-applied at `master.rs:325-329` by toolbox 0.14.0-beta.3
-`src/wallet/direct_acquire.rs:188-197`. Row 155 passes construction and
+applied at `master.rs:325-329` by toolbox 0.14.0-beta.4
+`src/wallet/direct_acquire.rs:188-197` (the lines re-read at the beta.4 pin).
+The reference applies the bound at issuance and at decryption only
+(`MasterCertificate.ts` `createCertificateFields` and `decryptField`), and
+this stack also at direct acquisition through toolbox #374's keyring proof,
+a divergence from the reference's store-as-given (toolbox
+`docs/ARCHITECTURE.md` section 7, row D26 at a8107be2, toolbox PR #476). Row 155 passes construction and
 verification at the 1 MiB encoded-field bound, then fails that plaintext
 check. Row 156 is non-canonical base64 and fails construction before the
 separate verify bound; row 157 fails canonical-DER argument validation.
@@ -296,3 +318,26 @@ derivation; 169 pins the tracker's typed transport fault; 170 and 171 pin SDK
 description. The existing certificate key order in 042 to 054 is inspected
 alongside the recording. SDK #379 is absent, so no BRC-56 HMAC tag is changed.
 Toolbox #388 is absent, and discovery remains #331's separate change.
+
+## The beta.4 pin (#347)
+
+The corpus has 176 rows, recorded once after the code (the moved and new
+files named with their cause in the recording commit). Rows 045 (#344, the
+relinquish refusal), 085 and 089 (#342, the typed fault's status), 124 (#342,
+the abort record's hint) and 147 (toolbox #389, `competingBeef`) move; rows
+175 and 176 are new and come last, so no earlier number moves. Two worlds
+join the list: `trusted`, whose wallet reads `TRUST_SETTINGS` through the
+CLI's typed config naming the harness certificate's certifier (#331, toolbox
+#388), and `stranger`, whose settings name another key; each holds the
+harness's certificate, acquired through the served door when the world is
+built. Row 175 answers that certificate with `certifierInfo`, the toolbox's
+transform of the setting (a description within 5 to 50 bytes and an icon
+named, so it is the configured entry), read against bsv-rs's result rows
+R74, R76, R79, R80, R47 and R49; row 176 drops it. Row 051 does not move:
+its world still holds the row 050 relinquished, and the toolbox's lookup
+includes soft-deleted rows, as the reference's `verifyOne` does. No
+TEXT-DIFF row of toolbox #392, #416, #422, #426, #450, #453 or #464 is
+reached by a fixture; no recorded `createHmac` key has a leading-zero X
+coordinate (bsv-rs #379); the certificate key order in 042 to 054 is
+unchanged (serde_json without `preserve_order`). Row 145 stays the one known
+refusal of bsv-rs's result rows (R56, #371, ts-stack #1451).

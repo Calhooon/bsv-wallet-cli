@@ -823,7 +823,7 @@ impl WalletMcp {
     // ── Discovery ──────────────────────────────────────────────
 
     #[tool(
-        description = "Find certificates by identity key. This beta.2 build returns an empty list: toolbox #388 (CLI #331)."
+        description = "Find certificates by identity key: the certificates of the certifiers the wallet trusts (its TRUST_SETTINGS, else the chain's default certifiers), each with certifierInfo (CLI #331)."
     )]
     async fn discover_by_identity_key(
         &self,
@@ -833,7 +833,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Find certificates by attributes. This beta.2 build returns an empty list: toolbox #388 (CLI #331)."
+        description = "Find certificates by attributes: the overlay's certificates of the certifiers the wallet trusts, each with certifierInfo; no local leg, so it is empty without an overlay (CLI #331)."
     )]
     async fn discover_by_attributes(
         &self,

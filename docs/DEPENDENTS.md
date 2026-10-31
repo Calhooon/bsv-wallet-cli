@@ -45,11 +45,14 @@ the same transaction sets and proofs, with no byte re-record required.
 Version fixtures 007 and 008 retain `bsv-wallet-toolbox-0.1.0`. The directly
 served SDK JSON types and the stored `InternalizeActionArgs` follow-up keep
 their beta.1 serde shape at that release. This branch now pins bsv-rs
-=0.9.0-beta.3, bsv-wallet-toolbox-rs =0.14.0-beta.3 and bsv-tracker
-=0.9.0-beta.3. Ordinary refusals now retain their reference classes (#330); generic faults
-without a class remain ERROR (#342). The CLI-only --from wrapper uses the
-must-spend list (#313). Discovery trust settings still await CLI #331
-(toolbox #388). The `v0.19.0-beta.3` announcement carries the consumer fixture
+=0.9.0-beta.4, bsv-wallet-toolbox-rs =0.14.0-beta.4 and bsv-tracker
+=0.9.0-beta.4 (#347). Ordinary refusals retain their reference classes (#330);
+the toolbox's faults are typed and served by family since beta.4 (#342), so
+LOW's two recorded `allowPending` creates (`low-fleet/09`, `10`), whose
+answer is a signing fault, move from 400 ERROR to 500 INTERNAL_ERROR with the
+same words; the generic untyped fault stays ERROR. The CLI-only --from
+wrapper uses the must-spend list (#313). Discovery reads `TRUST_SETTINGS`
+(#331, toolbox #388). The `v0.19.0-beta.3` announcement carries the consumer fixture
 diff since `v0.19.0-beta.1`. The beta.2 replay moved no consumer fixture
 ([`926107c`](https://github.com/Calhooon/bsv-wallet-cli/commit/926107ce8473decd7136cc873b350059ec399dec),
 with the corrected wire recording in

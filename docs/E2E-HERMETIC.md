@@ -197,8 +197,11 @@ funding block is proven by the BUMP inside its BEEF instead.
   #98 lands, `services_env.rs` passes `WOC_BASE` and `BITAILS_BASE` through
   and these two entries can leave `KNOWN_WALLED`.
 - **Overlay discovery** (`discoverByIdentityKey`, `discoverByAttributes`): scenario
-  06 and MCP scenario 21 now execute both calls and assert empty results at
-  beta.2, with toolbox #388 (CLI #331) as the reason. The wallet constructs
+  06 executes both calls on wallet B, whose `TRUST_SETTINGS` names wallet A,
+  the scenario's certifier (#331, toolbox #388): identity discovery's local
+  leg answers the certificate with the configured `certifierInfo`, attribute
+  discovery (no local leg) stays empty behind the wall; MCP scenario 21 asserts
+  both tools answer the HTTP door's discovery on wallet A. The wallet constructs
   its resolver internally. Its three mainnet SLAP hosts are explicitly
   counted as known walled attempts alongside the explorer hosts:
   `overlay-us-1.bsvb.tech:443`, `overlay-eu-1.bsvb.tech:443` and

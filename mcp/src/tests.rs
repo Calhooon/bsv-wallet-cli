@@ -357,7 +357,8 @@ fn a_malformed_value_is_refused_by_name_and_every_one_together() {
 }
 
 /// The six certificate tools carry the beta.2 JSON, including the keys
-/// direct acquisition and selective proof need. Discovery stays empty (#331).
+/// direct acquisition and selective proof need. Discovery is the daemon's
+/// door (#331): the stub's answer passes through.
 #[tokio::test]
 async fn certificate_tools_carry_the_published_shape() {
     let (base, task) = certificate_stub().await;
