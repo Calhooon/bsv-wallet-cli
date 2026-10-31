@@ -135,6 +135,9 @@ pub struct AppError {
     refusal: Option<Box<crate::spend_gate::Refusal>>,
     /// The reference's five review-action members, never inferred from words.
     review: Option<Box<bsv_sdk::wallet::ReviewActionsRefusal>>,
+    /// The operator's recovery hint, selected on a typed record (an
+    /// abort's stored acceptance, #342) and served after the message.
+    hint: Option<String>,
 }
 
 impl AppError {
@@ -145,6 +148,7 @@ impl AppError {
             message: message.into(),
             refusal: None,
             review: None,
+            hint: None,
         }
     }
 
@@ -214,15 +218,75 @@ impl AppError {
         )
     }
 
-    /// A classed refusal or fault. Generic `WalletError` has no typed family.
+    /// A classed refusal or fault. Generic `WalletError` has no typed family;
+    /// a `WalletFault` has one (bsv-rs #439, #342).
     fn of_sdk(e: &bsv_sdk::Error) -> Kind {
         match e {
             bsv_sdk::Error::WalletBusy { .. } => Kind::StoreBusy,
             bsv_sdk::Error::WalletReviewActions(_) => Kind::ReviewActions,
             bsv_sdk::Error::WalletRefusal { class, .. } => Kind::of_refusal(*class),
+            bsv_sdk::Error::AbortAccepted(record) => Kind::of_refusal(record.class),
             bsv_sdk::Error::TransportFault { .. } => Kind::Service,
+            bsv_sdk::Error::WalletFault(fault) => Self::of_fault(fault.family),
+            bsv_sdk::Error::TransactionNotJudged { cause, .. } => Self::of_not_judged(cause),
             _ => Kind::Unclassified,
         }
+    }
+
+    /// A typed toolbox fault by its family: the far side's (a transport or
+    /// a service) is 502, the wallet's own (its store, its build) is 500. A
+    /// family a later package adds is the stack's own, never the caller's.
+    fn of_fault(family: bsv_sdk::WalletFaultFamily) -> Kind {
+        use bsv_sdk::WalletFaultFamily as F;
+        match family {
+            F::Transport | F::Service => Kind::Service,
+            F::Storage | F::Internal => Kind::Internal,
+            _ => Kind::Internal,
+        }
+    }
+
+    /// An input the stack could not judge (bsv-rs #452), by its cause and
+    /// never its words. A coin or a spend before Genesis is the wallet's own
+    /// coin unjudgeable under this stack's word, permanent for that coin: the
+    /// wallet's state refuses a well-formed request (409). A tip, an
+    /// activation height, a source height or the work budget is the stack's
+    /// own configuration or policy, never the coin's or the caller's (500);
+    /// a cause a later package adds is the stack's too.
+    fn of_not_judged(cause: &bsv_sdk::script::NotJudgedCause) -> Kind {
+        use bsv_sdk::script::NotJudgedCause as C;
+        match cause {
+            C::PreGenesisCoin { .. } | C::PreGenesisSpend { .. } => Kind::Conflict,
+            C::TipHeightOverflow { .. }
+            | C::ZeroActivationHeight(_)
+            | C::SourceHeightOverflow { .. }
+            | C::WorkBudgetExceeded { .. } => Kind::Internal,
+            _ => Kind::Internal,
+        }
+    }
+
+    /// The recovery hint an abort refused on stored acceptance carries
+    /// (#342): selected on the typed record, its transaction, status and
+    /// accepting word as the toolbox knew them, never on the message.
+    fn abort_hint(record: &bsv_sdk::AbortAcceptance) -> String {
+        let mut known = Vec::new();
+        if let Some(txid) = &record.txid {
+            known.push(format!("transaction {txid}"));
+        }
+        if let Some(status) = &record.status {
+            known.push(format!("status '{status}'"));
+        }
+        if let Some(word) = &record.accepting_word {
+            known.push(format!("accepting word {word}"));
+        }
+        let known = if known.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", known.join(", "))
+        };
+        format!(
+            "the wallet holds an accepting word for this transaction{known}; it stays until \
+             a proof, node verdict or competitor's checked proof decides it"
+        )
     }
 
     /// Storage callers retain their fault type; wallet callers use `of_sdk`.
@@ -255,8 +319,10 @@ impl AppError {
 
     fn from_sdk(e: &bsv_sdk::Error) -> Self {
         let mut error = Self::new(Self::of_sdk(e), e.to_string());
-        if let bsv_sdk::Error::WalletReviewActions(review) = e {
-            error.review = Some(review.clone());
+        match e {
+            bsv_sdk::Error::WalletReviewActions(review) => error.review = Some(review.clone()),
+            bsv_sdk::Error::AbortAccepted(record) => error.hint = Some(Self::abort_hint(record)),
+            _ => {}
         }
         error
     }
@@ -307,15 +373,19 @@ impl From<anyhow::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = (self.kind.status(), self.kind.code());
+        let message = match &self.hint {
+            Some(hint) => format!("{} (hint: {hint})", self.message),
+            None => self.message,
+        };
         // Log the response's words too: a callback deadline cannot identify
         // whether the store or the header service was still answering.
         tracing::warn!(
             status = status.as_u16(),
             code = code,
-            message = %self.message,
+            message = %message,
             "request error"
         );
-        let mut body = json!({"code": code, "message": self.message});
+        let mut body = json!({"code": code, "message": message});
         if let Some(review) = &self.review {
             body = review_body(review);
         }

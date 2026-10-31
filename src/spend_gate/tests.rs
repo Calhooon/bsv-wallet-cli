@@ -2129,6 +2129,10 @@ fn the_gate_error_is_the_store_busy_by_its_type_only() {
         GateError::Wallet(bsv_sdk::Error::WalletError(
             "Store busy: sqlite code 5".to_string(),
         )),
+        GateError::Wallet(bsv_sdk::Error::WalletFault(bsv_sdk::WalletFault::new(
+            bsv_sdk::WalletFaultFamily::Storage,
+            "Store busy: sqlite code 5",
+        ))),
         GateError::Gate(anyhow::anyhow!("Store busy: sqlite code 517")),
         GateError::Gate(anyhow::Error::new(sqlx::Error::RowNotFound)),
         // A bare pool timeout: the reader's, as far as it says.
