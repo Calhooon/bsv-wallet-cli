@@ -176,7 +176,8 @@
     "174-listCertificates.decryptedFieldAtBound.json",
     "175-discoverByIdentityKey.trusted.json",
     "176-discoverByIdentityKey.stranger.json",
-    "177-createSignature.textPlain.json"
+    "177-createSignature.textPlain.json",
+    "178-createSignature.noContentType.json"
   ],
   "notes": {
     "007-getVersion.get.json": "#122 item 6: this wallet's name and its version's core, BRC-100's [vendor]-[major].[minor].[patch] (wallet/0100.md:2671), the MetaNet Client's shape (wallet-brc100-1.0.0); bsv-wallet-toolbox-0.1.0 before. The normalizer writes the numbers as <major>.<minor>.<patch> (tests/wire_support package_version), so a version commit moves no fixture; tests/integration/status.rs pins the string.",
@@ -212,6 +213,7 @@
     "174-listCertificates.decryptedFieldAtBound.json": "#343: read back the encrypted certificate stored by fixture 173 at bsv-rs 0.9.0-beta.4 src/auth/certificates/bounds.rs:26's 64 KiB plaintext bound; no plaintext is stored or served. The reference applies the bound at issuance and at decryption only (MasterCertificate.ts createCertificateFields and decryptField), and this stack also at direct acquisition through toolbox #374's keyring proof (a divergence from the reference's store-as-given: bsv-wallet-toolbox-rs docs/ARCHITECTURE.md section 7 row D26 at a8107be2, toolbox PR #476).",
     "175-discoverByIdentityKey.trusted.json": "#331 (toolbox #388): the trusted world reads TRUST_SETTINGS through the CLI's typed config, naming the harness certificate's certifier at trust 3 over the threshold 2; the wallet's own certificate is answered with certifierInfo, the toolbox's transform of the setting (discovery_trust.rs: description within 5 to 50 bytes and icon named, so it equals the configured entry), read against bsv-rs's R74, R76, R79, R80, R47 and R49.",
     "176-discoverByIdentityKey.stranger.json": "#331 (toolbox #388): the same certificate in a world whose TRUST_SETTINGS names another certifier: a stranger's certificate is dropped, an empty answer.",
-    "177-createSignature.textPlain.json": "#122 item 3 (the captain's decision by the second D ensemble, 3/3 follow): a valid JSON body sent as text/plain is the call, 200 with the signature, as the MetaNet Client answers it (bsv-desktop b791cb2 electron/httpServer.ts:89-90, express.text({ type: '*/*' }), then JSON.parse at src/walletByteJson.ts:140). Recorded at 400 VALIDATION_ERROR (`Expected request with Content-Type: application/json`) as createSignature.noContentType before; renamed, since the request carries a content type."
+    "177-createSignature.textPlain.json": "#122 item 3 (the captain's decision by the second D ensemble, 3/3 follow): a valid JSON body sent as text/plain is the call, 200 with the signature, as the MetaNet Client answers it (bsv-desktop b791cb2 electron/httpServer.ts:89-90, express.text({ type: '*/*' }), then JSON.parse at src/walletByteJson.ts:140). Recorded at 400 VALIDATION_ERROR (`Expected request with Content-Type: application/json`) as createSignature.noContentType before; renamed, since the request carries a content type.",
+    "178-createSignature.noContentType.json": "#122 item 3 (the captain's decision by the second D ensemble, 3/3 follow): the same valid body as 177 with no content type is the call with an empty body, as the MetaNet Client runs it (Express parses no body without a content type and the client forwards JSON.stringify({}), bsv-desktop b791cb2 electron/httpServer.ts:183-189), so createSignature answers what it answers for {}: 400 VALIDATION_ERROR, missing field `protocolID`. New; recorded last, so no file before it moves."
   }
 }
