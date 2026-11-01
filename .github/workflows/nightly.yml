@@ -252,6 +252,12 @@ jobs:
       # never by the behaviour the score judges. serve_bind_guard also reads
       # no line, but its served case kills the binary it starts and a killed
       # process leaves no coverage, so it stays. The package has no doctest.
+      # The benches run too, each routine once in criterion's test mode with
+      # its assertions, a bench added later joining by itself: gate_assess and
+      # create_action_signed run lines of spend_gate.rs and tracker_host.rs;
+      # internalize_action (server/post_word.rs alone) and list_outputs run
+      # no line of the five, so NO_FLOORED_BENCHES leaves them out (cargo
+      # llvm-cov per bench at cd53740).
       #
       # The limit: the whole oracle's baseline took more than 300 s on every
       # shard of run 41253247135, so no fixed --timeout; the baseline always
@@ -272,6 +278,7 @@ jobs:
             arch_config_env arch_env_reads arch_explorer_sites arch_no_error_words
             arch_no_prefix_errors arch_no_unwrap arch_spawn_sites arch_sql_sites
             brc100 header_source rule_28_sites signing_digest_vector
+          NO_FLOORED_BENCHES: internalize_action list_outputs
         run: |
           selection="--lib --bins"
           for main in tests/*.rs tests/*/main.rs; do
@@ -282,8 +289,13 @@ jobs:
             case " $NO_FLOORED_CODE " in *" $name "*) continue ;; esac
             selection="$selection --test $name"
           done
+          for bench in benches/*.rs; do
+            name=$(basename "$bench" .rs)
+            case " $NO_FLOORED_BENCHES " in *" $name "*) continue ;; esac
+            selection="$selection --bench $name"
+          done
           echo "shard ${{ matrix.shard }}/20: cargo test --locked $selection"
-          echo "left out (no line of a floored file): $NO_FLOORED_CODE"
+          echo "left out (no line of a floored file): $NO_FLOORED_CODE $NO_FLOORED_BENCHES"
           status=0
           # $selection is split into its words on purpose.
           # shellcheck disable=SC2086
