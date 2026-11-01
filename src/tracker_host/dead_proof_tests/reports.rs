@@ -1,4 +1,4 @@
-//! A failing row is reported once when first marked and again only on a
+//! A failing row is reported once when marked and again only on a
 //! change of its state (#328 (2), the owner's word of 2026-11-01).
 
 use super::*;
@@ -65,7 +65,7 @@ async fn a_dead_row_whose_mark_cleared_is_reported_again() {
     assert!(pass(&storage, &services, 700).await.faults.is_empty());
 
     // A step of the tick drops the mark (a hint's re-ask): the same fault
-    // is a first mark again.
+    // is a new mark again.
     sqlx::query("UPDATE tracker_states SET asks = 0, next_ask_at = NULL WHERE txid = ?")
         .bind(&txid)
         .execute(storage.writer())

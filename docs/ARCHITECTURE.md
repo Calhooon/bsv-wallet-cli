@@ -273,6 +273,21 @@ toolbox's `check_for_proofs`; its provider logged by
 `log`, `src/backstop_log.rs:86`). The word is served at `GET /tx/{txid}`
 (`tx_word`, `src/server/mod.rs:629`; `stored_word`,
 `src/tracker_host.rs:901`) as a view; nothing is decided from it.
+The same pass checks the toolbox's stored proof of each completed creator
+of a coin we hold (`adopt_proven`). A creator whose stored proof does not
+parse or check is marked (its pause, `asks` and `next_ask_at`), and three
+rules hold (#328, the owner's word of 2026-11-01): under the daemon's feed,
+the feed's tip event clears the dead-row marks as the served pass's header
+move does (`end_dead_row_pauses` in `src/store.rs`, called by
+`deliver_chain_event` on a tip); a failing row is reported once on its mark
+and again only on a change of its state (a different fault class, the mark
+cleared, the row offered again), the state kept in `tracker_adopt_checks`;
+and a could-not-look fault (`Unavailable`, `Headers`) takes the age re-ask's
+backoff like any other fault, never the parse fault's pause, with no mark and
+nothing stored on the row. Each is checked by its test:
+`a_marked_row_under_the_feed_clears_at_the_next_tip_not_after_its_pause`,
+`a_failing_row_is_reported_once_and_again_on_a_change_of_its_fault` and
+`a_creator_answered_unavailable_takes_the_backoff_and_no_mark`.
 The webhook's ingestion has an eight-second deadline
 (`ARC_CALLBACK_DEADLINE`, `ingest_arc_before_deadline`, added after this map's
 pin), below [Arcade's ten-second POST timeout at `1ae1208e64b77b64818044d606638939d9f1834a`,

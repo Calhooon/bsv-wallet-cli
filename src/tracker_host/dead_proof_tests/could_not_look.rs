@@ -22,7 +22,7 @@ async fn a_creator_answered_unavailable_takes_the_backoff_and_no_mark() {
     assert!(load_row(&storage, &txid).await.unwrap().is_none());
     assert_eq!(mark_of(&storage, &unparsed).await, (None, 1, Some(700)));
 
-    // Inside the backoff (600 s, the age re-ask's first pause): not
+    // Inside the backoff (600 s, the age re-ask's pause at no asks): not
     // selected, nothing reported.
     assert!(pass(&storage, &services, 699).await.faults.is_empty());
     // The backoff passed: selected, the same fault, the backoff doubled,

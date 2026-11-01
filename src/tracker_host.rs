@@ -113,6 +113,24 @@
 //! broadcaster called not final (a forced `gift-claim` before its lock
 //! time) is kept with its BEEF and handed to the broadcasters again at the
 //! lock time ([`heard`], and the re-announce step of [`tick`]).
+//!
+//! # A creator whose stored proof fails (#328)
+//!
+//! The adoption step of the pass checks the toolbox's stored proof of each
+//! creator of a coin we hold. Three rules (the owner's word of 2026-11-01;
+//! each one a change, none a "no change"):
+//!
+//! 1. Under the daemon's feed, the feed's tip event clears the dead-row
+//!    marks as the served pass's header move does: a marked row is checked
+//!    again on the next pass after a tip, not after its pause (up to 64
+//!    times the age threshold).
+//! 2. A failing row is reported once on its mark and again only on a
+//!    change of its state (a different fault class, the mark cleared, the
+//!    row offered again), never at each end of its pause.
+//! 3. A could-not-look fault (`Unavailable`, `Headers`) takes the age
+//!    re-ask's backoff like any other fault, never the parse fault's pause:
+//!    no mark, nothing stored on the row, not selected again until the
+//!    backoff passes.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
@@ -1981,9 +1999,9 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// pause its only stored mark) is also checked again on such a move.
 /// Until then the query does not select it, so the limit is never spent
 /// on it again: [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292).
-/// A failing row is reported once, when first marked, and again only on a
-/// change of its state: a different fault class, the mark cleared (a
-/// first mark again), or the row offered again (the toolbox's path
+/// A failing row is reported once, when marked, and again only on a
+/// change of its state: a different fault class, the mark cleared (a new
+/// mark again), or the row offered again (the toolbox's path
 /// rewritten); never at each end of its pause (#328 (2), the state kept in
 /// `tracker_adopt_checks` and dropped when the check passes). A
 /// could-not-look fault (`Unavailable`, `Headers`) is no verdict: it marks
@@ -2211,7 +2229,7 @@ impl CheckRecord {
     }
 }
 
-/// One failing check's report: its line on a first mark (the row held no
+/// One failing check's report: its line on a new mark (the row held no
 /// mark before this check), or when its state changed since the last
 /// report (the fault's class, or the stored path: the row offered again).
 /// Never again at each pause's end with the same fault (#328 (2)).
