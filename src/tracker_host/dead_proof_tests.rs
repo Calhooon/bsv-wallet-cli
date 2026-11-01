@@ -4,6 +4,8 @@ use super::tests::{header, opts, path_of, proven_coin, wallet_storage, FixedCloc
 use super::*;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
+mod feed;
+
 async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {
     ensure_tables(storage).await.unwrap();
     let mut row = TrackedRow::new(txid);

@@ -1965,7 +1965,9 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// that pause has passed, which reads any path the toolbox wrote since
 /// (it rewrites one on a re-anchor, a repair or a sync), or on a pass whose
 /// header moved at or below the toolbox's `proven_txs.height`
-/// (`moved_from`, without the feed). That height is the toolbox's column,
+/// (`moved_from`, without the feed), or after a tip of the daemon's feed,
+/// which ends every such pause ([`crate::store::end_dead_row_pauses`],
+/// #328 (1)). That height is the toolbox's column,
 /// not the path's, so a row whose path does not parse (no re-ask, the
 /// pause its only stored mark) is also checked again on such a move.
 /// Until then the query does not select it, so a failing row is reported
@@ -2984,6 +2986,11 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
                 fault: None,
             });
         }
+    }
+    if matches!(event, ChainEvent::Tip { .. }) {
+        // The feed's tip is the header move for the dead row's pause
+        // (#328 (1)): the daemon's pass reads no `moved_from`.
+        crate::store::end_dead_row_pauses(&mut *tx, i64::try_from(now)?).await?;
     }
     if let ChainEvent::Split {
         key, fork_height, ..
