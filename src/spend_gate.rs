@@ -337,10 +337,30 @@ impl Default for GateOptions {
     }
 }
 
-/// The door's word: `allowPending` is on only for the one value
-/// `"received"`; absent or anything else is off.
+/// The word test: on only for the one value `"received"`. The commands'
+/// `--allow-pending` takes no other (clap's value parser); the served door
+/// refuses any other value before this ([`AllowPending::from_json`]).
 pub fn allow_pending(word: Option<&str>) -> bool {
     word == Some(ALLOW_PENDING_RECEIVED)
+}
+
+/// The refusal of an `allowPending` value that is not a word of this
+/// wallet: the value as sent (its first 64 bytes; the body has no cap at
+/// this door), then the words.
+fn not_a_word(value: &serde_json::Value) -> String {
+    let mut shown = value.to_string();
+    if shown.len() > 64 {
+        let mut end = 64;
+        while !shown.is_char_boundary(end) {
+            end -= 1;
+        }
+        shown.truncate(end);
+        shown.push_str("...");
+    }
+    format!(
+        "allowPending: {shown} is not a word of this wallet; the words are \"{ALLOW_PENDING_RECEIVED}\" \
+         and {{\"{ALLOW_PENDING_RECEIVED}\": [\"txid:vout\", ...]}}"
+    )
 }
 
 /// R1 (d)'s word at the door, as one action names it: off, every received
@@ -384,21 +404,21 @@ impl AllowPending {
         }
     }
 
-    /// The served `/createAction`'s `allowPending`: absent is off; the
-    /// string `"received"` is every received coin and any other string is
-    /// off (as 0.15 read it); an object `{"received": ["txid:vout", ...]}`
-    /// is the scope (an empty list is off); an object of another shape, or
-    /// an outpoint that does not parse, is the caller's error. Any other
-    /// JSON value is off.
+    /// The served `/createAction`'s `allowPending`: absent (or `null`) is
+    /// off; the string `"received"` is every received coin; an object
+    /// `{"received": ["txid:vout", ...]}` is the scope (an empty list is
+    /// off); an object of another shape, or an outpoint that does not
+    /// parse, is the caller's error. Any other value, another string
+    /// included, is the caller's error naming the words (#122 item 7: it
+    /// was quietly off through 0.19.0-beta.4, while a wrong coin in the
+    /// scoped form was refused).
     pub fn from_json(value: Option<&serde_json::Value>) -> std::result::Result<Self, String> {
         const SHAPE: &str = "allowPending: an object is {\"received\": [\"txid:vout\", ...]}";
         match value {
             None => Ok(Self::Off),
-            Some(serde_json::Value::String(word)) => Ok(if allow_pending(Some(word)) {
-                Self::Received
-            } else {
-                Self::Off
-            }),
+            Some(serde_json::Value::String(word)) if allow_pending(Some(word)) => {
+                Ok(Self::Received)
+            }
             Some(serde_json::Value::Object(map)) => {
                 if map.len() != 1 {
                     return Err(SHAPE.to_string());
@@ -415,7 +435,7 @@ impl AllowPending {
                 }
                 Ok(Self::scoped(coins))
             }
-            Some(_) => Ok(Self::Off),
+            Some(other) => Err(not_a_word(other)),
         }
     }
 
