@@ -489,4 +489,31 @@ mod tests {
         };
         assert_eq!(AppError::from_sign_action(other).kind, Kind::Conflict);
     }
+
+    /// #386 (bsv-rs #582 at toolbox 0.14.0-beta.6): a certifier whose
+    /// general answer names its identity key in upper case is refused by
+    /// bsv-rs's transport (`assert_auth_identity_key`); the toolbox's
+    /// issuance door (`certificate_issuance_auth.rs` `send_error`) carries
+    /// that refusal as `NetworkError`, a `WalletFault` of the Transport
+    /// family at the boundary, so `acquireCertificate` serves the far side's
+    /// 502 `SERVICE_ERROR` in the toolbox's words, never 400 `ERROR`.
+    #[test]
+    fn an_upper_case_certifier_answer_at_issuance_is_the_far_sides_502() {
+        let upper = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".to_ascii_uppercase();
+        let refusal = bsv_sdk::auth::assert_auth_identity_key(&upper).unwrap_err();
+        assert!(matches!(refusal, bsv_sdk::Error::AuthError(_)));
+        assert!(refusal.transport_fault().is_none());
+        let toolbox =
+            bsv_wallet_toolbox::Error::NetworkError(format!("Failed to send request: {refusal}"));
+        let served = AppError::from(bsv_sdk::Error::from(toolbox));
+        assert_eq!(
+            served.kind.answer(),
+            (StatusCode::BAD_GATEWAY, "SERVICE_ERROR")
+        );
+        assert_eq!(
+            served.message,
+            "wallet error: Network error: Failed to send request: authentication error: \
+             Authentication identityKey must be a canonical compressed public key."
+        );
+    }
 }
