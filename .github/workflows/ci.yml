@@ -408,6 +408,7 @@ jobs:
           REV: ${{ steps.base.outputs.rev }}
         run: |
           python3 -B tools/test_scoreboard.py
+          python3 -B tools/test_mutants_hermetic.py
           base=()
           if [ -n "$REV" ]; then
             mkdir -p "$RUNNER_TEMP/base-tree"
