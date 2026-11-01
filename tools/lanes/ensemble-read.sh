@@ -6,7 +6,9 @@
 # The question file's first line names its allowed answers, two to four option tokens:
 #   OPTIONS: A|B|C
 # Each reader's DECISION line begins with exactly one of them, and aggregate.py --options compares
-# that token (a decision is categorical, never free text; the rationale carries the wording).
+# that token without case (a decision is categorical, never free text; the rationale carries the
+# wording). The line is checked before any reader launches: two to four tokens, none empty, none
+# with a space inside, none repeated without case, and no carriage return; else exit 2 naming why.
 # Evidence A is the BRC text at its pin (stance reader-brc), B the reference implementation
 # (reader-reference), C the package's code (reader-package). Each reader is its own
 # `$CCA run --class review` holding only its stance, the question and its own evidence pointer,
@@ -39,7 +41,28 @@ if [[ $first_line != OPTIONS:\ * ]]; then
   print -u2 "ensemble-read: the first line of $question must be OPTIONS: <two to four tokens joined by |>"
   exit 2
 fi
-answers=${${first_line#OPTIONS: }// /}
+# The OPTIONS line is checked before any reader launches: a bad line would waste three reads.
+# Sets $answers to the trimmed tokens joined by |, or exits 2 naming what is wrong.
+read_options() {
+  setopt local_options extended_glob
+  local t
+  local -a raw tokens
+  local -aU seen
+  bad() { print -u2 "ensemble-read: the OPTIONS line of $question $1: ${(q+)first_line}"; exit 2; }
+  [[ $first_line != *$'\r'* ]] || bad "carries a carriage return (save the file with LF line ends)"
+  raw=("${(@s:|:)${first_line#OPTIONS: }}")
+  (( ${#raw} >= 2 && ${#raw} <= 4 )) || bad "must name two to four tokens joined by |"
+  for t in "${raw[@]}"; do
+    t=${${t##[[:space:]]#}%%[[:space:]]#}
+    [[ -n $t ]] || bad "has an empty token"
+    [[ $t != *[[:space:]]* ]] || bad "has a space inside the token '$t'"
+    tokens+=("$t")
+  done
+  seen=("${(@)tokens:l}")
+  (( ${#seen} == ${#tokens} )) || bad "repeats a token (compared without case)"
+  answers=${(j:|:)tokens}
+}
+read_options
 out=${5:-$(mktemp -d "${TMPDIR:-/Volumes/Lanes/targets}/ensemble-read.XXXXXX")}
 mkdir -p -- $out
 

@@ -172,5 +172,22 @@ class Case(unittest.TestCase):
             self.assertEqual(code, 2, (bad, out))
             self.assertIn("--options must be two to four distinct tokens", err)
 
+    def test_options_compare_without_case(self):
+        code, out, _ = self.run_tool(block("Yes, the row stands", "0.8"), block("yes", "0.8"),
+                                     block("NO", "0.8"), options="yes|no")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.summary(out), "AGGREGATE: consensus agreement=2/3 mean=0.80 decision: yes")
+
+    def test_options_trim_a_trailing_carriage_return(self):
+        crlf = block("no the row falls", "0.8").replace("\n", "\r\n")
+        code, out, _ = self.run_tool(crlf, block("No", "0.8"), options="yes|no\r")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.summary(out), "AGGREGATE: consensus agreement=2/2 mean=0.80 decision: no")
+
+    def test_options_refuse_tokens_equal_without_case(self):
+        code, out, err = self.run_tool(block("yes", "0.8"), block("yes", "0.8"), options="yes|YES")
+        self.assertEqual(code, 2, out)
+        self.assertIn("--options must be two to four distinct tokens", err)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

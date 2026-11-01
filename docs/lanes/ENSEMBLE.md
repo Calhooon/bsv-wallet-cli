@@ -38,14 +38,14 @@ RATIONALE: <at most five lines>
 
 ## The aggregation
 
-- **The modal decision** is the decision the most readers gave: under D the option token the `DECISION` line begins with; else a review's `VERDICT` word when present, else the `DECISION` line lowercased with its whitespace collapsed.
+- **The modal decision** is the decision the most readers gave: under D the option token the `DECISION` line begins with, compared without case and counted as the question spells it; else a review's `VERDICT` word when present, else the `DECISION` line lowercased with its whitespace collapsed.
 - **The agreement fraction** is the readers on the modal decision over all readers, written `agreement=k/n`.
 - **The mean confidence** is the exact mean of every reader's `CONFIDENCE`, compared unrounded and written to two decimals only in the record.
 - **A consensus** is an agreement fraction of at least two thirds AND a mean confidence at or above 0.7 on the EXACT mean, with at least two readers; one reader is never a consensus. So 2 of 2 needs the mean too (two reviewers agreeing under B at a mean below 0.7 is not a consensus: the third reviewer runs); 3 of 4 is a consensus at the mean, 3 of 5 is not, 4 of 5 is. On a consensus the captain may act within its standing words.
 - **A split** is anything else. Below the fraction or the mean, the captain adds a reader with a new stance or new evidence and aggregates again, or escalates through the keeper with the disagreement stated.
 - **Never a silent side.** The captain never picks one reader's answer over the others without the record below.
 
-The tools: [chain-ensemble.sh](../../tools/lanes/chain-ensemble.sh) runs a lane, then B's two reviews concurrently from the captain's shell, the third only on a split or a low mean (it prints which), and prints one `ENSEMBLE:` line; [ensemble-read.sh](../../tools/lanes/ensemble-read.sh) runs D's three readers concurrently on a question file (its first line `OPTIONS: A|B|C`) and three evidence pointers, and aggregates with `--options`. Both take the runner from `$CCA` (default `cca`) and never merge anything.
+The tools: [chain-ensemble.sh](../../tools/lanes/chain-ensemble.sh) runs a lane, then B's two reviews concurrently from the captain's shell, the third only on a split or a low mean (it prints which), and prints one `ENSEMBLE:` line; [ensemble-read.sh](../../tools/lanes/ensemble-read.sh) runs D's three readers concurrently on a question file (its first line `OPTIONS: A|B|C`) and three evidence pointers, and aggregates with `--options`. Both take the runner from `$CCA` (default `cca`) and never merge anything. Their dry runs are CI's: the ratchet job runs [test_chain_ensemble.sh](../../tools/test_chain_ensemble.sh) under `zsh -f` with [stub-runner.sh](../../tools/lanes/stub-runner.sh) in place of `cca` and `gh`, and a failed case fails the job.
 
 ## The cost rule
 
