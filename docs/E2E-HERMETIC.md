@@ -1,6 +1,6 @@
 # The hermetic e2e run (#74)
 
-`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 24 e2e scenarios with nothing
+`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 25 e2e scenarios with nothing
 leaving the machine and no sat moving. The mainnet run (`node tests/e2e/run.js`
 against the funder daemon on :3320) is unchanged and stays the release gate;
 the hermetic run is the gate of every PR (the `e2e-hermetic` job of
