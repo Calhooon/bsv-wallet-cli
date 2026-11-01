@@ -371,11 +371,15 @@ doors read a key argument as at beta.4 (#377).
 
 ## The divergence rows (#122, items 3 to 7)
 
-The owner's word of 2026-11-01: where BRC-100 (at `5119a9b`) and the MetaNet
-Client agree, the server follows them; where they disagree, the client's
-published behaviour is the port's and the BRC amendment is drafted
-(`docs/brc100/`); an extension of this wallet's own lives in
-`docs/BRC-100-EXTENSIONS.md`.
+The owner's word of 2026-11-01 (23.8, through the keeper), as given:
+"one rule applied per item without a word per item: where the BRC and the
+MetaNet Client agree, the server follows them; where they disagree, the
+client's published behaviour is the port's and the BRC amendment is filed
+in the stack's cadence; docs/BRC-100-EXTENSIONS.md only where the client
+itself extends". BRC-100 is read at `5119a9b`; the amendment drafts are in
+`docs/brc100/`. Item 7 is outside the rule: neither the BRC nor the client
+names `allowPending`, and the client does not extend there, so no clause of
+the rule decides it; it is decided by the extension's own consistency.
 
 | item | call | served | fixtures | clause |
 |---|---|---|---|---|
@@ -383,4 +387,4 @@ published behaviour is the port's and the BRC amendment is drafted
 | 4 | a store fault | 500 `INTERNAL_ERROR` at the spend guard and at every wallet call | 088, 089 unchanged, their notes added | they agree on one answer; already one class since #342 |
 | 5 | `signAction` | an unknown reference 400 `VALIDATION_ERROR`, as `abortAction`'s | 040 moved; 041 unchanged | they agree: the caller's 400 at both doors |
 | 6 | `getVersion` | `bsv-wallet-cli-<major>.<minor>.<patch>` (`bsv-wallet-cli-0.19.0` at 0.19.0-beta.4) | 007, 008 and the consumers' `dolphinmilk/01`, `low-fleet/02` moved | they agree on `[vendor]-[major].[minor].[patch]`, 7 to 30 bytes |
-| 7 | `createAction`'s `allowPending` | a value that is not a word 400 `VALIDATION_ERROR` naming the words | 038 moved; 055's audit loses 038's entry | this wallet's extension, decided by its own consistency |
+| 7 | `createAction`'s `allowPending` | a value that is not a word 400 `VALIDATION_ERROR` naming the words | 038 moved; 055's audit loses 038's entry | no clause of the rule: neither names `allowPending`; this wallet's extension, decided by its own consistency |
