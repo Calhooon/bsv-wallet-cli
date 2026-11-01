@@ -206,26 +206,31 @@ async fn privileged_true_is_refused_before_the_call_is_audited() {
     }
 }
 
-/// A non-boolean `privileged` is the framework's 422 on each of the nine
-/// calls, never the everyday key's answer, and its text names the field's
-/// path (`privileged: invalid type`); a JSON array body is judged by
-/// position (`[0]`), as a struct with plain fields is.
+/// A non-boolean `privileged` is the framework's refusal on each of the
+/// nine calls, 400 `VALIDATION_ERROR` `{code, message}` since #122 item 3
+/// (a 422 in text before), never the everyday key's answer, and its words
+/// name the field's path (`privileged: invalid type`); a JSON array body is
+/// judged by position (`[0]`), as a struct with plain fields is.
 #[tokio::test]
-async fn a_non_boolean_privileged_is_a_422_that_names_its_path() {
+async fn a_non_boolean_privileged_is_a_400_that_names_its_path() {
     let (base, client, _tmp) = setup().await;
     for (path, body, _) in bodies(&base, &client).await {
         let url = format!("{base}/{path}");
         for bad in [json!("true"), json!(1)] {
             let resp = post_json(&client, &url, with(&body, &json!({"privileged": bad}))).await;
             let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap();
-            assert_eq!(status, 422, "{path} {bad}: {text}");
+            let refusal: Value = resp.json().await.unwrap();
+            let text = refusal["message"].as_str().unwrap_or_default();
+            assert_eq!(status, 400, "{path} {bad}: {refusal}");
+            assert_eq!(refusal["code"], "VALIDATION_ERROR", "{path} {bad}");
             assert!(text.contains("privileged: invalid type"), "{path}: {text}");
         }
         let resp = post_json(&client, &url, json!([body])).await;
         let status = resp.status().as_u16();
-        let text = resp.text().await.unwrap();
-        assert_eq!(status, 422, "{path} array: {text}");
+        let refusal: Value = resp.json().await.unwrap();
+        let text = refusal["message"].as_str().unwrap_or_default();
+        assert_eq!(status, 400, "{path} array: {refusal}");
+        assert_eq!(refusal["code"], "VALIDATION_ERROR", "{path} array");
         assert!(text.contains("[0]"), "{path} array: {text}");
         assert!(!text.contains("expected struct"), "{path} array: {text}");
     }
