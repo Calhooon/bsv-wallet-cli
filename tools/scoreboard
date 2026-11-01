@@ -29,7 +29,7 @@ not testable in-process (the planted cases run one copy); this rule and the CI
 step hold it.
 
 A record that is MISSING renders as a row that says so ("not in the tree yet",
-"unmeasured", "no baseline yet"). A record that is PRESENT must match its shape
+"unmeasured", "no baseline yet", "no report yet"). A record that is PRESENT must match its shape
 below, or the tool exits 1 naming the file and the field; it never reads a
 malformed record as an absent one.
 
@@ -232,7 +232,9 @@ def is_int(v):
 
 
 def is_num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """A finite number: Python's json reads Infinity, -Infinity and NaN as floats,
+    and --json would print them back as no JSON at all."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def load_json(name):

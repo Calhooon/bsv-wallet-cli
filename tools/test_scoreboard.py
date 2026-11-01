@@ -929,6 +929,9 @@ class TheFuzzHoursAreTheNightsRecord(Case):
                 (["targets", "beef_reader", "crashes"], True, "targets.beef_reader.crashes: must be a count"),
                 (["targets", "beef_reader", "seconds"], 0, "targets.beef_reader.seconds: must be a number of seconds above 0"),
                 (["targets", "beef_reader", "seconds"], "3600", "targets.beef_reader.seconds: must be a number"),
+                (["targets", "beef_reader", "seconds"], float("inf"), "targets.beef_reader.seconds: must be a number of seconds above 0"),
+                (["targets", "beef_reader", "seconds"], float("nan"), "targets.beef_reader.seconds: must be a number of seconds above 0"),
+                (["targets", "beef_reader", "seconds"], float("-inf"), "targets.beef_reader.seconds: must be a number of seconds above 0"),
                 (["targets", "beef_reader"], 3600, "targets.beef_reader: must be an object"),
                 (["targets"], {}, "targets: holds no target"),
                 (["targets"], DROP, "targets: must be an object"),
@@ -946,6 +949,18 @@ class TheFuzzHoursAreTheNightsRecord(Case):
                 self.assertTrue(out.startswith(f"scoreboard: docs/scoreboard/fuzz.json: {needle}"), out)
                 self.assertNotIn("Traceback", out)
                 print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_non_finite_record_is_refused_before_json_prints(self):
+        for v in ("inf", "nan", "-inf"):
+            with self.subTest(value=v):
+                self.with_record(edited(FUZZ, ["targets", "beef_reader", "seconds"], float(v)))
+                with open(os.path.join(self.tree.root, "docs/scoreboard/fuzz.json")) as f:
+                    self.assertIn({"inf": "Infinity", "nan": "NaN", "-inf": "-Infinity"}[v], f.read())
+                code, out = self.tree.run("--json")
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "scoreboard: docs/scoreboard/fuzz.json: targets.beef_reader.seconds: "
+                                      "must be a number of seconds above 0")
+                print(f"\n    --json exit 1: {tail(out)}", end=" ", file=sys.stderr)
 
     def test_an_empty_or_unparsable_record_is_refused(self):
         self.tree.write("docs/scoreboard/fuzz.json", "")
@@ -1001,6 +1016,24 @@ class TheDifferentialIsItsReport(Case):
                 (["differences"], -1, "differences: must be a count"),
                 (["calls"], "912", "calls: must be a count"),
                 (["commands"], 4.5, "commands: must be a count"),
+                (["differences"], float("inf"), "differences: must be a count"),
+                (["same_floor", "differences"], float("inf"), "same_floor.differences: must be a count"),
+                (["differences"], float("nan"), "differences: must be a count"),
+                (["same_floor", "differences"], float("nan"), "same_floor.differences: must be a count"),
+                (["differences"], float("-inf"), "differences: must be a count"),
+                (["same_floor", "differences"], float("-inf"), "same_floor.differences: must be a count"),
+                (["calls"], float("inf"), "calls: must be a count"),
+                (["same_floor", "calls"], float("inf"), "same_floor.calls: must be a count"),
+                (["calls"], float("nan"), "calls: must be a count"),
+                (["same_floor", "calls"], float("nan"), "same_floor.calls: must be a count"),
+                (["calls"], float("-inf"), "calls: must be a count"),
+                (["same_floor", "calls"], float("-inf"), "same_floor.calls: must be a count"),
+                (["commands"], float("inf"), "commands: must be a count"),
+                (["same_floor", "commands"], float("inf"), "same_floor.commands: must be a count"),
+                (["commands"], float("nan"), "commands: must be a count"),
+                (["same_floor", "commands"], float("nan"), "same_floor.commands: must be a count"),
+                (["commands"], float("-inf"), "commands: must be a count"),
+                (["same_floor", "commands"], float("-inf"), "same_floor.commands: must be a count"),
                 (["calls"], 0, "calls: 0 in a whole run"),
                 (["commands"], 0, "commands: 0 in a whole run"),
                 (["complete"], 1, "complete: must be true or false"),
@@ -1131,6 +1164,8 @@ class TheCensusCellsHoldAgainstTheBase(Case):
         for key, v, needle in (("fuzz:beef_reader:seconds", "3600", "must be a number"),
                                ("fuzz:target-names", "beef_reader", "must be a list of names"),
                                ("differential:same_floor", None, "must be a number"),
+                               ("fuzz:beef_reader:seconds", float("inf"), "must be a number"),
+                               ("differential:same_floor", float("nan"), "must be a number"),
                                ("fuzz:beef_reader:minutes", 60, "is not a key this tool compares")):
             with self.subTest(key=key):
                 with open(path, "w") as f:
