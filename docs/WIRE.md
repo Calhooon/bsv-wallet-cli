@@ -388,3 +388,30 @@ the rule decides it; it is decided by the extension's own consistency.
 | 5 | `signAction` | an unknown reference 400 `VALIDATION_ERROR`, as `abortAction`'s | 040 moved; 041 unchanged | they agree: the caller's 400 at both doors |
 | 6 | `getVersion` | `bsv-wallet-cli-<major>.<minor>.<patch>` (`bsv-wallet-cli-0.19.0` at 0.19.0-beta.4) | 007, 008 and the consumers' `dolphinmilk/01`, `low-fleet/02` moved | they agree on `[vendor]-[major].[minor].[patch]`, 7 to 30 bytes |
 | 7 | `createAction`'s `allowPending` | a value that is not a word 400 `VALIDATION_ERROR` naming the words | 038 moved; 055's audit loses 038's entry | no clause of the rule: neither names `allowPending`; this wallet's extension, decided by its own consistency |
+
+## The beta.6 pin (#386)
+
+The corpus has 179 rows. One row moves and one is new, both named with their
+cause in the recording commit; the packages move no other byte. Row 026
+(`revealCounterpartyKeyLinkage.badKey`) moves in class and text: the four key
+doors (`parse_counterparty`, and the two linkage doors' `counterparty` and
+`verifier`) read a caller's key through bsv-rs 0.9.0-beta.6's
+`wallet::validate_public_key` (#579), the reference wallet's
+`validatePublicKey` (`validationHelpers.ts:185-191` at edf6e03), in place of
+#377's host reader, so `02zz` is a `WalletRefusal` of class InvalidParameter,
+400 `VALIDATION_ERROR` `The counterparty parameter must be hexadecimal
+string.`, where beta.5 answered 400 `ERROR` `invalid hex string: Invalid
+character 'z' at position 2`. The rule is stricter than #377's copy: an
+uncompressed `04` key is refused and surrounding whitespace is trimmed; no
+other fixture names such a key. Row 179 (`createAction.refusedGraph`, new,
+last, after #122's 177 and 178) records a refused BEEF graph at the create door: an `inputBEEF` whose
+unproven transaction's parent is neither carried nor stored, the toolbox's
+`ValidationError` (InvalidParameter through the SDK boundary) served 400
+`VALIDATION_ERROR` by its class; since toolbox #546 the text ends at the byte
+count, with no dump path and no file written. Every recorded 200 answer of the
+wire and consumers corpora (97 wallet calls: 69 wire, 28 consumers) passes
+bsv-rs 0.9.0-beta.6's result rows, none refused; the nine host-route 200 rows
+and the eight bodiless preflight answers are not wallet calls. No world
+faults a header service at a discover call (toolbox #521) or sends a 429
+from one (toolbox #148), and no fixture reaches a script near the door's
+100,000,000-byte stack memory figure (toolbox #395).
