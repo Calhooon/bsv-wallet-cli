@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Aggregate the bounded forms of several readers or reviewers (#390, docs/lanes/ENSEMBLE.md).
 
-    tools/lanes/aggregate.py FILE...   one reader's or reviewer's output per file
+    tools/lanes/aggregate.py [--options A|B|C] FILE...   one reader's or reviewer's output per file
 
 From each file the LAST bounded block is read: an optional `VERDICT merge|fix`
 line, then `DECISION:` (one line), `CONFIDENCE:` (a number in [0,1]), `RISKS:`
@@ -11,22 +11,29 @@ The block starts at the last `DECISION:` line; the VERDICT, when present, is the
 nearest non-blank line before it. A key may carry a list marker or bold
 (`- **DECISION:**`), as a Markdown REPORT writes it.
 
-A decision is counted by its key: the VERDICT word when present, else the
-DECISION line lowercased with its whitespace collapsed. The modal decision is
-the key most files gave (a tie goes to the key seen earliest). The tool prints
-one line per file, each risk with its score, and the summary
+A decision is counted by its key. With --options (trigger D's categorical
+decisions: two to four option tokens joined by `|`, e.g. `A|B|C` or `yes|no`)
+the key is the DECISION line's first word, which must be exactly one of the
+options (trailing `,.;:` aside); a DECISION beginning with none is malformed.
+Without --options the key is the VERDICT word when present, else the DECISION
+line lowercased with its whitespace collapsed. The modal decision is the key
+most files gave (a tie goes to the key seen earliest). The tool prints one line
+per file, each risk with its score, and the summary
 
     AGGREGATE: consensus|split agreement=k/n mean=0.xx decision: <modal key>
 
-A consensus is k == n with n >= 2, or k >= 2 and n == 3 with mean >= 0.7; one
-file alone is never a consensus. Exit 0 is a consensus, 1 a split, 2 a
-malformed block or an unreadable file (named with its missing or bad field,
-nothing aggregated). A Python script with the standard library only, like
-tools/scoreboard; it reads files and runs nothing.
+A consensus is n >= 2, k/n >= 2/3 and a mean confidence >= 0.7, both compared
+exactly (the confidences are read as decimal fractions; the mean is rounded to
+two decimals only when printed); one file alone is never a consensus. Exit 0 is
+a consensus, 1 a split, 2 a malformed block, an unreadable file (named with its
+missing or bad field, nothing aggregated) or a malformed --options. A Python
+script with the standard library only, like tools/scoreboard; it reads files
+and runs nothing.
 """
 
 import re
 import sys
+from fractions import Fraction
 
 KEY = re.compile(r"^\s*(?:[-*]\s+)?\**(DECISION|CONFIDENCE|RISKS|RATIONALE)\**\s*:\s*\**\s*(.*?)\s*$")
 VERDICT = re.compile(r"^\s*(?:[-*]\s+)?\**VERDICT\**\s*:?\s*\**\s*(merge|fix)\b", re.I)
@@ -34,6 +41,9 @@ NUMBER = re.compile(r"^(?:\d+(?:\.\d*)?|\.\d+)$")
 SCORE = re.compile(r"\(?\s*((?:score\s*[:=]?\s*)?(\d+(?:\.\d*)?|\.\d+))\s*\)?\s*$", re.I)
 FIELDS = ("DECISION", "CONFIDENCE", "RISKS", "RATIONALE")
 RATIONALE_LINES = 5
+OPTION = re.compile(r"^[^\s|]+$")
+AGREEMENT = Fraction(2, 3)
+MEAN = Fraction(7, 10)
 
 
 class Malformed(Exception):
@@ -41,14 +51,23 @@ class Malformed(Exception):
 
 
 def unit(text):
-    """A number in [0,1], or None."""
+    """A number in [0,1] as an exact fraction, or None."""
     if not NUMBER.match(text):
         return None
-    value = float(text)
-    return value if 0.0 <= value <= 1.0 else None
+    value = Fraction(text)
+    return value if 0 <= value <= 1 else None
 
 
-def parse(path):
+def options_of(text):
+    """The option tokens of --options, or raise Malformed."""
+    options = text.split("|")
+    if not 2 <= len(options) <= 4 or len(set(options)) != len(options) \
+            or not all(OPTION.match(o) for o in options):
+        raise Malformed(f"--options must be two to four distinct tokens joined by |, got {text!r}")
+    return options
+
+
+def parse(path, options=None):
     try:
         with open(path, encoding="utf-8") as handle:
             lines = handle.read().splitlines()
@@ -102,7 +121,13 @@ def parse(path):
             risks.append((score, text))
     if not found["RATIONALE"] or len(found["RATIONALE"]) > RATIONALE_LINES:
         raise Malformed(f"{path}: RATIONALE must be one to {RATIONALE_LINES} lines")
-    key = verdict or re.sub(r"\s+", " ", decision.lower())
+    if options:
+        first = decision.split()[0].rstrip(",.;:")
+        if first not in options:
+            raise Malformed(f"{path}: DECISION must begin with exactly one of {'|'.join(options)}, got {decision}")
+        key = first
+    else:
+        key = verdict or re.sub(r"\s+", " ", decision.lower())
     return {"path": path, "verdict": verdict, "decision": decision, "key": key,
             "confidence": confidence, "risks": risks}
 
@@ -114,7 +139,7 @@ def aggregate(blocks):
     modal = max(counts, key=lambda k: counts[k])  # max keeps the earliest of a tie
     k, n = counts[modal], len(blocks)
     mean = sum(b["confidence"] for b in blocks) / n
-    consensus = n >= 2 and (k == n or (k >= 2 and n == 3 and round(mean, 2) >= 0.7))
+    consensus = n >= 2 and Fraction(k, n) >= AGREEMENT and mean >= MEAN
     return modal, k, n, mean, consensus
 
 
@@ -123,19 +148,26 @@ def main(argv):
         print(__doc__.strip())
         return 0 if argv else 2
     try:
-        blocks = [parse(path) for path in argv]
+        options = None
+        if argv[0] == "--options" or argv[0].startswith("--options="):
+            value, argv = (argv[1], argv[2:]) if argv[0] == "--options" and len(argv) > 1 \
+                else (argv[0].partition("=")[2], argv[1:])
+            options = options_of(value)
+        if not argv:
+            raise Malformed("no files")
+        blocks = [parse(path, options) for path in argv]
     except Malformed as error:
         print(f"aggregate: {error}", file=sys.stderr)
         return 2
     modal, k, n, mean, consensus = aggregate(blocks)
     for block in blocks:
         verdict = f"VERDICT {block['verdict']} " if block["verdict"] else ""
-        print(f"{block['path']}: {verdict}CONFIDENCE {block['confidence']:.2f} DECISION: {block['decision']}")
+        print(f"{block['path']}: {verdict}CONFIDENCE {float(block['confidence']):.2f} DECISION: {block['decision']}")
     for block in blocks:
         for score, text in block["risks"]:
-            print(f"risk {score:.2f} {text} ({block['path']})")
+            print(f"risk {float(score):.2f} {text} ({block['path']})")
     word = "consensus" if consensus else "split"
-    print(f"AGGREGATE: {word} agreement={k}/{n} mean={mean:.2f} decision: {modal}")
+    print(f"AGGREGATE: {word} agreement={k}/{n} mean={float(mean):.2f} decision: {modal}")
     return 0 if consensus else 1
 
 
