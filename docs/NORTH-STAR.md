@@ -72,11 +72,11 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | mutation floor `src/server/handlers.rs` | 100 | 100.0 at 2f8e6cf | `.github/workflows/nightly.yml` |
 | mutation floor `src/spend_gate.rs` | 90 | 90.7 at 2f8e6cf | `.github/workflows/nightly.yml` |
 | mutation floor `src/tracker_host.rs` | 75 | 75.4 at 2f8e6cf | `.github/workflows/nightly.yml` |
-| fuzz hours `beef_reader` | unmeasured |  | `docs/scoreboard/fuzz.json` |
-| fuzz hours `brc29_remittance` | unmeasured |  | `docs/scoreboard/fuzz.json` |
-| fuzz hours `served_json` | unmeasured |  | `docs/scoreboard/fuzz.json` |
-| fuzz hours `explorer_bodies` | unmeasured |  | `docs/scoreboard/fuzz.json` |
-| fuzz hours `allow_pending` | unmeasured |  | `docs/scoreboard/fuzz.json` |
+| fuzz hours `beef_reader` | 1.0 | 8599976 executions, 702 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
+| fuzz hours `brc29_remittance` | 1.0 | 2368027 executions, 454 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
+| fuzz hours `served_json` | 1.0 | 160391167 executions, 6234 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
+| fuzz hours `explorer_bodies` | 1.0 | 13083 executions, 357 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
+| fuzz hours `allow_pending` | 1.0 | 109220857 executions, 3447 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
 | bench baseline | no baseline yet |  | `benches/baseline.json` |
 | e2e scenarios | 24 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/browsers.js` |
