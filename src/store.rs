@@ -235,6 +235,37 @@ pub fn sqlx_is_busy(e: &sqlx::Error) -> bool {
     }
 }
 
+/// End the dead-row pauses at a tip of the daemon's feed (#328 (1)): each
+/// tracked creator the tracker's adoption pass marked (a row with no
+/// `bump` whose transaction the toolbox holds `completed` with a stored
+/// proof, its pause running) is due at `now`, so the next pass checks it
+/// again, as the served pass's header move does through `moved_from`. Its
+/// `asks` stand, so a check that fails again pauses one doubling longer.
+/// A row of the tick's own (an unproven transaction under its re-ask
+/// pause) is not one of them. The rows changed.
+///
+/// # Errors
+///
+/// The executor's `sqlx::Error`.
+pub async fn end_dead_row_pauses<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+    now: i64,
+) -> Result<u64> {
+    let ended = sqlx::query(
+        "UPDATE tracker_states SET next_ask_at = ? \
+         WHERE bump IS NULL AND next_ask_at > ? \
+           AND word IN ('rejected', 'conflicted', 'abandoned', 'unknown', 'built') \
+           AND txid IN (SELECT lower(t.txid) FROM transactions t \
+                        JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
+                        WHERE t.txid IS NOT NULL AND t.status = 'completed')",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(executor)
+    .await?;
+    Ok(ended.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
