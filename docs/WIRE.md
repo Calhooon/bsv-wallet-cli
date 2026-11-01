@@ -409,8 +409,9 @@ unproven transaction's parent is neither carried nor stored, the toolbox's
 `ValidationError` (InvalidParameter through the SDK boundary) served 400
 `VALIDATION_ERROR` by its class; since toolbox #546 the text ends at the byte
 count, with no dump path and no file written. Every recorded 200 answer of the
-wire and consumers corpora (97 wallet calls: 69 wire, 28 consumers) passes
-bsv-rs 0.9.0-beta.6's result rows, none refused; the nine host-route 200 rows
+wire and consumers corpora (98 wallet calls: 70 wire, among them #122's row
+177, and 28 consumers; the getVersion rows read with the package's version
+core) passes bsv-rs 0.9.0-beta.6's result rows, none refused; the nine host-route 200 rows
 and the eight bodiless preflight answers are not wallet calls. No world
 faults a header service at a discover call (toolbox #521) or sends a 429
 from one (toolbox #148), and no fixture reaches a script near the door's
