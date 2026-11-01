@@ -2095,3 +2095,98 @@ certificate with a non-compressed key would now fail the reverify, the
 owner's question); #350; #315 and #316 on the beta.2 milestone; the beta.1
 release object's prerelease mark (the keeper's); the 0.19.0-beta.5 tag on
 the content the keeper names.
+
+## 2026-11-01, the night: the owner's 22.8 order landed for the CLI but for
+the mutation cell, the beta.6 intake, and the funder's floor
+
+The 2026-10-31 entry ends with the beta.5 pin at beta 45fecea8, its gate 24
+of 24 at the documented 98,000-sat funding, and the owner's 22.8 order
+launched behind it at 23:36Z: the census base branch at the beta.4 release
+commit, the Differential and the Nightly dispatched at the landed tip, and
+three lanes in parallel. By 01:26Z every piece was landed in sequence
+through beta's up-to-date rule, each with its one-provider cold read on
+Opus, and beta stands at 6e7b738.
+
+The triage pass (22.8 (3)) landed first as PR 382 (docs/TRIAGE-2026-10-31.md,
+beta 23048c2): the lane read all fifty-five open rows in full against the
+tree (thirty-four on 0.19.0 after #371 and #372 closed at the pin,
+twenty-one on hardening); none could be closed; one moved (#187, a bug in
+the shipped `serve-fleet --daemon`, from hardening to 0.19.0); fifty-four
+were kept with an exit test and a phase, twelve exit tests added, #122 and
+#23 split by what already landed; the distance is thirty-five rows on
+0.19.0 and twenty on hardening, and the rows needing a word are grouped by
+whose word (the owner's #328, #142, #122, #38; the reference's then the
+owner's #149, #117; a package's #194, #155, #90, #89; the stack's #97, #92,
+#91, #88, #87). The two cold reads found one defect, outside the PR: the
+exit test the pass added to #370 named one fixture directory while counting
+the pin lane's ninety-seven across two, and after the captain's first edit
+still left eight bodiless OPTIONS preflight answers unaccounted; the second
+reader counted the fixtures itself (`tests/wire` 85 answering 200 = 69 run
++ 8 host-route + 8 preflight; `tests/wire_consumers` 29 = 28 run + 1
+host-route) and the exit test now states that split with every exclusion
+named. The keeper answered the stack's five rows on their issues the same
+night, each tied to the charter at the stack's main; the owner's four go to
+the morning's brief with the keeper's recommendation.
+
+The scoreboard's census records (22.8 (1a), #380) landed as PR 383 (beta
+7e6ec58): `tools/scoreboard` reads a fuzz-hours record per target of
+`fuzz/Cargo.toml` and a differential record with its same-build floor, each
+a row naming its producing run, a missing record reading "unmeasured" or
+"no report yet", the `--json` keys and `--base` rules each with a test; the
+first cold read planted forty-eight malformed records and found one read as
+valid, an infinite seconds value, and the fix made every number the tool
+reads finite (118 tests); `tools/test_bench_compare.py` failing on clean
+beta for a `bench:` job ci.yml no longer holds is #385. The A8 census (22.8
+(2)) ran as a proof lane: one profiled hermetic run of the 24 scenes at
+45fecea8 under samply at 2 kHz through a `BSV_WALLET_BIN` wrapper (attach
+needs root on macOS), seventeen rows at or above one percent re-aggregated
+exactly by the cold reader, the wallet's CPU mostly in the kernel, the
+allocator, SQLite's VM, k256's point addition and tokio with this crate's
+own code at 0.4 percent of self time, every `dominates_at` null since no
+gate scene varies an input size, no candidate named, and the lane's caveat
+that the whole suite is under one second of wallet CPU so finer rows need a
+heavier driver; the rows are the stack's `docs/a8/census-2026-10-31-cli.json`
+with their provenance, and the lane's one build commit, a
+`[profile.profiling]`, landed as PR 384 (beta 4f1366b). The figures (22.8
+(1b), #387) landed as PR 388 (beta 6e7b738): `docs/scoreboard/fuzz.json` from
+Nightly run 41253247135 (five targets, an hour each, no crash, corpus
+additions 3447, 702, 454, 357 and 6234, matched to the artifacts by the
+reader), `docs/scoreboard/differential.json` from Differential run
+41253245406 (45fecea8 against the beta.4 release commit: 0 differences over
+375 calls and 37 commands, the same-build floor run once locally and
+reproduced by the reader), and the hygiene cells re-measured under 1.98.1
+equal to the record. The mutation cell is not written and the floors stand:
+every one of the twenty Mutants shards reported `TIMEOUT Unmutated baseline
+in 94s build + 300s test` and tested no mutant, so the Mutation score job
+read no outcome for any floored file; that is the open #310 with the run's
+evidence, a ci lane's fix before a re-dispatched Nightly writes the cell.
+
+Two landings met beta's protection: with branches required up to date,
+each PR landed after another read BEHIND and `gh pr merge` was refused with
+"10 of 10 required status checks are expected" on green checks, and two
+waiters had echoed "merged" without reading the PR's state. The serial
+landing now updates each next PR onto beta through GitHub's rebase update,
+waits for the re-run checks, merges, and requires `state == MERGED` before
+it says so. The beta.6 intake opened as #386 on its milestone with every
+library landing since the beta.5 tags, the toolbox's post-tag discover-fault
+change, our own rows and the standing checks extended with beta.5's
+lessons; bsv-rs filed #579 from our #377 (a public strict public-key hex
+reader; the four door sites drop their host copy at the pin that carries
+it); the next prerelease cuts on the content the keeper names, and no gate
+runs before the funder's top-up (23.0, the owner's call, 50,000 sats
+recommended).
+
+Lessons kept: beta's protection is strict, so serial landings need an update
+step and a waiter verifies a merge by the PR's state; the Nightly's shards
+can end green having tested nothing, so the score job's table is read, never
+the shards' conclusions; the gate scenes are too light a driver for a
+profile below two percent; an exit test's scope and count are read against
+the fixtures by whoever writes them.
+
+Open after the night: #310 (the mutants baseline; a ci lane), then a
+re-dispatched Nightly and the mutation cell; #385; #379; #370 (its own PR);
+the stale `strip_rule_label` cites in docs/ARCHITECTURE.md (a docs-only
+fold); the owner's four triage words and 23.0 at the morning's brief; #333
+and the certificate re-issue at 0.19.0; #350 with #193 (one flaky test, one
+lane); #380's figures lane pattern for the next census; the beta.6 pin on
+the keeper's content. The lines: beta 6e7b738; main at this entry's parent.
