@@ -25,7 +25,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 const GATE: &str = "E2E_HERMETIC_ORACLE";
@@ -146,8 +146,71 @@ fn ports_free() {
 fn stat<'a>(out: &'a str, label: &str) -> &'a str {
     out.lines()
         .find_map(|l| l.trim_start().strip_prefix(label))
-        .map(str::trim)
-        .unwrap_or_else(|| panic!("the suite printed no `{label}` line: its stats are missing"))
+        .map_or_else(
+            || panic!("the suite printed no `{label}` line: its stats are missing"),
+            str::trim,
+        )
+}
+
+/// Runs the suite against `bin`, echoing its output as it comes, and returns
+/// its exit status and its stdout.
+fn run_suite(bin: &Path, mcp: &Path, node: &std::ffi::OsStr) -> (ExitStatus, String) {
+    let started = Instant::now();
+    let mut child = Command::new(node)
+        .arg("tests/e2e/run.js")
+        .current_dir(manifest_dir())
+        .env("E2E_HERMETIC", "1")
+        .env("NODE_USE_ENV_PROXY", "1")
+        .env("BSV_WALLET_BIN", bin)
+        .env("BSV_WALLET_MCP_BIN", mcp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap_or_else(|e| unjudged(&format!("start {}: {e}", node.to_string_lossy())));
+    let mut out = String::new();
+    for line in BufReader::new(child.stdout.take().expect("the suite's stdout")).lines() {
+        let line = line.expect("read the suite's output");
+        say(&line);
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let status = child.wait().expect("wait for the suite");
+    say(&format!(
+        "e2e_hermetic: the suite ended {status} after {:.0} s",
+        started.elapsed().as_secs_f64()
+    ));
+    (status, out)
+}
+
+/// The summary's stats: every scenario run or skipped, every run one passed,
+/// no walled attempt at an undeclared host and no unserved route.
+fn judge(out: &str, scenarios: usize) {
+    let passed = stat(out, "Passed:");
+    let skipped: usize = stat(out, "Skipped:")
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .expect("the Skipped line's count");
+    let (ran, total) = passed.split_once('/').expect("Passed: N/M");
+    let (ran, total): (usize, usize) =
+        (ran.parse().expect("passed"), total.parse().expect("total"));
+    assert_eq!(ran, total, "Passed: {passed}");
+    assert_eq!(
+        total + skipped,
+        scenarios,
+        "{total} run and {skipped} skipped of {scenarios} scenarios"
+    );
+    let walled = stat(out, "Walled:");
+    assert!(
+        walled.ends_with(", 0 new"),
+        "a walled attempt at an undeclared host: {walled}"
+    );
+    let unserved = stat(out, "Unserved:");
+    assert!(
+        unserved.starts_with("0 request(s)"),
+        "an unserved route: {unserved}"
+    );
 }
 
 #[test]
@@ -178,56 +241,7 @@ fn hermetic_suite_judges_this_build() {
         "e2e_hermetic: {scenarios} scenarios against {}",
         bin.display()
     ));
-    let started = Instant::now();
-    let mut child = Command::new(&node)
-        .arg("tests/e2e/run.js")
-        .current_dir(manifest_dir())
-        .env("E2E_HERMETIC", "1")
-        .env("NODE_USE_ENV_PROXY", "1")
-        .env("BSV_WALLET_BIN", &bin)
-        .env("BSV_WALLET_MCP_BIN", &mcp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap_or_else(|e| unjudged(&format!("start {}: {e}", node.to_string_lossy())));
-    let mut out = String::new();
-    for line in BufReader::new(child.stdout.take().expect("the suite's stdout")).lines() {
-        let line = line.expect("read the suite's output");
-        say(&line);
-        out.push_str(&line);
-        out.push('\n');
-    }
-    let status = child.wait().expect("wait for the suite");
-    say(&format!(
-        "e2e_hermetic: the suite ended {status} after {:.0} s",
-        started.elapsed().as_secs_f64()
-    ));
-
+    let (status, out) = run_suite(&bin, &mcp, &node);
     assert!(status.success(), "the hermetic suite failed: {status}");
-    let passed = stat(&out, "Passed:");
-    let skipped: usize = stat(&out, "Skipped:")
-        .split_whitespace()
-        .next()
-        .and_then(|n| n.parse().ok())
-        .expect("the Skipped line's count");
-    let (ran, total) = passed.split_once('/').expect("Passed: N/M");
-    let (ran, total): (usize, usize) =
-        (ran.parse().expect("passed"), total.parse().expect("total"));
-    assert_eq!(ran, total, "Passed: {passed}");
-    assert_eq!(
-        total + skipped,
-        scenarios,
-        "{total} run and {skipped} skipped of {scenarios} scenarios"
-    );
-    let walled = stat(&out, "Walled:");
-    assert!(
-        walled.ends_with(", 0 new"),
-        "a walled attempt at an undeclared host: {walled}"
-    );
-    let unserved = stat(&out, "Unserved:");
-    assert!(
-        unserved.starts_with("0 request(s)"),
-        "an unserved route: {unserved}"
-    );
+    judge(&out, scenarios);
 }
