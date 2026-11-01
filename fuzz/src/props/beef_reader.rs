@@ -5,7 +5,7 @@
 #[path = "../../../src/atomic_beef.rs"]
 mod atomic_beef;
 
-use bsv_sdk::transaction::{Beef, Transaction};
+use bsv_sdk::transaction::{Beef, BeefTx, Transaction};
 use bsv_wallet_cli::server::post_word::atomic_subject;
 use bsv_wallet_toolbox::storage::sqlx::refuse_invalid_beef_bytes;
 
@@ -40,7 +40,7 @@ pub fn check(data: &[u8]) {
     // createAction's answer: the toolbox's BEEF to AtomicBEEF on the new
     // txid, and the unproven ancestors the package carried.
     if let Ok(mut beef) = Beef::from_binary(data) {
-        if let Some(last) = beef.txs.last().map(|t| t.txid()) {
+        if let Some(last) = beef.txs.last().map(BeefTx::txid) {
             let _ = beef.to_binary_atomic(&last);
             let _ = bsv_wallet_toolbox::unproven_ancestors_in_beef(data, &last);
         }

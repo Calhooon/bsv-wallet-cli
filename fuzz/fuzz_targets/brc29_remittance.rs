@@ -10,4 +10,4 @@
 use bsv_wallet_cli_fuzz::props::brc29_remittance::{check, Input};
 use libfuzzer_sys::fuzz_target;
 
-fuzz_target!(|input: Input| check(input));
+fuzz_target!(|input: Input| check(&input));
