@@ -2,14 +2,17 @@
 # The chain scripts of tools/lanes (#390, #391), run against tools/lanes/stub-runner.sh standing
 # in for cca and gh, with planted REPORTs and no delay:
 #
-#   bash tools/test_chain_ensemble.sh
+#   zsh -f tools/test_chain_ensemble.sh   (CI's ratchet job runs it so; bash runs it too)
 #
 # chain-ensemble.sh: a lane whose whole output is the one line `REPORT: STATUS done` is judged
 # done (#391's ask 2); a blocked lane stops with exit 3; two agreeing reviewers at a mean of 0.7
 # or more run no third; a split runs C and says `split`; two agreeing at a mean below 0.7 run C
 # and say `low mean` (ruling 3). ensemble-read.sh: readers answering `A ...`, `A, because` and
 # `B` under `OPTIONS: A|B|C` aggregate as 2/3 on A; a reader answering `maybe` exits 2; a
-# question without its OPTIONS line exits 2 (ruling 2). Needs zsh, as the scripts do.
+# question without its OPTIONS line exits 2 (ruling 2); a bad OPTIONS line (a space inside a
+# token, one token, a carriage return) exits 2 before any reader launches (#392); `Yes`, `yes`
+# and `no` under `OPTIONS: yes|no` aggregate as 2/3 on yes (#392). Each passing case prints its
+# log's ENSEMBLE: and AGGREGATE: lines. Needs zsh, as the scripts do.
 # CHAIN_ENSEMBLE_LANES points the cases at another copy of tools/lanes.
 set -euo pipefail
 
@@ -34,7 +37,10 @@ check() { # check <name> <expected exit> <got exit> <output file> <expected line
       grep -qF -- "$line" "$log" || { ok=0; echo "  missing: $line"; }
     fi
   done
-  if [ $ok = 1 ]; then echo "ok   $name"; else failures=$((failures + 1)); echo "FAIL $name"; sed 's/^/  | /' "$log"; fi
+  if [ $ok = 1 ]; then
+    echo "ok   $name"
+    grep -E '^(ENSEMBLE|AGGREGATE): ' "$log" | sed 's/^/       /' || true
+  else failures=$((failures + 1)); echo "FAIL $name"; sed 's/^/  | /' "$log"; fi
 }
 
 form() { # form <verdict or -> <decision> <confidence>
@@ -97,6 +103,24 @@ check "a reader answering maybe exits 2" 2 $code "$WORK/maybe/log" \
 read_case no-options 'Does the row stand?' 'A' 'A' 'A'
 check "a question without its OPTIONS line exits 2" 2 $code "$WORK/no-options/log" \
   "the first line of $WORK/no-options/question.txt must be OPTIONS:" "!launched"
+
+bad_options() { # bad_options <case> <question first line> <expected reason>
+  local dir="$WORK/$1"
+  mkdir -p "$dir/out"
+  printf '%s\nDoes the row stand?\n' "$2" > "$dir/question.txt"
+  code=0
+  STUB_DIR="$WORK/options/stub" "$LANES/ensemble-read.sh" "$dir/question.txt" brc@pin ts@pin cli@rev \
+    "$dir/out" > "$dir/log" 2>&1 || code=$?
+  check "a bad OPTIONS line exits 2 before any reader: $1" 2 $code "$dir/log" \
+    "the OPTIONS line of $dir/question.txt $3" "!launched"
+}
+bad_options space-in-token 'OPTIONS: A B|C' "has a space inside the token 'A B'"
+bad_options one-token 'OPTIONS: A' "must name two to four tokens joined by |"
+bad_options carriage-return $'OPTIONS: A|B|C\r' "carries a carriage return"
+
+read_case case 'OPTIONS: yes|no' 'Yes, the row stands' 'yes' 'no'
+check "readers Yes, yes, no under yes|no aggregate as 2/3 on yes" 0 $code "$WORK/case/log" \
+  "AGGREGATE: consensus agreement=2/3 mean=0.77 decision: yes"
 
 echo "$cases cases, $failures failed"
 [ $failures = 0 ]

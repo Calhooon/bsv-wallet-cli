@@ -436,6 +436,26 @@ jobs:
           python3 -B tools/check-cites
           python3 -B tools/test_aggregate.py
 
+      # The ensemble chain's dry runs (#392): tools/lanes/chain-ensemble.sh
+      # and ensemble-read.sh against stub-runner.sh standing in for cca and
+      # gh, no seat and no network. The log shows each case's ENSEMBLE: or
+      # AGGREGATE: line; a failed case fails the job. The scripts are zsh;
+      # the runner image may lack it, so the step installs it when absent
+      # and says which.
+      - name: ensemble chain dry runs
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if command -v zsh > /dev/null; then
+            echo "zsh: present on the runner ($(zsh --version))"
+          else
+            echo "zsh: absent on the runner, installed with apt"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq zsh > /dev/null
+            zsh --version
+          fi
+          zsh -f tools/test_chain_ensemble.sh
+
       - name: changelog fragment
         if: ${{ !cancelled() }}
         env:

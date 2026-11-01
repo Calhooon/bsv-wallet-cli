@@ -14,7 +14,9 @@ nearest non-blank line before it. A key may carry a list marker or bold
 A decision is counted by its key. With --options (trigger D's categorical
 decisions: two to four option tokens joined by `|`, e.g. `A|B|C` or `yes|no`)
 the key is the DECISION line's first word, which must be exactly one of the
-options (trailing `,.;:` aside); a DECISION beginning with none is malformed.
+options (trailing `,.;:` aside), compared without case after the options and
+the word are trimmed, and counted as the option is spelled in --options (`Yes`
+under `yes|no` is `yes`); a DECISION beginning with none is malformed.
 Without --options the key is the VERDICT word when present, else the DECISION
 line lowercased with its whitespace collapsed. The modal decision is the key
 most files gave (a tie goes to the key seen earliest). The tool prints one line
@@ -59,9 +61,9 @@ def unit(text):
 
 
 def options_of(text):
-    """The option tokens of --options, or raise Malformed."""
-    options = text.split("|")
-    if not 2 <= len(options) <= 4 or len(set(options)) != len(options) \
+    """The option tokens of --options, each trimmed, or raise Malformed."""
+    options = [o.strip() for o in text.split("|")]
+    if not 2 <= len(options) <= 4 or len({o.casefold() for o in options}) != len(options) \
             or not all(OPTION.match(o) for o in options):
         raise Malformed(f"--options must be two to four distinct tokens joined by |, got {text!r}")
     return options
@@ -122,10 +124,11 @@ def parse(path, options=None):
     if not found["RATIONALE"] or len(found["RATIONALE"]) > RATIONALE_LINES:
         raise Malformed(f"{path}: RATIONALE must be one to {RATIONALE_LINES} lines")
     if options:
-        first = decision.split()[0].rstrip(",.;:")
-        if first not in options:
+        first = decision.split()[0].rstrip(",.;:").casefold()
+        spelled = {o.casefold(): o for o in options}
+        if first not in spelled:
             raise Malformed(f"{path}: DECISION must begin with exactly one of {'|'.join(options)}, got {decision}")
-        key = first
+        key = spelled[first]
     else:
         key = verdict or re.sub(r"\s+", " ", decision.lower())
     return {"path": path, "verdict": verdict, "decision": decision, "key": key,
