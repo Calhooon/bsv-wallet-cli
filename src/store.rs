@@ -235,6 +235,100 @@ pub fn sqlx_is_busy(e: &sqlx::Error) -> bool {
     }
 }
 
+/// End the dead-row pauses at a tip of the daemon's feed (#328 (1)): each
+/// tracked creator the tracker's adoption pass marked (a row with no
+/// `bump` whose transaction the toolbox holds `completed` with a stored
+/// proof, its pause running) is due at `now`, so the next pass checks it
+/// again, as the served pass's header move does through `moved_from`. Its
+/// `asks` stand, so a check that fails again pauses one doubling longer.
+/// A row of the tick's own (an unproven transaction under its re-ask
+/// pause) is not one of them. The rows changed.
+///
+/// # Errors
+///
+/// The executor's `sqlx::Error`.
+pub async fn end_dead_row_pauses<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+    now: i64,
+) -> Result<u64> {
+    let ended = sqlx::query(
+        "UPDATE tracker_states SET next_ask_at = ? \
+         WHERE bump IS NULL AND next_ask_at > ? \
+           AND word IN ('rejected', 'conflicted', 'abandoned', 'unknown', 'built') \
+           AND txid IN (SELECT lower(t.txid) FROM transactions t \
+                        JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
+                        WHERE t.txid IS NOT NULL AND t.status = 'completed')",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(executor)
+    .await?;
+    Ok(ended.rows_affected())
+}
+
+/// The tracker's record of the adoption pass's failing checks (#328): per
+/// creator whose check of the toolbox's proof fails, the state last
+/// reported (`reported`: the fault's class and the stored path's digest),
+/// and a could-not-look fault's backoff (`asks`, `next_at`: the creator is
+/// not selected again before it). A creator holds a row only while its
+/// check fails; the adoption pass reads it through its own selection.
+///
+/// # Errors
+///
+/// The executor's `sqlx::Error`.
+pub async fn ensure_adopt_checks(conn: &mut sqlx::SqliteConnection) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS tracker_adopt_checks (\
+            txid TEXT PRIMARY KEY, \
+            reported TEXT NOT NULL, \
+            asks INTEGER NOT NULL DEFAULT 0, \
+            next_at INTEGER)",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Record that `txid`'s failing check reported the state `reported`, with
+/// its backoff (none after a fault that marks the row).
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn set_adopt_check(
+    conn: &mut sqlx::SqliteConnection,
+    txid: &str,
+    reported: &str,
+    asks: u32,
+    next_at: Option<i64>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO tracker_adopt_checks (txid, reported, asks, next_at) VALUES (?, ?, ?, ?) \
+         ON CONFLICT(txid) DO UPDATE SET reported = excluded.reported, asks = excluded.asks, \
+            next_at = excluded.next_at",
+    )
+    .bind(txid)
+    .bind(reported)
+    .bind(i64::from(asks))
+    .bind(next_at)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// `txid`'s check no longer fails: its record goes.
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn drop_adopt_check(conn: &mut sqlx::SqliteConnection, txid: &str) -> Result<()> {
+    sqlx::query("DELETE FROM tracker_adopt_checks WHERE txid = ?")
+        .bind(txid)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

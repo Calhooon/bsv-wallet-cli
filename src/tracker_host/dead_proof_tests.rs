@@ -4,6 +4,10 @@ use super::tests::{header, opts, path_of, proven_coin, wallet_storage, FixedCloc
 use super::*;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
+mod could_not_look;
+mod feed;
+mod reports;
+
 async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {
     ensure_tables(storage).await.unwrap();
     let mut row = TrackedRow::new(txid);
@@ -421,26 +425,6 @@ async fn dead_rows_without_toolbox_proofs_are_never_loaded() {
 }
 
 #[tokio::test]
-async fn an_unanswered_header_retries_the_dead_row_on_the_next_tick() {
-    let txid = "c6".repeat(32);
-    let (storage, _) = proven_dead(&txid, "conflicted", 900).await;
-    let before = stored_bytes(&storage, &txid).await;
-    let (services, ready, task) = header_service(&txid).await;
-    let report = pass(&storage, &services, 100).await;
-    assert!(report.faults.is_empty() && report.adopted_mined.is_empty());
-    assert_eq!(stored_bytes(&storage, &txid).await, before);
-    ready.store(true, std::sync::atomic::Ordering::SeqCst);
-    let next = pass(&storage, &services, 101).await;
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    assert_eq!(next.adopted_mined, vec![txid.clone()]);
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap().0,
-        "mined"
-    );
-}
-
-#[tokio::test]
 async fn an_unparseable_toolbox_proof_marks_the_dead_row_once() {
     let txid = "c7".repeat(32);
     let (storage, services) = proven_dead(&txid, "rejected", 900).await;
@@ -465,7 +449,8 @@ async fn a_header_move_at_the_toolbox_height_checks_an_unparseable_dead_row_agai
 
     // The header at 900, the toolbox's `proven_txs.height`, moves.
     let moved = moved_at_900(&storage, &services, &"ef".repeat(32)).await;
-    assert_eq!(moved.faults, stands);
+    // Checked again, the same fault: not reported again (#328 (2)).
+    assert!(moved.faults.is_empty());
     assert!(moved.adopted_mined.is_empty());
     assert_eq!(mark_of(&storage, &txid).await, (None, 2, Some(102 + 1_200)));
     assert_word(&storage, &txid, ("conflicted", None, None)).await;
@@ -762,9 +747,10 @@ async fn a_marked_row_is_checked_again_after_its_pause_and_reads_a_new_toolbox_p
     assert_eq!(pass(&storage, &services, 100).await.faults.len(), 1);
     assert_idle(&pass(&storage, &services, 699).await);
 
-    // The pause passed: one more check, still failing, a doubled pause.
+    // The pause passed: one more check, still failing, a doubled pause,
+    // the same fault not reported again (#328 (2)).
     let again = pass(&storage, &services, 700).await;
-    assert_eq!(again.faults.len(), 1);
+    assert!(again.faults.is_empty());
     let row = load_row(&storage, &txid).await.unwrap().unwrap();
     assert_eq!((row.asks, row.next_ask_at), (2, Some(700 + 1_200)));
     assert_eq!(

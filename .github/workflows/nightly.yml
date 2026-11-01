@@ -412,3 +412,67 @@ jobs:
              "src/broadcast_verify.rs": 86,
              "src/explorers.rs": 82}
         run: python3 .github/nightly/mutants_score.py outcomes
+
+  # The bench job's measure on the dispatched night (#142; the owner's word of
+  # 2026-11-01: one nightly bench job on beta, an append by PR, nothing else
+  # scheduled). No cron: beta has no schedule (the owner's word of 2026-10-27,
+  # above), so a night is a dispatch, `gh workflow run nightly.yml --ref beta`.
+  # The steps and pins are bench.yml's measure: rustc 1.98.1 in the env and
+  # the action, the planted cases first, and tools/bench-compare --ci, which
+  # holds the gate's profile, the CPU read (model and cores, the entry's key),
+  # the sample floor and the history floor; criterion's warm-up calls are
+  # dropped by the benches. The base is the checked-out commit's own
+  # benches/baseline.json, so the candidate is that file with this night's
+  # run appended, stamped with the commit and the run id; an entry that gates
+  # (five runs) fails the night on a p99 over the margin, as on a PR.
+  # Independent of the Mutants matrix (no needs) and one runner: the night
+  # peaks at twelve runners under #144, not eleven. The artifact
+  # bench-night-<run id>-<CPU key> is what the captain appends to
+  # benches/baseline.json, one night per PR: tools/bench-compare --append
+  # (docs/BENCHES.md).
+  bench:
+    name: Bench (the night's candidate baseline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Over any rust-toolchain.toml the ref carries; the tool refuses another rustc -V.
+      RUSTUP_TOOLCHAIN: 1.98.1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The dispatched commit, the one --ci stamps (BENCH_COMMIT below).
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: The gate's planted cases
+        run: python3 tools/test_bench_compare.py
+
+      - name: Measure the night against the commit's own baseline
+        id: measure
+        env:
+          BENCH_COMMIT: ${{ github.sha }}
+        run: |
+          key=$(tools/bench-compare --gate-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "bench: this runner's entry is $key"
+          # A commit with no baseline file is a baseline with no entry.
+          git show HEAD:benches/baseline.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null \
+            || : > "$RUNNER_TEMP/base-baseline.json"
+          mkdir -p "$RUNNER_TEMP/bench/results"
+          BENCH_OUT="$RUNNER_TEMP/bench/results" tools/bench-compare --ci \
+            --base "$RUNNER_TEMP/base-baseline.json" --out "$RUNNER_TEMP/bench/baseline.json"
+
+      - name: Keep the night's candidate baseline under the run id and the CPU
+        if: always() && steps.measure.outputs.key != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-night-${{ github.run_id }}-${{ steps.measure.outputs.key }}
+          path: ${{ runner.temp }}/bench/
+          if-no-files-found: warn
+          retention-days: 30

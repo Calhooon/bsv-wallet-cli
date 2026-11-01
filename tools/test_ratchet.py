@@ -23,6 +23,8 @@ The base comparison (#126) covers a base above, equal to and below the tree,
 a raised PR record, a key the base predates and an unrecorded key. Only a tree
 below its own record gets the re-record hint. Non-object JSON records are
 refused by name under --check, --record and --base.
+One warning reported under two paths of one file (src/ and a
+tests/../src path, #396) counts once: the key is the normalized path.
 The CI notice is limited to a path absent from a readable tree; invalid
 refs, failed object reads and failed git show calls stop before measurement.
 Each case copies the tool into a git tree
@@ -975,6 +977,47 @@ class BaseInstrumentGuards(Case):
         self.assertIn("unwrap_expect_outside_tests: 1 -> 0 (-1)", out)
         self.assertTrue(out.endswith("ratchet: no number above the record or the base record"), out)
         self.note(code, tail(out))
+
+
+# A clippy pass that reports one pedantic warning at src/a.rs:1:1 under each
+# path of $STUB_PATHS (colon-separated), as rustc reports a file a test target
+# mounts by `#[path]` a second time under a path through `..` (#396).
+CARGO_WARNS = """#!/bin/sh
+for a in "$@"; do [ "$a" = --version ] && { echo "$STUB_CLIPPY"; exit 0; }; done
+echo "$*" >> "$STUB_LOG"
+[ "$1" = clippy ] || exit 0
+IFS=:
+for p in $STUB_PATHS; do
+  printf '{"reason":"compiler-message","message":{"level":"warning","code":{"code":"clippy::doc_markdown"},"spans":[{"is_primary":true,"file_name":"%s","line_start":1,"column_start":1}]}}\\n' "$p"
+done
+exit 0
+"""
+
+
+class OneLocationCountsOnce(Case):
+    """tools/ratchet keys a warning by its file's normalized path
+    (os.path.normpath), so one source location named by two paths is one
+    warning (#396: six pedantic warnings counted twice, 830 for 824)."""
+
+    def pedantic(self, *paths):
+        with open(os.path.join(self.tree.bin, "cargo"), "w") as f:
+            f.write(CARGO_WARNS)
+        env = self.tree.env(OLD)
+        env["STUB_PATHS"] = ":".join(paths)
+        r = subprocess.run([sys.executable, "-B", os.path.join(self.tree.root, "tools", "ratchet"), "--record"],
+                           cwd=self.tree.root, env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return self.tree.json()["ratchets"]["clippy_pedantic"]
+
+    def test_a_warning_under_src_and_tests_dotdot_src_counts_once_by_its_normpath(self):
+        n = self.pedantic("src/a.rs", "tests/../fuzz/src/../../src/a.rs")
+        self.assertEqual(n, 1)
+        self.note(0, f"clippy_pedantic {n}")
+
+    def test_two_locations_still_count_twice_after_normpath(self):
+        n = self.pedantic("src/a.rs", "tests/../src/b.rs")
+        self.assertEqual(n, 2)
+        self.note(0, f"clippy_pedantic {n}")
 
 
 if __name__ == "__main__":
