@@ -8,9 +8,10 @@
 # review brief, prepends the stance (A: review-package, B: review-wire-reference) and runs A and B
 # concurrently from this shell: two runner processes, each its own session, so the lane rule's
 # foreground clause holds (this shell is the caller and waits for both). Aggregates their bounded
-# forms with aggregate.py; only on a split runs C (default: B's brief) under review-adversarial,
-# with A's and B's outputs appended under a heading it reads after forming its own verdict.
-# Prints each reviewer's verdict line and one line
+# forms with aggregate.py; only when A and B are no consensus (a split, or both agreeing at a
+# mean below 0.7: a low mean; the line naming C says which) runs C (default: B's brief) under
+# review-adversarial, with A's and B's outputs appended under a heading it reads after forming
+# its own verdict. Prints each reviewer's verdict line and one line
 #   ENSEMBLE: merge|fix|split agreement=<k>/<n> mean=<0.xx>
 # Exit 0 on a merge consensus, 3 otherwise (a fix consensus, a split, a lane not done, a
 # malformed review). Never merges anything.
@@ -48,7 +49,8 @@ say() { print -r -- "chain-ensemble: $* $(stamp)"; }
 say "lane $lane launched"
 "$CCA" run --class code --worktree $lane "$(cat -- $brief)" < /dev/null > $out/lane.txt
 say "lane $lane finished (runner exit $?)"
-status_line=${${(M)${(f)"$(<$out/lane.txt)"}:#*REPORT: STATUS *}[1]:-}
+# grep the file, never index a string: a one-line REPORT is still one line (#391's ask 2).
+status_line=$(grep -m1 -e 'REPORT: STATUS ' -- $out/lane.txt) || status_line=
 if [[ $status_line != *"REPORT: STATUS done"* ]]; then
   print -r -- "chain-ensemble: the lane's REPORT is not STATUS done: ${status_line:-no REPORT line} ($out/lane.txt)"
   exit 3
@@ -82,6 +84,7 @@ pid_b=$!
 wait $pid_a $pid_b
 
 # tally <files...>: aggregate the bounded forms; sets $agg_code, $agg, $fraction, $mean, $modal.
+# $mean is aggregate.py's printed two decimals, for the record only: the rule is aggregate.py's.
 tally() {
   agg=$(python3 -B $HERE/aggregate.py "$@")
   agg_code=$?
@@ -89,14 +92,17 @@ tally() {
     print -r -- "ENSEMBLE: malformed (aggregate's message above; outputs in $out)"
     exit 3
   fi
-  local summary=${${(M)${(f)agg}:#AGGREGATE: *}[1]}
+  local summary
+  summary=$(print -r -- "$agg" | grep -m1 -e '^AGGREGATE: ') || summary=
   local words=(${=summary})
   fraction=${words[3]} mean=${words[4]} modal=${summary#*decision: }
 }
 
 tally $out/review-A.txt $out/review-B.txt
 if (( agg_code == 1 )); then
-  say "A and B split ($fraction $mean): review C launched"
+  # No consensus of two: they agree below the mean (a low mean) or they do not agree (a split).
+  if [[ $fraction == agreement=2/2 ]]; then why="low mean"; else why=split; fi
+  say "A and B $why ($fraction $mean): review C launched"
   appendix="---- THE TWO REVIEWERS' VERDICTS: read only after your own verdict is written ----
 REVIEWER A (review-package):
 $(<$out/review-A.txt)
@@ -106,7 +112,7 @@ $(<$out/review-B.txt)"
   review C review-adversarial $rev_c "$appendix"
   tally $out/review-A.txt $out/review-B.txt $out/review-C.txt
 fi
-for line in ${(f)agg}; do
+for line in "${(@f)agg}"; do
   [[ $line == $out/review-* ]] && print -r -- "reviewer ${${line#$out/review-}%%.txt:*}: ${line#*.txt: }"
 done
 if (( agg_code == 0 )); then

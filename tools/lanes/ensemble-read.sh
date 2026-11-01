@@ -3,6 +3,10 @@
 #
 #   tools/lanes/ensemble-read.sh <question-file> <evidence-A> <evidence-B> <evidence-C> [out-dir]
 #
+# The question file's first line names its allowed answers, two to four option tokens:
+#   OPTIONS: A|B|C
+# Each reader's DECISION line begins with exactly one of them, and aggregate.py --options compares
+# that token (a decision is categorical, never free text; the rationale carries the wording).
 # Evidence A is the BRC text at its pin (stance reader-brc), B the reference implementation
 # (reader-reference), C the package's code (reader-package). Each reader is its own
 # `$CCA run --class review` holding only its stance, the question and its own evidence pointer,
@@ -29,6 +33,13 @@ if (( $# < 4 || $# > 5 )); then
 fi
 question=$1
 [[ -r $question ]] || { print -u2 "ensemble-read: cannot read $question"; exit 2; }
+first_line=
+IFS= read -r first_line < $question || true
+if [[ $first_line != OPTIONS:\ * ]]; then
+  print -u2 "ensemble-read: the first line of $question must be OPTIONS: <two to four tokens joined by |>"
+  exit 2
+fi
+answers=${${first_line#OPTIONS: }// /}
 out=${5:-$(mktemp -d "${TMPDIR:-/Volumes/Lanes/targets}/ensemble-read.XXXXXX")}
 mkdir -p -- $out
 
@@ -40,6 +51,8 @@ read_one() {
 
 QUESTION:
 $(<$question)
+
+OPTIONS: $answers (your DECISION line begins with exactly one of these, as written)
 
 EVIDENCE: $2"
   print -r -- "ensemble-read: $1 launched $(stamp)"
@@ -56,7 +69,7 @@ read_one reader-package "$4" &
 pids+=($!)
 wait $pids
 
-python3 -B $HERE/aggregate.py $out/reader-brc.txt $out/reader-reference.txt $out/reader-package.txt
+python3 -B $HERE/aggregate.py --options $answers $out/reader-brc.txt $out/reader-reference.txt $out/reader-package.txt
 code=$?
 print -r -- "ensemble-read: outputs in $out"
 exit $code

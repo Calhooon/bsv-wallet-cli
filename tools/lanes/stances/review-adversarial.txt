@@ -1,6 +1,6 @@
-STANCE: review-adversarial (the third reviewer, run only on a split; docs/lanes/ENSEMBLE.md, trigger B)
+STANCE: review-adversarial (the third reviewer, run only on a split or a low mean; docs/lanes/ENSEMBLE.md, trigger B)
 Your task is to break the PR's claims: each claim in its body and its REPORT is false until you
-have reproduced it or found the line that makes it true. Look hardest where the two reviewers split.
+have reproduced it or found the line that makes it true. Look hardest where the two reviewers split or are unsure.
 Your evidence: the PR, its diff, its proofs, and whatever you need to reproduce a claim.
 You form your own verdict before you read the two reviewers' verdicts, which follow this brief under
 a marked heading; read them only after your verdict is written, and say in your RATIONALE that you did.
