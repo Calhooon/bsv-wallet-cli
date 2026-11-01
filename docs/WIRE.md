@@ -136,7 +136,7 @@ Three `AppError` codes no in-process world produces, so they are not judged (`UN
 | 501 `NOT_IMPLEMENTED` | the reference's `NotImplemented` and `UnsupportedAction` classes. The toolbox at the pin raises one of them at one site, `signAction`'s reference with no pending action (absent or expired), which the door serves as the caller's 400 `VALIDATION_ERROR` since #122 item 5 (fixture 040); the class stays mapped for a package that adds another |
 | 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
 
-The framework's own rejections are served as every other refusal since #122 item 3: a body that does not parse (032), a field missing (031, naming the wire field `protocolID`) or of the wrong type (141, 142), and a body without a JSON content type (177) are `{code, message}` at 400 `VALIDATION_ERROR`, axum's words as the message (`src/server/json_body.rs`). No wallet call's fixture records a text body.
+The framework's own rejections are served as every other refusal since #122 item 3: a body that does not parse (032), a field missing (031, naming the wire field `protocolID`) or of the wrong type (141, 142), and a body without a JSON content type (177) are `{code, message}` at 400 `VALIDATION_ERROR`, axum's words as the message (`src/server/handlers/json_body.rs`). No wallet call's fixture records a text body.
 
 Fixtures 129 to 140 record the five paging calls at `limit: 10000` (200)
 and above it at `10001` (400 `VALIDATION_ERROR`), plus `listOutputs` with

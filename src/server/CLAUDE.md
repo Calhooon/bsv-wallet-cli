@@ -7,6 +7,7 @@
 - **`mod.rs`** (192 lines) — Router setup, CORS/auth/tracing middleware, TLS support, `SpendingLock` type, `ServerConfig`, graceful shutdown. Exports `make_router()`, `run()`, `make_wallet_state()`.
 - **`handlers.rs`**: one handler per endpoint. Translates between MetaNet Client JSON and SDK types, calls `wallet.<method>()`, maps errors via `AppError`. Defines `WalletState = Arc<Wallet<StorageSqlx, Services>>`.
 - **`error.rs`**: `Kind` (a status and a code per refusal) and `AppError`, every typed error mapped by its variant (#81).
+- **`handlers/json_body.rs`**: the doors' `Json` body: axum's, its own rejections (a body that does not parse, a field missing or mistyped, no JSON content type) answered as `AppError`s, 400 `VALIDATION_ERROR` `{code, message}`, never axum's text (#122 item 3).
 - **`types.rs`** (263 lines) — `Mc*` request/response structs for endpoints whose SDK arg types lack serde derives. Endpoints with SDK serde support (batches 4-6) deserialize directly in handlers without wrapper types.
 
 ## Endpoint Map
@@ -58,7 +59,7 @@ All 28 endpoints, organized by batch:
 
 ## Gotchas
 
-- **`protocolID` capital D**: Serde's `rename_all = "camelCase"` produces `protocolId` (lowercase d), but the MetaNet Client sends `protocolID`. Every struct with this field needs `#[serde(rename = "protocolID", alias = "protocolId")]`. Same for `keyID`. Missing the rename silently drops the field; the rename (not an alias) is what serde names in a refusal (its `missing field` text says `protocolID`, #122 item 3).
+- **`protocolID` capital D**: Serde's `rename_all = "camelCase"` produces `protocolId` (lowercase d), but the MetaNet Client sends `protocolID`. Every struct with this field needs `#[serde(rename = "protocolID", alias = "protocolId")]` (the six key-derivation requests get both from `key_request!` in `types.rs`). Same for `keyID`. Missing the rename silently drops the field; the rename (not an alias) is what serde names in a refusal (its `missing field` text says `protocolID`, #122 item 3).
 - **Binary data as JSON number arrays**: The MetaNet Client sends `data`, `signature`, `tx`, `ciphertext`, `hmac` as `[0,1,2,...]` JSON arrays, not hex strings. Serde deserializes `Vec<u8>` from number arrays by default, which happens to match — but if you ever switch to hex encoding you'll break wire compatibility.
 - **[2026-10-28, #277] Signable reference:** toolbox 0.14.0-beta.2 holds twelve decoded bytes. BRC-100 serves their base64 text through `spend_gate::reference_string`; `signAction` and `abortAction` receive that text unchanged. The beta.1 UTF-8 recovery is retired (toolbox #285, bsv-rs #105).
 - **`inputs: Some(vec![])`**: `createAction` passes an empty inputs vec, not `None`. This signals to the SDK "I have no specific inputs, auto-select UTXOs" vs `None` which may have different behavior.
