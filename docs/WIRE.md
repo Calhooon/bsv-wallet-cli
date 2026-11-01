@@ -136,7 +136,7 @@ Three `AppError` codes no in-process world produces, so they are not judged (`UN
 | 501 `NOT_IMPLEMENTED` | the reference's `NotImplemented` and `UnsupportedAction` classes. The toolbox at the pin raises one of them at one site, `signAction`'s reference with no pending action (absent or expired), which the door serves as the caller's 400 `VALIDATION_ERROR` since #122 item 5 (fixture 040); the class stays mapped for a package that adds another |
 | 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
 
-The corpus also records the framework's 400 and 422 text bodies.
+The framework's own rejections are served as every other refusal since #122 item 3: a body that does not parse (032), a field missing (031, naming the wire field `protocolID`) or of the wrong type (141, 142), and a body without a JSON content type (177) are `{code, message}` at 400 `VALIDATION_ERROR`, axum's words as the message (`src/server/json_body.rs`). No wallet call's fixture records a text body.
 
 Fixtures 129 to 140 record the five paging calls at `limit: 10000` (200)
 and above it at `10001` (400 `VALIDATION_ERROR`), plus `listOutputs` with
@@ -148,8 +148,9 @@ Fixture 134 records BRC-100's newest-first paging (`wallet/0100.md:911`):
 the negative offset passes unchanged, returning an empty page with its true
 total in the fresh world. A served test with two stored outputs checks that
 `offset: -1` returns the newest one and `offset: 0` returns the oldest.
-Fixture 141, `signAction.sequenceNumberAboveType`, records axum's existing
-422 text for `4294967296`, before the handler: the `u32` type already enforces
+Fixture 141, `signAction.sequenceNumberAboveType`, records the type's refusal
+of `4294967296` before the handler, 400 `VALIDATION_ERROR` since #122 item 3
+(a 422 in text before): the `u32` type already enforces
 the BRC bound. Fixture 142, `listActions.offsetAboveType`, records the same
 type boundary for its unsigned offset. Their transport shape belongs to
 #117 and #149. All 128 earlier fixtures remain byte-identical.
@@ -227,7 +228,7 @@ The keys replaced, anywhere in a body (`VOLATILE_KEYS`); a `null` is kept as `nu
 | `reference` | `signableTransaction` of `/createAction` | the toolbox draws it at random |
 | each `keyringForVerifier` value | `/proveCertificate` | freshly encrypted for the verifier; every key, its order and each value's shape/length remain strict |
 
-Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ).
+Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ). One rule is not a run's: this wallet's served version string (`getVersion`, `handlers::WALLET_VERSION`) becomes `bsv-wallet-cli-<major>.<minor>.<patch>` (`package_version` in `tests/wire_support/mod.rs`, both corpora), because it moves with the package's version and never with a behaviour, so a release's version commit moves no fixture; `tests/integration/status.rs` pins the exact string and its shape (#122 item 6).
 
 What is not hidden, because it does not differ: the identity key, every derived key, every signature, every txid, every built transaction. The worlds use one fixed root key, so the identity key, the BRC-42 derivations and the RFC 6979 signatures are the same on every run, and a change to derivation or signing fails the replay. The seeded txids are fixed values or the ids of fixed transactions. The `funded` world's actions each ask for exactly their coin less the toolbox's fee for one input and one output (20 sats at its rate for a P2PKH input, 9 for the puzzle's one-byte unlock), and the basket wants no more coins than it has, so the toolbox builds no change output; the template, the signed transaction, their txids and the AtomicBEEFs are the same bytes on every run. The stranger's payments are signed by a fixed key (RFC 6979), and the recorder checks each before it is offered: the two valid spends verify (their scripts run true, their parents' proofs at their heights), the bad one does not.
 
@@ -367,3 +368,19 @@ discovery doors' chain evidence (toolbox #502: no world has an overlay, so
 records), a work-budget refusal (bsv-rs #519), or a lenient or `05`-tagged
 key (bsv-rs #498, #550); row 026's non-hex key keeps its words, and the
 doors read a key argument as at beta.4 (#377).
+
+## The divergence rows (#122, items 3 to 7)
+
+The owner's word of 2026-11-01: where BRC-100 (at `5119a9b`) and the MetaNet
+Client agree, the server follows them; where they disagree, the client's
+published behaviour is the port's and the BRC amendment is drafted
+(`docs/brc100/`); an extension of this wallet's own lives in
+`docs/BRC-100-EXTENSIONS.md`.
+
+| item | call | served | fixtures | clause |
+|---|---|---|---|---|
+| 3 | every call's body | the framework's rejections `{code, message}` at 400 `VALIDATION_ERROR`, the wire field's name (`protocolID`) | 031, 032, 141, 142 moved; 177 new | they disagree: the client's 400, the draft `docs/brc100/http-refusal-body.md` |
+| 4 | a store fault | 500 `INTERNAL_ERROR` at the spend guard and at every wallet call | 088, 089 unchanged, their notes added | they agree on one answer; already one class since #342 |
+| 5 | `signAction` | an unknown reference 400 `VALIDATION_ERROR`, as `abortAction`'s | 040 moved; 041 unchanged | they agree: the caller's 400 at both doors |
+| 6 | `getVersion` | `bsv-wallet-cli-<major>.<minor>.<patch>` (`bsv-wallet-cli-0.19.0` at 0.19.0-beta.4) | 007, 008 and the consumers' `dolphinmilk/01`, `low-fleet/02` moved | they agree on `[vendor]-[major].[minor].[patch]`, 7 to 30 bytes |
+| 7 | `createAction`'s `allowPending` | a value that is not a word 400 `VALIDATION_ERROR` naming the words | 038 moved; 055's audit loses 038's entry | this wallet's extension, decided by its own consistency |
