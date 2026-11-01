@@ -58,7 +58,7 @@ All 28 endpoints, organized by batch:
 
 ## Gotchas
 
-- **`protocolID` capital D**: Serde's `rename_all = "camelCase"` produces `protocolId` (lowercase d), but the MetaNet Client sends `protocolID`. Every struct with this field needs `#[serde(alias = "protocolID")]`. Same for `keyID`. Missing this alias silently drops the field.
+- **`protocolID` capital D**: Serde's `rename_all = "camelCase"` produces `protocolId` (lowercase d), but the MetaNet Client sends `protocolID`. Every struct with this field needs `#[serde(rename = "protocolID", alias = "protocolId")]`. Same for `keyID`. Missing the rename silently drops the field; the rename (not an alias) is what serde names in a refusal (its `missing field` text says `protocolID`, #122 item 3).
 - **Binary data as JSON number arrays**: The MetaNet Client sends `data`, `signature`, `tx`, `ciphertext`, `hmac` as `[0,1,2,...]` JSON arrays, not hex strings. Serde deserializes `Vec<u8>` from number arrays by default, which happens to match — but if you ever switch to hex encoding you'll break wire compatibility.
 - **[2026-10-28, #277] Signable reference:** toolbox 0.14.0-beta.2 holds twelve decoded bytes. BRC-100 serves their base64 text through `spend_gate::reference_string`; `signAction` and `abortAction` receive that text unchanged. The beta.1 UTF-8 recovery is retired (toolbox #285, bsv-rs #105).
 - **`inputs: Some(vec![])`**: `createAction` passes an empty inputs vec, not `None`. This signals to the SDK "I have no specific inputs, auto-select UTXOs" vs `None` which may have different behavior.
