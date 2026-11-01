@@ -16,9 +16,9 @@ Vector (one request each; the BRC's structure, the MetaNet Client's answer as re
 
 Witness:
 
-- [tests/wire/031-createSignature.missingField.json](https://github.com/Calhooon/bsv-wallet-cli/blob/b086613515dd4c6a5d123eae3904e6b4f485bfbc/tests/wire/031-createSignature.missingField.json)
-- [tests/wire/032-createSignature.malformedJson.json](https://github.com/Calhooon/bsv-wallet-cli/blob/b086613515dd4c6a5d123eae3904e6b4f485bfbc/tests/wire/032-createSignature.malformedJson.json)
-- [tests/wire/177-createSignature.noContentType.json](https://github.com/Calhooon/bsv-wallet-cli/blob/b086613515dd4c6a5d123eae3904e6b4f485bfbc/tests/wire/177-createSignature.noContentType.json)
+- [tests/wire/031-createSignature.missingField.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/031-createSignature.missingField.json)
+- [tests/wire/032-createSignature.malformedJson.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/032-createSignature.malformedJson.json)
+- [tests/wire/177-createSignature.noContentType.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/177-createSignature.noContentType.json)
 
 Pinned reference reading:
 
