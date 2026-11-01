@@ -434,6 +434,7 @@ jobs:
           python3 -B tools/check-links
           python3 -B tools/test_check_cites.py
           python3 -B tools/check-cites
+          python3 -B tools/test_aggregate.py
 
       - name: changelog fragment
         if: ${{ !cancelled() }}
