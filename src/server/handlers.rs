@@ -973,7 +973,7 @@ pub async fn sign_action(
     let result = wallet
         .sign_action(args, Some(&originator))
         .await
-        .map_err(AppError::from)?;
+        .map_err(AppError::from_sign_action)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
