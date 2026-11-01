@@ -15,6 +15,11 @@ members = ["."]
 
 [lib]
 path = "src/lib.rs"
+# As the bins: no test or bench build here. `props` compiles
+# `src/atomic_beef.rs`, whose unit tests need the CLI's `test_support` and
+# run in the CLI binary and in `tests/fuzz_replay.rs` (#396).
+test = false
+bench = false
 
 [dependencies]
 libfuzzer-sys = "0.4"
