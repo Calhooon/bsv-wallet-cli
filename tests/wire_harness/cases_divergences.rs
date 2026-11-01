@@ -1,5 +1,5 @@
 //! #122's divergence rows (item 3): a JSON body is the call under any
-//! content type, as the MetaNet Client reads it (express.text for every
+//! content type, as the client (bsv-desktop) reads it (express.text for every
 //! type, then JSON.parse), and a request with no content type is the call
 //! with `{}`, whatever it carries. Recorded last, so no file before it
 //! moves.

@@ -1,4 +1,4 @@
-//! The doors' request body (#122 item 3): read as the MetaNet Client reads
+//! The doors' request body (#122 item 3): read as the client (bsv-desktop) reads
 //! it, its rejections answered as every other refusal, `{code, message}`
 //! with the framework's words, never its plain text. The client's Express
 //! app runs `express.json()` then `express.text({ type: '*/*' })` and every

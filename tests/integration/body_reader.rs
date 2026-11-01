@@ -1,4 +1,4 @@
-//! The doors read a body as the MetaNet Client reads it (#122 item 3): a
+//! The doors read a body as the client (bsv-desktop) reads it (#122 item 3): a
 //! JSON body under any content type is the call, cleaned and refused as a
 //! JSON-typed one is, and a request with no content type runs the call
 //! with `{}` whatever it carries.
