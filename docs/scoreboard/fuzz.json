@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "commit": "45fecea8c4109c380071e183dfab443a481654d5",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135",
+  "date": "2026-10-31",
+  "targets": {
+    "allow_pending": {"seconds": 3601, "executions": 109220857, "corpus_added": 3447, "crashes": 0},
+    "beef_reader": {"seconds": 3601, "executions": 8599976, "corpus_added": 702, "crashes": 0},
+    "brc29_remittance": {"seconds": 3601, "executions": 2368027, "corpus_added": 454, "crashes": 0},
+    "explorer_bodies": {"seconds": 3602, "executions": 13083, "corpus_added": 357, "crashes": 0},
+    "served_json": {"seconds": 3601, "executions": 160391167, "corpus_added": 6234, "crashes": 0}
+  }
+}
