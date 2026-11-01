@@ -9,7 +9,7 @@
 | `init.rs` | `run(db_path, key?)` | Generate or import root key, create SQLite DB, write `.env` |
 | `daemon.rs` | `run(&Cli)` | Monitor + Wallet + HTTP server (production mode) |
 | `serve.rs` | `run(WalletContext, port)` | HTTP server only, no monitor (dev mode) |
-| `send.rs` | `run(&WalletContext, address, satoshis)` | P2PKH send, outputs AtomicBEEF hex |
+| `send.rs` | `run(&WalletContext, address, satoshis)` | P2PKH send, outputs AtomicBEEF hex; a self-payment is kept (#38) |
 | `fund.rs` | `run(&WalletContext, beef_hex, vout)` | Internalize external BEEF (faucet/exchange funding) |
 | `split.rs` | `run(&WalletContext, count)` | Split all UTXOs into N equal outputs |
 | `balance.rs` | `run(&WalletContext)` | Sum all spendable sats (paginates through all outputs) |
@@ -26,7 +26,7 @@
 - **Three initialization patterns**: (1) Most commands take `&WalletContext`. (2) `init` takes raw `db_path` + optional key (no context exists yet). (3) `daemon`, `services`, and `ui` take `&Cli` or raw args because they manage their own storage/services.
 - **`daemon` vs `serve`**: `daemon` creates its own `Arc<Storage>` + `Arc<Services>` for the Monitor (background sync tasks) + Wallet + HTTP server, with a periodic UTXO count check (every 5 min, threshold via `MIN_UTXOS` env var, default 3). `serve` takes an owned `WalletContext` and runs the HTTP server only — no monitor, no UTXO warnings. Use `serve` for dev, `daemon` for production.
 - **TLS support**: Both `daemon` and `serve` read `TLS_CERT_PATH` and `TLS_KEY_PATH` env vars. If both are set, the server binds with TLS. Otherwise plain HTTP.
-- **`send` output tagging**: Send outputs are tagged `"relinquish"` to mark them as belonging to the recipient, not this wallet. This prevents the wallet from counting sent funds in its own balance. The result also builds AtomicBEEF hex from the returned BEEF for wallet-to-wallet transfers.
+- **`send` output tagging**: Send outputs are tagged `"relinquish"` to mark them as belonging to the recipient, not this wallet. This prevents the wallet from counting sent funds in its own balance. The result also builds AtomicBEEF hex from the returned BEEF for wallet-to-wallet transfers. A send to the wallet's own deposit address (its locking script is `brc29::deposit_script`; the identity or deposit key in hex is taken as that address) is a self-payment (#38): untagged, then internalized as a wallet payment with the deposit remittance (`fund`'s prefix, suffix and anyone sender), so the balance moves by the fee alone. It needs the header service and is refused before anything is built without one.
 - **`AUTH_TOKEN` env var**: Both `daemon` and `serve` pass `AUTH_TOKEN` to `ServerConfig`. When set, the HTTP server requires bearer auth on all endpoints.
 - **JSON output mode**: All `WalletContext`-based commands check `ctx.json_output` and emit structured JSON when `--json` is passed. Commands using `&Cli` check `cli.json`.
 - **`ui` is a separate web server**: It opens its own SQLite connection (read-only queries) and serves an embedded HTML dashboard at a configurable port. It does NOT go through the wallet engine — it queries the database directly via sqlx.
