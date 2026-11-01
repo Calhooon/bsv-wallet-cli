@@ -13,7 +13,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "count": 11,
+      "count": 10,
       "entries": [
         {
           "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
@@ -95,18 +95,11 @@
           "seq": 8
         },
         {
-          "description": "wire bad word",
-          "method": "createAction",
-          "originator": "wire.test",
-          "satoshis": 1000,
-          "seq": 9
-        },
-        {
           "description": "wire foreign coin",
           "method": "createAction",
           "originator": "wire.test",
           "satoshis": 1000,
-          "seq": 10
+          "seq": 9
         }
       ]
     }
