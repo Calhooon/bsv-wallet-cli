@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
-use bsv_sdk::primitives::{to_hex, PublicKey};
+use bsv_sdk::primitives::to_hex;
 use bsv_sdk::wallet::{
+    validate_public_key,
     // Batch 4: Transaction types (have serde — pass through)
     AbortActionArgs,
     AbortActionResult,
@@ -683,25 +684,23 @@ fn parse_protocol_id(v: &serde_json::Value) -> Result<Protocol> {
     ))
 }
 
-/// Parse "03abc..." → Counterparty::Other(PublicKey)
+/// Parse "03abc..." → Counterparty::Other(PublicKey). A caller's key argument
+/// (here and at the two linkage doors' `counterparty` and `verifier`) is read
+/// by the reference wallet's argument rule (`validatePublicKey`,
+/// ts-stack@edf6e03 `sdk/src/wallet/validationHelpers.ts:185-191`) through
+/// bsv-rs's helper (0.9.0-beta.6, #579): trimmed, either case, 66
+/// characters, `02`/`03`, an x below p that is a point's; a refusal is a
+/// `WalletRefusal` of class InvalidParameter in the reference's words. It
+/// replaced #377's host strict reader, which read an uncompressed key.
 fn parse_counterparty(s: &str) -> Result<Counterparty> {
     match s {
         "self" => Ok(Counterparty::Self_),
         "anyone" => Ok(Counterparty::Anyone),
-        hex => Ok(Counterparty::Other(strict_public_key(hex)?)),
+        hex => Ok(Counterparty::Other(validate_public_key(
+            hex,
+            "counterparty",
+        )?)),
     }
-}
-
-/// A caller's key argument read strictly: even-length hex, then
-/// `PublicKey::from_bytes`, as `PublicKey::from_hex` read it through bsv-rs
-/// 0.9.0-beta.4 and in its words (#377). From beta.5 `from_hex` reads the
-/// reference's lenient `fromString` forms (bsv-rs #498: odd-length, hybrid,
-/// a coordinate at or above p), which the reference's wallet refuses at
-/// these arguments (`validatePublicKey`, ts-stack@edf6e03
-/// `sdk/src/wallet/validationHelpers.ts:185-196`); bsv-rs keeps its own
-/// strict reading crate-private.
-fn strict_public_key(hex: &str) -> bsv_sdk::Result<PublicKey> {
-    PublicKey::from_bytes(&bsv_sdk::primitives::from_hex(hex)?)
 }
 
 // =============================================================================
@@ -1237,8 +1236,8 @@ pub async fn reveal_counterparty_key_linkage(
         req.privileged_reason.as_deref(),
     )?;
     let args = WalletRevealCounterpartyArgs {
-        counterparty: strict_public_key(&req.counterparty).map_err(|e| anyhow::anyhow!("{}", e))?,
-        verifier: strict_public_key(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
+        counterparty: validate_public_key(&req.counterparty, "counterparty")?,
+        verifier: validate_public_key(&req.verifier, "verifier")?,
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
     };
@@ -1263,7 +1262,7 @@ pub async fn reveal_specific_key_linkage(
     )?;
     let args = WalletRevealSpecificArgs {
         counterparty: parse_counterparty(&req.counterparty)?,
-        verifier: strict_public_key(&req.verifier).map_err(|e| anyhow::anyhow!("{}", e))?,
+        verifier: validate_public_key(&req.verifier, "verifier")?,
         protocol_id: parse_protocol_id(&req.protocol_id)?,
         key_id: req.key_id,
         privileged: req.privileged,

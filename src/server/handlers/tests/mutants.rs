@@ -10,6 +10,7 @@ use axum::{
     routing::post,
     Extension, Router,
 };
+use bsv_sdk::primitives::PublicKey;
 use bsv_sdk::{primitives::PrivateKey, transaction::Beef};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};

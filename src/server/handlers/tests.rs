@@ -4,6 +4,7 @@ use super::*;
 use crate::test_support::response_answer;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use bsv_sdk::primitives::PublicKey;
 
 mod faults;
 mod mutants;
@@ -652,42 +653,67 @@ async fn tx_word_under_a_busy_store_is_503_store_busy() {
 mod custom_instructions;
 mod page_bounds;
 
-/// A caller's key argument is read as bsv-rs 0.9.0-beta.4's `from_hex` read
-/// it (#377): the lenient forms bsv-rs's `from_hex` reads from beta.5 (#498,
-/// cases of its `tests/vectors/public_key_forms_498.json`) are refused at
-/// the doors, as the reference wallet's `validatePublicKey` refuses them
-/// (ts-stack@edf6e03 `sdk/src/wallet/validationHelpers.ts:185-196`), in the
-/// beta.4 words; the canonical forms read the same key.
+/// A caller's key argument is read by the reference wallet's argument rule
+/// (`validatePublicKey`, ts-stack@edf6e03
+/// `sdk/src/wallet/validationHelpers.ts:185-191`) through bsv-rs 0.9.0-beta.6's
+/// `validate_public_key` (#579; #377's host reader retired at the beta.6
+/// pin, #386): the lenient forms bsv-rs's `from_hex` reads (#498, cases of
+/// its `tests/vectors/public_key_forms_498.json`) and an uncompressed `04`
+/// key (which #377's reader read) are refused at the doors as a typed
+/// `WalletRefusal` of class InvalidParameter in the reference's words, served
+/// 400 VALIDATION_ERROR; surrounding whitespace is trimmed as the reference
+/// trims it; the canonical form reads the same key.
 #[test]
 fn a_lenient_key_form_is_refused_at_the_doors() {
     const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const GY: &str = "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8";
-    let lenient = [
-        // odd_length_compressed_even
-        G[1..].to_string(),
-        // odd_length_uncompressed
-        format!("4{}{GY}", &G[2..]),
-        // hybrid_even
-        format!("06{}{GY}", &G[2..]),
-        // x_above_p_compressed_even
-        "02fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc30".to_string(),
-    ];
-    for form in &lenient {
-        assert!(PublicKey::from_hex(form).is_ok(), "{form}");
-        assert!(strict_public_key(form).is_err(), "{form}");
-        assert!(parse_counterparty(form).is_err(), "{form}");
-    }
-    assert_eq!(
-        strict_public_key(&lenient[0]).unwrap_err().to_string(),
-        "invalid hex string: Odd number of digits"
-    );
-    assert_eq!(
-        strict_public_key("02zz").unwrap_err().to_string(),
-        "invalid hex string: Invalid character 'z' at position 2"
-    );
-    let canonical = PublicKey::from_hex(G).unwrap();
-    assert_eq!(strict_public_key(G).unwrap(), canonical);
     let uncompressed = format!("04{}{GY}", &G[2..]);
-    assert_eq!(strict_public_key(&uncompressed).unwrap(), canonical);
+    let refused = [
+        // odd_length_compressed_even
+        (G[1..].to_string(), "even length, not 65."),
+        // odd_length_uncompressed
+        (format!("4{}{GY}", &G[2..]), "even length, not 129."),
+        // hybrid_even
+        (format!("06{}{GY}", &G[2..]), "no more than 66 length."),
+        // x_above_p_compressed_even
+        (
+            "02fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc30".to_string(),
+            "a valid compressed secp256k1 public key",
+        ),
+        // uncompressed: #377's reader read it, the reference refuses it
+        (uncompressed.clone(), "no more than 66 length."),
+        // fixture 026's key
+        ("02zz".to_string(), "hexadecimal string."),
+    ];
+    for (form, ending) in &refused {
+        let e = validate_public_key(form, "counterparty").unwrap_err();
+        assert!(
+            matches!(
+                e,
+                bsv_sdk::Error::WalletRefusal {
+                    class: bsv_sdk::WalletRefusalClass::InvalidParameter,
+                    ..
+                }
+            ),
+            "{form}: {e:?}"
+        );
+        assert_eq!(
+            e.to_string(),
+            format!("The counterparty parameter must be {ending}"),
+            "{form}"
+        );
+        let served = AppError::from(parse_counterparty(form).unwrap_err());
+        assert_eq!(
+            served.into_response().status(),
+            StatusCode::BAD_REQUEST,
+            "{form}"
+        );
+    }
+    let canonical = PublicKey::from_hex(G).unwrap();
+    assert!(PublicKey::from_hex(&uncompressed).is_ok());
+    assert_eq!(validate_public_key(G, "verifier").unwrap(), canonical);
+    for padded in [format!(" {G}"), format!("{G}\n"), format!("\t{G} ")] {
+        assert_eq!(validate_public_key(&padded, "verifier").unwrap(), canonical);
+    }
     assert!(matches!(parse_counterparty(G).unwrap(), Counterparty::Other(k) if k == canonical));
 }
