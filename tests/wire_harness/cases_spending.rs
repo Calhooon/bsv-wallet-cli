@@ -12,6 +12,23 @@ use super::worlds::{
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 
+/// An unsigned template over one caller input carried in `inputBEEF`: the
+/// coin `source`'s output 0 of [`PUZZLE`]'s amount, a one-byte unlock
+/// declared, one output for the coin less the toolbox's fee, so no change.
+pub(crate) fn caller_input_template(
+    description: &str,
+    input_beef: &[u8],
+    source: &bsv_sdk::transaction::Transaction,
+    input_description: &str,
+) -> serde_json::Value {
+    serde_json::json!({"description": description, "inputBEEF": input_beef,
+        "inputs": [{"outpoint": format!("{}.0", source.id()), "unlockingScriptLength": 1,
+            "inputDescription": input_description}],
+        "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
+            "outputDescription": "an output"}],
+        "options": {"signAndProcess": false, "randomizeOutputs": false}})
+}
+
 /// #157: record the internalize-only byte bound after every existing case.
 pub(crate) async fn record_internalize_bound(r: &mut Recorder) {
     record_internalize_instructions(
@@ -348,12 +365,7 @@ pub(crate) async fn record_funded_relinquish_and_caller_input(r: &mut Recorder) 
             "funded",
             post(
                 "/createAction",
-                json!({"description": "wire caller input", "inputBEEF": input_beef,
-                    "inputs": [{"outpoint": format!("{}.0", puzzle.id()), "unlockingScriptLength": 1,
-                        "inputDescription": "the puzzle"}],
-                    "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
-                        "outputDescription": "an output"}],
-                    "options": {"signAndProcess": false, "randomizeOutputs": false}}),
+                caller_input_template("wire caller input", &input_beef, &puzzle, "the puzzle"),
             ),
         )
         .await;
