@@ -204,3 +204,38 @@ async fn test_relinquish_certificate_not_found() {
         json!({"code": "VALIDATION_ERROR", "message": "Result must exist and be unique."})
     );
 }
+
+/// #386 (toolbox 0.14.0-beta.6): an issuance request's `certifier` is read
+/// by bsv-rs's `validate_public_key` in the toolbox (either case, trimmed)
+/// and compared with the certifier's signed answer in lower case, so an
+/// upper-case caller key reaches the certifier exactly as its lower-case
+/// form does. Here no certifier answers (`.invalid` never resolves, RFC
+/// 2606), and both forms are the far side's 502 `SERVICE_ERROR`, never a
+/// 400 naming the certifier. A certifier whose own answer names its key in
+/// upper case is refused by bsv-rs's transport (#582): the same 502
+/// (`server::error` tests).
+#[tokio::test]
+async fn an_upper_case_certifier_at_issuance_reaches_the_certifier() {
+    let (base, client, _tmp) = setup().await;
+    let g = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    let mut answers = Vec::new();
+    for certifier in [g.to_string(), g.to_ascii_uppercase()] {
+        let resp = post_json(
+            &client,
+            &format!("{base}/acquireCertificate"),
+            json!({
+                "type": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
+                "certifier": certifier,
+                "acquisitionProtocol": "issuance",
+                "certifierUrl": "https://certifier.invalid/issue",
+                "fields": {"name": "test"}
+            }),
+        )
+        .await;
+        let status = resp.status().as_u16();
+        let body: Value = resp.json().await.unwrap();
+        answers.push((status, body["code"].clone()));
+    }
+    assert_eq!(answers[0], (502, json!("SERVICE_ERROR")), "{answers:?}");
+    assert_eq!(answers[1], answers[0]);
+}
