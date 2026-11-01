@@ -7,6 +7,7 @@
 //! One module per group of endpoints; `support` builds the worlds.
 
 mod auth;
+mod body_reader;
 mod certificates;
 mod crypto;
 mod discovery;
