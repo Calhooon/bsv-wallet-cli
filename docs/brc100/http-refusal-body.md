@@ -12,17 +12,20 @@ Vector (one request each; the BRC's structure, the MetaNet Client's answer as re
 |---|---|---|---|
 | `{"data": [1]}` (no `protocolID`) | `status: "error"`, a missing-parameter code, a description naming `protocolID` | 400 `{"message": "<the toolbox's validation text>"}` | 400 `{"code": "VALIDATION_ERROR", "message": "Failed to deserialize the JSON body into the target type: missing field `protocolID` at line 1 column 12"}` |
 | `{"data": [1` as `application/json` | an error with a code and a description | 400, Express's HTML error page, before the wallet | 400 `{"code": "VALIDATION_ERROR", "message": "Failed to parse the request body as JSON: data: EOF while parsing a list at line 1 column 11"}` |
-| a valid body as `text/plain` | not addressed | read as text and parsed by the wallet: answered as the call | 400 `{"code": "VALIDATION_ERROR", "message": "Expected request with `Content-Type: application/json`"}` |
+| a valid body as `text/plain` | not addressed | read as text and parsed by the wallet: answered as the call | 200, the call's answer (`{"signature": [...]}`), read as the client reads it; 400 `{"code": "VALIDATION_ERROR", "message": "Expected request with `Content-Type: application/json`"}` before #122 item 3's content-type case |
+| the same body with no content type | not addressed | no body parsed; the call runs with `{}`: 400 `{"message": "<the toolbox's validation text>"}` | 400 `{"code": "VALIDATION_ERROR", "message": "Failed to deserialize the JSON body into the target type: missing field `protocolID` at line 1 column 2"}`, the call's answer to `{}` |
 
 Witness:
 
 - [tests/wire/031-createSignature.missingField.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/031-createSignature.missingField.json)
 - [tests/wire/032-createSignature.malformedJson.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/032-createSignature.malformedJson.json)
-- [tests/wire/177-createSignature.noContentType.json](https://github.com/Calhooon/bsv-wallet-cli/blob/0d5b7f472ebf0a2809c2d3653e9c2c0076c59086/tests/wire/177-createSignature.noContentType.json)
+- [tests/wire/177-createSignature.textPlain.json](https://github.com/Calhooon/bsv-wallet-cli/blob/cf5c5deefbab864efa8dae14c0e35c5112e588a1/tests/wire/177-createSignature.textPlain.json)
+- [tests/wire/178-createSignature.noContentType.json](https://github.com/Calhooon/bsv-wallet-cli/blob/cf5c5deefbab864efa8dae14c0e35c5112e588a1/tests/wire/178-createSignature.noContentType.json)
 
 Pinned reference reading:
 
 - [bsv-desktop@b791cb2 electron/httpServer.ts:88-90](https://github.com/bsv-blockchain/bsv-desktop/blob/b791cb2b571d62f23256e97abf97557739278a49/electron/httpServer.ts#L88): `express.json()`, then `express.text({ type: '*/*' })`, and no error middleware.
+- [bsv-desktop@b791cb2 electron/httpServer.ts:183-189](https://github.com/bsv-blockchain/bsv-desktop/blob/b791cb2b571d62f23256e97abf97557739278a49/electron/httpServer.ts#L183): the body forwarded as the string, or `JSON.stringify(req.body)` (`{}` when nothing parsed it), and `JSON.parse`d by every call (`src/walletByteJson.ts:140`).
 - [bsv-desktop@b791cb2 src/onWalletReady.ts:579-599](https://github.com/bsv-blockchain/bsv-desktop/blob/b791cb2b571d62f23256e97abf97557739278a49/src/onWalletReady.ts#L579): `createSignature`'s `catch` answers 400 `{message}`, as every call's does.
 - [ts-stack@edf6e03da packages/sdk/src/wallet/substrates/HTTPWalletJSON.ts:319-340](https://github.com/bsv-blockchain/ts-stack/blob/edf6e03dad39bd7bc4fc6e73e64de3a2b6f805c9/packages/sdk/src/wallet/substrates/HTTPWalletJSON.ts#L319): the body is parsed before `res.ok`; only 400 with `isError` is read as typed.
 
