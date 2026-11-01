@@ -89,9 +89,10 @@ probe and parses nothing (`app/src/components/ConnectGate.tsx:376-382`) [X];
 dolphinmilk's GET reads it [D: the sweep; its checkout is not on this host]. Their requests and the other 46 consumer
 fixtures are byte-identical. What no consumer fixture records moves too, and
 its captains should know it: the framework's rejections (a body that does
-not parse, a missing or mistyped field, no JSON content type) are
-`{code, message}` at 400 `VALIDATION_ERROR` where they were text at 400, 422
-and 415; `signAction`'s unknown reference is 400 `VALIDATION_ERROR` where it
+not parse, a missing or mistyped field) are `{code, message}` at 400
+`VALIDATION_ERROR` where they were text at 400 and 422; a JSON body under a
+content type that is not JSON is the call where it was a 415 in text, and a
+request with no content type is the call with `{}`; `signAction`'s unknown reference is 400 `VALIDATION_ERROR` where it
 was 501 `NOT_IMPLEMENTED`; and an `allowPending` value other than
 `"received"` or the scoped object is 400 `VALIDATION_ERROR` where it was
 quietly off (the MCP's string parameter reaches the same door; the CLI's
