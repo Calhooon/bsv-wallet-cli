@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::wire_support::{diff, replace_number, Normalizer, Req, Resp, J};
+use crate::wire_support::{diff, package_version, replace_number, Normalizer, Req, Resp, J};
 
 /// `serde_json::json!` into [`J`], its keys in the order written (the
 /// macro's map sorts them; a request is sent as recorded either way).
@@ -114,11 +114,13 @@ pub(crate) fn normalize(v: J) -> J {
 }
 
 /// Inside any string: the local stubs' ports (a fresh port each run), a
-/// held coin's age in a refusal's listing (`<n> min old`), and the
-/// platform's errno in a refused connection's words (`os error <n>`).
+/// held coin's age in a refusal's listing (`<n> min old`), the
+/// platform's errno in a refused connection's words (`os error <n>`), and
+/// this wallet's served version string (`package_version`).
 pub(crate) fn normalize_text(s: &str) -> String {
     let s = replace_number(s, "127.0.0.1:", "<port>", true);
     let s = replace_number(&s, "os error ", "<errno>", true);
+    let s = package_version(&s);
     replace_number(&s, " min old", "<minutes>", false)
 }
 
