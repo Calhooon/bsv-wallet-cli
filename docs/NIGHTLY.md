@@ -6,7 +6,7 @@
 
 ## The fuzz targets
 
-`fuzz/` is a `cargo-fuzz` crate with its own manifest, workspace and `Cargo.lock`; the root `Cargo.toml` does not name it. Each target runs one hour a night on the corpus under `fuzz/corpus/<target>/`.
+`fuzz/` is a `cargo-fuzz` crate with its own manifest, workspace and `Cargo.lock`; the root `Cargo.toml` does not name it. Each target runs one hour a night on the corpus under `fuzz/corpus/<target>/`. The jobs' rustc is the dated nightly `FUZZ_NIGHTLY` at the top of `nightly.yml` (#395: the unpinned channel's rustc of 2026-10-31 refused sqlx-core 0.8.6 with E0391 and no target built); the pin moves by PR when a newer nightly is proven to build and run the five targets, never by drift.
 
 | target | the bytes | what may not happen |
 |---|---|---|

@@ -50,6 +50,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_FUZZ_VERSION: 0.13.2
+  # The fuzz jobs' rustc, a dated nightly (#395): the unpinned channel took
+  # rustc 1.101.0-nightly of 2026-10-31 (f9ceb4a4d), which refuses sqlx-core
+  # 0.8.6 with E0391 (a cycle computing whether `error::Error` needs async
+  # drop), so no target built. nightly-2026-10-30 (rustc 92b5b8c87 of
+  # 2026-10-29) built and ran all five. The pin moves by PR when a newer
+  # nightly is proven to build and run the five targets, never by drift.
+  FUZZ_NIGHTLY: nightly-2026-10-30
   CARGO_MUTANTS_VERSION: 27.1.0
   MUTANTS_SHARDS: 50
 
@@ -75,7 +82,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: ${{ env.FUZZ_NIGHTLY }}
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -83,7 +90,7 @@ jobs:
           key: fuzz
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+        run: cargo +"$FUZZ_NIGHTLY" install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
 
       # One hour on the checked-in corpus. New entries land in new/, crashes
       # in crashes/; the step records the exit and whether libFuzzer wrote
@@ -98,7 +105,7 @@ jobs:
         run: |
           mkdir -p "new/$TARGET" "crashes/$TARGET"
           set +e
-          cargo fuzz run "$TARGET" "new/$TARGET" "fuzz/corpus/$TARGET" -- \
+          cargo +"$FUZZ_NIGHTLY" fuzz run "$TARGET" "new/$TARGET" "fuzz/corpus/$TARGET" -- \
             -max_total_time=3600 -timeout=60 -print_final_stats=1 \
             -artifact_prefix="crashes/$TARGET/" 2>&1 | tee fuzz.log
           status=${PIPESTATUS[0]}
@@ -123,7 +130,7 @@ jobs:
         run: |
           mkdir -p merged additions
           cp "fuzz/corpus/$TARGET"/* merged/
-          cargo fuzz run "$TARGET" merged "new/$TARGET" -- -merge=1 2>&1 | tail -5
+          cargo +"$FUZZ_NIGHTLY" fuzz run "$TARGET" merged "new/$TARGET" -- -merge=1 2>&1 | tail -5
           for f in merged/*; do
             [ -e "fuzz/corpus/$TARGET/$(basename "$f")" ] || cp "$f" additions/
           done
@@ -165,7 +172,7 @@ jobs:
           {
             echo "The nightly fuzz target \`$TARGET\` stopped with exit ${{ steps.fuzz.outputs.exit }} ($RUN, artifact \`crash-$TARGET\`)."
             echo
-            echo "Reproduce: save an input below (\`base64 -d\`) and run \`cargo +nightly fuzz run $TARGET <file>\` from the checkout's root."
+            echo "Reproduce: save an input below (\`base64 -d\`) and run \`cargo +$FUZZ_NIGHTLY fuzz run $TARGET <file>\` from the checkout's root."
             for f in crashes/"$TARGET"/*; do
               [ -f "$f" ] || continue
               echo
