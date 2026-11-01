@@ -1,8 +1,8 @@
 //! Beta.6 package facts: a refused BEEF graph at the create door (toolbox
 //! #546, bsv-wallet-cli#386).
+use super::cases_spending::caller_input_template;
 use super::recorder::{post, Recorder};
-use super::worlds::{parent_tx, FEE_PUZZLE_1_OUT, P2PKH, PUZZLE};
-use serde_json::json;
+use super::worlds::{parent_tx, PUZZLE};
 
 pub(crate) async fn record(r: &mut Recorder) {
     // An unproven transaction whose parent the BEEF does not carry and the
@@ -29,12 +29,7 @@ pub(crate) async fn record(r: &mut Recorder) {
             "funded",
             post(
                 "/createAction",
-                json!({"description": "wire refused graph", "inputBEEF": beef.to_binary(),
-                    "inputs": [{"outpoint": format!("{}.0", child.id()), "unlockingScriptLength": 1,
-                        "inputDescription": "an orphan"}],
-                    "outputs": [{"lockingScript": P2PKH, "satoshis": PUZZLE.2 - FEE_PUZZLE_1_OUT,
-                        "outputDescription": "an output"}],
-                    "options": {"signAndProcess": false, "randomizeOutputs": false}}),
+                caller_input_template("wire refused graph", &beef.to_binary(), &child, "an orphan"),
             ),
         )
         .await;
