@@ -4,6 +4,7 @@ use super::tests::{header, opts, path_of, proven_coin, wallet_storage, FixedCloc
 use super::*;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
+mod could_not_look;
 mod feed;
 mod reports;
 
@@ -421,26 +422,6 @@ async fn dead_rows_without_toolbox_proofs_are_never_loaded() {
     for (txid, bytes) in before {
         assert_eq!(stored_bytes(&storage, &txid).await, bytes);
     }
-}
-
-#[tokio::test]
-async fn an_unanswered_header_retries_the_dead_row_on_the_next_tick() {
-    let txid = "c6".repeat(32);
-    let (storage, _) = proven_dead(&txid, "conflicted", 900).await;
-    let before = stored_bytes(&storage, &txid).await;
-    let (services, ready, task) = header_service(&txid).await;
-    let report = pass(&storage, &services, 100).await;
-    assert!(report.faults.is_empty() && report.adopted_mined.is_empty());
-    assert_eq!(stored_bytes(&storage, &txid).await, before);
-    ready.store(true, std::sync::atomic::Ordering::SeqCst);
-    let next = pass(&storage, &services, 101).await;
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    assert_eq!(next.adopted_mined, vec![txid.clone()]);
-    assert_eq!(
-        stored_word(&storage, &txid).await.unwrap().unwrap().0,
-        "mined"
-    );
 }
 
 #[tokio::test]
