@@ -34,8 +34,9 @@ permissions:
 # dispatched night (run 40074725488) started its twenty shards and five fuzz
 # targets at once, took every runner the account has for over an hour and
 # starved every PR check. The mutants matrix now runs at most six shards at
-# once (about 1,160 runner-minutes in all, so near three and a half hours at
-# six), beside the five fuzz targets' hour: the night peaks at eleven runners
+# once (fifty shards since #310, about 56 runner-hours at the oracle's
+# measured baseline, so about nine hours at six), beside the five fuzz
+# targets' hour: the night peaks at eleven runners
 # and holds six after the fuzz hour. The group is one name, never one per
 # ref: the schedule runs from main and a dispatch from the ref it names, so a
 # group of nightly-${{ github.ref }} would let a dispatched night on beta and
@@ -50,6 +51,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_FUZZ_VERSION: 0.13.2
   CARGO_MUTANTS_VERSION: 27.1.0
+  MUTANTS_SHARDS: 50
 
 jobs:
   fuzz:
@@ -205,10 +207,17 @@ jobs:
             exit 1
           fi
 
-  # cargo-mutants over the hot paths, in twenty shards (about 1,190 mutants,
-  # about 60 a shard; one mutant is a build and the oracle's tests below).
+  # cargo-mutants over the hot paths, in fifty shards (about 1,190 mutants,
+  # about 24 a shard; one mutant is a build and the oracle's tests below).
   # Copy mode (never --in-place); a mutant's tests stop at twice the shard's
-  # own baseline, a timeout, scored as not caught.
+  # own baseline, a timeout, scored as not caught. Fifty shards, dealt
+  # round-robin (#310): the missed mutants lie in runs of the list (one
+  # tracker_host stretch), so a consecutive slice gathers them into one
+  # shard. At the last scheduled night's outcome mix and the oracle's
+  # measured baseline of 721 s with the benches in, the worst shard with
+  # ten timeouts is 461 minutes as forty slices, 517 as fifty slices, 363
+  # as forty dealt round-robin and 330 as fifty dealt round-robin, the one
+  # shape under the job's 340 minutes (docs/NIGHTLY.md).
   mutants:
     name: Mutants (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -218,7 +227,10 @@ jobs:
       # Six shards at a time, so a night leaves runners for the PR checks (#144).
       max-parallel: 6
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        # 0 to MUTANTS_SHARDS - 1; the score job counts the same fifty.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+                40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -296,7 +308,7 @@ jobs:
             case " $NO_FLOORED_BENCHES " in *" $name "*) continue ;; esac
             selection="$selection --bench $name"
           done
-          echo "shard ${{ matrix.shard }}/20: cargo test --locked $selection"
+          echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS: cargo test --locked $selection"
           echo "left out (no line of a floored file): $NO_FLOORED_CODE $NO_FLOORED_BENCHES"
           status=0
           # $selection is split into its words on purpose.
@@ -304,11 +316,14 @@ jobs:
           cargo mutants \
             -f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs \
             -f src/broadcast_verify.rs -f src/explorers.rs \
-            --shard ${{ matrix.shard }}/20 --baseline run --timeout-multiplier 2 \
+            --shard "${{ matrix.shard }}/$MUTANTS_SHARDS" --sharding round-robin \
+            --baseline run --timeout-multiplier 2 \
             --build-timeout 900 --test-workspace false --output out \
             -- --locked $selection || status=$?
           case "$status" in
-            0|2|3) echo "cargo-mutants exit $status: mutants tested; the score job judges" ;;
+            0|2|3)
+              echo "cargo-mutants exit $status: mutants tested; the score job judges"
+              echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS exit $status" > out/mutants.out/shard-ok ;;
             4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
             1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
@@ -323,6 +338,7 @@ jobs:
             out/mutants.out/outcomes.json
             out/mutants.out/missed.txt
             out/mutants.out/diff/
+            out/mutants.out/shard-ok
           retention-days: 30
 
   mutants-score:
@@ -342,6 +358,28 @@ jobs:
         with:
           pattern: mutants-*
           path: outcomes
+
+      # A night is judged whole or not at all (#310). A shard cut at the
+      # job's 340 minutes, failed or cancelled still uploads what it has
+      # (the upload runs under always(), for the evidence), and a partial
+      # outcomes.json would be scored as if it were the file's night. So
+      # the score refuses unless the matrix concluded success and every
+      # shard uploaded the marker its step writes only after cargo-mutants
+      # ended with 0, 2 or 3; the refusal names each shard without one, the
+      # night is red by design and nothing is scored.
+      - name: Refuse a night with a shard that did not succeed
+        env:
+          SHARDS_RESULT: ${{ needs.mutants.result }}
+        run: |
+          missing=""
+          for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
+            [ -f "outcomes/mutants-$shard/shard-ok" ] || missing="$missing $shard"
+          done
+          if [ "$SHARDS_RESULT" != "success" ] || [ -n "$missing" ]; then
+            echo "::error::the Mutants shards concluded $SHARDS_RESULT; shards without a success marker:${missing:- none}; a partial night is never scored"
+            exit 1
+          fi
+          echo "all $MUTANTS_SHARDS Mutants shards succeeded; the score judges the night"
 
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
