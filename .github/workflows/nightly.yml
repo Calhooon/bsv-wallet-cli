@@ -37,7 +37,9 @@ permissions:
 # once (fifty shards since #310, about 56 runner-hours at the oracle's
 # measured baseline, so about nine hours at six), beside the five fuzz
 # targets' hour: the night peaks at eleven runners
-# and holds six after the fuzz hour. The group is one name, never one per
+# and holds six after the fuzz hour. The hermetic pass's six shards (#393)
+# start after the cargo matrix ends, so the night never holds more than six
+# after the fuzz hour. The group is one name, never one per
 # ref: the schedule runs from main and a dispatch from the ref it names, so a
 # group of nightly-${{ github.ref }} would let a dispatched night on beta and
 # the scheduled one run side by side. A night started while one runs waits
@@ -59,6 +61,15 @@ env:
   FUZZ_NIGHTLY: nightly-2026-10-30
   CARGO_MUTANTS_VERSION: 27.1.0
   MUTANTS_SHARDS: 50
+  # The hermetic pass's shards (#393; docs/NIGHTLY.md: the count from the
+  # suite's measured time and the cargo pass's survivors) and its
+  # cargo-mutants: the upstream commit that makes -F select struct-field
+  # deletion mutants too (sourcefrog/cargo-mutants #632, fixed by #634 after
+  # 27.1.0, unreleased); 27.1.0 adds every such mutant to every selection.
+  # Its --list of the five files equals 27.1.0's name for name (1,191 at
+  # 6bf9a2c), and each shard checks its selection against the survivors.
+  MUTANTS_HERMETIC_SHARDS: 6
+  CARGO_MUTANTS_HERMETIC_REV: b00aff0c6ca0670bccdf4eb2ece9e15c4c35c8b9
 
 jobs:
   fuzz:
@@ -276,9 +287,10 @@ jobs:
       # create_action_signed run lines of spend_gate.rs and tracker_host.rs;
       # internalize_action (server/post_word.rs alone) and list_outputs run
       # no line of the five, so NO_FLOORED_BENCHES leaves them out (cargo
-      # llvm-cov per bench at cd53740). The five fuzz targets of fuzz/ are
-      # judges outside this oracle: their own workspace under nightly rustc,
-      # which the package's cargo test cannot build (#396, docs/NIGHTLY.md).
+      # llvm-cov per bench at cd53740). The five fuzz targets' properties
+      # join as tests/fuzz_replay.rs, which replays each target's committed
+      # seeds through the function its fuzz_target! calls, on stable (#396,
+      # docs/NIGHTLY.md).
       #
       # The limit: the whole oracle's baseline took more than 300 s on every
       # shard of run 41253247135, so no fixed --timeout; the baseline always
@@ -330,7 +342,7 @@ jobs:
           case "$status" in
             0|2|3)
               echo "cargo-mutants exit $status: mutants tested; the score job judges"
-              echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS exit $status" > out/mutants.out/shard-ok ;;
+              echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS exit $status; cargo test --locked $selection" > out/mutants.out/shard-ok ;;
             4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
             1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
@@ -348,9 +360,191 @@ jobs:
             out/mutants.out/shard-ok
           retention-days: 30
 
+  # The cargo pass's survivors (#393): every mutant whose outcome was missed
+  # or timeout, by name, once; a caught mutant is caught and an unviable one
+  # never built, so neither is judged again. Only after all fifty cargo
+  # shards succeeded (needs: a failed or cancelled shard skips this job, and
+  # the markers are checked as the score job checks them).
+  mutants-survivors:
+    name: Mutants survivors
+    needs: mutants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line. A dispatch runs the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutants-*
+          path: outcomes
+
+      - name: Collect the survivors of the cargo pass
+        run: |
+          missing=""
+          for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
+            [ -f "outcomes/mutants-$shard/shard-ok" ] || missing="$missing $shard"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::cargo shards without a success marker:$missing; no survivors are collected from a partial pass"
+            exit 1
+          fi
+          python3 .github/nightly/mutants_hermetic.py survivors outcomes survivors.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cargo-survivors
+          path: survivors.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # The hermetic pass (#393): tests/e2e_hermetic.rs, the hermetic e2e suite
+  # as a cargo test target, judges only the cargo pass's survivors, dealt
+  # round-robin over MUTANTS_HERMETIC_SHARDS shards; the score is the union.
+  # It starts after the cargo matrix ends, so its six run inside #144's six
+  # with nothing else running. Each shard: the e2e-hermetic job's setup (Node
+  # 24, npm ci, Playwright's Chromium with its system libraries), the MCP
+  # binary built once (the mcp package is not mutated), the unmutated suite
+  # once as a stability check (a flaky scene would read as a caught mutant,
+  # so an unstable suite refuses the shard), then cargo-mutants with -F
+  # selecting exactly the shard's survivors, checked by --list before it runs, over
+  # `cargo test --locked --test e2e_hermetic` with E2E_HERMETIC_ORACLE=1;
+  # its own baseline is the second unmutated run. The suite runs to its end
+  # whether or not a scenario failed, so a mutant costs a build and a whole
+  # suite (or the timeout, twice the baseline). The copy cargo-mutants makes
+  # leaves gitignored node_modules and the browsers out, so NODE_PATH and
+  # PLAYWRIGHT_BROWSERS_PATH name the checkout's. An environment fault the
+  # test meets (a held port, a binary not this build's) prints
+  # E2E_HERMETIC_UNJUDGED and would read as caught, so any mutant's log
+  # carrying the word refuses the shard.
+  mutants-hermetic:
+    name: Mutants-hermetic (shard ${{ matrix.shard }})
+    needs: mutants-survivors
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      NODE_USE_ENV_PROXY: '1'
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        # 0 to MUTANTS_HERMETIC_SHARDS - 1; the score job counts the same six.
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The schedule fires only from main, the stable line; the night measures
+          # beta, the programme's line. A dispatch runs the ref it was given.
+          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: mutants-hermetic
+
+      - name: Install cargo-mutants (the -F fix, pinned by commit)
+        run: |
+          cargo install --git https://github.com/sourcefrog/cargo-mutants \
+            --rev "$CARGO_MUTANTS_HERMETIC_REV" --locked cargo-mutants
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+
+      - name: Install the harness's dependency (Playwright)
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cca/pw-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
+
+      - name: Install Chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cca/pw-browsers
+        run: node tests/e2e/install-browsers.js --with-deps
+
+      - name: Build the MCP binary the suite's scenario 21 drives
+        run: cargo build --release --locked -p bsv-wallet-mcp
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cargo-survivors
+
+      - name: Judge the shard's survivors by the hermetic suite
+        env:
+          SHARD: ${{ matrix.shard }}
+          E2E_HERMETIC_ORACLE: '1'
+          E2E_WALLET_TMP: ${{ runner.temp }}/e2e
+          BSV_WALLET_MCP_BIN: ${{ github.workspace }}/target/release/bsv-wallet-mcp
+          NODE_PATH: ${{ github.workspace }}/tests/e2e/node_modules
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cca/pw-browsers
+          PLAYWRIGHT_SKIP_BROWSER_GC: '1'
+        run: |
+          mkdir -p "$E2E_WALLET_TMP" out/mutants.out
+          python3 .github/nightly/mutants_hermetic.py shard survivors.txt "$SHARD" \
+            "$MUTANTS_HERMETIC_SHARDS" shard.names shard.re
+          cp shard.names out/mutants.out/
+          if [ ! -s shard.names ]; then
+            echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS: no survivor dealt here"
+            echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS: no survivor" > out/mutants.out/shard-ok
+            exit 0
+          fi
+          echo "the stability check: the unmutated suite once, before cargo-mutants' baseline"
+          if ! cargo test --locked --test e2e_hermetic; then
+            echo "::error::the unmutated hermetic suite failed: an unstable suite would read as caught mutants, so the shard judges nothing"
+            exit 1
+          fi
+          files=(-f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs
+                 -f src/broadcast_verify.rs -f src/explorers.rs)
+          select=()
+          while IFS= read -r rx; do select+=(-F "$rx"); done < shard.re
+          cargo mutants --list "${files[@]}" "${select[@]}" > shard.listed
+          python3 .github/nightly/mutants_hermetic.py check-list shard.names shard.listed
+          status=0
+          cargo mutants "${files[@]}" "${select[@]}" \
+            --baseline run --timeout-multiplier 2 --jobs 1 \
+            --build-timeout 900 --test-workspace false --output out \
+            -- --locked --test e2e_hermetic || status=$?
+          if grep -rl E2E_HERMETIC_UNJUDGED out/mutants.out/log/; then
+            echo "::error::a run above met an environment fault (E2E_HERMETIC_UNJUDGED), which cargo-mutants reads as caught: the shard is not judged"
+            exit 1
+          fi
+          case "$status" in
+            0|2|3)
+              echo "cargo-mutants exit $status: the survivors judged; the score job takes the union"
+              echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS exit $status; cargo test --locked --test e2e_hermetic (serve without a tracker pass, the classic ARC stub, the explorers walled)" > out/mutants.out/shard-ok ;;
+            4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
+            1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
+            *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
+          esac
+
+      - name: Upload the outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hermetic-mutants-${{ matrix.shard }}
+          path: |
+            out/mutants.out/outcomes.json
+            out/mutants.out/missed.txt
+            out/mutants.out/shard.names
+            out/mutants.out/diff/
+            out/mutants.out/log/
+            out/mutants.out/shard-ok
+          retention-days: 30
+
   mutants-score:
     name: Mutation score
-    needs: mutants
+    needs: [mutants, mutants-survivors, mutants-hermetic]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -366,6 +560,11 @@ jobs:
           pattern: mutants-*
           path: outcomes
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: hermetic-mutants-*
+          path: hermetic
+
       # A night is judged whole or not at all (#310). A shard cut at the
       # job's 340 minutes, failed or cancelled still uploads what it has
       # (the upload runs under always(), for the evidence), and a partial
@@ -374,9 +573,13 @@ jobs:
       # shard uploaded the marker its step writes only after cargo-mutants
       # ended with 0, 2 or 3; the refusal names each shard without one, the
       # night is red by design and nothing is scored.
+      # The hermetic pass is half of the night (#393): its survivors' job and
+      # every one of its shards must have succeeded and left its marker too.
       - name: Refuse a night with a shard that did not succeed
         env:
           SHARDS_RESULT: ${{ needs.mutants.result }}
+          SURVIVORS_RESULT: ${{ needs.mutants-survivors.result }}
+          HERMETIC_RESULT: ${{ needs.mutants-hermetic.result }}
         run: |
           missing=""
           for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
@@ -386,7 +589,23 @@ jobs:
             echo "::error::the Mutants shards concluded $SHARDS_RESULT; shards without a success marker:${missing:- none}; a partial night is never scored"
             exit 1
           fi
-          echo "all $MUTANTS_SHARDS Mutants shards succeeded; the score judges the night"
+          echo "all $MUTANTS_SHARDS Mutants shards succeeded"
+          missing=""
+          for shard in $(seq 0 $((MUTANTS_HERMETIC_SHARDS - 1))); do
+            [ -f "hermetic/hermetic-mutants-$shard/shard-ok" ] || missing="$missing $shard"
+          done
+          if [ "$SURVIVORS_RESULT" != "success" ] || [ "$HERMETIC_RESULT" != "success" ] || [ -n "$missing" ]; then
+            echo "::error::the survivors' job concluded $SURVIVORS_RESULT and the Mutants-hermetic shards $HERMETIC_RESULT; hermetic shards without a success marker:${missing:- none}; a night without its hermetic pass is never scored"
+            exit 1
+          fi
+          echo "all $MUTANTS_HERMETIC_SHARDS Mutants-hermetic shards succeeded; the score judges the night"
+          {
+            echo "## The targets the night ran under"
+            echo
+            echo "- the cargo pass: \`$(cut -d';' -f2- outcomes/mutants-0/shard-ok | sed 's/^ //')\`"
+            echo "- the hermetic pass, on the cargo pass's survivors: \`$(cut -d';' -f2- hermetic/hermetic-mutants-0/shard-ok | sed 's/^ //')\`, cargo-mutants at $CARGO_MUTANTS_HERMETIC_REV"
+            echo
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
@@ -411,7 +630,7 @@ jobs:
              "src/server/handlers.rs": 100,
              "src/broadcast_verify.rs": 86,
              "src/explorers.rs": 82}
-        run: python3 .github/nightly/mutants_score.py outcomes
+        run: python3 .github/nightly/mutants_score.py --hermetic hermetic outcomes
 
   # The bench job's measure on the dispatched night (#142; the owner's word of
   # 2026-11-01: one nightly bench job on beta, an append by PR, nothing else

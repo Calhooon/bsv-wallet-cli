@@ -73,7 +73,30 @@ async fn test_get_version() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["version"].is_string(), "version should be a string");
+    // #122 item 6: this wallet's name and its version's core, BRC-100's
+    // `[vendor]-[major].[minor].[patch]` within 7 to 30 bytes.
+    let version = body["version"]
+        .as_str()
+        .expect("version should be a string");
+    let core = format!(
+        "{}.{}.{}",
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH")
+    );
+    assert_eq!(version, format!("bsv-wallet-cli-{core}"));
+    assert_eq!(version, bsv_wallet_cli::server::handlers::WALLET_VERSION);
+    assert!(
+        (7..=30).contains(&version.len()),
+        "{version}: 7 to 30 bytes"
+    );
+    let (vendor, numbers) = version.rsplit_once('-').unwrap();
+    assert_eq!(vendor, "bsv-wallet-cli");
+    let parts: Vec<&str> = numbers.split('.').collect();
+    assert_eq!(parts.len(), 3, "{version}");
+    assert!(parts
+        .iter()
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())));
 }
 
 #[tokio::test]

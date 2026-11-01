@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::wire_support::{replace_number, Normalizer, Req, Resp, J};
+use crate::wire_support::{package_version, replace_number, Normalizer, Req, Resp, J};
 
 // ---------------------------------------------------------------------------
 // The fixture.
@@ -62,5 +62,5 @@ fn volatile(key: &str, _: Option<&str>, _: &J) -> Option<String> {
 }
 
 fn normalize_text(s: &str) -> String {
-    replace_number(s, " min old", "<minutes>", false)
+    replace_number(&package_version(s), " min old", "<minutes>", false)
 }

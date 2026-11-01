@@ -18,7 +18,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "version": "bsv-wallet-toolbox-0.1.0"
+      "version": "bsv-wallet-cli-<major>.<minor>.<patch>"
     }
   }
 }

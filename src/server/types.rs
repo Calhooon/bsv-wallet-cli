@@ -1,5 +1,38 @@
 use serde::{Deserialize, Serialize};
 
+/// The six key-derivation requests share one layout: BRC-100's
+/// `privileged` and `privileged_reason` lead (an array body's `[0]` is
+/// `privileged`, #145), then the call's own fields, then `protocolID` and
+/// `keyID` by their wire names (the lowercase spellings read too, and a
+/// refusal names the wire's, #122 item 3), then the rest.
+macro_rules! key_request {
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident {
+            $($(#[$lead_meta:meta])* pub $lead:ident: $lead_ty:ty,)*
+        }
+        then {
+            $($(#[$tail_meta:meta])* pub $tail:ident: $tail_ty:ty,)*
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            /// BRC-100's `privileged`, refused when `true` (#145).
+            pub privileged: Option<bool>,
+            /// The justification that accompanies a privileged request (#145).
+            pub privileged_reason: Option<String>,
+            $($(#[$lead_meta])* pub $lead: $lead_ty,)*
+            #[serde(rename = "protocolID", alias = "protocolId")]
+            pub protocol_id: serde_json::Value,
+            #[serde(rename = "keyID", alias = "keyId")]
+            pub key_id: String,
+            $($(#[$tail_meta])* pub $tail: $tail_ty,)*
+        }
+    };
+}
+
 /// MetaNet Client request for getPublicKey
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -10,9 +43,9 @@ pub struct McGetPublicKeyReq {
     pub privileged_reason: Option<String>,
     #[serde(default)]
     pub identity_key: bool,
-    #[serde(default, alias = "protocolID")]
+    #[serde(default, rename = "protocolID", alias = "protocolId")]
     pub protocol_id: Option<serde_json::Value>,
-    #[serde(default, alias = "keyID")]
+    #[serde(default, rename = "keyID", alias = "keyId")]
     pub key_id: Option<String>,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -27,26 +60,20 @@ pub struct McGetPublicKeyRes {
     pub public_key: String,
 }
 
-/// MetaNet Client request for createSignature
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McCreateSignatureReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    /// Raw data to hash-then-sign. Mutually exclusive with
-    /// `hash_to_directly_sign` (ts-sdk sends exactly one of the two).
-    #[serde(default)]
-    pub data: Option<Vec<u8>>,
-    /// A 32-byte digest to sign as-is (ts-sdk `hashToDirectlySign`).
-    #[serde(default)]
-    pub hash_to_directly_sign: Option<Vec<u8>>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    pub counterparty: String,
+key_request! {
+    /// MetaNet Client request for createSignature
+    pub struct McCreateSignatureReq {
+        /// Raw data to hash-then-sign. Mutually exclusive with
+        /// `hash_to_directly_sign` (ts-sdk sends exactly one of the two).
+        #[serde(default)]
+        pub data: Option<Vec<u8>>,
+        /// A 32-byte digest to sign as-is (ts-sdk `hashToDirectlySign`).
+        #[serde(default)]
+        pub hash_to_directly_sign: Option<Vec<u8>>,
+    }
+    then {
+        pub counterparty: String,
+    }
 }
 
 /// MetaNet Client response for createSignature
@@ -81,7 +108,9 @@ pub struct McCreateActionReq {
     /// R1 (d), the action's word at the door, beside `options` (the
     /// toolbox's `CreateActionOptions` is the reference's shape and stays
     /// as it is): the one value `"received"` offers a received coin whose
-    /// creator is not yet mined; absent or anything else is off.
+    /// creator is not yet mined, `{"received": ["txid:vout", ...]}` only the
+    /// named ones; absent is off and any other value is the caller's 400
+    /// (`AllowPending::from_json`, #122 item 7).
     #[serde(default)]
     pub allow_pending: Option<serde_json::Value>,
 }
@@ -253,94 +282,64 @@ pub struct McInternalizeActionRes {
 // Batch 3: Crypto request types (SDK args lack serde)
 // =============================================================================
 
-/// MetaNet Client request for verifySignature
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McVerifySignatureReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    #[serde(default)]
-    pub data: Option<Vec<u8>>,
-    pub signature: Vec<u8>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    #[serde(default)]
-    pub counterparty: Option<String>,
-    #[serde(default)]
-    pub for_self: Option<bool>,
+key_request! {
+    /// MetaNet Client request for verifySignature
+    pub struct McVerifySignatureReq {
+        #[serde(default)]
+        pub data: Option<Vec<u8>>,
+        pub signature: Vec<u8>,
+    }
+    then {
+        #[serde(default)]
+        pub counterparty: Option<String>,
+        #[serde(default)]
+        pub for_self: Option<bool>,
+    }
 }
 
-/// MetaNet Client request for encrypt
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McEncryptReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    pub plaintext: Vec<u8>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    #[serde(default)]
-    pub counterparty: Option<String>,
+key_request! {
+    /// MetaNet Client request for encrypt
+    pub struct McEncryptReq {
+        pub plaintext: Vec<u8>,
+    }
+    then {
+        #[serde(default)]
+        pub counterparty: Option<String>,
+    }
 }
 
-/// MetaNet Client request for decrypt
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McDecryptReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    pub ciphertext: Vec<u8>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    #[serde(default)]
-    pub counterparty: Option<String>,
+key_request! {
+    /// MetaNet Client request for decrypt
+    pub struct McDecryptReq {
+        pub ciphertext: Vec<u8>,
+    }
+    then {
+        #[serde(default)]
+        pub counterparty: Option<String>,
+    }
 }
 
-/// MetaNet Client request for createHmac
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McCreateHmacReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    pub data: Vec<u8>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    #[serde(default)]
-    pub counterparty: Option<String>,
+key_request! {
+    /// MetaNet Client request for createHmac
+    pub struct McCreateHmacReq {
+        pub data: Vec<u8>,
+    }
+    then {
+        #[serde(default)]
+        pub counterparty: Option<String>,
+    }
 }
 
-/// MetaNet Client request for verifyHmac
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McVerifyHmacReq {
-    /// BRC-100's `privileged`, refused when `true` (#145).
-    pub privileged: Option<bool>,
-    /// The justification that accompanies a privileged request (#145).
-    pub privileged_reason: Option<String>,
-    pub data: Vec<u8>,
-    pub hmac: Vec<u8>,
-    #[serde(alias = "protocolID")]
-    pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
-    pub key_id: String,
-    #[serde(default)]
-    pub counterparty: Option<String>,
+key_request! {
+    /// MetaNet Client request for verifyHmac
+    pub struct McVerifyHmacReq {
+        pub data: Vec<u8>,
+        pub hmac: Vec<u8>,
+    }
+    then {
+        #[serde(default)]
+        pub counterparty: Option<String>,
+    }
 }
 
 // =============================================================================
@@ -367,9 +366,9 @@ pub struct McRevealCounterpartyKeyLinkageReq {
 pub struct McRevealSpecificKeyLinkageReq {
     pub counterparty: String,
     pub verifier: String,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     /// BRC-100's `privileged`, refused when `true` (#145).
     #[serde(default)]

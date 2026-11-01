@@ -67,7 +67,7 @@ Beyond the byte comparison, the replay fails when the corpus stops covering:
 - each of the 28 BRC-100 calls the router serves,
 - the five host routes (`/permission-audit`, `/permission-audit/reset`, `/chain-feed`, `/tx/{txid}`, `/arc-callback`),
 - every world named above (a world no fixture is served from is a gap),
-- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 numeric `5` (`REVIEW_ACTIONS`), 400 `VALIDATION_ERROR`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `NOT_IMPLEMENTED`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 404 `NOT_FOUND` (the host's missing transaction word), 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
+- every code the server answers with, at its status, at least once. `AppError`'s (`src/server/error.rs`, `APP_CODES`): 400 numeric `5` (`REVIEW_ACTIONS`), 400 `VALIDATION_ERROR`, 400 `ERROR`, 402 `INSUFFICIENT_FUNDS` (with `held`), 403 `INPUT_NOT_OFFERED`, 409 `CONFLICT`, 500 `INTERNAL_ERROR`, 501 `PRIVILEGED_NOT_SUPPORTED` (`privileged: true` on the nine calls that name it, #145), 502 `SERVICE_ERROR`, 503 `STORE_BUSY` (`Retry-After: 1`), 503 `HEADERS_UNAVAILABLE` (`Retry-After: 2`). The router's own (`src/server/mod.rs`, `ROUTER_CODES`): 401 `UNAUTHORIZED`, 404 `CALLBACK_DISABLED`, 404 `NOT_FOUND` (the host's missing transaction word), 400 `BAD_JSON`, 400 `BAD_PAYLOAD`, 413 `TOO_LARGE`, 500 `ERR_CHAIN_FEED`, 500 `ERR_TX_WORD`. A fixture answering a code this list does not judge is a gap too: the list and the corpus agree in both directions.
 
 `APP_CODES` is typed by hand, but it is checked against the source: `every_app_error_code_is_judged` reads every `(StatusCode::NAME, "CODE")` of `Kind::answer` in `src/server/error.rs`, the one table of the served layer's statuses and codes (#81), and fails unless `APP_CODES` and `UNPRODUCED` together are exactly that set, at the same statuses. A code added to the source with no fixture fails it by name, and so does one gone from the source.
 
@@ -123,18 +123,20 @@ height or work budget 500 (no world reaches it; the toolbox's not-judged
 refusals at the doors are `SpendRefused`, `InvalidParameter`). Invalid BEEF
 folds into VALIDATION_ERROR, and incomplete ancestry into CONFLICT without
 the former coin member. Prove and abort use InvalidParameter; missing/expired
-sign sessions use NotImplemented. Relinquishing an unknown certificate is the
+sign sessions use NotImplemented, which the signAction door serves as the
+caller's 400 VALIDATION_ERROR, as abort's (#122 item 5, fixture 040). Relinquishing an unknown certificate is the
 toolbox's `BadRequest` refusal since beta.4 (#344, toolbox #430; fixture 045),
 `Result must exist and be unique.`, served 400 VALIDATION_ERROR.
 
-Two `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
+Three `AppError` codes no in-process world produces, so they are not judged (`UNPRODUCED` in `tests/wire_harness/judge.rs`; a fixture that answers one moves it to `APP_CODES`):
 
 | code | why no world produces it |
 |---|---|
 | 403 `ACCESS_DENIED` | the reference's `Unauthorized` class, including the toolbox's permission refusal; this server grants every originator (the permission audit records, it does not refuse) |
+| 501 `NOT_IMPLEMENTED` | the reference's `NotImplemented` and `UnsupportedAction` classes. The toolbox at the pin raises one of them at one site, `signAction`'s reference with no pending action (absent or expired), which the door serves as the caller's 400 `VALIDATION_ERROR` since #122 item 5 (fixture 040); the class stays mapped for a package that adds another |
 | 502 `BROADCAST_REJECTED` | the host's verdict after the full post-broadcast probe window: no broadcaster took the transaction and an independent chain index says it is absent. The probe asks explorers; the run's proxy refuses every request, which the ladder reads as "could not look", never as absent, so the verdict is not reached in-process |
 
-The corpus also records the framework's 400 and 422 text bodies.
+The framework's own rejections are served as every other refusal since #122 item 3: a body that does not parse (032) and a field missing (031, naming the wire field `protocolID`) or of the wrong type (141, 142) are `{code, message}` at 400 `VALIDATION_ERROR`, axum's words as the message (`src/server/handlers/json_body.rs`). The body is read as the MetaNet Client reads it: JSON under any content type (177, a valid body as `text/plain`, is the call's 200), and a request with no content type is the call with `{}` (178: 400 `VALIDATION_ERROR`, missing field `protocolID`, as `{}` answers). No wallet call's fixture records a text body.
 
 Fixtures 129 to 140 record the five paging calls at `limit: 10000` (200)
 and above it at `10001` (400 `VALIDATION_ERROR`), plus `listOutputs` with
@@ -146,8 +148,9 @@ Fixture 134 records BRC-100's newest-first paging (`wallet/0100.md:911`):
 the negative offset passes unchanged, returning an empty page with its true
 total in the fresh world. A served test with two stored outputs checks that
 `offset: -1` returns the newest one and `offset: 0` returns the oldest.
-Fixture 141, `signAction.sequenceNumberAboveType`, records axum's existing
-422 text for `4294967296`, before the handler: the `u32` type already enforces
+Fixture 141, `signAction.sequenceNumberAboveType`, records the type's refusal
+of `4294967296` before the handler, 400 `VALIDATION_ERROR` since #122 item 3
+(a 422 in text before): the `u32` type already enforces
 the BRC bound. Fixture 142, `listActions.offsetAboveType`, records the same
 type boundary for its unsigned offset. Their transport shape belongs to
 #117 and #149. All 128 earlier fixtures remain byte-identical.
@@ -225,7 +228,7 @@ The keys replaced, anywhere in a body (`VOLATILE_KEYS`); a `null` is kept as `nu
 | `reference` | `signableTransaction` of `/createAction` | the toolbox draws it at random |
 | each `keyringForVerifier` value | `/proveCertificate` | freshly encrypted for the verifier; every key, its order and each value's shape/length remain strict |
 
-Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ).
+Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ). One rule is not a run's: this wallet's served version string (`getVersion`, `handlers::WALLET_VERSION`) becomes `bsv-wallet-cli-<major>.<minor>.<patch>` (`package_version` in `tests/wire_support/mod.rs`, both corpora), because it moves with the package's version and never with a behaviour, so a release's version commit moves no fixture; `tests/integration/status.rs` pins the exact string and its shape (#122 item 6).
 
 What is not hidden, because it does not differ: the identity key, every derived key, every signature, every txid, every built transaction. The worlds use one fixed root key, so the identity key, the BRC-42 derivations and the RFC 6979 signatures are the same on every run, and a change to derivation or signing fails the replay. The seeded txids are fixed values or the ids of fixed transactions. The `funded` world's actions each ask for exactly their coin less the toolbox's fee for one input and one output (20 sats at its rate for a P2PKH input, 9 for the puzzle's one-byte unlock), and the basket wants no more coins than it has, so the toolbox builds no change output; the template, the signed transaction, their txids and the AtomicBEEFs are the same bytes on every run. The stranger's payments are signed by a fixed key (RFC 6979), and the recorder checks each before it is offered: the two valid spends verify (their scripts run true, their parents' proofs at their heights), the bad one does not.
 
@@ -366,9 +369,29 @@ records), a work-budget refusal (bsv-rs #519), or a lenient or `05`-tagged
 key (bsv-rs #498, #550); row 026's non-hex key keeps its words, and the
 doors read a key argument as at beta.4 (#377).
 
+## The divergence rows (#122, items 3 to 7)
+
+The owner's word of 2026-11-01 (23.8, through the keeper), as given:
+"one rule applied per item without a word per item: where the BRC and the
+MetaNet Client agree, the server follows them; where they disagree, the
+client's published behaviour is the port's and the BRC amendment is filed
+in the stack's cadence; docs/BRC-100-EXTENSIONS.md only where the client
+itself extends". BRC-100 is read at `5119a9b`; the amendment drafts are in
+`docs/brc100/`. Item 7 is outside the rule: neither the BRC nor the client
+names `allowPending`, and the client does not extend there, so no clause of
+the rule decides it; it is decided by the extension's own consistency.
+
+| item | call | served | fixtures | clause |
+|---|---|---|---|---|
+| 3 | every call's body | the framework's rejections `{code, message}` at 400 `VALIDATION_ERROR`, the wire field's name (`protocolID`); a body is JSON under any content type, and a request with none is the call with `{}`, as the client reads them | 031, 032, 141, 142 moved; 177 (`text/plain`, the call's 200) and 178 (no content type, `{}`'s 400) new | they disagree on the refusal: the client's 400, the draft `docs/brc100/http-refusal-body.md`; the content type, which the BRC never names, read as the client reads it by the captain's decision (the second D ensemble on #122, 3/3 follow) |
+| 4 | a store fault | 500 `INTERNAL_ERROR` at the spend guard and at every wallet call | 088, 089 unchanged, their notes added | they agree on one answer; already one class since #342 |
+| 5 | `signAction` | an unknown reference 400 `VALIDATION_ERROR`, as `abortAction`'s | 040 moved; 041 unchanged | they agree: the caller's 400 at both doors |
+| 6 | `getVersion` | `bsv-wallet-cli-<major>.<minor>.<patch>` (`bsv-wallet-cli-0.19.0` at 0.19.0-beta.4) | 007, 008 and the consumers' `dolphinmilk/01`, `low-fleet/02` moved | they agree on `[vendor]-[major].[minor].[patch]`, 7 to 30 bytes |
+| 7 | `createAction`'s `allowPending` | a value that is not a word 400 `VALIDATION_ERROR` naming the words | 038 moved; 055's audit loses 038's entry | no clause of the rule: neither names `allowPending`; this wallet's extension, decided by its own consistency |
+
 ## The beta.6 pin (#386)
 
-The corpus has 177 rows. One row moves and one is new, both named with their
+The corpus has 179 rows. One row moves and one is new, both named with their
 cause in the recording commit; the packages move no other byte. Row 026
 (`revealCounterpartyKeyLinkage.badKey`) moves in class and text: the four key
 doors (`parse_counterparty`, and the two linkage doors' `counterparty` and
@@ -380,8 +403,8 @@ doors (`parse_counterparty`, and the two linkage doors' `counterparty` and
 string.`, where beta.5 answered 400 `ERROR` `invalid hex string: Invalid
 character 'z' at position 2`. The rule is stricter than #377's copy: an
 uncompressed `04` key is refused and surrounding whitespace is trimmed; no
-other fixture names such a key. Row 177 (`createAction.refusedGraph`, new,
-last) records a refused BEEF graph at the create door: an `inputBEEF` whose
+other fixture names such a key. Row 179 (`createAction.refusedGraph`, new,
+last, after #122's 177 and 178) records a refused BEEF graph at the create door: an `inputBEEF` whose
 unproven transaction's parent is neither carried nor stored, the toolbox's
 `ValidationError` (InvalidParameter through the SDK boundary) served 400
 `VALIDATION_ERROR` by its class; since toolbox #546 the text ends at the byte

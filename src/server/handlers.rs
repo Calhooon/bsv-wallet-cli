@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::Json;
 use bsv_sdk::primitives::to_hex;
 use bsv_sdk::wallet::{
     validate_public_key,
@@ -74,6 +73,9 @@ pub use super::error::AppError;
 use super::error::Kind;
 use super::page_bounds::check_page_bounds;
 use super::types::*;
+use json_body::Json;
+
+pub mod json_body;
 
 pub type WalletState = Arc<Wallet<StorageSqlx, Services>>;
 
@@ -130,7 +132,7 @@ fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
 ///
 /// The nine request structs carry both as plain fields, not a flattened
 /// struct: a flattened field loses serde's path, so a non-boolean
-/// `privileged` would be a 422 without its `privileged:` prefix and a
+/// `privileged` would be refused without its `privileged:` prefix and a
 /// JSON array body an "expected struct" error.
 /// They lead the seven calls' structs (an array body's `[0]` is
 /// `privileged`) and close the key-linkage calls' as before.
@@ -729,15 +731,28 @@ pub async fn get_network(
     Ok(Json(result))
 }
 
-/// GET /getVersion
-pub async fn get_version(
-    State(wallet): State<WalletState>,
-) -> Result<Json<GetVersionResult>, AppError> {
-    let result = wallet
-        .get_version(Some("localhost"))
-        .await
-        .map_err(AppError::from)?;
-    Ok(Json(result))
+/// This wallet's version string (#122 item 6): BRC-100's
+/// `[vendor]-[major].[minor].[patch]`, 7 to 30 bytes (`wallet/0100.md:2671`
+/// at `5119a9b`), the shape the MetaNet Client answers through its toolbox
+/// (`wallet-brc100-1.0.0`, ts-stack `edf6e03` wallet-toolbox `Wallet.ts:1323`):
+/// the package's name and its version's core. A pre-release identifier and
+/// the toolbox's version have no room in that shape; `bsv-wallet --version`
+/// prints the package's whole version.
+pub const WALLET_VERSION: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "-",
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_PATCH"),
+);
+
+/// GET /getVersion: [`WALLET_VERSION`], never the toolbox's own string.
+pub async fn get_version() -> Json<GetVersionResult> {
+    Json(GetVersionResult {
+        version: WALLET_VERSION.to_string(),
+    })
 }
 
 /// GET /waitForAuthentication
@@ -972,7 +987,7 @@ pub async fn sign_action(
     let result = wallet
         .sign_action(args, Some(&originator))
         .await
-        .map_err(AppError::from)?;
+        .map_err(AppError::from_sign_action)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {

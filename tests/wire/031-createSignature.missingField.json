@@ -13,14 +13,17 @@
     }
   },
   "response": {
-    "status": 422,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "text": "Failed to deserialize the JSON body into the target type: missing field `protocolId` at line 1 column 12"
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Failed to deserialize the JSON body into the target type: missing field `protocolID` at line 1 column 12"
+    }
   }
 }

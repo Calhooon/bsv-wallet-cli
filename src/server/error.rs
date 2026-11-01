@@ -194,6 +194,24 @@ impl AppError {
         }
     }
 
+    /// `signAction`'s failure. The reference's not-implemented class is
+    /// raised there for one case, a reference with no pending action in
+    /// this process (absent or expired: toolbox 0.14.0-beta.5
+    /// `wallet.rs:2016-2041`, after ts-stack `edf6e03` `signAction.ts:57-60`
+    /// "recovery of out-of-session signAction reference data"): the
+    /// caller's reference names nothing, the 400 `VALIDATION_ERROR`
+    /// `abortAction` answers for the same reference (#122 item 5). Any other
+    /// failure keeps its class.
+    pub(crate) fn from_sign_action(e: bsv_sdk::Error) -> Self {
+        match &e {
+            bsv_sdk::Error::WalletRefusal {
+                class: WalletRefusalClass::NotImplemented,
+                ..
+            } => Self::new(Kind::Validation, e.to_string()),
+            _ => Self::from(e),
+        }
+    }
+
     fn with_refusal(mut self, refusal: crate::spend_gate::Refusal) -> Self {
         self.refusal = Some(Box::new(refusal));
         self
@@ -442,4 +460,33 @@ fn review_body(review: &bsv_sdk::wallet::ReviewActionsRefusal) -> serde_json::Va
         body["noSendChange"] = json!(change);
     }
     body
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #122 item 5: signAction's unknown reference is the caller's 400, as
+    /// abortAction's; any other class at that door keeps its own answer.
+    #[test]
+    fn a_sign_action_reference_miss_is_the_callers_400() {
+        let miss = bsv_sdk::Error::WalletRefusal {
+            class: WalletRefusalClass::NotImplemented,
+            message: "No pending transaction found for reference: cmVm".to_string(),
+        };
+        let served = AppError::from_sign_action(miss);
+        assert_eq!(
+            served.kind.answer(),
+            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+        );
+        assert_eq!(
+            served.message,
+            "No pending transaction found for reference: cmVm"
+        );
+        let other = bsv_sdk::Error::WalletRefusal {
+            class: WalletRefusalClass::InvalidOperation,
+            message: "not signable".to_string(),
+        };
+        assert_eq!(AppError::from_sign_action(other).kind, Kind::Conflict);
+    }
 }

@@ -27,7 +27,8 @@ src/
   - `protocolID`: mixed array `[2, "name"]` vs SDK's `Protocol { security_level, protocol_name }`
   - `counterparty`: hex string vs `Counterparty::Other(PublicKey)`
   - Binary data (`tx`, `signature`): JSON number arrays `[0,1,2,...]` vs hex strings
-  - Field names: MetaNet Client uses `protocolID` / `keyID` (capital D). Use `#[serde(alias = "protocolID")]` since `rename_all = "camelCase"` produces lowercase `d`.
+  - Field names: MetaNet Client uses `protocolID` / `keyID` (capital D). Use `#[serde(rename = "protocolID", alias = "protocolId")]` since `rename_all = "camelCase"` produces lowercase `d`: the rename is the wire name, so a refusal names the field as the caller sent it (#122 item 3), and the alias still reads the lowercase spelling.
+- **getVersion** answers this wallet's name and its version's core, `bsv-wallet-cli-<major>.<minor>.<patch>` (`handlers::WALLET_VERSION`, `bsv-wallet-cli-0.19.0` at 0.19.0-beta.4): BRC-100's `[vendor]-[major].[minor].[patch]` within 7 to 30 bytes, the MetaNet Client's shape (#122 item 6). Never the toolbox's string; a pre-release identifier has no room in it, and `bsv-wallet --version` prints the whole version. The wire corpora write it as `bsv-wallet-cli-<major>.<minor>.<patch>`, so a version commit moves no fixture.
 - **SpendingLock**: A FIFO mutex serializes `createAction` calls. With limited UTXOs, concurrent spending races on SQLite's write lock. Non-spending endpoints (crypto, queries) run fully concurrent.
 - **Daemon vs Serve**: `daemon` = Monitor (background sync tasks) + HTTP server. `serve` = HTTP server only (dev mode, no background sync).
 - **The explorer ladder (0.17.0, #50; the owner's word of 2026-10-22)**: each chain scanner has its own rate limits, so when one fails we go to the next. Every chain question that leaves the wallet asks WhatsOnChain, BananaBlocks and Bitails as each other's fallbacks: the toolbox's ladders (=0.14.0-beta.6: `get_raw_tx`, `get_merkle_path`, `get_utxo_status`, `get_status_for_txids`, `is_utxo`; `is_utxo_with_spender` for the spend probe (0.18.2, #196: one ladder pass per outpoint, four explorer requests in the bound-spender witness with or without the header service, plus a proof and header when needed; without the header service this is four rather than 0.13.0's two. Bytes alone name the bound spender unconfirmed; an unreadable or unbound name is `(Unknown, None)`, never unspent, toolbox #96); `get_utxo_leads` for `sync`'s discovery, where one explorer's list is a lead and each lead is verified before it is received) and the CLI's own rungs in `src/explorers.rs` (`receive`'s couriers: WoC `/beef`, then BananaBlocks `/hex` with the services' checked proof, then `get_beef`) and `broadcast_verify`'s chain indexes (WoC, Bitails, BananaBlocks). A fault (a 429, a timeout, a 5xx, a malformed body, bytes that do not hash to the txid) is "could not look": it moves to the next rung at once and is never "unspent" or "absent". A negative needs a second provider's clean answer (BananaBlocks' 404 is a gap, never a vote). No rung sleeps on a 429: the rung is skipped without a request until its Retry-After passes (the toolbox's `RateGate`); at toolbox 0.14.0-beta.6 the header services (Chaintracks, BHS) pass the same gate (toolbox #148): a call inside the window is `Rate limited: <service>: retry after <n>s` and the next header rung is asked. Every explorer call logs `explorer_call` at info with `provider`, `call`, `status`, `ms`. The spend gate and the tracker read the wallet's own proof records, never an explorer.
@@ -52,7 +53,7 @@ cargo test --test integration
 
 # E2E tests (Node.js, requires funder wallet on :3320)
 # See "E2E Testing" section below for full setup.
-node tests/e2e/run.js                   # all 24 scenarios
+node tests/e2e/run.js                   # all 25 scenarios
 node tests/e2e/run.js --scenario 16     # single scenario
 node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
@@ -62,7 +63,7 @@ Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_D
 
 ## E2E Testing
 
-The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 24 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
+The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 25 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
 
 ### E2E Funder Wallet
 
@@ -93,7 +94,7 @@ cd e2e-funder && ../target/release/bsv-wallet init
 cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 ```
 
-### Scenario Coverage (24 scenarios)
+### Scenario Coverage (25 scenarios)
 
 | # | Name | Tests | Cost |
 |---|------|-------|------|
@@ -107,6 +108,7 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 22 | Rapid internalize + spend | 10 cycles A→B, B internalizes and returns; no phantom UTXOs (needs 50,000 in A at its start) | fees only |
 | 23 | Scoped allowPending | A third wallet C (:3372) with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
 | 24 | Busy store | External sqlite3 WAL writer: createAction and the toolbox's abortAction write return 503 STORE_BUSY with Retry-After: 1; listOutputs and the two host reads stay 200; exit and a SQLite write probe confirm release, then all five are 200, balance unchanged (#204); #168's read pre-check stays covered by its unit test and fixture 116 | 0 sats |
+| 25 | CLI self-send | A sends 1,000 to its own address: the balance is lower by the fee alone (read from the transaction) and the kept output is a spendable default-basket coin; a send of 1,000 to B is lower by amount plus fee, B takes it in with `fund` (#38) | fees only |
 
 ### Dependencies
 

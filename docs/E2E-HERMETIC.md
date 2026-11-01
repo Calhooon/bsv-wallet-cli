@@ -1,6 +1,6 @@
 # The hermetic e2e run (#74)
 
-`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 24 e2e scenarios with nothing
+`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 25 e2e scenarios with nothing
 leaving the machine and no sat moving. The mainnet run (`node tests/e2e/run.js`
 against the funder daemon on :3320) is unchanged and stays the release gate;
 the hermetic run is the gate of every PR (the `e2e-hermetic` job of
@@ -267,6 +267,44 @@ CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
 `PUBLIC_CALLBACK_URL`. `E2E_STUB_PORT` moves the stub (default 3380);
 `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` name the binaries when they are not
 under the repository's `target/release`.
+
+## As a cargo test target (#393)
+
+`tests/e2e_hermetic.rs` runs this suite as one test of the package, so the
+Nightly's mutation oracle judges a mutant by it (docs/NIGHTLY.md, the hermetic
+pass). `cargo test --locked --test e2e_hermetic`:
+
+- **Unset** (`E2E_HERMETIC_ORACLE` is not `1`): the test passes at once and
+  prints why, so `cargo test`, CI's PR gate and the Nightly's cargo shards are
+  unchanged.
+- **Set** (`E2E_HERMETIC_ORACLE=1`): it runs `E2E_HERMETIC=1 node
+  tests/e2e/run.js` from the package's directory with `NODE_USE_ENV_PROXY=1`
+  and `BSV_WALLET_BIN` set to `CARGO_BIN_EXE_bsv-wallet`, the binary cargo
+  built for this tree, after checking it: a `BSV_WALLET_BIN` in the
+  environment naming another binary, a binary outside the profile directory
+  of the test's own executable (the current build's target directory, never a
+  stale `target/release`) or older than the newest source under `src/` is
+  refused. It needs `BSV_WALLET_MCP_BIN` naming a built `bsv-wallet-mcp`
+  (the mcp package is not mutated; build it once), Node (`E2E_NODE`, else
+  `node` on `PATH`; the proven majors above), the harness's `npm ci` (or
+  `NODE_PATH` naming `tests/e2e/node_modules` when the tree is a copy without
+  it, as cargo-mutants' is), Playwright's Chromium (`PLAYWRIGHT_BROWSERS_PATH`
+  when the tree has no git to resolve the standing folder by), `sqlite3`, and
+  `E2E_WALLET_TMP` as for any run. It fails on the suite's non-zero exit, a
+  walled attempt at an undeclared host (`Walled: ... 0 new` read), an unserved
+  route (`Unserved: 0`), a missing stat line, and a passed count short of
+  the scenarios (25) less those skipped, as the `e2e-hermetic` job does.
+- **The ports**: wallets A, B and C on 3370 to 3372, the funder on 3373, the
+  stub on 3380 and the inspector UI on 9321, fixed: one suite at a time per
+  host (the Nightly's hermetic shards are one job each, `--jobs 1`). The test
+  waits up to a minute for a held port to free before it starts.
+- **Environment faults** (a held port, a binary that is not this build's, no
+  MCP binary or Node) print `E2E_HERMETIC_UNJUDGED`: cargo-mutants would read
+  the failure as a caught mutant, so the Nightly refuses a shard whose log
+  carries the word.
+- **The time** (2026-11-01, the Studio Mac, debug binary): 75 s with
+  a cold Chromium, 35 to 37 s warm; CI's release-binary run of the
+  same suite takes 26 to 29 s.
 
 ## Busy-store coverage
 

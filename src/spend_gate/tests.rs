@@ -3235,13 +3235,31 @@ fn the_word_is_parsed_from_the_route_and_the_flags() {
         AllowPending::from_json(Some(&json!("received"))).unwrap(),
         AllowPending::Received
     );
-    for off in [json!("all"), json!(true), json!(1), json!(["received"])] {
+    // #122 item 7: any other value is the caller's error naming the words,
+    // as a wrong coin in the scoped form is; never quietly off.
+    for (unknown, shown) in [
+        (json!("all"), "\"all\""),
+        (json!("Received"), "\"Received\""),
+        (json!(true), "true"),
+        (json!(1), "1"),
+        (json!(["received"]), "[\"received\"]"),
+    ] {
+        let err = AllowPending::from_json(Some(&unknown)).unwrap_err();
         assert_eq!(
-            AllowPending::from_json(Some(&off)).unwrap(),
-            AllowPending::Off,
-            "{off}"
+            err,
+            format!(
+                "allowPending: {shown} is not a word of this wallet; the words are \"received\" \
+                 and {{\"received\": [\"txid:vout\", ...]}}"
+            ),
+            "{unknown}"
         );
     }
+    let long = json!("x".repeat(100));
+    let err = AllowPending::from_json(Some(&long)).unwrap_err();
+    assert!(
+        err.starts_with(&format!("allowPending: \"{}...", "x".repeat(63))),
+        "{err}"
+    );
     assert_eq!(
         AllowPending::from_json(Some(
             &json!({"received": [format!("{t2}:1"), format!("{t1}.0"), format!("{t2}:1")]})

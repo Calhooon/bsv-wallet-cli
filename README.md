@@ -482,6 +482,15 @@ allocates and signs the named coins as managed change, then funds any remainder
 and fee from the rest of the offer. `split --from` sizes its outputs from the
 named coins' total. The served createAction and MCP arguments are unchanged.
 
+`send` to this wallet's own address (the one `address` prints, on either
+chain's prefix; or its identity or deposit key in hex) keeps its sats: the
+payment output is built without the `relinquish` tag, and once the broadcast
+is verified the command internalizes it as a wallet payment with the deposit
+address's own BRC-29 remittance, so it joins the default basket and the
+balance moves by the fee alone (#38). It needs the header service: without one
+it is refused before anything is built. A send to any other address is
+unchanged, its output tagged `relinquish`.
+
 ## The served answers
 
 A refused call answers `{"code", "message"}` (the gate's refusals add

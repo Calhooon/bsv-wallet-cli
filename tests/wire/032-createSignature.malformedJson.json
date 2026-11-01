@@ -15,9 +15,12 @@
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
-    "text": "Failed to parse the request body as JSON: data: EOF while parsing a list at line 1 column 11"
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Failed to parse the request body as JSON: data: EOF while parsing a list at line 1 column 11"
+    }
   }
 }
