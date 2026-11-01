@@ -1,0 +1,116 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "wire refused graph",
+      "inputBEEF": [
+        2,
+        0,
+        190,
+        239,
+        0,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        225,
+        203,
+        195,
+        177,
+        178,
+        25,
+        6,
+        236,
+        220,
+        113,
+        103,
+        155,
+        153,
+        102,
+        114,
+        223,
+        169,
+        67,
+        2,
+        255,
+        15,
+        174,
+        4,
+        190,
+        245,
+        62,
+        31,
+        209,
+        137,
+        94,
+        170,
+        189,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255,
+        255,
+        255,
+        255,
+        1,
+        136,
+        19,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        81,
+        135,
+        0,
+        0,
+        0,
+        0
+      ],
+      "inputs": [
+        {
+          "inputDescription": "an orphan",
+          "outpoint": "58938553e5e4f6dac224d19dc0712b6a4647eefa4807e98d8c584943395843bc.0",
+          "unlockingScriptLength": 1
+        }
+      ],
+      "options": {
+        "randomizeOutputs": false,
+        "signAndProcess": false
+      },
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 4991
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Validation error: inputBEEF: BEEF structure is invalid: ancestor(s) not stored, and createAction fetches none: [bdaa5e89d11f3ef5be04ae0fff0243a9df7266999b6771dcec0619b2b1c3cbe1]; roots [58938553e5e4f6da]; missing inputs [bdaa5e89d11f3ef5]; transactions with missing inputs [58938553e5e4f6da]; not valid [none]; txid-only [none]; 1 tx(s), 0 bump(s), 69 bytes"
+    }
+  }
+}
