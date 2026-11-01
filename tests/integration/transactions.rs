@@ -81,7 +81,9 @@ async fn test_create_action_insufficient_funds() {
     );
 }
 
-/// A missing pending sign session has the reference's `NotImplemented` class.
+/// A missing pending sign session is the caller's 400 `VALIDATION_ERROR`, as
+/// abortAction's unknown reference is (#122 item 5; the toolbox raises the
+/// reference's `NotImplemented` class, which the door serves so).
 #[tokio::test]
 async fn test_sign_action_invalid_reference() {
     let (base, client, _tmp) = setup().await;
@@ -96,11 +98,11 @@ async fn test_sign_action_invalid_reference() {
     .await;
     assert_eq!(
         resp.status(),
-        501,
-        "a missing signAction session is not implemented"
+        400,
+        "a missing signAction session is the caller's reference refused"
     );
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["code"], "NOT_IMPLEMENTED");
+    assert_eq!(body["code"], "VALIDATION_ERROR");
     assert!(
         body["message"].is_string(),
         "error should have message field"
