@@ -10,6 +10,7 @@
 const { execSync } = require('child_process');
 const { BSV, parseCliJson } = require('../lib/setup');
 const { parseBeef } = require('../stub/tx');
+const hermetic = require('../lib/hermetic');
 
 const AMOUNT = 1_000;
 
@@ -44,27 +45,36 @@ module.exports = {
 
   async run(walletA, walletB, assert) {
     // The differential also drives the previous binary, which relinquishes a
-    // self-payment: it skips that half rather than give 1,000 sats away.
+    // self-payment. Under the stub it makes the same calls and is held to
+    // that shape (lower by amount plus fee, nothing kept), so the two
+    // recordings compare call for call; on mainnet it skips the self half
+    // rather than give 1,000 sats away.
     const keeps = execSync(`"${BSV}" send --help`, { encoding: 'utf-8', stdio: 'pipe' }).includes('keeps');
     const start = balance(walletA);
     assert(start >= 2 * AMOUNT + 1_000, `A needs ${2 * AMOUNT + 1_000} sats for two sends, has ${start}`);
 
     let self = null;
-    if (keeps) {
+    if (keeps || hermetic.enabled) {
       const ownAddress = parseCliJson(cli(walletA, '--json address')).address;
       const sent = parseCliJson(cli(walletA, `--json send --allow-pending received "${ownAddress}" ${AMOUNT}`));
       assert(sent.txid && sent.beef, 'self-send must return txid and beef');
-      assert(sent.kept && Number.isInteger(sent.kept.vout), `self-send must name the kept output, got ${JSON.stringify(sent.kept)}`);
       const { fee, tx } = feeOf(sent.beef, sent.txid);
-      assert(Number(tx.outputs[sent.kept.vout].satoshis) === AMOUNT, `kept output ${sent.kept.vout} must carry ${AMOUNT} sats`);
       const after = balance(walletA);
-      console.log(`       self-send ${sent.txid.slice(0, 16)}...: balance ${start} -> ${after}, fee ${fee} (from the transaction), kept vout ${sent.kept.vout}`);
-      assert(fee > 0, `self-send fee must be positive, got ${fee}`);
-      assert(start - after === fee, `self-send must cost the fee alone: ${start} - ${after} = ${start - after}, fee ${fee}`);
       const outputs = await walletA.client.listOutputs('default', { limit: 10000, includeEnvelope: false });
-      assert((outputs.outputs || []).some(o => o.outpoint === `${sent.txid}.${sent.kept.vout}` && o.spendable !== false),
-        `the kept output ${sent.txid}.${sent.kept.vout} must be a spendable coin of A's default basket`);
-      self = { txid: sent.txid, before: start, after, fee };
+      const coin = (vout) => (outputs.outputs || []).some(o => o.outpoint === `${sent.txid}.${vout}` && o.spendable !== false);
+      console.log(`       self-send ${sent.txid.slice(0, 16)}...: balance ${start} -> ${after}, fee ${fee} (from the transaction), kept ${JSON.stringify(sent.kept)}`);
+      assert(fee > 0, `self-send fee must be positive, got ${fee}`);
+      if (keeps) {
+        assert(sent.kept && Number.isInteger(sent.kept.vout), `self-send must name the kept output, got ${JSON.stringify(sent.kept)}`);
+        assert(Number(tx.outputs[sent.kept.vout].satoshis) === AMOUNT, `kept output ${sent.kept.vout} must carry ${AMOUNT} sats`);
+        assert(start - after === fee, `self-send must cost the fee alone: ${start} - ${after} = ${start - after}, fee ${fee}`);
+        assert(coin(sent.kept.vout), `the kept output ${sent.txid}.${sent.kept.vout} must be a spendable coin of A's default basket`);
+      } else {
+        console.log('       this binary predates #38: its self-send relinquishes the payment');
+        assert(sent.kept === undefined && start - after === AMOUNT + fee && !coin(0),
+          `a pre-#38 self-send relinquishes: ${start} - ${after} = ${start - after}, amount ${AMOUNT} + fee ${fee}`);
+      }
+      self = { txid: sent.txid, before: start, after, fee, kept: keeps };
     } else {
       console.log('       self-send skipped: this binary predates #38 (send --help does not say it keeps)');
     }
