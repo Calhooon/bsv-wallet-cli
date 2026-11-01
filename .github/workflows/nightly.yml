@@ -409,7 +409,7 @@ jobs:
   # binary built once (the mcp package is not mutated), the unmutated suite
   # once as a stability check (a flaky scene would read as a caught mutant,
   # so an unstable suite refuses the shard), then cargo-mutants with -F
-  # selecting exactly the shard's survivors, checked by --list first, over
+  # selecting exactly the shard's survivors, checked by --list before it runs, over
   # `cargo test --locked --test e2e_hermetic` with E2E_HERMETIC_ORACLE=1;
   # its own baseline is the second unmutated run. The suite runs to its end
   # whether or not a scenario failed, so a mutant costs a build and a whole
