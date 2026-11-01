@@ -337,8 +337,10 @@ CLIPPY_LINTS = [
 def warnings(cmd, env):
     """The warnings of a cargo run, by lint, deduplicated by (lint, file,
     line, column): a lib's lint is reported once for the lib and once for its
-    test harness. Cargo replays a fresh crate's cached warnings, so a second
-    run on the same tree reads the same set."""
+    test harness, and a file another target mounts by `#[path]` once more
+    under a path through `..` (`tests/../fuzz/src/../../src/...`, #396), so
+    the file is its normalized path. Cargo replays a fresh crate's cached
+    warnings, so a second run on the same tree reads the same set."""
     env = dict(os.environ, CARGO_TERM_COLOR="never", **env)
     proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -359,7 +361,7 @@ def warnings(cmd, env):
         if not spans:
             continue
         s = spans[0]
-        seen.add((code, s["file_name"], s["line_start"], s["column_start"]))
+        seen.add((code, os.path.normpath(s["file_name"]), s["line_start"], s["column_start"]))
     return Counter(code for code, _f, _l, _c in seen)
 
 
