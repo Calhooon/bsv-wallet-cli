@@ -205,10 +205,10 @@ jobs:
             exit 1
           fi
 
-  # cargo-mutants over the hot paths, in twenty shards (about 1,160 mutants;
-  # one mutant is a build and the package's tests, about two minutes on a
-  # runner). Copy mode (never --in-place); a mutant's tests stop at five
-  # minutes, a timeout, scored as not caught.
+  # cargo-mutants over the hot paths, in twenty shards (about 1,190 mutants,
+  # about 60 a shard; one mutant is a build and the oracle's tests below).
+  # Copy mode (never --in-place); a mutant's tests stop at twice the shard's
+  # own baseline, a timeout, scored as not caught.
   mutants:
     name: Mutants (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -238,15 +238,67 @@ jobs:
       - name: Install cargo-mutants
         run: cargo install cargo-mutants --version "$CARGO_MUTANTS_VERSION" --locked
 
-      # cargo-mutants exits non-zero when a mutant survives; the score job
-      # judges, so this step records and goes on.
+      # The oracle (#310; the owner's word of 2026-11-01: the selection is
+      # never the oracle's ceiling): every test target of the package that
+      # runs a line of a floored file, whole, with nothing skipped inside a
+      # target: the library's and the binaries' unit tests and every tests/
+      # target, a target added later joining by itself. The targets named in
+      # NO_FLOORED_CODE are left out, each because it runs no line of the
+      # five files under coverage and starts no process (cargo llvm-cov per
+      # target at 6e7b738, docs/NIGHTLY.md): the architecture scanners and
+      # rule 28's sites read the source as text, the BRC-100 oracle reads the
+      # committed fixtures, header_source and signing_digest_vector call
+      # other modules, so a mutant can change their verdict only by its text,
+      # never by the behaviour the score judges. serve_bind_guard also reads
+      # no line, but its served case kills the binary it starts and a killed
+      # process leaves no coverage, so it stays. The package has no doctest.
+      #
+      # The limit: the whole oracle's baseline took more than 300 s on every
+      # shard of run 41253247135, so no fixed --timeout; the baseline always
+      # runs (never --baseline skip: a skipped baseline lets a broken tree
+      # read as every mutant caught), unbounded but by the job's limit, and
+      # each mutant's tests stop at twice the shard's measured baseline
+      # (--timeout-multiplier 2; cargo-mutants prints the figure as "Auto-set
+      # test timeout"). The shard prints its selection before it runs.
+      #
+      # The exit code (cargo-mutants 27.1.0): 0 every mutant caught, 2 a
+      # mutant missed, 3 a test timed out; the score job judges those, so the
+      # shard goes on. 4 is the unmutated baseline failing, so no mutant was
+      # tested, and 1 a usage error: the shard fails, never green with an
+      # empty outcomes.json. Any other code fails it too.
       - name: Mutate the hot paths
+        env:
+          NO_FLOORED_CODE: >-
+            arch_config_env arch_env_reads arch_explorer_sites arch_no_error_words
+            arch_no_prefix_errors arch_no_unwrap arch_spawn_sites arch_sql_sites
+            brc100 header_source rule_28_sites signing_digest_vector
         run: |
+          selection="--lib --bins"
+          for main in tests/*.rs tests/*/main.rs; do
+            case "$main" in
+              */main.rs) name=$(basename "$(dirname "$main")") ;;
+              *) name=$(basename "$main" .rs) ;;
+            esac
+            case " $NO_FLOORED_CODE " in *" $name "*) continue ;; esac
+            selection="$selection --test $name"
+          done
+          echo "shard ${{ matrix.shard }}/20: cargo test --locked $selection"
+          echo "left out (no line of a floored file): $NO_FLOORED_CODE"
+          status=0
+          # $selection is split into its words on purpose.
+          # shellcheck disable=SC2086
           cargo mutants \
             -f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs \
             -f src/broadcast_verify.rs -f src/explorers.rs \
-            --shard ${{ matrix.shard }}/20 --timeout 300 --build-timeout 900 \
-            --test-workspace false --output out -- --locked || echo "cargo-mutants exit $?"
+            --shard ${{ matrix.shard }}/20 --baseline run --timeout-multiplier 2 \
+            --build-timeout 900 --test-workspace false --output out \
+            -- --locked $selection || status=$?
+          case "$status" in
+            0|2|3) echo "cargo-mutants exit $status: mutants tested; the score job judges" ;;
+            4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
+            1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
+            *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
+          esac
 
       - name: Upload the outcomes
         if: always()
