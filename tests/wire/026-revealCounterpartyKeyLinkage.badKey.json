@@ -21,8 +21,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "ERROR",
-      "message": "invalid hex string: Invalid character 'z' at position 2"
+      "code": "VALIDATION_ERROR",
+      "message": "The counterparty parameter must be hexadecimal string."
     }
   }
 }

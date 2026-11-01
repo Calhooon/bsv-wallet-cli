@@ -175,9 +175,11 @@
     "173-acquireCertificate.decryptedFieldAtBound.json",
     "174-listCertificates.decryptedFieldAtBound.json",
     "175-discoverByIdentityKey.trusted.json",
-    "176-discoverByIdentityKey.stranger.json"
+    "176-discoverByIdentityKey.stranger.json",
+    "177-createAction.refusedGraph.json"
   ],
   "notes": {
+    "026-revealCounterpartyKeyLinkage.badKey.json": "#386 (bsv-rs 0.9.0-beta.6, #579): the counterparty and verifier are read by the reference wallet's validatePublicKey (validationHelpers.ts:185-191 at edf6e03) through bsv_rs::wallet::validate_public_key; 02zz is a typed WalletRefusal InvalidParameter in the reference's sentence, 400 VALIDATION_ERROR. Through beta.5 #377's host reader answered 400 ERROR `invalid hex string: Invalid character 'z' at position 2`.",
     "053-discoverByIdentityKey.ok.json": "The fresh world holds no certificate whose subject is G and reads no TRUST_SETTINGS (the chain's default certifiers): an empty answer. The trusted answer is fixture 175 (#331, toolbox #388).",
     "054-discoverByAttributes.ok.json": "discoverByAttributes has no local leg (toolbox #388: only identity discovery reads the store); behind the wall the overlay answers nothing, so the answer is empty whatever the trust settings say (#331).",
     "103-internalizeAction.badUnlock.json": "Beta.3 (#330, toolbox #404): typed InvalidParameter serves HTTP 400 VALIDATION_ERROR; offset and script sentence are preserved, accepted false and nothing is stored.",
@@ -201,6 +203,7 @@
     "173-acquireCertificate.decryptedFieldAtBound.json": "#343: valid signed/encrypted field with exactly 65,536 plaintext bytes is stored at bsv-rs 0.9.0-beta.4 src/auth/certificates/bounds.rs:26's MAX_DECRYPTED_FIELD_BYTES, applied at master.rs:325-329 through toolbox 0.14.0-beta.4 src/wallet/direct_acquire.rs:188-197. The reference applies the bound at issuance and at decryption only (MasterCertificate.ts createCertificateFields and decryptField), and this stack also at direct acquisition through toolbox #374's keyring proof (a divergence from the reference's store-as-given: bsv-wallet-toolbox-rs docs/ARCHITECTURE.md section 7 row D26 at a8107be2, toolbox PR #476).",
     "174-listCertificates.decryptedFieldAtBound.json": "#343: read back the encrypted certificate stored by fixture 173 at bsv-rs 0.9.0-beta.4 src/auth/certificates/bounds.rs:26's 64 KiB plaintext bound; no plaintext is stored or served. The reference applies the bound at issuance and at decryption only (MasterCertificate.ts createCertificateFields and decryptField), and this stack also at direct acquisition through toolbox #374's keyring proof (a divergence from the reference's store-as-given: bsv-wallet-toolbox-rs docs/ARCHITECTURE.md section 7 row D26 at a8107be2, toolbox PR #476).",
     "175-discoverByIdentityKey.trusted.json": "#331 (toolbox #388): the trusted world reads TRUST_SETTINGS through the CLI's typed config, naming the harness certificate's certifier at trust 3 over the threshold 2; the wallet's own certificate is answered with certifierInfo, the toolbox's transform of the setting (discovery_trust.rs: description within 5 to 50 bytes and icon named, so it equals the configured entry), read against bsv-rs's R74, R76, R79, R80, R47 and R49.",
-    "176-discoverByIdentityKey.stranger.json": "#331 (toolbox #388): the same certificate in a world whose TRUST_SETTINGS names another certifier: a stranger's certificate is dropped, an empty answer."
+    "176-discoverByIdentityKey.stranger.json": "#331 (toolbox #388): the same certificate in a world whose TRUST_SETTINGS names another certifier: a stranger's certificate is dropped, an empty answer.",
+    "177-createAction.refusedGraph.json": "#386 (toolbox 0.14.0-beta.6, #546): an inputBEEF whose unproven transaction's parent is neither carried nor stored is refused by the toolbox's assembly as ValidationError (WalletRefusal InvalidParameter through the SDK boundary), served 400 VALIDATION_ERROR by its class; the text names the roots, the missing inputs and the sizes and ends at the byte count, no dump path, and nothing is written to the temp folder."
   }
 }
