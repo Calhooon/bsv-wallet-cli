@@ -333,6 +333,14 @@ class WhatTheGateLetsThrough(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+def job(workflow, name):
+    """A job's text in a workflow of .github/workflows: from its key to the
+    comment that opens the next job (or the file's end)."""
+    with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", workflow)) as f:
+        text = f.read()
+    return text.split(f"\n  {name}:\n", 1)[1].split("\n  # ", 1)[0]
+
+
 class TheJobsInputs(unittest.TestCase):
     def tool(self, *args, rustc=None, **env):
         """The tool run as the job runs it; rustc, when named, is what a
@@ -356,10 +364,10 @@ class TheJobsInputs(unittest.TestCase):
         self.assertIn("rustc 1.99.0", r.stderr)
 
     def test_the_pin_is_the_jobs(self):
-        with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml")) as f:
-            ci = f.read()
-        bench = ci.split("\n  bench:\n", 1)[1].split("\n  # ", 1)[0]
-        ratchet = ci.split("\n  ratchet:\n", 1)[1].split("\n  # ", 1)[0]
+        # The bench job is bench.yml's since 7b32844 (it left ci.yml for a
+        # dispatch); the ratchet job is ci.yml's.
+        bench = job("bench.yml", "bench")
+        ratchet = job("ci.yml", "ratchet")
         self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", ratchet)
