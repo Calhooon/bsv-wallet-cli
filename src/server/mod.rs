@@ -559,15 +559,17 @@ const BEEF_DOORS: [&str; 2] = ["/createAction", "/internalizeAction"];
 /// The body cap of the routes that carry no BEEF.
 const BODY_CAP: usize = 50 * 1024 * 1024;
 
-/// Rewrite lone surrogate escapes in JSON request bodies before the `Json`
-/// extractors see them (see [`sanitize_lone_surrogates`]).
+/// Rewrite lone surrogate escapes in request bodies before the `Json`
+/// extractors see them (see [`sanitize_lone_surrogates`]). A body under
+/// any content type is read as JSON, as the MetaNet Client reads it (#122
+/// item 3, `handlers/json_body.rs`), so every body with a content type is
+/// capped and cleaned here; a request with none is read as `{}` and its
+/// body is never parsed.
 async fn lenient_json_body(request: Request, next: Next) -> Response {
-    let is_json = request
+    if !request
         .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.to_ascii_lowercase().contains("json"));
-    if !is_json {
+        .contains_key(axum::http::header::CONTENT_TYPE)
+    {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();
