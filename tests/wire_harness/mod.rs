@@ -19,6 +19,7 @@ pub(crate) mod judge;
 pub(crate) mod manifest;
 pub(crate) mod recorder;
 pub(crate) mod review_race;
+pub(crate) mod store_fault_doors;
 pub(crate) mod text_report;
 pub(crate) mod tracker_fault;
 pub(crate) mod trust;

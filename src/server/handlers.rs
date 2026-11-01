@@ -70,9 +70,11 @@ use std::sync::Arc;
 
 pub use super::error::AppError;
 use super::error::Kind;
-use super::json_body::Json;
 use super::page_bounds::check_page_bounds;
 use super::types::*;
+use json_body::Json;
+
+pub mod json_body;
 
 pub type WalletState = Arc<Wallet<StorageSqlx, Services>>;
 

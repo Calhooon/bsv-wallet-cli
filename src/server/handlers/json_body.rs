@@ -16,7 +16,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
 use axum::response::{IntoResponse, Response};
 
-use super::error::{AppError, Kind};
+use crate::server::error::{AppError, Kind};
 
 /// A request body read as `T`, or a response body written from it.
 pub struct Json<T>(pub T);
