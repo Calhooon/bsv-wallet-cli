@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "commit": "7040346a94ec1a98a9f28d1b6c2110fdb667e906",
+  "commit": "66d8a4e0deaaddf366fc1683767d21363d1b1e53",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -35,11 +35,11 @@
       },
       "src": {
         "files": 104,
-        "lines": 48661
+        "lines": 48767
       },
       "tests": {
         "files": 67,
-        "lines": 15546
+        "lines": 15557
       }
     },
     "test_files": 106,
@@ -58,7 +58,7 @@
       },
       {
         "path": "src/spend_gate.rs",
-        "lines": 2095
+        "lines": 2101
       },
       {
         "path": "src/broadcast_reconcile.rs",
@@ -66,7 +66,7 @@
       },
       {
         "path": "src/server/handlers.rs",
-        "lines": 1269
+        "lines": 1280
       },
       {
         "path": "mcp/src/main.rs",
@@ -88,11 +88,11 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 3803
+        "lines": 3821
       },
       {
         "path": "src/tracker_words_witnesses.rs",
-        "lines": 1288
+        "lines": 1289
       },
       {
         "path": "src/chain_feed_tests.rs",
