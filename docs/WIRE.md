@@ -365,3 +365,30 @@ discovery doors' chain evidence (toolbox #502: no world has an overlay, so
 records), a work-budget refusal (bsv-rs #519), or a lenient or `05`-tagged
 key (bsv-rs #498, #550); row 026's non-hex key keeps its words, and the
 doors read a key argument as at beta.4 (#377).
+
+## The beta.6 pin (#386)
+
+The corpus has 177 rows. One row moves and one is new, both named with their
+cause in the recording commit; the packages move no other byte. Row 026
+(`revealCounterpartyKeyLinkage.badKey`) moves in class and text: the four key
+doors (`parse_counterparty`, and the two linkage doors' `counterparty` and
+`verifier`) read a caller's key through bsv-rs 0.9.0-beta.6's
+`wallet::validate_public_key` (#579), the reference wallet's
+`validatePublicKey` (`validationHelpers.ts:185-191` at edf6e03), in place of
+#377's host reader, so `02zz` is a `WalletRefusal` of class InvalidParameter,
+400 `VALIDATION_ERROR` `The counterparty parameter must be hexadecimal
+string.`, where beta.5 answered 400 `ERROR` `invalid hex string: Invalid
+character 'z' at position 2`. The rule is stricter than #377's copy: an
+uncompressed `04` key is refused and surrounding whitespace is trimmed; no
+other fixture names such a key. Row 177 (`createAction.refusedGraph`, new,
+last) records a refused BEEF graph at the create door: an `inputBEEF` whose
+unproven transaction's parent is neither carried nor stored, the toolbox's
+`ValidationError` (InvalidParameter through the SDK boundary) served 400
+`VALIDATION_ERROR` by its class; since toolbox #546 the text ends at the byte
+count, with no dump path and no file written. Every recorded 200 answer of the
+wire and consumers corpora (97 wallet calls: 69 wire, 28 consumers) passes
+bsv-rs 0.9.0-beta.6's result rows, none refused; the nine host-route 200 rows
+and the eight bodiless preflight answers are not wallet calls. No world
+faults a header service at a discover call (toolbox #521) or sends a 429
+from one (toolbox #148), and no fixture reaches a script near the door's
+100,000,000-byte stack memory figure (toolbox #395).

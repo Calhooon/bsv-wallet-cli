@@ -213,4 +213,8 @@ From toolbox 0.14.0-beta.5 (toolbox #502, its CHANGELOG's beta.5 entry) the
 overlay leg verifies each overlay output's chain evidence with the wallet's
 chain tracker and drops an output that fails; with no header service
 (`CHAINTRACKS_URL=off`) it asks no overlay, the local and configured records
-still answering.
+still answering. From toolbox 0.14.0-beta.6 (toolbox #521, its CHANGELOG's
+beta.6 Fixed entry) a header service that faults with anything other than
+not-configured is the discover call's answer, its typed fault served by its
+family (502 `SERVICE_ERROR` for Transport and Service), never an empty
+overlay part; no wire world faults a header service at a discover call.
