@@ -63,6 +63,26 @@ pub(crate) fn payment_output(to: &Destination, satoshis: u64) -> CreateActionOut
     }
 }
 
+/// The destination and the address printed for it. A self-payment's second
+/// step is an internalize, whose BEEF proofs need headers: with no header
+/// service it is refused before anything is built, so no output is broadcast
+/// that the wallet could not keep.
+fn resolve(ctx: &WalletContext, address: &str) -> Result<(Destination, String)> {
+    let to = destination(&ctx.root_key, address)?;
+    if !to.own {
+        return Ok((to, address.to_string()));
+    }
+    if ctx.wallet.services().chaintracks.is_none() {
+        bail!(
+            "a send to this wallet's own address keeps its sats by internalizing the \
+             payment, which needs the header service (CHAINTRACKS_URL); none is \
+             configured, so nothing was sent"
+        );
+    }
+    let own = brc29::deposit_address(&ctx.root_key, ctx.chain)?;
+    Ok((to, own))
+}
+
 pub async fn run(
     ctx: &WalletContext,
     address: &str,
@@ -70,22 +90,7 @@ pub async fn run(
     allow_pending: crate::spend_gate::AllowPending,
     from: &[(String, u32)],
 ) -> Result<()> {
-    let to = destination(&ctx.root_key, address)?;
-    // A self-payment's second step is an internalize, whose BEEF proofs need
-    // headers: with no header service it is refused before anything is built,
-    // so no output is broadcast that the wallet could not keep.
-    if to.own && ctx.wallet.services().chaintracks.is_none() {
-        bail!(
-            "a send to this wallet's own address keeps its sats by internalizing the \
-             payment, which needs the header service (CHAINTRACKS_URL); none is \
-             configured, so nothing was sent"
-        );
-    }
-    let address = if to.own {
-        brc29::deposit_address(&ctx.root_key, ctx.chain)?
-    } else {
-        address.to_string()
-    };
+    let (to, address) = resolve(ctx, address)?;
     let address = address.as_str();
 
     let description = format!("Send {} sats to {}", satoshis, &address[..8]);
@@ -159,20 +164,15 @@ pub async fn run(
     // default basket as a spendable coin. The toolbox merges into the action
     // it already holds: nothing is broadcast again.
     let kept = if to.own {
-        let beef = beef_hex
-            .as_deref()
-            .ok_or_else(|| anyhow!("send {txid_hex}: no BEEF to keep the payment with"))?;
-        Some(
-            keep_own_payment(
-                ctx,
-                beef,
-                &txid_hex,
-                &to.locking_script,
-                satoshis,
-                &description,
-            )
-            .await?,
-        )
+        let vout = keep_own_payment(
+            ctx,
+            beef_hex.as_deref(),
+            &txid_hex,
+            &to,
+            satoshis,
+            &description,
+        );
+        Some(vout.await?)
     } else {
         None
     };
@@ -208,12 +208,14 @@ pub async fn run(
 /// the network) and the `fund` command that keeps it later.
 async fn keep_own_payment(
     ctx: &WalletContext,
-    beef_hex: &str,
+    beef_hex: Option<&str>,
     txid_hex: &str,
-    script: &[u8],
+    to: &Destination,
     satoshis: u64,
     description: &str,
 ) -> Result<u32> {
+    let beef_hex =
+        beef_hex.ok_or_else(|| anyhow!("send {txid_hex}: no BEEF to keep the payment with"))?;
     let atomic = hex::decode(beef_hex)?;
     let tx = Beef::from_binary(&atomic)
         .ok()
@@ -222,9 +224,11 @@ async fn keep_own_payment(
     let vout = tx
         .outputs
         .iter()
-        .position(|o| o.locking_script.to_binary() == script && o.satoshis == Some(satoshis))
-        .ok_or_else(|| anyhow!("send {txid_hex}: no output pays this wallet's address"))?
-        as u32;
+        .position(|o| {
+            o.locking_script.to_binary() == to.locking_script && o.satoshis == Some(satoshis)
+        })
+        .and_then(|i| u32::try_from(i).ok())
+        .ok_or_else(|| anyhow!("send {txid_hex}: no output pays this wallet's address"))?;
     let (_, anyone_pubkey) = bsv_sdk::wallet::KeyDeriver::anyone_key();
     let args = InternalizeActionArgs {
         tx: atomic,
