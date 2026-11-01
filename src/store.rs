@@ -268,9 +268,10 @@ pub async fn end_dead_row_pauses<'e, E: sqlx::Executor<'e, Database = sqlx::Sqli
 
 /// The tracker's record of the adoption pass's failing checks (#328): per
 /// creator whose check of the toolbox's proof fails, the state last
-/// reported (`reported`: the fault's class and the stored path's digest).
-/// A creator holds a row only while its check fails; the adoption pass
-/// reads it through its own selection.
+/// reported (`reported`: the fault's class and the stored path's digest),
+/// and a could-not-look fault's backoff (`asks`, `next_at`: the creator is
+/// not selected again before it). A creator holds a row only while its
+/// check fails; the adoption pass reads it through its own selection.
 ///
 /// # Errors
 ///
@@ -279,14 +280,17 @@ pub async fn ensure_adopt_checks(conn: &mut sqlx::SqliteConnection) -> Result<()
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS tracker_adopt_checks (\
             txid TEXT PRIMARY KEY, \
-            reported TEXT NOT NULL)",
+            reported TEXT NOT NULL, \
+            asks INTEGER NOT NULL DEFAULT 0, \
+            next_at INTEGER)",
     )
     .execute(conn)
     .await?;
     Ok(())
 }
 
-/// Record that `txid`'s failing check reported the state `reported`.
+/// Record that `txid`'s failing check reported the state `reported`, with
+/// its backoff (none after a fault that marks the row).
 ///
 /// # Errors
 ///
@@ -295,13 +299,18 @@ pub async fn set_adopt_check(
     conn: &mut sqlx::SqliteConnection,
     txid: &str,
     reported: &str,
+    asks: u32,
+    next_at: Option<i64>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO tracker_adopt_checks (txid, reported) VALUES (?, ?) \
-         ON CONFLICT(txid) DO UPDATE SET reported = excluded.reported",
+        "INSERT INTO tracker_adopt_checks (txid, reported, asks, next_at) VALUES (?, ?, ?, ?) \
+         ON CONFLICT(txid) DO UPDATE SET reported = excluded.reported, asks = excluded.asks, \
+            next_at = excluded.next_at",
     )
     .bind(txid)
     .bind(reported)
+    .bind(i64::from(asks))
+    .bind(next_at)
     .execute(conn)
     .await?;
     Ok(())

@@ -525,6 +525,12 @@ impl StoredVerdict {
     }
 }
 
+/// The pause after `asks` re-asks: the age threshold, doubling up to
+/// [`MAX_BACKOFF_DOUBLINGS`] times.
+fn backoff(age_threshold: Timestamp, asks: u32) -> Timestamp {
+    age_threshold.saturating_mul(1 << asks.min(MAX_BACKOFF_DOUBLINGS))
+}
+
 /// No headers: the view for replaying the hints alone.
 struct NoHeaders;
 
@@ -688,7 +694,7 @@ impl TrackedRow {
     /// One more ask that brought nothing: the next one waits a pause that
     /// doubles with each ask, up to [`MAX_BACKOFF_DOUBLINGS`] times.
     fn pause(&mut self, age_threshold: Timestamp, now: Timestamp) {
-        let pause = age_threshold.saturating_mul(1 << self.asks.min(MAX_BACKOFF_DOUBLINGS));
+        let pause = backoff(age_threshold, self.asks);
         self.asks = self.asks.saturating_add(1);
         self.next_ask_at = Some(now.saturating_add(pause));
     }
@@ -1955,7 +1961,7 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// `/tx/{txid}` serves the row's word (`unknown` or `built`) until then,
 /// where with no row it was 404: the row is what keeps it out of the
 /// limit. A header the service could not give, or a height above its tip,
-/// adopts nothing this pass.
+/// adopts nothing and tracks nothing: the creator waits its backoff.
 ///
 /// An existing dead row is revived only when the replay ends `mined` with
 /// no check fault. A check that fails (a path that does not parse or does
@@ -1979,8 +1985,13 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// change of its state: a different fault class, the mark cleared (a
 /// first mark again), or the row offered again (the toolbox's path
 /// rewritten); never at each end of its pause (#328 (2), the state kept in
-/// `tracker_adopt_checks` and dropped when the check passes). A service
-/// outage waits for the next pass without a fault. New creators are
+/// `tracker_adopt_checks` and dropped when the check passes). A
+/// could-not-look fault (`Unavailable`, `Headers`) is no verdict: it marks
+/// nothing and stores nothing on the row, and the creator takes the age
+/// re-ask's backoff (the age threshold, doubling up to 64 times it, kept
+/// in `tracker_adopt_checks`), never the parse fault's pause: it is not
+/// selected again until the backoff passes, and a tip or a header move
+/// does not end it (#328 (3)). New creators are
 /// selected before dead rows. A revived row's verdict remains history:
 /// replaying it after the proof leaves `mined` with `Reask::Recheck`. The
 /// tick does not load an unchanged mined row, so that re-ask does not fetch
@@ -2008,7 +2019,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     // path already held is left to the usual replay and chain-event paths.
     let found = sqlx::query(
         "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path, s.word, \
-                c.reported \
+                c.reported, c.asks AS check_asks \
          FROM transactions t \
          JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
          LEFT JOIN tracker_states s ON s.txid = lower(t.txid) \
@@ -2020,12 +2031,14 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                                            AND s.next_ask_at IS NOT NULL)) \
                                   AND (s.next_ask_at IS NULL OR s.next_ask_at <= ? \
                                        OR p.height >= ?))) \
+           AND (c.next_at IS NULL OR c.next_at <= ?) \
            AND EXISTS (SELECT 1 FROM outputs o \
                        WHERE o.transaction_id = t.transaction_id AND o.spent_by IS NULL) \
          GROUP BY lower(t.txid) ORDER BY (s.txid IS NOT NULL), MIN(t.transaction_id) LIMIT ?",
     )
     .bind(i64::try_from(now)?)
     .bind(report.moved_from.map(i64::from))
+    .bind(i64::try_from(now)?)
     .bind(MAX_ADOPT_PER_PASS as i64)
     .fetch_all(storage.pool())
     .await?;
@@ -2040,6 +2053,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
         .filter_map(|(row, _)| row.proof_height())
         .collect();
     snapshot.extend(services, heights).await;
+    let mut checks = Vec::new();
     for (mut row, record) in rows {
         let (state, fault) = row.replay(params, &*snapshot);
         let parsed = row.bump.is_some();
@@ -2050,21 +2064,13 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
             .stored_word
             .clone()
             .filter(|word| matches!(word.as_str(), "rejected" | "conflicted" | "abandoned"));
-        match (&fault, &dead) {
-            // No answer from the service is no verdict on the stored proof.
-            (Some(CheckError::Headers(_)), Some(_)) => continue,
-            // Could not look: nothing is stored, the next pass looks again.
-            (Some(CheckError::Unavailable(_)), Some(_)) => {
-                report.faults.push(proof_stands(&row));
-                continue;
-            }
-            (Some(fault @ (CheckError::Headers(_) | CheckError::Unavailable(_))), None) => {
-                report
-                    .faults
-                    .push(format!("{}: not adopted: {fault}", row.txid));
-                continue;
-            }
-            _ => {}
+        if let Some(fault @ (CheckError::Headers(_) | CheckError::Unavailable(_))) = &fault {
+            // Could not look: no verdict on the stored proof, so no mark and
+            // nothing stored on the row. The creator takes the age re-ask's
+            // backoff, never the parse fault's pause (#328 (3)).
+            let line = could_not_look(fault, dead.is_some(), &row);
+            check.back_off(report, line, (params.age_threshold, now), &mut checks);
+            continue;
         }
         let mined = parsed && fault.is_none() && matches!(state.word(), Word::Mined(_));
         if mined {
@@ -2072,12 +2078,12 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
             row.asks = 0;
             row.next_ask_at = None;
             store_row(storage, &row, &state, now).await?;
-            check.settle(storage, &row.txid).await?;
+            check.settle(&mut checks);
             continue;
         }
         if let Some(word) = dead {
             // The failed check is stored once; its dead word stands.
-            check.report(storage, report, proof_stands(&row)).await?;
+            check.report(report, proof_stands(&row), &mut checks);
             row.bump = None;
             row.pause(params.age_threshold, now);
             let mut writer = crate::store::writer(storage).await?;
@@ -2093,7 +2099,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                     "a proven creator's stored merkle path does not meet the active header; tracked with its re-ask"
                 );
                 report.adopted_proof_failed.push(row.txid.clone());
-                check.settle(storage, &row.txid).await?;
+                check.settle(&mut checks);
             }
             // Tracked without the path, with the dead row's mark: checked
             // again when its pause passes or its header moves, so a path the
@@ -2105,7 +2111,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                     "{}: the stored proof does not hold: {fault}; tracked without it",
                     row.txid
                 );
-                check.report(storage, report, line).await?;
+                check.report(report, line, &mut checks);
             }
             None if !parsed => {
                 row.pause(params.age_threshold, now);
@@ -2113,7 +2119,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                     "{}: the stored proof does not parse; tracked without it",
                     row.txid
                 );
-                check.report(storage, report, line).await?;
+                check.report(report, line, &mut checks);
             }
             None => {
                 report.faults.push(format!(
@@ -2126,7 +2132,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
         }
         store_row(storage, &row, &state, now).await?;
     }
-    Ok(())
+    store_checks(storage, checks).await
 }
 
 /// Load a selected dead row intact, or build a newly adopted creator's row,
@@ -2162,6 +2168,8 @@ async fn proven_row(
 struct CheckRecord {
     reported: Option<String>,
     path: String,
+    /// A could-not-look fault's backoff: the asks so far.
+    asks: u32,
 }
 
 impl CheckRecord {
@@ -2169,6 +2177,10 @@ impl CheckRecord {
         let path: Option<Vec<u8>> = found.get("merkle_path");
         Self {
             reported: found.get("reported"),
+            asks: found
+                .get::<Option<i64>, _>("check_asks")
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0),
             path: path.map_or_else(
                 || "none".to_string(),
                 |bytes| hex::encode(&bsv_sdk::primitives::sha256(&bytes)[..8]),
@@ -2190,9 +2202,11 @@ impl CheckRecord {
         Check {
             txid: row.txid.clone(),
             state: format!("{class} {}", self.path),
-            // The row held the dead row's mark before this check.
-            marked: row.stored_word.is_some() && row.next_ask_at.is_some(),
+            // The row held the dead row's mark, or the creator a
+            // could-not-look backoff, before this check.
+            marked: (row.stored_word.is_some() && row.next_ask_at.is_some()) || self.asks > 0,
             reported: self.reported,
+            asks: self.asks,
         }
     }
 }
@@ -2206,33 +2220,86 @@ struct Check {
     state: String,
     marked: bool,
     reported: Option<String>,
+    asks: u32,
 }
 
 impl Check {
-    async fn report(
+    /// A fault that marks the row: reported as above, any backoff ended.
+    fn report(&self, report: &mut TickReport, line: String, writes: &mut Vec<CheckWrite>) {
+        if self.say(report, Some(line)) || self.asks > 0 {
+            writes.push((self.txid.clone(), Some((self.state.clone(), 0, None))));
+        }
+    }
+
+    /// A could-not-look fault (#328 (3)): reported as above, and the
+    /// creator not selected again until the age re-ask's backoff passes
+    /// (the age threshold, doubling up to 64 times it).
+    fn back_off(
         &self,
-        storage: &StorageSqlx,
         report: &mut TickReport,
-        line: String,
-    ) -> Result<()> {
+        line: Option<String>,
+        (age_threshold, now): (Timestamp, Timestamp),
+        writes: &mut Vec<CheckWrite>,
+    ) {
+        self.say(report, line);
+        let next_at = now.saturating_add(backoff(age_threshold, self.asks));
+        let backoff = (
+            self.state.clone(),
+            self.asks.saturating_add(1),
+            Some(next_at),
+        );
+        writes.push((self.txid.clone(), Some(backoff)));
+    }
+
+    /// Push `line` unless the same state was reported and still stands;
+    /// whether the state changed.
+    fn say(&self, report: &mut TickReport, line: Option<String>) -> bool {
         let same = self.reported.as_deref() == Some(self.state.as_str());
-        if !(same && self.marked) {
+        if let Some(line) = line.filter(|_| !(same && self.marked)) {
             report.faults.push(line);
         }
-        if !same {
-            let mut writer = crate::store::writer(storage).await?;
-            crate::store::set_adopt_check(&mut writer, &self.txid, &self.state).await?;
-        }
-        Ok(())
+        !same
     }
 
     /// The check no longer fails: its record goes.
-    async fn settle(&self, storage: &StorageSqlx, txid: &str) -> Result<()> {
+    fn settle(&self, writes: &mut Vec<CheckWrite>) {
         if self.reported.is_some() {
-            let mut writer = crate::store::writer(storage).await?;
-            crate::store::drop_adopt_check(&mut writer, txid).await?;
+            writes.push((self.txid.clone(), None));
         }
-        Ok(())
+    }
+}
+
+/// A creator's record to write after the pass's checks: the state reported
+/// with its backoff (`asks`, `next_at`), or none when the record goes.
+type CheckWrite = (TxId, Option<(String, u32, Option<Timestamp>)>);
+
+/// Write the pass's check records (`tracker_adopt_checks`) on one writer.
+async fn store_checks(storage: &StorageSqlx, records: Vec<CheckWrite>) -> Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let mut writer = crate::store::writer(storage).await?;
+    for (txid, write) in records {
+        match write {
+            Some((state, asks, next_at)) => {
+                let next_at = next_at.map(i64::try_from).transpose()?;
+                crate::store::set_adopt_check(&mut writer, &txid, &state, asks, next_at).await?;
+            }
+            None => crate::store::drop_adopt_check(&mut writer, &txid).await?,
+        }
+    }
+    Ok(())
+}
+
+/// The line of a check that could not look (`Unavailable`, `Headers`):
+/// none for a dead row the header service did not answer, the dead word
+/// standing for one with no header at its height, "not adopted" for a new
+/// creator.
+fn could_not_look(fault: &CheckError, dead: bool, row: &TrackedRow) -> Option<String> {
+    match (fault, dead) {
+        (CheckError::Headers(_), true) => None,
+        (_, true) => Some(proof_stands(row)),
+        (_, false) => Some(format!("{}: not adopted: {fault}", row.txid)),
     }
 }
 
