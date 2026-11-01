@@ -560,11 +560,8 @@ const BEEF_DOORS: [&str; 2] = ["/createAction", "/internalizeAction"];
 const BODY_CAP: usize = 50 * 1024 * 1024;
 
 /// Rewrite lone surrogate escapes in request bodies before the `Json`
-/// extractors see them (see [`sanitize_lone_surrogates`]). A body under
-/// any content type is read as JSON, as the MetaNet Client reads it (#122
-/// item 3, `handlers/json_body.rs`), so every body with a content type is
-/// capped and cleaned here; a request with none is read as `{}` and its
-/// body is never parsed.
+/// extractors see them (see [`sanitize_lone_surrogates`]): any content type,
+/// as the doors read JSON under any (#122 item 3); with none, `{}` is read.
 async fn lenient_json_body(request: Request, next: Next) -> Response {
     if !request
         .headers()
