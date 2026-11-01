@@ -37,22 +37,17 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        if !req.headers().contains_key(CONTENT_TYPE) {
-            return read(b"{}");
-        }
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(IntoResponse::into_response)?;
-        read(&bytes)
-    }
-}
-
-/// `bytes` read as `T` whatever the content type, as the client's
-/// `JSON.parse` reads the string.
-fn read<T: DeserializeOwned>(bytes: &[u8]) -> Result<Json<T>, Response> {
-    match axum::Json::<T>::from_bytes(bytes) {
-        Ok(axum::Json(value)) => Ok(Json(value)),
-        Err(rejection) => Err(refused(rejection)),
+        // JSON whatever the content type, as the client's `JSON.parse`
+        // reads the string; with none, nothing is parsed and the call is `{}`.
+        let read = if req.headers().contains_key(CONTENT_TYPE) {
+            let bytes = Bytes::from_request(req, state)
+                .await
+                .map_err(IntoResponse::into_response)?;
+            axum::Json::<T>::from_bytes(&bytes)
+        } else {
+            axum::Json::<T>::from_bytes(b"{}")
+        };
+        read.map(|axum::Json(value)| Self(value)).map_err(refused)
     }
 }
 
