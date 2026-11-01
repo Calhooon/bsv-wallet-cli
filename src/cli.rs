@@ -54,9 +54,11 @@ pub enum Commands {
     Balance,
     /// Show BRC-29 funding address
     Address,
-    /// Send BSV to a P2PKH address
+    /// Send BSV to a P2PKH address. A send to this wallet's own address keeps
+    /// its sats: the payment is internalized back, the fee the only cost
     Send {
-        /// Destination address
+        /// Destination address; or this wallet's own identity or deposit key
+        /// (hex), which pays its own address
         address: String,
         /// Amount in satoshis
         satoshis: u64,
