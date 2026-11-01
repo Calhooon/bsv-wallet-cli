@@ -5,6 +5,7 @@ use super::*;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
 mod feed;
+mod reports;
 
 async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {
     ensure_tables(storage).await.unwrap();
@@ -467,7 +468,8 @@ async fn a_header_move_at_the_toolbox_height_checks_an_unparseable_dead_row_agai
 
     // The header at 900, the toolbox's `proven_txs.height`, moves.
     let moved = moved_at_900(&storage, &services, &"ef".repeat(32)).await;
-    assert_eq!(moved.faults, stands);
+    // Checked again, the same fault: not reported again (#328 (2)).
+    assert!(moved.faults.is_empty());
     assert!(moved.adopted_mined.is_empty());
     assert_eq!(mark_of(&storage, &txid).await, (None, 2, Some(102 + 1_200)));
     assert_word(&storage, &txid, ("conflicted", None, None)).await;
@@ -764,9 +766,10 @@ async fn a_marked_row_is_checked_again_after_its_pause_and_reads_a_new_toolbox_p
     assert_eq!(pass(&storage, &services, 100).await.faults.len(), 1);
     assert_idle(&pass(&storage, &services, 699).await);
 
-    // The pause passed: one more check, still failing, a doubled pause.
+    // The pause passed: one more check, still failing, a doubled pause,
+    // the same fault not reported again (#328 (2)).
     let again = pass(&storage, &services, 700).await;
-    assert_eq!(again.faults.len(), 1);
+    assert!(again.faults.is_empty());
     let row = load_row(&storage, &txid).await.unwrap().unwrap();
     assert_eq!((row.asks, row.next_ask_at), (2, Some(700 + 1_200)));
     assert_eq!(

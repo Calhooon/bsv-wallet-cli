@@ -785,10 +785,13 @@ pub(crate) async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
         && crate::store::has_column(reader, "tracker_states", "verdict").await?
         && crate::store::has_column(reader, "tracker_states", "chain").await?
         && crate::store::has_column(reader, "tracker_meta", "value").await?
+        && crate::store::has_column(reader, "tracker_adopt_checks", "reported").await?
     {
         return Ok(());
     }
     let mut writer = crate::store::writer(storage).await?;
+    // Added with the dead row's reports (0.19.0, #328).
+    crate::store::ensure_adopt_checks(&mut writer).await?;
     for sql in [
         "CREATE TABLE IF NOT EXISTS tracker_states (\
             txid TEXT PRIMARY KEY, \
@@ -1970,9 +1973,13 @@ pub const MAX_ADOPT_PER_PASS: usize = 100;
 /// #328 (1)). That height is the toolbox's column,
 /// not the path's, so a row whose path does not parse (no re-ask, the
 /// pause its only stored mark) is also checked again on such a move.
-/// Until then the query does not select it, so a failing row is reported
-/// once per check and the limit is never spent on it again:
-/// [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292). A service
+/// Until then the query does not select it, so the limit is never spent
+/// on it again: [`MAX_ADOPT_PER_PASS`] bounds work that can move (#292).
+/// A failing row is reported once, when first marked, and again only on a
+/// change of its state: a different fault class, the mark cleared (a
+/// first mark again), or the row offered again (the toolbox's path
+/// rewritten); never at each end of its pause (#328 (2), the state kept in
+/// `tracker_adopt_checks` and dropped when the check passes). A service
 /// outage waits for the next pass without a fault. New creators are
 /// selected before dead rows. A revived row's verdict remains history:
 /// replaying it after the proof leaves `mined` with `Reask::Recheck`. The
@@ -2000,10 +2007,12 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     // The dead-word list matches `spend_gate::hold_reason`; a row with a
     // path already held is left to the usual replay and chain-event paths.
     let found = sqlx::query(
-        "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path, s.word \
+        "SELECT lower(t.txid) AS txid, MAX(t.is_outgoing) AS made, p.merkle_path, s.word, \
+                c.reported \
          FROM transactions t \
          JOIN proven_txs p ON p.proven_tx_id = t.proven_tx_id \
          LEFT JOIN tracker_states s ON s.txid = lower(t.txid) \
+         LEFT JOIN tracker_adopt_checks c ON c.txid = lower(t.txid) \
          WHERE t.txid IS NOT NULL AND t.status = 'completed' \
            AND (s.txid IS NULL OR (s.bump IS NULL \
                                   AND (s.word IN ('rejected', 'conflicted', 'abandoned') \
@@ -2023,15 +2032,18 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     let mut rows = Vec::with_capacity(found.len());
     for r in &found {
         if let Some(row) = proven_row(storage, r).await? {
-            rows.push(row);
+            rows.push((row, CheckRecord::of(r)));
         }
     }
-    snapshot
-        .extend(services, rows.iter().filter_map(TrackedRow::proof_height))
-        .await;
-    for mut row in rows {
+    let heights: Vec<Height> = rows
+        .iter()
+        .filter_map(|(row, _)| row.proof_height())
+        .collect();
+    snapshot.extend(services, heights).await;
+    for (mut row, record) in rows {
         let (state, fault) = row.replay(params, &*snapshot);
         let parsed = row.bump.is_some();
+        let check = record.of_check(&row, fault.as_ref());
         // The query's dead words; a marked `unknown` or `built` row is a
         // creator tracked without its path, checked again as a new one.
         let dead = row
@@ -2060,11 +2072,12 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
             row.asks = 0;
             row.next_ask_at = None;
             store_row(storage, &row, &state, now).await?;
+            check.settle(storage, &row.txid).await?;
             continue;
         }
         if let Some(word) = dead {
             // The failed check is stored once; its dead word stands.
-            report.faults.push(proof_stands(&row));
+            check.report(storage, report, proof_stands(&row)).await?;
             row.bump = None;
             row.pause(params.age_threshold, now);
             let mut writer = crate::store::writer(storage).await?;
@@ -2080,6 +2093,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
                     "a proven creator's stored merkle path does not meet the active header; tracked with its re-ask"
                 );
                 report.adopted_proof_failed.push(row.txid.clone());
+                check.settle(storage, &row.txid).await?;
             }
             // Tracked without the path, with the dead row's mark: checked
             // again when its pause passes or its header moves, so a path the
@@ -2087,17 +2101,19 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
             Some(fault) => {
                 row.bump = None;
                 row.pause(params.age_threshold, now);
-                report.faults.push(format!(
+                let line = format!(
                     "{}: the stored proof does not hold: {fault}; tracked without it",
                     row.txid
-                ));
+                );
+                check.report(storage, report, line).await?;
             }
             None if !parsed => {
                 row.pause(params.age_threshold, now);
-                report.faults.push(format!(
+                let line = format!(
                     "{}: the stored proof does not parse; tracked without it",
                     row.txid
-                ));
+                );
+                check.report(storage, report, line).await?;
             }
             None => {
                 report.faults.push(format!(
@@ -2138,6 +2154,86 @@ async fn proven_row(
         .and_then(|bytes| MerklePath::from_binary(bytes).ok())
         .map(|path| path.to_hex());
     Ok(Some(row))
+}
+
+/// What the adoption pass last reported of a creator whose check fails
+/// (#328 (2)): the state recorded in `tracker_adopt_checks`, and the
+/// digest of the toolbox's stored path this pass reads.
+struct CheckRecord {
+    reported: Option<String>,
+    path: String,
+}
+
+impl CheckRecord {
+    fn of(found: &sqlx::sqlite::SqliteRow) -> Self {
+        let path: Option<Vec<u8>> = found.get("merkle_path");
+        Self {
+            reported: found.get("reported"),
+            path: path.map_or_else(
+                || "none".to_string(),
+                |bytes| hex::encode(&bsv_sdk::primitives::sha256(&bytes)[..8]),
+            ),
+        }
+    }
+
+    /// This pass's check of `row`, before its mark is written.
+    fn of_check(self, row: &TrackedRow, fault: Option<&CheckError>) -> Check {
+        let class = match fault {
+            None if row.bump.is_none() => "parse",
+            None => "word",
+            Some(CheckError::InvalidProof(_)) => "invalid",
+            Some(CheckError::TxidMismatch) => "txid",
+            Some(CheckError::RootMismatch(_)) => "root",
+            Some(CheckError::Unavailable(_)) => "unavailable",
+            Some(CheckError::Headers(_)) => "headers",
+        };
+        Check {
+            txid: row.txid.clone(),
+            state: format!("{class} {}", self.path),
+            // The row held the dead row's mark before this check.
+            marked: row.stored_word.is_some() && row.next_ask_at.is_some(),
+            reported: self.reported,
+        }
+    }
+}
+
+/// One failing check's report: its line on a first mark (the row held no
+/// mark before this check), or when its state changed since the last
+/// report (the fault's class, or the stored path: the row offered again).
+/// Never again at each pause's end with the same fault (#328 (2)).
+struct Check {
+    txid: TxId,
+    state: String,
+    marked: bool,
+    reported: Option<String>,
+}
+
+impl Check {
+    async fn report(
+        &self,
+        storage: &StorageSqlx,
+        report: &mut TickReport,
+        line: String,
+    ) -> Result<()> {
+        let same = self.reported.as_deref() == Some(self.state.as_str());
+        if !(same && self.marked) {
+            report.faults.push(line);
+        }
+        if !same {
+            let mut writer = crate::store::writer(storage).await?;
+            crate::store::set_adopt_check(&mut writer, &self.txid, &self.state).await?;
+        }
+        Ok(())
+    }
+
+    /// The check no longer fails: its record goes.
+    async fn settle(&self, storage: &StorageSqlx, txid: &str) -> Result<()> {
+        if self.reported.is_some() {
+            let mut writer = crate::store::writer(storage).await?;
+            crate::store::drop_adopt_check(&mut writer, txid).await?;
+        }
+        Ok(())
+    }
 }
 
 /// A failed proof cannot replace the stored dead word.

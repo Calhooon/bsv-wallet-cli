@@ -266,6 +266,60 @@ pub async fn end_dead_row_pauses<'e, E: sqlx::Executor<'e, Database = sqlx::Sqli
     Ok(ended.rows_affected())
 }
 
+/// The tracker's record of the adoption pass's failing checks (#328): per
+/// creator whose check of the toolbox's proof fails, the state last
+/// reported (`reported`: the fault's class and the stored path's digest).
+/// A creator holds a row only while its check fails; the adoption pass
+/// reads it through its own selection.
+///
+/// # Errors
+///
+/// The executor's `sqlx::Error`.
+pub async fn ensure_adopt_checks(conn: &mut sqlx::SqliteConnection) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS tracker_adopt_checks (\
+            txid TEXT PRIMARY KEY, \
+            reported TEXT NOT NULL)",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Record that `txid`'s failing check reported the state `reported`.
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn set_adopt_check(
+    conn: &mut sqlx::SqliteConnection,
+    txid: &str,
+    reported: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO tracker_adopt_checks (txid, reported) VALUES (?, ?) \
+         ON CONFLICT(txid) DO UPDATE SET reported = excluded.reported",
+    )
+    .bind(txid)
+    .bind(reported)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// `txid`'s check no longer fails: its record goes.
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn drop_adopt_check(conn: &mut sqlx::SqliteConnection, txid: &str) -> Result<()> {
+    sqlx::query("DELETE FROM tracker_adopt_checks WHERE txid = ?")
+        .bind(txid)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
