@@ -333,6 +333,98 @@ class WhatTheGateLetsThrough(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+def night(tree, run_id="41000000001", scale=1.0, machine=MACHINE, toolchain=TOOLCHAIN):
+    """A night's artifact baseline.json: the tree it measured against with
+    its run appended, as --ci writes the candidate."""
+    key = bc.gate_key(machine)
+    out = copy.deepcopy(tree)
+    r = {**run(scale, commit="d"), "run_id": run_id}
+    e = out.setdefault("profiles", {}).get(key)
+    if e is None or e["toolchain"] != toolchain:
+        out["profiles"][key] = {"profile": key, "gate": True, "machine": machine, "toolchain": toolchain,
+                                "runs": [r]}
+    else:
+        e["runs"].append(r)
+    return out
+
+
+class TheNightsAppend(unittest.TestCase):
+    """--append (#142): one night's run onto the baseline, by its own PR,
+    as the gate counts runs."""
+
+    def test_an_opening_entry_from_the_first_night(self):
+        out, key, r = bc.appended(bc.empty(), night(bc.empty()))
+        self.assertEqual(key, KEY)
+        self.assertEqual(out["profiles"][KEY]["runs"], [r])
+        self.assertEqual(r["run_id"], "41000000001")
+        errors, *_ = judge(out, bc.empty(), r["benches"])
+        self.assertEqual(errors, [])
+
+    def test_the_fifth_night_switches_the_gate_on(self):
+        tree = bc.empty()
+        for i in range(5):
+            tree, _, _ = bc.appended(tree, night(tree, run_id=f"4100000000{i}"))
+        self.assertEqual(len(tree["profiles"][KEY]["runs"]), 5)
+        _, _, gating, _ = judge(tree, tree)
+        self.assertTrue(gating)
+
+    def test_a_night_measured_against_an_older_baseline_appends_only_its_run(self):
+        older = baseline(runs(3))
+        tree = copy.deepcopy(older)
+        tree, _, _ = bc.appended(tree, night(tree, run_id="1"))
+        out, _, r = bc.appended(tree, night(older, run_id="2"))
+        self.assertEqual([x.get("run_id") for x in out["profiles"][KEY]["runs"]], [None, None, None, "1", "2"])
+
+    def test_a_duplicate_run_id_is_refused(self):
+        tree, _, _ = bc.appended(bc.empty(), night(bc.empty()))
+        with self.assertRaisesRegex(ValueError, "duplicate run id"):
+            bc.appended(tree, night(bc.empty()))
+
+    def test_a_cpu_less_entry_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "names no CPU"):
+            bc.appended(bc.empty(), night(bc.empty(), machine="?, 4 cores"))
+
+    def test_an_entry_keyed_off_its_cpu_is_refused(self):
+        n = night(bc.empty())
+        n["profiles"][KEY]["machine"] = "Intel Xeon Platinum 8370C, 4 cores"
+        with self.assertRaisesRegex(ValueError, "names no CPU"):
+            bc.appended(bc.empty(), n)
+
+    def test_a_run_without_its_run_id_is_refused(self):
+        n = night(bc.empty())
+        del n["profiles"][KEY]["runs"][0]["run_id"]
+        with self.assertRaisesRegex(ValueError, "carries no run id"):
+            bc.appended(bc.empty(), n)
+
+    def test_two_nights_in_one_append_are_refused(self):
+        n = night(night(baseline(runs(2)), run_id="1"), run_id="2")
+        with self.assertRaisesRegex(ValueError, "one run a PR"):
+            bc.appended(baseline(runs(2)), n)
+
+    def test_a_night_on_another_pin_is_not_an_append(self):
+        n = night(baseline(runs(2)), toolchain="rustc 1.99.0 (ccccccccc 2026-11-01)")
+        with self.assertRaisesRegex(ValueError, "re-record on a new pin is not an append"):
+            bc.appended(baseline(runs(2)), n)
+
+    def test_a_slow_night_over_the_reference_is_refused_as_the_gate_would(self):
+        with self.assertRaisesRegex(ValueError, "the gate would fail this append.*over the base's reference"):
+            bc.appended(baseline(runs(4)), night(baseline(runs(4)), scale=3.0))
+
+    def test_the_command_appends_once_and_refuses_the_second(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
+            tree, art = os.path.join(d, "baseline.json"), os.path.join(d, "night.json")
+            bc.write(tree, baseline(runs(4)))
+            bc.write(art, night(baseline(runs(4))))
+            cmd = [sys.executable, TOOL, "--append", art, "--out", tree]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("5 of the 5 runs the gate needs; this entry gates", r.stdout)
+            again = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertEqual(again.returncode, 1)
+            self.assertIn("duplicate run id", again.stderr)
+            self.assertEqual(len(bc.load(tree)["profiles"][KEY]["runs"]), 5)
+
+
 def job(workflow, name):
     """A job's text in a workflow of .github/workflows: from its key to the
     comment that opens the next job (or the file's end)."""
@@ -371,6 +463,18 @@ class TheJobsInputs(unittest.TestCase):
         self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", ratchet)
+
+    def test_the_nights_bench_is_the_bench_jobs_measure(self):
+        # #142: the Nightly's bench job measures as bench.yml's does, on the
+        # same pin, and keeps its candidate under the run id and the CPU.
+        night_job = job("nightly.yml", "bench")
+        self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", night_job)
+        self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", night_job)
+        self.assertIn("python3 tools/test_bench_compare.py", night_job)
+        self.assertIn("tools/bench-compare --ci", night_job)
+        self.assertIn("tools/bench-compare --gate-key", night_job)
+        self.assertIn("bench-night-${{ github.run_id }}-${{ steps.measure.outputs.key }}", night_job)
+        self.assertNotIn("needs:", night_job)
 
     def test_ci_refuses_a_renamed_profile(self):
         r = self.tool("--ci", "--out", os.devnull, BENCH_PROFILE="ubuntu-fast")

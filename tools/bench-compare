@@ -10,6 +10,11 @@
                                           the CI job bench: run the benches, check the tree's
                                           baseline against the base's, compare, write the
                                           candidate baseline to FILE
+  tools/bench-compare --append NIGHT [--out FILE]
+                                          append the one new run of a night's artifact
+                                          (its baseline.json) to benches/baseline.json, or
+                                          FILE; run nothing (#142)
+  tools/bench-compare --gate-key          print this machine's gate key, ubuntu-latest-<cpu>
 
 The gate's profile, margin, sample floor and history floor are this file's
 constants, never a workflow's env. An entry is keyed by its profile and the
@@ -450,14 +455,93 @@ def reading(args):
               f"{'over' if change > margin else 'ok'}")
 
 
+def appended(tree, night):
+    """The tree with the one new run of a night's candidate appended, or
+    the refusal (#142). The night's candidate is its artifact's
+    baseline.json: the file it measured against with its run added. Its
+    new run is the one whose run id the tree does not carry; the runs the
+    tree carries are the night's base, already in. Returns (tree, key,
+    run) or raises ValueError naming the refusal.
+
+    One run, as the gate counts: an entry's runs grow by one a PR, an
+    opening entry is one run, and the result passes judge() against the
+    tree as its base with the run's own numbers as the measure, so the
+    gate's checks of a tree against its base (the margin, the shape, the
+    ids, the reference) refuse here what they would fail there. What only
+    the append PR's own bench run can check is its measure against the
+    committed run.
+    """
+    tree_runs = [r for e in tree.get("profiles", {}).values() for r in e.get("runs", [])]
+    tree_ids = {r["run_id"] for r in tree_runs if r.get("run_id")}
+    new = []
+    for k, e in sorted(night.get("profiles", {}).items()):
+        if not k.startswith(GATE_PROFILE + "-"):
+            continue
+        for r in e.get("runs", []):
+            if r in tree_runs:
+                continue
+            if not r.get("run_id"):
+                raise ValueError(f"{k}: a run of the night ({r.get('commit', '?')[:12]}) carries no run id; "
+                                 f"a night's run is told from the others by its run id")
+            if r["run_id"] not in tree_ids:
+                new.append((k, e, r))
+    if not new:
+        raise ValueError("every run of the night is already in the baseline: a duplicate run id "
+                         "(one night is appended once)")
+    if len(new) > 1:
+        raise ValueError(f"the night carries {len(new)} runs the baseline does not "
+                         f"({', '.join(r['run_id'] for _, _, r in new)}); one run a PR")
+    key, e, run = new[0]
+    m = e.get("machine") or ""
+    model = m.rsplit(",", 1)[0].strip()
+    if model in ("", "?") or key != gate_key(m):
+        raise ValueError(f"{key}: the entry names no CPU (machine {m!r}); an entry is keyed by its CPU, "
+                         f"and a run of no CPU gates nothing")
+    t = tree.get("profiles", {}).get(key)
+    if t is not None and t.get("toolchain") != e.get("toolchain"):
+        raise ValueError(f"{key}: the baseline's entry is {t.get('toolchain')} and the night's run "
+                         f"{e.get('toolchain')}: a re-record on a new pin is not an append (commit the "
+                         f"night's baseline.json whole, docs/BENCHES.md)")
+    out = json.loads(json.dumps(tree))
+    out.setdefault("margin", MARGIN)
+    profiles = out.setdefault("profiles", {})
+    if t is None:
+        profiles[key] = {"profile": key, "gate": True, "machine": m, "toolchain": e["toolchain"], "runs": [run]}
+    else:
+        profiles[key]["runs"].append(run)
+    ctx = {"key": key, "machine": m, "toolchain": e["toolchain"], "commit": run.get("commit"),
+           "run_id": run["run_id"], "recorded": run.get("recorded")}
+    _, _, errors, _, _, _ = judge(out, tree, run.get("benches", {}), ctx)
+    if errors:
+        raise ValueError(f"{key}: the gate would fail this append: " + "; ".join(errors))
+    return out, key, run
+
+
+def append(args):
+    path = args["out"] or TREE
+    with open(args["append"]) as f:
+        night = json.load(f)
+    tree = load(path)
+    try:
+        out, key, run = appended(tree, night)
+    except ValueError as e:
+        sys.exit(f"bench-compare: --append refused: {e}")
+    write(path, out)
+    n = len(out["profiles"][key]["runs"])
+    print(f"bench-compare: appended run {run['run_id']} ({run.get('commit', '?')[:12]}, {run.get('recorded')}) "
+          f"to {key} in {path}: {n} of the {MIN_RUNS} runs the gate needs"
+          + ("; this entry gates" if n >= MIN_RUNS else ""))
+
+
 def main(argv):
-    args = {"ci": False, "record": False, "compare_only": None, "base": None, "out": None}
+    args = {"ci": False, "record": False, "gate_key": False, "compare_only": None, "base": None, "out": None,
+            "append": None}
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--ci", "--record"):
-            args[a[2:]] = True
-        elif a in ("--compare-only", "--base", "--out") and i + 1 < len(argv):
+        if a in ("--ci", "--record", "--gate-key"):
+            args[a[2:].replace("-", "_")] = True
+        elif a in ("--compare-only", "--base", "--out", "--append") and i + 1 < len(argv):
             args[a[2:].replace("-", "_")] = argv[i + 1]
             i += 1
         elif a in ("-h", "--help"):
@@ -466,6 +550,14 @@ def main(argv):
         else:
             sys.exit(f"bench-compare: unknown argument {a}")
         i += 1
+    if args["gate_key"]:
+        print(gate_key(machine()))
+        return
+    if args["append"]:
+        if args["ci"] or args["record"] or args["compare_only"] or args["base"]:
+            sys.exit("bench-compare: --append runs nothing; it takes only --out")
+        append(args)
+        return
     if args["ci"]:
         if args["record"]:
             sys.exit("bench-compare: --ci records its candidate in --out; --record is a developer's")
