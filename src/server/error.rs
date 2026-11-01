@@ -499,7 +499,8 @@ mod tests {
     /// 502 `SERVICE_ERROR` in the toolbox's words, never 400 `ERROR`.
     #[test]
     fn an_upper_case_certifier_answer_at_issuance_is_the_far_sides_502() {
-        let upper = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".to_ascii_uppercase();
+        let upper = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+            .to_ascii_uppercase();
         let refusal = bsv_sdk::auth::assert_auth_identity_key(&upper).unwrap_err();
         assert!(matches!(refusal, bsv_sdk::Error::AuthError(_)));
         assert!(refusal.transport_fault().is_none());
