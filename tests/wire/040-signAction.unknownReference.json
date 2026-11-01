@@ -12,7 +12,7 @@
     }
   },
   "response": {
-    "status": 501,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -21,7 +21,7 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "NOT_IMPLEMENTED",
+      "code": "VALIDATION_ERROR",
       "message": "No pending transaction found for reference: bm8tc3VjaC1yZWZlcmVuY2U="
     }
   }
