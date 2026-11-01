@@ -125,7 +125,7 @@ fn brc29_remittance() {
         );
         let input = Input::arbitrary_take_rest(Unstructured::new(bytes))
             .expect("the bytes decode as the target's input");
-        check(input);
+        check(&input);
     });
 }
 

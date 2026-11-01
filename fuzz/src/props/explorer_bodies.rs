@@ -87,7 +87,7 @@ fn local() -> &'static Local {
     })
 }
 
-/// BananaBlocks paces itself per base, one bucket a process (30 a burst,
+/// `BananaBlocks` paces itself per base, one bucket a process (30 a burst,
 /// 0.5 a second): the base turns over a path suffix the socket ignores, so
 /// the bucket a call meets is rarely empty. A bounded set of bases keeps the
 /// process's table of gates bounded.
@@ -106,9 +106,9 @@ enum Index {
 }
 
 /// One verification pass with `fuzzed` at the socket's `/fz` and every
-/// other source quiet. WhatsOnChain and Bitails go through `single_pass`
-/// with BananaBlocks off (the process's `Explorers` cell is built off by
-/// whichever of them runs first, and never at a base). BananaBlocks goes
+/// other source quiet. `WhatsOnChain` and `Bitails` go through `single_pass`
+/// with `BananaBlocks` off (the process's `Explorers` cell is built off by
+/// whichever of them runs first, and never at a base). `BananaBlocks` goes
 /// through `explicit` with a fresh provider at a turning base and a quiet
 /// WhatsOnChain-shaped index as the one voter.
 async fn verify(base: &str, fuzzed: Index) -> PresenceReport {
@@ -181,6 +181,31 @@ fn check_voting_index(report: &PresenceReport, status: u16, name: &str, mined: b
     }
 }
 
+/// `BananaBlocks`' index against the status and body it was served, beside
+/// a voting index's clean 404.
+fn check_bananablocks_index(report: &PresenceReport, status: u16, body: &[u8]) {
+    let about = json(body)
+        .and_then(|v| v.get("txid").and_then(|t| t.as_str()).map(str::to_string))
+        .is_some_and(|t| t.eq_ignore_ascii_case(txid()));
+    match report.chain_index {
+        ChainIndexAnswer::Present(evidence) => {
+            assert_eq!(status, 200, "mined from a {status}");
+            assert!(about, "mined from a body about another transaction");
+            assert_eq!(evidence, NetworkEvidence::Mined);
+            assert_eq!(report.chain_index_by, Some("bananablocks"));
+        }
+        ChainIndexAnswer::Absent => {
+            if report.chain_index_by.is_some() {
+                assert_eq!(status, 200, "known from a {status}");
+                assert!(about, "known from a body about another transaction");
+            }
+        }
+        ChainIndexAnswer::Unknown => {
+            panic!("BananaBlocks' answer stood against the voting indexes' 404s")
+        }
+    }
+}
+
 pub fn check(data: &[u8]) {
     if data.len() < 2 {
         return;
@@ -215,7 +240,7 @@ pub fn check(data: &[u8]) {
             2 => {
                 let report = verify(base, Index::WhatsOnChain).await;
                 let mined = json(body)
-                    .and_then(|v| v.get("confirmations").and_then(|c| c.as_i64()))
+                    .and_then(|v| v.get("confirmations").and_then(serde_json::Value::as_i64))
                     .is_some_and(|c| c >= 1);
                 check_voting_index(&report, status, "whatsonchain", mined);
             }
@@ -228,26 +253,7 @@ pub fn check(data: &[u8]) {
             }
             _ => {
                 let report = verify(base, Index::BananaBlocks).await;
-                let about = json(body)
-                    .and_then(|v| v.get("txid").and_then(|t| t.as_str()).map(str::to_string))
-                    .is_some_and(|t| t.eq_ignore_ascii_case(txid()));
-                match report.chain_index {
-                    ChainIndexAnswer::Present(evidence) => {
-                        assert_eq!(status, 200, "mined from a {status}");
-                        assert!(about, "mined from a body about another transaction");
-                        assert_eq!(evidence, NetworkEvidence::Mined);
-                        assert_eq!(report.chain_index_by, Some("bananablocks"));
-                    }
-                    ChainIndexAnswer::Absent => {
-                        if report.chain_index_by.is_some() {
-                            assert_eq!(status, 200, "known from a {status}");
-                            assert!(about, "known from a body about another transaction");
-                        }
-                    }
-                    ChainIndexAnswer::Unknown => {
-                        panic!("BananaBlocks' answer stood against the voting indexes' 404s")
-                    }
-                }
+                check_bananablocks_index(&report, status, body);
             }
         }
     });

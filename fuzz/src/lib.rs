@@ -44,7 +44,7 @@ pub fn proven_beef(raw: Vec<u8>, height: u32) -> Vec<u8> {
     beef.to_binary()
 }
 
-/// `child` spending a proven `parent`, as AtomicBEEF bytes on `child`.
+/// `child` spending a proven `parent`, as `AtomicBEEF` bytes on `child`.
 pub fn atomic_payment(parent: Vec<u8>, child: Vec<u8>) -> Vec<u8> {
     let parent_id = txid_of(&parent);
     let child_id = txid_of(&child);
@@ -82,7 +82,9 @@ pub fn brc29_key(
 /// touched. Mirror of bsv-wallet-toolbox-rs 0.14.0-beta.1
 /// `src/wallet/wallet.rs` `internalize_action` (the derivation checks, the
 /// "death spiral prevention"; the lines unchanged from 0.13.0), with the
-/// deriver at `root`.
+/// deriver at `root`. The copy's branch order and one binding's name
+/// (`expected`) are clippy's pedantic lints', which the package's ratchet
+/// counts here since `tests/fuzz_replay.rs` compiles this file (#396).
 pub fn internalize_precheck(args: &InternalizeActionArgs, root: &PrivateKey) -> Result<(), String> {
     for output in &args.outputs {
         if let Some(ref payment) = output.payment_remittance {
@@ -107,23 +109,23 @@ pub fn internalize_precheck(args: &InternalizeActionArgs, root: &PrivateKey) -> 
                     && script[23] == 0x88
                     && script[24] == 0xac
                 {
-                    let counterparty = if !payment.sender_identity_key.is_empty() {
+                    let counterparty = if payment.sender_identity_key.is_empty() {
+                        Counterparty::Self_
+                    } else {
                         Counterparty::Other(
                             PublicKey::from_hex(&payment.sender_identity_key)
                                 .map_err(|e| format!("Invalid sender_identity_key: {e}"))?,
                         )
-                    } else {
-                        Counterparty::Self_
                     };
                     let protocol = Protocol::new(SecurityLevel::Counterparty, "3241645161d8");
                     let key_id = format!(
                         "{} {}",
                         payment.derivation_prefix, payment.derivation_suffix
                     );
-                    let derived = deriver
+                    let expected = deriver
                         .derive_public_key(&protocol, &key_id, &counterparty, true)
                         .map_err(|e| format!("BRC-29 key derivation failed: {e}"))?;
-                    if derived.hash160()[..] != script[3..23] {
+                    if expected.hash160()[..] != script[3..23] {
                         return Err(format!("Derivation mismatch for output {vout}"));
                     }
                 }

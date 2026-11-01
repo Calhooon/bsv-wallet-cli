@@ -60,7 +60,75 @@ fn known(k: u8) -> PublicKey {
         .public_key()
 }
 
-pub fn check(input: Input) {
+/// What a `Built` carrier paid: its output count, the paying output's
+/// index and the hash it pays.
+type Built = (usize, usize, [u8; 20]);
+
+/// The transaction the input carries and, when built, what it paid.
+fn carry(carrier: &Carrier, derived: Option<&PublicKey>) -> (Vec<u8>, Option<Built>) {
+    match carrier {
+        Carrier::Built {
+            outputs,
+            pay_at,
+            to_derived,
+        } => {
+            let n = (*outputs % 4) as usize + 1;
+            let at = *pay_at as usize % n;
+            let paid = match (derived, to_derived) {
+                (Some(key), true) => key.hash160(),
+                _ => [0xdb; 20],
+            };
+            let outs: Vec<(u64, Vec<u8>)> = (0..n)
+                .map(|i| {
+                    let hash = if i == at {
+                        paid
+                    } else {
+                        [u8::try_from(i).expect("at most four outputs") + 1; 20]
+                    };
+                    (1000, p2pkh(hash))
+                })
+                .collect();
+            let parent = raw_tx(&[(&"11".repeat(32), 0)], &[(5000, p2pkh([0x22; 20]))]);
+            let parent_id = txid_of(&parent);
+            let child = raw_tx(&[(&parent_id, 0)], &outs);
+            (atomic_payment(parent, child), Some((n, at, paid)))
+        }
+        Carrier::Raw(bytes) => (bytes.clone(), None),
+    }
+}
+
+/// The toolbox wallet's verdict on a built carrier.
+fn judge(input: &Input, derived: Option<&PublicKey>, built: Built, verdict: &Result<(), String>) {
+    let (n, at, paid) = built;
+    if input.prefix.is_empty() || input.suffix.is_empty() {
+        assert!(verdict.is_err(), "an empty derivation was taken");
+        return;
+    }
+    let index = input.output_index as usize;
+    if index >= n {
+        assert!(
+            verdict.is_err(),
+            "an output index past the outputs was taken"
+        );
+        return;
+    }
+    if index != at {
+        // Another P2PKH output, locked to a hash no remittance derives.
+        assert!(verdict.is_err(), "a payment to another key was taken");
+        return;
+    }
+    match derived {
+        Some(key) if key.hash160() == paid => {
+            assert!(
+                verdict.is_ok(),
+                "a payment to the derived key was refused: {verdict:?}"
+            );
+        }
+        _ => assert!(verdict.is_err(), "a payment to another key was taken"),
+    }
+}
+
+pub fn check(input: &Input) {
     let sender_hex = match &input.sender {
         Sender::Empty => String::new(),
         Sender::Known(k) => known(*k).to_hex(),
@@ -75,31 +143,7 @@ pub fn check(input: Input) {
         Some(None) => None,
     };
 
-    let (tx, built) = match &input.carrier {
-        Carrier::Built {
-            outputs,
-            pay_at,
-            to_derived,
-        } => {
-            let n = (*outputs % 4) as usize + 1;
-            let at = *pay_at as usize % n;
-            let paid = match (&derived, to_derived) {
-                (Some(key), true) => key.hash160(),
-                _ => [0xdb; 20],
-            };
-            let outs: Vec<(u64, Vec<u8>)> = (0..n)
-                .map(|i| {
-                    let hash = if i == at { paid } else { [i as u8 + 1; 20] };
-                    (1000, p2pkh(hash))
-                })
-                .collect();
-            let parent = raw_tx(&[(&"11".repeat(32), 0)], &[(5000, p2pkh([0x22; 20]))]);
-            let parent_id = txid_of(&parent);
-            let child = raw_tx(&[(&parent_id, 0)], &outs);
-            (atomic_payment(parent, child), Some((n, at, paid)))
-        }
-        Carrier::Raw(bytes) => (bytes.clone(), None),
-    };
+    let (tx, built) = carry(&input.carrier, derived.as_ref());
 
     let req = McInternalizeActionReq {
         tx: tx.clone(),
@@ -133,33 +177,7 @@ pub fn check(input: Input) {
     assert_eq!(payment.sender_identity_key, sender_hex);
 
     let verdict = internalize_precheck(&args, root());
-    let Some((n, at, paid)) = built else {
-        return;
-    };
-    if input.prefix.is_empty() || input.suffix.is_empty() {
-        assert!(verdict.is_err(), "an empty derivation was taken");
-        return;
-    }
-    let index = input.output_index as usize;
-    if index >= n {
-        assert!(
-            verdict.is_err(),
-            "an output index past the outputs was taken"
-        );
-        return;
-    }
-    if index != at {
-        // Another P2PKH output, locked to a hash no remittance derives.
-        assert!(verdict.is_err(), "a payment to another key was taken");
-        return;
-    }
-    match &derived {
-        Some(key) if key.hash160() == paid => {
-            assert!(
-                verdict.is_ok(),
-                "a payment to the derived key was refused: {verdict:?}"
-            )
-        }
-        _ => assert!(verdict.is_err(), "a payment to another key was taken"),
+    if let Some(built) = built {
+        judge(input, derived.as_ref(), built, &verdict);
     }
 }
