@@ -10,9 +10,9 @@ pub struct McGetPublicKeyReq {
     pub privileged_reason: Option<String>,
     #[serde(default)]
     pub identity_key: bool,
-    #[serde(default, alias = "protocolID")]
+    #[serde(default, rename = "protocolID", alias = "protocolId")]
     pub protocol_id: Option<serde_json::Value>,
-    #[serde(default, alias = "keyID")]
+    #[serde(default, rename = "keyID", alias = "keyId")]
     pub key_id: Option<String>,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -42,9 +42,9 @@ pub struct McCreateSignatureReq {
     /// A 32-byte digest to sign as-is (ts-sdk `hashToDirectlySign`).
     #[serde(default)]
     pub hash_to_directly_sign: Option<Vec<u8>>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     pub counterparty: String,
 }
@@ -264,9 +264,9 @@ pub struct McVerifySignatureReq {
     #[serde(default)]
     pub data: Option<Vec<u8>>,
     pub signature: Vec<u8>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -283,9 +283,9 @@ pub struct McEncryptReq {
     /// The justification that accompanies a privileged request (#145).
     pub privileged_reason: Option<String>,
     pub plaintext: Vec<u8>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -300,9 +300,9 @@ pub struct McDecryptReq {
     /// The justification that accompanies a privileged request (#145).
     pub privileged_reason: Option<String>,
     pub ciphertext: Vec<u8>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -317,9 +317,9 @@ pub struct McCreateHmacReq {
     /// The justification that accompanies a privileged request (#145).
     pub privileged_reason: Option<String>,
     pub data: Vec<u8>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -335,9 +335,9 @@ pub struct McVerifyHmacReq {
     pub privileged_reason: Option<String>,
     pub data: Vec<u8>,
     pub hmac: Vec<u8>,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     #[serde(default)]
     pub counterparty: Option<String>,
@@ -367,9 +367,9 @@ pub struct McRevealCounterpartyKeyLinkageReq {
 pub struct McRevealSpecificKeyLinkageReq {
     pub counterparty: String,
     pub verifier: String,
-    #[serde(alias = "protocolID")]
+    #[serde(rename = "protocolID", alias = "protocolId")]
     pub protocol_id: serde_json::Value,
-    #[serde(alias = "keyID")]
+    #[serde(rename = "keyID", alias = "keyId")]
     pub key_id: String,
     /// BRC-100's `privileged`, refused when `true` (#145).
     #[serde(default)]

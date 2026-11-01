@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::Json;
 use bsv_sdk::primitives::{to_hex, PublicKey};
 use bsv_sdk::wallet::{
     // Batch 4: Transaction types (have serde — pass through)
@@ -71,6 +70,7 @@ use std::sync::Arc;
 
 pub use super::error::AppError;
 use super::error::Kind;
+use super::json_body::Json;
 use super::page_bounds::check_page_bounds;
 use super::types::*;
 
