@@ -371,6 +371,17 @@ impl Normalizer {
     }
 }
 
+/// This wallet's served version string (`getVersion`, #122 item 6) as its
+/// shape, `bsv-wallet-cli-<major>.<minor>.<patch>`: it moves with the
+/// package's version, never with a run or a behaviour, so a version commit
+/// moves no fixture. `tests/integration/status.rs` pins the exact string.
+pub fn package_version(s: &str) -> String {
+    s.replace(
+        bsv_wallet_cli::server::handlers::WALLET_VERSION,
+        "bsv-wallet-cli-<major>.<minor>.<patch>",
+    )
+}
+
 /// Every run of digits right after `marker` (`after`), or right before it,
 /// replaced by `placeholder`.
 pub fn replace_number(s: &str, marker: &str, placeholder: &str, after: bool) -> String {
