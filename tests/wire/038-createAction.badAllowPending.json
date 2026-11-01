@@ -19,7 +19,7 @@
     }
   },
   "response": {
-    "status": 402,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -28,10 +28,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "INSUFFICIENT_FUNDS",
-      "held": [],
-      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 0 sats offered, 0 coin(s) held back)",
-      "offeredSatoshis": 0
+      "code": "VALIDATION_ERROR",
+      "message": "Invalid argument: allowPending: \"everything\" is not a word of this wallet; the words are \"received\" and {\"received\": [\"txid:vout\", ...]}"
     }
   }
 }
