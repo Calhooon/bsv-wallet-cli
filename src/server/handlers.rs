@@ -129,7 +129,7 @@ fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
 ///
 /// The nine request structs carry both as plain fields, not a flattened
 /// struct: a flattened field loses serde's path, so a non-boolean
-/// `privileged` would be a 422 without its `privileged:` prefix and a
+/// `privileged` would be refused without its `privileged:` prefix and a
 /// JSON array body an "expected struct" error.
 /// They lead the seven calls' structs (an array body's `[0]` is
 /// `privileged`) and close the key-linkage calls' as before.

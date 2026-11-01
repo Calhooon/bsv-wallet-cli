@@ -80,5 +80,21 @@ The `v0.19.0-beta.4` announcement carries the consumer fixture diff since
 family). Their requests and the other 46 consumer fixtures are
 byte-identical across that replay. The wire corpus grows from 174 to 176
 fixtures: 175 and 176 are new under the trust settings (#331).
+The #122 divergence rows (items 3 to 7, after `v0.19.0-beta.4`) move
+exactly two consumer fixtures: `dolphinmilk/01-getVersion.json` and
+`low-fleet/02-getVersion.json` answer `bsv-wallet-cli-<major>.<minor>.<patch>`
+(the corpus's shape of `bsv-wallet-cli-0.19.0`) where they answered
+`bsv-wallet-toolbox-0.1.0`. LOW's gate logs the string as a reachability
+probe and parses nothing (`app/src/components/ConnectGate.tsx:376-382`) [X];
+dolphinmilk's GET reads it [D: the sweep; its checkout is not on this host]. Their requests and the other 46 consumer
+fixtures are byte-identical. What no consumer fixture records moves too, and
+its captains should know it: the framework's rejections (a body that does
+not parse, a missing or mistyped field, no JSON content type) are
+`{code, message}` at 400 `VALIDATION_ERROR` where they were text at 400, 422
+and 415; `signAction`'s unknown reference is 400 `VALIDATION_ERROR` where it
+was 501 `NOT_IMPLEMENTED`; and an `allowPending` value other than
+`"received"` or the scoped object is 400 `VALIDATION_ERROR` where it was
+quietly off (the MCP's string parameter reaches the same door; the CLI's
+flag never took another word).
 External consumers stay on their recorded
 versions until their captains move them.

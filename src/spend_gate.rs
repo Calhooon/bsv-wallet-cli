@@ -345,7 +345,7 @@ pub fn allow_pending(word: Option<&str>) -> bool {
 }
 
 /// The refusal of an `allowPending` value that is not a word of this
-/// wallet: the value as sent (its first 64 bytes; the body has no cap at
+/// wallet: the value as sent (at most 64 bytes of it; the body has no cap at
 /// this door), then the words.
 fn not_a_word(value: &serde_json::Value) -> String {
     let mut shown = value.to_string();
