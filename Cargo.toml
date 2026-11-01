@@ -54,6 +54,13 @@ default = []
 tls = ["axum-server"]
 
 [dev-dependencies]
+# tests/fuzz_replay.rs compiles fuzz/src/lib.rs (the fuzz targets'
+# properties) by `#[path]` (#396): `arbitrary` decodes brc29_remittance's
+# seeds as the fuzz binary does, pinned to fuzz/Cargo.lock's version so a
+# seed decodes to the same input on both sides; `encoding_rs` is
+# explorer_bodies' reading of a body as `reqwest`'s `text()` does.
+arbitrary = { version = "=1.5.0", features = ["derive"] }
+encoding_rs = "0.8"
 async-trait = "0.1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"

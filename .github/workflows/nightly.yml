@@ -269,9 +269,10 @@ jobs:
       # create_action_signed run lines of spend_gate.rs and tracker_host.rs;
       # internalize_action (server/post_word.rs alone) and list_outputs run
       # no line of the five, so NO_FLOORED_BENCHES leaves them out (cargo
-      # llvm-cov per bench at cd53740). The five fuzz targets of fuzz/ are
-      # judges outside this oracle: their own workspace under nightly rustc,
-      # which the package's cargo test cannot build (#396, docs/NIGHTLY.md).
+      # llvm-cov per bench at cd53740). The five fuzz targets' properties
+      # join as tests/fuzz_replay.rs, which replays each target's committed
+      # seeds through the function its fuzz_target! calls, on stable (#396,
+      # docs/NIGHTLY.md).
       #
       # The limit: the whole oracle's baseline took more than 300 s on every
       # shard of run 41253247135, so no fixed --timeout; the baseline always

@@ -2,7 +2,9 @@
 //! tests (`src/test_support/tx.rs`, by `#[path]`), the BEEF builders over
 //! them, and the one step of a door that is written inline in the
 //! toolbox's async `Wallet::internalize_action`, so a target cannot call it
-//! without a wallet and a store.
+//! without a wallet and a store; and each target's property (`props`),
+//! which the package's `tests/fuzz_replay.rs` compiles from this file by
+//! `#[path]` and replays on stable over the committed seeds (#396).
 //!
 //! The mirror names the lines it copies. It drifts when its source changes;
 //! `docs/NIGHTLY.md` names it, and the cure is a function in the toolbox
@@ -29,6 +31,9 @@ pub fn synthetic_root() -> PrivateKey {
 #[path = "../../src/test_support/tx.rs"]
 mod tx;
 pub use tx::{p2pkh, raw_tx, txid_of};
+
+/// Each target's property, the body its `fuzz_target!` calls.
+pub mod props;
 
 /// `raw` under a one-transaction block's path at `height`, as BEEF bytes.
 pub fn proven_beef(raw: Vec<u8>, height: u32) -> Vec<u8> {
