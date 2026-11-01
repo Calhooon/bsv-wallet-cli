@@ -1,0 +1,26 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "content-type": "text/plain",
+      "origin": "http://wire.test"
+    },
+    "raw": "{\"data\":[1],\"protocolID\":[2,\"wire test\"],\"keyID\":\"1\",\"counterparty\":\"self\"}"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Expected request with `Content-Type: application/json`"
+    }
+  }
+}
