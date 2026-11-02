@@ -2,8 +2,8 @@
 
 Runnable scenarios for verifying wallet health after UTXO fixes.
 All commands assume a funded `bsv-wallet daemon` running on port 3322.
-Each call to the wallet sends `Origin: http://localhost`, which the daemon's
-`ALLOWED_ORIGINS` must list (the browser gate, #411).
+Each call to the wallet sends `Origin: http://localhost`, whose originator,
+`localhost`, the daemon's `ALLOWED_ORIGINS` must list (the browser gate, #411).
 
 ```
 WALLET=http://localhost:3322
