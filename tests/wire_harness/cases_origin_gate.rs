@@ -4,7 +4,7 @@
 //! `http://wire.test` and `https://app.example` (`worlds.rs`).
 use serde_json::json;
 
-use super::recorder::{post, Recorder};
+use super::recorder::{options, post, Recorder};
 
 const UNLISTED: &str = "http://unlisted.test";
 
@@ -25,4 +25,11 @@ pub(crate) async fn record(r: &mut Recorder) {
         )
         .await;
     assert_eq!(denied.value("/code"), "ERR_PERMISSION_DENIED");
+    // Its preflight: refused before CORS answers it.
+    r.case(
+        "gate.options.notListed",
+        "fresh",
+        options("/encrypt", "POST").header("origin", UNLISTED),
+    )
+    .await;
 }
