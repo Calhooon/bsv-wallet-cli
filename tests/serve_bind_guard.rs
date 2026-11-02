@@ -6,7 +6,8 @@
 //! `--allow-no-token` permits the open bind deliberately; loopback without a
 //! token is unchanged. The binary is run as a user runs it: a throwaway wallet
 //! made by `init` in a temp dir, `CHAINTRACKS_URL=off` and the served loop off,
-//! so nothing reaches the network.
+//! so nothing reaches the network. The same scene pins the start refused by a
+//! bad `ALLOWED_ORIGINS` entry (#433).
 
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
@@ -194,5 +195,45 @@ fn loopback_without_a_token_binds_as_before() {
         let (status, stderr) = run_until_listening_or_exit(cmd);
         assert!(status.is_none(), "{bind:?}: serve exited: {stderr}");
         assert!(stderr.contains("listening on"), "{bind:?}: {stderr}");
+    }
+}
+
+/// #433: a bad `ALLOWED_ORIGINS` entry refuses the start by its rule, one
+/// line on stderr and exit 1, before any socket is opened. The gate's
+/// constructors return the rule instead of panicking; the text below is the
+/// one `serve`, `daemon` and `ui` printed at beta 0aeb7f1, before that
+/// change, byte for byte.
+#[test]
+fn a_bad_allowed_origins_entry_refuses_the_start_by_its_rule() {
+    const SCHEME: &str = "Error: ALLOWED_ORIGINS is \"http://localhost\", which is not an \
+        originator: a domain name with an optional port, without a URL scheme (`localhost`, \
+        `app.example:8443`; the reference's prepareOriginator); this entry carries a scheme: \
+        set it so, or unset it for the default\n";
+    const PATH: &str = "Error: ALLOWED_ORIGINS is \"localhost/app\", which is not an \
+        originator: a domain name with an optional port, without credentials, a path, a query \
+        parameter or a fragment (the reference's prepareOriginator): set it so, or unset it \
+        for the default\n";
+    let dir = TempDir::new().expect("temp dir");
+    init(&dir);
+    let port = free_port().to_string();
+    for command in [
+        ["serve", "--port"],
+        ["daemon", "--port"],
+        ["ui", "--ui-port"],
+    ] {
+        for (allowed, shown) in [
+            ("localhost,http://localhost", SCHEME),
+            ("localhost/app", PATH),
+        ] {
+            let mut cmd = wallet(&dir);
+            cmd.env("ALLOWED_ORIGINS", allowed)
+                .args(["--db", "wallet.db"])
+                .args(command)
+                .arg(&port);
+            let (status, stderr) = run_until_listening_or_exit(cmd);
+            let status = status.unwrap_or_else(|| panic!("{command:?} served: {stderr}"));
+            assert_eq!(status.code(), Some(1), "{command:?} {allowed}: {stderr}");
+            assert_eq!(stderr, shown, "{command:?} {allowed}");
+        }
     }
 }
