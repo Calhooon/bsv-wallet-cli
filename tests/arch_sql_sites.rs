@@ -1,6 +1,6 @@
 //! Rule A2 (#73): SQL lives behind the storage boundary. The boundary is
-//! `src/store.rs` (the crate's own tables beside the toolbox's) and the
-//! toolbox itself; every other file that holds an `sqlx` query call (by
+//! `src/store.rs` and its module `src/store/origin_grants.rs` (the crate's
+//! own tables beside the toolbox's, #414) and the toolbox itself; every other file that holds an `sqlx` query call (by
 //! path, `sqlx::query(`, or bare after a `use sqlx::query`, and that `use`
 //! itself) or an SQL statement in a string literal is listed with its
 //! count, and #89 moves them behind the boundary.
@@ -10,7 +10,7 @@ mod arch_support;
 use arch_support::{calls, count, imports, Line, Rule};
 
 /// The storage boundary.
-const BOUNDARY: &[&str] = &["src/store.rs"];
+const BOUNDARY: &[&str] = &["src/store.rs", "src/store/origin_grants.rs"];
 
 /// The words that open an SQL statement, as they appear in a literal.
 const STATEMENTS: &[&str] = &[
