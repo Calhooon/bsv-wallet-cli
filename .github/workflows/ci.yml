@@ -429,6 +429,10 @@ jobs:
           python3 -B tools/test_scoreboard.py
           python3 -B tools/test_fuzz_record.py
           python3 -B tools/test_mutants_hermetic.py
+          # The Nightly's two modes (#462): the plan's changed set and the
+          # score's carried figures and refusals.
+          python3 -B tools/test_changed_set.py
+          python3 -B tools/test_mutants_score.py
           # The Mutants shards' left-out targets (#401): the recorded reach
           # holds every entry of the list at zero lines of a floored file.
           python3 -B tools/test_no_floored.py

@@ -26,8 +26,30 @@ name: Nightly
 # (`gh workflow run nightly.yml --ref beta`), before each minor tag as RELEASING
 # names it and on demand; a scheduled night cost about twenty-five runner-hours,
 # starved the pull requests' checks and read in the afternoon.
+#
+# Two modes (#462, the owner's word through the keeper of 2026-11-02: "even
+# the nightly... is all that necessary? or maybe a fraction"). INCREMENTAL,
+# the default, mutates only the floored files whose figure may have moved
+# since the last complete run (the job `plan`, .github/nightly/changed_set.py)
+# and carries every other file's figure from that run with its run and sha;
+# its fuzz targets run FUZZ_SECONDS_INCREMENTAL each and the bench runs only
+# when `bench` is set. COMPLETE mutates every floored file in MUTANTS_SHARDS
+# shards, fuzzes each target an hour and runs the bench: the night of record,
+# dispatched at each pin (docs/RELEASING.md), and the only night that may move
+# a floor. `gh workflow run nightly.yml --ref beta` is an incremental night;
+# `-f mode=complete` the complete one; `-f bench=true` the week's bench.
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'incremental (the changed floored files; the rest carried from the last complete run) or complete (every floored file; at each pin)'
+        type: choice
+        options: [incremental, complete]
+        default: incremental
+      bench:
+        description: 'run the bench job (the captain sets it once a week; a complete night runs it regardless)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,7 +84,19 @@ env:
   # nightly is proven to build and run the five targets, never by drift.
   FUZZ_NIGHTLY: nightly-2026-10-30
   CARGO_MUTANTS_VERSION: 27.1.0
+  # A complete night's shards; an incremental night's plan deals its changed
+  # files' mutants at most 19 a shard (the complete night's own sizing, 923 in
+  # fifty) and never more than this (#462).
   MUTANTS_SHARDS: 50
+  # The fuzz budget per target (#462): an hour on a complete night; on an
+  # incremental night ten minutes, from the execution rates of run 41413946663
+  # (docs/scoreboard/fuzz.json, an hour each): allow_pending 41,463 a second,
+  # served_json 32,571, beef_reader 3,494, brc29_remittance 592,
+  # explorer_bodies 3.45, so ten minutes is 2,070 cases of the slowest target
+  # (its 18 seeds and the hour's 379 additions, each replayed several times
+  # over) and 355,000 of brc29_remittance's.
+  FUZZ_SECONDS_COMPLETE: 3600
+  FUZZ_SECONDS_INCREMENTAL: 600
   # The hermetic pass's shards (#393; docs/NIGHTLY.md: the count from the
   # suite's measured time and the cargo pass's survivors) and its
   # cargo-mutants: the upstream commit that makes -F select struct-field
@@ -78,6 +112,50 @@ env:
   CARGO_LLVM_COV_VERSION: 0.6.14
 
 jobs:
+  # The night's plan (#462): which floored files tonight mutates, in how many
+  # shards, under which cargo test selection. A complete night: every floored
+  # file in MUTANTS_SHARDS shards. An incremental night: the floored files
+  # changed since the last complete run (docs/scoreboard/mutants.json names
+  # it), every floored file a changed test reaches (by the reach record of
+  # #401; a target it does not measure reaches all of them), and the whole set
+  # when Cargo.lock, a workspace manifest or this workflow changed; an empty
+  # set plans no shard and the night carries every figure, saying so. The
+  # plan's table goes to the run's summary and plan.json to the artifact
+  # nightly-plan, which the score reads.
+  plan:
+    name: The night's plan
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      files: ${{ steps.plan.outputs.files }}
+      shards: ${{ steps.plan.outputs.shards }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      empty: ${{ steps.plan.outputs.empty }}
+      selection: ${{ steps.plan.outputs.selection }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The dispatch's commit, never the ref (#423), with the history the
+          # diff against the last complete run's commit needs.
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Plan the night
+        id: plan
+        env:
+          MODE: ${{ inputs.mode || 'incremental' }}
+        run: |
+          python3 -B .github/nightly/changed_set.py --mode "$MODE" --max-shards "$MUTANTS_SHARDS" \
+            --out plan.json --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-plan
+          path: plan.json
+          if-no-files-found: error
+          retention-days: 30
+
   fuzz:
     name: Fuzz (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -110,21 +188,24 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo +"$FUZZ_NIGHTLY" install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
 
-      # One hour on the checked-in corpus. New entries land in new/, crashes
+      # The night's budget on the checked-in corpus: FUZZ_SECONDS_COMPLETE (an
+      # hour) on a complete night, FUZZ_SECONDS_INCREMENTAL (ten minutes)
+      # otherwise. New entries land in new/, crashes
       # in crashes/; the step records the exit and whether libFuzzer wrote
       # an input (a crash, a timeout, out of memory) and never fails, so the
       # corpus and the crash are uploaded before the job's verdict. A
       # non-zero exit with no input (the target did not build, cargo-fuzz
       # failed) is not a crash: the job fails and no issue is opened.
-      - name: Fuzz for an hour
+      - name: Fuzz for the night's budget
         id: fuzz
         env:
           TARGET: ${{ matrix.target }}
+          FUZZ_SECONDS: ${{ inputs.mode == 'complete' && env.FUZZ_SECONDS_COMPLETE || env.FUZZ_SECONDS_INCREMENTAL }}
         run: |
           mkdir -p "new/$TARGET" "crashes/$TARGET"
           set +e
           cargo +"$FUZZ_NIGHTLY" fuzz run "$TARGET" "new/$TARGET" "fuzz/corpus/$TARGET" -- \
-            -max_total_time=3600 -timeout=60 -print_final_stats=1 \
+            -max_total_time="$FUZZ_SECONDS" -timeout=60 -print_final_stats=1 \
             -artifact_prefix="crashes/$TARGET/" 2>&1 | tee fuzz.log
           status=${PIPESTATUS[0]}
           echo "exit=$status" >> "$GITHUB_OUTPUT"
@@ -248,8 +329,14 @@ jobs:
   # ten timeouts is 461 minutes as forty slices, 517 as fifty slices, 363
   # as forty dealt round-robin and 330 as fifty dealt round-robin, the one
   # shape under the job's 340 minutes (docs/NIGHTLY.md).
+  #
+  # The shards, the files and the selection are the plan's (#462): a complete
+  # night's fifty over the five files, an incremental night's few over its
+  # changed files alone; no shard when the plan is empty.
   mutants:
     name: Mutants (shard ${{ matrix.shard }})
+    needs: plan
+    if: needs.plan.outputs.shards != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 340
     strategy:
@@ -257,10 +344,8 @@ jobs:
       # Six shards at a time, so a night leaves runners for the PR checks (#144).
       max-parallel: 6
       matrix:
-        # 0 to MUTANTS_SHARDS - 1; the score job counts the same fifty.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-                40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+        # 0 to the plan's shards - 1; the score job counts the same.
+        shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -320,40 +405,32 @@ jobs:
       # shard goes on. 4 is the unmutated baseline failing, so no mutant was
       # tested, and 1 a usage error: the shard fails, never green with an
       # empty outcomes.json. Any other code fails it too.
+      # The selection is the plan's (.github/nightly/changed_set.py): --lib
+      # --bins, a --test for every target under tests/ and a --bench for
+      # every bench, less the left-out list's entries.
       - name: Mutate the hot paths
+        env:
+          SHARDS: ${{ needs.plan.outputs.shards }}
+          FILES: ${{ needs.plan.outputs.files }}
+          SELECTION: ${{ needs.plan.outputs.selection }}
         run: |
-          NO_FLOORED_CODE=$(python3 -B .github/nightly/no_floored.py list test)
-          NO_FLOORED_BENCHES=$(python3 -B .github/nightly/no_floored.py list bench)
-          selection="--lib --bins"
-          for main in tests/*.rs tests/*/main.rs; do
-            case "$main" in
-              */main.rs) name=$(basename "$(dirname "$main")") ;;
-              *) name=$(basename "$main" .rs) ;;
-            esac
-            case " $NO_FLOORED_CODE " in *" $name "*) continue ;; esac
-            selection="$selection --test $name"
-          done
-          for bench in benches/*.rs; do
-            name=$(basename "$bench" .rs)
-            case " $NO_FLOORED_BENCHES " in *" $name "*) continue ;; esac
-            selection="$selection --bench $name"
-          done
-          echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS: cargo test --locked $selection"
-          echo "left out (no line of a floored file): $NO_FLOORED_CODE $NO_FLOORED_BENCHES"
+          selection="$SELECTION"
+          files=()
+          for f in $FILES; do files+=(-f "$f"); done
+          echo "shard ${{ matrix.shard }}/$SHARDS over ${FILES}: cargo test --locked $selection"
+          echo "left out (no line of a floored file): $(python3 -B .github/nightly/no_floored.py list test) $(python3 -B .github/nightly/no_floored.py list bench)"
           status=0
           # $selection is split into its words on purpose.
           # shellcheck disable=SC2086
-          cargo mutants \
-            -f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs \
-            -f src/broadcast_verify.rs -f src/explorers.rs \
-            --shard "${{ matrix.shard }}/$MUTANTS_SHARDS" --sharding round-robin \
+          cargo mutants "${files[@]}" \
+            --shard "${{ matrix.shard }}/$SHARDS" --sharding round-robin \
             --baseline run --timeout-multiplier 2 \
             --build-timeout 900 --test-workspace false --output out \
             -- --locked $selection || status=$?
           case "$status" in
             0|2|3)
               echo "cargo-mutants exit $status: mutants tested; the score job judges"
-              echo "shard ${{ matrix.shard }}/$MUTANTS_SHARDS exit $status; cargo test --locked $selection" > out/mutants.out/shard-ok ;;
+              echo "shard ${{ matrix.shard }}/$SHARDS exit $status; cargo test --locked $selection" > out/mutants.out/shard-ok ;;
             4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
             1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
@@ -433,10 +510,17 @@ jobs:
   # never built, so neither is judged again. Only after all fifty cargo
   # shards succeeded (needs: a failed or cancelled shard skips this job, and
   # the markers are checked as the score job checks them).
+  #
+  # The hermetic pass's shards (#462): a complete night keeps
+  # MUTANTS_HERMETIC_SHARDS; an incremental night deals its survivors twenty
+  # a shard, at most MUTANTS_HERMETIC_SHARDS; no survivor, no hermetic shard.
   mutants-survivors:
     name: Mutants survivors
-    needs: mutants
+    needs: [plan, mutants]
     runs-on: ubuntu-latest
+    outputs:
+      hermetic_shards: ${{ steps.collect.outputs.hermetic_shards }}
+      hermetic_matrix: ${{ steps.collect.outputs.hermetic_matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -452,9 +536,13 @@ jobs:
           path: outcomes
 
       - name: Collect the survivors of the cargo pass
+        id: collect
+        env:
+          SHARDS: ${{ needs.plan.outputs.shards }}
+          MODE: ${{ needs.plan.outputs.mode }}
         run: |
           missing=""
-          for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
+          for shard in $(seq 0 $((SHARDS - 1))); do
             [ -f "outcomes/mutants-$shard/shard-ok" ] || missing="$missing $shard"
           done
           if [ -n "$missing" ]; then
@@ -466,6 +554,18 @@ jobs:
           mkdir -p survivors
           mv survivors.txt survivors/
           git rev-parse HEAD > survivors/sha
+          n=$(grep -c . survivors/survivors.txt || true)
+          if [ "$n" -eq 0 ]; then
+            h=0
+          elif [ "$MODE" = complete ]; then
+            h=$MUTANTS_HERMETIC_SHARDS
+          else
+            h=$(( (n + 19) / 20 ))
+            [ "$h" -le "$MUTANTS_HERMETIC_SHARDS" ] || h=$MUTANTS_HERMETIC_SHARDS
+          fi
+          echo "hermetic_shards=$h" >> "$GITHUB_OUTPUT"
+          echo "hermetic_matrix=$(python3 -c "import json; print(json.dumps(list(range($h))))")" >> "$GITHUB_OUTPUT"
+          echo "$n survivors, $h hermetic shard(s) ($MODE night)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -497,7 +597,8 @@ jobs:
   # carrying the word refuses the shard.
   mutants-hermetic:
     name: Mutants-hermetic (shard ${{ matrix.shard }})
-    needs: mutants-survivors
+    needs: [plan, mutants-survivors]
+    if: needs.mutants-survivors.outputs.hermetic_shards != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 340
     env:
@@ -506,8 +607,8 @@ jobs:
       fail-fast: false
       max-parallel: 6
       matrix:
-        # 0 to MUTANTS_HERMETIC_SHARDS - 1; the score job counts the same six.
-        shard: [0, 1, 2, 3, 4, 5]
+        # 0 to the survivors job's hermetic_shards - 1; the score job counts the same.
+        shard: ${{ fromJSON(needs.mutants-survivors.outputs.hermetic_matrix) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -559,6 +660,8 @@ jobs:
       - name: Judge the shard's survivors by the hermetic suite
         env:
           SHARD: ${{ matrix.shard }}
+          HSHARDS: ${{ needs.mutants-survivors.outputs.hermetic_shards }}
+          FILES: ${{ needs.plan.outputs.files }}
           E2E_HERMETIC_ORACLE: '1'
           E2E_WALLET_TMP: ${{ runner.temp }}/e2e
           BSV_WALLET_MCP_BIN: ${{ github.workspace }}/target/release/bsv-wallet-mcp
@@ -568,11 +671,11 @@ jobs:
         run: |
           mkdir -p "$E2E_WALLET_TMP" out/mutants.out
           python3 .github/nightly/mutants_hermetic.py shard survivors.txt "$SHARD" \
-            "$MUTANTS_HERMETIC_SHARDS" shard.names shard.re
+            "$HSHARDS" shard.names shard.re
           cp shard.names out/mutants.out/
           if [ ! -s shard.names ]; then
-            echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS: no survivor dealt here"
-            echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS: no survivor" > out/mutants.out/shard-ok
+            echo "hermetic shard $SHARD/$HSHARDS: no survivor dealt here"
+            echo "hermetic shard $SHARD/$HSHARDS: no survivor" > out/mutants.out/shard-ok
             exit 0
           fi
           echo "the stability check: the unmutated suite once, before cargo-mutants' baseline"
@@ -580,8 +683,9 @@ jobs:
             echo "::error::the unmutated hermetic suite failed: an unstable suite would read as caught mutants, so the shard judges nothing"
             exit 1
           fi
-          files=(-f src/spend_gate.rs -f src/tracker_host.rs -f src/server/handlers.rs
-                 -f src/broadcast_verify.rs -f src/explorers.rs)
+          # The plan's files: the cargo pass mutated these alone (#462).
+          files=()
+          for f in $FILES; do files+=(-f "$f"); done
           select=()
           while IFS= read -r rx; do select+=(-F "$rx"); done < shard.re
           # The listing colour-free (#435): cargo-mutants reads the
@@ -601,7 +705,7 @@ jobs:
           case "$status" in
             0|2|3)
               echo "cargo-mutants exit $status: the survivors judged; the score job takes the union"
-              echo "hermetic shard $SHARD/$MUTANTS_HERMETIC_SHARDS exit $status; cargo test --locked --test e2e_hermetic (serve without a tracker pass, the classic ARC stub, the explorers walled)" > out/mutants.out/shard-ok ;;
+              echo "hermetic shard $SHARD/$HSHARDS exit $status; cargo test --locked --test e2e_hermetic (serve without a tracker pass, the classic ARC stub, the explorers walled)" > out/mutants.out/shard-ok ;;
             4) echo "::error::cargo-mutants exit 4: the unmutated baseline failed, no mutant was tested"; exit 1 ;;
             1) echo "::error::cargo-mutants exit 1: a usage error, no mutant was tested"; exit 1 ;;
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
@@ -628,7 +732,7 @@ jobs:
 
   mutants-score:
     name: Mutation score
-    needs: [mutants, mutants-survivors, mutants-hermetic, mutants-reach]
+    needs: [plan, mutants, mutants-survivors, mutants-hermetic, mutants-reach]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -663,35 +767,56 @@ jobs:
       # And the left-out targets' reach job (#401): a night whose excluded
       # targets were not measured at zero reach ran an oracle that may lack a
       # judge.
+      # The counts are the plan's (#462): its cargo shards and the survivors
+      # job's hermetic shards. An empty plan ran no shard and is scored as a
+      # night that carries every figure; a night with no survivor runs no
+      # hermetic shard and needs none.
       - name: Refuse a night with a shard that did not succeed
         env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          EMPTY: ${{ needs.plan.outputs.empty }}
+          SHARDS: ${{ needs.plan.outputs.shards }}
+          HSHARDS: ${{ needs.mutants-survivors.outputs.hermetic_shards }}
           SHARDS_RESULT: ${{ needs.mutants.result }}
           SURVIVORS_RESULT: ${{ needs.mutants-survivors.result }}
           HERMETIC_RESULT: ${{ needs.mutants-hermetic.result }}
           REACH_RESULT: ${{ needs.mutants-reach.result }}
         run: |
+          if [ "$PLAN_RESULT" != "success" ]; then
+            echo "::error::the night's plan concluded $PLAN_RESULT; a night without a plan is never scored"
+            exit 1
+          fi
           if [ "$REACH_RESULT" != "success" ]; then
             echo "::error::the left-out targets' reach job concluded $REACH_RESULT; a night whose left-out targets are not measured at zero reach is never scored"
             exit 1
           fi
+          if [ "$EMPTY" = "true" ]; then
+            echo "the plan is empty: no floored file changed since the last complete run and no test or dependency reaches one; no shard ran and the night carries every figure" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           missing=""
-          for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
+          for shard in $(seq 0 $((SHARDS - 1))); do
             [ -f "outcomes/mutants-$shard/shard-ok" ] || missing="$missing $shard"
           done
           if [ "$SHARDS_RESULT" != "success" ] || [ -n "$missing" ]; then
             echo "::error::the Mutants shards concluded $SHARDS_RESULT; shards without a success marker:${missing:- none}; a partial night is never scored"
             exit 1
           fi
-          echo "all $MUTANTS_SHARDS Mutants shards succeeded"
+          echo "all $SHARDS Mutants shards succeeded"
+          if [ "$SURVIVORS_RESULT" = "success" ] && [ "$HSHARDS" = "0" ]; then
+            echo "no survivor of the cargo pass: the hermetic pass has nothing to judge"
+            echo "- the cargo pass: \`$(cut -d';' -f2- outcomes/mutants-0/shard-ok | sed 's/^ //')\`; no survivor, no hermetic pass" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           missing=""
-          for shard in $(seq 0 $((MUTANTS_HERMETIC_SHARDS - 1))); do
+          for shard in $(seq 0 $((HSHARDS - 1))); do
             [ -f "hermetic/hermetic-mutants-$shard/shard-ok" ] || missing="$missing $shard"
           done
           if [ "$SURVIVORS_RESULT" != "success" ] || [ "$HERMETIC_RESULT" != "success" ] || [ -n "$missing" ]; then
             echo "::error::the survivors' job concluded $SURVIVORS_RESULT and the Mutants-hermetic shards $HERMETIC_RESULT; hermetic shards without a success marker:${missing:- none}; a night without its hermetic pass is never scored"
             exit 1
           fi
-          echo "all $MUTANTS_HERMETIC_SHARDS Mutants-hermetic shards succeeded; the score judges the night"
+          echo "all $HSHARDS Mutants-hermetic shards succeeded; the score judges the night"
           {
             echo "## The targets the night ran under"
             echo
@@ -703,9 +828,15 @@ jobs:
       # The survivors' commit, after the refusal above (a failed survivors'
       # job uploads none): the score's --sha reads it beside the shards'.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.empty != 'true'
         with:
           name: cargo-survivors
           path: survivors
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-plan
+          path: plan
 
       # A night is one tree (#423): before any figure is judged,
       # mutants_score.py --sha refuses the night, naming each shard and its
@@ -728,6 +859,16 @@ jobs:
       # - server/handlers.rs: 100.0 measured, floor 100 (#174).
       # - broadcast_verify.rs: 86.7 measured, floor 86 (#173).
       # - explorers.rs: 82.6 measured, floor 82 (#124).
+      #
+      # The two modes (#462): mutants_score.py --plan --record scores the
+      # plan's files and carries every other floored file's figure from the
+      # record's last complete run, naming the run and sha per file. Before
+      # any figure it refuses a carried figure whose base is not the last
+      # complete run, a plan against another base, a floor moved on an
+      # incremental night (a floor moves only on a complete run) and an
+      # outcome outside the plan. The night's record, every file with its
+      # source, run and sha, is the artifact night-record, which the captain
+      # commits over docs/scoreboard/mutants.json when the night is of record.
       - name: Score per file against the floors
         env:
           MUTANTS_FLOORS: >-
@@ -736,9 +877,28 @@ jobs:
              "src/server/handlers.rs": 100,
              "src/broadcast_verify.rs": 86,
              "src/explorers.rs": 82}
+          EMPTY: ${{ needs.plan.outputs.empty }}
+          HSHARDS: ${{ needs.mutants-survivors.outputs.hermetic_shards }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python3 .github/nightly/mutants_score.py --sha "$GITHUB_SHA" --survivors survivors \
-            --hermetic hermetic outcomes
+          mkdir -p night
+          args=(--plan plan/plan.json --record docs/scoreboard/mutants.json --run "$RUN"
+                --write night/mutants.json --sha "$GITHUB_SHA")
+          if [ "$EMPTY" != "true" ]; then
+            args+=(--survivors survivors)
+            [ "$HSHARDS" = "0" ] || args+=(--hermetic hermetic)
+            args+=(outcomes)
+          fi
+          python3 .github/nightly/mutants_score.py "${args[@]}"
+
+      - name: Upload the night's record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: night-record
+          path: night/mutants.json
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The bench job's measure on the dispatched night (#142; the owner's word of
   # 2026-11-01: one nightly bench job on beta, an append by PR, nothing else
@@ -757,8 +917,12 @@ jobs:
   # bench-night-<run id>-<CPU key> is what the captain appends to
   # benches/baseline.json, one night per PR: tools/bench-compare --append
   # (docs/BENCHES.md).
+  #
+  # Weekly (#462): the bench runs when the dispatch sets `bench` (the captain,
+  # once a week; #303 allows no schedule) or on a complete night.
   bench:
     name: Bench (the night's candidate baseline)
+    if: inputs.bench || inputs.mode == 'complete'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
