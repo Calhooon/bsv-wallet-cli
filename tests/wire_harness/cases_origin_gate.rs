@@ -42,4 +42,11 @@ pub(crate) async fn record(r: &mut Recorder) {
             .header("originator", "wire.test"),
     )
     .await;
+    // An Originator header naming another host than the Origin.
+    r.case(
+        "gate.encrypt.originatorDisagrees",
+        "fresh",
+        post("/encrypt", encrypt()).header("originator", "evil.example"),
+    )
+    .await;
 }
