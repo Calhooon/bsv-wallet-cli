@@ -2284,10 +2284,12 @@ re-declared modules the library owns; 301 repeats of 1,224, three files not
 two), the score refusing a duplicated outcome name, the differential's six
 log-target differences accepted as the named cosmetic change; PR 426 (#401;
 a `mutants-reach` job measuring the left-out targets' reach once a night,
-about 15 minutes) reviewed merge at 0.88 and open, CLEAN, at 08:3xZ. The
-next night is dispatched on beta when PR 426 lands; no Nightly run newer
-than 41340299977 exists at this entry. #395 (the fuzz jobs' dated nightly,
-PR 398), #393, #142 and #423 close on that night's evidence.
+about 15 minutes) reviewed merge at 0.88 and landed at 08:3xZ (beta
+2ca0173); #401 closes at the next night's reach job. The next night was
+dispatched on beta 2ca0173 as Nightly run 41413946663 (queued 08:33:31Z)
+and noted on #393, #395, #142, #396, #423 and #401; its record is to come.
+#395 (the fuzz jobs' dated nightly, PR 398), #393, #142, #423 and #401
+close on that night's evidence.
 
 The wave of eight, launched at 19:1xZ after #310's landing, each a lane with
 one cold review: #392 (PR 397), #395 (PR 398, beta 843fcf1), #142 (PR 399,
@@ -2369,14 +2371,14 @@ colon (#416; the captain's scratch chains already do); a consumer-facing
 announcement is the CLI captain's text, carried verbatim (the keeper's).
 
 Open after the morning, in order: PR 419 on the owner's two words (24.0);
-PR 426's landing, then the next night dispatched on beta and its record
-(the hermetic shards, the bench job and the dated fuzz nightly in it; #393,
-#395, #142, #423 close on it); #420 (explorers.rs's four survivors, a tests
+the record of Nightly run 41413946663 (the hermetic shards, the bench
+job, the dated fuzz nightly and the reach job in it; #393, #395, #142,
+#423 and #401 close on it); #420 (explorers.rs's four survivors, a tests
 lane; the floor stays 82); #414 ((c), behind (b)); #416; the next pin's
 items on #386: bsv-rs #613 (the seven `validate_<call>_args`) and #620
 (`PushDrop::decode`), the toolbox's #554, #186 and #142, and #576 (the day
 line's names); 23.6, the reverify read against a copy of the production
 store; the production upgrade with an upgrade note naming every caller
 (the Origin header and ALLOWED_ORIGINS for the SwiftBar plugins, the
-funder, 3322 and LOW's node-side callers). The lines: beta 678a9ff; main at
-this entry's parent.
+funder, 3322 and LOW's node-side callers). The lines: beta 2ca0173; main
+7d587e4.
