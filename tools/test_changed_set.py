@@ -5,8 +5,11 @@ shards its mutants need, and carries the rest; a test change reaches every
 floored file when the reach record does not measure the target, the files it
 ran a line of when it does, and none for a left-out target; a lockfile or a
 workspace manifest change brings in the whole set; no change plans no shard
-(the night carries everything); a complete night mutates every file in
-MUTANTS_SHARDS shards; a record without a mode is refused; and the git diff
+(the night carries everything); a file under src/, read by the crate's
+module tree (#464's review: a test module reaches the floored files its tests
+can run by name, other code the whole set), on a planted crate and on this
+repository's own; a complete night mutates every file in MUTANTS_SHARDS
+shards; a record without a mode is refused; and the git diff
 against the record's last complete run, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_changed_set.py
@@ -53,6 +56,37 @@ REACH = {"issue": 401, "commit": SHA, "floored": ["src/a.rs", "src/b.rs", "src/c
 ]}
 
 
+# A crate shaped like the reviewers' cases (#464): floored modules with test
+# modules in their module directories (`mod tests;`, a subdirectory, a
+# `#[path]`), a module the lib compiles outside its tests, test-only helpers,
+# a file include_str! reads, and a file a test target compiles by #[path].
+TEST = "    #[test]\n    fn t() {}\n"
+CRATE = {
+    "src/lib.rs": ("pub mod a;\npub mod b;\npub mod c;\npub mod other;\n"
+                   "#[cfg(test)]\nmod support;\n#[cfg(test)]\nmod unused;\n#[cfg(test)]\nmod tracker;\n"),
+    "src/main.rs": "mod cli;\nfn main() { cli::run(); bsv_wallet_cli::other::f(); }\n",
+    "src/cli.rs": "pub fn run() {}\n",
+    "src/a.rs": ("mod from;\npub fn f() { from::g(); }\n#[cfg(test)]\nmod tests;\n"
+                 "#[cfg(test)]\n#[path = \"a_extra_tests.rs\"]\nmod extra;\n"),
+    "src/a/from.rs": "pub fn g() {}\n",
+    "src/a/tests.rs": "use super::*;\nmod carried;\n" + TEST,
+    "src/a/tests/carried.rs": "use super::*;\n" + TEST,
+    "src/a_extra_tests.rs": "use super::f;\n" + TEST,
+    "src/b.rs": "pub fn f() {}\n#[cfg(test)]\nmod tests;\n",
+    "src/b/tests.rs": "use crate::{c, support};\n#[test]\nfn t() { c::f(); support::h(); }\n",
+    "src/c.rs": "pub fn f() {}\n",
+    "src/other.rs": ("// A string is not a name: \"crate::a::f\"\npub fn f() {}\n"
+                     "pub const DATA: &str = include_str!(\"data.json\");\n#[cfg(test)]\nmod tests;\n"),
+    "src/other/tests.rs": "#[test]\nfn t() { crate::c::f(); }\n",
+    "src/data.json": "{}\n",
+    "src/NOTES.md": "notes\n",
+    "src/support.rs": "pub fn h() {}\n",
+    "src/unused.rs": "pub fn u() {}\n",
+    "src/tracker.rs": "pub fn k() {}\n",
+    "tests/measured.rs": "#[path = \"../src/tracker.rs\"]\nmod tracker;\n",
+}
+
+
 class Tree:
     def __init__(self):
         self.root = tempfile.mkdtemp(prefix="changed-set-case.", dir=os.environ.get("TMPDIR"))
@@ -60,10 +94,11 @@ class Tree:
         self.write(".github/nightly/no-floored-targets", "test arch_rule\n")
         self.write(".github/nightly/no-floored-reach.json", json.dumps(REACH))
         self.write("docs/scoreboard/mutants.json", json.dumps(RECORD))
-        for name in ("src/a.rs", "src/b.rs", "src/c.rs", "src/other.rs", "tests/arch_rule.rs",
-                     "tests/measured.rs", "tests/oracle.rs", "tests/integration/main.rs",
+        for name in ("tests/arch_rule.rs", "tests/oracle.rs", "tests/integration/main.rs",
                      "benches/gate.rs", "Cargo.toml", "Cargo.lock"):
             self.write(name, "// x\n")
+        for name, text in CRATE.items():
+            self.write(name, text)
 
     def write(self, name, text):
         p = os.path.join(self.root, name)
@@ -107,7 +142,7 @@ class Case(unittest.TestCase):
         print(f"\n    files {p['files']}, shards {p['shards']}, carried {p['carried']}", end=" ", file=sys.stderr)
 
     def test_a_source_change_mutates_that_file_alone(self):
-        p, out = self.planned("src/a.rs", "src/other.rs", "docs/x.md")
+        p, out = self.planned("src/a.rs", "src/NOTES.md", "docs/x.md")
         self.assertEqual(p["files"], ["src/a.rs"])
         self.assertEqual(p["carried"], ["src/b.rs", "src/c.rs"])
         # ceil(40 / 19) is 3; the six runners a night holds come first.
@@ -143,11 +178,61 @@ class Case(unittest.TestCase):
         self.show(p)
 
     def test_no_change_carries_everything(self):
-        p, out = self.planned("README.md", "benches/baseline.json", "fuzz/Cargo.lock", "src/other.rs")
+        p, out = self.planned("README.md", "benches/baseline.json", "fuzz/Cargo.lock", "src/NOTES.md")
         self.assertEqual((p["files"], p["shards"], p["matrix"]), ([], 0, []))
         self.assertEqual(p["carried"], ["src/a.rs", "src/b.rs", "src/c.rs"])
         self.assertIn("carries every file's figure from the last complete run", out)
         self.show(p)
+
+    def test_a_test_module_in_a_floored_module_directory_reaches_that_file(self):
+        # #464's review: src/spend_gate/tests.rs (`mod tests;`) and
+        # src/spend_gate/tests/carried.rs planned no file. A test module, its
+        # subdirectory and a `#[path]` test module of a.rs reach a.rs; a.rs
+        # names no other floored module, so a.rs alone: 40 mutants, six shards.
+        for path in ("src/a/tests.rs", "src/a/tests/carried.rs", "src/a_extra_tests.rs"):
+            p, _ = self.planned(path)
+            self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6), path)
+            self.assertIn("test-only code", p["paths"][0]["why"], path)
+        self.show(p)
+
+    def test_a_test_module_reaches_every_floored_module_it_names(self):
+        # b's tests name crate::c: b and c, 320 mutants, ceil(320 / 19) shards.
+        p, _ = self.planned("src/b/tests.rs")
+        self.assertEqual((p["files"], p["shards"]), (["src/b.rs", "src/c.rs"], 17))
+        # other.rs's #[cfg(test)] module names crate::c: c, 20 mutants, six shards.
+        p, _ = self.planned("src/other/tests.rs")
+        self.assertEqual((p["files"], p["shards"]), (["src/c.rs"], 6))
+        self.show(p)
+
+    def test_a_test_helper_reaches_what_the_tests_that_name_it_reach(self):
+        # support.rs names nothing; b's tests name it and reach b and c.
+        p, _ = self.planned("src/support.rs")
+        self.assertEqual((p["files"], p["shards"]), (["src/b.rs", "src/c.rs"], 17))
+        # A test-only module no test names reaches nothing...
+        p, _ = self.planned("src/unused.rs")
+        self.assertEqual((p["files"], p["shards"]), ([], 0))
+        # ...unless a test target compiles it by #[path]: the target's reach.
+        p, _ = self.planned("src/tracker.rs")
+        self.assertEqual((p["files"], p["shards"]), (["src/c.rs"], 6))
+        self.assertIn("compiled by tests/measured.rs (#[path]): test measured", p["paths"][0]["why"])
+        self.show(p)
+
+    def test_code_outside_the_tests_brings_in_the_whole_set(self):
+        # #464's review: src/spend_gate/from.rs, and src/config.rs, src/main.rs,
+        # src/server/mod.rs, src/lib.rs (which hold #[cfg(test)] modules):
+        # code the lib or a binary compiles outside its tests may run beside
+        # any floored file in a unit test, the conservative choice.
+        for path in ("src/a/from.rs", "src/other.rs", "src/lib.rs", "src/main.rs", "src/cli.rs",
+                     "src/data.json", "src/stray.rs"):
+            p, _ = self.planned(path)
+            self.assertEqual((p["files"], p["shards"], p["whole"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 50, True),
+                             path)
+        self.assertIn("read by src/other.rs", self.planned("src/data.json")[0]["paths"][0]["why"])
+        self.show(p)
+
+    def test_a_path_in_a_floored_module_directory_reaches_that_file(self):
+        p, _ = self.planned("src/a/vectors.bin", "src/NOTES.md")
+        self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6))
 
     def test_a_complete_night_mutates_every_file(self):
         p, _ = self.planned("README.md", mode="complete")
@@ -183,6 +268,36 @@ class Case(unittest.TestCase):
         self.assertEqual((p["base"]["commit"], p["files"]), (base, ["src/b.rs"]))
         self.assertEqual(p["shards"], 16)  # ceil(300 / 19)
         self.show(p)
+
+
+class Repo(unittest.TestCase):
+    """The reviewers' rows on this repository's own crate (#464): each planned
+    no file at 4443492. Every floored file here names the others (handlers ->
+    spend_gate -> tracker_host -> ...), so a test that names one reaches all."""
+
+    def test_the_reviewers_rows_bring_in_the_whole_set(self):
+        root = os.path.dirname(HERE)
+        sys.path.insert(0, os.path.dirname(SCRIPT))
+        import no_floored
+        floored = no_floored.floored(__import__("pathlib").Path(root))
+        scratch = tempfile.mkdtemp(prefix="changed-set-repo.", dir=os.environ.get("TMPDIR"))
+        try:
+            for path in ("src/spend_gate/tests.rs", "src/server/handlers/tests.rs", "src/spend_gate/from.rs",
+                         "src/spend_gate/tests/carried.rs", "src/config.rs", "src/main.rs", "src/server/mod.rs",
+                         "src/lib.rs", "src/config/tests.rs"):
+                with open(os.path.join(scratch, "changed.txt"), "w") as f:
+                    f.write(path + "\n")
+                out = os.path.join(scratch, "plan.json")
+                r = subprocess.run([sys.executable, "-B", SCRIPT, "--root", root, "--mode", "incremental",
+                                    "--paths", os.path.join(scratch, "changed.txt"), "--head", "f" * 40,
+                                    "--out", out], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                with open(out) as f:
+                    p = json.load(f)
+                self.assertEqual((p["files"], p["shards"]), (sorted(floored), 50), path)
+                print(f"\n    {path}: {len(p['files'])} files, {p['shards']} shards", end=" ", file=sys.stderr)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 if __name__ == "__main__":
