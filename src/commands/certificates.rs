@@ -3,8 +3,9 @@ use anyhow::Result;
 
 /// An explicit, repeatable audit: opening a wallet never runs it implicitly.
 /// The toolbox reads every stored certificate past a failure and answers the
-/// counts; a failure exits non-zero (#430). Naming each failing certificate
-/// waits on the toolbox's per-certificate verdicts (toolbox #585).
+/// counts; a failure exits non-zero (#430). Each failing certificate is named
+/// (type, serial number, certifier) only by the toolbox's warn line on stderr;
+/// naming it in the answer waits on toolbox #585.
 pub async fn run(ctx: &WalletContext) -> Result<()> {
     let tally = ctx.wallet.reverify_stored_certificates().await?;
     if ctx.json_output {

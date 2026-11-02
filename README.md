@@ -26,8 +26,9 @@ uses `type`, hex signatures and base64 keyrings. Run
 stored certificate's signature without changing any; it reports the checked
 and failed counts and exits non-zero when any fails
 ([#430](https://github.com/Calhooon/bsv-wallet-cli/issues/430)). It reads the
-certificates the wallet lists (not the relinquished ones); naming each failing
-certificate waits on toolbox
+certificates the wallet lists (not the relinquished ones). Each failing
+certificate's type, serial number and certifier appear on stderr in a warn
+line; naming them in the answer itself waits on toolbox
 [#585](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/585). At toolbox 0.14.0-beta.5 a
 certificate whose subject or certifier key is not a compressed key (`02` or
 `03` and 64 hex digits) fails the reverify, an uncompressed `04` key
