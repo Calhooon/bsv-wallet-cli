@@ -53,7 +53,7 @@ cargo test --test integration
 
 # E2E tests (Node.js, requires funder wallet on :3320)
 # See "E2E Testing" section below for full setup.
-node tests/e2e/run.js                   # all 25 scenarios
+node tests/e2e/run.js                   # all 30 scenarios
 node tests/e2e/run.js --scenario 16     # single scenario
 node tests/e2e/run.js --dry-run         # setup only, no scenarios
 node tests/e2e/run.js --skip-woc        # skip WoC verification (faster)
@@ -63,7 +63,7 @@ Environment variables: `ROOT_KEY` (required, set by `bsv-wallet init`), `SPEND_D
 
 ## E2E Testing
 
-The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 25 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
+The E2E test suite (`tests/e2e/`) is a Node.js harness that spawns fresh wallets and runs 30 scenarios covering the HTTP API, CLI commands, MCP server, and database inspector UI.
 
 ### E2E Funder Wallet
 
@@ -78,7 +78,7 @@ Design (c) remains: E2E.24 temporarily sets fresh wallet A's default basket's de
 - **Default funding**: 100,000 sats per run (configurable via `FUND_AMOUNT` env var; scenario 22 needs 50,000 in wallet A at its start and the scenarios before it move about 40,000 out of A). Before funding, the default basket must hold the funding plus 1,000 sats of fee headroom, plus 15,000 sats if the `e2e-external` coin is missing.
 - **The spend gate's word**: a test wallet's coins are received payments not yet mined, which the gate holds from a plain spend (R1 (d), 0.15.0). The harness names `allowPending: received` on every spend a test wallet makes (the HTTP client's default; `--allow-pending received` on the CLI scenarios' `send` and `split`), and on the funder's funding transfer (its coins after a run are the sweeps, received and unmined). The funder's client never passes it otherwise. The scoped form (0.18.0, #63), `allowPending: {"received": ["txid:vout"]}` / `--allow-pending received --coin txid:vout`, offers only the named received coins; scenario 23 drives it on a third wallet.
 - **Wallet logs**: each test wallet's `serve` log goes to `serve.log` in its temp directory; a failed run keeps both directories (keys and logs) and names them.
-- **Ports**: the test wallets serve on 3370 (A), 3371 (B) and 3372 (scenario 23's C); `WALLET_A_PORT`, `WALLET_B_PORT`, `WALLET_C_PORT` move them. Never a port `~/bsv/prod-test-wallets/REGISTRY.md` reserves (3323, 3330 to 3344): on 2026-10-23 the harness's old default 3323 was the registry's `recipient` seat, whose daemon took the run's requests and had its balance swept to the funder. `startWallet` refuses a port that already answers and checks the server's identity against the directory's key before anything is funded.
+- **Ports**: the test wallets serve on 3370 (A), 3371 (B), 3372 (scenario 23's C) and 3374 (the browser gate scenes' D, 26 to 30); `WALLET_A_PORT`, `WALLET_B_PORT`, `WALLET_C_PORT`, `WALLET_D_PORT` move them. Every wallet the harness starts lists the harness's `Origin`, `http://e2e-test`, in its `ALLOWED_ORIGINS` (#411); the mainnet funder's `.env` must list it too. Never a port `~/bsv/prod-test-wallets/REGISTRY.md` reserves (3323, 3330 to 3344): on 2026-10-23 the harness's old default 3323 was the registry's `recipient` seat, whose daemon took the run's requests and had its balance swept to the funder. `startWallet` refuses a port that already answers and checks the server's identity against the directory's key before anything is funded.
 - **SwiftBar**: Blue "E2E" icon in menu bar (`~/bsv-wallet-cli-runner/e2e-funder.30s.sh`)
 
 **Setup (first time only):**
@@ -94,7 +94,7 @@ cd e2e-funder && ../target/release/bsv-wallet init
 cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 ```
 
-### Scenario Coverage (25 scenarios)
+### Scenario Coverage (30 scenarios)
 
 | # | Name | Tests | Cost |
 |---|------|-------|------|
@@ -109,6 +109,11 @@ cd e2e-funder && ../target/release/bsv-wallet daemon --port 3320 &
 | 23 | Scoped allowPending | A third wallet C (:3372) with two received unproven coins from A: `allowPending: {received: [P1]}` offers P1 only (402 over it, P2 held "not named"; 2,000 within it on P1 alone), naming a spent or foreign coin is 400, the plain word returns the rest to A (#63) | fees only |
 | 24 | Busy store | External sqlite3 WAL writer: createAction and the toolbox's abortAction write return 503 STORE_BUSY with Retry-After: 1; listOutputs and the two host reads stay 200; exit and a SQLite write probe confirm release, then all five are 200, balance unchanged (#204); #168's read pre-check stays covered by its unit test and fixture 116 | 0 sats |
 | 25 | CLI self-send | A sends 1,000 to its own address: the balance is lower by the fee alone (read from the transaction) and the kept output is a spendable default-basket coin; a send of 1,000 to B is lower by amount plus fee, B takes it in with `fund` (#38) | fees only |
+| 26 | Browser gate: no Origin | A wallet D (:3374) listing `http://app.example`: no `Origin` with `Originator: app.example` is the client's 400 `Origin header is required`, with and without the bearer; nothing reaches a door (the stack's scenario `2026-11-01-wallet-browser-gate-no-origin`, #411) | 0 sats |
+| 27 | Browser gate: a new origin (b: refused, no pending row) | `http://new.example` is refused 400 `ERR_PERMISSION_DENIED` twice with no CORS header, then listed and the wallet restarted: answered | 0 sats |
+| 28 | Browser gate: a granted origin | the listed `http://app.example` is answered, with an agreeing `Originator` too; under `AUTH_TOKEN` 401 without the bearer, answered with it | 0 sats |
+| 29 | Browser gate: a revoked origin (b: delisted and restarted) | answered, then removed from `ALLOWED_ORIGINS` and restarted: refused; the scenario's expired grant is #414's | 0 sats |
+| 30 | Browser gate: a disagreeing originator | an `Originator` header or a body `originator` naming another host than the `Origin` is 400 `VALIDATION_ERROR`, nothing reaching a door | 0 sats |
 
 ### Dependencies
 

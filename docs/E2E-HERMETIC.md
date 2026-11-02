@@ -1,6 +1,6 @@
 # The hermetic e2e run (#74)
 
-`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 25 e2e scenarios with nothing
+`E2E_HERMETIC=1 node tests/e2e/run.js` runs the 30 e2e scenarios with nothing
 leaving the machine and no sat moving. The mainnet run (`node tests/e2e/run.js`
 against the funder daemon on :3320) is unchanged and stays the release gate;
 the hermetic run is the gate of every PR (the `e2e-hermetic` job of
@@ -293,8 +293,8 @@ pass). `cargo test --locked --test e2e_hermetic`:
   `E2E_WALLET_TMP` as for any run. It fails on the suite's non-zero exit, a
   walled attempt at an undeclared host (`Walled: ... 0 new` read), an unserved
   route (`Unserved: 0`), a missing stat line, and a passed count short of
-  the scenarios (25) less those skipped, as the `e2e-hermetic` job does.
-- **The ports**: wallets A, B and C on 3370 to 3372, the funder on 3373, the
+  the scenarios (30) less those skipped, as the `e2e-hermetic` job does.
+- **The ports**: wallets A, B and C on 3370 to 3372, the browser gate scenes' D on 3374 (#411), the funder on 3373, the
   stub on 3380 and the inspector UI on 9321, fixed: one suite at a time per
   host (the Nightly's hermetic shards are one job each, `--jobs 1`). The test
   waits up to a minute for a held port to free before it starts.
