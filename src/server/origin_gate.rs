@@ -3,7 +3,7 @@
 //! judges is derived from it, and only the origins `ALLOWED_ORIGINS` names
 //! are admitted. The per-origin grant in the store is #414's.
 //!
-//! The MetaNet Client's lines this follows (bsv-desktop bcb6003):
+//! The desktop client's lines this follows (bsv-desktop bcb6003):
 //! `src/onWalletReady.ts:45-71` reads the originator from `Origin` (an
 //! unparseable one is none), and `:82-88` answers a call without one
 //! `400 {"message": "Origin header is required"}`; an origin its owner
@@ -47,6 +47,8 @@ pub(crate) const DENIED: &str = "The user has denied the request for permission.
 pub struct AllowedOrigins(Arc<[String]>);
 
 impl AllowedOrigins {
+    /// The list, each origin as written (`ALLOWED_ORIGINS` is checked at
+    /// start: `config::read`).
     pub fn new<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
         Self(origins.into_iter().map(Into::into).collect())
     }
@@ -64,11 +66,26 @@ impl AllowedOrigins {
             .iter()
             .filter_map(|o| HeaderValue::from_str(o).ok())
             .collect();
+        // A listed page reads `Retry-After` on a 503 STORE_BUSY (#44).
         CorsLayer::new()
             .allow_credentials(true)
             .allow_headers(AllowHeaders::mirror_request())
             .allow_methods(AllowMethods::mirror_request())
             .allow_origin(AllowOrigin::list(listed))
+            .expose_headers([axum::http::header::RETRY_AFTER])
+    }
+}
+
+impl super::ServerConfig {
+    /// The default settings with the browser gate admitting `origins`, as
+    /// `ALLOWED_ORIGINS` would (the tests' and the harnesses' servers).
+    #[allow(dead_code)] // the binary reads `ALLOWED_ORIGINS`; the tests build it
+    #[must_use]
+    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
+        Self {
+            allowed_origins: AllowedOrigins::new(origins),
+            ..Self::default()
+        }
     }
 }
 
@@ -197,6 +214,13 @@ pub(crate) async fn preflight(
         .answer(),
         None => Refused::NoOrigin.answer(),
     }
+}
+
+/// The refusal of a read body whose `originator` disagrees with the
+/// admitted `Origin` (#411), when the gate admitted the call.
+pub(crate) fn refuse_body(extensions: &axum::http::Extensions, body: &[u8]) -> Option<Response> {
+    let admitted = extensions.get::<Admitted>()?;
+    body_disagrees(admitted, body).map(IntoResponse::into_response)
 }
 
 /// A body's top-level `originator`, when it names another host than the
@@ -343,7 +367,7 @@ mod tests {
         let admitted = Admitted("http://app.example".into());
         assert!(body_disagrees(&admitted, br#"{"keyID":"1"}"#).is_none());
         assert!(body_disagrees(&admitted, br#"{"originator":"app.example"}"#).is_none());
-        assert!(body_disagrees(&admitted, br#"[1,2]"#).is_none());
+        assert!(body_disagrees(&admitted, br"[1,2]").is_none());
         assert!(body_disagrees(&admitted, br#"["evil.example",{"keyID":"1"}]"#).is_none());
         assert!(body_disagrees(&admitted, b"not json").is_none());
         for body in [

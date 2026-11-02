@@ -62,6 +62,12 @@ pub(crate) async fn record(r: &mut Recorder) {
         .body
         .as_ref()
         .is_some_and(|b| b.pointer("/ciphertext").is_some()));
+    record_fields_and_doors(r).await;
+}
+
+/// The other fields a call may name an originator in, and the doors past
+/// the BRC-100 calls.
+async fn record_fields_and_doors(r: &mut Recorder) {
     // A body's top-level originator naming another host.
     let mut claimed = encrypt();
     claimed["originator"] = json!("evil.example");
