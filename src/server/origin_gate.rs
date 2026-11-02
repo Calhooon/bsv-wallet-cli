@@ -1,4 +1,4 @@
-//! The served doors' browser gate, #411's first step (b) by the owner's word
+//! The served doors' browser gate, #411's step (b) by the owner's word
 //! of 2026-11-01: every call carries an `Origin`, the originator a door
 //! judges is derived from it, and only the origins `ALLOWED_ORIGINS` names
 //! are admitted. The per-origin grant in the store is #414's.
