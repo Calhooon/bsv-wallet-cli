@@ -3,6 +3,6 @@
 # checks the copy's sha256 against this line before it replays a row.
 # Move it: docs/GATE-VECTORS.md.
 repo bsv-stack-lean
-commit 4372ea39954703d61f933536268708908237e484
+commit e43836621e35979c2d08b0f12babd1c76e9b2661
 path conformance/wallet-gate-vectors.json
 sha256 6326f29c677b4346886a311f237c6d9535153fb2a95e57c89776ece76427a98e
