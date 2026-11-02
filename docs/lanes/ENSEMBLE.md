@@ -34,7 +34,7 @@ RISKS: <a residual risk> <its score in [0,1]>
 RATIONALE: <at most five lines>
 ```
 
-`RISKS: none` is allowed. Under D the `DECISION:` line begins with exactly one of the question's options. [aggregate.py](../../tools/lanes/aggregate.py) reads the last such block of each answer and refuses (exit 2) a block missing `DECISION` or `CONFIDENCE`, a confidence outside [0,1], or (with `--options`) a `DECISION` beginning with none of the named options, naming the file and the field.
+`RISKS: none` is allowed. The colon after each key is optional, with any spacing around it: `VERDICT merge`, `VERDICT: merge`, `VERDICT:merge` and `VERDICT : merge` read alike, as do `CONFIDENCE: 0.9` and `CONFIDENCE 0.9` (#416); a key may carry a list marker or bold, and it is a whole word (`CONFIDENCES` is not the key). Under D the `DECISION:` line begins with exactly one of the question's options. [aggregate.py](../../tools/lanes/aggregate.py) reads the last such block of each answer and refuses (exit 2) a block missing `DECISION` or `CONFIDENCE`, a confidence outside [0,1], or (with `--options`) a `DECISION` beginning with none of the named options, naming the file and the field.
 
 ## The aggregation
 
@@ -45,7 +45,7 @@ RATIONALE: <at most five lines>
 - **A split** is anything else. Below the fraction or the mean, the captain adds a reader with a new stance or new evidence and aggregates again, or escalates through the keeper with the disagreement stated.
 - **Never a silent side.** The captain never picks one reader's answer over the others without the record below.
 
-The tools: [chain-ensemble.sh](../../tools/lanes/chain-ensemble.sh) runs a lane, then B's two reviews concurrently from the captain's shell, the third only on a split or a low mean (it prints which), and prints one `ENSEMBLE:` line; [ensemble-read.sh](../../tools/lanes/ensemble-read.sh) runs D's three readers concurrently on a question file (its first line `OPTIONS: A|B|C`) and three evidence pointers, and aggregates with `--options`. Both take the runner from `$CCA` (default `cca`) and never merge anything. Their dry runs are CI's: the ratchet job runs [test_chain_ensemble.sh](../../tools/test_chain_ensemble.sh) under `zsh -f` with [stub-runner.sh](../../tools/lanes/stub-runner.sh) in place of `cca` and `gh`, and a failed case fails the job.
+The tools: [chain-ensemble.sh](../../tools/lanes/chain-ensemble.sh) runs a lane, then B's two reviews concurrently from the captain's shell, the third only on a split or a low mean (it prints which), and prints one `ENSEMBLE:` line; [ensemble-read.sh](../../tools/lanes/ensemble-read.sh) runs D's three readers concurrently on a question file (its first line `OPTIONS: A|B|C`) and three evidence pointers, and aggregates with `--options`. Both take the runner from `$CCA` (default `cca`) and never merge anything. Each launch writes into a fresh output folder and prints it at launch (`chain-ensemble: outputs in <dir>`): the given folder (`$OUT_DIR` for the chain, the fifth argument for the readers) when it is new or empty, else a new timestamped subfolder of it, so a second launch into one folder never overwrites an earlier launch's outputs (#416); without one, a new folder under `$TMPDIR`. Their dry runs are CI's: the ratchet job runs [test_chain_ensemble.sh](../../tools/test_chain_ensemble.sh) under `zsh -f` with [stub-runner.sh](../../tools/lanes/stub-runner.sh) in place of `cca` and `gh`, and a failed case fails the job.
 
 ## The cost rule
 
