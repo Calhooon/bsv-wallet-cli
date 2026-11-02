@@ -112,7 +112,7 @@ The server implements the wallet interface and serializes spending operations.
 Under `AUTH_TOKEN` a browser client passes the CORS preflight, which carries
 no credentials, and sends its bearer on the request (#138).
 
-The browser gate (#411, the first step of the owner's word of 2026-11-01): every
+The browser gate (#411, step (b) of the owner's word of 2026-11-01): every
 served call but `POST /arc-callback` carries an `Origin`, and only the origins
 `ALLOWED_ORIGINS` names are answered, as the MetaNet Client asks an `Origin` of
 every call. The originator a door judges is the `Origin`'s host; the legacy
