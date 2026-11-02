@@ -849,6 +849,38 @@ async fn step_4_ii_a_stale_transaction_no_broadcaster_knows_is_announced_once() 
     assert_eq!(follow_up_of(&storage, &txid).await, None);
 }
 
+/// Step 4 (ii) with the evidence rule and ruling 7b (b): the broadcaster
+/// that takes the one announce of the `stale` T is heard as a hint, once.
+/// T stays `stale` (a hint writes no chain word) and now stands on the tier
+/// `announced`, the status its payment reads before its proof.
+#[tokio::test]
+async fn step_4_ii_the_taken_announce_of_a_stale_transaction_is_its_tier() {
+    let (storage, txid) = stale_at_900().await;
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .broadcaster_statuses(vec![(
+            "arcade".to_string(),
+            bsv_wallet_toolbox::BroadcastStatus::Unknown,
+        )])
+        .build();
+    services.set_header_for_height(header(900, &"ee".repeat(32), 7));
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+    let before = crate::tracker_host::stored_tier(&storage, &txid)
+        .await
+        .unwrap();
+    assert_ne!(before, Some("announced"));
+
+    let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
+    assert_eq!(report.stale_announced, vec![txid.clone()]);
+    assert_eq!(word(&storage, &txid).await.0, "stale");
+    assert_eq!(
+        crate::tracker_host::stored_tier(&storage, &txid)
+            .await
+            .unwrap(),
+        Some("announced")
+    );
+}
+
 /// One rule, not two (ruling 7d (c) with toolbox 0.10.0's
 /// `reask_lost_proof`): in the daemon the toolbox's monitor runs its reorg
 /// and review tasks, which demote the stored proof and re-ask the courier
