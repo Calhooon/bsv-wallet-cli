@@ -183,6 +183,7 @@ fn gate_notes() -> Vec<(String, String)> {
         ("182-gate.encrypt.originatorWithoutOrigin.json", "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal."),
         ("183-gate.encrypt.originatorDisagrees.json", "#411: an Originator header naming another host than the Origin is refused (the ruling's rule 1; BrowserGate.lean disagreeing_refused), 400 VALIDATION_ERROR naming both; the listed origin's page reads it (the CORS echo)."),
         ("184-gate.encrypt.originatorAgrees.json", "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314)."),
+        ("185-gate.encrypt.bodyOriginatorDisagrees.json", "#411: a body's top-level originator naming another host than the Origin is refused once the body is read (the ruling's rule 1), 400 VALIDATION_ERROR naming both."),
     ].map(|(f, n)| (f.to_string(), n.to_string())));
     notes
 }
