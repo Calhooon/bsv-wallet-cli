@@ -1,5 +1,7 @@
 {
   "schema": 1,
+  "mode": "complete",
+  "mode_note": "the night of record cut at the pin: every floored file mutated, so each file's figure is this night's own (source night), and an incremental night carries from it with this run and commit (#462)",
   "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
   "commit_note": "the dispatch's sha and the one tree the night ran: every one of the fifty Mutants shards, the survivors' job and the six Mutants-hermetic shards wrote 2ca0173 as its artifact's sha (#423), while beta moved under the night (dcfb2a9 at 09:58Z, 4e2602b at 12:04Z, ab3921d at 15:11Z)",
   "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
@@ -103,35 +105,50 @@
       "caught": 74,
       "missed": 12,
       "timeout": 0,
-      "unviable": 17
+      "unviable": 17,
+      "source": "night",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
+      "sha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7"
     },
     "src/explorers.rs": {
       "score": 82.6,
       "caught": 19,
       "missed": 4,
       "timeout": 0,
-      "unviable": 7
+      "unviable": 7,
+      "source": "night",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
+      "sha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7"
     },
     "src/server/handlers.rs": {
       "score": 100.0,
       "caught": 45,
       "missed": 0,
       "timeout": 0,
-      "unviable": 123
+      "unviable": 123,
+      "source": "night",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
+      "sha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7"
     },
     "src/spend_gate.rs": {
       "score": 90.4,
       "caught": 236,
       "missed": 25,
       "timeout": 0,
-      "unviable": 13
+      "unviable": 13,
+      "source": "night",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
+      "sha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7"
     },
     "src/tracker_host.rs": {
       "score": 74.2,
       "caught": 219,
       "missed": 76,
       "timeout": 0,
-      "unviable": 53
+      "unviable": 53,
+      "source": "night",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663",
+      "sha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7"
     }
   },
   "note": "A night measured on one tree with each mutant judged once (#400, #423): 923 mutants, 593 caught, 117 missed, no timeout, 213 unviable; the survivors' artifact (survivors.txt, 117 names) is the score's missed list name for name. src/explorers.rs reads 82.6, at its floor 82, on 2ca0173, which is before PR 429 (dcfb2a9) caught its four survivors: the four of #420 still survive here, and run 41340299977's 78.0 was #400's repeats, as that record's reading of 82.6 said. src/tracker_host.rs reads 74.2 against its floor 75: the 58 distinct survivors run 41340299977 named all survive (47 under the same name, 11 at the lines 2ca0173 gives them; they are 55 distinct mutants there, the mixed tree having named three twice), and 21 more survive that no shard of run 41340299977 judged on a commit where the file equals 2ca0173's (TickReport::is_quiet, TrackedRow::keep_chain, Check::report, Check::settle, record_accepted, follow_up_stale, TickReport::summary's String::new()); that night's 75.3 counted the mixed tree's repeats and missed those, so the fall is the measurement's, not a change of the file. The floors are unchanged: 90, 75, 100, 86, 82. The night's fuzz five ran 3601 s each on nightly-2026-10-30 (#395) and its bench job measured the opening run of the AMD EPYC 9V74 entry (#142); neither feeds this record.",
