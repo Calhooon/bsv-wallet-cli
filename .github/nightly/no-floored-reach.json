@@ -1,0 +1,182 @@
+{
+  "issue": 401,
+  "commit": "678a9ffdd27d3f6c0ae6292380bb9aefa2096b53",
+  "method": "cargo llvm-cov --locked --lcov --test|--bench <name>, one run a target",
+  "floored": [
+    "src/broadcast_verify.rs",
+    "src/explorers.rs",
+    "src/server/handlers.rs",
+    "src/spend_gate.rs",
+    "src/tracker_host.rs"
+  ],
+  "targets": [
+    {
+      "kind": "test",
+      "name": "arch_config_env",
+      "seconds": 42.3,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_env_reads",
+      "seconds": 51.7,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_explorer_sites",
+      "seconds": 43.2,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_no_error_words",
+      "seconds": 26.4,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_no_prefix_errors",
+      "seconds": 43.8,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_no_unwrap",
+      "seconds": 45.5,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_spawn_sites",
+      "seconds": 30.6,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "arch_sql_sites",
+      "seconds": 23.1,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "rule_28_sites",
+      "seconds": 29.6,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "brc100",
+      "seconds": 49.2,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "header_source",
+      "seconds": 29.5,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "test",
+      "name": "signing_digest_vector",
+      "seconds": 49.7,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "bench",
+      "name": "internalize_action",
+      "seconds": 111.8,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    },
+    {
+      "kind": "bench",
+      "name": "list_outputs",
+      "seconds": 97.5,
+      "reach": {
+        "src/broadcast_verify.rs": [],
+        "src/explorers.rs": [],
+        "src/server/handlers.rs": [],
+        "src/spend_gate.rs": [],
+        "src/tracker_host.rs": []
+      }
+    }
+  ]
+}
