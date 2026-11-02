@@ -44,7 +44,8 @@ The plan names the selection the shards pass `cargo test` (`--lib --bins`, a
 the left-out list's entries: the oracle complete per floored file, the owner's
 23.9 word), the shard count (a complete night or a whole set: MUTANTS_SHARDS;
 otherwise one shard per PER_SHARD of the changed files' mutants, by the
-record's counts, at least one, at most MUTANTS_SHARDS) and the matrix. An
+record's counts, and at least PARALLEL (the six a night runs at once) while
+there are that many mutants, at most MUTANTS_SHARDS) and the matrix. An
 empty changed set plans no shard: the night carries every figure and says so.
 
 Exit 1, naming the fault, on a record without a mode or a base, a mode other
@@ -69,6 +70,10 @@ REACH = ".github/nightly/no-floored-reach.json"
 MODES = ("incremental", "complete")
 # The complete night's sizing: 923 mutants in fifty shards, 19 at most a shard.
 PER_SHARD = 19
+# The matrix's max-parallel (#144): a small set still fills the six runners a
+# night may hold, since a shard's wall clock is its baseline (about 11 minutes
+# in run 41516017523) and its mutants, not their count across shards.
+PARALLEL = 6
 WHOLE = {
     "Cargo.lock": "the lockfile changed: a dependency counts as changing every file that uses it",
     "Cargo.toml": "a workspace manifest changed: a dependency counts as changing every file that uses it",
@@ -193,7 +198,7 @@ def plan(mode, record, paths, root, head, max_shards):
     elif mode == "complete" or whole:
         shards = max_shards
     else:
-        shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD)))
+        shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD), min(PARALLEL, mutants)))
     return {
         "mode": mode,
         "base": base,

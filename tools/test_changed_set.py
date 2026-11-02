@@ -110,7 +110,8 @@ class Case(unittest.TestCase):
         p, out = self.planned("src/a.rs", "src/other.rs", "docs/x.md")
         self.assertEqual(p["files"], ["src/a.rs"])
         self.assertEqual(p["carried"], ["src/b.rs", "src/c.rs"])
-        self.assertEqual((p["mutants"], p["shards"], p["matrix"]), (40, 3, [0, 1, 2]))  # ceil(40 / 19)
+        # ceil(40 / 19) is 3; the six runners a night holds come first.
+        self.assertEqual((p["mutants"], p["shards"], p["matrix"]), (40, 6, [0, 1, 2, 3, 4, 5]))
         self.assertFalse(p["whole"])
         self.assertIn("Carried from the last complete run: `src/b.rs`, `src/c.rs`.", out)
         self.show(p)
@@ -125,7 +126,7 @@ class Case(unittest.TestCase):
 
     def test_a_measured_test_change_reaches_the_files_it_ran(self):
         p, _ = self.planned("tests/measured.rs")
-        self.assertEqual((p["files"], p["shards"]), (["src/c.rs"], 2))
+        self.assertEqual((p["files"], p["shards"]), (["src/c.rs"], 6))
         self.show(p)
 
     def test_a_left_out_test_change_reaches_nothing(self):

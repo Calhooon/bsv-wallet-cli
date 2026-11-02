@@ -86,7 +86,8 @@ env:
   CARGO_MUTANTS_VERSION: 27.1.0
   # A complete night's shards; an incremental night's plan deals its changed
   # files' mutants at most 19 a shard (the complete night's own sizing, 923 in
-  # fifty) and never more than this (#462).
+  # fifty), in at least six shards (#144's six at once) while there are six
+  # mutants, and never more than this (#462).
   MUTANTS_SHARDS: 50
   # The fuzz budget per target (#462): an hour on a complete night; on an
   # incremental night ten minutes, from the execution rates of run 41413946663
