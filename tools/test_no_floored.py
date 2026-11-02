@@ -7,7 +7,10 @@ measure, a record entry the list does not hold, an entry naming no target, a
 floored file the record does not measure, and a malformed or doubled list
 line; `measure`, over a stub `cargo` that writes each target's lcov, writes
 the record, fails naming a target that runs a floored line, and refuses a
-report that never names a floored file (unread, never zero). Each case
+report that never names a floored file (unread, never zero); and the planted
+call of #401, the real report of `test header_source` made to call
+`spend_gate::allow_pending`, refused by the entry's name, while the same
+report at zero counts passes. Each case
 copies the script into a tree of its own under $TMPDIR. Run by the CI job
 ratchet: python3 tools/test_no_floored.py
 """
@@ -172,7 +175,7 @@ class Check(Tree):
         self.assertIn("the record does not measure the floored file src/b.rs", r.stdout)
 
 
-class Measure(Tree):
+class Stubbed(Tree):
     def measure(self, lcovs):
         bindir = os.path.join(self.root, "bin")
         os.makedirs(bindir)
@@ -186,6 +189,8 @@ class Measure(Tree):
         out = os.path.join(self.root, "out.json")
         return self.run_script("measure", out, "--lcov-dir", os.path.join(self.root, "reports"), env=env), out
 
+
+class Measure(Stubbed):
     def test_zero_reach_writes_a_record_the_check_passes(self):
         r, out = self.measure({"arch_one": lcov({}), "two": lcov({}), "quiet": lcov({})})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -205,6 +210,57 @@ class Measure(Tree):
         r, _ = self.measure({"arch_one": "SF:ROOT/src/other.rs\nDA:1,1\nend_of_record\n"})
         self.assertEqual(r.returncode, 1)
         self.assertIn("::error::test arch_one: the coverage report names no src/a.rs, src/b.rs; its reach is unread, never zero", r.stdout)
+
+
+# The planted call of #401: on a scratch branch, `test header_source` was made
+# to call `bsv_wallet_cli::spend_gate::allow_pending` once, and the job's
+# `measure` (cargo-llvm-cov 0.6.14) refused it by name. PLANTED is that run's
+# report for the floored file, cut to the plant's function and its lines with
+# their counts as recorded (LF and FNF are the whole file's); UNPLANTED is the
+# same lines at the counts of the tree without the plant.
+PLANTED = """SF:ROOT/src/spend_gate.rs
+FN:343,_RNvNtCs5b2QZ1eff7g_14bsv_wallet_cli10spend_gate13allow_pending
+FNDA:1,_RNvNtCs5b2QZ1eff7g_14bsv_wallet_cli10spend_gate13allow_pending
+FNF:136
+FNH:1
+DA:343,1
+DA:344,1
+DA:345,1
+DA:350,0
+BRF:0
+BRH:0
+LF:1176
+LH:3
+end_of_record
+"""
+UNPLANTED = (PLANTED.replace("FNDA:1,", "FNDA:0,").replace("FNH:1", "FNH:0")
+             .replace(",1\nDA", ",0\nDA").replace("DA:345,1", "DA:345,0").replace("LH:3", "LH:0"))
+
+
+class Planted(Stubbed):
+    def setUp(self):
+        super().setUp()
+        self.write(".github/workflows/nightly.yml",
+                   NIGHTLY.replace('{"src/a.rs": 90,\n             "src/b.rs": 75}', '{"src/spend_gate.rs": 70}'))
+        self.write(".github/nightly/no-floored-targets", "test header_source\n")
+        self.write("tests/header_source.rs", "")
+
+    def test_the_planted_call_is_refused_by_the_entrys_name(self):
+        r, out = self.measure({"header_source": PLANTED})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(
+            "::error::test header_source runs src/spend_gate.rs:343 and 2 more of its lines: it judges "
+            "a floored file, so it joins the oracle; take it out of .github/nightly/no-floored-targets\n"
+            "measure: 1 fault(s); the left-out targets' zero reach does not hold\n", r.stdout)
+        self.assertEqual(load(out)["targets"][0]["reach"]["src/spend_gate.rs"], [343, 344, 345])
+        self.assertEqual(self.check(load(out)).returncode, 1)
+
+    def test_the_same_report_without_the_plant_passes(self):
+        self.assertNotIn(",1\n", UNPLANTED)
+        r, out = self.measure({"header_source": UNPLANTED})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("measure: every left-out target runs no line of a floored file", r.stdout)
+        self.assertEqual(load(out)["targets"][0]["reach"]["src/spend_gate.rs"], [])
 
 
 if __name__ == "__main__":
