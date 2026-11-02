@@ -15,7 +15,7 @@ record.install(BSV);
 
 const { execSync, spawn } = require('child_process');
 const fs = require('fs');
-const { WalletClient, ANYONE_KEY, buildP2PKH } = require('./wallet-client');
+const { WalletClient, ANYONE_KEY, buildP2PKH, E2E_ORIGIN } = require('./wallet-client');
 const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
 const FUNDER_PORT = parseInt(process.env.FUNDER_PORT || '3320');
 // Kept outside the allocator's default basket for E2E.24's unsigned input.
@@ -30,9 +30,12 @@ const WALLET_TMP = process.env.E2E_WALLET_TMP || '/tmp';
  * Initialize and start a wallet on a given port. `env` names settings the
  * wallet's `.env` carries beside the key `init` wrote (wallet B's
  * TRUST_SETTINGS, #331), read by `serve` and every CLI command alike.
+ * `ALLOWED_ORIGINS` is the harness's origin unless `env` names it (#411:
+ * the served doors refuse an origin the list does not name).
  * Returns { dir, proc, client, identityKey, address }.
  */
 async function startWallet(port, name, { env = {} } = {}) {
+  env = { ALLOWED_ORIGINS: E2E_ORIGIN, ...env };
   // The port must be free. A process already answering there (another
   // wallet's daemon, a leftover) would take this wallet's requests: the
   // 2026-10-23 run funded someone's daemon on :3323 and swept its coins
