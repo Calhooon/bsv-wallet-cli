@@ -533,9 +533,10 @@ class NoNumberFallsFromTheBase(Case):
 
     def test_the_real_floors_against_the_nights_record_pass(self):
         # PR 176's three provisional floors (80 at the base, before any night)
-        # against the tree's record (run 40473522272) and the workflow's
-        # floors: a floor under 80 is its first measurement replacing the
-        # provisional one (the notice); a floor over 80 rose with the record.
+        # against the tree's record and the workflow's floors: a floor under
+        # 80 is its first measurement replacing the provisional one (the
+        # notice); a floor over 80 rose with the record; a file the record's
+        # verdict holds below its floor is red by design, never the notice.
         with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
             nightly = f.read()
         with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
@@ -551,9 +552,13 @@ class NoNumberFallsFromTheBase(Case):
         self.tree.write("docs/scoreboard/mutants.json", mutants)
         code, out = self.checked(base)
         self.assertEqual(code, 0, out)
+        verdict = json.loads(mutants).get("verdict", "")
         for file, floor in real.items():
             notice = f"notice: floor:{file}: 80 at the base (provisional, unmeasured), {floor} in the tree"
-            if floor < 80:
+            if f"{file} " in verdict and f"below its floor {floor}" in verdict:
+                self.assertIn(f"RED BY DESIGN: floor:{file}:", out)
+                self.assertNotIn(f"notice: floor:{file}:", out)
+            elif floor < 80:
                 self.assertIn(notice, out)
             else:
                 self.assertNotIn(f"notice: floor:{file}:", out)
