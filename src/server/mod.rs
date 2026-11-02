@@ -598,19 +598,22 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
                 .into_response();
         }
     };
-    if let Some(refused) = origin_gate::refuse_body(&parts.extensions, &bytes) {
-        return refused;
-    }
-    let body = match sanitize_lone_surrogates(&bytes) {
-        std::borrow::Cow::Borrowed(_) => axum::body::Body::from(bytes),
+    let fixed = match sanitize_lone_surrogates(&bytes) {
+        std::borrow::Cow::Borrowed(_) => None,
         std::borrow::Cow::Owned(fixed) => {
             tracing::warn!(
                 path = %parts.uri.path(),
                 "json body carried a lone UTF-16 surrogate escape; substituted U+FFFD"
             );
-            axum::body::Body::from(fixed)
+            Some(fixed)
         }
     };
+    // The body as the door reads it: its originator is judged there.
+    let read = fixed.as_deref().unwrap_or(&bytes);
+    if let Some(refused) = origin_gate::refuse_body(&parts.extensions, read) {
+        return refused;
+    }
+    let body = fixed.map_or_else(|| axum::body::Body::from(bytes), axum::body::Body::from);
     next.run(Request::from_parts(parts, body)).await
 }
 
