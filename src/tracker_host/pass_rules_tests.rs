@@ -374,3 +374,25 @@ fn a_check_record_stored_by_the_release_before_is_not_reported_again() {
         assert_eq!(!writes.is_empty(), again, "a stored {class} record");
     }
 }
+
+/// The guard's own answer (R3, the stack's `Tracker.spend_guard`): `true`
+/// for a checked, non-suspect `mined` word alone. A creator a broadcaster
+/// only saw is not suspect and is not offered; the host's callers also
+/// read the depth or the word, but the guard does not lean on them.
+#[tokio::test]
+async fn the_spend_guard_never_offers_a_word_short_of_mined() {
+    let mut row = TrackedRow::new(&"e4".repeat(32));
+    row.hints.push(StoredHint::of(&Hint::new(
+        "taal|seen",
+        HintStatus::Seen,
+        1_800_000_000,
+    )));
+    let services = MockWalletServices::builder().build();
+    services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
+    let snapshot = HeaderSnapshot::take(&services, []).await;
+    let params = opts().params();
+    let (mut state, fault) = row.replay(&params, &snapshot);
+    assert_eq!((word_label(state.word()), fault), ("seen", None));
+    assert_eq!(guard_state(&mut state, &params, &snapshot), Ok(false));
+    assert!(!state.suspect());
+}
