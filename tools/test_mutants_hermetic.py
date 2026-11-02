@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """The planted cases of the Nightly's hermetic pass (#393):
 .github/nightly/mutants_hermetic.py's survivors (missed and timeout in,
-caught, unviable and the baseline out, a name of two copies once), its
-round-robin shards and anchored escapes, its list check; and
+caught, unviable and the baseline out), its
+round-robin shards and anchored escapes, its list check (a name listed
+twice refused, #400); and
 .github/nightly/mutants_score.py's union with `--hermetic` (a survivor the
 hermetic pass caught is caught, one it missed stays missed, a timeout it
 caught is caught, a survivor it never judged fails the score), the plain
 score unchanged without the flag; and the score's one tree with `--sha`
 (#423: two shards on different commits refused, naming each; a shard or the
 survivors without a sha refused; all on the dispatch's commit accepted, the
-commit printed above the table). Each case writes its files in a directory
+commit printed above the table); and the score's one judgment a mutant
+(#400: a name with two outcomes in the cargo pass or in the hermetic pass
+refused, naming it and its count; unique names accepted). Each case writes its files in a directory
 of its own under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_mutants_hermetic.py
 """
@@ -37,8 +40,7 @@ def outcome(file, name, summary):
     return {"scenario": {"Mutant": {"file": file, "name": name}}, "summary": summary}
 
 
-# The cargo pass, two shards: one of each outcome, a baseline, and a name of
-# explorers.rs's two copies (the library's and the binary's) missed twice.
+# The cargo pass, two shards: one of each outcome, a baseline, each name once.
 CARGO = [
     [{"scenario": "Baseline", "summary": "Success"},
      outcome(GATE, "src/spend_gate.rs:1:1: replace a -> bool with true", "CaughtMutant"),
@@ -46,7 +48,6 @@ CARGO = [
      outcome(GATE, "src/spend_gate.rs:3:1: replace c -> u8 with 0", "Unviable"),
      outcome(GATE, "src/spend_gate.rs:4:1: replace <impl Display for E>::fmt -> Result with Ok(Default::default())", "Timeout")],
     [{"scenario": "Baseline", "summary": "Success"},
-     outcome(EXPL, "src/explorers.rs:5:9: delete ! in d", "MissedMutant"),
      outcome(EXPL, "src/explorers.rs:5:9: delete ! in d", "MissedMutant"),
      outcome(EXPL, "src/explorers.rs:6:1: replace e -> String with \"xyzzy\".into()", "MissedMutant")],
 ]
@@ -114,7 +115,7 @@ class Case(unittest.TestCase):
     def test_the_list_check_refuses_any_other_selection(self):
         with open(self.path("names"), "w") as f:
             f.write("a\nb\n")
-        for listed, code in (("a\nb\nb\n", 0), ("a\n", 1), ("a\nb\nc\n", 1)):
+        for listed, code in (("a\nb\n", 0), ("a\nb\nb\n", 1), ("a\n", 1), ("a\nb\nc\n", 1)):
             with open(self.path("listed"), "w") as f:
                 f.write(listed)
             r = self.run_py(HERMETIC, "check-list", self.path("names"), self.path("listed"))
@@ -137,15 +138,14 @@ class Case(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         # caught, timeout, missed, unviable, score
         self.assertEqual(rows[GATE][:5], ["1", "1", "1", "1", "33.3"])
-        self.assertEqual(rows[EXPL][:5], ["0", "0", "3", "0", "0.0"])
+        self.assertEqual(rows[EXPL][:5], ["0", "0", "2", "0", "0.0"])
 
     def test_the_union_counts_a_hermetic_catch_as_caught(self):
         hermetic = [[
             {"scenario": "Baseline", "summary": "Success"},
             outcome(GATE, SURVIVORS[2], "MissedMutant"),        # spend_gate b: stays missed
             outcome(GATE, SURVIVORS[3], "CaughtMutant"),        # spend_gate fmt: a timeout, caught
-            outcome(EXPL, SURVIVORS[0], "MissedMutant"),        # explorers d, copy one
-            outcome(EXPL, SURVIVORS[0], "CaughtMutant"),        # explorers d, copy two: caught
+            outcome(EXPL, SURVIVORS[0], "CaughtMutant"),        # explorers d: caught
             outcome(EXPL, SURVIVORS[1], "Timeout"),             # explorers e: stays missed
         ]]
         r, rows = self.score(hermetic)
@@ -153,7 +153,7 @@ class Case(unittest.TestCase):
         self.assertIn("The union of two passes", r.stdout)
         # caught, timeout, missed, unviable, score, floor, mark, by e2e_hermetic
         self.assertEqual(rows[GATE], ["2", "0", "1", "1", "66.7", "0", "ok", "1"])
-        self.assertEqual(rows[EXPL], ["2", "0", "1", "0", "66.7", "0", "ok", "2"])
+        self.assertEqual(rows[EXPL], ["1", "0", "1", "0", "50.0", "0", "ok", "1"])
         self.assertNotIn("delete ! in d", r.stdout)
 
     def test_a_survivor_the_hermetic_pass_never_judged_fails_the_score(self):
@@ -208,6 +208,35 @@ class Case(unittest.TestCase):
         r = self.night([DISPATCH, DISPATCH], [DISPATCH], None)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("- `survivors`: no sha", r.stdout)
+
+    # A mutant is judged once (#400): the name cargo-mutants 27.1.0 listed
+    # twice while main.rs and lib.rs both declared `mod explorers;`.
+    TWICE = "src/explorers.rs:5:9: delete ! in d"
+
+    def test_a_name_judged_twice_in_the_cargo_pass_is_refused(self):
+        self.plant("cargo", CARGO + [[outcome(EXPL, self.TWICE, "MissedMutant")]])
+        env = dict(os.environ, MUTANTS_FLOORS=json.dumps({GATE: 0, EXPL: 0}))
+        r = self.run_py(SCORE, self.path("cargo"), env=env)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("A malformed night (#400)", r.stdout)
+        self.assertIn("1 mutant name(s) have more than one outcome in the cargo pass", r.stdout)
+        self.assertIn(f"- `{self.TWICE}`: 2 outcomes", r.stdout)
+        self.assertNotIn("| file |", r.stdout)  # no figure is judged
+
+    def test_a_name_judged_twice_in_the_hermetic_pass_is_refused(self):
+        hermetic = [[outcome(GATE, n, "CaughtMutant") for n in SURVIVORS],
+                    [outcome(EXPL, self.TWICE, "MissedMutant")]]
+        r, rows = self.score(hermetic)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("more than one outcome in the hermetic pass", r.stdout)
+        self.assertNotIn("in the cargo pass", r.stdout)
+        self.assertEqual(rows, {})
+
+    def test_each_name_judged_once_is_scored(self):
+        r, rows = self.score(self.HERMETIC_ALL)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("malformed", r.stdout)
+        self.assertEqual(rows[EXPL][:5], ["2", "0", "0", "0", "100.0"])
 
 
 DISPATCH = "6bf9a2c" + "0" * 33
