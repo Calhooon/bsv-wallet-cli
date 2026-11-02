@@ -2190,3 +2190,193 @@ fold); the owner's four triage words and 23.0 at the morning's brief; #333
 and the certificate re-issue at 0.19.0; #350 with #193 (one flaky test, one
 lane); #380's figures lane pattern for the next census; the beta.6 pin on
 the keeper's content. The lines: beta 6e7b738; main at this entry's parent.
+
+## 2026-11-01 (the afternoon) to 2026-11-02 (the morning): the owner's words of the day, the beta.6 pin and tag with the gate 25 of 25, the wave of eight, #310 closed on a complete-oracle record, the ensemble rule in use, and the browser gate held on two words
+
+The 2026-11-01 night entry ends at beta 6e7b738 and main at its parent. The
+hours to 14:1xZ were quiet: bsv-rs landed its validators for #579 (#581,
+#584) and the toolbox its census legs and #545/#530 (the cause of our #155),
+each recorded on #386; the keeper rotated the coin-read daemon's callback
+token itself after the captain declined it as not this seat's hand. At
+08:2xZ the captain found GitHub's comment stamps reading one hour ahead of
+true UTC since the 06:00Z DST change (a probe comment, deleted at once); the
+keeper verified it and made it the fleet's line: the record is the verified
+clock, never a GitHub event stamp. Every time below is the verified clock.
+
+The owner's words of the day. 23.8 (14:1xZ, through the keeper, "I like
+your reccomendtaion for all of them"): the four triage rows' shapes: #328
+one lane with three shapes; #142 a nightly bench job and an append-only
+baseline step by PR; #122 one rule per item; #38 the two steps in one send,
+its exit test a hermetic balance lower by the fee alone. 23.6: the reverify
+READ against a copy of the production store before any stable cut, the
+count reported, failures re-issued under #333's path. 23.5 (c): the
+mutation gate at 80 percent on the node's-word and chain-evidence paths.
+23.0, the top-up: on the owner's word in session ("port 3321 .. go ahead
+man") a plain createAction from the desktop wallet on 3321 paid 100,000
+sats to the funder's address, approved in the app in 11 s (txid
+b27656d3...; mined in block 973,628, the day line's figure); the receipt by
+the 10-22 precedent (the funder daemon stopped by pid, `fund <atomic beef>
+--vout 0`, restarted), the basket 97,409 to 197,409. The standing refill
+rule, the owner's word through the keeper at 14:4xZ ("you always have the
+green light"): the funder's basket kept at or above 150,000, a refill of
+100,000 whenever a gate would leave it under 110,000, each refill a ledger
+line, the source 3321 with the owner at the computer, else 3322 by the
+captain's hand for the funder's refills alone; 3322's spendable figure goes
+in the day line (2,404,741 over 42 outputs that hour). 23.9 (14:4xZ, every
+crate, "no cheating, no shortcuts"): a floored file's mutation oracle is
+every scene that judges it; the test selection after `--` makes the
+baseline run and is never the oracle's ceiling; the record carries each
+figure with the targets it ran under; a floor is set from the complete
+oracle and never lowered to pass; three to five weeks for the primitives.
+The ensemble rule (15:4xZ, in session, "as long as it is efficient and
+productive"): the bounded REPORT form everywhere (C), three evidence-readers
+on divergence and ruling calls (D), two-stance cold reviews on pin PRs with
+a third on a split (B), full option ensembles only for a production spend or
+a stable cut (A); and the pool (15:4xZ): "pool capacity is not a problem",
+so the cost rule is signal and time, never seats. The keeper ruled item 4
+fleet-wide at 16:2xZ: a note reporting a judgment ends in DECISION /
+CONFIDENCE / RISKS (scored) / RATIONALE in at most five lines, and this
+program's consensus definition is the fleet's. The browser gate (22:2xZ, on
+#411, "yep I like your reccomendations"): (c), the per-origin grant in the
+store, is the shape (#414, design, 0.19.0); (b), a required Origin and an
+env allow-list, is the step now, one lane behind the pin.
+
+The ensemble rule landed as PR 391 (#390; beta 8d24d96 at 16:19Z): README
+rule 7's bounded form, docs/lanes/ENSEMBLE.md, tools/lanes/ with six stances
+and `aggregate.py`; its cold review said fix at 0.85 on the rounded mean, and
+the captain ruled the consensus as an agreement fraction of at least two
+thirds AND an exact mean at or above 0.7 with n at least 2, D's decisions
+categorical (an OPTIONS line). Its record: two D runs, #393 3/3 `now` at
+0.77 and #122's item 3 3/3 `follow` at 0.77, each in about three minutes;
+one B run, on the pin PR 413: the package-reader fix at 0.85, the
+wire-and-reference reader merge at 0.88, a split, the adversarial third fix
+at 0.9, `ENSEMBLE: fix agreement=2/3 mean=0.88`. #390 closed at 23:04Z with
+that record; #392 (the chain's dry runs in CI, PR 397, beta 4d330f8) closed;
+#416 (the parsers' optional colon) is the residual.
+
+#310 and the Nightly. The lane's word: a floored file's oracle is every
+cargo target that runs one of its lines (llvm-cov per target). PR 394's
+cold review said fix at 0.8 (the benches and fuzz targets reach floored
+files; the worst shard overran); the fix dealt fifty shards by cargo-mutants'
+own `--sharding round-robin` (the one modeled shape under 340 minutes; a
+second reading reached it independently), with the score job refusing any
+night with a shard not successful; merged 19:09Z (beta 6bf9a2c), and Nightly
+run 41340299977 dispatched on beta. Its score at 05:00Z: all fifty shards
+success, no timeouts, the score job red by design: `src/explorers.rs` 78.0
+against its floor of 82 (four unique survivors, #420), the others clear
+(broadcast_verify 86.7/86, handlers 100/100, spend_gate 93.3/90,
+tracker_host 75.3/75; the day line's figures, the record's in PR 421). The
+record could not land under the scoreboard's ceiling rule, so PR 422 (beta
+19fdb3b) gave rule 1 its one exception (a cell whose verdict is "below the
+floor" naming an open issue prints red by design and passes) with the
+review's guard under `--check --base`: the exception never raises or adds a
+floor. The record's own review found the night was not one tree: the
+Nightly checked out the ref per job, so the fifty shards ran on nine commits
+and three target lists, none of them 6bf9a2c. Ruled: the night stands as
+what it is; PR 421 records each shard's commit and list beside the score
+job's figures, the floors untouched, the #400 caveat named; merged 06:15Z
+(beta 9cb5335) and #310 closed. The follow-ups landed in order: PR 424
+(#423; beta edd3ea0): every Nightly job and the Differential on
+`github.sha`, each shard recording its sha, the score refusing a night of
+more than one tree; PR 425 (#400; beta 678a9ff): the duplicate listing at
+its cause (cargo-mutants' `walk_package` keeps no visited set and `main.rs`
+re-declared modules the library owns; 301 repeats of 1,224, three files not
+two), the score refusing a duplicated outcome name, the differential's six
+log-target differences accepted as the named cosmetic change; PR 426 (#401;
+a `mutants-reach` job measuring the left-out targets' reach once a night,
+about 15 minutes) reviewed merge at 0.88 and open, CLEAN, at 08:3xZ. The
+next night is dispatched on beta when PR 426 lands; no Nightly run newer
+than 41340299977 exists at this entry. #395 (the fuzz jobs' dated nightly,
+PR 398), #393, #142 and #423 close on that night's evidence.
+
+The wave of eight, launched at 19:1xZ after #310's landing, each a lane with
+one cold review: #392 (PR 397), #395 (PR 398, beta 843fcf1), #142 (PR 399,
+beta a80d6b3: the Nightly's bench job and `tools/bench-compare --append`;
+closes at five appended nights), #328 (PR 405, beta f916968: the tracker's
+three ruled shapes, six tests failing on beta), #396 (PR 403, ported as PR
+409, beta f480e01), #38 (PR 404, ported as PR 412, beta 59f8bc1: send
+recognizes its own deposit script and keeps the sats, hermetic scenario 25),
+#122 (PR 408, beta 98099aa: items 3 to 7, fixtures 177 and 178 new, the
+amendment draft docs/brc100/http-refusal-body.md, its item 3 decided by the
+D run), #393 (PR 402, ported as PR 410, re-ported as PR 415, beta 45ae661 at
+23:02Z: the hermetic suite as the oracle's second pass over the cargo pass's
+survivors). The ports had one cause: record files. PR 407 (#406, the
+ratchet's dedupe split out of 403) re-recorded docs/ratchets.json and
+docs/NORTH-STAR.md, and 403's and 404's own re-records then refused GitHub's
+rebase update; each port cherry-picked the reviewed content onto beta,
+dropped the record commits, re-recorded fresh and took its own review. 410
+was ported twice because 409 then landed in nightly.yml and NIGHTLY.md: the
+merge-tree read clean and the rebase did not.
+
+The beta.6 pin. The watcher fired at 20:02Z on the three index rows
+(bsv-rs and the tracker 0.9.0-beta.6, the toolbox 0.14.0-beta.6 tagged on
+adb9e183). The pin lane's PR 413 (2h14m) met the B run's split and a fix
+lane (the merge of beta, the fixture renumbered 177 to 179, the doors under
+`key_request!`, the certifier class measured, the deferrals named, every
+proof and the Dependents run re-run); the second two-stance reading split
+again on one docs item, folded on the standing merge (the 2026-10-26
+ruling (b)). GitHub then refused the rebase merge: the lane had merged beta
+into its branch twice. PR 417 ported it as a linear history under one
+invariant, `git diff be58350` empty (be58350 the reviewed tip), reviewed
+merge at 0.95, and landed at 01:40Z: beta 5aa43539. PR 413 closed as
+superseded; #155 closed by the package. The gate's opening attempt never
+started (the fresh gate worktree lacked tests/e2e/node_modules; nothing
+spent); the gate script gained `npm ci`, and the one run went 25 of 25 on
+5aa43539 at 01:46Z, the funder 197,409 to 195,179, net 2,230. The keeper's
+tag chain: PR 418 (the version, the locks, the assembled CHANGELOG, the
+announcement rewritten by the keeper from the captain's facts: 177/178 are
+#122's new recordings, the consumer diff dolphinmilk/01 and low-fleet/02 on
+getVersion) merged at 02:10Z, beta 54c7276; the annotated tag
+v0.19.0-beta.6 on 54c7276; the Release run 41376247957 green; the GitHub
+release a prerelease at 02:30:38Z with three binaries; crates.io's version
+row 0.19.0-beta.6 stamped 02:27:12Z (checksum 218aa966f0e8), the index read
+by the keeper at 02:31:12Z (the day line's figure); four of four. The
+consumers' captains (bsv-dd, bsv-low) told the tag and their one fixture
+each.
+
+The browser gate. #411 (filed from #122's review: the CORS layer admits
+any origin) was ruled as above. PR 419, (b) at every door but
+/arc-callback (the client's refusal texts; no Originator fallback; the
+bearer before the gate; the stricter default built: nothing admitted with
+ALLOWED_ORIGINS unset, exact origins only; scenes 26 to 30 after the
+stack's browser-gate scenarios at its main 76004514; 30/30 hermetic): the
+cold review said fix at 0.86 (the body's originator check failed open on a
+duplicated key; the two SwiftBar plugins unnamed; the scene range); the fix
+and re-review said merge at 0.9 at 345610a. It is HELD on the owner's two
+words in the keeper's brief 24.0: the default with the allow-list unset (the
+stricter, agreed by the keeper) and the grant's key (the reference keys by
+hostname, `prepareOriginator`, recommended; exact origins the alternative,
+a divergence row); the expired-grant step is (c)'s. Prepared for it: the
+two SwiftBar plugins' curl lines carry an Origin header (backups beside
+them) and the funder's .env names its allowed origins; 3322's .env changes
+at the production upgrade on the owner's word, and LOW's node-side callers
+want the exact line and the env var at the landing.
+
+Lessons kept: the load rule before a wave (no launch on the Studio above 60:
+eight code lanes took it to 146 on 10 cores, five were stopped and moved to
+the box, and the Studio chain scripts now refuse above 60); the box is a
+loop host (LOW's L58 held it from 01:28Z to 02:55Z, and a launch there
+returned no REPORT: an empty REPORT is a refusal, never a run); a session
+restart (the owner's `cca captain` relaunch at 17:07Z) leaves its loops as
+orphans, so a watcher fired twice into one worktree at 20:02Z: kill a loop
+by name before re-arming and list orphans after a restart; record files
+(docs/ratchets.json, docs/NORTH-STAR.md) conflict across PRs, so they are
+re-recorded last and one PR at a time; a clean merge-tree is not a clean
+rebase; never merge beta into a lane branch (beta admits rebase merges
+only); a waiter waits for the new head's checks to register after an
+update before counting them; the parsers read `VERDICT:` with an optional
+colon (#416; the captain's scratch chains already do); a consumer-facing
+announcement is the CLI captain's text, carried verbatim (the keeper's).
+
+Open after the morning, in order: PR 419 on the owner's two words (24.0);
+PR 426's landing, then the next night dispatched on beta and its record
+(the hermetic shards, the bench job and the dated fuzz nightly in it; #393,
+#395, #142, #423 close on it); #420 (explorers.rs's four survivors, a tests
+lane; the floor stays 82); #414 ((c), behind (b)); #416; the next pin's
+items on #386: bsv-rs #613 (the seven `validate_<call>_args`) and #620
+(`PushDrop::decode`), the toolbox's #554, #186 and #142, and #576 (the day
+line's names); 23.6, the reverify read against a copy of the production
+store; the production upgrade with an upgrade note naming every caller
+(the Origin header and ALLOWED_ORIGINS for the SwiftBar plugins, the
+funder, 3322 and LOW's node-side callers). The lines: beta 678a9ff; main at
+this entry's parent.
