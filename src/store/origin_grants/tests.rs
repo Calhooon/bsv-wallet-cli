@@ -617,3 +617,37 @@ async fn a_revoke_stamps_and_deletes_nothing() {
         .is_empty());
     assert_eq!(count(&storage, "origin_grants").await, 2);
 }
+
+#[tokio::test]
+async fn the_listing_holds_every_grant_and_the_open_rows_unless_all() {
+    let (_dir, storage) = wallet_db().await;
+    let ceiling = owner("b.example", Scope::Spending, Some(500), 0);
+    grant(&storage, &ceiling, NOW).await.unwrap();
+    granted(&storage, "b.example").await;
+    granted(&storage, "a.example").await;
+    revoke(&storage, "a.example", None, NOW).await.unwrap();
+    let open = ask(&storage, &wallet_call("c.example:5173", "/listOutputs")).await;
+    let shut = ask(&storage, &spend_call("b.example", 20)).await;
+    say(&storage, shut.pending_id, Answer::Deny, None)
+        .await
+        .unwrap();
+
+    let rows = listing(&storage, false).await.unwrap();
+    let keys: Vec<_> = rows
+        .grants
+        .iter()
+        .map(|g| (g.originator.as_str(), g.scope, g.revoked_at.is_some()))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("a.example", Scope::Wallet, true),
+            ("b.example", Scope::Wallet, false),
+            ("b.example", Scope::Spending, false),
+        ]
+    );
+    assert_eq!(rows.pending, std::slice::from_ref(&open));
+    let every = listing(&storage, true).await.unwrap();
+    let ids: Vec<_> = every.pending.iter().map(|p| p.pending_id).collect();
+    assert_eq!(ids, [open.pending_id, shut.pending_id]);
+}

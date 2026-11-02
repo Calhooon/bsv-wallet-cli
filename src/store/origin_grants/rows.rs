@@ -170,6 +170,15 @@ impl PendingRow {
     }
 }
 
+/// The rows `bsv-wallet origins` lists ([`super::listing`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Listing {
+    /// Every grant row, live, expired or revoked.
+    pub grants: Vec<GrantRow>,
+    /// The pending rows asked for: the open ones, or every one.
+    pub pending: Vec<PendingRow>,
+}
+
 /// A row function's refusal, told apart by its type
 /// (`e.downcast_ref::<Refused>()`); its text is the one served or printed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,8 +265,10 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
-/// Unix seconds as the CLI prints them (`2026-11-02T19:31Z`, UTC).
-fn when(at: i64) -> String {
+/// Unix seconds as the CLI prints them (`2026-11-02T19:31Z`, UTC); a time
+/// outside chrono's range prints as its number.
+#[must_use]
+pub fn when(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0).map_or_else(
         || at.to_string(),
         |t| t.format("%Y-%m-%dT%H:%MZ").to_string(),
