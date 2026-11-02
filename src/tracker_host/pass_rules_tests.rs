@@ -128,6 +128,8 @@ fn the_pass_takes_its_age_its_asks_and_its_spend_depth_from_the_configuration() 
 /// up, judged or faulted) is not.
 #[test]
 fn a_pass_is_quiet_only_when_it_did_nothing_but_read() {
+    /// One count of the pass, and how a report comes to hold it.
+    type Loud = (&'static str, fn(&mut TickReport));
     fn one() -> Vec<String> {
         vec!["ab".repeat(32)]
     }
@@ -139,7 +141,7 @@ fn a_pass_is_quiet_only_when_it_did_nothing_but_read() {
     }
     .is_quiet());
 
-    let loud: [(&str, fn(&mut TickReport)); 13] = [
+    let loud: [Loud; 13] = [
         ("adopted", |r| r.adopted = 1),
         ("adopted_mined", |r| r.adopted_mined = one()),
         ("adopted_proof_failed", |r| r.adopted_proof_failed = one()),
