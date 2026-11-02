@@ -768,67 +768,7 @@ async fn permission_audit_reset() -> Json<serde_json::Value> {
 }
 
 #[cfg(test)]
-mod lenient_json_tests {
-    use super::sanitize_lone_surrogates;
-
-    #[test]
-    fn lone_lead_and_lone_trail_become_fffd_and_pairs_survive() {
-        let lead = br#"{"keyID":"ab \ud83d cd"}"#;
-        assert_eq!(
-            &*sanitize_lone_surrogates(lead),
-            br#"{"keyID":"ab \ufffd cd"}"#
-        );
-        let trail = br#"{"keyID":"\udc00"}"#;
-        assert_eq!(&*sanitize_lone_surrogates(trail), br#"{"keyID":"\ufffd"}"#);
-        let pair = br#"{"keyID":"\ud83d\ude00"}"#;
-        assert!(matches!(
-            sanitize_lone_surrogates(pair),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        let plain = br#"{"keyID":"plain \\u0041"}"#;
-        assert!(matches!(
-            sanitize_lone_surrogates(plain),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        let fixed = sanitize_lone_surrogates(lead);
-        let v: serde_json::Value = serde_json::from_slice(&fixed).unwrap();
-        assert_eq!(v["keyID"], "ab \u{fffd} cd");
-    }
-}
+mod lenient_json_tests;
 
 #[cfg(test)]
-mod bind_guard_tests {
-    use super::refuse_open_bind;
-    use std::net::IpAddr;
-
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn beyond_loopback_needs_a_token_or_the_flag() {
-        for open in ["0.0.0.0", "::", "192.168.1.10", "10.0.0.1"] {
-            let err = refuse_open_bind(ip(open), None, false).unwrap_err();
-            assert!(
-                err.to_string().contains("--allow-no-token"),
-                "{open}: {err}"
-            );
-            assert!(
-                refuse_open_bind(ip(open), Some(""), false).is_err(),
-                "{open}"
-            );
-            assert!(
-                refuse_open_bind(ip(open), Some("t"), false).is_ok(),
-                "{open}"
-            );
-            assert!(refuse_open_bind(ip(open), None, true).is_ok(), "{open}");
-        }
-    }
-
-    #[test]
-    fn loopback_is_unchanged() {
-        for lo in ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"] {
-            assert!(refuse_open_bind(ip(lo), None, false).is_ok(), "{lo}");
-        }
-    }
-}
+mod bind_guard_tests;
