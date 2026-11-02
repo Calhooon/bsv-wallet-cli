@@ -589,6 +589,7 @@ impl World {
         let mut config = ServerConfig {
             settings: crate::wire_support::quiet_config(),
             ..ServerConfig::admitting([super::recorder::ORIGINATOR, "app.example"])
+                .expect("an originator")
         };
         match name {
             "auth" => config.auth_token = Some(WIRE_BEARER.to_string()),

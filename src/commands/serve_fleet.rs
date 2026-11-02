@@ -166,7 +166,7 @@ fn tenant_config(ctx: &WalletContext) -> Result<ServerConfig> {
         &ctx.config,
         ctx.chain,
         arcade_token,
-    ))
+    )?)
 }
 
 /// The daemon mode's join: the first tenant's server to end decides the

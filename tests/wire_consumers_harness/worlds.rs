@@ -115,7 +115,7 @@ impl World {
         // (#411): each must be listed in its wallet's ALLOWED_ORIGINS.
         let mut config = ServerConfig {
             settings: crate::wire_support::quiet_config(),
-            ..ServerConfig::admitting(["localhost", "e2e-test"])
+            ..ServerConfig::admitting(["localhost", "e2e-test"]).expect("an originator")
         };
         if name == "auth" {
             config.auth_token = Some(BEARER.to_string());

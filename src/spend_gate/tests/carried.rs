@@ -95,7 +95,7 @@ async fn headers(
 async fn serve(w: &CarriedWorld, body: Value) -> (u16, Value, bool) {
     let app = crate::server::make_router(
         w.wallet.clone(),
-        crate::server::ServerConfig::admitting(["gate.local"]),
+        crate::server::ServerConfig::admitting(["gate.local"]).expect("an originator"),
     );
     let request = Request::post("/createAction")
         .header("content-type", "application/json")

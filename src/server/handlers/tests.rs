@@ -287,7 +287,8 @@ async fn served_by(
     let storage = StorageSqlx::in_memory().await.unwrap();
     let key = bsv_sdk::primitives::PrivateKey::random();
     let wallet = crate::test_support::test_wallet(storage, "served-by", key).await;
-    let config = crate::server::ServerConfig::admitting(origins.iter().copied());
+    let config =
+        crate::server::ServerConfig::admitting(origins.iter().copied()).expect("an originator");
     crate::server::make_router(wallet, config)
         .oneshot(request)
         .await
@@ -666,7 +667,7 @@ async fn host_route_store_faults(path: &str, code: &str) {
     let storage = wallet.storage();
     let app = crate::server::make_router(
         wallet.clone(),
-        crate::server::ServerConfig::admitting(["host-route.test"]),
+        crate::server::ServerConfig::admitting(["host-route.test"]).expect("an originator"),
     );
     let request = || {
         axum::http::Request::get(path)

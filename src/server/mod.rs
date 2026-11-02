@@ -26,7 +26,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::config::{Config, ServerSettings};
 use handlers::WalletState;
-pub use origin_gate::AllowedOrigins;
+pub use origin_gate::{AllowedOrigins, OriginatorRule};
 
 // One 5 s store busy ceiling fits; two do not. Leave time to deliver the
 // answer before Arcade's 10 s POST timeout (arcade@1ae1208e64b77b64818044d606638939d9f1834a,
@@ -95,13 +95,23 @@ impl ServerConfig {
     /// (`BIND_ADDR`, `AUTH_TOKEN`, `TLS_CERT_PATH` with `TLS_KEY_PATH`), on
     /// `chain`. `/arc-callback` is enabled when a callback token exists: the
     /// Arcade runtime's (`arcade_token`), else an explicit `CALLBACK_TOKEN`.
-    pub fn from_config(settings: &Arc<Config>, chain: Chain, arcade_token: Option<String>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// The [`OriginatorRule`] an `allowed_origins` entry breaks (a
+    /// configuration built in-process rather than read from
+    /// `ALLOWED_ORIGINS`, whose read refuses the same entry at start).
+    pub fn from_config(
+        settings: &Arc<Config>,
+        chain: Chain,
+        arcade_token: Option<String>,
+    ) -> Result<Self, OriginatorRule> {
         let (server, services) = (&settings.server, &settings.services);
         let owned = |t: &crate::config::Secret| t.expose().to_string();
         let tls = (server.tls_cert_path.clone()).zip(server.tls_key_path.clone());
-        Self {
+        Ok(Self {
             auth_token: server.auth_token.as_ref().map(owned),
-            allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned()),
+            allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned())?,
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -110,7 +120,7 @@ impl ServerConfig {
             bind_addr: server.bind_addr,
             callback_token: arcade_token.or_else(|| services.callback_token.as_ref().map(owned)),
             settings: settings.clone(),
-        }
+        })
     }
 }
 

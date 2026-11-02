@@ -553,7 +553,7 @@ mod tests {
     /// Host that is not loopback, is refused.
     #[test]
     fn the_inspector_admits_its_own_origin_and_the_listed() {
-        let listed = AllowedOrigins::new(["app.example"]);
+        let listed = AllowedOrigins::new(["app.example"]).expect("an originator");
         let host = (header::HOST, "localhost:9321");
         let ok = |m: Method, h: HeaderMap| inspector_word(&m, &h, &listed).is_ok();
         assert!(ok(Method::GET, headers(std::slice::from_ref(&host))));

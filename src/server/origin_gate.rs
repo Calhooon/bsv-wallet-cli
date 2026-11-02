@@ -36,6 +36,7 @@ use axum::response::{IntoResponse, Response};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use super::error::{AppError, Kind};
+pub use crate::config::originator::OriginatorRule;
 
 /// The route the gate does not judge: Arcade's webhook, server to server,
 /// sends no `Origin` and is authenticated by the callback token.
@@ -57,22 +58,20 @@ impl AllowedOrigins {
     /// lowercased; `ALLOWED_ORIGINS` is checked at start by the same rule
     /// (`config::read`).
     ///
-    /// # Panics
+    /// # Errors
     ///
     /// On an entry that is not an originator (a scheme, a path, a name that
-    /// is not a hostname), with the rule it breaks: an entry is never
-    /// stripped to its host.
-    pub fn new<I: IntoIterator<Item = S>, S: Into<String>>(originators: I) -> Self {
-        Self(
-            originators
-                .into_iter()
-                .map(|entry| {
-                    let entry = entry.into();
-                    crate::config::originator::checked(&entry)
-                        .unwrap_or_else(|rule| panic!("{entry:?} is not {rule}"))
-                })
-                .collect(),
-        )
+    /// is not a hostname), the [`OriginatorRule`] it breaks, in the text the
+    /// binary refuses `ALLOWED_ORIGINS` with: an entry is never stripped to
+    /// its host (#433).
+    pub fn new<I: IntoIterator<Item = S>, S: Into<String>>(
+        originators: I,
+    ) -> Result<Self, OriginatorRule> {
+        originators
+            .into_iter()
+            .map(|entry| crate::config::originator::listed(&entry.into()))
+            .collect::<Result<_, _>>()
+            .map(Self)
     }
 
     /// The entry admitting `originator`, looked up as the reference looks
@@ -119,13 +118,18 @@ impl AllowedOrigins {
 impl super::ServerConfig {
     /// The default settings with the browser gate admitting `originators`, as
     /// `ALLOWED_ORIGINS` would (the tests' and the harnesses' servers).
+    ///
+    /// # Errors
+    ///
+    /// The [`OriginatorRule`] an entry breaks, as [`AllowedOrigins::new`].
     #[allow(dead_code)] // the binary reads `ALLOWED_ORIGINS`; the tests build it
-    #[must_use]
-    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(originators: I) -> Self {
-        Self {
-            allowed_origins: AllowedOrigins::new(originators),
+    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(
+        originators: I,
+    ) -> Result<Self, OriginatorRule> {
+        Ok(Self {
+            allowed_origins: AllowedOrigins::new(originators)?,
             ..Self::default()
-        }
+        })
     }
 }
 
@@ -373,6 +377,9 @@ impl<'de> serde::de::Visitor<'de> for Originators<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::originator;
+    use crate::server::ServerConfig;
+    use bsv_wallet_toolbox::Chain;
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut h = HeaderMap::new();
@@ -386,7 +393,7 @@ mod tests {
     }
 
     fn listed() -> AllowedOrigins {
-        AllowedOrigins::new(["App.Example", "localhost:5173"])
+        AllowedOrigins::new(["App.Example", "localhost:5173"]).expect("an originator")
     }
 
     /// The key (the owner's word of 2026-11-02): an `Origin` is judged as
@@ -484,7 +491,7 @@ mod tests {
             assert_eq!(admitted.entry, entry, "{origin}");
             assert_eq!(admitted.origin, origin);
         }
-        let both = AllowedOrigins::new(["localhost:5173", "localhost"]);
+        let both = AllowedOrigins::new(["localhost:5173", "localhost"]).expect("an originator");
         let at = |origin| judge(&headers(&[("origin", origin)]), &both).unwrap().entry;
         assert_eq!(at("http://localhost:5173"), "localhost:5173");
         assert_eq!(at("http://localhost:3000"), "localhost");
@@ -515,12 +522,59 @@ mod tests {
         }
     }
 
-    /// An entry is an originator or a programmer's error, never stripped
-    /// to its host.
+    /// An entry is an originator or the rule it breaks, returned, never a
+    /// panic and never stripped to its host (#433): the text is the
+    /// binary's refusal of the same entry in `ALLOWED_ORIGINS`.
     #[test]
-    #[should_panic(expected = "without a URL scheme")]
-    fn an_entry_with_a_scheme_is_refused() {
-        let _ = AllowedOrigins::new(["http://localhost"]);
+    fn an_entry_with_a_scheme_is_refused_by_the_scheme_rule() {
+        let e = AllowedOrigins::new(["localhost", " http://localhost "]).unwrap_err();
+        assert_eq!(
+            (e.entry(), e.rule()),
+            ("http://localhost", originator::SCHEME)
+        );
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "ALLOWED_ORIGINS is \"http://localhost\", which is not {}: \
+                 set it so, or unset it for the default",
+                originator::SCHEME
+            )
+        );
+        let config = ServerConfig::admitting(["https://app.example"]).err();
+        assert_eq!(config.map(|e| e.rule()), Some(originator::SCHEME));
+    }
+
+    #[test]
+    fn an_entry_with_a_path_is_refused_by_the_parts_rule() {
+        let e = AllowedOrigins::new(["localhost/app"]).unwrap_err();
+        assert_eq!((e.entry(), e.rule()), ("localhost/app", originator::PARTS));
+        assert!(e.to_string().contains("a path"), "{e}");
+        let config = ServerConfig::admitting(["app.example", "localhost/"]).err();
+        assert_eq!(config.map(|e| e.rule()), Some(originator::PARTS));
+    }
+
+    #[test]
+    fn an_entry_whose_name_is_not_a_hostname_is_refused_by_the_name_rule() {
+        let e = AllowedOrigins::new(["localhost:99999"]).unwrap_err();
+        assert_eq!(e.rule(), originator::NAME);
+    }
+
+    #[test]
+    fn good_entries_are_admitted_lowercased() {
+        let list = AllowedOrigins::new([" App.Example ", "localhost:5173", "127.0.0.1"]).unwrap();
+        assert_eq!(&*list.0, ["app.example", "localhost:5173", "127.0.0.1"]);
+        assert!(ServerConfig::admitting(Vec::<String>::new()).is_ok());
+    }
+
+    /// A configuration built in-process, not read from `ALLOWED_ORIGINS`
+    /// (dolphinmilk's path, docs/DEPENDENTS.md): its bad entry is returned
+    /// by `from_config`, never a panic.
+    #[test]
+    fn from_config_returns_the_rule_an_in_process_entry_breaks() {
+        let mut config = crate::config::Config::default();
+        config.server.allowed_origins = vec!["http://localhost:3000".into()];
+        let e = ServerConfig::from_config(&Arc::new(config), Chain::Main, None).err();
+        assert_eq!(e.map(|e| e.rule()), Some(originator::SCHEME));
     }
 
     /// A body's originator agrees with the `Origin` or is refused, and the

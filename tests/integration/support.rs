@@ -19,7 +19,7 @@ pub(crate) const ORIGINS: [&str; 3] = ["test.local", "browser.test", "privileged
 
 /// The default server settings admitting [`ORIGINS`].
 pub(crate) fn admitting() -> ServerConfig {
-    ServerConfig::admitting(ORIGINS)
+    ServerConfig::admitting(ORIGINS).expect("an originator")
 }
 
 /// A client that sends `Origin: http://test.local` on every request (a

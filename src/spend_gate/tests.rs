@@ -503,7 +503,7 @@ async fn a_served_request_retries_the_heal_a_failed_start_owed() {
     let owed = crate::server::HealOwed::owed();
     let app = crate::server::make_router_owing(
         wallet.clone(),
-        crate::server::ServerConfig::admitting(["heal.test"]),
+        crate::server::ServerConfig::admitting(["heal.test"]).expect("an originator"),
         owed.clone(),
     );
     let request = || {

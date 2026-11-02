@@ -12,7 +12,7 @@ pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
     let arcade_token =
         crate::services_env::arcade_runtime(&ctx.config.services, ctx.chain, &ctx.db_path)?
             .map(|rt| rt.callback_token);
-    let config = ServerConfig::from_config(&ctx.config, ctx.chain, arcade_token);
+    let config = ServerConfig::from_config(&ctx.config, ctx.chain, arcade_token)?;
     let settings = ctx.config.clone();
     let db_path = ctx.db_path.clone();
     let wallet_state = server::make_wallet_state(ctx.wallet);
