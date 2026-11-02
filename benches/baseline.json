@@ -1,0 +1,70 @@
+{
+  "margin": 0.05,
+  "profiles": {
+    "ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores": {
+      "gate": true,
+      "machine": "AMD EPYC 9V74 80-Core Processor, 4 cores",
+      "profile": "ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores",
+      "runs": [
+        {
+          "benches": {
+            "create_action_signed/signed/1000": {
+              "calls": 300,
+              "p50_us": 22409.4,
+              "p99_us": 26037.8
+            },
+            "create_action_signed/signed/10000": {
+              "calls": 100,
+              "p50_us": 315170.5,
+              "p99_us": 359370.1
+            },
+            "gate_assess/all/1000": {
+              "calls": 500,
+              "p50_us": 60630.3,
+              "p99_us": 73164.2
+            },
+            "gate_assess/all/10000": {
+              "calls": 200,
+              "p50_us": 801501.4,
+              "p99_us": 858393.0
+            },
+            "gate_assess/need/1000": {
+              "calls": 900,
+              "p50_us": 12012.6,
+              "p99_us": 14520.2
+            },
+            "gate_assess/need/10000": {
+              "calls": 200,
+              "p50_us": 278463.5,
+              "p99_us": 314733.0
+            },
+            "internalize_action/brc29/1000": {
+              "calls": 600,
+              "p50_us": 1446.8,
+              "p99_us": 2129.6
+            },
+            "internalize_action/brc29/10000": {
+              "calls": 200,
+              "p50_us": 2962.1,
+              "p99_us": 5675.4
+            },
+            "list_outputs/limit100/1000": {
+              "calls": 14800,
+              "p50_us": 643.0,
+              "p99_us": 880.8
+            },
+            "list_outputs/limit100/10000": {
+              "calls": 2400,
+              "p50_us": 4314.4,
+              "p99_us": 4781.0
+            }
+          },
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "recorded": "2026-11-02",
+          "run_id": "41413946663"
+        }
+      ],
+      "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)"
+    }
+  }
+}
