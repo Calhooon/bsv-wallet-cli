@@ -199,7 +199,7 @@ pub use tx::{p2pkh, raw_tx, txid_of};
 
 /// The `marker` field of every event logged while a [`Markers::capture`]
 /// guard lives on this thread, with the event's `txid`, `error` and message when
-/// it carries them. A `#[tokio::test]` runs on one thread, so a capture taken
+/// it carries them, its level, and every field by name. A `#[tokio::test]` runs on one thread, so a capture taken
 /// at its start sees every line the test's awaits log.
 #[derive(Clone, Default)]
 pub struct Markers(Arc<Mutex<Vec<Marked>>>);
@@ -211,6 +211,8 @@ pub struct Marked {
     pub txid: Option<String>,
     pub error: Option<String>,
     pub message: Option<String>,
+    pub level: Option<tracing::Level>,
+    pub fields: HashMap<String, String>,
 }
 
 impl Markers {
@@ -257,6 +259,7 @@ impl tracing::field::Visit for Marked {
 
 impl Marked {
     fn set(&mut self, name: &str, value: String) {
+        self.fields.insert(name.to_string(), value.clone());
         match name {
             "marker" => self.marker = value,
             "txid" => self.txid = Some(value),
@@ -269,7 +272,10 @@ impl Marked {
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Markers {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
-        let mut marked = Marked::default();
+        let mut marked = Marked {
+            level: Some(*event.metadata().level()),
+            ..Marked::default()
+        };
         event.record(&mut marked);
         if !marked.marker.is_empty() {
             self.0.lock().unwrap().push(marked);

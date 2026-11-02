@@ -361,6 +361,63 @@ mod tests {
         assert!(off.bananablocks().is_none());
     }
 
+    /// #420: the status an explorer fault is logged under, by its exact
+    /// text for each class `fault_status` names: a rate limit (whatever
+    /// Retry-After it carries) apart from every other fault.
+    #[test]
+    fn fault_status_names_each_class_by_its_exact_text() {
+        use bsv_wallet_toolbox::Error;
+        let cases: &[(Error, &str)] = &[
+            (
+                Error::RateLimited {
+                    provider: "WhatsOnChain".to_string(),
+                    retry_after_secs: 0,
+                },
+                "rate limited",
+            ),
+            (
+                Error::RateLimited {
+                    provider: "Bitails".to_string(),
+                    retry_after_secs: 30,
+                },
+                "rate limited",
+            ),
+            (
+                Error::RateLimited {
+                    provider: "BananaBlocks".to_string(),
+                    retry_after_secs: u64::MAX,
+                },
+                "rate limited",
+            ),
+            (Error::NetworkError("timeout".to_string()), "fault"),
+            (Error::ServiceError("503".to_string()), "fault"),
+        ];
+        for (error, want) in cases {
+            assert_eq!(fault_status(error), *want, "{error}");
+        }
+    }
+
+    /// #420 (CLAUDE.md's ladder paragraph): every explorer call logs one
+    /// `explorer_call` line at info with `provider`, `call`, `status`, `ms`.
+    #[test]
+    fn log_call_logs_one_explorer_call_line_at_info() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
+        let started = Instant::now()
+            .checked_sub(std::time::Duration::from_millis(25))
+            .unwrap();
+        log_call("WhatsOnChain", "beef", "429", started);
+        let lines = markers.named("explorer_call");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = &lines[0];
+        assert_eq!(line.level, Some(tracing::Level::INFO));
+        assert_eq!(line.message.as_deref(), Some("explorer call"));
+        assert_eq!(line.fields["provider"], "WhatsOnChain");
+        assert_eq!(line.fields["call"], "beef");
+        assert_eq!(line.fields["status"], "429");
+        let ms: u64 = line.fields["ms"].parse().unwrap();
+        assert!(ms >= 25, "ms {ms}");
+    }
+
     /// 0.18.2 (toolbox #44): the spend probe's spender rungs left this
     /// module; what remains asks for bytes (`/beef`, `/hex`) and for a
     /// chain index's word, never for a spender.
