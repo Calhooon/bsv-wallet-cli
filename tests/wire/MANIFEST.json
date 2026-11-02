@@ -185,7 +185,8 @@
     "183-gate.encrypt.originatorDisagrees.json",
     "184-gate.encrypt.originatorAgrees.json",
     "185-gate.encrypt.bodyOriginatorDisagrees.json",
-    "186-gate.getVersion.noOrigin.json"
+    "186-gate.getVersion.noOrigin.json",
+    "187-gate.isAuthenticated.bearerNoOrigin.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -252,6 +253,7 @@
     "183-gate.encrypt.originatorDisagrees.json": "#411: an Originator header naming another host than the Origin is refused (the ruling's rule 1; BrowserGate.lean disagreeing_refused), 400 VALIDATION_ERROR naming both; the listed origin's page reads it (the CORS echo).",
     "184-gate.encrypt.originatorAgrees.json": "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314).",
     "185-gate.encrypt.bodyOriginatorDisagrees.json": "#411: a body's top-level originator naming another host than the Origin is refused once the body is read (the ruling's rule 1), 400 VALIDATION_ERROR naming both.",
-    "186-gate.getVersion.noOrigin.json": "#411: a status door is gated as a BRC-100 call is; the client asks an Origin of every path."
+    "186-gate.getVersion.noOrigin.json": "#411: a status door is gated as a BRC-100 call is; the client asks an Origin of every path.",
+    "187-gate.isAuthenticated.bearerNoOrigin.json": "#411: the bearer never stands in for an Origin (the ruling's rule 4; BrowserGate.lean bearer_changes_no_word): with the right bearer and no Origin, the no-origin refusal."
   }
 }
