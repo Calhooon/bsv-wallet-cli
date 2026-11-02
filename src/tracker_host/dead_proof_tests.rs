@@ -6,6 +6,7 @@ use bsv_wallet_toolbox::services::mock::MockWalletServices;
 
 mod could_not_look;
 mod feed;
+mod reorged;
 mod reports;
 
 async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {

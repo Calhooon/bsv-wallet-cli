@@ -3216,6 +3216,9 @@ mod dead_proof_tests;
 mod pass_rules_tests;
 
 #[cfg(test)]
+mod announce_rules_tests;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::broadcast_reconcile::DEFAULT_ABSENCE_MINUTES;
@@ -3922,7 +3925,7 @@ pub(crate) mod tests {
     }
 
     /// An event header, as the feed carries one.
-    fn event_header(height: u32, hash: &str, root: &str) -> serde_json::Value {
+    pub(crate) fn event_header(height: u32, hash: &str, root: &str) -> serde_json::Value {
         serde_json::json!({
             "version": 1, "previousHash": "00".repeat(32), "merkleRoot": root,
             "time": 1_700_000_000u32, "bits": 0x1d00_ffffu32, "nonce": 0, "height": height,
@@ -4531,7 +4534,7 @@ pub(crate) mod tests {
     }
 
     /// A reorg at 900 whose deactivated header is `hash` with root `root`.
-    fn reorg_at_900(hash: &str, root: &str) -> serde_json::Value {
+    pub(crate) fn reorg_at_900(hash: &str, root: &str) -> serde_json::Value {
         serde_json::json!({
             "v": 1, "kind": "reorg", "forkHeight": 900, "depth": 1,
             "deactivatedHeaders": [event_header(900, hash, root)],
