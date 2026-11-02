@@ -128,6 +128,10 @@ fn the_pass_takes_its_age_its_asks_and_its_spend_depth_from_the_configuration() 
 /// up, judged or faulted) is not.
 #[test]
 fn a_pass_is_quiet_only_when_it_did_nothing_but_read() {
+    fn one() -> Vec<String> {
+        vec!["ab".repeat(32)]
+    }
+
     assert!(TickReport::default().is_quiet());
     assert!(TickReport {
         tracked: 3,
@@ -135,101 +139,24 @@ fn a_pass_is_quiet_only_when_it_did_nothing_but_read() {
     }
     .is_quiet());
 
-    let one = || vec!["ab".repeat(32)];
-    let loud = [
-        (
-            "adopted",
-            TickReport {
-                adopted: 1,
-                ..TickReport::default()
-            },
-        ),
-        (
-            "adopted_mined",
-            TickReport {
-                adopted_mined: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "adopted_proof_failed",
-            TickReport {
-                adopted_proof_failed: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "hints",
-            TickReport {
-                hints: 1,
-                ..TickReport::default()
-            },
-        ),
-        (
-            "asked",
-            TickReport {
-                asked: 1,
-                ..TickReport::default()
-            },
-        ),
-        (
-            "reannounced",
-            TickReport {
-                reannounced: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "not_final",
-            TickReport {
-                not_final: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "moved",
-            TickReport {
-                moved: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "stale_known",
-            TickReport {
-                stale_known: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "stale_announced",
-            TickReport {
-                stale_announced: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "stale_to_monitor",
-            TickReport {
-                stale_to_monitor: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "verdicts",
-            TickReport {
-                verdicts: one(),
-                ..TickReport::default()
-            },
-        ),
-        (
-            "faults",
-            TickReport {
-                faults: one(),
-                ..TickReport::default()
-            },
-        ),
+    let loud: [(&str, fn(&mut TickReport)); 13] = [
+        ("adopted", |r| r.adopted = 1),
+        ("adopted_mined", |r| r.adopted_mined = one()),
+        ("adopted_proof_failed", |r| r.adopted_proof_failed = one()),
+        ("hints", |r| r.hints = 1),
+        ("asked", |r| r.asked = 1),
+        ("reannounced", |r| r.reannounced = one()),
+        ("not_final", |r| r.not_final = one()),
+        ("moved", |r| r.moved = one()),
+        ("stale_known", |r| r.stale_known = one()),
+        ("stale_announced", |r| r.stale_announced = one()),
+        ("stale_to_monitor", |r| r.stale_to_monitor = one()),
+        ("verdicts", |r| r.verdicts = one()),
+        ("faults", |r| r.faults = one()),
     ];
-    for (what, report) in loud {
+    for (what, set) in loud {
+        let mut report = TickReport::default();
+        set(&mut report);
         assert!(!report.is_quiet(), "a pass with {what} is not quiet");
     }
 }
@@ -351,17 +278,17 @@ async fn a_ring_read_longer_than_twelve_is_cut_to_its_newest_twelve() {
 /// since, until a new hint names it.
 #[tokio::test]
 async fn a_transaction_asked_sixteen_times_without_a_proof_is_not_asked_again() {
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(None))
+        .build();
     let (storage, user) = wallet_storage().await;
-    let txid = "e7".repeat(32);
+    let txid = "e9".repeat(32);
     insert_tx(&storage, user, &txid, "unproven").await;
+    let mut now = 1_800_000_000;
     storage
         .record_broadcast_status(&txid, "arcade", BROADCAST_STATUS_MINED)
         .await
         .unwrap();
-    let services = MockWalletServices::builder()
-        .get_merkle_path_response(proof_answer(None))
-        .build();
-    let mut now = 1_800_000_000;
     let mut asked = 0;
     for _ in 0..MAX_ASKS_PER_TX + 4 {
         let report = tick(&storage, &services, &FixedClock(now), &opts())
