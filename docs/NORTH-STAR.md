@@ -77,7 +77,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | fuzz hours `served_json` | 1.0 | 160391167 executions, 6234 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
 | fuzz hours `explorer_bodies` | 1.0 | 13083 executions, 357 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
 | fuzz hours `allow_pending` | 1.0 | 109220857 executions, 3447 corpus, 0 crashes at 45fecea | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253247135 |
-| bench baseline | no baseline yet |  | `benches/baseline.json` |
+| bench baseline `ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | e2e scenarios | 30 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/browsers.js` |
 | differential `45fecea` against `e5bf424` | 0 | 375 calls, 37 commands; the same-build floor 0; complete | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253245406 |
