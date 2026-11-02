@@ -1,0 +1,21 @@
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:35:26.9859031Z HEAD is now at 2ca0173 ci(#401): the Mutants shards' left-out targets are guarded by their measured reach, not trusted by name
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:35:35.9530220Z   nightly-2026-10-30-x86_64-unknown-linux-gnu installed - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:35:35.9810828Z   nightly-2026-10-30-x86_64-unknown-linux-gnu unchanged - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:35:56.0655087Z ^[[36;1m  echo "crashed=true" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:35:56.0655798Z ^[[36;1m  echo "crashed=false" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:40:11.8494329Z INFO: Running with entropic power schedule (0xFF, 100).
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T08:40:11.8494699Z INFO: Seed: 541698717
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8735723Z #12580902	DONE   cov: 3527 ft: 14246 corp: 1303/850Kb lim: 4096 exec/s: 3493 rss: 552Mb
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8819845Z Done 12580902 runs in 3601 second(s)
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8820134Z stat::number_of_executed_units: 12580902
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8820371Z stat::average_exec_per_sec:     3493
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8820587Z stat::new_units_added:          5329
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8820809Z stat::slowest_unit_time_sec:    0
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:12.8821035Z stat::peak_rss_mb:              552
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:13.0972461Z ^[[36;1mecho "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"^[[0m
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:14.6982107Z #1296	DONE   cov: 3498 ft: 14031 exec/s: 1296 rss: 261Mb
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:14.6982470Z MERGE-OUTER: successful in 1 attempt(s)
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:14.6982755Z MERGE-OUTER: the control file has 227068 bytes
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:14.6983088Z MERGE-OUTER: consumed 0Mb (80Mb rss) to parse the control file
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:14.6983523Z MERGE-OUTER: 781 new files with 9358 new features added; 1165 new coverage edges
+Fuzz (beef_reader)	UNKNOWN STEP	2026-11-02T09:40:16.0150914Z corpus additions: 781

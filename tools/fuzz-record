@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Write docs/scoreboard/fuzz.json from a Nightly run's fuzz jobs (#445).
+
+  tools/fuzz-record RUN_ID [--keep DIR] [--out FILE]
+                                 read the run with gh (its jobs, the five fuzz
+                                 jobs' logs, the corpus-* and crash-*
+                                 artifacts), write the record to the tree's
+                                 docs/scoreboard/fuzz.json, or FILE; --keep
+                                 writes what was read to DIR (a new directory)
+                                 for a reviewer's --from
+  tools/fuzz-record --from DIR [--out FILE]
+                                 the same record from a directory of what was
+                                 read, run nothing
+
+A night's fuzz record is this tool's output, never typed: the scoreboard's
+fuzz rows read it, and a reviewer recomputes it byte for byte (docs/NIGHTLY.md).
+
+A directory of what was read holds:
+
+  run.json         the run: databaseId, workflowName, headSha, createdAt and
+                   its Fuzz jobs' name, conclusion and databaseId
+                   (`gh run view <id> --json ...`)
+  logs/<target>.log
+                   the job's log (`gh run view <id> --job <job> --log`)
+  artifacts.json   each corpus-<target> and crash-<target> artifact the run
+                   uploaded: its file count and its stopping inputs (crash-,
+                   timeout-, oom-, leak-), by name
+
+Each target's figures, as its job printed them: `seconds` and `executions`
+from libFuzzer's one `Done <runs> runs in <s> second(s)` (its runs equal to
+`stat::number_of_executed_units`), `corpus_added` from the merge step's one
+`corpus additions: <n>` (equal to the corpus-<target> artifact's file count;
+no artifact is 0), `crashes` from the crash-<target> artifact's stopping
+inputs (equal to libFuzzer's `Test unit written to` lines naming one). The
+run is refused, nothing written, naming each target at fault, when: it is
+not a Nightly run; its Fuzz jobs are not fuzz/Cargo.toml's targets; a job's
+conclusion is not success; a job's checkout (`HEAD is now at <sha>`) is not
+the run's commit, or the jobs' differ; the jobs' rustc (the toolchain
+action's `installed - rustc ..`) differ; or a figure is missing, repeated or
+disagrees with its witness. The date is the run's creation day, UTC.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+REPO = "Calhooon/bsv-wallet-cli"
+RUNS = f"https://github.com/{REPO}/actions/runs/"
+WORKFLOW = "Nightly"
+JOB = re.compile(r"^Fuzz \(([A-Za-z0-9_-]+)\)$")
+STOPPING = re.compile(r"^(crash|timeout|oom|leak)-")
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TREE = os.path.join(ROOT, "docs", "scoreboard", "fuzz.json")
+MANIFEST = os.path.join(ROOT, "fuzz", "Cargo.toml")
+
+# A line of `gh run view --log` is "<job>\t<step>\t<timestamp> <text>"; a
+# log the API serves bare is "<timestamp> <text>". The text is what the job
+# printed. A step's script echoed into the log carries the shell's colour
+# codes before its text, so an anchored pattern never takes a script's own
+# words (`echo "crashed=true"`, `echo "corpus additions: $(..)"`) for output.
+PREFIX = re.compile(r"^(?:[^\t]*\t[^\t]*\t)?﻿?\d{4}-\d\d-\d\dT[0-9:.]+Z ?")
+DONE = re.compile(r"^Done (\d+) runs in (\d+) second\(s\)$")
+UNITS = re.compile(r"^stat::number_of_executed_units: *(\d+)$")
+ADDED = re.compile(r"^corpus additions: *(\d+)$")
+HEAD = re.compile(r"^HEAD is now at ([0-9a-f]{7,40}) ")
+RUSTC = re.compile(r"^\s*\S+ (?:installed|unchanged) - (rustc .+)$")
+WRITTEN = re.compile(r"^Test unit written to \S*?/((?:crash|timeout|oom|leak)-\S+)$")
+
+
+class Refused(Exception):
+    pass
+
+
+def targets():
+    """The [[bin]] names of fuzz/Cargo.toml: the targets the Nightly runs."""
+    with open(MANIFEST, "rb") as f:
+        return [b["name"] for b in tomllib.load(f).get("bin", [])]
+
+
+def lines(text):
+    return [PREFIX.sub("", line, count=1) for line in text.splitlines()]
+
+
+def matches(pattern, log):
+    return [m for m in (pattern.match(line) for line in log) if m]
+
+
+def one(pattern, log, what, faults, target):
+    found = matches(pattern, log)
+    if len(found) != 1:
+        faults.append(f"{target}: {len(found)} lines of {what} in its log, one expected")
+        return None
+    return found[0]
+
+
+def figures(target, text, artifacts, faults):
+    """A target's record and its job's sha and rustc, from its log and the
+    run's artifacts; each fault named in faults."""
+    log = lines(text)
+    out = {}
+    done = one(DONE, log, "`Done <runs> runs in <s> second(s)`", faults, target)
+    units = one(UNITS, log, "`stat::number_of_executed_units`", faults, target)
+    added = one(ADDED, log, "`corpus additions: <n>`", faults, target)
+    shas = sorted({m.group(1) for m in matches(HEAD, log)})
+    rustcs = sorted({m.group(1) for m in matches(RUSTC, log)})
+    written = sorted(m.group(1) for m in matches(WRITTEN, log))
+    if len(shas) != 1:
+        faults.append(f"{target}: its log names {len(shas)} checkouts ({', '.join(shas) or 'none'}), one expected")
+    if len(rustcs) != 1:
+        faults.append(f"{target}: its log names {len(rustcs)} installed rustc ({'; '.join(rustcs) or 'none'}), "
+                      f"one expected")
+    if done and units and done.group(1) != units.group(1):
+        faults.append(f"{target}: `Done` names {done.group(1)} runs and `stat::number_of_executed_units` "
+                      f"{units.group(1)}")
+    corpus = artifacts.get(f"corpus-{target}", {"files": 0, "inputs": []})
+    if added and int(added.group(1)) != corpus["files"]:
+        faults.append(f"{target}: its log names {added.group(1)} corpus additions and the artifact "
+                      f"corpus-{target} holds {corpus['files']} files")
+    inputs = sorted(artifacts.get(f"crash-{target}", {"inputs": []})["inputs"])
+    if inputs != written:
+        faults.append(f"{target}: the artifact crash-{target} holds the inputs {inputs or 'none'} and its log "
+                      f"wrote {written or 'none'}")
+    if done and units and added:
+        out = {"seconds": int(done.group(2)), "executions": int(done.group(1)),
+               "corpus_added": int(added.group(1)), "crashes": len(inputs)}
+    return out, shas[0] if len(shas) == 1 else None, rustcs[0] if len(rustcs) == 1 else None
+
+
+def record(night, manifest):
+    """The record of a night read into night = {"run": run.json, "logs":
+    {target: text}, "artifacts": artifacts.json}, and each target's line for
+    the print; or Refused naming every fault."""
+    run = night["run"]
+    faults = []
+    if run.get("workflowName") != WORKFLOW:
+        raise Refused(f"run {run.get('databaseId')} is the workflow {run.get('workflowName')!r}, not {WORKFLOW}")
+    commit = run.get("headSha") or ""
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise Refused(f"run {run.get('databaseId')} names no full commit ({commit!r})")
+    jobs = {}
+    for j in run.get("jobs", []):
+        m = JOB.match(j.get("name", ""))
+        if m:
+            if m.group(1) in jobs:
+                faults.append(f"{m.group(1)}: the run has two Fuzz jobs of the name")
+            jobs[m.group(1)] = j
+    if sorted(jobs) != sorted(manifest):
+        raise Refused(f"the run's Fuzz jobs ({', '.join(sorted(jobs)) or 'none'}) are not the targets of "
+                      f"fuzz/Cargo.toml ({', '.join(sorted(manifest))})")
+    for t in sorted(jobs):
+        if jobs[t].get("conclusion") != "success":
+            faults.append(f"{t}: the job {jobs[t].get('databaseId')} concluded {jobs[t].get('conclusion')!r}, "
+                          f"not success")
+    known = {f"{p}-{t}" for p in ("corpus", "crash") for t in manifest}
+    for a in sorted(set(night["artifacts"]) - known):
+        if a.startswith(("corpus-", "crash-")):
+            faults.append(f"{a}: an artifact of no target of fuzz/Cargo.toml")
+    out, said, shas, rustcs = {}, [], {}, {}
+    for t in sorted(manifest):
+        if t not in night["logs"]:
+            faults.append(f"{t}: no log of its job")
+            continue
+        out[t], shas[t], rustcs[t] = figures(t, night["logs"][t], night["artifacts"], faults)
+    off = {t: s for t, s in shas.items() if s is not None and not commit.startswith(s)}
+    if off:
+        faults.append(f"a night is one tree: the run's commit is {commit}, and these jobs checked out another: "
+                      + ", ".join(f"{t} at {s}" for t, s in sorted(off.items())))
+    if len({r for r in rustcs.values() if r}) > 1:
+        faults.append("the jobs' rustc differ: " + "; ".join(f"{t} {r}" for t, r in sorted(rustcs.items())))
+    if faults:
+        raise Refused("; ".join(faults))
+    for t in sorted(out):
+        e = out[t]
+        said.append(f"{t}: {e['seconds']} s, {e['executions']} executions, {e['corpus_added']} corpus added, "
+                    f"{e['crashes']} crashes (job {jobs[t]['databaseId']}, at {shas[t]}, {rustcs[t]})")
+    rec = {"schema": 1, "commit": commit, "run": f"{RUNS}{run['databaseId']}",
+           "date": run["createdAt"][:10], "targets": out}
+    return rec, said
+
+
+def render(rec):
+    """The committed file's text: one target a line, in name order."""
+    head = ",\n".join(f"  {json.dumps(k)}: {json.dumps(rec[k])}" for k in ("schema", "commit", "run", "date"))
+    rows = ",\n".join(f"    {json.dumps(t)}: {json.dumps(e)}" for t, e in sorted(rec["targets"].items()))
+    return "{\n" + head + ',\n  "targets": {\n' + rows + "\n  }\n}\n"
+
+
+def read(d):
+    """A night from a directory of what was read."""
+    with open(os.path.join(d, "run.json")) as f:
+        run = json.load(f)
+    with open(os.path.join(d, "artifacts.json")) as f:
+        artifacts = json.load(f)
+    logs = {}
+    ld = os.path.join(d, "logs")
+    for name in sorted(os.listdir(ld)) if os.path.isdir(ld) else []:
+        if name.endswith(".log"):
+            with open(os.path.join(ld, name), encoding="utf-8", errors="replace") as f:
+                logs[name[:-4]] = f.read()
+    return {"run": run, "logs": logs, "artifacts": artifacts}
+
+
+def gh(*args):
+    r = subprocess.run(["gh", *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Refused(f"gh {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def fetch(run_id, d):
+    """Read the run with gh into the directory d (the shape read() reads)."""
+    full = json.loads(gh("run", "view", run_id, "-R", REPO, "--json",
+                         "databaseId,workflowName,headSha,createdAt,jobs"))
+    run = {k: full.get(k) for k in ("databaseId", "workflowName", "headSha", "createdAt")}
+    run["jobs"] = [{k: j.get(k) for k in ("name", "conclusion", "databaseId")}
+                   for j in full.get("jobs", []) if JOB.match(j.get("name", ""))]
+    os.makedirs(os.path.join(d, "logs"))
+    for j in run["jobs"]:
+        text = gh("run", "view", run_id, "-R", REPO, "--job", str(j["databaseId"]), "--log")
+        with open(os.path.join(d, "logs", JOB.match(j["name"]).group(1) + ".log"), "w") as f:
+            f.write(text)
+    artifacts = {}
+    with tempfile.TemporaryDirectory(prefix="fuzz-record.", dir=os.environ.get("TMPDIR")) as dl:
+        r = subprocess.run(["gh", "run", "download", run_id, "-R", REPO, "-p", "corpus-*", "-p", "crash-*",
+                            "-D", dl], capture_output=True, text=True)
+        if r.returncode != 0 and "no artifact matches" not in r.stderr:
+            raise Refused(f"gh run download {run_id}: {r.stderr.strip()}")
+        for a in sorted(os.listdir(dl)):
+            names = sorted(os.path.relpath(os.path.join(p, n), os.path.join(dl, a))
+                           for p, _, ns in os.walk(os.path.join(dl, a)) for n in ns)
+            artifacts[a] = {"files": len(names),
+                            "inputs": sorted(os.path.basename(n) for n in names
+                                              if STOPPING.match(os.path.basename(n)))}
+    for name, data in (("run.json", run), ("artifacts.json", artifacts)):
+        with open(os.path.join(d, name), "w") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+
+
+def main(argv):
+    args = {"from": None, "keep": None, "out": None, "run": None}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--from", "--keep", "--out") and i + 1 < len(argv):
+            args[a[2:]] = argv[i + 1]
+            i += 1
+        elif a in ("-h", "--help"):
+            print(__doc__)
+            return
+        elif re.fullmatch(r"\d+", a) and args["run"] is None:
+            args["run"] = a
+        else:
+            sys.exit(f"fuzz-record: unknown argument {a}")
+        i += 1
+    if bool(args["run"]) == bool(args["from"]):
+        sys.exit("fuzz-record: a run id or --from DIR, one of the two")
+    if args["from"] and args["keep"]:
+        sys.exit("fuzz-record: --keep is a run id's; --from reads a kept directory")
+    try:
+        if args["from"]:
+            night = read(args["from"])
+        elif args["keep"]:
+            if os.path.exists(args["keep"]):
+                sys.exit(f"fuzz-record: --keep {args['keep']} exists; it is a new directory")
+            fetch(args["run"], args["keep"])
+            night = read(args["keep"])
+        else:
+            d = tempfile.mkdtemp(prefix="fuzz-record.", dir=os.environ.get("TMPDIR"))
+            try:
+                fetch(args["run"], os.path.join(d, "night"))
+                night = read(os.path.join(d, "night"))
+            finally:
+                shutil.rmtree(d)
+        rec, said = record(night, targets())
+    except Refused as e:
+        sys.exit(f"fuzz-record: refused, nothing written: {e}")
+    out = args["out"] or TREE
+    with open(out, "w") as f:
+        f.write(render(rec))
+    print("\n".join(said))
+    print(f"fuzz-record: wrote {out}: run {rec['run']}, commit {rec['commit']}, {rec['date']}, "
+          f"{len(rec['targets'])} targets")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,21 @@
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:33:38.7357852Z HEAD is now at 2ca0173 ci(#401): the Mutants shards' left-out targets are guarded by their measured reach, not trusted by name
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:33:48.1489838Z   nightly-2026-10-30-x86_64-unknown-linux-gnu installed - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:33:48.1980502Z   nightly-2026-10-30-x86_64-unknown-linux-gnu unchanged - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:34:09.4327476Z ^[[36;1m  echo "crashed=true" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:34:09.4328002Z ^[[36;1m  echo "crashed=false" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:39:27.8115159Z INFO: Running with entropic power schedule (0xFF, 100).
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T08:39:27.8115993Z INFO: Seed: 3747999033
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0079571Z #12430	DONE   cov: 8446 ft: 18820 corp: 546/66Kb lim: 582 exec/s: 3 rss: 590Mb
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0105736Z Done 12430 runs in 3601 second(s)
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0106059Z stat::number_of_executed_units: 12430
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0106333Z stat::average_exec_per_sec:     3
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0106581Z stat::new_units_added:          744
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0106836Z stat::slowest_unit_time_sec:    0
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.0107086Z stat::peak_rss_mb:              590
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:39:29.3743743Z ^[[36;1mecho "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"^[[0m
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:19.0271672Z #548	DONE   cov: 8429 ft: 18461 exec/s: 5 rss: 571Mb
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:19.0272167Z MERGE-OUTER: successful in 1 attempt(s)
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:19.0273345Z MERGE-OUTER: the control file has 232325 bytes
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:19.0273897Z MERGE-OUTER: consumed 0Mb (79Mb rss) to parse the control file
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:19.0274654Z MERGE-OUTER: 379 new files with 3090 new features added; 1072 new coverage edges
+Fuzz (explorer_bodies)	UNKNOWN STEP	2026-11-02T09:41:20.0753890Z corpus additions: 379

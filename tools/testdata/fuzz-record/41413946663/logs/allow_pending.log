@@ -1,0 +1,21 @@
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:33:38.2036302Z HEAD is now at 2ca0173 ci(#401): the Mutants shards' left-out targets are guarded by their measured reach, not trusted by name
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:33:46.8979351Z   nightly-2026-10-30-x86_64-unknown-linux-gnu installed - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:33:46.9472265Z   nightly-2026-10-30-x86_64-unknown-linux-gnu unchanged - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:34:03.7152589Z ^[[36;1m  echo "crashed=true" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:34:03.7153035Z ^[[36;1m  echo "crashed=false" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:37:47.9455589Z INFO: Running with entropic power schedule (0xFF, 100).
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T08:37:47.9456112Z INFO: Seed: 2666769236
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9562495Z #149265139	DONE   cov: 3143 ft: 15823 corp: 4388/1575Kb lim: 4096 exec/s: 41451 rss: 876Mb
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9699645Z Done 149265139 runs in 3601 second(s)
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9699799Z stat::number_of_executed_units: 149265139
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9699951Z stat::average_exec_per_sec:     41451
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9700098Z stat::new_units_added:          66087
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9700242Z stat::slowest_unit_time_sec:    0
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:48.9700444Z stat::peak_rss_mb:              876
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:49.3068888Z ^[[36;1mecho "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"^[[0m
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:50.4582890Z #4354	DONE   cov: 3158 ft: 15834 exec/s: 0 rss: 132Mb
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:50.4583257Z MERGE-OUTER: successful in 1 attempt(s)
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:50.4583526Z MERGE-OUTER: the control file has 508153 bytes
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:50.4583846Z MERGE-OUTER: consumed 0Mb (79Mb rss) to parse the control file
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:50.4584244Z MERGE-OUTER: 3640 new files with 15114 new features added; 2686 new coverage edges
+Fuzz (allow_pending)	UNKNOWN STEP	2026-11-02T09:37:58.4432348Z corpus additions: 3640

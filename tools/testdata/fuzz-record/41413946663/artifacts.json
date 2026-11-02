@@ -1,0 +1,22 @@
+{
+  "corpus-allow_pending": {
+    "files": 3640,
+    "inputs": []
+  },
+  "corpus-beef_reader": {
+    "files": 781,
+    "inputs": []
+  },
+  "corpus-brc29_remittance": {
+    "files": 411,
+    "inputs": []
+  },
+  "corpus-explorer_bodies": {
+    "files": 379,
+    "inputs": []
+  },
+  "corpus-served_json": {
+    "files": 6211,
+    "inputs": []
+  }
+}

@@ -8,6 +8,8 @@
 .env
 *.pem
 *.log
+# tools/fuzz-record's fixture: a Nightly fuzz job's log, excerpted (#445)
+!tools/testdata/fuzz-record/*/logs/*.log
 .playwright-mcp/
 .claude-docs-logs/
 e2e-funder/
