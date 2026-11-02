@@ -305,3 +305,72 @@ async fn a_transaction_asked_sixteen_times_without_a_proof_is_not_asked_again() 
         MAX_ASKS_PER_TX as usize
     );
 }
+
+/// The host's row is its replay's input (R6: the tracker's state is the
+/// replay of what the host stored): each broadcaster word a hint carries
+/// reads back from the stored row as the word heard, a `mined` claim with
+/// its height among them, never as `unknown`.
+#[test]
+fn every_broadcaster_word_reads_back_from_the_stored_row_as_heard() {
+    let words = [
+        HintStatus::Accepted,
+        HintStatus::Seen,
+        HintStatus::Mined { height: 900 },
+        HintStatus::StaleBlock,
+        HintStatus::Rejected {
+            reason: "a refusal".to_string(),
+        },
+        HintStatus::DoubleSpend {
+            competitors: vec!["ee".repeat(32)],
+        },
+        HintStatus::OrphanMempool,
+        HintStatus::MempoolPresent {
+            source: "courier-a".to_string(),
+        },
+    ];
+    for status in words {
+        let hint = Hint::new("arcade", status, 1_700_000_000);
+        let json = serde_json::to_string(&StoredHint::of(&hint)).unwrap();
+        let back: StoredHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.hint(), hint);
+    }
+}
+
+/// A failing check is reported once and again only on a change of its
+/// state (#328 (2)), across an upgrade too: a record v0.19.0-beta.6 stored
+/// (`tracker_adopt_checks`, the fault's class in its words: `parse` for a
+/// toolbox path that does not parse, `word` for one that checks but
+/// replays to another word) is the same state when the same path is
+/// checked again, so a marked creator is not reported again; a record of
+/// another class is.
+#[test]
+fn a_check_record_stored_by_the_release_before_is_not_reported_again() {
+    let txid = "e3".repeat(32);
+    let marked = |bump: Option<String>| TrackedRow {
+        bump,
+        stored_word: Some("rejected".to_string()),
+        next_ask_at: Some(700),
+        ..TrackedRow::new(&txid)
+    };
+    let unparsed = marked(None);
+    let parsed = marked(Some(super::tests::path_of(&txid, 900)));
+    let path = "0123456789abcdef";
+    let cases = [
+        (&unparsed, "parse", false),
+        (&parsed, "word", false),
+        (&unparsed, "root", true),
+        (&parsed, "invalid", true),
+    ];
+    for (row, class, again) in cases {
+        let record = CheckRecord {
+            reported: Some(format!("{class} {path}")),
+            path: path.to_string(),
+            asks: 0,
+        };
+        let (mut report, mut writes) = (TickReport::default(), Vec::new());
+        let check = record.of_check(row, None);
+        check.report(&mut report, "the line".to_string(), &mut writes);
+        assert_eq!(!report.faults.is_empty(), again, "a stored {class} record");
+        assert_eq!(!writes.is_empty(), again, "a stored {class} record");
+    }
+}
