@@ -145,6 +145,19 @@ browser's form, with its scheme; the list names its originator). The inspector
 (`bsv-wallet ui`) answers its own origin and those whose originator is listed, a `GET` without
 an `Origin` (its page's reads), and a loopback `Host` only. See
 [docs/WIRE.md](docs/WIRE.md#the-browser-gate-411).
+
+The per-origin grant rows (#414) are kept in the wallet's store and listed
+and answered from the command line; the served doors still admit by
+`ALLOWED_ORIGINS` until the design's switch
+([docs/design/origin-grants.md](docs/design/origin-grants.md), section (4)):
+
+| command | does |
+|---|---|
+| `origins [--all] [--json]` | lists every grant row and the open pending requests (`--all` adds the answered ones); `--json` prints `{"grants", "pending"}`, times in unix seconds |
+| `origin-grant <originator \| #pending-id> [--scope wallet\|spending] [--amount SATS] [--expires SECONDS\|never] [--once]` | grants an originator (a host with an optional port, no scheme) directly or answers a pending request; `--amount` is required for spending unless `--once`; prints the rows written |
+| `origin-deny <#pending-id>` | denies a pending request and prints it |
+| `origin-revoke <originator> [--scope wallet\|spending]` | stamps the originator's live rows revoked and prints each; exits 1 naming the originator when it holds none |
+
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. `CHAINTRACKS_URL=off` runs
 with no header service: nothing is marked proven (every merkle proof is

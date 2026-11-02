@@ -17,6 +17,7 @@ pub mod gift_inspect;
 pub mod gift_send;
 pub mod identity;
 pub mod init;
+pub mod origins;
 pub mod outputs;
 pub mod receive;
 pub mod reconcile_broadcasts;

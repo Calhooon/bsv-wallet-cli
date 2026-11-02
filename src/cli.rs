@@ -179,6 +179,51 @@ pub enum Commands {
         #[arg(long)]
         label: Option<String>,
     },
+    /// List the per-origin grant rows and the open pending requests (#414).
+    /// The served doors still admit by `ALLOWED_ORIGINS`; these rows are the
+    /// store's record. Times print in UTC; --json prints unix seconds
+    Origins {
+        /// Also list the pending requests already answered
+        #[arg(long)]
+        all: bool,
+    },
+    /// Grant an originator directly, or answer a pending request (#7) with a
+    /// grant. Prints the row as `origins` does
+    OriginGrant {
+        /// An originator in the reference's form (`app.example`,
+        /// `app.example:8443`: a host with an optional port, no scheme), or a
+        /// pending request's id (`#7`, or `7`: a shell reads an unquoted `#`
+        /// as a comment)
+        target: String,
+        /// The scope of a direct grant; a pending request names its own
+        #[arg(long, value_name = "SCOPE", value_parser = ["wallet", "spending"])]
+        scope: Option<String>,
+        /// The spending scope's ceiling in satoshis a calendar month (UTC);
+        /// required for spending unless --once
+        #[arg(long, value_name = "SATS", conflicts_with = "once")]
+        amount: Option<u64>,
+        /// Seconds from now until the wallet grant expires, or `never` (the
+        /// default); a spending grant never expires
+        #[arg(long, value_name = "SECONDS|never", conflicts_with = "once")]
+        expires: Option<String>,
+        /// Admit the one pending spending request alone, writing no grant
+        #[arg(long)]
+        once: bool,
+    },
+    /// Deny a pending request (#7)
+    OriginDeny {
+        /// The pending request's id (`#7`, or `7`)
+        pending: String,
+    },
+    /// Revoke an originator's live grant rows (both scopes, or --scope);
+    /// exits 1 when it holds none. Nothing is deleted
+    OriginRevoke {
+        /// An originator in the reference's form; any port of its host
+        originator: String,
+        /// Revoke this scope alone
+        #[arg(long, value_name = "SCOPE", value_parser = ["wallet", "spending"])]
+        scope: Option<String>,
+    },
     /// Break-glass chain scan: ask an explorer for the unspent outputs at our deposit
     /// address and internalize new ones
     ///
