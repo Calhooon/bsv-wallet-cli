@@ -71,6 +71,8 @@ docs/scoreboard/mutants.json, the measured column of the floors' rows:
     "commit": "<the full sha the nightly mutated>",
     "run": "<the nightly run's URL>",
     "date": "YYYY-MM-DD",
+    "verdict": "red by design: src/explorers.rs 78.0 below its floor 82; ..
+                its surviving mutants are #420",
     "files": {
       "src/spend_gate.rs": {"score": 86.6, "caught": 194, "missed": 30,
                             "timeout": 0, "unviable": 12}
@@ -84,6 +86,20 @@ the tool exits 1 naming the file, the stored score and the computed one: a score
 never read as given, since the ceiling holds a floor under it. A file whose caught,
 missed and timeout are all 0 is malformed. The table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
+Other fields (the night's tool, targets, note) are the captain's prose and are
+not read.
+
+`verdict` is optional: the cell of rule 1's exception. When present it is a
+string beginning "red by design: " that holds, for each file the night measured
+below its floor, a clause `<file> <score> below its floor <floor>` (the record's
+score and MUTANTS_FLOORS's floor, as numbers), and the issue of that file's
+survivors as the first `#N` after its clause and before the next clause. A
+verdict that does not begin so, or names no clause, exits 1 naming the field;
+a clause on a file that is not floored or not measured, with figures that are
+not the tree's, on a file whose score is at or above its floor, named twice, or
+naming no issue exits 1 naming the file. The tool runs no network, so that the
+issue is open is the review's to read. The file's row reads "<score> at
+<commit>, below the floor (red by design, #N)".
 
 docs/scoreboard/fuzz.json, the fuzz hours' rows, one per target of fuzz/Cargo.toml:
 
@@ -156,7 +172,13 @@ record names its file and provisional when it does not. The floors' rule:
      property of the tree alone, so every --check holds it, with a base or
      without one (CI on a push whose previous commit cannot be fetched), for
      every floor of MUTANTS_FLOORS; a fault names the file, the floor and the
-     score.
+     score. The owner's word of 2026-11-01: "if the complete oracle's figure
+     for a file comes out under its floor, the Nightly goes red by design and
+     the captain opens the issue; never lower a floor to pass." The exception
+     (#310): a floor may stand above its measured score when the record's
+     verdict holds that file below its floor and names its open issue, and
+     --check prints the file as RED BY DESIGN with the issue and does not fail
+     on it; without the verdict and the issue the ceiling holds.
   2. The fall (--base). A floor with a measurement at the base never falls; a
      provisional floor never falls without a measurement in the tree's record;
      a measurement at the base never vanishes from the tree.
@@ -206,6 +228,12 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RUNS = "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/"
 RUN_URL = re.compile(r"^" + re.escape(RUNS) + r"\d+(/attempts/\d+)?$")
 TARGET = re.compile(r"^[A-Za-z0-9_-]+$")
+# docs/scoreboard/mutants.json's verdict (rule 1's exception): its prefix, its
+# clause per file, and the issue a clause names.
+VERDICT_PREFIX = "red by design: "
+VERDICT_CLAUSE = re.compile(r"(\S+) (\d+(?:\.\d+)?) below its floor (\d+(?:\.\d+)?)")
+VERDICT_ISSUE = re.compile(r"#(\d+)\b")
+MALFORMED = "the record's verdict is malformed"
 
 # A key's direction: "floor" may not fall (nor leave the tree), "ceiling" may not rise.
 FLOOR_KEYS = re.compile(r"^(floor:.+|fixtures:wire|fixtures:consumers|consumers|e2e:scenarios|e2e:hermetic|arch:rules"
@@ -506,14 +534,69 @@ def measured_scores():
     return scores, commit[:7]
 
 
+def verdict_clauses():
+    """The record's `verdict` (rule 1's exception): [(file, score, floor, issue or
+    None)], one per clause `<file> <score> below its floor <floor>`, the issue
+    the first #N after the clause and before the next; [] when the record or its
+    verdict is absent. The figures are read here and judged by red_by_design()."""
+    if not path(MUTANTS).exists():
+        return []
+    record = require_object(MUTANTS, "(the file)", load_json(MUTANTS))
+    if "verdict" not in record:
+        return []
+    text = record["verdict"]
+    if not isinstance(text, str) or not text.startswith(VERDICT_PREFIX):
+        fail(MUTANTS, "verdict", f"must be a string that begins {VERDICT_PREFIX!r}")
+    found = list(VERDICT_CLAUSE.finditer(text))
+    if not found:
+        fail(MUTANTS, "verdict", "names no file below its floor (`<file> <score> below its floor <floor>`)")
+    clauses = []
+    for i, m in enumerate(found):
+        rest = text[m.end():found[i + 1].start() if i + 1 < len(found) else len(text)]
+        issue = VERDICT_ISSUE.search(rest)
+        clauses.append((m.group(1), float(m.group(2)), float(m.group(3)), issue and int(issue.group(1))))
+    return clauses
+
+
+def red_by_design(floored, scores):
+    """Rule 1's exception: {file: issue} for each file the record's verdict holds
+    below its floor, and the faults, one per malformed clause, each naming the
+    file (floored: the tree's floors, by file; scores: the tree's record, by file)."""
+    red, faults = {}, []
+    for file, said_score, said_floor, issue in verdict_clauses():
+        floor, score = floored.get(file), scores.get(file)
+        why = None
+        if file in red:
+            why = "named twice"
+        elif floor is None:
+            why = "not a floor of MUTANTS_FLOORS"
+        elif score is None:
+            why = "not measured in the tree's record"
+        elif (said_score, said_floor) != (score, floor):
+            why = (f"says {said_score:g} below its floor {said_floor:g}; the record measures {score:g} "
+                   f"and the floor is {floor:g}")
+        elif score >= floor:
+            why = f"measured {score:g}, at or above its floor {floor:g}: a verdict on a file not below its floor"
+        elif issue is None:
+            why = "names no issue (#N); a file red by design names the open issue of its survivors"
+        if why:
+            faults.append(f"floor:{file}: {MALFORMED}: {why}")
+        else:
+            red[file] = issue
+    return red, faults
+
+
 def mutation_rows():
     if not path(NIGHTLY).exists():
         return [Row("mutation floors", ABSENT, "", f"`{NIGHTLY}`")]
     scores, commit = measured_scores()
     rows, named = [], sorted(floors().items())
+    red = red_by_design(dict(named), scores)[0]
     for file, floor in named:
         score = scores.get(file)
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
+        if file in red:
+            cell += f", below the floor (red by design, #{red[file]})"
         rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`",
                         {f"floor:{file}": floor, f"floor:{file}:measured": score is not None}))
     rows[0].values["floor:files"] = [file for file, _ in named]
@@ -822,19 +905,28 @@ def is_floor(key):
 
 def ceiling(tree, scores):
     """Rules 1 and 4 of the floors' rule, on the tree alone: the faults, one per
-    floor above its measured score rounded down, and the notices, one per
-    provisional floor (scores: the tree's docs/scoreboard/mutants.json, by file).
-    Every --check runs it, with --base or without, so the two cannot drift."""
-    out, notices = [], []
+    floor above its measured score rounded down that the record's verdict does
+    not hold red by design and one per malformed verdict clause; the notices,
+    one per provisional floor; and the red-by-design lines, one per file the
+    verdict holds below its floor (scores: the tree's docs/scoreboard/mutants.json,
+    by file). Every --check runs it, with --base or without, so the two cannot drift."""
+    out, notices, reds = [], [], []
+    floored = {k[len("floor:"):]: tree[k] for k in tree if is_floor(k)}
+    red, out = red_by_design(floored, scores)
     for key in sorted(k for k in tree if is_floor(k)):
-        t, score = tree[key], scores.get(key[len("floor:"):])
+        file = key[len("floor:"):]
+        t, score = tree[key], scores.get(file)
         if score is None:
             notices.append(f"{key}: {t:g} in the tree, no measurement in the tree's record; "
                            "a provisional floor, held to no score until a night measures its file")
+        elif file in red:
+            reds.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; below the "
+                        f"floor by the record's verdict, #{red[file]}: the floor does not move and the Nightly "
+                        "is red until the tests raise the score (the owner's word of 2026-11-01)")
         elif t > math.floor(score):
             out.append(f"{key}: measured {score:g} in the tree's record, floor {t:g} in the tree; "
                        f"a floor is never above the measured score rounded down: {math.floor(score)}, not {t:g}")
-    return out, notices
+    return out, notices, reds
 
 
 def falls(base, tree, scores):
@@ -933,15 +1025,22 @@ def main():
         print(f"scoreboard: {DOC} is stale; run python3 tools/scoreboard --render and commit it")
         status = 1
     scores = measured_scores()[0]
-    above, notices = ceiling(values(all_rows), scores)
+    above, notices, reds = ceiling(values(all_rows), scores)
     for line in notices:
         print(f"scoreboard: notice: {line}")
+    for line in reds:
+        print(f"scoreboard: RED BY DESIGN: {line}")
     for line in above:
         print(f"scoreboard: {line}")
-    if above:
-        n = len(above)
+    malformed = [line for line in above if MALFORMED in line]
+    if len(above) > len(malformed):
+        n = len(above) - len(malformed)
         print(f"scoreboard: {n} floor{' stands' if n == 1 else 's stand'} above "
               f"{'its measured score' if n == 1 else 'their measured scores'} rounded down")
+    if malformed:
+        n = len(malformed)
+        print(f"scoreboard: {n} clause{'' if n == 1 else 's'} of {MUTANTS}'s verdict malformed")
+    if above:
         status = 1
     if args.base:
         base = load_base(args.base)
