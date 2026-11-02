@@ -12,7 +12,7 @@ The stack's `conformance/wallet-gate-vectors.json` (bsv-stack-lean #184, its pag
 | [`tests/gate_vectors.rs`](../tests/gate_vectors.rs) | the replay; `cargo test --locked --test gate_vectors -- --nocapture` prints the counts |
 | [`tests/gate_vectors_store/mod.rs`](../tests/gate_vectors_store/mod.rs) | each row's store, in the store's own records: the creator, its evidence, its dead parent, the coin, the header service |
 
-The pin at this writing: bsv-stack-lean `103c5bd6101917b829e5d403152ec87fa8046aae` (origin/main on 2026-10-24; the file last moved at `0e543b9`), sha256 `8ea731e553ec1ac0ffb6711e7007adae51d89d9d6793241d6174b0d1d1bab87d`.
+The pin at this writing: bsv-stack-lean `7600451447064ad1c2eaec56e0023a51ecced674` (main on 2026-11-01, the browser gate's reading, moved with the owner's word on #411; the file last moved at `7ecc5bb`, the BRCs re-pin: its `date` and two `pins` hashes, no row), sha256 `6326f29c677b4346886a311f237c6d9535153fb2a95e57c89776ece76427a98e`. The browser gate itself (the wallet charter's section 13, `lean/BrowserGate.lean`) exports no vector rows at that commit: its five scenarios (`corpus/scenarios/2026-11-01-wallet-browser-gate-*.md`) are `[D]` against an implementation until a runner drives the doors over HTTP, and the hermetic suite's scenes 25 to 29 follow them step by step (#411).
 
 ## How a row is replayed
 
