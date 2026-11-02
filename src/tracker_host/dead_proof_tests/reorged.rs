@@ -23,9 +23,7 @@ async fn reorged_row(storage: &StorageSqlx, txid: &str, rejected: bool) {
     });
     row.asks = 1;
     row.next_ask_at = Some(50);
-    let (state, fault) = row.replay(&opts().params(), &HeaderSnapshot::unread());
-    assert_eq!(fault, None);
-    store_row(storage, &row, &state, 10).await.unwrap();
+    store_unread(storage, &row).await;
 }
 
 /// A creator of ours proven by the toolbox at 900 (its root the txid),
