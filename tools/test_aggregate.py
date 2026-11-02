@@ -4,7 +4,8 @@ docs/lanes/ENSEMBLE.md (an agreement of at least two thirds and an exact mean
 of at least 0.7 over two or more files: 2 of 3 at 0.70 exact is, 0.69, 0.70,
 0.70 is not, 2 of 2 at 0.65 is not, 3 of 4 is, 3 of 5 is not, 4 of 5 is; one
 file never), a VERDICT counted over its DECISION, --options' categorical
-decisions, and each malformed block exits 2 naming its file and field. Each case writes its files
+decisions, the colon optional after every key (#416), and each malformed
+block exits 2 naming its file and field. Each case writes its files
 in a directory of its own under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_aggregate.py
 """
@@ -188,6 +189,46 @@ class Case(unittest.TestCase):
         code, out, err = self.run_tool(block("yes", "0.8"), block("yes", "0.8"), options="yes|YES")
         self.assertEqual(code, 2, out)
         self.assertIn("--options must be two to four distinct tokens", err)
+
+    def test_the_verdict_colon_is_optional(self):
+        # #416: a reviewer wrote `VERDICT: merge` and a chain read no verdict.
+        forms = ("VERDICT: merge", "VERDICT merge", "VERDICT:merge", "VERDICT : merge", "- **VERDICT:** merge")
+        texts = [block("land it", "0.8", lead="").replace("DECISION:", f"{form}\nDECISION:", 1) for form in forms]
+        code, out, _ = self.run_tool(*texts)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count(": VERDICT merge CONFIDENCE 0.80"), len(forms), out)
+        self.assertEqual(self.summary(out), f"AGGREGATE: consensus agreement={len(forms)}/{len(forms)} mean=0.80 decision: merge")
+
+    def test_a_verdict_fused_to_its_word_is_no_verdict(self):
+        text = block("land it", "0.8", lead="").replace("DECISION:", "VERDICTmerge\nDECISION:", 1)
+        code, out, _ = self.run_tool(text, block("land it", "0.8"))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("VERDICT merge", out)
+        self.assertIn("decision: land it", self.summary(out))
+
+    def test_the_confidence_colon_is_optional(self):
+        forms = ("CONFIDENCE 0.9", "CONFIDENCE:0.9", "CONFIDENCE : 0.9", "**CONFIDENCE** 0.9")
+        texts = [block("land it", "0.9", "merge").replace("CONFIDENCE: 0.9", form) for form in forms]
+        code, out, _ = self.run_tool(*texts)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.summary(out), f"AGGREGATE: consensus agreement={len(forms)}/{len(forms)} mean=0.90 decision: merge")
+
+    def test_every_key_reads_without_its_colon(self):
+        text = ("VERDICT fix\nDECISION the pin is stale\nCONFIDENCE 0.8\nRISKS\nthe row may move 0.2\n"
+                "RATIONALE the fixture moved.\n")
+        code, out, _ = self.run_tool(text, block("the pin is stale", "0.8", "fix"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("VERDICT fix CONFIDENCE 0.80 DECISION: the pin is stale", out)
+        self.assertIn("risk 0.20 the row may move", out)
+        self.assertEqual(self.summary(out), "AGGREGATE: consensus agreement=2/2 mean=0.80 decision: fix")
+
+    def test_a_key_is_a_whole_word(self):
+        # `CONFIDENCES 0.9` is prose, not the key: the block still lacks its CONFIDENCE.
+        text = block("x", "0.9").replace("CONFIDENCE: 0.9", "CONFIDENCES 0.9")
+        code, out, err = self.run_tool(text)
+        self.assertEqual(code, 2, out)
+        self.assertIn("reader-0.txt: missing CONFIDENCE", err)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
