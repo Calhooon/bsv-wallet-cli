@@ -2,18 +2,20 @@ mod arc_ingest;
 mod atomic_beef;
 mod brc29;
 mod broadcast_reconcile;
-mod broadcast_verify;
 mod cli;
 mod commands;
 mod context;
-mod explorers;
-mod server;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod tracker_words_witnesses;
 
 use anyhow::Result;
+// The verifier, the explorers' ladder and the server are the library's, one
+// copy each (#400): a module the binary declared again was compiled into
+// both crates, and cargo-mutants, which walks each crate's modules from its
+// root, listed every mutant of the file twice.
+use bsv_wallet_cli::{broadcast_verify, explorers, server};
 // The configuration, read once at start: the crate's one reader of the
 // environment.
 use bsv_wallet_cli::config;
