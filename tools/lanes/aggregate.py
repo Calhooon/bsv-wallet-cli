@@ -9,7 +9,9 @@ line, then `DECISION:` (one line), `CONFIDENCE:` (a number in [0,1]), `RISKS:`
 `RATIONALE:` (at most five lines, ended by a blank line or the end of the file).
 The block starts at the last `DECISION:` line; the VERDICT, when present, is the
 nearest non-blank line before it. A key may carry a list marker or bold
-(`- **DECISION:**`), as a Markdown REPORT writes it.
+(`- **DECISION:**`), as a Markdown REPORT writes it, and its colon is optional
+with any spacing around it (`VERDICT merge`, `VERDICT: merge`, `VERDICT:merge`,
+`CONFIDENCE 0.9`, #416); the key is a whole word (`DECISIONS` is not one).
 
 A decision is counted by its key. With --options (trigger D's categorical
 decisions: two to four option tokens joined by `|`, e.g. `A|B|C` or `yes|no`)
@@ -37,8 +39,8 @@ import re
 import sys
 from fractions import Fraction
 
-KEY = re.compile(r"^\s*(?:[-*]\s+)?\**(DECISION|CONFIDENCE|RISKS|RATIONALE)\**\s*:\s*\**\s*(.*?)\s*$")
-VERDICT = re.compile(r"^\s*(?:[-*]\s+)?\**VERDICT\**\s*:?\s*\**\s*(merge|fix)\b", re.I)
+KEY = re.compile(r"^\s*(?:[-*]\s+)?\**(DECISION|CONFIDENCE|RISKS|RATIONALE)(?!\w)\**\s*:?\s*\**\s*(.*?)\s*$")
+VERDICT = re.compile(r"^\s*(?:[-*]\s+)?\**VERDICT(?!\w)\**\s*:?\s*\**\s*(merge|fix)\b", re.I)
 NUMBER = re.compile(r"^(?:\d+(?:\.\d*)?|\.\d+)$")
 SCORE = re.compile(r"\(?\s*((?:score\s*[:=]?\s*)?(\d+(?:\.\d*)?|\.\d+))\s*\)?\s*$", re.I)
 FIELDS = ("DECISION", "CONFIDENCE", "RISKS", "RATIONALE")
