@@ -68,7 +68,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |
 | mutation floor `src/broadcast_verify.rs` | 86 | 86.7 at 6bf9a2c | `.github/workflows/nightly.yml` |
-| mutation floor `src/explorers.rs` | 82 | 78.0 at 6bf9a2c | `.github/workflows/nightly.yml` |
+| mutation floor `src/explorers.rs` | 82 | 78.0 at 6bf9a2c, below the floor (red by design, #420) | `.github/workflows/nightly.yml` |
 | mutation floor `src/server/handlers.rs` | 100 | 100.0 at 6bf9a2c | `.github/workflows/nightly.yml` |
 | mutation floor `src/spend_gate.rs` | 90 | 93.3 at 6bf9a2c | `.github/workflows/nightly.yml` |
 | mutation floor `src/tracker_host.rs` | 75 | 75.3 at 6bf9a2c | `.github/workflows/nightly.yml` |
