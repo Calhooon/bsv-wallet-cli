@@ -10,9 +10,8 @@ Usage:
 shards') and writes each mutant name whose outcome is missed or timeout, once,
 sorted: the mutants no cargo test target caught. A caught mutant is caught (a
 second judgment adds nothing) and an unviable one does not build, so neither
-is a survivor. A file a binary and the library both declare (`mod explorers;`
-in main.rs and lib.rs) lists a mutant twice under one name; the name is
-written once and cargo-mutants selects both copies by it.
+is a survivor. Each name is written once; a night that judged a name twice
+is refused by the score (#400).
 
 `shard` deals the survivors round-robin (name i to shard i mod shards) and
 writes the shard's names and, one a line, an anchored regex matching exactly
@@ -21,11 +20,14 @@ for cargo-mutants' `-F`.
 
 `check-list` compares the names cargo-mutants' `--list` printed under those
 regexes with the shard's names, as sets: exit 1, naming each difference, when
-they are not equal, so a shard never judges a selection other than its own.
+they are not equal, so a shard never judges a selection other than its own;
+and exit 1 naming a name the list printed twice (#400: a mutant is judged
+once).
 """
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 SURVIVING = ("MissedMutant", "Timeout")
@@ -74,13 +76,17 @@ def main(args):
         print(f"shard {shard}/{shards}: {len(mine)} of {len(names)} survivors")
         return 0
     if args[:1] == ["check-list"] and len(args) == 3:
-        want, got = set(read_names(args[1])), set(read_names(args[2]))
+        listed = read_names(args[2])
+        want, got = set(read_names(args[1])), set(listed)
+        twice = sorted(n for n, k in Counter(listed).items() if k > 1)
+        for n in twice:
+            print(f"listed more than once: {n}")
         for n in sorted(want - got):
             print(f"not selected: {n}")
         for n in sorted(got - want):
             print(f"selected, not a survivor of this shard: {n}")
-        if want != got:
-            print(f"the selection is not the shard's survivors ({len(got)} selected, {len(want)} named)")
+        if want != got or twice:
+            print(f"the selection is not the shard's survivors ({len(listed)} listed, {len(got)} distinct, {len(want)} named)")
             return 1
         print(f"the selection is the shard's {len(want)} survivors, name for name")
         return 0

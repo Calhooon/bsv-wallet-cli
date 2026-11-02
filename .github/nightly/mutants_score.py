@@ -30,12 +30,18 @@ commit its job checked out, and `--survivors <dir>` names the survivors'
 artifact, which holds one too. Before any figure is judged, exit 1 naming each
 shard whose sha is missing or is not `<commit>` (the dispatch's), with the sha
 it names; otherwise the night's commit is printed above the table.
+
+A mutant is judged once (#400): a name with more than one outcome in the
+cargo pass, or in the hermetic pass, is a malformed night (cargo-mutants
+listed the mutant twice, or a shard's artifact was given twice), and before
+any figure is judged the score exits 1 naming each such name and its count.
+The counts per file are then the unique mutants'.
 """
 
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 DEFAULT_FLOOR = 80.0
@@ -56,6 +62,27 @@ def mutant_outcomes(args):
             scenario = outcome["scenario"]
             if isinstance(scenario, dict) and "Mutant" in scenario:
                 yield scenario["Mutant"], outcome["summary"]
+
+
+def duplicated(args):
+    """Each mutant name with more than one outcome, and its count, sorted."""
+    seen = Counter(mutant["name"] for mutant, _ in mutant_outcomes(args))
+    return sorted((name, n) for name, n in seen.items() if n > 1)
+
+
+def malformed(passes):
+    """The refusal's lines when a pass judged a name more than once, else []."""
+    lines = []
+    for label, dups in passes:
+        if dups:
+            lines += [
+                f"**A malformed night (#400)**: {len(dups)} mutant name(s) have more than one outcome"
+                f" in the {label}; a mutant is judged once; nothing is scored:",
+                "",
+            ]
+            lines += [f"- `{name}`: {n} outcomes" for name, n in dups]
+            lines += [""]
+    return lines
 
 
 def shard_shas(dirs):
@@ -118,11 +145,18 @@ def main(args):
         if refusal:
             write("\n".join(refusal) + "\n")
             return 1
+    passes = [("cargo pass", duplicated(args))]
     if hermetic_dir is not None:
-        # Each name the hermetic pass judged: caught when any copy was.
-        hermetic = defaultdict(bool)
-        for mutant, summary in mutant_outcomes([hermetic_dir]):
-            hermetic[mutant["name"]] |= summary == "CaughtMutant"
+        passes.append(("hermetic pass", duplicated([hermetic_dir])))
+    refusal = malformed(passes)
+    if refusal:
+        write("\n".join(refusal))
+        return 1
+    if hermetic_dir is not None:
+        # Each name the hermetic pass judged, once: caught or not.
+        hermetic = {
+            mutant["name"]: summary == "CaughtMutant" for mutant, summary in mutant_outcomes([hermetic_dir])
+        }
     floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
     counts = defaultdict(lambda: defaultdict(int))
     by_hermetic = defaultdict(int)
@@ -173,11 +207,8 @@ def main(args):
             f"| `{file}` | {caught} | {timeout} | {miss} | {unviable} | {score} | {floor:g} | {mark} |"
             + (f" {by_hermetic.get(file, 0)} |" if hermetic is not None else "")
         )
-    # A file a binary and the library both declare as a module (`mod
-    # explorers;` in main.rs and lib.rs) is mutated once per crate: the
-    # counts above weigh both copies alike, the list names each once.
     for file in sorted(missed):
-        names = sorted(set(missed[file]))
+        names = sorted(missed[file])
         lines += ["", f"<details><summary>{len(names)} missed in <code>{file}</code></summary>", ""]
         lines += [f"- `{name}`" for name in names]
         lines += ["", "</details>"]

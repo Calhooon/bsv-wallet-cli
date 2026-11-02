@@ -1013,7 +1013,7 @@ class TheScoreIsItsCounts(Case):
         for file, e in self.real().items():
             for summary, n in (("CaughtMutant", e["caught"]), ("MissedMutant", e["missed"]),
                                ("Timeout", e["timeout"]), ("Unviable", e["unviable"])):
-                outcomes += [{"scenario": {"Mutant": {"file": file, "name": f"m{i}"}}, "summary": summary}
+                outcomes += [{"scenario": {"Mutant": {"file": file, "name": f"{file}:{summary}:{i}"}}, "summary": summary}
                              for i in range(n)]
         self.tree.write("outcomes.json", json.dumps({"outcomes": outcomes}))
         env = {k: v for k, v in os.environ.items() if k != "GITHUB_STEP_SUMMARY"}
