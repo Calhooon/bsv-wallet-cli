@@ -6,7 +6,9 @@ name: CI
 # `deny` (the paved road's cargo-deny gate over the stack's template, adopted
 # at 0.13.x) and `locks`; on beta those and `ratchet`, `wire` (#69) and
 # `e2e-hermetic`. A push to beta or main runs exactly that set, the same as a
-# pull request, nothing more (the owner's word of 2026-10-27: "sick of seeing
+# pull request, nothing more; so does a merge-queue group (#451: beta lands
+# through GitHub's merge queue, and the queue waits on the same required
+# contexts for the group's commit) (the owner's word of 2026-10-27: "sick of seeing
 # all these CI failures... they are all so hardcore and slowing us down").
 # The measurements run on workflow_dispatch and once before a tag, each in its
 # own workflow with its own badge, never on the push run: `bench.yml` (#71),
@@ -20,6 +22,11 @@ on:
     branches: [main, beta]
   push:
     branches: [main, beta]
+  # The merge queue's group commit (#451). Its ref is
+  # refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>, one per group, so the
+  # concurrency group below never cancels one group for another.
+  merge_group:
+    types: [checks_requested]
   # release.yml runs the same jobs on a tag before it publishes.
   workflow_call:
 
@@ -269,7 +276,9 @@ jobs:
   # by tools/ratchet (docs/RATCHETS.md). The tree is checked against the
   # record of the base, read from the base ref and never from the PR's own
   # docs/ratchets.json (a PR that edited the record would pass itself): on a
-  # PR the base branch's tip, on a push the commit before it. The PR's record
+  # PR the base branch's tip, on a push the commit before it, on a merge-queue
+  # group the group's parent commit (the event's merge_group.base_sha, beta
+  # or the group queued ahead, an ancestor of the group's head). The PR's record
   # may lower the base's numbers, never raise one. A base with no record yet
   # checks the tree against this tree's record alone. The toolchain is pinned
   # to the record's: a new clippy brings new pedantic lints, and the numbers
@@ -296,7 +305,9 @@ jobs:
 
       # The base ref, read once for the ratchet and the scoreboard: on a PR
       # the base branch's tip, on a push the commit before it, none on a
-      # push with no fetchable before.
+      # push with no fetchable before; on a merge-queue group its parent
+      # commit, and an unfetchable parent fails (a group is never checked
+      # against its own record alone).
       # Never with --depth here: a depth-limited fetch into the full checkout
       # above turns the clone shallow, and check-cites' ancestry proof (the
       # pin reachable from HEAD) then fails with git exit 1.
@@ -305,9 +316,17 @@ jobs:
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          GROUP_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          EVENT: ${{ github.event_name }}
         run: |
           rev=""
-          if [ -n "$BASE_REF" ]; then
+          if [ "$EVENT" = merge_group ]; then
+            if [ -z "$GROUP_BASE" ] || ! git fetch --no-tags origin "$GROUP_BASE"; then
+              echo "::error::the merge group's parent commit (${GROUP_BASE:-empty}) is not fetchable"
+              exit 1
+            fi
+            rev="$GROUP_BASE"
+          elif [ -n "$BASE_REF" ]; then
             git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
             rev="origin/$BASE_REF"
           elif [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ]; then
@@ -474,6 +493,16 @@ jobs:
           python3 -B tools/test_changelog.py
           # A push's PR was checked; on a PR the ratchet job's base ref is
           # the PR's base branch, fetched by The base ref above.
+          # A merge-queue group has no PR number in its event and may batch
+          # several PRs, so no label is read: each PR's own pull_request run
+          # checked its fragment and label (the queue admits a PR only with
+          # its required checks green), and the group's tree is checked here
+          # for a malformed fragment, which no label excuses.
+          if [ "$EVENT" = merge_group ]; then
+            echo "changelog: merge_group: the fragment requirement was checked on each PR; validating the group's fragments"
+            python3 -B tools/changelog --list
+            exit 0
+          fi
           if [ "$EVENT" != pull_request ]; then
             echo "changelog: $EVENT: the fragment requirement is checked on the PR"
             exit 0
