@@ -44,9 +44,10 @@ pub enum Commands {
     },
     /// Show public key and address
     Identity,
-    /// Check stored certificate signatures after the beta.2 pin, without changing them
+    /// Check every stored certificate's signature, without changing any
     Certificates {
-        /// Reverify every stored certificate and report checked and failed counts
+        /// Reverify every stored certificate and report checked and failed
+        /// counts; exits non-zero when any fails
         #[arg(long, required = true)]
         reverify: bool,
     },
