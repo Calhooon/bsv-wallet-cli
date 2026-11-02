@@ -39,9 +39,54 @@ fn certificate_writer_bounds_and_boolean_verifier() {
 
 #[tokio::test]
 async fn reverify_command_counts_good_and_bad_signatures_without_changing_certificates() {
+    for output in audit(&[(7, true), (8, false)], 2).await {
+        assert_eq!(output.status.code(), Some(1));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result, json!({"checked": 2, "failed": 1}));
+    }
+}
+
+// #430: the failing certificate is stored first, so a reverify that stopped
+// at the first failure would answer one checked. Every row is read, the
+// command exits non-zero and nothing changes. Naming the failing one waits
+// on the toolbox's per-certificate verdicts (toolbox #585).
+#[tokio::test]
+async fn reverify_checks_every_certificate_past_a_failure_and_exits_non_zero() {
+    let output = audit(&[(9, false), (10, true), (11, true)], 1)
+        .await
+        .remove(0);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
+        json!({"checked": 3, "failed": 1})
+    );
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("1 of 3 stored certificates failed signature verification"));
+}
+
+type TestWallet = Wallet<StorageSqlx, MockWalletServices>;
+
+fn key() -> PrivateKey {
+    PrivateKey::from_hex(&"01".repeat(32)).unwrap()
+}
+
+/// Runs the reverify `runs` times over a scratch store of `rows` and
+/// asserts the certificates are unchanged after.
+async fn audit(rows: &[(u8, bool)], runs: usize) -> Vec<std::process::Output> {
+    let (dir, wallet) = store(rows).await;
+    let path = dir.path().join("wallet.db");
+    let before = snapshot(&wallet).await;
+    let outputs = (0..runs).map(|_| reverify_output(&path, &key())).collect();
+    assert_eq!(snapshot(&wallet).await, before);
+    outputs
+}
+
+/// A scratch store holding one certificate per `(serial byte, good)` row.
+async fn store(rows: &[(u8, bool)]) -> (tempfile::TempDir, TestWallet) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("wallet.db");
-    let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+    let root = key();
     let identity = root.public_key().to_hex();
     let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
     storage.migrate("certificate-pin", &identity).await.unwrap();
@@ -53,58 +98,11 @@ async fn reverify_command_counts_good_and_bad_signatures_without_changing_certif
     )
     .await
     .unwrap();
-    seed(&wallet, &root, &[(7, true), (8, false)]).await;
-    let before = snapshot(&wallet).await;
-    for _ in 0..2 {
-        let output = reverify_output(&path, &root);
-        assert_eq!(output.status.code(), Some(1));
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result, json!({"checked": 2, "failed": 1}));
-    }
-    assert_eq!(snapshot(&wallet).await, before);
+    seed(&wallet, &root, rows).await;
+    (dir, wallet)
 }
 
-// #430: the failing certificate is stored first, so a reverify that stopped
-// at the first failure would answer one checked. Every row is read, the
-// command exits non-zero and nothing changes. Naming the failing one waits
-// on the toolbox's per-certificate verdicts (toolbox #585).
-#[tokio::test]
-async fn reverify_checks_every_certificate_past_a_failure_and_exits_non_zero() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("wallet.db");
-    let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
-    let identity = root.public_key().to_hex();
-    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-    storage.migrate("certificate-430", &identity).await.unwrap();
-    storage.make_available().await.unwrap();
-    let wallet = Wallet::new(
-        Some(root.clone()),
-        storage,
-        MockWalletServices::builder().build(),
-    )
-    .await
-    .unwrap();
-    seed(&wallet, &root, &[(9, false), (10, true), (11, true)]).await;
-    let before = snapshot(&wallet).await;
-    let output = reverify_output(&path, &root);
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(answer, json!({"checked": 3, "failed": 1}));
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("1 of 3 stored certificates failed signature verification"));
-    assert_eq!(snapshot(&wallet).await, before);
-}
-
-async fn seed(
-    wallet: &Wallet<StorageSqlx, MockWalletServices>,
-    root: &PrivateKey,
-    rows: &[(u8, bool)],
-) {
+async fn seed(wallet: &TestWallet, root: &PrivateKey, rows: &[(u8, bool)]) {
     let issuer = PrivateKey::from_hex(&"02".repeat(32)).unwrap();
     for &(n, good) in rows {
         let mut cert = Certificate::new([6; 32], [n; 32], root.public_key(), issuer.public_key())
@@ -132,7 +130,7 @@ async fn seed(
     }
 }
 
-async fn snapshot(wallet: &Wallet<StorageSqlx, MockWalletServices>) -> Vec<(String, String)> {
+async fn snapshot(wallet: &TestWallet) -> Vec<(String, String)> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT serial_number, signature FROM certificates ORDER BY serial_number",
     )
