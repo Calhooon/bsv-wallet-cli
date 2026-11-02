@@ -91,8 +91,9 @@ impl AllowedOrigins {
     }
 
     /// Whether the list admits an `Origin` header's originator (the CORS
-    /// layer's and the inspector's question).
-    pub(crate) fn admits_origin(&self, origin: &str) -> bool {
+    /// layer's and the inspector's question). Public because the inspector
+    /// (`commands::ui`) lives in the binary, across the lib/bin split.
+    pub fn admits_origin(&self, origin: &str) -> bool {
         originator_of(origin).is_some_and(|o| self.admits(&o).is_some())
     }
 
