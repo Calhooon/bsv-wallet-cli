@@ -2382,3 +2382,178 @@ store; the production upgrade with an upgrade note naming every caller
 (the Origin header and ALLOWED_ORIGINS for the SwiftBar plugins, the
 funder, 3322 and LOW's node-side callers). The lines: beta 2ca0173; main
 7d587e4.
+
+## 2026-11-02, the day (13:1xZ to the night): the owner's green light, the browser gate (b) landed and #411 closed on its scenario run, the amendment filed as BRCs#372, the second night's record, the (c) design and its store, the survivors' batch 1, and the interruption
+
+The morning entry ends at beta 2ca0173 and main 006b091 (its fold, PR
+427), with PR 419 held on the owner's two words and Nightly run 41413946663
+running. Every time below is the verified clock; GitHub's merge stamps
+agree with it to the minute.
+
+The owner's words of the day. At 13:1xZ, in session, after "how we doin
+overall": "I agree with your recommendations.. you got green light for
+whatever you need". It rules the three things that waited on him: the
+browser gate's strict default (nothing admitted with ALLOWED_ORIGINS
+unset); the reference's hostname key (`prepareOriginator`), taken by a
+re-key lane before PR 419 lands; and the one certificate's re-issue as the
+0.19.0 step at the production upgrade, his desktop wallet the certifier
+(#333; the 23.6 count at 12:0xZ found one live certificate, the other 45
+rows relinquished). The keeper heard the same word at the keyboard ("I
+agree with all of your recommendations") and added two: the census queue's
+eleven rows go out as one batch, and the BRC-100 amendment draft files on
+bsv-blockchain/BRCs once it stands one cold read on beta. At 23:2xZ, on the
+speed line through the keeper: "we never wanna use our own hardware", no
+paid runners ("balling on a budget"); below.
+
+The browser gate (b). The re-key lane (on the box, 50 min, 0.85) keyed the
+originator from the Origin header as `prepareOriginator` derives it
+(`https://App.Example:8443` to `app.example:8443`, one entry covering every
+port by the reference's lookup), took ALLOWED_ORIGINS in that form with a
+scheme or path refusing the start by name, and added fixtures 189 and 190
+with 001 to 188 and the 48 consumer rows byte-identical. Its re-review said
+fix at 0.9 for one reason outside the re-key: combined with beta's lib/bin
+split (PR 425) the branch did not compile, `AllowedOrigins::admits_origin`
+not being `pub`; the fix lane added the word with a merged-tree proof, and a
+render lane re-rendered NORTH-STAR.md when CI's ratchet job read the page
+stale (190 fixtures and 30 scenes against 179 and 25). PR 419 merged at
+19:31Z: beta 0aeb7f14, thirty commits. The scenario run (code class, 0.88)
+played the stack's five browser-gate files at its main 12f9d797 against
+0aeb7f14: eighteen steps, 10 match, 3 diverge, 5 unrunnable, every
+divergence and unrunnable step a (c) cell (the pending row, revocation,
+expiry); the door right under the owner's word, no fix on our side. The
+table is on #411, which closed on it at 19:41Z. The consumers were told:
+LOW by message, dolphinmilk by Calhooon/dolphinmilk#1 (the header line,
+ALLOWED_ORIGINS, and the constructor's panic). The funder's .env carries
+the new form, `ALLOWED_ORIGINS=localhost,127.0.0.1,e2e-test` (a backup
+beside it; the running beta.6 daemon ignores the variable); 3322's line
+waits for its upgrade; the SwiftBar plugins' `Origin: http://localhost`
+derives to `localhost` unchanged. The keeper's W lane re-pinned the stack's
+five files to 0aeb7f14 with (b) and (c) marks and named one residue, the
+disagreeing-originator step 4 (the door refused, the charter admits); the
+captain's answer was to conform, since the key is the hostname scope and a
+host:port comparison guards nothing: #448, PR 450 (one `agrees()` in the
+lookup form, fixture 191, scene 30's step 4; review merge at 0.9, the day
+line's figure), its vectors' pin folded to the stack's main file commit
+ab1f89f4 (the five files' sha256s confirmed at both shas), merged last of
+the day's queue at 22:57Z: beta 73b5f956, #448 closed.
+
+The amendment draft (#122 item 3, docs/brc100/http-refusal-body.md). The
+cold read (Opus, no build) said fix at 0.9: every citation, both Express
+claims, the four fixtures and the nine links held, with five asks (the
+SDK's codes 5, 6 and 7, the Client bridge's 503 and 500 bodies, bare #N
+links, the BRCs form and its prior art, the Origin header). The fix's
+re-read said fix at 0.82 on three asks (the form has two required fields;
+BRC-185 missing; a 400 failing the envelope checks throws rather than
+failing with its status); the second fix's re-read said merge at 0.86, and
+its three wording risks were folded under ruling (b). PR 432 merged at
+15:11Z: beta ab3921d8. The keeper filed it the same hour as
+bsv-blockchain/BRCs#372 (the Discussion form, the body as at ab3921d8 with
+the bookkeeping lines stripped); the number is on #122, #149 and #117,
+whose rows wait on the BRC's answer. The verdicts and scores are the day
+line's figures.
+
+The second night's record. Run 41413946663 completed on one tree,
+2ca0173: all fifty Mutants shards success, the six Mutants-hermetic shards
+failed on a tooling fault (the guard compared cargo-mutants' coloured
+`--list` names with the plain survivors), so the run concluded failure and
+the score job refused the night. The record (PR 438, merged 20:04Z, beta
+f2976ef1) carries the complete cargo oracle by the score script run over
+the artifacts: broadcast_verify 86.0 against 86, explorers 82.6 against 82
+(the opening night's 78.0 was #400's repeats), handlers 100, spend_gate
+90.4 against 90, tracker_host 74.2 against 75 red by design on #175; 117
+unique survivors, no timeouts; the hermetic union absent on #435; no floor
+moved. #423 (one tree met) and #420 closed on it. #435 (the colour fault)
+was PR 436 (`--colors never` for the listing, the guard stripping ANSI and
+still refusing a wrong, missing or duplicated name), merged 19:46Z, beta
+62372d6f, closed. The bench append, night 1 of 5 for #142, was PR 443
+(beta 5c7ffe24). The fuzz record had no tool: PR 444 wrote it by a scratch
+script, so #445 asked for one, PR 447 (`tools/fuzz-record`, the night's
+record byte-identical to 444's) merged at 22:16Z (beta 11860a81), PR 444
+closed as superseded, #445 and #395 closed. #401's planted call (PR 446:
+a test target calling into spend_gate refused by the guard by name) merged
+at 22:25Z (beta 475357c8), #401 closed. The third night, run 41516017523,
+was dispatched at 20:05Z on f2976ef1 and noted on #393, #142, #395 and
+#175; at this writing it is queued.
+
+The (c) design (#414). The design lane opened PR 439 (0.78): a `wallet`
+scope per origin over all the doors and a `spending` scope with a monthly
+ceiling, a new origin's call held open as the Client holds it, twelve
+witness rows. The two-stance ensemble said fix, agreement 2/2 at a mean of
+0.80, with eight asks (scenes 28 and 30 keep the stack's bearer and
+borrowed-name steps; `origin_spends` keyed on the signed and the deferred
+flows; the shutdown 503 body and the reference's "Permission denied." as
+witness rows; the monthly-limit sentence; and the flood cap as W14); the
+fix took all eight in one commit and the re-read said merge at 0.86. PR 439
+merged at 21:29Z: beta 63c9b1e2. Its plan is seven lanes: L1 the store, L2
+the CLI's `origins` commands, L3 the owner's `/origins*` door and the MCP's
+three tools, L4 the inspector, L5 the switch (the gate reads the rows, the
+held call, W14's 429, the mainnet gate), L6 spending (with the stack's Lean
+spending clause now checking the row's expiry; the mainnet gate), L7 the
+seed's retirement on the owner's word; L1 to L4 move no admission. L1, the
+`origin_grants` store (three tables, an idempotent ensure, the row
+functions, nothing calling it), was PR 449 (review merge at 0.9), merged
+22:40Z, beta 98e81a24; L2 launched on the box at that merge; L3 and L4 are
+briefed. W1 (one scope per origin instead of the reference's four
+permission kinds) and W4 (a pending row kept after a disconnect where the
+Client denies) go to the owner on the keeper's brief with the keeper's
+reading: both "the reference's own behaviour"; L1's row shape holds either
+way. Side findings filed: #440 (the inspector's `/api/query` guards writes
+by SQL prefix on a writable pool; a read-only connection, before grant rows
+live in the store, L4) and #441 (signAction and abortAction not bound to the
+creating originator, a divergence row). #433 (filed at 14:50Z: the library
+constructor panicked on a scheme-bearing entry, which dolphinmilk builds
+in-process) was PR 442 (the constructors return `Result<Self,
+OriginatorRule>`, the binary's refusal text byte-identical), merged 20:51Z,
+beta ca8b9ff0, closed. #437 was filed from the scenario run: an empty
+`AUTH_TOKEN=` demands a bearer at the door but means no token to the bind
+guard and the knob table.
+
+The survivors (23.5 (c)). tracker_host.rs's 58 unique survivors of the
+opening night go in three batches, each a tests lane with one cold review,
+no floor moved. Batch 1 was PR 434 (24 names: 22 killed, 2 declared
+equivalent with the reviewer's own reasons; review merge at 0.9, the day
+line's figure), merged 21:56Z, beta 87ebc88f, noted on #175; batch 2 (24
+names inline) launched at that merge and runs; batch 3's ten are briefed.
+
+The interruption, 15:2xZ to 19:25Z. The owner's relaunch orphaned four
+background tasks (the night's hold, the survivors chain, PR 419's render and
+landing, the hourly clock), and the notes of 16:20Z to 19:20Z were missed.
+The restart deleted the scratchpad (every brief, chain script and the day
+line), and the captain's first append-then-copy overwrote the kept day line
+with a stub; all 483 files were recovered from the session transcript into
+/Volumes/Lanes/out/bsv-wallet-cli/work, the working folder since. The lessons
+kept: one landing at a time on beta (four waiters with caps collided at
+20:2xZ and GitHub refused 439 twice), so one queue runner lands strictly in
+order (434, 447, 446, 449, 450 drained by 22:57Z) and counts at least ten
+rows and eight passes with none pending, skipped rows as done; a branch
+rewritten by update-branch is force-fetched (`+refs/heads/...`) before any
+ancestor check; a PR adding a fixture re-renders NORTH-STAR.md or meets the
+render guard (419 and 450 both did); a box lane cannot read the Studio's
+Lanes volume (each host's is its own disk), so a box brief carries its
+inputs inline; the proof class means Fable, so it runs only when Fable has
+budget (the scenario run went to the code class on Opus); a refused command
+ran none of its parts (the cold read's opening launch ran on an empty
+brief); a waiter or lane is stopped by its process tree, the captain's own
+shell excluded; a destructive remote command never pipes into `head`. The box's disk at 94%
+was swept by name (about 130 GiB across the day's passes, the day line's
+figure; 68% at 22:28Z), and the four names that were not the captain's by
+the box's records (repin, rel, and bsv-rs's two review targets; the gate-*
+family is bsv-low's) were left to their owners.
+
+The speed line (23:1xZ to the night). The owner's word through the keeper
+filed #451 (beta's landings through GitHub's merge queue) and #452 (the
+reads' scope and the cache audit), both open with their ensemble chains;
+#453 (a self-hosted runner) and #455 (a hosted fast-runner label) were
+withdrawn and closed on the owner's word; #456 is a dispatch rule (no cron
+under #303; PR 458 in review); the free cuts #460, #461 and #462 are filed
+in order (#462 the incremental Nightly ahead of #460).
+
+Open after the day: L2 (running), then L3, L4, L5 (the switch; the mainnet
+gate), L6 (spending; the mainnet gate), L7; W1 and W4 for the owner; the
+survivors' batches 2 (running) and 3; night 3's record (run 41516017523);
+#437, #440, #441; the speed line (#451, #452, #456 with PR 458, #460, #461,
+#462); the next pin's intake on #386: bsv-rs #613, #620, #640, #639, #648,
+#651 and #658 (open), the toolbox's #554, #186, #142, #576 and #585 (open);
+the certificate re-issue (#333) at the production upgrade with the upgrade
+note naming every caller. The lines: beta 73b5f956; main at this entry's
+parent, 006b0912.
