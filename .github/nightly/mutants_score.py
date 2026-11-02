@@ -60,13 +60,17 @@ Before any figure is judged, exit 1 naming the fault when:
 An empty plan mutates nothing: the night carries every figure and says so,
 and `--sha` has no shard to check. With `--run <url>` and `--write <out>` the
 night's record is written: the record's shape (docs/scoreboard/mutants.json)
-with `mode`, `base`, the night's `floors` and per file its counts and
-`{"source": "night"|"carried", "run", "sha"}`.
+with `mode`, `base`, the night's `floors`, per file its counts and
+`{"source": "night"|"carried", "run", "sha"}`, and the record's `verdict`
+clause of each carried file (rule 1's exception, as tools/scoreboard reads it:
+a carried figure keeps its clause; a file the night measured has none until
+the owner gives one).
 """
 
 import datetime
 import json
 import os
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -358,8 +362,32 @@ def night_record(plan, record, floors, night, carried, commit, run):
     if plan["mode"] == "incremental":
         out["base"] = base
     out["floors"] = {f: int(v) if float(v).is_integer() else v for f, v in floors.items()}
+    said = verdict(record, carried)
+    if said:
+        out["verdict"] = said
     out["files"] = files
     return out
+
+
+# The record's verdict (rule 1's exception), as tools/scoreboard reads it: the
+# prefix, then a clause per file below its floor with the issue after it.
+VERDICT_PREFIX = "red by design: "
+VERDICT_CLAUSE = re.compile(r"(\S+) (\d+(?:\.\d+)?) below its floor (\d+(?:\.\d+)?)")
+
+
+def verdict(record, carried):
+    """The record's verdict clauses on the files the night carries, each with its
+    words and issue, or None. A carried file keeps its figure and its floor, so
+    its clause still holds (#464's review: without it the written record lost
+    tracker_host.rs's exception and tools/scoreboard --check exited 1); a file
+    the night measured is judged afresh and its clause is the owner's to give."""
+    text = record.get("verdict")
+    if not isinstance(text, str) or not text.startswith(VERDICT_PREFIX):
+        return None
+    found = list(VERDICT_CLAUSE.finditer(text))
+    kept = [text[m.start():found[i + 1].start() if i + 1 < len(found) else len(text)].strip().rstrip(";").strip()
+            for i, m in enumerate(found) if m.group(1) in carried]
+    return VERDICT_PREFIX + "; ".join(kept) if kept else None
 
 
 if __name__ == "__main__":

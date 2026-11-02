@@ -186,6 +186,28 @@ class Case(unittest.TestCase):
         self.a_night_on_a()
         self.refused("No last complete run (#462)", plan(["src/a.rs"]), record)
 
+    def test_a_carried_file_keeps_its_verdict_clause(self):
+        # #464's review: the written record lacked `verdict`, so committing it
+        # lost tracker_host.rs's red-by-design exception and tools/scoreboard
+        # --check exited 1. b (74.0 below its floor 75) is carried tonight and
+        # keeps its clause, words and issue; a's clause (measured tonight) is
+        # the owner's to give again.
+        record = complete_record()
+        record["verdict"] = ("red by design: src/a.rs 95.0 below its floor 96; its survivors are #1; "
+                             "src/b.rs 74.0 below its floor 75; the floor does not move; its survivors are #175's")
+        self.a_night_on_a()
+        code, out = self.night.score(plan(["src/a.rs"]), record)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.night.written()["verdict"],
+                         "red by design: src/b.rs 74.0 below its floor 75; the floor does not move; "
+                         "its survivors are #175's")
+        # Nothing carried with a clause, or no verdict: none written.
+        code, out = self.night.score(plan(["src/a.rs", "src/b.rs"], mode="complete"), record)
+        self.assertNotIn("verdict", self.night.written())
+        del record["verdict"]
+        self.night.score(plan(["src/a.rs"]), record)
+        self.assertNotIn("verdict", self.night.written())
+
     def test_the_committed_record_is_a_complete_base(self):
         # The tree's own record: the last complete run, every file the night's.
         with open(os.path.join(os.path.dirname(HERE), "docs", "scoreboard", "mutants.json")) as f:
