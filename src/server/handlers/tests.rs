@@ -300,18 +300,59 @@ async fn served_by(
 #[tokio::test]
 async fn a_body_originator_is_judged_after_the_surrogate_rewrite() {
     for (originator, status) in [("evil.example", 400), ("app.example", 200)] {
-        let body = format!(
-            r#"{{"originator":"{originator}","protocolID":[2,"gate test"],"keyID":"\ud83d","counterparty":"self","plaintext":[1]}}"#
-        );
-        let request = axum::http::Request::post("/encrypt")
-            .header("Origin", "http://app.example")
-            .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(body))
-            .unwrap();
-        let response = served_by(&["http://app.example"], request).await;
-        let (served, _, answer) = crate::test_support::response_answer(response).await;
-        assert_eq!(served.as_u16(), status, "{originator}: {answer}");
+        let call = format!(r#""originator":"{originator}","keyID":"\ud83d""#);
+        let (served, answer) = encrypt_served("application/json", &call).await;
+        assert_eq!(served, status, "{originator}: {answer}");
     }
+}
+
+/// The review of PR 419: two `originator` keys in one body are refused
+/// under either content type the doors read JSON by (the reviewer's probe
+/// answered 200), and one agreeing originator is still the call.
+#[tokio::test]
+async fn a_body_naming_two_originators_is_refused_under_either_content_type() {
+    for content_type in ["application/json", "text/plain"] {
+        for (originators, status) in [
+            (
+                r#""originator":"evil.example","originator":"evil.example""#,
+                400,
+            ),
+            (
+                r#""originator":"app.example","originator":"evil.example""#,
+                400,
+            ),
+            (
+                r#""originator":"app.example","originator":"app.example""#,
+                400,
+            ),
+            (r#""originator":7"#, 400),
+            (r#""originator":"app.example""#, 200),
+        ] {
+            let call = format!(r#"{originators},"keyID":"1""#);
+            let (served, answer) = encrypt_served(content_type, &call).await;
+            assert_eq!(served, status, "{content_type} {originators}: {answer}");
+            if status == 400 {
+                assert_eq!(answer["code"], "VALIDATION_ERROR", "{answer}");
+            }
+        }
+    }
+}
+
+/// An `/encrypt` body of `fields` (its originator and key) under
+/// `Origin: http://app.example`, which the router admits: the status and
+/// the answer.
+async fn encrypt_served(content_type: &str, fields: &str) -> (u16, serde_json::Value) {
+    let body = format!(
+        r#"{{{fields},"protocolID":[2,"gate test"],"counterparty":"self","plaintext":[1]}}"#
+    );
+    let request = axum::http::Request::post("/encrypt")
+        .header("Origin", "http://app.example")
+        .header("Content-Type", content_type)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let response = served_by(&["http://app.example"], request).await;
+    let (served, _, answer) = crate::test_support::response_answer(response).await;
+    (served.as_u16(), answer)
 }
 
 /// F4 of the #44 CLI review: the served `internalizeAction` strips a

@@ -224,35 +224,78 @@ pub(crate) fn refuse_body(extensions: &axum::http::Extensions, body: &[u8]) -> O
 }
 
 /// A body's top-level `originator`, when it names another host than the
-/// admitted `Origin` (or is not a string): the refusal. A body that is not
-/// a JSON object names none; its door reads it as before.
+/// admitted `Origin` (or is not a string): the refusal. It fails closed: a
+/// second `originator` is a disagreement by itself, and so is a body the
+/// walk cannot read once it has met one. A body that is not a JSON object
+/// names none, and a fault before any `originator` is the door's own (its
+/// reader stops at the same byte); either way its door reads it as before.
 pub(crate) fn body_disagrees(admitted: &Admitted, body: &[u8]) -> Option<AppError> {
-    #[derive(serde::Deserialize)]
-    struct Claim {
-        originator: Option<serde_json::Value>,
-    }
-    // Only an object names a field: serde reads a struct from an array by
-    // position, and an array body is a door's positional call.
+    // Only an object names a field: an array body is a door's positional
+    // call.
     let object = body.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{');
     if !object {
         return None;
     }
-    let claim = serde_json::from_slice::<Claim>(body).ok()?.originator?;
-    let agrees = claim
-        .as_str()
-        .is_some_and(|c| host_of(c).is_some() && host_of(c) == host_of(&admitted.0));
-    let claim = claim
-        .as_str()
-        .map_or_else(|| claim.to_string(), str::to_string);
-    (!agrees).then(|| {
+    let refused = |claim: String| {
         AppError::new(
             Kind::Validation,
             format!(
-                "the body's originator names {claim}, which disagrees with the Origin header's {}",
+                "the body's originator {claim}, which disagrees with the Origin header's {}",
                 admitted.0
             ),
         )
-    })
+    };
+    let mut claims = Vec::new();
+    let mut reader = serde_json::Deserializer::from_slice(body);
+    let read = serde::de::DeserializeSeed::deserialize(Originators(&mut claims), &mut reader)
+        .and_then(|()| reader.end());
+    match (read, claims.as_slice()) {
+        (_, []) => None,
+        (Err(_), _) | (_, [None]) => Some(refused("cannot be read".into())),
+        (Ok(()), [Some(claim)]) => {
+            let agrees = claim
+                .as_str()
+                .is_some_and(|c| host_of(c).is_some() && host_of(c) == host_of(&admitted.0));
+            let claim = claim
+                .as_str()
+                .map_or_else(|| claim.to_string(), str::to_string);
+            (!agrees).then(|| refused(format!("names {claim}")))
+        }
+        (Ok(()), many) => Some(refused(format!("is named {} times", many.len()))),
+    }
+}
+
+/// The walk of a body's top level: each `originator` it meets, `None`
+/// until its value is read (a fault inside one leaves it unread). Every
+/// other value is skipped unread.
+struct Originators<'a>(&'a mut Vec<Option<serde_json::Value>>);
+
+impl<'de> serde::de::DeserializeSeed<'de> for Originators<'_> {
+    type Value = ();
+    fn deserialize<D: serde::Deserializer<'de>>(self, reader: D) -> Result<(), D::Error> {
+        reader.deserialize_map(self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for Originators<'_> {
+    type Value = ();
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON object")
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "originator" {
+                self.0.push(None);
+                let claim = map.next_value::<serde_json::Value>()?;
+                if let Some(last) = self.0.last_mut() {
+                    *last = Some(claim);
+                }
+            } else {
+                map.next_value::<serde::de::IgnoredAny>()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -362,18 +405,44 @@ mod tests {
         }
     }
 
+    /// A body's originator agrees with the `Origin` or is refused, and the
+    /// check fails closed (the review of PR 419): a second `originator` is a
+    /// disagreement by itself (serde's derive refused the duplicate and the
+    /// check admitted the call), and so is a fault while the walk reads one
+    /// or after it has read one. A fault before any is the door's own
+    /// (fixture 032).
     #[test]
     fn a_body_originator_must_agree_with_the_origin() {
         let admitted = Admitted("http://app.example".into());
-        assert!(body_disagrees(&admitted, br#"{"keyID":"1"}"#).is_none());
-        assert!(body_disagrees(&admitted, br#"{"originator":"app.example"}"#).is_none());
-        assert!(body_disagrees(&admitted, br"[1,2]").is_none());
-        assert!(body_disagrees(&admitted, br#"["evil.example",{"keyID":"1"}]"#).is_none());
-        assert!(body_disagrees(&admitted, b"not json").is_none());
+        for body in [
+            &br#"{"keyID":"1"}"#[..],
+            br#"{"originator":"app.example"}"#,
+            br#"{"originator":"app.example","keyID":"1"}"#,
+            br"[1,2]",
+            br#"["evil.example",{"keyID":"1"}]"#,
+            b"not json",
+            br#"{"data": [1"#,
+        ] {
+            assert!(
+                body_disagrees(&admitted, body).is_none(),
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
         for body in [
             &br#"{"originator":"evil.example"}"#[..],
             br#"{"originator":7}"#,
             br#"{"originator":""}"#,
+            br#"{"originator":"evil.example","originator":"evil.example"}"#,
+            br#"{"originator":"app.example","originator":"evil.example"}"#,
+            br#"{"originator":"app.example","keyID":"1","originator":"app.example"}"#,
+            br#"{"origin\u0061tor":"app.example","originator":"evil.example"}"#,
+            br#"{"originator":["evil.example"]}"#,
+            br#"{"originator":{"host":"app.example"}}"#,
+            br#"{"originator":null}"#,
+            br#"{"originator":"app.example"#,
+            br#"{"originator":"app.example","keyID":[1"#,
+            br#"{"originator":"app.example"} trailing"#,
         ] {
             assert!(
                 body_disagrees(&admitted, body).is_some(),
