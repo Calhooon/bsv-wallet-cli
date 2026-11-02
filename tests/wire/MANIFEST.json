@@ -183,7 +183,8 @@
     "181-gate.options.notListed.json",
     "182-gate.encrypt.originatorWithoutOrigin.json",
     "183-gate.encrypt.originatorDisagrees.json",
-    "184-gate.encrypt.originatorAgrees.json"
+    "184-gate.encrypt.originatorAgrees.json",
+    "185-gate.encrypt.bodyOriginatorDisagrees.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -248,6 +249,7 @@
     "181-gate.options.notListed.json": "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin.",
     "182-gate.encrypt.originatorWithoutOrigin.json": "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal.",
     "183-gate.encrypt.originatorDisagrees.json": "#411: an Originator header naming another host than the Origin is refused (the ruling's rule 1; BrowserGate.lean disagreeing_refused), 400 VALIDATION_ERROR naming both; the listed origin's page reads it (the CORS echo).",
-    "184-gate.encrypt.originatorAgrees.json": "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314)."
+    "184-gate.encrypt.originatorAgrees.json": "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314).",
+    "185-gate.encrypt.bodyOriginatorDisagrees.json": "#411: a body's top-level originator naming another host than the Origin is refused once the body is read (the ruling's rule 1), 400 VALIDATION_ERROR naming both."
   }
 }
