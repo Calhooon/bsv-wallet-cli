@@ -23,8 +23,9 @@ use sqlx::{Sqlite, SqliteConnection};
 mod rows;
 
 pub use rows::{
-    expired, key_of, month_of, unlisted_text, Answer, Answered, Asking, Fold, FoldLine, Folded,
-    GrantRow, Granting, Pending, PendingRow, Refused, Reply, Scope, Source, Standing, SEED_NOTICE,
+    expired, key_of, month_of, unlisted_text, when, Answer, Answered, Asking, Fold, FoldLine,
+    Folded, GrantRow, Granting, Listing, Pending, PendingRow, Refused, Reply, Scope, Source,
+    Standing, SEED_NOTICE,
 };
 use rows::{GrantTuple, PendingTuple};
 
@@ -463,6 +464,40 @@ pub async fn fold(storage: &StorageSqlx, entries: &[String], now: i64) -> Result
     };
     fold.log();
     Ok(fold)
+}
+
+/// The listing `bsv-wallet origins` prints (section (4)): every grant row,
+/// by originator and then scope (`wallet` first), and the pending rows by
+/// id, the open ones alone unless `all` asks for the answered ones too.
+/// Read on the reader.
+///
+/// # Errors
+///
+/// The store's error.
+pub async fn listing(storage: &StorageSqlx, all: bool) -> Result<Listing> {
+    ensure(storage).await?;
+    let sql = format!(
+        "SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, scope = 'spending'"
+    );
+    let grants: Vec<GrantTuple> = sqlx::query_as(&sql).fetch_all(storage.pool()).await?;
+    let sql = format!(
+        "SELECT {PENDING_COLUMNS} FROM origin_pending \
+         WHERE ? OR answered_at IS NULL ORDER BY pending_id"
+    );
+    let pending: Vec<PendingTuple> = sqlx::query_as(&sql)
+        .bind(all)
+        .fetch_all(storage.pool())
+        .await?;
+    Ok(Listing {
+        grants: grants
+            .into_iter()
+            .map(GrantRow::from_tuple)
+            .collect::<Result<_>>()?,
+        pending: pending
+            .into_iter()
+            .map(PendingRow::from_tuple)
+            .collect::<Result<_>>()?,
+    })
 }
 
 /// The month's tally: the satoshis `origin_spends` holds for the
