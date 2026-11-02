@@ -180,7 +180,8 @@
     "178-createSignature.noContentType.json",
     "179-createAction.refusedGraph.json",
     "180-gate.encrypt.notListed.json",
-    "181-gate.options.notListed.json"
+    "181-gate.options.notListed.json",
+    "182-gate.encrypt.originatorWithoutOrigin.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -242,6 +243,7 @@
     "178-createSignature.noContentType.json": "#122 item 3 (the captain's decision by the second D ensemble, 3/3 follow): the same valid body as 177 with no content type is the call with an empty body, as the MetaNet Client runs it (Express parses no body without a content type and the client forwards JSON.stringify({}), bsv-desktop b791cb2 electron/httpServer.ts:183-189), so createSignature answers what it answers for {}: 400 VALIDATION_ERROR, missing field `protocolID`. New; recorded last, so no file before it moves.",
     "179-createAction.refusedGraph.json": "#386 (toolbox 0.14.0-beta.6, #546): an inputBEEF whose unproven transaction's parent is neither carried nor stored is refused by the toolbox's assembly as ValidationError (WalletRefusal InvalidParameter through the SDK boundary), served 400 VALIDATION_ERROR by its class; the text names the roots, the missing inputs and the sizes and ends at the byte count, no dump path, and nothing is written to the temp folder. Recorded as 177 on the pin's branch; 179 after #122's 177 and 178 (recorded before it), so no file before it moves.",
     "180-gate.encrypt.notListed.json": "#411: an Origin ALLOWED_ORIGINS does not name is refused in the client's denial, 400 ERR_PERMISSION_DENIED \"The user has denied the request for permission.\" (ts-stack edf6e03 WalletPermissionsManager.ts:1348-1349, served 400 by onWalletReady.ts's handlers), with no access-control-allow-origin, so a page cannot read it; under (b) no pending row is written (the scenario new-origin's step 1 under (b)).",
-    "181-gate.options.notListed.json": "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin."
+    "181-gate.options.notListed.json": "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin.",
+    "182-gate.encrypt.originatorWithoutOrigin.json": "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal."
   }
 }
