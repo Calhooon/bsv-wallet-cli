@@ -55,9 +55,8 @@ pub struct ServerConfig {
     /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
     /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
-    /// The exact origins the browser gate admits (`ALLOWED_ORIGINS`,
-    /// #411); empty admits none. Every call but `/arc-callback` must carry
-    /// an `Origin` it names, the bearer's callers too.
+    /// The exact origins the browser gate admits (`ALLOWED_ORIGINS`, #411);
+    /// empty admits none, the bearer's callers included.
     pub allowed_origins: AllowedOrigins,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
@@ -92,16 +91,6 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    /// The default settings with the browser gate admitting `origins`, as
-    /// `ALLOWED_ORIGINS` would (the tests' and the harnesses' servers).
-    #[allow(dead_code)] // the binary reads `ALLOWED_ORIGINS`; the tests build it
-    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
-        Self {
-            allowed_origins: AllowedOrigins::new(origins),
-            ..Self::default()
-        }
-    }
-
     /// The served wallet's server settings from the configuration
     /// (`BIND_ADDR`, `AUTH_TOKEN`, `TLS_CERT_PATH` with `TLS_KEY_PATH`), on
     /// `chain`. `/arc-callback` is enabled when a callback token exists: the
@@ -247,11 +236,7 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
 
 /// [`make_router`], with the start-time heal owed when `owed` says so.
 pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOwed) -> Router {
-    // A listed page reads `Retry-After` on a 503 STORE_BUSY (#44).
-    let cors = config
-        .allowed_origins
-        .cors()
-        .expose_headers([axum::http::header::RETRY_AFTER]);
+    let cors = config.allowed_origins.cors();
     let allowed = config.allowed_origins.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
@@ -613,12 +598,8 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
                 .into_response();
         }
     };
-    if let Some(refused) = parts
-        .extensions
-        .get::<origin_gate::Admitted>()
-        .and_then(|admitted| origin_gate::body_disagrees(admitted, &bytes))
-    {
-        return refused.into_response();
+    if let Some(refused) = origin_gate::refuse_body(&parts.extensions, &bytes) {
+        return refused;
     }
     let body = match sanitize_lone_surrogates(&bytes) {
         std::borrow::Cow::Borrowed(_) => axum::body::Body::from(bytes),
