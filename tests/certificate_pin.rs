@@ -53,34 +53,68 @@ async fn reverify_command_counts_good_and_bad_signatures_without_changing_certif
     )
     .await
     .unwrap();
-    seed(&wallet, &root).await;
-    let snapshot = || async {
-        sqlx::query_as::<_, (String, String)>(
-            "SELECT serial_number, signature FROM certificates ORDER BY serial_number",
-        )
-        .fetch_all(wallet.storage().pool())
-        .await
-        .unwrap()
-    };
-    let before = snapshot().await;
+    seed(&wallet, &root, &[(7, true), (8, false)]).await;
+    let before = snapshot(&wallet).await;
     for _ in 0..2 {
-        let result = reverify(&path, &root);
+        let output = reverify_output(&path, &root);
+        assert_eq!(output.status.code(), Some(1));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(result, json!({"checked": 2, "failed": 1}));
     }
-    assert_eq!(snapshot().await, before);
+    assert_eq!(snapshot(&wallet).await, before);
 }
 
-async fn seed(wallet: &Wallet<StorageSqlx, MockWalletServices>, root: &PrivateKey) {
+// #430: the failing certificate is stored first, so a reverify that stopped
+// at the first failure would answer one checked. Every row is read, the
+// command exits non-zero and nothing changes. Naming the failing one waits
+// on the toolbox's per-certificate verdicts (toolbox #585).
+#[tokio::test]
+async fn reverify_checks_every_certificate_past_a_failure_and_exits_non_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wallet.db");
+    let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+    let identity = root.public_key().to_hex();
+    let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    storage.migrate("certificate-430", &identity).await.unwrap();
+    storage.make_available().await.unwrap();
+    let wallet = Wallet::new(
+        Some(root.clone()),
+        storage,
+        MockWalletServices::builder().build(),
+    )
+    .await
+    .unwrap();
+    seed(&wallet, &root, &[(9, false), (10, true), (11, true)]).await;
+    let before = snapshot(&wallet).await;
+    let output = reverify_output(&path, &root);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(answer, json!({"checked": 3, "failed": 1}));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("1 of 3 stored certificates failed signature verification"));
+    assert_eq!(snapshot(&wallet).await, before);
+}
+
+async fn seed(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    root: &PrivateKey,
+    rows: &[(u8, bool)],
+) {
     let issuer = PrivateKey::from_hex(&"02".repeat(32)).unwrap();
-    for n in [7, 8] {
+    for &(n, good) in rows {
         let mut cert = Certificate::new([6; 32], [n; 32], root.public_key(), issuer.public_key())
             .with_revocation_outpoint(Some(Outpoint::new([0; 32], 0)));
         cert.set_field("name", "d2lyZQ==");
         cert.sign(&issuer).unwrap();
-        let signature = if n == 8 {
-            "3006020101020101".into()
-        } else {
+        let signature = if good {
             hex::encode(cert.signature.unwrap())
+        } else {
+            "3006020101020101".into()
         };
         // The audit reads legacy rows. Beta.3's acquire door correctly
         // refuses the invalid row, so seed the earlier stored state directly.
@@ -98,9 +132,19 @@ async fn seed(wallet: &Wallet<StorageSqlx, MockWalletServices>, root: &PrivateKe
     }
 }
 
-fn reverify(path: &std::path::Path, root: &PrivateKey) -> serde_json::Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_bsv-wallet"))
+async fn snapshot(wallet: &Wallet<StorageSqlx, MockWalletServices>) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT serial_number, signature FROM certificates ORDER BY serial_number",
+    )
+    .fetch_all(wallet.storage().pool())
+    .await
+    .unwrap()
+}
+
+fn reverify_output(path: &std::path::Path, root: &PrivateKey) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_bsv-wallet"))
         .current_dir(path.parent().unwrap())
+        .env_remove("RUST_LOG")
         .env("ROOT_KEY", root.to_hex())
         .env("CHAINTRACKS_URL", "off")
         .env("ARC_MODE", "classic")
@@ -113,11 +157,5 @@ fn reverify(path: &std::path::Path, root: &PrivateKey) -> serde_json::Value {
             "--reverify",
         ])
         .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
+        .unwrap()
 }
