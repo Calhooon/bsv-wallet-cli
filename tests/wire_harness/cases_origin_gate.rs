@@ -94,4 +94,18 @@ async fn record_fields_and_doors(r: &mut Recorder) {
             .header("authorization", &format!("Bearer {WIRE_BEARER}")),
     )
     .await;
+    // A body naming its originator twice: a disagreement by itself, read by
+    // a walk that fails closed (the review of PR 419; serde's derive refused
+    // the duplicate and the check had admitted the call).
+    let call = encrypt().to_string();
+    let twice = format!(
+        r#"{},"originator":"wire.test","originator":"evil.example"}}"#,
+        call.strip_suffix('}').unwrap_or(&call)
+    );
+    r.case(
+        "gate.encrypt.bodyOriginatorTwice",
+        "fresh",
+        post("/encrypt", json!({})).raw(&twice),
+    )
+    .await;
 }
