@@ -99,3 +99,5 @@ quietly off (the MCP's string parameter reaches the same door; the CLI's
 flag never took another word).
 External consumers stay on their recorded
 versions until their captains move them.
+
+The `v0.19.0-beta.6` announcement carries the consumer fixture diff since `v0.19.0-beta.4` (no beta.5 was cut; the number follows the line). This branch now pins bsv-rs =0.9.0-beta.6, bsv-wallet-toolbox-rs =0.14.0-beta.6 and bsv-tracker =0.9.0-beta.6 (PR 417, the port of PR 413 on `5aa43539`; the mainnet gate run once on that sha, 25 of 25 scenarios, net 2,230 sats). The pin moved two wire fixtures: 026 reads the typed class and 179 the refused BEEF graph (the toolbox's #546); 177 and 178 are byte-identical to beta.4's; the 98 wallet-call rows refuse none and the vectors read no difference; the four key doors validate on bsv-rs's `validate_public_key` (#377's residue closed) and the certifier at issuance measures 502 by class. The consumer fixtures' diff in full is the CLI captain's to amend here before the first consumer takes the tag.
