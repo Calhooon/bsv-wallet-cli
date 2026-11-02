@@ -13,8 +13,10 @@
 # (reader-reference), C the package's code (reader-package). Each reader is its own
 # `$CCA run --class review` holding only its stance, the question and its own evidence pointer,
 # never another reader's output; the three run concurrently from this shell, which waits for all.
-# Their outputs are reader-brc.txt, reader-reference.txt and reader-package.txt in the out
-# directory (default a new directory under $TMPDIR); aggregate.py then prints the aggregation.
+# Their outputs are reader-brc.txt, reader-reference.txt and reader-package.txt in the
+# launch's directory, printed at launch (launch-dir.zsh: the out-dir itself when it is new or empty,
+# else a new timestamped subfolder of it; without one, a new directory under $TMPDIR);
+# aggregate.py then prints the aggregation.
 # Exit 0 on a consensus, 1 on a split, 2 on a usage error or a malformed answer.
 #
 # $CCA is the runner (default cca); a dry run stubs it with tools/lanes/stub-runner.sh.
@@ -63,8 +65,10 @@ read_options() {
   answers=${(j:|:)tokens}
 }
 read_options
-out=${5:-$(mktemp -d "${TMPDIR:-/Volumes/Lanes/targets}/ensemble-read.XXXXXX")}
-mkdir -p -- $out
+source $HERE/launch-dir.zsh
+launch_dir "${5:-}" ensemble-read || { print -u2 "ensemble-read: cannot make an output directory"; exit 2; }
+out=$REPLY
+print -r -- "ensemble-read: outputs in $out"
 
 stamp() { strftime -s REPLY '%H:%M:%S' $EPOCHSECONDS; print -r -- "$REPLY.${${EPOCHREALTIME#*.}[1,3]}"; }
 

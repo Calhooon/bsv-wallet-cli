@@ -11,8 +11,12 @@
 # `B` under `OPTIONS: A|B|C` aggregate as 2/3 on A; a reader answering `maybe` exits 2; a
 # question without its OPTIONS line exits 2 (ruling 2); a bad OPTIONS line (a space inside a
 # token, one token, a carriage return) exits 2 before any reader launches (#392); `Yes`, `yes`
-# and `no` under `OPTIONS: yes|no` aggregate as 2/3 on yes (#392). Each passing case prints its
-# log's ENSEMBLE: and AGGREGATE: lines. Needs zsh, as the scripts do.
+# and `no` under `OPTIONS: yes|no` aggregate as 2/3 on yes (#392). The colon after a key is
+# optional (#416): reviewers writing `VERDICT: merge` with `CONFIDENCE 0.9` and `VERDICT:merge`
+# with `CONFIDENCE:0.8` aggregate as a merge, and a reader's `CONFIDENCE 0.8` reads. Each launch
+# writes a fresh directory (#416): two chain launches and two read launches into one out
+# directory each keep their own outputs. Each passing case prints its log's ENSEMBLE: and
+# AGGREGATE: lines. Needs zsh, as the scripts do.
 # CHAIN_ENSEMBLE_LANES points the cases at another copy of tools/lanes.
 set -euo pipefail
 
@@ -80,6 +84,40 @@ chain low-mean $'REPORT: STATUS done\nbase abc' merge 0.6 merge 0.7 merge 0.8
 check "two agreeing at mean 0.65 run C and say low mean" 0 $code "$WORK/low-mean/log" \
   "A and B low mean (agreement=2/2 mean=0.65): review C launched" "ENSEMBLE: merge agreement=3/3 mean=0.70"
 
+# The colon is optional (#416): the stub's reviewers write the variant forms.
+mkdir -p "$WORK/colon/stub" "$WORK/colon/out"
+printf 'REPORT: STATUS done\n' > "$WORK/colon/stub/lane.txt"
+printf 'VERDICT: merge\nDECISION: planted\nCONFIDENCE 0.9\nRISKS: none\nRATIONALE: planted.\n' \
+  > "$WORK/colon/stub/review-package.txt"
+printf -- '- **VERDICT:**merge\nDECISION: planted\nCONFIDENCE:0.8\nRISKS none\nRATIONALE: planted.\n' \
+  > "$WORK/colon/stub/review-wire-reference.txt"
+code=0
+STUB_DIR="$WORK/colon/stub" OUT_DIR="$WORK/colon/out" "$LANES/chain-ensemble.sh" lane-x lane/x \
+  "$WORK/brief.txt" "$WORK/review.txt" "$WORK/review.txt" > "$WORK/colon/log" 2>&1 || code=$?
+check "VERDICT: merge and VERDICT:merge with CONFIDENCE 0.9 and CONFIDENCE:0.8 merge" 0 $code \
+  "$WORK/colon/log" "reviewer A: VERDICT merge CONFIDENCE 0.90" "reviewer B: VERDICT merge CONFIDENCE 0.80" \
+  "ENSEMBLE: merge agreement=2/2 mean=0.85" "!review C"
+
+# Two launches into one OUT_DIR (#416): launch 1 takes the empty directory, launch 2 a fresh
+# subfolder of it; neither overwrites the other's lane.txt.
+mkdir -p "$WORK/twice/out"
+for n in 1 2; do
+  mkdir -p "$WORK/twice/stub$n"
+  printf 'REPORT: STATUS done\nlaunch %s\n' $n > "$WORK/twice/stub$n/lane.txt"
+  form merge planted 0.9 > "$WORK/twice/stub$n/review-package.txt"
+  form merge planted 0.8 > "$WORK/twice/stub$n/review-wire-reference.txt"
+  code=0
+  STUB_DIR="$WORK/twice/stub$n" OUT_DIR="$WORK/twice/out" "$LANES/chain-ensemble.sh" lane-x lane/x \
+    "$WORK/brief.txt" "$WORK/review.txt" "$WORK/review.txt" > "$WORK/twice/log$n" 2>&1 || code=$?
+  check "chain launch $n into one OUT_DIR" 0 $code "$WORK/twice/log$n" "ENSEMBLE: merge agreement=2/2 mean=0.85"
+done
+one=$(sed -n 's/^chain-ensemble: outputs in //p' "$WORK/twice/log1" | head -1)
+second=$(sed -n 's/^chain-ensemble: outputs in //p' "$WORK/twice/log2" | head -1)
+{ echo "one $one"; echo "second $second"; cat "$one/lane.txt" "$second/lane.txt"; } > "$WORK/twice/log"
+[ "$one" = "$WORK/twice/out" ] && [ "${second%/*}" = "$WORK/twice/out" ] || code=4
+check "two chain launches into one OUT_DIR keep both lane.txt" 0 $code "$WORK/twice/log" \
+  "launch 1" "launch 2"
+
 read_case() { # read_case <case> <question first line> <brc decision> <reference decision> <package decision>
   local dir="$WORK/$1"
   mkdir -p "$dir/stub" "$dir/out"
@@ -121,6 +159,26 @@ bad_options carriage-return $'OPTIONS: A|B|C\r' "carries a carriage return"
 read_case case 'OPTIONS: yes|no' 'Yes, the row stands' 'yes' 'no'
 check "readers Yes, yes, no under yes|no aggregate as 2/3 on yes" 0 $code "$WORK/case/log" \
   "AGGREGATE: consensus agreement=2/3 mean=0.77 decision: yes"
+
+# A reader's CONFIDENCE without its colon reads (#416).
+read_case colon-read 'OPTIONS: A|B|C' 'A the row stands' 'A' 'B'
+sed -i.bak 's/^CONFIDENCE: /CONFIDENCE /' "$WORK/colon-read/stub/reader-brc.txt"
+code=0
+STUB_DIR="$WORK/colon-read/stub" "$LANES/ensemble-read.sh" "$WORK/colon-read/question.txt" brc@pin ts@pin \
+  cli@rev "$WORK/colon-read/out" > "$WORK/colon-read/log" 2>&1 || code=$?
+check "a reader's CONFIDENCE 0.8 without its colon reads" 0 $code "$WORK/colon-read/log" \
+  "CONFIDENCE 0.80 DECISION: A the row stands" "AGGREGATE: consensus agreement=2/3 mean=0.77 decision: A"
+
+# Two read launches into one out directory (#416): the second gets a fresh subfolder.
+code=0
+STUB_DIR="$WORK/options/stub" "$LANES/ensemble-read.sh" "$WORK/options/question.txt" brc@pin ts@pin cli@rev \
+  "$WORK/options/out" > "$WORK/options/log2" 2>&1 || code=$?
+again=$(sed -n 's/^ensemble-read: outputs in //p' "$WORK/options/log2" | head -1)
+{ echo "again $again"; ls "$WORK/options/out" "$again"; } >> "$WORK/options/log2"
+[ "${again%/*}" = "$WORK/options/out" ] && [ -f "$WORK/options/out/reader-brc.txt" ] \
+  && [ -f "$again/reader-brc.txt" ] || code=4
+check "a second read launch into one out directory takes a fresh subfolder" 0 $code "$WORK/options/log2" \
+  "AGGREGATE: consensus agreement=2/3 mean=0.77 decision: A"
 
 echo "$cases cases, $failures failed"
 [ $failures = 0 ]

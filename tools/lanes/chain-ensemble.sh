@@ -18,8 +18,10 @@
 #
 # $CCA is the runner (default cca) and $GH the GitHub client (default gh); a dry run stubs both
 # with tools/lanes/stub-runner.sh. zsh -f: the caller's startup files are not read (the
-# environment is inherited); a runner's stdin is /dev/null. $OUT_DIR keeps the outputs
-# (default a new directory under $TMPDIR). $PR_NUMBER skips the lookup.
+# environment is inherited); a runner's stdin is /dev/null. $OUT_DIR keeps the outputs: each
+# launch writes into a fresh directory, printed at launch (launch-dir.zsh: OUT_DIR itself when it is
+# new or empty, else a new timestamped subfolder of it; unset, a new directory under $TMPDIR).
+# $PR_NUMBER skips the lookup.
 emulate -L zsh
 setopt no_unset pipe_fail
 zmodload zsh/datetime
@@ -39,8 +41,10 @@ lane=$1 branch=$2 brief=$3 rev_a=$4 rev_b=$5 rev_c=${6:-$5}
 for f in $brief $rev_a $rev_b $rev_c; do
   [[ -r $f ]] || { print -u2 "chain-ensemble: cannot read $f"; exit 2; }
 done
-out=${OUT_DIR:-$(mktemp -d "${TMPDIR:-/Volumes/Lanes/targets}/chain-ensemble.XXXXXX")}
-mkdir -p -- $out
+source $HERE/launch-dir.zsh
+launch_dir "${OUT_DIR:-}" chain-ensemble || { print -u2 "chain-ensemble: cannot make an output directory"; exit 2; }
+out=$REPLY
+print -r -- "chain-ensemble: outputs in $out"
 
 stamp() { strftime -s REPLY '%H:%M:%S' $EPOCHSECONDS; print -r -- "$REPLY.${${EPOCHREALTIME#*.}[1,3]}"; }
 say() { print -r -- "chain-ensemble: $* $(stamp)"; }
