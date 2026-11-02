@@ -37,9 +37,7 @@ async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {
         "abandoned" => None,
         _ => panic!("not a dead word: {word}"),
     };
-    let (state, fault) = row.replay(&opts().params(), &HeaderSnapshot::unread());
-    assert_eq!(fault, None);
-    store_row(storage, &row, &state, 10).await.unwrap();
+    store_unread(storage, &row).await;
     // No production caller feeds Abandon; seed its stored word directly.
     if word == "abandoned" {
         sqlx::query("UPDATE tracker_states SET word = 'abandoned' WHERE txid = ?")
@@ -49,6 +47,13 @@ async fn dead_row(storage: &StorageSqlx, txid: &str, word: &str) -> TrackedRow {
             .unwrap();
     }
     load_row(storage, txid).await.unwrap().unwrap()
+}
+
+/// Store `row` as its replay with no header read (no proof to check), at 10.
+async fn store_unread(storage: &StorageSqlx, row: &TrackedRow) {
+    let (state, fault) = row.replay(&opts().params(), &HeaderSnapshot::unread());
+    assert_eq!(fault, None);
+    store_row(storage, row, &state, 10).await.unwrap();
 }
 
 async fn stored_bytes(storage: &StorageSqlx, txid: &str) -> String {
