@@ -1,7 +1,8 @@
 //! The served doors' browser gate (#411, the owner's word of 2026-11-01,
 //! step (b)): each refusal the gate serves, and the agreeing call it
 //! admits. Recorded last, so no file before them moves. The worlds admit
-//! `http://wire.test` and `https://app.example` (`worlds.rs`).
+//! the originators `wire.test` and `app.example` (`worlds.rs`), by the
+//! reference's hostname scope (the owner's word of 2026-11-02).
 use serde_json::json;
 
 use super::recorder::{get, options, post, Recorder};
@@ -106,6 +107,36 @@ async fn record_fields_and_doors(r: &mut Recorder) {
         "gate.encrypt.bodyOriginatorTwice",
         "fresh",
         post("/encrypt", json!({})).raw(&twice),
+    )
+    .await;
+    record_hostname_scope(r).await;
+}
+
+/// The key (the owner's word of 2026-11-02): an `Origin` is judged as its
+/// originator, and a listed host admits it under any scheme and on every
+/// port, as the reference scopes a grant to the hostname.
+async fn record_hostname_scope(r: &mut Recorder) {
+    // `https://app.example:8443` is `app.example:8443`, admitted by the
+    // entry `app.example`; the Originator header in the reference's form
+    // agrees.
+    let scoped = r
+        .case(
+            "gate.encrypt.hostnameScope",
+            "fresh",
+            post("/encrypt", encrypt())
+                .header("origin", "https://app.example:8443")
+                .header("originator", "app.example:8443"),
+        )
+        .await;
+    assert!(scoped
+        .body
+        .as_ref()
+        .is_some_and(|b| b.pointer("/ciphertext").is_some()));
+    // Its preflight from another port of the host: answered, echoed.
+    r.case(
+        "gate.options.hostnameScope",
+        "fresh",
+        options("/encrypt", "POST").header("origin", "http://app.example:5173"),
     )
     .await;
 }
