@@ -55,10 +55,11 @@ const HOST_ROUTES: [&str; 5] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 11] = [
+pub(crate) const APP_CODES: [(u16, &str); 12] = [
     (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "ERROR"),
+    (400, "ERR_PERMISSION_DENIED"),
     (402, "INSUFFICIENT_FUNDS"),
     (403, "INPUT_NOT_OFFERED"),
     (409, "CONFLICT"),

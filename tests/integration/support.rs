@@ -11,6 +11,35 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tempfile::TempDir;
 
+/// The origin the tests' client sends on every call, and the origins their
+/// servers admit (`ALLOWED_ORIGINS`, #411): a served door refuses a call
+/// without an `Origin` it names.
+pub(crate) const ORIGIN: &str = "http://test.local";
+pub(crate) const ORIGINS: [&str; 3] = [
+    ORIGIN,
+    "http://browser.test",
+    "http://privileged-audit.test",
+];
+
+/// The default server settings admitting [`ORIGINS`].
+pub(crate) fn admitting() -> ServerConfig {
+    ServerConfig::admitting(ORIGINS)
+}
+
+/// A client that sends `Origin: http://test.local` on every request (a
+/// request's own `Origin` replaces it).
+pub(crate) fn client() -> Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ORIGIN,
+        reqwest::header::HeaderValue::from_static(ORIGIN),
+    );
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("client")
+}
+
 /// Spin up a server on a random port, return the base URL and a reqwest client.
 pub(crate) async fn setup() -> (String, Client, TempDir) {
     setup_with_header_service(std::env::var("CHAINTRACKS_URL").ok()).await
@@ -53,7 +82,7 @@ pub(crate) async fn local_header_service(height: u32) -> String {
 pub(crate) async fn setup_with_header_service(
     chaintracks_url: Option<String>,
 ) -> (String, Client, TempDir) {
-    setup_with_config(chaintracks_url, ServerConfig::default()).await
+    setup_with_config(chaintracks_url, admitting()).await
 }
 
 /// A fresh wallet over a header service (or none), served under `config`.
@@ -99,15 +128,14 @@ pub(crate) async fn setup_with_config(
     });
 
     let base = format!("http://{}", addr);
-    let client = Client::new();
-    (base, client, tmp)
+    (base, client(), tmp)
 }
 
 /// Helper: POST JSON with Origin header
 pub(crate) async fn post_json(client: &Client, url: &str, body: Value) -> reqwest::Response {
     client
         .post(url)
-        .header("Origin", "http://test.local")
+        .header("Origin", ORIGIN)
         .json(&body)
         .send()
         .await
@@ -124,7 +152,8 @@ pub(crate) async fn post_json_ok(client: &Client, url: &str, body: Value) -> Val
 }
 
 /// Helper: connect to a running wallet server. Returns None if WALLET_URL not set.
+/// The wallet must list [`ORIGIN`] in its `ALLOWED_ORIGINS`.
 pub(crate) fn e2e_setup() -> Option<(String, Client)> {
     let url = std::env::var("WALLET_URL").ok()?;
-    Some((url, Client::new()))
+    Some((url, client()))
 }

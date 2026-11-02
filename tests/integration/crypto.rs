@@ -364,14 +364,15 @@ async fn test_verify_hmac_wrong_data_returns_invalid() {
     );
 }
 
-/// POST to /encrypt WITHOUT an Origin header. Should return 400 with "Origin header required".
+/// POST to /encrypt WITHOUT an Origin header: the MetaNet Client's 400,
+/// "Origin header is required" (#411).
 #[tokio::test]
 async fn test_encrypt_missing_origin_returns_400() {
-    let (base, client, _tmp) = setup().await;
+    let (base, _client, _tmp) = setup().await;
     let plaintext: Vec<u8> = b"test".to_vec();
 
-    // Send request WITHOUT Origin header (do not use post_json helper which adds it)
-    let resp = client
+    // Send request WITHOUT Origin header (a bare client: the setup's sends one)
+    let resp = reqwest::Client::new()
         .post(format!("{base}/encrypt"))
         .json(&json!({
             "plaintext": plaintext,
@@ -392,7 +393,7 @@ async fn test_encrypt_missing_origin_returns_400() {
     let body: Value = resp.json().await.unwrap();
     let message = body["message"].as_str().unwrap_or("");
     assert!(
-        message.contains("Origin header required"),
+        message.contains("Origin header is required"),
         "error message should mention Origin header, got: {message}"
     );
 }

@@ -30,6 +30,10 @@ pub enum Kind {
     InputNotOffered,
     /// The toolbox's permission refusal.
     AccessDenied,
+    /// The browser gate's refusal of an origin `ALLOWED_ORIGINS` does not
+    /// name (#411): the MetaNet Client's denial, 400 with the reference's
+    /// code (ts-stack edf6e03 `WalletPermissionsManager.ts:1348-1349`).
+    OriginDenied,
     /// The wallet's state refuses a well-formed request.
     Conflict,
     /// Completed action results require review, with their typed evidence.
@@ -64,6 +68,7 @@ impl Kind {
             Kind::InsufficientFunds => (StatusCode::PAYMENT_REQUIRED, "INSUFFICIENT_FUNDS"),
             Kind::InputNotOffered => (StatusCode::FORBIDDEN, "INPUT_NOT_OFFERED"),
             Kind::AccessDenied => (StatusCode::FORBIDDEN, "ACCESS_DENIED"),
+            Kind::OriginDenied => (StatusCode::BAD_REQUEST, "ERR_PERMISSION_DENIED"),
             Kind::Conflict => (StatusCode::CONFLICT, "CONFLICT"),
             Kind::ReviewActions => (StatusCode::BAD_REQUEST, "5"),
             Kind::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED"),

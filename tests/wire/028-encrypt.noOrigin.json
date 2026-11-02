@@ -28,7 +28,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "Origin header required"
+      "message": "Origin header is required"
     }
   }
 }

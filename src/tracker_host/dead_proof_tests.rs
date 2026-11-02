@@ -283,9 +283,11 @@ async fn served_word(storage: &StorageSqlx, txid: &str) -> serde_json::Value {
         PrivateKey::from_hex(&"11".repeat(32)).unwrap(),
     )
     .await;
-    let response = crate::server::make_router(wallet, crate::server::ServerConfig::default())
+    let config = crate::server::ServerConfig::admitting(["http://dead-proof.test"]);
+    let response = crate::server::make_router(wallet, config)
         .oneshot(
             Request::get(format!("/tx/{txid}"))
+                .header("Origin", "http://dead-proof.test")
                 .body(Body::empty())
                 .unwrap(),
         )
