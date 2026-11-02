@@ -178,7 +178,11 @@ record names its file and provisional when it does not. The floors' rule:
      (#310): a floor may stand above its measured score when the record's
      verdict holds that file below its floor and names its open issue, and
      --check prints the file as RED BY DESIGN with the issue and does not fail
-     on it; without the verdict and the issue the ceiling holds.
+     on it; without the verdict and the issue the ceiling holds. The exception
+     never raises or adds a floor: under --base a file held red by design must
+     carry the base's own floor, and a floor that rose or that the base did not
+     have is refused naming the file; plain --check has no base to compare, so
+     the rise is caught by the base comparison CI's `ratchet` job runs.
   2. The fall (--base). A floor with a measurement at the base never falls; a
      provisional floor never falls without a measurement in the tree's record;
      a measurement at the base never vanishes from the tree.
@@ -935,8 +939,18 @@ def falls(base, tree, scores):
     that vanished, a floor that fell against rules 2 and 3 of the floors' rule
     (scores: the tree's docs/scoreboard/mutants.json, by file); and the notices,
     one per provisional floor its first measurement lowered. A floor above its
-    score is ceiling()'s, never this function's."""
+    score is ceiling()'s, never this function's, but for rule 1's exception: a
+    file the verdict holds red by design must stand at the base's floor."""
     out, notices = [], []
+    floored = {k[len("floor:"):]: tree[k] for k in tree if is_floor(k)}
+    for file in sorted(red_by_design(floored, scores)[0]):
+        key, t = f"floor:{file}", floored[file]
+        if key not in base:
+            out.append(f"{key}: no floor at the base, {t:g} in the tree, measured {scores[file]:g}; "
+                       "the exception never raises or adds a floor")
+        elif t > base[key]:  # Below the base's: rule 2's fault, named once below.
+            out.append(f"{key}: {base[key]:g} at the base, {t:g} in the tree, measured {scores[file]:g}; "
+                       "the exception never raises or adds a floor")
     for key in sorted(base):
         b, t = base[key], tree.get(key)
         if t is None:

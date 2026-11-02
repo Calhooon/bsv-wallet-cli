@@ -896,6 +896,38 @@ class RedByDesign(Case):
         self.refused_by_check("floor:src/spend_gate.rs: 80 at the base, 76 in the tree; a measured floor may not fall",
                               "--base", base)
 
+    # The exception never raises or adds a floor (the review of PR 422): under
+    # --base a file red by design stands at the base's own floor.
+    def test_a_red_floor_raised_from_the_base_is_refused(self):
+        self.below()
+        base = self.tree.values()
+        self.below(verdict=self.VERDICT.replace("its floor 80", "its floor 95"), floor=95)
+        self.refused_by_check("floor:src/spend_gate.rs: 80 at the base, 95 in the tree, measured 75.5; "
+                              "the exception never raises or adds a floor", "--base", base)
+
+    def test_a_new_floor_above_its_score_under_a_verdict_is_refused(self):
+        base = self.tree.values()
+        self.tree.write(".github/workflows/nightly.yml",
+                        NIGHTLY.replace('"src/explorers.rs": 69}', '"src/explorers.rs": 69,\n             "src/context.rs": 95}'))
+        mutants = json.loads(json.dumps(MUTANTS))
+        mutants["files"]["src/context.rs"] = counted(50.0)
+        mutants["verdict"] = "red by design: src/context.rs 50.0 below its floor 95; #420"
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        self.refused_by_check("floor:src/context.rs: no floor at the base, 95 in the tree, measured 50; "
+                              "the exception never raises or adds a floor", "--base", base)
+
+    def test_a_red_floor_that_stands_at_the_base_passes_check_base(self):
+        # The ruled case: the base already carries the floor the verdict holds.
+        self.below(verdict=None, score=86.6)
+        base = self.tree.values()
+        self.below()
+        code, out = self.checked("--base", base)
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.RED, out)
+        self.assertNotIn("never raises or adds", out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
     def test_pr_421s_record_is_red_by_design(self):
         # PR 421's record (run 41340299977) as it wrote it, under the floors it
         # kept: explorers.rs 78.0 under its floor 82, the survivors #420.
