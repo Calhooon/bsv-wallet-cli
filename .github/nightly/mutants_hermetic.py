@@ -22,10 +22,16 @@ for cargo-mutants' `-F`.
 regexes with the shard's names, as sets: exit 1, naming each difference, when
 they are not equal, so a shard never judges a selection other than its own;
 and exit 1 naming a name the list printed twice (#400: a mutant is judged
-once).
+once). Both sides are compared colour-free (#435): an ANSI SGR escape
+(`ESC[...m`) is stripped from every line first, since the job's
+`CARGO_TERM_COLOR=always` once coloured the listing and refused a right
+selection; the list step asks for none (`--colors never`, `NO_COLOR=1`), and
+the strip is the defence. A selection other than the survivors is still
+refused.
 """
 
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -33,6 +39,8 @@ from pathlib import Path
 SURVIVING = ("MissedMutant", "Timeout")
 # regex-syntax's is_meta_character: what `regex::escape` escapes.
 META = set("\\.+*?()|[]{}^$#&-~")
+# An ANSI SGR escape, the colour cargo-mutants prints (#435).
+SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def mutant_outcomes(root):
@@ -53,6 +61,10 @@ def escape(name):
 
 def read_names(path):
     return [line for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def plain(line):
+    return SGR.sub("", line)
 
 
 def write_lines(path, lines):
@@ -76,8 +88,9 @@ def main(args):
         print(f"shard {shard}/{shards}: {len(mine)} of {len(names)} survivors")
         return 0
     if args[:1] == ["check-list"] and len(args) == 3:
-        listed = read_names(args[2])
-        want, got = set(read_names(args[1])), set(listed)
+        listed = [n for n in map(plain, read_names(args[2])) if n.strip()]
+        want = {n for n in map(plain, read_names(args[1])) if n.strip()}
+        got = set(listed)
         twice = sorted(n for n, k in Counter(listed).items() if k > 1)
         for n in twice:
             print(f"listed more than once: {n}")

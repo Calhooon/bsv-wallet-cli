@@ -584,7 +584,10 @@ jobs:
                  -f src/broadcast_verify.rs -f src/explorers.rs)
           select=()
           while IFS= read -r rx; do select+=(-F "$rx"); done < shard.re
-          cargo mutants --list "${files[@]}" "${select[@]}" > shard.listed
+          # The listing colour-free (#435): cargo-mutants reads the
+          # workflow's CARGO_TERM_COLOR=always and coloured the names the
+          # check compares; NO_COLOR overrides any colour forcing.
+          NO_COLOR=1 cargo mutants --list --colors never "${files[@]}" "${select[@]}" > shard.listed
           python3 .github/nightly/mutants_hermetic.py check-list shard.names shard.listed
           status=0
           cargo mutants "${files[@]}" "${select[@]}" \

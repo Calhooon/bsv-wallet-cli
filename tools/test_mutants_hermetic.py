@@ -3,7 +3,8 @@
 .github/nightly/mutants_hermetic.py's survivors (missed and timeout in,
 caught, unviable and the baseline out), its
 round-robin shards and anchored escapes, its list check (a name listed
-twice refused, #400); and
+twice refused, #400; a coloured listing compared colour-free, a wrong name
+still refused, #435); and
 .github/nightly/mutants_score.py's union with `--hermetic` (a survivor the
 hermetic pass caught is caught, one it missed stays missed, a timeout it
 caught is caught, a survivor it never judged fails the score), the plain
@@ -120,6 +121,38 @@ class Case(unittest.TestCase):
                 f.write(listed)
             r = self.run_py(HERMETIC, "check-list", self.path("names"), self.path("listed"))
             self.assertEqual(r.returncode, code, listed + r.stdout)
+
+    # The listing as run 41413946663's shard 0 printed it under
+    # CARGO_TERM_COLOR=always (#435), and the plain names of its artifact.
+    COLOURED = ("src/tracker_host.rs:1911:20: delete \x1b[33m!\x1b[0m in \x1b[38;5;13mnode_verdict\x1b[0m\n"
+                "src/explorers.rs:321:5: replace \x1b[38;5;13mfault_status\x1b[0m \x1b[35m-> String\x1b[0m"
+                " with \x1b[33m\"xyzzy\".into()\x1b[0m\n")
+    PLAIN = ["src/tracker_host.rs:1911:20: delete ! in node_verdict",
+             "src/explorers.rs:321:5: replace fault_status -> String with \"xyzzy\".into()"]
+
+    def check_coloured(self, names, listed):
+        with open(self.path("names"), "w") as f:
+            f.write("".join(f"{n}\n" for n in names))
+        with open(self.path("listed"), "w") as f:
+            f.write(listed)
+        return self.run_py(HERMETIC, "check-list", self.path("names"), self.path("listed"))
+
+    def test_the_list_check_compares_colour_free(self):
+        r = self.check_coloured(self.PLAIN, self.COLOURED)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("the shard's 2 survivors, name for name", r.stdout)
+        # Coloured twice is still twice.
+        r = self.check_coloured(self.PLAIN, self.COLOURED + self.PLAIN[0] + "\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"listed more than once: {self.PLAIN[0]}", r.stdout)
+
+    def test_a_coloured_listing_of_another_name_is_still_refused(self):
+        wrong = [self.PLAIN[0], self.PLAIN[1].replace("321:5", "322:5")]
+        r = self.check_coloured(wrong, self.COLOURED)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"not selected: {wrong[1]}", r.stdout)
+        self.assertIn(f"selected, not a survivor of this shard: {self.PLAIN[1]}", r.stdout)
+        self.assertNotIn("\x1b", r.stdout)
 
     def score(self, hermetic):
         self.plant("cargo", CARGO)
