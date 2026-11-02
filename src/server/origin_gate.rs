@@ -23,8 +23,9 @@
 //! stack's charter section 13 (`lean/BrowserGate.lean` `gate`): the legacy
 //! `Originator` header never stands in for a missing `Origin` (the client
 //! falls back to it, `onWalletReady.ts:59-68`), and an `Originator` header
-//! or a body's `originator` naming another originator than the `Origin`'s
-//! is refused. The bearer (`AUTH_TOKEN`) is checked ahead of the gate and
+//! or a body's `originator` naming another host than the `Origin`'s is
+//! refused, compared in the lookup form (the hostname, every port of a
+//! host one originator under the key, as the admission compares). The bearer (`AUTH_TOKEN`) is checked ahead of the gate and
 //! never admits an origin.
 
 use std::sync::Arc;
@@ -199,6 +200,16 @@ fn hostname_of(originator: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+/// Whether another field's name agrees with the `Origin`'s originator:
+/// both in the lookup form, the lowercased hostname (`prepareOriginator`'s
+/// `normalized`, `WPM:5776`, `:5786`), as the admission compares an entry
+/// (#448). A key covering every port of a host never splits one caller by
+/// its port; a name of another host disagrees.
+fn agrees(name: &str, originator: &str) -> bool {
+    let claimed = claimed_originator(name).and_then(|c| hostname_of(&c));
+    claimed.is_some() && claimed == hostname_of(originator)
+}
+
 /// The `Origin` header and its originator, when it is one a URL parser
 /// reads with a host.
 fn origin_of(headers: &HeaderMap) -> Option<(&str, String)> {
@@ -208,12 +219,12 @@ fn origin_of(headers: &HeaderMap) -> Option<(&str, String)> {
 
 /// The gate on a call's headers: the admitted call, or the refusal. The
 /// order is `BrowserGate.gate`'s: the `Origin`, the other field's
-/// agreement, then the list.
+/// agreement (by hostname), then the list.
 pub(crate) fn judge(headers: &HeaderMap, allowed: &AllowedOrigins) -> Result<Admitted, Refused> {
     let (origin, originator) = origin_of(headers).ok_or(Refused::NoOrigin)?;
     if let Some(claimed) = headers.get("originator") {
         let claimed = String::from_utf8_lossy(claimed.as_bytes()).into_owned();
-        if claimed_originator(&claimed).as_ref() != Some(&originator) {
+        if !agrees(&claimed, &originator) {
             return Err(Refused::Disagrees {
                 origin: origin.to_string(),
                 claimed,
@@ -299,8 +310,8 @@ pub(crate) fn refuse_body(extensions: &axum::http::Extensions, body: &[u8]) -> O
     body_disagrees(admitted, body).map(IntoResponse::into_response)
 }
 
-/// A body's top-level `originator`, when it names another originator than
-/// the admitted `Origin`'s (or is not a string): the refusal. It fails closed: a
+/// A body's top-level `originator`, when it names another host than the
+/// admitted `Origin`'s (or is not a string): the refusal. It fails closed: a
 /// second `originator` is a disagreement by itself, and so is a body the
 /// walk cannot read once it has met one. A body that is not a JSON object
 /// names none, and a fault before any `originator` is the door's own (its
@@ -331,7 +342,7 @@ pub(crate) fn body_disagrees(admitted: &Admitted, body: &[u8]) -> Option<AppErro
         (Ok(()), [Some(claim)]) => {
             let agrees = claim
                 .as_str()
-                .is_some_and(|c| claimed_originator(c).as_ref() == Some(&admitted.originator));
+                .is_some_and(|c| agrees(c, &admitted.originator));
             let claim = claim
                 .as_str()
                 .map_or_else(|| claim.to_string(), str::to_string);
@@ -483,6 +494,19 @@ mod tests {
                 "localhost:5173",
             ),
             ("http://localhost:5174", None, "localhost:5173"),
+            // The stack's disagreeing-originator step 4 (#448): a port
+            // beside the name is one originator under the hostname key.
+            (
+                "http://app.example:8080",
+                Some("app.example"),
+                "app.example",
+            ),
+            (
+                "http://app.example",
+                Some("app.example:8080"),
+                "app.example",
+            ),
+            ("http://localhost:5173", Some("localhost"), "localhost:5173"),
             ("http://localhost", None, "localhost:5173"),
         ] {
             let mut pairs = vec![("origin", origin)];
@@ -497,17 +521,19 @@ mod tests {
         assert_eq!(at("http://localhost:3000"), "localhost");
     }
 
-    /// The scenario disagreeing-originator: another originator in the
+    /// The scenario disagreeing-originator: another host in the
     /// `Originator` header is refused, listed or not, before the list; it
-    /// is compared in the `Origin`'s form, host and port.
+    /// is compared in the lookup form, the hostname (#448).
     #[test]
     fn a_disagreeing_originator_is_refused_before_the_list() {
         for (origin, claimed) in [
             ("http://evil.example", "app.example"),
             ("http://app.example", "evil.example"),
-            ("http://localhost:5173", "localhost"),
-            ("http://app.example", "app.example:8080"),
+            ("http://app.example:8080", "evil.example:8080"),
+            ("http://app.example", "sub.app.example"),
+            ("http://app.example", "http://evil.example"),
             ("http://app.example", ""),
+            ("http://app.example", ":8080"),
         ] {
             assert!(
                 matches!(
@@ -577,6 +603,31 @@ mod tests {
         assert_eq!(e.map(|e| e.rule()), Some(originator::SCHEME));
     }
 
+    /// A body's originator is compared in the lookup form (#448, fixture
+    /// 191): `Origin: https://app.example:8080` with `originator:
+    /// app.example` is one originator under the hostname key; another host
+    /// on the same port is not.
+    #[test]
+    fn a_body_originator_agrees_by_hostname() {
+        let admitted = Admitted {
+            origin: "https://app.example:8080".into(),
+            originator: "app.example:8080".into(),
+            entry: "app.example".into(),
+        };
+        for body in [
+            &br#"{"originator":"app.example"}"#[..],
+            br#"{"originator":"app.example:8080"}"#,
+            br#"{"originator":"app.example:9090"}"#,
+        ] {
+            assert!(body_disagrees(&admitted, body).is_none());
+        }
+        let refused = body_disagrees(&admitted, br#"{"originator":"evil.example:8080"}"#)
+            .expect("another host disagrees");
+        assert!(format!("{refused:?}").contains(
+            "names evil.example:8080, which disagrees with the Origin header's https://app.example:8080"
+        ));
+    }
+
     /// A body's originator agrees with the `Origin` or is refused, and the
     /// check fails closed (the review of PR 419): a second `originator` is a
     /// disagreement by itself (serde's derive refused the duplicate and the
@@ -596,6 +647,8 @@ mod tests {
             br#"{"originator":"app.example","keyID":"1"}"#,
             br#"{"originator":"APP.example"}"#,
             br#"{"originator":"http://app.example"}"#,
+            br#"{"originator":"app.example:8080"}"#,
+            br#"{"originator":"https://APP.example:8443"}"#,
             br"[1,2]",
             br#"["evil.example",{"keyID":"1"}]"#,
             b"not json",
@@ -609,6 +662,8 @@ mod tests {
         }
         for body in [
             &br#"{"originator":"evil.example"}"#[..],
+            br#"{"originator":"evil.example:80"}"#,
+            br#"{"originator":"sub.app.example"}"#,
             br#"{"originator":7}"#,
             br#"{"originator":""}"#,
             br#"{"originator":"evil.example","originator":"evil.example"}"#,
