@@ -49,4 +49,16 @@ pub(crate) async fn record(r: &mut Recorder) {
         post("/encrypt", encrypt()).header("originator", "evil.example"),
     )
     .await;
+    // One naming the same host, as the reference's Node client sends it.
+    let agrees = r
+        .case(
+            "gate.encrypt.originatorAgrees",
+            "fresh",
+            post("/encrypt", encrypt()).header("originator", "http://wire.test"),
+        )
+        .await;
+    assert!(agrees
+        .body
+        .as_ref()
+        .is_some_and(|b| b.pointer("/ciphertext").is_some()));
 }
