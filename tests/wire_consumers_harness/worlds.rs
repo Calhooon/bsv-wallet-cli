@@ -111,9 +111,15 @@ impl World {
             CLOSED.to_string(),
         );
         let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
+        // The origins the consumers' callers send (#411): each must be
+        // listed in its wallet's ALLOWED_ORIGINS.
         let mut config = ServerConfig {
             settings: crate::wire_support::quiet_config(),
-            ..ServerConfig::default()
+            ..ServerConfig::admitting([
+                "http://localhost",
+                "http://localhost:5173",
+                "http://e2e-test",
+            ])
         };
         if name == "auth" {
             config.auth_token = Some(BEARER.to_string());

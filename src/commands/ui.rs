@@ -1,8 +1,9 @@
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query, State},
-    http::{header, StatusCode},
-    response::IntoResponse,
+    extract::{Path, Query, Request, State},
+    http::{header, HeaderMap, Method, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -18,7 +19,7 @@ struct AppState {
     db_path: String,
 }
 
-pub async fn run(db_path: &str, port: u16) -> Result<()> {
+pub async fn run(db_path: &str, port: u16, allowed: &[String]) -> Result<()> {
     let url = format!("sqlite:{db_path}");
     let pool = SqlitePool::connect(&url).await?;
     let state = Arc::new(AppState {
@@ -33,6 +34,10 @@ pub async fn run(db_path: &str, port: u16) -> Result<()> {
         .route("/api/tables/{name}/schema", get(table_schema))
         .route("/api/stats", get(stats))
         .route("/api/query", post(query))
+        .layer(middleware::from_fn_with_state(
+            Arc::new(allowed.to_vec()),
+            same_origin,
+        ))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{port}");
@@ -40,6 +45,57 @@ pub async fn run(db_path: &str, port: u16) -> Result<()> {
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// The inspector's browser gate (#411), the served doors' rule on its own
+/// routes: a call is admitted when its `Origin` is the inspector's own
+/// (`http://` and the `Host` it was asked by) or one `ALLOWED_ORIGINS`
+/// names. The one exemption: a `GET` or `HEAD` with no `Origin`, the only
+/// requests a browser sends without one (its own page's reads, and a
+/// command line's); a page of another origin cannot read their answers, as
+/// the inspector answers no CORS. Every call must name a loopback `Host`,
+/// so a page rebinding its name to this port is refused before any read.
+async fn same_origin(
+    State(allowed): State<Arc<Vec<String>>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    match inspector_word(request.method(), request.headers(), &allowed) {
+        Ok(()) => next.run(request).await,
+        Err(why) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": why })),
+        )
+            .into_response(),
+    }
+}
+
+fn inspector_word(method: &Method, headers: &HeaderMap, allowed: &[String]) -> Result<(), String> {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let name = url::Url::parse(&format!("http://{host}"))
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_default();
+    if !matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
+        return Err(format!(
+            "the inspector answers only a loopback Host, not {host:?}"
+        ));
+    }
+    match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        None if matches!(*method, Method::GET | Method::HEAD) => Ok(()),
+        None => Err("Origin header is required".to_string()),
+        Some(origin)
+            if origin == format!("http://{host}") || allowed.iter().any(|o| o == origin) =>
+        {
+            Ok(())
+        }
+        Some(origin) => Err(format!(
+            "origin {origin} is neither the inspector's own nor in ALLOWED_ORIGINS"
+        )),
+    }
 }
 
 async fn index() -> impl IntoResponse {
@@ -475,5 +531,55 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(k.clone(), v.parse().unwrap());
+        }
+        h
+    }
+
+    /// #411: the inspector's own page and the listed origins are admitted;
+    /// a GET without an Origin is its own page's read; anything else, or a
+    /// Host that is not loopback, is refused.
+    #[test]
+    fn the_inspector_admits_its_own_origin_and_the_listed() {
+        let listed = vec!["http://localhost:5173".to_string()];
+        let host = (header::HOST, "localhost:9321");
+        let ok = |m: Method, h: HeaderMap| inspector_word(&m, &h, &listed).is_ok();
+        assert!(ok(Method::GET, headers(std::slice::from_ref(&host))));
+        assert!(ok(
+            Method::HEAD,
+            headers(&[(header::HOST, "127.0.0.1:9321")])
+        ));
+        assert!(ok(
+            Method::POST,
+            headers(&[host.clone(), (header::ORIGIN, "http://localhost:9321")])
+        ));
+        assert!(ok(
+            Method::POST,
+            headers(&[host.clone(), (header::ORIGIN, "http://localhost:5173")])
+        ));
+        assert!(!ok(Method::POST, headers(std::slice::from_ref(&host))));
+        assert!(!ok(
+            Method::POST,
+            headers(&[host.clone(), (header::ORIGIN, "http://evil.example")])
+        ));
+        assert!(!ok(
+            Method::GET,
+            headers(&[host.clone(), (header::ORIGIN, "http://127.0.0.1:9321")])
+        ));
+        assert!(!ok(
+            Method::GET,
+            headers(&[(header::HOST, "evil.example:9321")])
+        ));
+        assert!(!ok(Method::GET, headers(&[])));
     }
 }

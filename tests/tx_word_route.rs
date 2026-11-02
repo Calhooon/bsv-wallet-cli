@@ -130,7 +130,10 @@ async fn served() -> (String, Client, TempDir) {
     .unwrap();
 
     let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
-    let app = server::make_router(server::make_wallet_state(wallet), ServerConfig::default());
+    let app = server::make_router(
+        server::make_wallet_state(wallet),
+        ServerConfig::admitting(["http://localhost"]),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -140,7 +143,12 @@ async fn served() -> (String, Client, TempDir) {
 }
 
 async fn get(client: &Client, url: String) -> (u16, Value) {
-    let resp = client.get(url).send().await.unwrap();
+    let resp = client
+        .get(url)
+        .header("Origin", "http://localhost")
+        .send()
+        .await
+        .unwrap();
     (resp.status().as_u16(), resp.json().await.unwrap())
 }
 

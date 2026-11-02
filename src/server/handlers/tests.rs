@@ -270,7 +270,10 @@ async fn cors_exposes_retry_after() {
     let storage = StorageSqlx::in_memory().await.unwrap();
     let key = bsv_sdk::primitives::PrivateKey::random();
     let wallet = crate::test_support::test_wallet(storage, "cors", key).await;
-    let app = crate::server::make_router(wallet, crate::server::ServerConfig::default());
+    let app = crate::server::make_router(
+        wallet,
+        crate::server::ServerConfig::admitting(["https://app.example"]),
+    );
     let response = app
         .oneshot(
             axum::http::Request::get("/isAuthenticated")
@@ -596,9 +599,13 @@ async fn host_route_store_faults(path: &str, code: &str) {
 
     let (_dir, wallet, holder) = crate::test_support::busy_read_wallet().await;
     let storage = wallet.storage();
-    let app = crate::server::make_router(wallet.clone(), crate::server::ServerConfig::default());
+    let app = crate::server::make_router(
+        wallet.clone(),
+        crate::server::ServerConfig::admitting(["http://host-route.test"]),
+    );
     let request = || {
         axum::http::Request::get(path)
+            .header("Origin", "http://host-route.test")
             .body(axum::body::Body::empty())
             .unwrap()
     };

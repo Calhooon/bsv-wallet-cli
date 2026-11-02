@@ -5,6 +5,7 @@ pub mod broadcast_follow_up;
 pub mod error;
 pub mod handlers;
 mod host_reads;
+pub mod origin_gate;
 mod page_bounds;
 pub mod post_word;
 pub mod types;
@@ -21,11 +22,11 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{Config, ServerSettings};
 use handlers::WalletState;
+pub use origin_gate::AllowedOrigins;
 
 // One 5 s store busy ceiling fits; two do not. Leave time to deliver the
 // answer before Arcade's 10 s POST timeout (arcade@1ae1208e64b77b64818044d606638939d9f1834a,
@@ -54,6 +55,10 @@ pub struct ServerConfig {
     /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
     /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
+    /// The exact origins the browser gate admits (`ALLOWED_ORIGINS`,
+    /// #411); empty admits none. Every call but `/arc-callback` must carry
+    /// an `Origin` it names, the bearer's callers too.
+    pub allowed_origins: AllowedOrigins,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
     /// Network the served wallet is on. Drives post-broadcast verification
@@ -76,6 +81,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             auth_token: None,
+            allowed_origins: AllowedOrigins::default(),
             tls: None,
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
@@ -86,6 +92,16 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
+    /// The default settings with the browser gate admitting `origins`, as
+    /// `ALLOWED_ORIGINS` would (the tests' and the harnesses' servers).
+    #[allow(dead_code)] // the binary reads `ALLOWED_ORIGINS`; the tests build it
+    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
+        Self {
+            allowed_origins: AllowedOrigins::new(origins),
+            ..Self::default()
+        }
+    }
+
     /// The served wallet's server settings from the configuration
     /// (`BIND_ADDR`, `AUTH_TOKEN`, `TLS_CERT_PATH` with `TLS_KEY_PATH`), on
     /// `chain`. `/arc-callback` is enabled when a callback token exists: the
@@ -96,6 +112,7 @@ impl ServerConfig {
         let tls = (server.tls_cert_path.clone()).zip(server.tls_key_path.clone());
         Self {
             auth_token: server.auth_token.as_ref().map(owned),
+            allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned()),
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -230,8 +247,12 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
 
 /// [`make_router`], with the start-time heal owed when `owed` says so.
 pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOwed) -> Router {
-    // A browser caller reads `Retry-After` on a 503 STORE_BUSY (#44).
-    let cors = CorsLayer::very_permissive().expose_headers([axum::http::header::RETRY_AFTER]);
+    // A listed page reads `Retry-After` on a 503 STORE_BUSY (#44).
+    let cors = config
+        .allowed_origins
+        .cors()
+        .expose_headers([axum::http::header::RETRY_AFTER]);
+    let allowed = config.allowed_origins.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -334,14 +355,19 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         // ARC/Arcade proof-delivery webhook (callback-token auth, exempt from
         // wallet bearer auth — see auth_middleware).
         .route("/arc-callback", post(arc_callback))
-        // The last layer added runs first: body limit, trace, extensions, CORS
-        // (it answers each OPTIONS, a preflight carries no bearer, and rides a
-        // 401 so a browser reads it: #138), auth BEFORE the body is read (an
+        // The last layer added runs first: body limit, trace, extensions, the
+        // preflight's gate (an OPTIONS from an origin not listed is refused,
+        // #411), CORS (it answers a listed origin's OPTIONS, a preflight
+        // carries no bearer, and rides a 401 so a browser reads it: #138),
+        // auth, the browser gate (#411), both BEFORE the body is read (an
         // uncapped BEEF door is open only to the wallet's own caller), the body.
         .layer(middleware::from_fn_with_state(wallet.clone(), heal_owed))
         .layer(middleware::from_fn(lenient_json_body))
+        .layer(middleware::from_fn(origin_gate::gate))
         .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
+        .layer(middleware::from_fn(origin_gate::preflight))
+        .layer(axum::Extension(allowed))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -562,6 +588,8 @@ const BODY_CAP: usize = 50 * 1024 * 1024;
 /// Rewrite lone surrogate escapes in request bodies before the `Json`
 /// extractors see them (see [`sanitize_lone_surrogates`]): any content type,
 /// as the doors read JSON under any (#122 item 3); with none, `{}` is read.
+/// A body whose `originator` disagrees with the admitted `Origin` is
+/// refused here, once it is read (#411).
 async fn lenient_json_body(request: Request, next: Next) -> Response {
     if !request
         .headers()
@@ -585,6 +613,13 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
                 .into_response();
         }
     };
+    if let Some(refused) = parts
+        .extensions
+        .get::<origin_gate::Admitted>()
+        .and_then(|admitted| origin_gate::body_disagrees(admitted, &bytes))
+    {
+        return refused.into_response();
+    }
     let body = match sanitize_lone_surrogates(&bytes) {
         std::borrow::Cow::Borrowed(_) => axum::body::Body::from(bytes),
         std::borrow::Cow::Owned(fixed) => {

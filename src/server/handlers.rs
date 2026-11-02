@@ -108,19 +108,16 @@ fn valid_response(valid: bool) -> Json<serde_json::Value> {
     Json(json!({ "valid": valid }))
 }
 
-/// Extract originator from Origin or Originator header
+/// The originator a door judges: the `Origin` header's host, which the
+/// browser gate (`origin_gate`) admitted before the door (#411). The
+/// `Originator` header never stands in for it.
 fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
-    if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
-        if let Ok(url) = url::Url::parse(origin) {
-            if let Some(host) = url.host_str() {
-                return Ok(host.to_string());
-            }
-        }
-    }
-    if let Some(originator) = headers.get("originator").and_then(|v| v.to_str().ok()) {
-        return Ok(originator.to_string());
-    }
-    Err(AppError::new(Kind::Validation, "Origin header required"))
+    headers
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|origin| url::Url::parse(origin).ok())
+        .and_then(|url| url.host_str().map(str::to_string))
+        .ok_or_else(|| AppError::new(Kind::Validation, super::origin_gate::NO_ORIGIN))
 }
 
 /// BRC-100's privileged keyring (#145): this wallet holds none, so a

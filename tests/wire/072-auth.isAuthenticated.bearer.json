@@ -4,13 +4,15 @@
     "method": "GET",
     "path": "/isAuthenticated",
     "headers": {
-      "authorization": "Bearer wire-bearer"
+      "authorization": "Bearer wire-bearer",
+      "origin": "http://wire.test"
     }
   },
   "response": {
     "status": 200,
     "headers": {
       "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
       "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"
