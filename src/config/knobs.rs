@@ -282,6 +282,13 @@ impl Config {
                 "AUTH_TOKEN",
                 self.secret("AUTH_TOKEN", s.auth_token.as_ref()),
             ),
+            (
+                "ALLOWED_ORIGINS",
+                match s.allowed_origins.as_slice() {
+                    [] => Value::None("none"),
+                    origins => origins.join(",").into(),
+                },
+            ),
             ("TLS_CERT_PATH", or_none(s.tls_cert_path.as_deref())),
             ("TLS_KEY_PATH", or_none(s.tls_key_path.as_deref())),
             (

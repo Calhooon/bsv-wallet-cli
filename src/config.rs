@@ -511,6 +511,9 @@ pub struct ServerSettings {
     /// `AUTH_TOKEN`, as set (an empty one counts as none at the bind
     /// guard).
     pub auth_token: Option<Secret>,
+    /// `ALLOWED_ORIGINS`: the exact origins the served doors admit (#411);
+    /// unset or blank admits none.
+    pub allowed_origins: Vec<String>,
     /// `TLS_CERT_PATH`.
     pub tls_cert_path: Option<String>,
     /// `TLS_KEY_PATH`.
@@ -524,6 +527,7 @@ impl ServerSettings {
                 .number("BIND_ADDR", "an IP address")
                 .unwrap_or(IpAddr::from([127, 0, 0, 1])),
             auth_token: raw.get("AUTH_TOKEN").map(Secret::new),
+            allowed_origins: raw.origins("ALLOWED_ORIGINS"),
             tls_cert_path: raw.get("TLS_CERT_PATH").map(str::to_string),
             tls_key_path: raw.get("TLS_KEY_PATH").map(str::to_string),
         }
