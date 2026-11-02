@@ -409,6 +409,10 @@ jobs:
         run: |
           python3 -B tools/test_scoreboard.py
           python3 -B tools/test_mutants_hermetic.py
+          # The Mutants shards' left-out targets (#401): the recorded reach
+          # holds every entry of the list at zero lines of a floored file.
+          python3 -B tools/test_no_floored.py
+          python3 -B .github/nightly/no_floored.py check .github/nightly/no-floored-reach.json
           base=()
           if [ -n "$REV" ]; then
             mkdir -p "$RUNNER_TEMP/base-tree"

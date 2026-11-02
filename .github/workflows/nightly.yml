@@ -73,6 +73,9 @@ env:
   # selection against the survivors, refusing a name listed twice.
   MUTANTS_HERMETIC_SHARDS: 6
   CARGO_MUTANTS_HERMETIC_REV: b00aff0c6ca0670bccdf4eb2ece9e15c4c35c8b9
+  # The left-out targets' reach job's coverage tool (#401), the version its
+  # record .github/nightly/no-floored-reach.json was measured with.
+  CARGO_LLVM_COV_VERSION: 0.6.14
 
 jobs:
   fuzz:
@@ -283,9 +286,11 @@ jobs:
       # runs a line of a floored file, whole, with nothing skipped inside a
       # target: the library's and the binaries' unit tests and every tests/
       # target, a target added later joining by itself. The targets named in
-      # NO_FLOORED_CODE are left out, each because it runs no line of the
-      # five files under coverage and starts no process (cargo llvm-cov per
-      # target at 6e7b738, docs/NIGHTLY.md): the architecture scanners and
+      # .github/nightly/no-floored-targets (the one list, #401: this step and
+      # the guard both read it) are left out, each because it runs no line
+      # of the five files under coverage and starts no process (cargo
+      # llvm-cov per target, the job mutants-reach and docs/NIGHTLY.md): the
+      # architecture scanners and
       # rule 28's sites read the source as text, the BRC-100 oracle reads the
       # committed fixtures, header_source and signing_digest_vector call
       # other modules, so a mutant can change their verdict only by its text,
@@ -296,8 +301,8 @@ jobs:
       # its assertions, a bench added later joining by itself: gate_assess and
       # create_action_signed run lines of spend_gate.rs and tracker_host.rs;
       # internalize_action (server/post_word.rs alone) and list_outputs run
-      # no line of the five, so NO_FLOORED_BENCHES leaves them out (cargo
-      # llvm-cov per bench at cd53740). The five fuzz targets' properties
+      # no line of the five, so the list leaves them out too. The five fuzz
+      # targets' properties
       # join as tests/fuzz_replay.rs, which replays each target's committed
       # seeds through the function its fuzz_target! calls, on stable (#396,
       # docs/NIGHTLY.md).
@@ -316,13 +321,9 @@ jobs:
       # tested, and 1 a usage error: the shard fails, never green with an
       # empty outcomes.json. Any other code fails it too.
       - name: Mutate the hot paths
-        env:
-          NO_FLOORED_CODE: >-
-            arch_config_env arch_env_reads arch_explorer_sites arch_no_error_words
-            arch_no_prefix_errors arch_no_unwrap arch_spawn_sites arch_sql_sites
-            brc100 header_source rule_28_sites signing_digest_vector
-          NO_FLOORED_BENCHES: internalize_action list_outputs
         run: |
+          NO_FLOORED_CODE=$(python3 -B .github/nightly/no_floored.py list test)
+          NO_FLOORED_BENCHES=$(python3 -B .github/nightly/no_floored.py list bench)
           selection="--lib --bins"
           for main in tests/*.rs tests/*/main.rs; do
             case "$main" in
@@ -375,6 +376,56 @@ jobs:
             out/mutants.out/missed.txt
             out/mutants.out/diff/
             out/mutants.out/shard-ok
+          retention-days: 30
+
+  # The left-out targets' reach (#401): the guard on the Mutants shards'
+  # exclusion. Every entry of .github/nightly/no-floored-targets (the list
+  # the selection above reads) runs under cargo llvm-cov, one run a target,
+  # on the night's tree; .github/nightly/no_floored.py fails the job naming
+  # each entry that runs a line of a floored file (the files of
+  # MUTANTS_FLOORS) and that line, since such a target judges a floored file
+  # and belongs in the oracle. One runner, beside the shards (no needs): 674 s
+  # of measurement and a 199 s cold build on the Studio Mac at load 34, where
+  # re-measuring in each of fifty shards would cost fifty times that. The
+  # score refuses a night whose reach job did not succeed. The artifact
+  # no-floored-reach is the night's record; the captain commits it over
+  # .github/nightly/no-floored-reach.json when the list or the floored files
+  # change, and CI's ratchet job checks that record against the list.
+  mutants-reach:
+    name: Mutants left-out reach
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The dispatch's commit, never the ref (#423).
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: mutants-reach
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version "$CARGO_LLVM_COV_VERSION" --locked
+
+      - name: Measure each left-out target's reach of the floored files
+        run: |
+          mkdir -p out
+          python3 -B .github/nightly/no_floored.py measure out/no-floored-reach.json
+
+      - name: Upload the night's record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: no-floored-reach
+          path: out/no-floored-reach.json
+          if-no-files-found: ignore
           retention-days: 30
 
   # The cargo pass's survivors (#393): every mutant whose outcome was missed
@@ -574,7 +625,7 @@ jobs:
 
   mutants-score:
     name: Mutation score
-    needs: [mutants, mutants-survivors, mutants-hermetic]
+    needs: [mutants, mutants-survivors, mutants-hermetic, mutants-reach]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -606,12 +657,20 @@ jobs:
       # night is red by design and nothing is scored.
       # The hermetic pass is half of the night (#393): its survivors' job and
       # every one of its shards must have succeeded and left its marker too.
+      # And the left-out targets' reach job (#401): a night whose excluded
+      # targets were not measured at zero reach ran an oracle that may lack a
+      # judge.
       - name: Refuse a night with a shard that did not succeed
         env:
           SHARDS_RESULT: ${{ needs.mutants.result }}
           SURVIVORS_RESULT: ${{ needs.mutants-survivors.result }}
           HERMETIC_RESULT: ${{ needs.mutants-hermetic.result }}
+          REACH_RESULT: ${{ needs.mutants-reach.result }}
         run: |
+          if [ "$REACH_RESULT" != "success" ]; then
+            echo "::error::the left-out targets' reach job concluded $REACH_RESULT; a night whose left-out targets are not measured at zero reach is never scored"
+            exit 1
+          fi
           missing=""
           for shard in $(seq 0 $((MUTANTS_SHARDS - 1))); do
             [ -f "outcomes/mutants-$shard/shard-ok" ] || missing="$missing $shard"
@@ -691,7 +750,7 @@ jobs:
   # run appended, stamped with the commit and the run id; an entry that gates
   # (five runs) fails the night on a p99 over the margin, as on a PR.
   # Independent of the Mutants matrix (no needs) and one runner: the night
-  # peaks at twelve runners under #144, not eleven. The artifact
+  # peaks at thirteen runners under #144 with the reach job (#401). The artifact
   # bench-night-<run id>-<CPU key> is what the captain appends to
   # benches/baseline.json, one night per PR: tools/bench-compare --append
   # (docs/BENCHES.md).

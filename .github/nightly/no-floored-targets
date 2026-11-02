@@ -1,0 +1,30 @@
+# The test targets and benches the Nightly's Mutants shards leave out of the
+# cargo oracle (#310, #401), one `<kind> <name>` a line, kind `test` (under
+# tests/) or `bench` (under benches/). Each runs no line of a floored file
+# (the files of MUTANTS_FLOORS in .github/workflows/nightly.yml), measured
+# with cargo llvm-cov per target, so it cannot change a floored file's
+# verdict. The selection step and the guard both read this file and nothing
+# else: .github/nightly/no_floored.py measures each entry's reach and fails
+# naming the entry and the floored line it runs, and its record
+# .github/nightly/no-floored-reach.json is checked against this list by CI's
+# ratchet job (docs/NIGHTLY.md).
+#
+# The eight architecture scanners and rule 28's sites read the source as text.
+test arch_config_env
+test arch_env_reads
+test arch_explorer_sites
+test arch_no_error_words
+test arch_no_prefix_errors
+test arch_no_unwrap
+test arch_spawn_sites
+test arch_sql_sites
+test rule_28_sites
+# The BRC-100 oracle reads the committed fixtures.
+test brc100
+# Other modules only.
+test header_source
+test signing_digest_vector
+# internalize_action runs server/post_word.rs alone; list_outputs no line of
+# src/ (cd53740).
+bench internalize_action
+bench list_outputs
