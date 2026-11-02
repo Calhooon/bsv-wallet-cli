@@ -17,6 +17,8 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub mod origin_grants;
+
 /// The table `table` has the column `column`, read on the reader. The
 /// schema helpers ask this first and send their DDL to the writer only
 /// when something is missing, so a read path never queues for the writer.
