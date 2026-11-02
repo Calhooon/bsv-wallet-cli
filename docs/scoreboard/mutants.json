@@ -1,13 +1,30 @@
 {
   "schema": 1,
-  "commit": "2f8e6cf2e74b482afe3b77d99158d7007dbc9c7d",
-  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/40473522272",
-  "date": "2026-10-27",
+  "commit": "6bf9a2c185c855cd3770264729104fef22a318e8",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41340299977",
+  "date": "2026-11-02",
+  "dispatched": "2026-11-01T19:09:36Z",
+  "tool": "cargo-mutants 27.1.0",
+  "toolchain": "stable, rustc 1.99.1 (58cf8f9c3 2026-10-13) on the runner",
+  "shape": "fifty shards dealt round-robin (--sharding round-robin), six at a time; --baseline run --timeout-multiplier 2 --build-timeout 900; every shard judged on the whole oracle; all fifty concluded success and the score job judged the night (PR 394, #310)",
+  "targets": {
+    "cargo": ["--lib", "--bins", "--test arc_callback_tests", "--test arcade_webhook_vector_tests",
+              "--test certificate_pin", "--test chaintracks_off", "--test compact_tracker_off",
+              "--test gate_vectors", "--test json_refusal", "--test serve_bind_guard",
+              "--test served_beef_doors", "--test tx_word_route", "--test wire",
+              "--test wire_consumers", "--test integration", "--test respend_witness"],
+    "benches": ["--bench create_action_signed", "--bench gate_assess"],
+    "hermetic": "not in this night: PR 415's hermetic pass landed after the dispatch; the next dispatched night carries it (#393)"
+  },
+  "floors": {"src/spend_gate.rs": 90, "src/tracker_host.rs": 75, "src/server/handlers.rs": 100,
+             "src/broadcast_verify.rs": 86, "src/explorers.rs": 82},
+  "verdict": "red by design: src/explorers.rs 78.0 below its floor 82; the floor does not move (the owner's word); its four surviving mutants are #420",
   "files": {
-    "src/broadcast_verify.rs": {"score": 86.7, "caught": 144, "missed": 22, "timeout": 0, "unviable": 34},
-    "src/explorers.rs": {"score": 82.6, "caught": 38, "missed": 8, "timeout": 0, "unviable": 14},
-    "src/server/handlers.rs": {"score": 100.0, "caught": 79, "missed": 0, "timeout": 0, "unviable": 143},
-    "src/spend_gate.rs": {"score": 90.7, "caught": 225, "missed": 23, "timeout": 0, "unviable": 13},
-    "src/tracker_host.rs": {"score": 75.4, "caught": 202, "missed": 66, "timeout": 0, "unviable": 51}
-  }
+    "src/broadcast_verify.rs": {"score": 86.7, "caught": 144, "missed": 22, "timeout": 0, "unviable": 37},
+    "src/explorers.rs": {"score": 78.0, "caught": 39, "missed": 11, "timeout": 0, "unviable": 9},
+    "src/server/handlers.rs": {"score": 100.0, "caught": 77, "missed": 0, "timeout": 0, "unviable": 251},
+    "src/spend_gate.rs": {"score": 93.3, "caught": 238, "missed": 17, "timeout": 0, "unviable": 12},
+    "src/tracker_host.rs": {"score": 75.3, "caught": 216, "missed": 71, "timeout": 0, "unviable": 63}
+  },
+  "note": "#400: the shards list src/broadcast_verify.rs and src/explorers.rs twice, so their counts carry duplicates (the score job's summary names 12 unique missed of broadcast_verify.rs's 22 and 4 unique of explorers.rs's 11); the ratios are unaffected. The selection is shard 9's printed line (job 124953006471); it left out arch_config_env arch_env_reads arch_explorer_sites arch_no_error_words arch_no_prefix_errors arch_no_unwrap arch_spawn_sites arch_sql_sites brc100 header_source rule_28_sites signing_digest_vector, and the benches internalize_action and list_outputs. The night's five Fuzz jobs failed (dispatched before #395's pin) and feed no record."
 }
