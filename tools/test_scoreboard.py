@@ -517,15 +517,13 @@ class NoNumberFallsFromTheBase(Case):
                                    "a floor is never above the measured score rounded down: 70, not 75")
 
     def test_the_real_unchanged_floors_under_the_nights_record_pass(self):
-        # The tree's own floors and record (run 40473522272) at base and tree:
-        # spend_gate 90 under 90.7, explorers 82 under 82.6, every floor at or
-        # under its score rounded down.
+        # The tree's own floors and record at base and tree: every floor at or
+        # under its score rounded down, or held below it by the record's
+        # verdict (rule 1's exception), whichever night the record is.
         with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
             self.tree.write(".github/workflows/nightly.yml", f.read())
         with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
             mutants = f.read()
-        scores = {k: v["score"] for k, v in json.loads(mutants)["files"].items()}
-        self.assertEqual((scores["src/spend_gate.rs"], scores["src/explorers.rs"]), (90.7, 82.6))
         self.tree.write("docs/scoreboard/mutants.json", mutants)
         base = self.tree.values()
         code, out = self.checked(base)
@@ -784,6 +782,148 @@ class AScenarioIsAModuleThatExportsRun(Case):
         print(f"\n    exit 1: {[l for l in out.splitlines() if 'e2e:scenarios' in l][0]}", end=" ", file=sys.stderr)
 
 
+class RedByDesign(Case):
+    """(J) Rule 1's exception (#310, the owner's word of 2026-11-01): a floor
+    above its measured score stands when the record's verdict holds the file
+    below its floor and names its issue; --check prints it RED BY DESIGN and
+    does not fail. Without the issue, or on a file not below its floor, the
+    verdict is malformed; without a verdict the ceiling holds; rule 2 holds."""
+
+    VERDICT = ("red by design: src/spend_gate.rs 75.5 below its floor 80; the floor does not move "
+               "(the owner's word); its surviving mutants are #420")
+
+    def below(self, verdict=VERDICT, score=75.5, floor=80):
+        self.tree.write(".github/workflows/nightly.yml", NIGHTLY.replace(": 80,", f": {floor},"))
+        mutants = json.loads(json.dumps(MUTANTS))
+        mutants["files"]["src/spend_gate.rs"] = counted(score)
+        if verdict is not None:
+            mutants["verdict"] = verdict
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+
+    def checked(self, *args):
+        code, out = self.tree.run("--render")
+        self.assertEqual(code, 0, out)
+        return self.tree.run("--check", *args)
+
+    def refused_by_check(self, needle, *args):
+        code, out = self.checked(*args)
+        self.assertEqual(code, 1, out)
+        self.assertIn(needle, out)
+        print(f"\n    exit 1: {[l for l in out.splitlines() if needle in l][0]}", end=" ", file=sys.stderr)
+
+    RED = ("scoreboard: RED BY DESIGN: floor:src/spend_gate.rs: measured 75.5 in the tree's record, "
+           "floor 80 in the tree; below the floor by the record's verdict, #420")
+
+    def test_a_verdict_with_its_issue_passes_plain_check(self):
+        self.below()
+        code, out = self.checked()
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.RED, out)
+        self.assertNotIn("above its measured", out)
+        self.assertIn("| mutation floor `src/spend_gate.rs` | 80 | 75.5 at abcdef0, below the floor "
+                      "(red by design, #420) |", self.table())
+        print(f"\n    exit 0: {[l for l in out.splitlines() if 'RED BY DESIGN' in l][0]}", end=" ", file=sys.stderr)
+
+    def test_a_verdict_with_its_issue_passes_check_base(self):
+        self.below()
+        base = self.tree.values()
+        code, out = self.checked("--base", base)
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.RED, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_verdict_without_an_issue_is_refused(self):
+        self.below(verdict="red by design: src/spend_gate.rs 75.5 below its floor 80; the floor does not move")
+        self.refused_by_check("floor:src/spend_gate.rs: the record's verdict is malformed: names no issue (#N)")
+
+    def test_an_issue_of_another_clause_is_not_this_files(self):
+        # The issue is the first #N after the file's clause and before the next.
+        self.below(verdict="red by design: src/spend_gate.rs 75.5 below its floor 80; "
+                           "src/explorers.rs 50.0 below its floor 69, #421")
+        self.refused_by_check("floor:src/spend_gate.rs: the record's verdict is malformed: names no issue (#N)")
+
+    def test_a_verdict_on_a_file_at_its_floor_is_refused(self):
+        self.below(verdict="red by design: src/spend_gate.rs 80.0 below its floor 80; #420", score=80.0)
+        self.refused_by_check("floor:src/spend_gate.rs: the record's verdict is malformed: measured 80, "
+                              "at or above its floor 80")
+
+    def test_a_verdict_on_a_file_above_its_floor_is_refused(self):
+        self.below(verdict="red by design: src/spend_gate.rs 86.6 below its floor 80; #420", score=86.6)
+        self.refused_by_check("floor:src/spend_gate.rs: the record's verdict is malformed: measured 86.6, "
+                              "at or above its floor 80", "--base", self.tree.values())
+
+    def test_a_verdict_whose_figures_are_not_the_trees_is_refused(self):
+        self.below(verdict=self.VERDICT.replace("75.5", "78.0"))
+        self.refused_by_check("floor:src/spend_gate.rs: the record's verdict is malformed: says 78 below its "
+                              "floor 80; the record measures 75.5 and the floor is 80")
+
+    def test_a_verdict_on_an_unfloored_file_is_refused(self):
+        self.below(verdict=self.VERDICT + "; src/other.rs 10.0 below its floor 20, #9")
+        self.refused_by_check("floor:src/other.rs: the record's verdict is malformed: not a floor of MUTANTS_FLOORS")
+
+    def test_a_verdict_of_another_shape_is_refused(self):
+        self.below(verdict="below the floor: src/spend_gate.rs, #420")
+        self.refused("docs/scoreboard/mutants.json: verdict: must be a string that begins 'red by design: '",
+                     "--check")
+        self.below(verdict="red by design: nothing named, #420")
+        self.refused("docs/scoreboard/mutants.json: verdict: names no file below its floor", "--check")
+
+    def test_the_ceiling_without_a_verdict_is_refused(self):
+        self.below(verdict=None)
+        self.refused_by_check("floor:src/spend_gate.rs: measured 75.5 in the tree's record, floor 80 in the tree; "
+                              "a floor is never above the measured score rounded down: 75, not 80")
+
+    def test_a_verdict_excuses_only_the_file_it_names(self):
+        self.below()
+        with open(os.path.join(self.tree.root, "docs/scoreboard/mutants.json")) as f:
+            mutants = json.load(f)
+        mutants["files"]["src/explorers.rs"] = counted(60.0)
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        code, out = self.checked()
+        self.assertEqual(code, 1, out)
+        self.assertIn(self.RED, out)
+        self.assertIn("floor:src/explorers.rs: measured 60 in the tree's record, floor 69 in the tree; "
+                      "a floor is never above the measured score rounded down: 60, not 69", out)
+        self.assertIn("1 floor stands above its measured score rounded down", out)
+        print(f"\n    exit 1: {tail(out)}", end=" ", file=sys.stderr)
+
+    def test_a_measured_floor_that_falls_is_refused_under_a_verdict(self):
+        # Rule 2 is untouched: a red-by-design floor lowered toward its score.
+        self.below()
+        base = self.tree.values()
+        self.below(verdict=self.VERDICT.replace("its floor 80", "its floor 76"), floor=76)
+        self.refused_by_check("floor:src/spend_gate.rs: 80 at the base, 76 in the tree; a measured floor may not fall",
+                              "--base", base)
+
+    def test_pr_421s_record_is_red_by_design(self):
+        # PR 421's record (run 41340299977) as it wrote it, under the floors it
+        # kept: explorers.rs 78.0 under its floor 82, the survivors #420.
+        floors = {"src/spend_gate.rs": 90, "src/tracker_host.rs": 75, "src/server/handlers.rs": 100,
+                  "src/broadcast_verify.rs": 86, "src/explorers.rs": 82}
+        self.tree.write(".github/workflows/nightly.yml",
+                        NIGHTLY.replace('{"src/spend_gate.rs": 80,\n             "src/explorers.rs": 69}',
+                                        json.dumps(floors)))
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps({
+            "schema": 1, "commit": "6bf9a2c185c855cd3770264729104fef22a318e8",
+            "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41340299977", "date": "2026-11-02",
+            "floors": floors,
+            "verdict": "red by design: src/explorers.rs 78.0 below its floor 82; the floor does not move "
+                       "(the owner's word); its four surviving mutants are #420",
+            "files": {
+                "src/broadcast_verify.rs": {"score": 86.7, "caught": 144, "missed": 22, "timeout": 0, "unviable": 37},
+                "src/explorers.rs": {"score": 78.0, "caught": 39, "missed": 11, "timeout": 0, "unviable": 9},
+                "src/server/handlers.rs": {"score": 100.0, "caught": 77, "missed": 0, "timeout": 0, "unviable": 251},
+                "src/spend_gate.rs": {"score": 93.3, "caught": 238, "missed": 17, "timeout": 0, "unviable": 12},
+                "src/tracker_host.rs": {"score": 75.3, "caught": 216, "missed": 71, "timeout": 0, "unviable": 63}}}))
+        code, out = self.checked()
+        self.assertEqual(code, 0, out)
+        self.assertIn("scoreboard: RED BY DESIGN: floor:src/explorers.rs: measured 78 in the tree's record, "
+                      "floor 82 in the tree; below the floor by the record's verdict, #420", out)
+        self.assertNotIn("above its measured", out)
+        print(f"\n    exit 0: {[l for l in out.splitlines() if 'RED BY DESIGN' in l][0]}", end=" ", file=sys.stderr)
+
+
 class TheScoreIsItsCounts(Case):
     """(I) A record's score is never read as given: it must equal the nightly's
     own formula over the counts beside it, or the ceiling would hold a floor
@@ -803,10 +943,11 @@ class TheScoreIsItsCounts(Case):
         # its floor to 95 passed every check.
         self.tree.write(".github/workflows/nightly.yml",
                         NIGHTLY.replace('"src/explorers.rs": 69}', '"src/explorers.rs": 69,\n             "src/tracker_host.rs": 95}'))
-        self.with_entry("src/tracker_host.rs", dict(self.real()["src/tracker_host.rs"], score=95.0))
+        real = self.real()["src/tracker_host.rs"]
+        self.with_entry("src/tracker_host.rs", dict(real, score=95.0))
         self.refused("docs/scoreboard/mutants.json: files.src/tracker_host.rs.score: 95 stored, "
-                     "75.4 computed from its counts")
-        self.refused("75.4 computed from its counts", "--check")
+                     f"{real['score']:g} computed from its counts")
+        self.refused(f"{real['score']:g} computed from its counts", "--check")
 
     def test_a_score_off_by_a_tenth_is_refused(self):
         self.with_entry("src/spend_gate.rs", dict(MUTANTS["files"]["src/spend_gate.rs"], score=86.7))
