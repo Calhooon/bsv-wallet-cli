@@ -173,6 +173,33 @@ async fn main() -> Result<()> {
             let ctx = open().await?;
             commands::actions::run(&ctx, label.as_deref()).await?;
         }
+        Commands::Origins { all } => {
+            commands::origins::list(&open().await?, *all).await?;
+        }
+        Commands::OriginGrant {
+            target,
+            scope,
+            amount,
+            expires,
+            once,
+        } => {
+            let asked = commands::origins::Grant::read(
+                target,
+                scope.as_deref(),
+                *amount,
+                expires.as_deref(),
+                *once,
+            )?;
+            commands::origins::grant(&open().await?, &asked).await?;
+        }
+        Commands::OriginDeny { pending } => {
+            let id = commands::origins::pending_id(pending)?;
+            commands::origins::deny(&open().await?, id).await?;
+        }
+        Commands::OriginRevoke { originator, scope } => {
+            let scope = scope.as_deref().map(commands::origins::scope).transpose()?;
+            commands::origins::revoke(&open().await?, originator, scope).await?;
+        }
         Commands::Sync { reconcile_spent } => {
             let ctx = open().await?;
             commands::sync::run(&ctx, *reconcile_spent).await?;
