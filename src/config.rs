@@ -35,6 +35,7 @@ use serde::Serialize;
 
 mod arc_mode;
 mod knobs;
+pub mod originator;
 #[cfg(test)]
 mod origins_tests;
 mod read;
@@ -513,7 +514,8 @@ pub struct ServerSettings {
     /// `AUTH_TOKEN`, as set (an empty one counts as none at the bind
     /// guard).
     pub auth_token: Option<Secret>,
-    /// `ALLOWED_ORIGINS`: the exact origins the served doors admit (#411);
+    /// `ALLOWED_ORIGINS`: the originators the served doors admit (#411), as
+    /// the reference names one (`host[:port]`, lowercased, no scheme);
     /// unset or blank admits none.
     pub allowed_origins: Vec<String>,
     /// `TLS_CERT_PATH`.

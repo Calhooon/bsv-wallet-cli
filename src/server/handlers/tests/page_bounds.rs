@@ -25,15 +25,18 @@ async fn page_router() -> axum::Router {
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
     crate::server::make_router(
         wallet,
-        crate::server::ServerConfig::admitting([BOUNDS, LONG.as_str()]),
+        crate::server::ServerConfig::admitting(["bounds.test", &LONG[7..]]),
     )
 }
 
 /// The origin the page calls carry, and one whose 254-byte host the five
-/// toolbox methods refuse on entry (the tripwire below).
+/// toolbox methods refuse on entry (the tripwire below), its labels a DNS
+/// hostname's, as an `ALLOWED_ORIGINS` entry must be.
 const BOUNDS: &str = "http://bounds.test";
-static LONG: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| format!("http://{}", "x".repeat(254)));
+static LONG: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let label = "x".repeat(63);
+    format!("http://{label}.{label}.{label}.{}", &label[1..])
+});
 
 async fn post_page(
     app: axum::Router,
@@ -123,7 +126,10 @@ async fn page_negative_offset_reaches_toolbox_newest_first() {
         coin(&storage, (user, basket), &txid, false, None, satoshis, 1).await;
     }
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
-    let app = crate::server::make_router(wallet, crate::server::ServerConfig::admitting([BOUNDS]));
+    let app = crate::server::make_router(
+        wallet,
+        crate::server::ServerConfig::admitting(["bounds.test"]),
+    );
     for (offset, satoshis) in [(-1, 200), (0, 100)] {
         let (status, body) = post_page(
             app.clone(),

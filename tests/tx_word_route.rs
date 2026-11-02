@@ -132,7 +132,7 @@ async fn served() -> (String, Client, TempDir) {
     let wallet = Wallet::new(Some(key), storage, services).await.unwrap();
     let app = server::make_router(
         server::make_wallet_state(wallet),
-        ServerConfig::admitting(["http://localhost"]),
+        ServerConfig::admitting(["localhost"]),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

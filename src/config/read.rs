@@ -111,12 +111,13 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// A list of exact origins (`scheme://host[:port]`, comma-separated):
-    /// unset or blank is none. Each entry, trimmed, must be an http or https
-    /// origin written as a browser sends it (no path, query, fragment or
-    /// userinfo, no wildcard, the default port and upper case left out); any
-    /// other refuses the whole list, so a typo never admits less or more
-    /// than the operator wrote (#411).
+    /// A list of originators (`host[:port]`, comma-separated, #411): unset
+    /// or blank is none. Each entry, trimmed and lowercased, must be an
+    /// originator as the reference's `prepareOriginator` reads one
+    /// ([`super::originator::checked`]); an entry carrying a scheme, a path
+    /// or anything else is refused by its rule and refuses the whole list,
+    /// never stripped to its host, so a typo never admits less or more than the
+    /// operator wrote.
     pub(crate) fn origins(&self, name: &'static str) -> Vec<String> {
         let Some(value) = self.given(name) else {
             return Vec::new();
@@ -125,7 +126,9 @@ impl<'a> Reader<'a> {
             .split(',')
             .map(str::trim)
             .filter(|entry| !entry.is_empty())
-            .map(|entry| checked_origin(name, entry))
+            .map(|entry| {
+                super::originator::checked(entry).map_err(|rule| refused(name, entry, rule))
+            })
             .collect();
         self.kept(checked.map(Some)).unwrap_or_default()
     }
@@ -154,27 +157,6 @@ fn refused(variable: &'static str, value: &str, expected: &'static str) -> Confi
         variable,
         value: value.to_string(),
         expected: expected.into(),
-    }
-}
-
-/// An origin as a browser serializes it in its `Origin` header: the entry
-/// must equal its own serialization, so `http://localhost/`, `*`,
-/// `localhost` and `HTTP://Localhost:80` are refused by name.
-fn checked_origin(name: &'static str, entry: &str) -> Result<String, ConfigError> {
-    match url::Url::parse(entry) {
-        Ok(u)
-            if matches!(u.scheme(), "http" | "https")
-                && u.has_host()
-                && !entry.contains('*')
-                && u.origin().ascii_serialization() == entry =>
-        {
-            Ok(entry.to_string())
-        }
-        _ => Err(refused(
-            name,
-            entry,
-            "exact origins (scheme://host[:port], comma-separated, no wildcard)",
-        )),
     }
 }
 
