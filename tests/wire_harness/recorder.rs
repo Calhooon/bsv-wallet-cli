@@ -180,6 +180,7 @@ fn gate_notes() -> Vec<(String, String)> {
         ("028-encrypt.noOrigin.json", "#411: a call without an Origin is the MetaNet Client's refusal in its words, 400 \"Origin header is required\" (bsv-desktop bcb6003 src/onWalletReady.ts:82-88), served by the typed carrier as VALIDATION_ERROR; \"Origin header required\" before."),
         ("180-gate.encrypt.notListed.json", "#411: an Origin ALLOWED_ORIGINS does not name is refused in the client's denial, 400 ERR_PERMISSION_DENIED \"The user has denied the request for permission.\" (ts-stack edf6e03 WalletPermissionsManager.ts:1348-1349, served 400 by onWalletReady.ts's handlers), with no access-control-allow-origin, so a page cannot read it; under (b) no pending row is written (the scenario new-origin's step 1 under (b))."),
         ("181-gate.options.notListed.json", "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin."),
+        ("182-gate.encrypt.originatorWithoutOrigin.json", "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal."),
     ].map(|(f, n)| (f.to_string(), n.to_string())));
     notes
 }
