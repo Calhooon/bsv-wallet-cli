@@ -2401,9 +2401,10 @@ re-key lane before PR 419 lands; and the one certificate's re-issue as the
 rows relinquished). The keeper heard the same word at the keyboard ("I
 agree with all of your recommendations") and added two: the census queue's
 eleven rows go out as one batch, and the BRC-100 amendment draft files on
-bsv-blockchain/BRCs once it stands one cold read on beta. At 23:2xZ, on the
-speed line through the keeper: "we never wanna use our own hardware", no
-paid runners ("balling on a budget"); below.
+bsv-blockchain/BRCs once it stands one cold read on beta. On the speed
+line through the keeper: at 23:2xZ "we never wanna use our own hardware"
+(#453 withdrawn); at 23:3xZ the same words again and "balling on a
+budget", no paid runners (#455 withdrawn); below.
 
 The browser gate (b). The re-key lane (on the box, 50 min, 0.85) keyed the
 originator from the Origin header as `prepareOriginator` derives it
@@ -2482,8 +2483,8 @@ witness rows. The two-stance ensemble said fix, agreement 2/2 at a mean of
 0.80, with eight asks (scenes 28 and 30 keep the stack's bearer and
 borrowed-name steps; `origin_spends` keyed on the signed and the deferred
 flows; the shutdown 503 body and the reference's "Permission denied." as
-witness rows; the monthly-limit sentence; and the flood cap as W14); the
-fix took all eight in one commit and the re-read said merge at 0.86. PR 439
+witness rows; the monthly-limit sentence) and, beside them, the flood risk;
+the fix took all eight and the flood cap as W14 in one commit and the re-read said merge at 0.86. PR 439
 merged at 21:29Z: beta 63c9b1e2. Its plan is seven lanes: L1 the store, L2
 the CLI's `origins` commands, L3 the owner's `/origins*` door and the MCP's
 three tools, L4 the inspector, L5 the switch (the gate reads the rows, the
@@ -2536,9 +2537,10 @@ ran none of its parts (the cold read's opening launch ran on an empty
 brief); a waiter or lane is stopped by its process tree, the captain's own
 shell excluded; a destructive remote command never pipes into `head`. The box's disk at 94%
 was swept by name (about 130 GiB across the day's passes, the day line's
-figure; 68% at 22:28Z), and the four names that were not the captain's by
-the box's records (repin, rel, and bsv-rs's two review targets; the gate-*
-family is bsv-low's) were left to their owners.
+figure; 68% at 22:28Z), and the names that were not the captain's by
+the box's records (repin, rel, and the review-339, review-353, review-354
+and review-356 targets, bsv-rs's by record; the gate-* family is
+bsv-low's) were left untouched for their owners.
 
 The speed line (23:1xZ to the night). The owner's word through the keeper
 filed #451 (beta's landings through GitHub's merge queue) and #452 (the
@@ -2552,8 +2554,10 @@ Open after the day: L2 (running), then L3, L4, L5 (the switch; the mainnet
 gate), L6 (spending; the mainnet gate), L7; W1 and W4 for the owner; the
 survivors' batches 2 (running) and 3; night 3's record (run 41516017523);
 #437, #440, #441; the speed line (#451, #452, #456 with PR 458, #460, #461,
-#462); the next pin's intake on #386: bsv-rs #613, #620, #640, #639, #648,
-#651 and #658 (open), the toolbox's #554, #186, #142, #576 and #585 (open);
+#462); the next pin's intake on #386: bsv-rs #613 (merged), #620
+(merged), #640 (merged), #639 (merged), #648 (merged), #651 (merged) and
+#658 (open), the toolbox's #554 (closed), #186 (closed), #142 (closed),
+#576 (closed) and #585 (open), as GitHub shows them at 2026-11-02 night;
 the certificate re-issue (#333) at the production upgrade with the upgrade
 note naming every caller. The lines: beta 73b5f956; main at this entry's
 parent, 006b0912.
