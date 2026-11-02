@@ -95,7 +95,7 @@ with its value and its source (`env` or `default`), and exits:
 | Variable | Default | |
 |---|---|---|
 | `WALLET_URL` | `http://localhost:3322` | the wallet's HTTP server; an http or https URL |
-| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank; the wallet's `ALLOWED_ORIGINS` must list it (#411) |
+| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank; the wallet's `ALLOWED_ORIGINS` must list its originator (`localhost` for the default, #411) |
 | `RELAY_URL` | none | the callback relay; unset or empty is no relay |
 | `RELAY_ADMIN_TOKEN` | none | the relay's admin bearer, printed `<set>` (or `empty`) |
 | `RUST_LOG` | `error` | the log filter, to stderr; `bsv_wallet_mcp=info` is always added |
@@ -119,16 +119,19 @@ Under `AUTH_TOKEN` a browser client passes the CORS preflight, which carries
 no credentials, and sends its bearer on the request (#138).
 
 The browser gate (#411, step (b) of the owner's word of 2026-11-01): every
-served call but `POST /arc-callback` carries an `Origin`, and only the origins
-`ALLOWED_ORIGINS` names are answered, as the MetaNet Client asks an `Origin` of
-every call. The originator a door judges is the `Origin`'s host; the legacy
-`Originator` header never stands in for a missing `Origin`, and an `Originator`
-header or a body's `originator` naming another host is refused.
+served call but `POST /arc-callback` carries an `Origin`, and only the
+originators `ALLOWED_ORIGINS` names are answered, as the MetaNet Client asks an
+`Origin` of every call. The originator a door judges is derived from the
+`Origin` as the reference derives it: the host, lowercased, with its port only
+when the header names one, never the scheme (`https://App.Example:8443` is
+`app.example:8443`, `http://localhost` is `localhost`). The legacy `Originator`
+header never stands in for a missing `Origin`, and an `Originator` header or a
+body's `originator` naming another originator is refused.
 
 | variable | effect |
 |---|---|
-| `ALLOWED_ORIGINS` | the exact origins the served doors and the inspector answer, comma-separated, as a browser sends them (`http://localhost`, `http://localhost:5173`, `https://app.example:8443`): no path, no trailing slash, no wildcard, no scheme-less entry, the default port left out; any other spelling is refused at start by name. Unset or blank answers no origin (the stricter default, until the owner's word). Each admitted call is logged at info with its origin |
-| `AUTH_TOKEN` | the bearer for the owner's non-browser callers, checked ahead of the gate; it never stands in for an origin: a bearer caller still sends an `Origin` the list names, and is judged by it |
+| `ALLOWED_ORIGINS` | the originators the served doors and the inspector answer, comma-separated, in the reference's form (`localhost`, `127.0.0.1`, `app.example:8443`): a host with an optional port, without a scheme, lowercased at read, as the reference's `prepareOriginator` reads one (ts-stack `edf6e03` `WalletPermissionsManager.ts:5750-5795`). An entry is the hostname's grant, every port and scheme of the host one entry, as the reference scopes a grant (`:5702-5729`; its lookup tries the originator as named, then its hostname, then another port's grant, `:5786-5794`). An entry carrying a scheme (`http://localhost`), a path, credentials, a query or a fragment, or a name that is not a hostname or IP address (`*`), is refused at start naming the rule, never stripped to its host. Unset or blank answers no origin (the stricter default, by the owner's word of 2026-11-02). Each admitted call is logged at info with its origin, its originator and the entry that admitted it |
+| `AUTH_TOKEN` | the bearer for the owner's non-browser callers, checked ahead of the gate; it never stands in for an origin: a bearer caller still sends an `Origin` whose originator the list names, and is judged by it |
 
 A call without an `Origin` is the client's 400 `{"code": "VALIDATION_ERROR",
 "message": "Origin header is required"}`; an origin the list does not name is
@@ -137,8 +140,9 @@ user has denied the request for permission."}`, with no CORS header, so a page
 cannot read it; its preflight is refused the same way. A caller of the served
 wallet sends the header as the x402 skill does:
 `curl -H 'Origin: http://localhost' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:3322/getVersion`,
-with `ALLOWED_ORIGINS=http://localhost` in the wallet's `.env`. The inspector
-(`bsv-wallet ui`) answers its own origin and the listed ones, a `GET` without
+with `ALLOWED_ORIGINS=localhost` in the wallet's `.env` (the header keeps the
+browser's form, with its scheme; the list names its originator). The inspector
+(`bsv-wallet ui`) answers its own origin and those whose originator is listed, a `GET` without
 an `Origin` (its page's reads), and a loopback `Host` only. See
 [docs/WIRE.md](docs/WIRE.md#the-browser-gate-411).
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
