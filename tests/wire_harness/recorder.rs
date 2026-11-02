@@ -12,9 +12,10 @@ use crate::wire_support::{Bound, Req, BOUND, J};
 // The cases (record only). Replay reads the fixtures, never these.
 // ---------------------------------------------------------------------------
 
-/// The origin every recorded request carries, which the worlds admit
-/// (`ALLOWED_ORIGINS`, #411).
+/// The origin every recorded request carries, and its originator, which
+/// the worlds admit (`ALLOWED_ORIGINS`, #411).
 pub(crate) const ORIGIN: &str = "http://wire.test";
+pub(crate) const ORIGINATOR: &str = "wire.test";
 pub(crate) const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 pub(crate) const CERT_TYPE: &str = "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=";
 /// A ciphertext of `wire` under [`ROOT_KEY`], protocol `[2, "wire test"]`,

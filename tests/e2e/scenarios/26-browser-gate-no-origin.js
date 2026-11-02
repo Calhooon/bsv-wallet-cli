@@ -1,7 +1,7 @@
 /**
  * E2E.26: the browser gate, no Origin (#411, step (b)). The stack's
  * scenario 2026-11-01-wallet-browser-gate-no-origin (bsv-stack-lean
- * 76004514), step by step:
+ * 4372ea39), step by step:
  *   1. no Origin, `Originator: app.example`, createSignature, no bearer (the
  *      host holds none): refused noOrigin, the Originator header not read;
  *   2. the same with the bearer, the host holding a token: refused noOrigin,
@@ -18,7 +18,7 @@ module.exports = {
   description: 'no Origin is refused whatever the Originator header names, with or without the bearer',
 
   async run(_walletA, _walletB, assert) {
-    return g.scene('wallet-D-no-origin', [g.APP], async (wallet) => {
+    return g.scene('wallet-D-no-origin', [g.APP_GRANT], async (wallet) => {
       const before = await g.audited(wallet);
       // 1.
       const one = await g.call(wallet, 'POST', 'createSignature',
@@ -28,7 +28,7 @@ module.exports = {
       assert(one.allowOrigin === null, '1: no CORS header on the refusal');
       assert(await g.audited(wallet) === before, '1: nothing reached a door (the audit is unchanged)');
       // 2.
-      await g.restartGated(wallet, [g.APP], { token: g.TOKEN });
+      await g.restartGated(wallet, [g.APP_GRANT], { token: g.TOKEN });
       const two = await g.call(wallet, 'POST', 'createSignature',
         { originator: 'app.example', bearer: g.TOKEN, body: g.ARGS.createSignature });
       assert(two.status === 400 && two.body.message === g.NO_ORIGIN,
