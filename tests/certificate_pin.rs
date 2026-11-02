@@ -48,8 +48,9 @@ async fn reverify_command_counts_good_and_bad_signatures_without_changing_certif
 
 // #430: the failing certificate is stored first, so a reverify that stopped
 // at the first failure would answer one checked. Every row is read, the
-// command exits non-zero and nothing changes. Naming the failing one waits
-// on the toolbox's per-certificate verdicts (toolbox #585).
+// command exits non-zero and nothing changes. The failing one is named on
+// stderr by the toolbox's warn line (type, serial number, certifier), which
+// the default filter shows; naming it in the answer waits on toolbox #585.
 #[tokio::test]
 async fn reverify_checks_every_certificate_past_a_failure_and_exits_non_zero() {
     let output = audit(&[(9, false), (10, true), (11, true)], 1)
@@ -61,8 +62,11 @@ async fn reverify_checks_every_certificate_past_a_failure_and_exits_non_zero() {
         serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
         json!({"checked": 3, "failed": 1})
     );
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("1 of 3 stored certificates failed signature verification"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("1 of 3 stored certificates failed signature verification"));
+    let named = |n: u8| stderr.contains(&format!("serial_number={}", to_base64(&[n; 32])));
+    assert!(named(9) && !named(10) && !named(11), "{stderr}");
+    assert!(!stderr.contains("d2lyZQ=="));
 }
 
 type TestWallet = Wallet<StorageSqlx, MockWalletServices>;
@@ -143,6 +147,7 @@ fn reverify_output(path: &std::path::Path, root: &PrivateKey) -> std::process::O
     Command::new(env!("CARGO_BIN_EXE_bsv-wallet"))
         .current_dir(path.parent().unwrap())
         .env_remove("RUST_LOG")
+        .env("NO_COLOR", "1")
         .env("ROOT_KEY", root.to_hex())
         .env("CHAINTRACKS_URL", "off")
         .env("ARC_MODE", "classic")
