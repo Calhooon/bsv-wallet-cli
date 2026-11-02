@@ -69,9 +69,12 @@ module.exports = {
       assert(schemaResp.ok, `/api/tables/outputs/schema should return 200`);
 
       // POST /api/query (read-only SQL)
+      // A POST names its Origin, as the inspector's own page sends it (#411:
+      // the inspector admits its own origin; a GET without one is its page's).
+      const ownOrigin = `http://localhost:${UI_PORT}`;
       const queryResp = await fetch(`http://localhost:${UI_PORT}/api/query`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Origin': ownOrigin },
         body: JSON.stringify({ sql: 'SELECT COUNT(*) as cnt FROM outputs' }),
       });
       assert(queryResp.ok, `/api/query should return 200`);
@@ -82,11 +85,19 @@ module.exports = {
       // POST /api/query (mutation should be blocked)
       const mutationResp = await fetch(`http://localhost:${UI_PORT}/api/query`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Origin': ownOrigin },
         body: JSON.stringify({ sql: 'DROP TABLE outputs' }),
       });
       assert(!mutationResp.ok || (await mutationResp.text()).includes('Only SELECT'),
         'Mutation queries must be blocked');
+
+      // #411: a POST from another origin is refused before the query runs.
+      const foreignResp = await fetch(`http://localhost:${UI_PORT}/api/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': 'http://evil.example' },
+        body: JSON.stringify({ sql: 'SELECT COUNT(*) as cnt FROM outputs' }),
+      });
+      assert(foreignResp.status === 403, `a foreign origin's query is refused 403, got ${foreignResp.status}`);
 
       // ─── Playwright browser test ───
       const { chromium } = require('playwright');

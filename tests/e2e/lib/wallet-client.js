@@ -5,6 +5,9 @@
  */
 const record = require('./record');
 
+/** The harness's origin: every wallet it starts admits it (#411). */
+const E2E_ORIGIN = 'http://e2e-test';
+
 class WalletClient {
   /**
    * `allowPending: 'received'` names the spend gate's word R1 (d) on every
@@ -16,11 +19,14 @@ class WalletClient {
    * mined or its own change). The scoped form, `allowPending: { received:
    * ['txid:vout', ...] }` (0.18.0, #63), offers only the named received coins
    * under the word; a call passes it in `opts.allowPending` (scenario 23).
+   * Every call sends `Origin` (the served doors refuse a call without one,
+   * #411): `E2E_ORIGIN` by default, which every wallet the harness starts
+   * lists in its `ALLOWED_ORIGINS`; the browser gate's scenes name others.
    */
-  constructor(port, name = `wallet:${port}`, { allowPending } = {}) {
+  constructor(port, name = `wallet:${port}`, { allowPending, origin = E2E_ORIGIN } = {}) {
     this.base = `http://localhost:${port}`;
     this.name = name;
-    this.origin = 'http://e2e-test';
+    this.origin = origin;
     this.allowPending = allowPending;
   }
 
@@ -306,4 +312,4 @@ function findVoutByScript(txBytes, expectedScript, expectedSats) {
   return 0;
 }
 
-module.exports = { WalletClient, ANYONE_KEY, buildP2PKH, findVoutByScript };
+module.exports = { WalletClient, ANYONE_KEY, buildP2PKH, findVoutByScript, E2E_ORIGIN };
