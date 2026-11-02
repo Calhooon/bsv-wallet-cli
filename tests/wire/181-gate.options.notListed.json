@@ -1,0 +1,22 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/encrypt",
+    "headers": {
+      "access-control-request-headers": "content-type, authorization",
+      "access-control-request-method": "POST",
+      "origin": "http://unlisted.test"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "ERR_PERMISSION_DENIED",
+      "message": "The user has denied the request for permission."
+    }
+  }
+}
