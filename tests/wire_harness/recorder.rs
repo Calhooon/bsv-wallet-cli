@@ -185,6 +185,7 @@ fn gate_notes() -> Vec<(String, String)> {
         ("184-gate.encrypt.originatorAgrees.json", "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314)."),
         ("185-gate.encrypt.bodyOriginatorDisagrees.json", "#411: a body's top-level originator naming another host than the Origin is refused once the body is read (the ruling's rule 1), 400 VALIDATION_ERROR naming both."),
         ("186-gate.getVersion.noOrigin.json", "#411: a status door is gated as a BRC-100 call is; the client asks an Origin of every path."),
+        ("187-gate.isAuthenticated.bearerNoOrigin.json", "#411: the bearer never stands in for an Origin (the ruling's rule 4; BrowserGate.lean bearer_changes_no_word): with the right bearer and no Origin, the no-origin refusal."),
     ].map(|(f, n)| (f.to_string(), n.to_string())));
     notes
 }

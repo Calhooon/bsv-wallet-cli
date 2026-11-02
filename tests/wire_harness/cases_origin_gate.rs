@@ -5,6 +5,7 @@
 use serde_json::json;
 
 use super::recorder::{get, options, post, Recorder};
+use super::worlds::WIRE_BEARER;
 
 const UNLISTED: &str = "http://unlisted.test";
 
@@ -76,6 +77,15 @@ pub(crate) async fn record(r: &mut Recorder) {
         "gate.getVersion.noOrigin",
         "fresh",
         get("/getVersion").without("origin"),
+    )
+    .await;
+    // The bearer never stands in for an Origin.
+    r.case(
+        "gate.isAuthenticated.bearerNoOrigin",
+        "auth",
+        get("/isAuthenticated")
+            .without("origin")
+            .header("authorization", &format!("Bearer {WIRE_BEARER}")),
     )
     .await;
 }
