@@ -8,6 +8,11 @@
  *   3. the host holding a token, without the bearer: refused ahead of the
  *      gate, 401 UNAUTHORIZED;
  *   4. with the bearer: admitted (the bearer narrows, never widens).
+ * The grant row's key (the scenario's `BrowserGate.Origin`, the reference's
+ * hostname scope, the owner's word of 2026-11-02): the line `app.example`
+ * admits the host under either scheme and on every port, before step 3:
+ * `https://app.example:8443`, naming `app.example:8443` in the Originator
+ * header, is admitted.
  * Cost: 0 sats.
  */
 const g = require('../lib/browser-gate');
@@ -26,6 +31,10 @@ module.exports = {
       answered(await g.call(wallet, 'POST', 'getPublicKey', { origin: g.APP, body: g.ARGS.getPublicKey }), 1);
       answered(await g.call(wallet, 'POST', 'getPublicKey',
         { origin: g.APP, originator: 'app.example', body: g.ARGS.getPublicKey }), 2);
+      const scoped = await g.call(wallet, 'POST', 'getPublicKey',
+        { origin: 'https://app.example:8443', originator: 'app.example:8443', body: g.ARGS.getPublicKey });
+      assert(scoped.status === 200 && scoped.allowOrigin === 'https://app.example:8443',
+        `2 (the key): app.example's line admits https://app.example:8443 (got ${scoped.status} ${JSON.stringify(scoped.body)})`);
       await g.restartGated(wallet, [g.APP_GRANT], { token: g.TOKEN });
       const three = await g.call(wallet, 'POST', 'getPublicKey', { origin: g.APP, body: g.ARGS.getPublicKey });
       assert(three.status === 401 && three.body.code === 'UNAUTHORIZED',

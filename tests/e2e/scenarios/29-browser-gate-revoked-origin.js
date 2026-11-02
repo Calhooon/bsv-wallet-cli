@@ -6,7 +6,8 @@
  *   1. app.example calls: admitted;
  *   2. the owner revokes app.example: its line removed, the wallet restarted;
  *   3. the page calls: refused (under (b) the not-listed denial; no pending
- *      row);
+ *      row), and so is every other port of the host (the grant is the
+ *      hostname's);
  *   4. a second grant with an expiry, called past it: not expressible under
  *      (b), an env line has no expiry; #414's (named, not run).
  * Cost: 0 sats.
@@ -26,6 +27,9 @@ module.exports = {
       assert(three.status === 400 && three.body.code === 'ERR_PERMISSION_DENIED' && three.body.message === g.DENIED,
         `3: revoked, app.example is refused in the client's denial (got ${three.status} ${JSON.stringify(three.body)})`);
       assert(three.allowOrigin === null, '3: no CORS header, so the page cannot read it');
+      const port = await g.call(wallet, 'POST', 'getPublicKey', { origin: 'http://app.example:8080', body: g.ARGS.getPublicKey });
+      assert(port.status === 400 && port.body.code === 'ERR_PERMISSION_DENIED',
+        `3: another port of the revoked host is refused too (got ${port.status} ${JSON.stringify(port.body)})`);
       console.log('       4: an expired grant: not expressible under (b) (an ALLOWED_ORIGINS line has no expiry); #414');
       return {};
     });
