@@ -14,12 +14,14 @@ name: Nightly
 # then only to that score rounded down; a floor never rises above it, and a
 # floor with a measurement at the base may never fall.
 #
-# GitHub fires `schedule` only from the default branch (main) and registers
-# workflow_dispatch there too, so a copy of this file lives on main and every
-# checkout below takes beta on the schedule (the programme's line); a dispatch
-# (`gh workflow run nightly.yml --ref beta`) runs the ref it names. One file
-# serves both lines: on beta the cron is inert, and when beta merges into main
-# at the next minor the schedule still measures beta.
+# GitHub registers workflow_dispatch from the default branch (main), so a copy
+# of this file lives on main; a dispatch (`gh workflow run nightly.yml --ref
+# beta`) runs the ref it names, and every job checks out that ref's commit at
+# the dispatch, `github.sha`, never the ref (#423): run 41340299977, dispatched
+# on beta 6bf9a2c, checked the ref out per job while beta moved and ran its
+# fifty shards on nine later commits under three target lists. Each shard's
+# artifact names the commit it ran on, and the score refuses a night of more
+# than one tree.
 # The owner's word (2026-10-27): no schedule. The measurement runs on dispatch
 # (`gh workflow run nightly.yml --ref beta`), before each minor tag as RELEASING
 # names it and on demand; a scheduled night cost about twenty-five runner-hours,
@@ -86,9 +88,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The schedule fires only from main, the stable line; the night measures
-          # beta, the programme's line. A dispatch runs the ref it was given.
-          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          # The dispatch's commit, never the ref (#423): a job that starts
+          # hours into the night still checks out the tree the night was
+          # dispatched on, whatever the ref has moved to since.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
@@ -252,9 +255,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The schedule fires only from main, the stable line; the night measures
-          # beta, the programme's line. A dispatch runs the ref it was given.
-          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          # The dispatch's commit, never the ref (#423): a job that starts
+          # hours into the night still checks out the tree the night was
+          # dispatched on, whatever the ref has moved to since.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
@@ -348,6 +352,12 @@ jobs:
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
           esac
 
+      # The commit the shard ran on, beside its outcomes (#423); after
+      # cargo-mutants, which moves an existing mutants.out aside.
+      - name: Name the shard's commit
+        if: always()
+        run: mkdir -p out/mutants.out && git rev-parse HEAD | tee out/mutants.out/sha
+
       - name: Upload the outcomes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -355,6 +365,7 @@ jobs:
           name: mutants-${{ matrix.shard }}
           path: |
             out/mutants.out/outcomes.json
+            out/mutants.out/sha
             out/mutants.out/missed.txt
             out/mutants.out/diff/
             out/mutants.out/shard-ok
@@ -372,9 +383,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The schedule fires only from main, the stable line; the night measures
-          # beta, the programme's line. A dispatch runs the ref it was given.
-          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          # The dispatch's commit, never the ref (#423): a job that starts
+          # hours into the night still checks out the tree the night was
+          # dispatched on, whatever the ref has moved to since.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -393,11 +405,17 @@ jobs:
             exit 1
           fi
           python3 .github/nightly/mutants_hermetic.py survivors outcomes survivors.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          # The commit the survivors were collected on, for the score (#423).
+          mkdir -p survivors
+          mv survivors.txt survivors/
+          git rev-parse HEAD > survivors/sha
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cargo-survivors
-          path: survivors.txt
+          path: |
+            survivors/survivors.txt
+            survivors/sha
           if-no-files-found: error
           retention-days: 30
 
@@ -436,9 +454,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The schedule fires only from main, the stable line; the night measures
-          # beta, the programme's line. A dispatch runs the ref it was given.
-          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          # The dispatch's commit, never the ref (#423): a job that starts
+          # hours into the night still checks out the tree the night was
+          # dispatched on, whatever the ref has moved to since.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
@@ -528,6 +547,10 @@ jobs:
             *) echo "::error::cargo-mutants exit $status: no outcome to judge"; exit 1 ;;
           esac
 
+      - name: Name the shard's commit
+        if: always()
+        run: mkdir -p out/mutants.out && git rev-parse HEAD | tee out/mutants.out/sha
+
       - name: Upload the outcomes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -535,6 +558,7 @@ jobs:
           name: hermetic-mutants-${{ matrix.shard }}
           path: |
             out/mutants.out/outcomes.json
+            out/mutants.out/sha
             out/mutants.out/missed.txt
             out/mutants.out/shard.names
             out/mutants.out/diff/
@@ -550,9 +574,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The schedule fires only from main, the stable line; the night measures
-          # beta, the programme's line. A dispatch runs the ref it was given.
-          ref: ${{ github.event_name == 'schedule' && 'beta' || github.ref }}
+          # The dispatch's commit, never the ref (#423): a job that starts
+          # hours into the night still checks out the tree the night was
+          # dispatched on, whatever the ref has moved to since.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -607,6 +632,18 @@ jobs:
             echo
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The survivors' commit, after the refusal above (a failed survivors'
+      # job uploads none): the score's --sha reads it beside the shards'.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cargo-survivors
+          path: survivors
+
+      # A night is one tree (#423): before any figure is judged,
+      # mutants_score.py --sha refuses the night, naming each shard and its
+      # sha, unless every cargo shard, every hermetic shard and the survivors
+      # name the dispatch's commit; the summary prints that commit above the
+      # table, for the record's writer.
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
       # header). The measured night: run 40473522272, the last scheduled one
@@ -630,7 +667,9 @@ jobs:
              "src/server/handlers.rs": 100,
              "src/broadcast_verify.rs": 86,
              "src/explorers.rs": 82}
-        run: python3 .github/nightly/mutants_score.py --hermetic hermetic outcomes
+        run: |
+          python3 .github/nightly/mutants_score.py --sha "$GITHUB_SHA" --survivors survivors \
+            --hermetic hermetic outcomes
 
   # The bench job's measure on the dispatched night (#142; the owner's word of
   # 2026-11-01: one nightly bench job on beta, an append by PR, nothing else

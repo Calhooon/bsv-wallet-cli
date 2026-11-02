@@ -64,6 +64,10 @@ jobs:
       NODE_USE_ENV_PROXY: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The dispatch's (or the caller's) commit, named as nightly.yml
+          # names it (#423); the action's default is this sha too.
+          ref: ${{ github.sha }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
