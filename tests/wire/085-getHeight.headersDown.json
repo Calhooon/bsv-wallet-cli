@@ -2,12 +2,16 @@
   "world": "headers-down",
   "request": {
     "method": "GET",
-    "path": "/getHeight"
+    "path": "/getHeight",
+    "headers": {
+      "origin": "http://wire.test"
+    }
   },
   "response": {
     "status": 502,
     "headers": {
       "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
       "access-control-expose-headers": "retry-after",
       "content-type": "application/json",
       "vary": "origin, access-control-request-method, access-control-request-headers"

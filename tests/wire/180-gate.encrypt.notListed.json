@@ -1,0 +1,37 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/encrypt",
+    "headers": {
+      "origin": "http://unlisted.test"
+    },
+    "json": {
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "keyID": "1",
+      "plaintext": [
+        119,
+        105,
+        114,
+        101
+      ],
+      "protocolID": [
+        2,
+        "wire test"
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_PERMISSION_DENIED",
+      "message": "The user has denied the request for permission."
+    }
+  }
+}

@@ -57,7 +57,7 @@ async fn setup(root: Option<String>, auth_token: Option<&str>) -> (String, TempD
         .expect("wallet");
     let config = ServerConfig {
         auth_token: auth_token.map(str::to_string),
-        ..Default::default()
+        ..ServerConfig::admitting(["http://test.local"])
     };
     let app = server::make_router(server::make_wallet_state(wallet), config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

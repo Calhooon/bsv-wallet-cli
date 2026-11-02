@@ -39,7 +39,10 @@ async fn custom_instructions_wallet() -> (WalletState, axum::Router, Vec<u8>) {
     .unwrap();
     let wallet =
         crate::server::make_wallet_state(Wallet::new(Some(key), storage, services).await.unwrap());
-    let router = crate::server::make_router(wallet.clone(), crate::server::ServerConfig::default());
+    let router = crate::server::make_router(
+        wallet.clone(),
+        crate::server::ServerConfig::admitting(["http://test.local"]),
+    );
     (wallet, router, bytes)
 }
 

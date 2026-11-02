@@ -15,7 +15,7 @@ async fn test_auth_token_enforcement() {
     let config = ServerConfig {
         auth_token: Some("test-secret-token".to_string()),
         tls: None,
-        ..Default::default()
+        ..crate::support::admitting()
     };
     let (base, client, _tmp) =
         setup_with_config(std::env::var("CHAINTRACKS_URL").ok(), config).await;
@@ -67,7 +67,7 @@ const ORIGIN: &str = "http://browser.test";
 async fn bearer_served() -> (String, reqwest::Client, tempfile::TempDir) {
     let config = ServerConfig {
         auth_token: Some("test-secret-token".to_string()),
-        ..Default::default()
+        ..crate::support::admitting()
     };
     setup_with_config(None, config).await
 }
@@ -106,11 +106,12 @@ async fn test_auth_token_preflight_passes() {
     assert_eq!(h["access-control-allow-credentials"], "true");
     assert_eq!(resp.text().await.unwrap(), "");
 
-    // A bare OPTIONS (no Access-Control-Request-Method) gets the same CORS
-    // answer: the CORS layer answers every OPTIONS, and none reaches a route.
+    // A bare OPTIONS (no Access-Control-Request-Method) from a listed
+    // origin gets the same CORS answer: the CORS layer answers every OPTIONS
+    // the preflight's gate lets by, and none reaches a route.
     let url = format!("{base}/createAction");
     let resp = client
-        .request(reqwest::Method::OPTIONS, url)
+        .request(reqwest::Method::OPTIONS, &url)
         .send()
         .await
         .unwrap();
@@ -120,6 +121,25 @@ async fn test_auth_token_preflight_passes() {
         "a bare OPTIONS is CORS's, as without a token"
     );
     assert_eq!(resp.text().await.unwrap(), "");
+
+    // #411: a preflight from an origin not listed, or with none, is the
+    // browser gate's refusal; no CORS header lets a page read it.
+    for (origin, code) in [
+        (Some("http://unlisted.test"), "ERR_PERMISSION_DENIED"),
+        (None, "VALIDATION_ERROR"),
+    ] {
+        let mut req = reqwest::Client::new()
+            .request(reqwest::Method::OPTIONS, &url)
+            .header("Access-Control-Request-Method", "POST");
+        if let Some(origin) = origin {
+            req = req.header("Origin", origin);
+        }
+        let resp = req.send().await.unwrap();
+        assert_eq!(resp.status(), 400, "{origin:?}");
+        assert_eq!(allowed_origin(&resp), None, "{origin:?}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["code"], code, "{origin:?}");
+    }
 }
 
 /// The actual request under `AUTH_TOKEN` (#138): refused without the bearer

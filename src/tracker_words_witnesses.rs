@@ -469,7 +469,7 @@ async fn the_abort_door_refuses_a_transaction_a_broadcaster_took() {
         crate::server::make_wallet_state(wallet),
         crate::server::ServerConfig {
             auth_token: Some("witness-bearer".to_string()),
-            ..Default::default()
+            ..crate::server::ServerConfig::admitting(["http://witness.local"])
         },
     );
     // The router in process: no listener, no HTTP client.
@@ -555,7 +555,10 @@ async fn serve_abort(
     wallet: &crate::server::handlers::WalletState,
     reference: &str,
 ) -> (StatusCode, serde_json::Value) {
-    let app = crate::server::make_router(wallet.clone(), Default::default());
+    let app = crate::server::make_router(
+        wallet.clone(),
+        crate::server::ServerConfig::admitting(["http://witness.local"]),
+    );
     let request = axum::http::Request::post("/abortAction")
         .header("Origin", "http://witness.local")
         .header("Content-Type", "application/json")

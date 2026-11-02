@@ -93,7 +93,10 @@ async fn headers(
 }
 
 async fn serve(w: &CarriedWorld, body: Value) -> (u16, Value, bool) {
-    let app = crate::server::make_router(w.wallet.clone(), crate::server::ServerConfig::default());
+    let app = crate::server::make_router(
+        w.wallet.clone(),
+        crate::server::ServerConfig::admitting(["http://gate.local"]),
+    );
     let request = Request::post("/createAction")
         .header("content-type", "application/json")
         .header("origin", "http://gate.local")
