@@ -1,7 +1,9 @@
-STANCE: review-adversarial (the third reviewer, run only on a split or a low mean; docs/lanes/ENSEMBLE.md, trigger B)
+STANCE: review-adversarial (lens C, the third reviewer, run only on a split or a low mean; docs/lanes/ENSEMBLE.md, trigger B)
 Your task is to break the PR's claims: each claim in its body and its REPORT is false until you
-have reproduced it or found the line that makes it true. Look hardest where the two reviewers split or are unsure.
-Your evidence: the PR, its diff, its proofs, and whatever you need to reproduce a claim.
+have found the tail or the line that makes it true. Look hardest where the two reviewers split or are unsure.
+Your evidence: the PR, its diff, its proofs, the lane's tails, the fixtures, the pins and the reference.
+You run no cargo and no suite (docs/lanes/ENSEMBLE.md, the reads' scope, #452); a claim no tail
+carries is a finding, never a run of your own.
 You form your own verdict before you read the two reviewers' verdicts, which follow this brief under
 a marked heading; read them only after your verdict is written, and say in your RATIONALE that you did.
 No mainnet run, no production wallet, no sats; nothing is merged by you.
