@@ -89,6 +89,21 @@ not name reads "unmeasured", as every floor does while the file is absent.
 Other fields (the night's tool, targets, note) are the captain's prose and are
 not read.
 
+`mode` (#462) says which of the Nightly's two modes the record is: "complete"
+(every floored file mutated, the night of record cut at a pin) or
+"incremental" (only the floored files changed since the last complete run;
+every other figure carried from that run). Each file's entry then names its
+provenance: `"source": "night"` with the record's own `run` and `commit` as
+its `run` and `sha`, or `"source": "carried"` with the last complete run's.
+An incremental record names that run as `"base": {"run": <URL>, "commit":
+<sha>}`; a complete record has no carried file and its base is itself. A
+record without `mode` is read as a complete night, every file its own, and
+an entry there may name no provenance but its own. A provenance that does
+not hold (a carried figure on a complete record, a carried figure from
+another run than the base, a night figure from another run than the record's)
+exits 1 naming the file. A carried row's measured cell names the run it was
+carried from: "<score> carried from run <id> at <sha>".
+
 `verdict` is optional: the cell of rule 1's exception. When present it is a
 string beginning "red by design: " that holds, for each file the night measured
 below its floor, a clause `<file> <score> below its floor <floor>` (the record's
@@ -538,6 +553,45 @@ def measured_scores():
     return scores, commit[:7]
 
 
+def provenance():
+    """Each file's measured cell's provenance, {file: (source, run id, short sha)}, from
+    docs/scoreboard/mutants.json's `mode`, `base` and per-file `source`, `run` and `sha`
+    (#462); {} when the record is absent. measured_scores() checks the rest of the shape."""
+    if not path(MUTANTS).exists():
+        return {}
+    record = require_object(MUTANTS, "(the file)", load_json(MUTANTS))
+    mode = record.get("mode", "complete")
+    if mode not in ("complete", "incremental"):
+        fail(MUTANTS, "mode", 'must be "complete" or "incremental"')
+    own = (record.get("run"), record.get("commit"))
+    if mode == "incremental":
+        base = require_object(MUTANTS, "base", record.get("base"))
+        if not isinstance(base.get("run"), str) or not RUN_URL.match(base["run"]):
+            fail(MUTANTS, "base.run", f"must be the last complete run's URL under {RUNS}")
+        if not isinstance(base.get("commit"), str) or not SHA.match(base["commit"]):
+            fail(MUTANTS, "base.commit", "must be the full 40-hex sha the last complete run mutated")
+        base = (base["run"], base["commit"])
+    elif "base" in record and record["base"] != {"run": own[0], "commit": own[1]}:
+        fail(MUTANTS, "base", "a complete record is its own base: its run and commit, or no base")
+    else:
+        base = own
+    out = {}
+    for file, entry in record.get("files", {}).items():
+        source = entry.get("source", "night" if "mode" not in record else None)
+        if source not in ("night", "carried"):
+            fail(MUTANTS, f"files.{file}.source", 'must be "night" or "carried" on a record that names its mode')
+        if source == "carried" and mode == "complete":
+            fail(MUTANTS, f"files.{file}.source", "carried on a complete record; a complete night mutates every file")
+        want = own if source == "night" else base
+        said = (entry.get("run", own[0] if "mode" not in record else None),
+                entry.get("sha", own[1] if "mode" not in record else None))
+        if said != want:
+            whose = "the record's own run and commit" if source == "night" else "the last complete run (base)"
+            fail(MUTANTS, f"files.{file}", f"{source} names run {said[0]} at {said[1]}; a {source} figure names {whose}")
+        out[file] = (source, str(said[0]).rsplit("/", 1)[-1], str(said[1])[:7])
+    return out
+
+
 def verdict_clauses():
     """The record's `verdict` (rule 1's exception): [(file, score, floor, issue or
     None)], one per clause `<file> <score> below its floor <floor>`, the issue
@@ -594,11 +648,14 @@ def mutation_rows():
     if not path(NIGHTLY).exists():
         return [Row("mutation floors", ABSENT, "", f"`{NIGHTLY}`")]
     scores, commit = measured_scores()
+    origin = provenance()
     rows, named = [], sorted(floors().items())
     red = red_by_design(dict(named), scores)[0]
     for file, floor in named:
         score = scores.get(file)
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
+        if score is not None and origin.get(file, ("night",))[0] == "carried":
+            cell = f"{score:.1f} carried from run {origin[file][1]} at {origin[file][2]}"
         if file in red:
             cell += f", below the floor (red by design, #{red[file]})"
         rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`",

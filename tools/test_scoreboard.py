@@ -1371,5 +1371,66 @@ class TheConsumersCorpusIsReadWhereItLives(Case):
         self.assertIn("| consumers' fixtures | not in the tree yet |", self.table())
 
 
+class TheRecordNamesEachFiguresProvenance(Case):
+    """#462: a record that names its mode names each file's source, run and sha;
+    a carried figure's row names the run it was carried from; a provenance that
+    does not hold is refused naming the file."""
+
+    BASE_RUN = RUN.replace("01", "07")
+    BASE = "9" * 40
+
+    def incremental(self, **changes):
+        mutants = {"schema": 1, "mode": "incremental", "commit": SHA, "run": RUN, "date": "2026-11-03",
+                   "base": {"run": self.BASE_RUN, "commit": self.BASE},
+                   "files": {"src/spend_gate.rs": dict(counted(86.6), source="night", run=RUN, sha=SHA),
+                             "src/explorers.rs": dict(counted(82.6), source="carried", run=self.BASE_RUN,
+                                                      sha=self.BASE)}}
+        for file, entry in changes.items():
+            mutants["files"][file].update(entry)
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        return mutants
+
+    def test_a_carried_row_names_its_run(self):
+        self.incremental()
+        out = self.table()
+        self.assertIn("| mutation floor `src/explorers.rs` | 69 | 82.6 carried from run 40500000007 at 9999999 |", out)
+        self.assertIn("| mutation floor `src/spend_gate.rs` | 80 | 86.6 at abcdef0 |", out)
+        print("\n    exit 0: 82.6 carried from run 40500000007 at 9999999", end=" ", file=sys.stderr)
+
+    def test_a_carried_figure_from_another_run_than_the_base_is_refused(self):
+        self.incremental(**{"src/explorers.rs": {"run": RUN.replace("01", "05")}})
+        self.refused("docs/scoreboard/mutants.json: files.src/explorers.rs: carried names run "
+                     + RUN.replace("01", "05"))
+
+    def test_a_night_figure_from_another_run_is_refused(self):
+        self.incremental(**{"src/spend_gate.rs": {"sha": self.BASE}})
+        self.refused("files.src/spend_gate.rs: night names run")
+
+    def test_a_carried_figure_on_a_complete_record_is_refused(self):
+        mutants = self.incremental()
+        mutants["mode"] = "complete"
+        del mutants["base"]
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        self.refused("files.src/explorers.rs.source: carried on a complete record")
+
+    def test_a_moded_record_without_a_source_is_refused(self):
+        mutants = self.incremental()
+        del mutants["files"]["src/spend_gate.rs"]["source"]
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        self.refused("files.src/spend_gate.rs.source: must be")
+
+    def test_an_incremental_record_without_a_base_is_refused(self):
+        mutants = self.incremental()
+        del mutants["base"]
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        self.refused("docs/scoreboard/mutants.json: base: must be an object")
+
+    def test_an_unknown_mode_is_refused(self):
+        mutants = self.incremental()
+        mutants["mode"] = "partial"
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        self.refused('docs/scoreboard/mutants.json: mode: must be "complete" or "incremental"')
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
