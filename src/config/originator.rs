@@ -6,14 +6,82 @@
 //! DNS hostname or `localhost`. Its grants are scoped to the lowercased
 //! hostname, every port of a host sharing one (`:5702-5729`).
 
-/// The rule an entry is refused by, in the reference's words.
-const SCHEME: &str = "an originator: a domain name with an optional port, without a URL scheme \
+/// The variable the binary reads the allow-list from, named in an
+/// [`OriginatorRule`]'s text.
+const VARIABLE: &str = "ALLOWED_ORIGINS";
+
+/// The rule an entry carrying a scheme breaks, in the reference's words.
+pub const SCHEME: &str =
+    "an originator: a domain name with an optional port, without a URL scheme \
                       (`localhost`, `app.example:8443`; the reference's prepareOriginator); \
                       this entry carries a scheme";
-const PARTS: &str = "an originator: a domain name with an optional port, without credentials, \
+/// The rule an entry carrying credentials, a path, a query or a fragment
+/// breaks.
+pub const PARTS: &str = "an originator: a domain name with an optional port, without credentials, \
                      a path, a query parameter or a fragment (the reference's prepareOriginator)";
-const NAME: &str = "an originator: a DNS hostname, `localhost` or an IP address, with an optional \
+/// The rule an entry whose name is not a hostname, or whose port is not
+/// one, breaks.
+pub const NAME: &str =
+    "an originator: a DNS hostname, `localhost` or an IP address, with an optional \
                     port (the reference's prepareOriginator)";
+
+/// An allow-list entry refused, and the rule it breaks (#433): what the
+/// browser gate's constructors return
+/// ([`crate::server::AllowedOrigins::new`],
+/// [`crate::server::ServerConfig::admitting`],
+/// [`crate::server::ServerConfig::from_config`]) in place of a panic. Its
+/// text is the binary's refusal of the same entry in `ALLOWED_ORIGINS`, and
+/// it converts to that [`super::ConfigError`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriginatorRule {
+    entry: String,
+    rule: &'static str,
+}
+
+impl OriginatorRule {
+    /// The entry refused, trimmed, as given.
+    #[must_use]
+    pub fn entry(&self) -> &str {
+        &self.entry
+    }
+
+    /// The rule it breaks: [`SCHEME`], [`PARTS`] or [`NAME`].
+    #[must_use]
+    pub fn rule(&self) -> &'static str {
+        self.rule
+    }
+}
+
+impl From<OriginatorRule> for super::ConfigError {
+    fn from(refused: OriginatorRule) -> Self {
+        Self {
+            variable: VARIABLE,
+            value: refused.entry,
+            expected: refused.rule.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for OriginatorRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        super::ConfigError::from(self.clone()).fmt(f)
+    }
+}
+
+impl std::error::Error for OriginatorRule {}
+
+/// An allow-list entry checked by [`checked`], its refusal the entry with
+/// its rule.
+///
+/// # Errors
+///
+/// The [`OriginatorRule`] the entry breaks.
+pub fn listed(entry: &str) -> Result<String, OriginatorRule> {
+    checked(entry).map_err(|rule| OriginatorRule {
+        entry: entry.trim().to_string(),
+        rule,
+    })
+}
 
 /// An entry checked as the reference's `prepareOriginator` checks an
 /// originator, lowercased; the refusal names the rule. One divergence,

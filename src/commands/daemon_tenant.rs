@@ -132,7 +132,7 @@ pub async fn start(
     let wallet_state = server::make_wallet_state(wallet);
 
     let arcade_token = arcade_rt.as_ref().map(|rt| rt.callback_token.clone());
-    let server_config = ServerConfig::from_config(config, chain, arcade_token);
+    let server_config = ServerConfig::from_config(config, chain, arcade_token)?;
 
     // The served pass, as `serve` runs it (`broadcast_reconcile`): the
     // tracker's pass (the wallet's creators tracked, a proven creator

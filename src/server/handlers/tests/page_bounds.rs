@@ -25,7 +25,7 @@ async fn page_router() -> axum::Router {
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
     crate::server::make_router(
         wallet,
-        crate::server::ServerConfig::admitting(["bounds.test", &LONG[7..]]),
+        crate::server::ServerConfig::admitting(["bounds.test", &LONG[7..]]).expect("an originator"),
     )
 }
 
@@ -128,7 +128,7 @@ async fn page_negative_offset_reaches_toolbox_newest_first() {
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
     let app = crate::server::make_router(
         wallet,
-        crate::server::ServerConfig::admitting(["bounds.test"]),
+        crate::server::ServerConfig::admitting(["bounds.test"]).expect("an originator"),
     );
     for (offset, satoshis) in [(-1, 200), (0, 100)] {
         let (status, body) = post_page(
