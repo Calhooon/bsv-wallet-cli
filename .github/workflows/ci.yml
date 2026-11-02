@@ -499,7 +499,7 @@ jobs:
           path: ${{ runner.temp }}/ratchet/
           if-no-files-found: warn
 
-  # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 25 scenarios of
+  # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 30 scenarios of
   # tests/e2e against a local stub of the header service, the three explorers
   # and the broadcaster (tests/e2e/stub), with the proxy environment walling
   # every other host: every request from the binary and the harness becomes a
@@ -557,7 +557,7 @@ jobs:
       - name: Check the hermetic BEEF codecs and kept-template demand
         run: node --test tests/e2e/stub/tx.test.js tests/e2e/24-busy-store.test.js
 
-      - name: Run the 25 scenarios against the stub
+      - name: Run the 30 scenarios against the stub
         env:
           E2E_WALLET_TMP: ${{ runner.temp }}/e2e
         run: |

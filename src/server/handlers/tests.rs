@@ -266,25 +266,52 @@ async fn incomplete_ancestry_is_a_conflict_by_class() {
 /// CORS: a browser caller may read `Retry-After` (the router's layer).
 #[tokio::test]
 async fn cors_exposes_retry_after() {
-    use tower::ServiceExt;
-    let storage = StorageSqlx::in_memory().await.unwrap();
-    let key = bsv_sdk::primitives::PrivateKey::random();
-    let wallet = crate::test_support::test_wallet(storage, "cors", key).await;
-    let app = crate::server::make_router(wallet, crate::server::ServerConfig::default());
-    let response = app
-        .oneshot(
-            axum::http::Request::get("/isAuthenticated")
-                .header("Origin", "https://app.example")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
+    let request = axum::http::Request::get("/isAuthenticated")
+        .header("Origin", "https://app.example")
+        .body(axum::body::Body::empty())
         .unwrap();
+    let response = served_by(&["https://app.example"], request).await;
     let exposed = response
         .headers()
         .get(axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS)
         .map(|v| v.to_str().unwrap().to_ascii_lowercase());
     assert_eq!(exposed.as_deref(), Some("retry-after"));
+}
+
+/// `request` served by a fresh wallet's router admitting `origins`.
+async fn served_by(
+    origins: &[&str],
+    request: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    use tower::ServiceExt;
+    let storage = StorageSqlx::in_memory().await.unwrap();
+    let key = bsv_sdk::primitives::PrivateKey::random();
+    let wallet = crate::test_support::test_wallet(storage, "served-by", key).await;
+    let config = crate::server::ServerConfig::admitting(origins.iter().copied());
+    crate::server::make_router(wallet, config)
+        .oneshot(request)
+        .await
+        .unwrap()
+}
+
+/// #411: a body's originator is judged as the door reads the body, after
+/// the lone-surrogate rewrite, so a body serde could not read before it is
+/// no way around the check; the same body naming the Origin's host passes.
+#[tokio::test]
+async fn a_body_originator_is_judged_after_the_surrogate_rewrite() {
+    for (originator, status) in [("evil.example", 400), ("app.example", 200)] {
+        let body = format!(
+            r#"{{"originator":"{originator}","protocolID":[2,"gate test"],"keyID":"\ud83d","counterparty":"self","plaintext":[1]}}"#
+        );
+        let request = axum::http::Request::post("/encrypt")
+            .header("Origin", "http://app.example")
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let response = served_by(&["http://app.example"], request).await;
+        let (served, _, answer) = crate::test_support::response_answer(response).await;
+        assert_eq!(served.as_u16(), status, "{originator}: {answer}");
+    }
 }
 
 /// F4 of the #44 CLI review: the served `internalizeAction` strips a
@@ -596,9 +623,13 @@ async fn host_route_store_faults(path: &str, code: &str) {
 
     let (_dir, wallet, holder) = crate::test_support::busy_read_wallet().await;
     let storage = wallet.storage();
-    let app = crate::server::make_router(wallet.clone(), crate::server::ServerConfig::default());
+    let app = crate::server::make_router(
+        wallet.clone(),
+        crate::server::ServerConfig::admitting(["http://host-route.test"]),
+    );
     let request = || {
         axum::http::Request::get(path)
+            .header("Origin", "http://host-route.test")
             .body(axum::body::Body::empty())
             .unwrap()
     };

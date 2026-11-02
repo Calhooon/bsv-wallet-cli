@@ -5,6 +5,7 @@ pub mod broadcast_follow_up;
 pub mod error;
 pub mod handlers;
 mod host_reads;
+pub mod origin_gate;
 mod page_bounds;
 pub mod post_word;
 pub mod types;
@@ -21,11 +22,11 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{Config, ServerSettings};
 use handlers::WalletState;
+pub use origin_gate::AllowedOrigins;
 
 // One 5 s store busy ceiling fits; two do not. Leave time to deliver the
 // answer before Arcade's 10 s POST timeout (arcade@1ae1208e64b77b64818044d606638939d9f1834a,
@@ -54,6 +55,9 @@ pub struct ServerConfig {
     /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
     /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
+    /// The exact origins the browser gate admits (`ALLOWED_ORIGINS`, #411);
+    /// empty admits none, the bearer's callers included.
+    pub allowed_origins: AllowedOrigins,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
     /// Network the served wallet is on. Drives post-broadcast verification
@@ -76,6 +80,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             auth_token: None,
+            allowed_origins: AllowedOrigins::default(),
             tls: None,
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
@@ -96,6 +101,7 @@ impl ServerConfig {
         let tls = (server.tls_cert_path.clone()).zip(server.tls_key_path.clone());
         Self {
             auth_token: server.auth_token.as_ref().map(owned),
+            allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned()),
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -230,8 +236,8 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
 
 /// [`make_router`], with the start-time heal owed when `owed` says so.
 pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOwed) -> Router {
-    // A browser caller reads `Retry-After` on a 503 STORE_BUSY (#44).
-    let cors = CorsLayer::very_permissive().expose_headers([axum::http::header::RETRY_AFTER]);
+    let cors = config.allowed_origins.cors();
+    let allowed = config.allowed_origins.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -334,14 +340,19 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         // ARC/Arcade proof-delivery webhook (callback-token auth, exempt from
         // wallet bearer auth — see auth_middleware).
         .route("/arc-callback", post(arc_callback))
-        // The last layer added runs first: body limit, trace, extensions, CORS
-        // (it answers each OPTIONS, a preflight carries no bearer, and rides a
-        // 401 so a browser reads it: #138), auth BEFORE the body is read (an
+        // The last layer added runs first: body limit, trace, extensions, the
+        // preflight's gate (an OPTIONS from an origin not listed is refused,
+        // #411), CORS (it answers a listed origin's OPTIONS, a preflight
+        // carries no bearer, and rides a 401 so a browser reads it: #138),
+        // auth, the browser gate (#411), both BEFORE the body is read (an
         // uncapped BEEF door is open only to the wallet's own caller), the body.
         .layer(middleware::from_fn_with_state(wallet.clone(), heal_owed))
         .layer(middleware::from_fn(lenient_json_body))
+        .layer(middleware::from_fn(origin_gate::gate))
         .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
+        .layer(middleware::from_fn(origin_gate::preflight))
+        .layer(axum::Extension(allowed))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -562,6 +573,8 @@ const BODY_CAP: usize = 50 * 1024 * 1024;
 /// Rewrite lone surrogate escapes in request bodies before the `Json`
 /// extractors see them (see [`sanitize_lone_surrogates`]): any content type,
 /// as the doors read JSON under any (#122 item 3); with none, `{}` is read.
+/// A body whose `originator` disagrees with the admitted `Origin` is
+/// refused here, once it is read (#411).
 async fn lenient_json_body(request: Request, next: Next) -> Response {
     if !request
         .headers()
@@ -585,16 +598,22 @@ async fn lenient_json_body(request: Request, next: Next) -> Response {
                 .into_response();
         }
     };
-    let body = match sanitize_lone_surrogates(&bytes) {
-        std::borrow::Cow::Borrowed(_) => axum::body::Body::from(bytes),
+    let fixed = match sanitize_lone_surrogates(&bytes) {
+        std::borrow::Cow::Borrowed(_) => None,
         std::borrow::Cow::Owned(fixed) => {
             tracing::warn!(
                 path = %parts.uri.path(),
                 "json body carried a lone UTF-16 surrogate escape; substituted U+FFFD"
             );
-            axum::body::Body::from(fixed)
+            Some(fixed)
         }
     };
+    // The body as the door reads it: its originator is judged there.
+    let read = fixed.as_deref().unwrap_or(&bytes);
+    if let Some(refused) = origin_gate::refuse_body(&parts.extensions, read) {
+        return refused;
+    }
+    let body = fixed.map_or_else(|| axum::body::Body::from(bytes), axum::body::Body::from);
     next.run(Request::from_parts(parts, body)).await
 }
 
@@ -733,67 +752,7 @@ async fn permission_audit_reset() -> Json<serde_json::Value> {
 }
 
 #[cfg(test)]
-mod lenient_json_tests {
-    use super::sanitize_lone_surrogates;
-
-    #[test]
-    fn lone_lead_and_lone_trail_become_fffd_and_pairs_survive() {
-        let lead = br#"{"keyID":"ab \ud83d cd"}"#;
-        assert_eq!(
-            &*sanitize_lone_surrogates(lead),
-            br#"{"keyID":"ab \ufffd cd"}"#
-        );
-        let trail = br#"{"keyID":"\udc00"}"#;
-        assert_eq!(&*sanitize_lone_surrogates(trail), br#"{"keyID":"\ufffd"}"#);
-        let pair = br#"{"keyID":"\ud83d\ude00"}"#;
-        assert!(matches!(
-            sanitize_lone_surrogates(pair),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        let plain = br#"{"keyID":"plain \\u0041"}"#;
-        assert!(matches!(
-            sanitize_lone_surrogates(plain),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        let fixed = sanitize_lone_surrogates(lead);
-        let v: serde_json::Value = serde_json::from_slice(&fixed).unwrap();
-        assert_eq!(v["keyID"], "ab \u{fffd} cd");
-    }
-}
+mod lenient_json_tests;
 
 #[cfg(test)]
-mod bind_guard_tests {
-    use super::refuse_open_bind;
-    use std::net::IpAddr;
-
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn beyond_loopback_needs_a_token_or_the_flag() {
-        for open in ["0.0.0.0", "::", "192.168.1.10", "10.0.0.1"] {
-            let err = refuse_open_bind(ip(open), None, false).unwrap_err();
-            assert!(
-                err.to_string().contains("--allow-no-token"),
-                "{open}: {err}"
-            );
-            assert!(
-                refuse_open_bind(ip(open), Some(""), false).is_err(),
-                "{open}"
-            );
-            assert!(
-                refuse_open_bind(ip(open), Some("t"), false).is_ok(),
-                "{open}"
-            );
-            assert!(refuse_open_bind(ip(open), None, true).is_ok(), "{open}");
-        }
-    }
-
-    #[test]
-    fn loopback_is_unchanged() {
-        for lo in ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"] {
-            assert!(refuse_open_bind(ip(lo), None, false).is_ok(), "{lo}");
-        }
-    }
-}
+mod bind_guard_tests;

@@ -503,11 +503,12 @@ async fn a_served_request_retries_the_heal_a_failed_start_owed() {
     let owed = crate::server::HealOwed::owed();
     let app = crate::server::make_router_owing(
         wallet.clone(),
-        crate::server::ServerConfig::default(),
+        crate::server::ServerConfig::admitting(["http://heal.test"]),
         owed.clone(),
     );
     let request = || {
         axum::http::Request::get("/isAuthenticated")
+            .header("Origin", "http://heal.test")
             .body(axum::body::Body::empty())
             .unwrap()
     };

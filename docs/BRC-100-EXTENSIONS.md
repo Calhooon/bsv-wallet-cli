@@ -24,11 +24,12 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 20 rows
+## Extensions: 21 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
 | `*` | refusal | `message` | The refusal's human-readable text; the BRC's error structure names it `description` (line 295). BRC-100 leaves the error's realisation to the transport (line 298); the body is `{code, message}` with `code` the BRC's (line 294), against the BRC's `{status, code, description}` (#149). | the initial release, feb0dd0 (2026-03-25) |
+| `*` | request | `originator` | Read only to refuse it (the browser gate, the ruling's rule 1): a JSON object body's top-level `originator` naming another host than the call's `Origin` is 400 `VALIDATION_ERROR` naming both, one naming the same host is the call as without it. BRC-100 passes the originator beside a call's arguments, never in them (`wallet/0100.md:707`, `originator?: OriginatorDomainNameString`), and the MetaNet Client ignores the field (fixture 185). | #411 (the owner's word of 2026-11-01) |
 | `createAction` | request | `allowPending` | R1 (d), the action's word at the door, beside `options` (the toolbox's `CreateActionOptions` is the reference's shape and stays as it is): `"received"` offers a received coin whose creator is not yet mined; absent is off. Any other value is 400 `VALIDATION_ERROR` naming the words, as the scoped form's wrong coin is: the extension decided by its own consistency, the MetaNet Client having no such field (#122 item 7, fixture 038; quietly off through 0.19.0-beta.4). | 0.11.0 (#29; the owner's ruling of 2026-10-18) |
 | `createAction` | request | `allowPending.received` | The scoped form `{"received": ["txid:vout", ...]}`: only the named received coins are offered; a named coin that is not a received coin of this wallet is 400. | 0.18.0 (#63) |
 | `createAction` | refusal | `offeredSatoshis` | The satoshis the spend gate offered the toolbox, beside the coins it held back. | 0.10.0 (e69291b) |
@@ -49,7 +50,7 @@ constraints add no JSON key and no extension-table row. Negative
 | `listCertificates` | response | `certificates.keyring` | The stored master keyring of a verified direct certificate; its keys form a Record. | #338, toolbox #374 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-20 extensions.
+21 extensions.
 
 ## Gaps: 35 rows
 

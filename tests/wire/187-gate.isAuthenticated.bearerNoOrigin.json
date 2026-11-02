@@ -1,0 +1,23 @@
+{
+  "world": "auth",
+  "request": {
+    "method": "GET",
+    "path": "/isAuthenticated",
+    "headers": {
+      "authorization": "Bearer wire-bearer"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "Origin header is required"
+    }
+  }
+}

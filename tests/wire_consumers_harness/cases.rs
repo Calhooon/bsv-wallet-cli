@@ -257,6 +257,9 @@ const STACK_WITNESS: &[Case] = &[Case {
     call: "txWord",
     source: "bsv-stack-lean docs/p0/witness-spend.md (GET /tx/{txid} on loopback)",
     path: "/tx/{UNKNOWN}",
+    // #411: its GET carries no Origin today and is refused; this is the
+    // header line it needs (named in the PR's "For the consumers").
+    origin: "http://localhost",
     ..Case::BASE
 }];
 

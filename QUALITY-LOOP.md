@@ -2,6 +2,8 @@
 
 Runnable scenarios for verifying wallet health after UTXO fixes.
 All commands assume a funded `bsv-wallet daemon` running on port 3322.
+Each call to the wallet sends `Origin: http://localhost`, which the daemon's
+`ALLOWED_ORIGINS` must list (the browser gate, #411).
 
 ```
 WALLET=http://localhost:3322
@@ -18,7 +20,7 @@ WALLET=http://localhost:3322
 **Steps**:
 ```bash
 # Create and broadcast an OP_RETURN transaction
-RESULT=$(curl -s -X POST $WALLET/createAction \
+RESULT=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/createAction \
   -H "Content-Type: application/json" \
   -d '{
     "description": "quality-loop: basic broadcast",
@@ -55,7 +57,7 @@ curl -s "https://api.whatsonchain.com/v1/bsv/main/tx/$TXID" | jq '.txid'
 ```bash
 # Fire 5 concurrent OP_RETURN transactions
 for i in $(seq 1 5); do
-  curl -s -X POST $WALLET/createAction \
+  curl -s -X POST -H 'Origin: http://localhost' $WALLET/createAction \
     -H "Content-Type: application/json" \
     -d "{
       \"description\": \"quality-loop: concurrent #$i\",
@@ -80,7 +82,7 @@ echo "All 5 requests completed"
 **Verify**:
 ```bash
 # List recent actions and confirm 5 new entries
-curl -s -X POST $WALLET/listActions \
+curl -s -X POST -H 'Origin: http://localhost' $WALLET/listActions \
   -H "Content-Type: application/json" \
   -d '{"labels": [], "includeLabels": true, "limit": 5}' | jq '.totalActions'
 ```
@@ -96,7 +98,7 @@ curl -s -X POST $WALLET/listActions \
 **Steps**:
 ```bash
 # Step 1: Create a noSend transaction
-NOSEND=$(curl -s -X POST $WALLET/createAction \
+NOSEND=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/createAction \
   -H "Content-Type: application/json" \
   -d '{
     "description": "quality-loop: noSend test",
@@ -116,7 +118,7 @@ echo "noSend txid: $NOSEND_TXID"
 echo $NOSEND | jq '.tx | length'
 
 # Step 3: Create a normal transaction to confirm it picks a different UTXO
-NORMAL=$(curl -s -X POST $WALLET/createAction \
+NORMAL=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/createAction \
   -H "Content-Type: application/json" \
   -d '{
     "description": "quality-loop: after noSend",
@@ -156,7 +158,7 @@ curl -s "https://api.whatsonchain.com/v1/bsv/main/tx/$NORMAL_TXID" | jq '.txid'
 **Steps**:
 ```bash
 # Step 1: Check current balance
-BEFORE=$(curl -s -X POST $WALLET/wallet_balance \
+BEFORE=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/wallet_balance \
   -H "Content-Type: application/json" -d '{}')
 echo "Balance before: $BEFORE"
 
@@ -175,7 +177,7 @@ sqlite3 ~/.bsv-wallet/wallet.db "
 # The daemon runs review_status periodically. Force it by restarting or waiting.
 
 # Step 4: Verify balance is restored after cleanup
-AFTER=$(curl -s -X POST $WALLET/wallet_balance \
+AFTER=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/wallet_balance \
   -H "Content-Type: application/json" -d '{}')
 echo "Balance after: $AFTER"
 ```
@@ -207,7 +209,7 @@ sqlite3 ~/.bsv-wallet/wallet.db "
 **Steps**:
 ```bash
 # Step 1: Get reported balance via API
-API_BALANCE=$(curl -s -X POST $WALLET/wallet_balance \
+API_BALANCE=$(curl -s -X POST -H 'Origin: http://localhost' $WALLET/wallet_balance \
   -H "Content-Type: application/json" -d '{}' | jq -r '.balance // .total_satoshis')
 echo "API balance: $API_BALANCE"
 

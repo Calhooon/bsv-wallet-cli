@@ -23,15 +23,24 @@ async fn page_router() -> axum::Router {
     let storage = StorageSqlx::in_memory().await.unwrap();
     let key = bsv_sdk::primitives::PrivateKey::random();
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
-    crate::server::make_router(wallet, crate::server::ServerConfig::default())
+    crate::server::make_router(
+        wallet,
+        crate::server::ServerConfig::admitting([BOUNDS, LONG.as_str()]),
+    )
 }
+
+/// The origin the page calls carry, and one whose 254-byte host the five
+/// toolbox methods refuse on entry (the tripwire below).
+const BOUNDS: &str = "http://bounds.test";
+static LONG: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("http://{}", "x".repeat(254)));
 
 async fn post_page(
     app: axum::Router,
     call: &str,
     args: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
-    post_page_from(app, call, args, ("Originator", "bounds.test")).await
+    post_page_from(app, call, args, ("Origin", BOUNDS)).await
 }
 
 async fn post_page_from(
@@ -114,7 +123,7 @@ async fn page_negative_offset_reaches_toolbox_newest_first() {
         coin(&storage, (user, basket), &txid, false, None, satoshis, 1).await;
     }
     let wallet = crate::test_support::test_wallet(storage, "page-bounds", key).await;
-    let app = crate::server::make_router(wallet, crate::server::ServerConfig::default());
+    let app = crate::server::make_router(wallet, crate::server::ServerConfig::admitting([BOUNDS]));
     for (offset, satoshis) in [(-1, 200), (0, 100)] {
         let (status, body) = post_page(
             app.clone(),
@@ -179,7 +188,7 @@ async fn page_refusals_precede_every_toolbox_entry() {
             let mut body = args.clone();
             body["limit"] = json!(limit);
             let (_, body) =
-                post_page_from(app.clone(), call, body, ("Originator", &"x".repeat(254))).await;
+                post_page_from(app.clone(), call, body, ("Origin", LONG.as_str())).await;
             let answer = body;
             let message = answer["message"].as_str().unwrap();
             if limit == 10000 {
@@ -210,7 +219,7 @@ async fn page_originator_is_extracted_before_limit_validation() {
             assert_eq!(status, StatusCode::BAD_REQUEST, "{call}: {body}");
             assert_eq!(
                 body,
-                json!({"code": "VALIDATION_ERROR", "message": "Origin header required"}),
+                json!({"code": "VALIDATION_ERROR", "message": "Origin header is required"}),
                 "{call}"
             );
         }

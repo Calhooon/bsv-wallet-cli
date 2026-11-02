@@ -11,6 +11,7 @@ pub(crate) mod cases_beta4;
 pub(crate) mod cases_beta6;
 pub(crate) mod cases_certificate_privacy;
 pub(crate) mod cases_divergences;
+pub(crate) mod cases_origin_gate;
 pub(crate) mod cases_page_bounds;
 pub(crate) mod cases_routes;
 pub(crate) mod cases_spending;

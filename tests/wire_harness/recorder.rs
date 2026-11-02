@@ -12,7 +12,9 @@ use crate::wire_support::{Bound, Req, BOUND, J};
 // The cases (record only). Replay reads the fixtures, never these.
 // ---------------------------------------------------------------------------
 
-const ORIGIN: &str = "http://wire.test";
+/// The origin every recorded request carries, which the worlds admit
+/// (`ALLOWED_ORIGINS`, #411).
+pub(crate) const ORIGIN: &str = "http://wire.test";
 pub(crate) const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 pub(crate) const CERT_TYPE: &str = "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=";
 /// A ciphertext of `wire` under [`ROOT_KEY`], protocol `[2, "wire test"]`,
@@ -135,7 +137,7 @@ impl Recorder {
                 ("134-listOutputs.offsetNegative.json".into(), "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.".into()),
                 ("141-signAction.sequenceNumberAboveType.json".into(), "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
                 ("142-listActions.offsetAboveType.json".into(), "The u32 argument type refuses offset 4294967296 before listActions is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
-            ].into_iter().collect(),
+            ].into_iter().chain(gate_notes()).collect(),
         })
         .unwrap();
         text.push('\n');
@@ -143,11 +145,56 @@ impl Recorder {
     }
 }
 
+/// #411's moved fixtures and the gate's own, with their reasons.
+fn gate_notes() -> Vec<(String, String)> {
+    const GETS: [&str; 22] = [
+        "001-isAuthenticated.get.json",
+        "003-getHeight.get.json",
+        "005-getNetwork.get.json",
+        "007-getVersion.get.json",
+        "009-waitForAuthentication.get.json",
+        "055-permission-audit.get.json",
+        "057-permission-audit.afterReset.json",
+        "058-chain-feed.none.json",
+        "059-chain-feed.frozen.json",
+        "060-tx.mined.json",
+        "061-tx.pending.json",
+        "062-tx.unknown.json",
+        "063-tx.notHex.json",
+        "070-auth.isAuthenticated.noBearer.json",
+        "071-auth.isAuthenticated.wrongBearer.json",
+        "072-auth.isAuthenticated.bearer.json",
+        "073-auth.chain-feed.noBearer.json",
+        "085-getHeight.headersDown.json",
+        "091-chain-feed.hostFault.json",
+        "092-tx.hostFault.json",
+        "117-chain-feed.storeBusy.json",
+        "118-tx.storeBusy.json",
+    ];
+    let moved = "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.";
+    let mut notes: Vec<(String, String)> = GETS
+        .iter()
+        .map(|f| (f.to_string(), moved.to_string()))
+        .collect();
+    notes.extend([
+        ("028-encrypt.noOrigin.json", "#411: a call without an Origin is the MetaNet Client's refusal in its words, 400 \"Origin header is required\" (bsv-desktop bcb6003 src/onWalletReady.ts:82-88), served by the typed carrier as VALIDATION_ERROR; \"Origin header required\" before."),
+        ("180-gate.encrypt.notListed.json", "#411: an Origin ALLOWED_ORIGINS does not name is refused in the client's denial, 400 ERR_PERMISSION_DENIED \"The user has denied the request for permission.\" (ts-stack edf6e03 WalletPermissionsManager.ts:1348-1349, served 400 by onWalletReady.ts's handlers), with no access-control-allow-origin, so a page cannot read it; under (b) no pending row is written (the scenario new-origin's step 1 under (b))."),
+        ("181-gate.options.notListed.json", "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin."),
+        ("182-gate.encrypt.originatorWithoutOrigin.json", "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal."),
+        ("183-gate.encrypt.originatorDisagrees.json", "#411: an Originator header naming another host than the Origin is refused (the ruling's rule 1; BrowserGate.lean disagreeing_refused), 400 VALIDATION_ERROR naming both; the listed origin's page reads it (the CORS echo)."),
+        ("184-gate.encrypt.originatorAgrees.json", "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314)."),
+        ("185-gate.encrypt.bodyOriginatorDisagrees.json", "#411: a body's top-level originator naming another host than the Origin is refused once the body is read (the ruling's rule 1), 400 VALIDATION_ERROR naming both."),
+        ("186-gate.getVersion.noOrigin.json", "#411: a status door is gated as a BRC-100 call is; the client asks an Origin of every path."),
+        ("187-gate.isAuthenticated.bearerNoOrigin.json", "#411: the bearer never stands in for an Origin (the ruling's rule 4; BrowserGate.lean bearer_changes_no_word): with the right bearer and no Origin, the no-origin refusal."),
+    ].map(|(f, n)| (f.to_string(), n.to_string())));
+    notes
+}
+
 pub(crate) fn get(path: &str) -> Req {
     Req {
         method: "GET".into(),
         path: path.into(),
-        headers: BTreeMap::new(),
+        headers: BTreeMap::from([("origin".to_string(), ORIGIN.to_string())]),
         json: None,
         raw: None,
         fill: None,

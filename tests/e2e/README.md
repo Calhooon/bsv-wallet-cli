@@ -1,6 +1,6 @@
 # E2E harness
 
-Run the 25 scenarios with `E2E_HERMETIC=1 NODE_USE_ENV_PROXY=1 node tests/e2e/run.js` using Node 24 and the release wallet and MCP binaries. Set `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` to binaries outside the checkout, and `E2E_WALLET_TMP` to the run's scratch directory. The [hermetic guide](../../docs/E2E-HERMETIC.md) describes the local stub, proxy wall and cleanup; [CLAUDE.md](../../CLAUDE.md#e2e-funder-wallet) describes the separately operated mainnet funder.
+Run the 30 scenarios with `E2E_HERMETIC=1 NODE_USE_ENV_PROXY=1 node tests/e2e/run.js` using Node 24 and the release wallet and MCP binaries. Set `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` to binaries outside the checkout, and `E2E_WALLET_TMP` to the run's scratch directory. The [hermetic guide](../../docs/E2E-HERMETIC.md) describes the local stub, proxy wall and cleanup; [CLAUDE.md](../../CLAUDE.md#e2e-funder-wallet) describes the separately operated mainnet funder.
 
 The CLI judges no transaction itself; internalize verification belongs to the toolbox, with the node's word per input on the toolbox's lane ([toolbox #422](https://github.com/Calhooon/bsv-wallet-toolbox-rs/issues/422)).
 
