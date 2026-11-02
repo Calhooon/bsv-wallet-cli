@@ -32,4 +32,14 @@ pub(crate) async fn record(r: &mut Recorder) {
         options("/encrypt", "POST").header("origin", UNLISTED),
     )
     .await;
+    // The legacy Originator header never stands in for a missing Origin
+    // (the client falls back to it; the ruling's rule 1 does not).
+    r.case(
+        "gate.encrypt.originatorWithoutOrigin",
+        "fresh",
+        post("/encrypt", encrypt())
+            .without("origin")
+            .header("originator", "wire.test"),
+    )
+    .await;
 }
