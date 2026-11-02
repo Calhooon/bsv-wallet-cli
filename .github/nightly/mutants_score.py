@@ -36,8 +36,35 @@ cargo pass, or in the hermetic pass, is a malformed night (cargo-mutants
 listed the mutant twice, or a shard's artifact was given twice), and before
 any figure is judged the score exits 1 naming each such name and its count.
 The counts per file are then the unique mutants'.
+
+With `--plan <plan.json> --record <mutants.json>` (#462) the night is one of
+the Nightly's two modes, as .github/nightly/changed_set.py planned it. The
+mutated files (the plan's `files`) are scored from the outcomes; every other
+floored file's figure is CARRIED from the record, which holds the last
+complete run, and its row names that run and sha. A carried figure is never
+judged against its floor again (its run judged it); the night's files are.
+Before any figure is judged, exit 1 naming the fault when:
+
+- the plan's base (the last complete run it diffed against) is not the
+  record's (the record itself when its mode is complete, its `base` when
+  incremental);
+- a carried file's entry in the record does not name that run and sha (a
+  carried figure whose base is not the last complete run: a file the record
+  holds as an incremental night's figure, or as an older run's, is never
+  carried again);
+- on an incremental night, a floor of `MUTANTS_FLOORS` differs from the
+  record's `floors` (a floor moves only on a complete run);
+- an outcome names a file the plan did not mutate, or a complete plan does
+  not mutate every floored file.
+
+An empty plan mutates nothing: the night carries every figure and says so,
+and `--sha` has no shard to check. With `--run <url>` and `--write <out>` the
+night's record is written: the record's shape (docs/scoreboard/mutants.json)
+with `mode`, `base`, the night's `floors` and per file its counts and
+`{"source": "night"|"carried", "run", "sha"}`.
 """
 
+import datetime
 import json
 import os
 import sys
@@ -109,6 +136,55 @@ def one_tree(dispatch, shards):
     return lines
 
 
+def last_complete(record):
+    """The last complete run a record names, {"run", "commit"}, or None."""
+    if record.get("mode") == "complete":
+        return {"run": record.get("run"), "commit": record.get("commit")}
+    if record.get("mode") == "incremental" and isinstance(record.get("base"), dict):
+        return {"run": record["base"].get("run"), "commit": record["base"].get("commit")}
+    return None
+
+
+def num(v):
+    return "absent" if v is None else f"{float(v):g}"
+
+
+def refuse_plan(plan, record, floors, outcome_files):
+    """The refusal's lines for a night whose plan, record or floors do not hold, else []."""
+    lines = []
+    base = last_complete(record)
+    if base is None:
+        return [f"**No last complete run (#462)**: the record names no mode, or an incremental record no base; nothing is carried or scored."]
+    if plan.get("base") != base:
+        lines.append(f"**A stale base (#462)**: the plan diffed against {plan.get('base')}, the record's last complete run is {base}; nothing is scored.")
+    floored = sorted(floors)
+    planned = set(plan.get("files", []))
+    if plan.get("mode") == "complete" and planned != set(floored):
+        lines.append(f"**A complete night mutates every floored file (#462)**: the plan mutates {sorted(planned)} of {floored}.")
+    if plan.get("mode") == "incremental":
+        said = record.get("floors")
+        moved = sorted(f for f in set(floors) | set(said or {}) if (said or {}).get(f) != floors.get(f))
+        if moved:
+            lines.append("**A floor moves only on a complete run (#462)**: on this incremental night "
+                         + ", ".join(f"`{f}` is {num(floors.get(f))} against the last complete run's {num((said or {}).get(f))}" for f in moved)
+                         + "; nothing is scored.")
+    for f in floored:
+        if f in planned:
+            continue
+        entry = record.get("files", {}).get(f)
+        if entry is None:
+            lines.append(f"**No figure to carry (#462)**: `{f}` is not mutated tonight and the record holds no figure for it.")
+            continue
+        named = {"run": entry.get("run", record.get("run")), "commit": entry.get("sha", record.get("commit"))}
+        if named != base or entry.get("source", "night") == "carried" and record.get("mode") == "complete":
+            lines.append(f"**A carried figure's base is not the last complete run (#462)**: `{f}` names run "
+                         f"{named['run']} at `{named['commit']}`, the last complete run is {base['run']} at `{base['commit']}`; nothing is scored.")
+    unplanned = sorted(outcome_files - planned)
+    if unplanned:
+        lines.append(f"**An outcome outside the plan (#462)**: {', '.join(f'`{f}`' for f in unplanned)} mutated, not in the plan's files; nothing is scored.")
+    return lines
+
+
 def write(text):
     sys.stdout.write(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -122,7 +198,8 @@ def main(args):
     hermetic_dir = None
     dispatch = None
     survivors_dir = None
-    while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"]):
+    opts = {}
+    while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"], ["--plan"], ["--record"], ["--run"], ["--write"]):
         if len(args) < 2:
             print(f"{args[0]} needs a value", file=sys.stderr)
             return 1
@@ -130,13 +207,31 @@ def main(args):
             hermetic_dir = args[1]
         elif args[0] == "--sha":
             dispatch = args[1]
-        else:
+        elif args[0] == "--survivors":
             survivors_dir = args[1]
+        else:
+            opts[args[0][2:]] = args[1]
         args = args[2:]
     if survivors_dir is not None and dispatch is None:
         print("--survivors needs --sha", file=sys.stderr)
         return 1
-    if dispatch is not None:
+    if ("plan" in opts) != ("record" in opts) or ("write" in opts and "plan" not in opts):
+        print("--plan and --record go together, and --write needs them", file=sys.stderr)
+        return 1
+    floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
+    plan = record = None
+    if "plan" in opts:
+        plan = json.loads(Path(opts["plan"]).read_text())
+        record = json.loads(Path(opts["record"]).read_text())
+        refusal = refuse_plan(plan, record, floors, {m["file"] for m, _ in mutant_outcomes(args)})
+        if refusal:
+            write("\n".join(refusal) + "\n")
+            return 1
+    if dispatch is not None and plan is not None and not plan.get("files"):
+        dispatch_checked = False
+    else:
+        dispatch_checked = dispatch is not None
+    if dispatch_checked:
         shards = list(shard_shas([a for a in args if Path(a).is_dir()] + ([hermetic_dir] if hermetic_dir else [])))
         if survivors_dir is not None:
             sha = Path(survivors_dir) / "sha"
@@ -157,7 +252,6 @@ def main(args):
         hermetic = {
             mutant["name"]: summary == "CaughtMutant" for mutant, summary in mutant_outcomes([hermetic_dir])
         }
-    floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
     counts = defaultdict(lambda: defaultdict(int))
     by_hermetic = defaultdict(int)
     missed = defaultdict(list)
@@ -174,7 +268,18 @@ def main(args):
             missed[mutant["file"]].append(mutant["name"])
 
     lines = ["## Mutation score per file", ""]
-    if dispatch is not None:
+    carried = {}
+    if plan is not None:
+        base = last_complete(record)
+        carried = {f: record["files"][f] for f in sorted(floors) if f not in set(plan.get("files", []))}
+        lines += [f"A {plan['mode']} night (#462); the last complete run: {base['run']} at `{base['commit']}`."]
+        if not plan.get("files"):
+            lines += ["No floored file changed since it and no test or dependency reaches one: the night "
+                      "mutated nothing and carries every file's figure."]
+        elif carried:
+            lines += ["A carried row is that run's figure, judged at that run and not again tonight."]
+        lines += [""]
+    if dispatch_checked:
         lines += [f"The night's commit: `{dispatch}` (the dispatch's; every shard ran on it, #423).", ""]
     if hermetic is not None:
         lines += [
@@ -190,6 +295,13 @@ def main(args):
     ]
     failed = False
     for file in sorted(set(counts) | set(floors)):
+        if file in carried:
+            e = carried[file]
+            lines.append(
+                f"| `{file}` | {e['caught']} | {e['timeout']} | {e['missed']} | {e['unviable']} | {e['score']:.1f} "
+                f"| {floors.get(file, DEFAULT_FLOOR):g} | carried from run {e.get('run', record.get('run')).rsplit('/', 1)[-1]} "
+                f"at `{e.get('sha', record.get('commit'))[:7]}` |" + (" |" if hermetic is not None else ""))
+            continue
         c = counts.get(file, {})
         caught, timeout = c.get("CaughtMutant", 0), c.get("Timeout", 0)
         miss, unviable = c.get("MissedMutant", 0), c.get("Unviable", 0)
@@ -217,7 +329,37 @@ def main(args):
         lines += ["", f"**{len(unjudged)} survivor(s) of the cargo pass have no hermetic outcome**; no union:", ""]
         lines += [f"- `{name}`" for name in sorted(unjudged)]
     write("\n".join(lines) + "\n")
+    if "write" in opts:
+        night = {f: counts.get(f, {}) for f in plan.get("files", [])}
+        out_record = night_record(plan, record, floors, night, carried, dispatch, opts.get("run"))
+        Path(opts["write"]).write_text(json.dumps(out_record, indent=2) + "\n")
+        print(f"wrote {opts['write']}")
     return 1 if failed else 0
+
+
+def night_record(plan, record, floors, night, carried, commit, run):
+    """The night's record, docs/scoreboard/mutants.json's shape, with each file's provenance."""
+    base = last_complete(record)
+    files = {}
+    for f in sorted(floors):
+        if f in carried:
+            e = carried[f]
+            files[f] = {k: e[k] for k in ("score", "caught", "missed", "timeout", "unviable")}
+            files[f].update(source="carried", run=base["run"], sha=base["commit"])
+            continue
+        c = night.get(f, {})
+        caught, missed, timeout = c.get("CaughtMutant", 0), c.get("MissedMutant", 0), c.get("Timeout", 0)
+        judged = caught + missed + timeout
+        files[f] = {"score": round(100.0 * caught / judged, 1) if judged else None, "caught": caught,
+                    "missed": missed, "timeout": timeout, "unviable": c.get("Unviable", 0),
+                    "source": "night", "run": run, "sha": commit}
+    out = {"schema": 1, "mode": plan["mode"], "commit": commit, "run": run,
+           "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")}
+    if plan["mode"] == "incremental":
+        out["base"] = base
+    out["floors"] = {f: int(v) if float(v).is_integer() else v for f, v in floors.items()}
+    out["files"] = files
+    return out
 
 
 if __name__ == "__main__":
