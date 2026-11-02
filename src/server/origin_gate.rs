@@ -1,24 +1,30 @@
 //! The served doors' browser gate, #411's step (b) by the owner's word
 //! of 2026-11-01: every call carries an `Origin`, the originator a door
-//! judges is derived from it, and only the origins `ALLOWED_ORIGINS` names
-//! are admitted. The per-origin grant in the store is #414's.
+//! judges is derived from it, and only the originators `ALLOWED_ORIGINS`
+//! names are admitted. The per-origin grant in the store is #414's.
+//!
+//! The key, by the owner's word of 2026-11-02: the reference's originator
+//! and its hostname scope (ts-stack edf6e03 `WalletPermissionsManager.ts`,
+//! written `WPM`). An originator is a domain name with an optional port,
+//! without a scheme (`prepareOriginator`, `WPM:5750-5795`); its grants are
+//! the lowercased hostname's, every port of a host sharing one
+//! (`WPM:5702-5729`).
 //!
 //! The desktop client's lines this follows (bsv-desktop bcb6003):
 //! `src/onWalletReady.ts:45-71` reads the originator from `Origin` (an
 //! unparseable one is none), and `:82-88` answers a call without one
 //! `400 {"message": "Origin header is required"}`; an origin its owner
 //! refuses is its permission manager's `The user has denied the request for
-//! permission.` (ts-stack edf6e03 `WalletPermissionsManager.ts:1348-1349`,
-//! code `ERR_PERMISSION_DENIED`), served 400 by the same handler. Here the
-//! list is the owner's word, so an origin it does not name is refused in
-//! that shape without a prompt.
+//! permission.` (`WPM:1348-1349`, code `ERR_PERMISSION_DENIED`), served 400
+//! by the same handler. Here the list is the owner's word, so an originator
+//! it does not name is refused in that shape without a prompt.
 //!
 //! Where this is stricter than the client, by the ruling's rule 1 and the
 //! stack's charter section 13 (`lean/BrowserGate.lean` `gate`): the legacy
 //! `Originator` header never stands in for a missing `Origin` (the client
 //! falls back to it, `onWalletReady.ts:59-68`), and an `Originator` header
-//! or a body's `originator` naming another host than the `Origin` is
-//! refused. The bearer (`AUTH_TOKEN`) is checked ahead of the gate and
+//! or a body's `originator` naming another originator than the `Origin`'s
+//! is refused. The bearer (`AUTH_TOKEN`) is checked ahead of the gate and
 //! never admits an origin.
 
 use std::sync::Arc;
@@ -41,64 +47,97 @@ pub(crate) const NO_ORIGIN: &str = "Origin header is required";
 /// The client's text for an origin its owner refused.
 pub(crate) const DENIED: &str = "The user has denied the request for permission.";
 
-/// The exact origins the served doors admit (`ALLOWED_ORIGINS`), as a
-/// browser serializes them; empty admits none.
+/// The originators the served doors admit (`ALLOWED_ORIGINS`): each a
+/// host with an optional port, lowercased, no scheme; empty admits none.
 #[derive(Clone, Debug, Default)]
 pub struct AllowedOrigins(Arc<[String]>);
 
 impl AllowedOrigins {
-    /// The list, each origin as written (`ALLOWED_ORIGINS` is checked at
-    /// start: `config::read`).
-    pub fn new<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
-        Self(origins.into_iter().map(Into::into).collect())
+    /// The list of originators (`localhost`, `app.example:8443`),
+    /// lowercased; `ALLOWED_ORIGINS` is checked at start by the same rule
+    /// (`config::read`).
+    ///
+    /// # Panics
+    ///
+    /// On an entry that is not an originator (a scheme, a path, a name that
+    /// is not a hostname), with the rule it breaks: an entry is never
+    /// stripped to its host.
+    pub fn new<I: IntoIterator<Item = S>, S: Into<String>>(originators: I) -> Self {
+        Self(
+            originators
+                .into_iter()
+                .map(|entry| {
+                    let entry = entry.into();
+                    crate::config::originator::checked(&entry)
+                        .unwrap_or_else(|rule| panic!("{entry:?} is not {rule}"))
+                })
+                .collect(),
+        )
     }
 
-    fn admits(&self, origin: &str) -> bool {
-        self.0.iter().any(|o| o == origin)
+    /// The entry admitting `originator`, looked up as the reference looks
+    /// up a grant (`prepareOriginator`'s lookup values, `WPM:5786-5794`):
+    /// the originator as named, then its hostname, then any entry whose
+    /// hostname is the originator's (the reference's untagged fallback,
+    /// accepted when the grant's domain normalizes to the hostname,
+    /// `WPM:2966`, `:3267`). So a port never narrows an entry: every port
+    /// of a listed host is admitted.
+    fn admits(&self, originator: &str) -> Option<&str> {
+        let host = hostname_of(originator)?;
+        let find = |hit: &dyn Fn(&str) -> bool| self.0.iter().find(|e| hit(e)).map(String::as_str);
+        find(&|e| e == originator)
+            .or_else(|| find(&|e| e == host))
+            .or_else(|| find(&|e| hostname_of(e).as_deref() == Some(host.as_str())))
+    }
+
+    /// Whether the list admits an `Origin` header's originator (the CORS
+    /// layer's and the inspector's question).
+    pub(crate) fn admits_origin(&self, origin: &str) -> bool {
+        originator_of(origin).is_some_and(|o| self.admits(&o).is_some())
     }
 
     /// The CORS layer over the list: a preflight or an answer carries
-    /// `Access-Control-Allow-Origin` only for a listed origin, which it
-    /// echoes; the methods and headers are mirrored as before (#138).
+    /// `Access-Control-Allow-Origin` only for an `Origin` whose originator
+    /// the list admits, which it echoes; the methods and headers are
+    /// mirrored as before (#138).
     pub(crate) fn cors(&self) -> CorsLayer {
-        let listed: Vec<HeaderValue> = self
-            .0
-            .iter()
-            .filter_map(|o| HeaderValue::from_str(o).ok())
-            .collect();
+        let allowed = self.clone();
+        let admits = move |origin: &HeaderValue, _: &axum::http::request::Parts| {
+            origin.to_str().is_ok_and(|o| allowed.admits_origin(o))
+        };
         // A listed page reads `Retry-After` on a 503 STORE_BUSY (#44).
         CorsLayer::new()
             .allow_credentials(true)
             .allow_headers(AllowHeaders::mirror_request())
             .allow_methods(AllowMethods::mirror_request())
-            .allow_origin(AllowOrigin::list(listed))
+            .allow_origin(AllowOrigin::predicate(admits))
             .expose_headers([axum::http::header::RETRY_AFTER])
     }
 }
 
 impl super::ServerConfig {
-    /// The default settings with the browser gate admitting `origins`, as
+    /// The default settings with the browser gate admitting `originators`, as
     /// `ALLOWED_ORIGINS` would (the tests' and the harnesses' servers).
     #[allow(dead_code)] // the binary reads `ALLOWED_ORIGINS`; the tests build it
     #[must_use]
-    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(origins: I) -> Self {
+    pub fn admitting<I: IntoIterator<Item = S>, S: Into<String>>(originators: I) -> Self {
         Self {
-            allowed_origins: AllowedOrigins::new(origins),
+            allowed_origins: AllowedOrigins::new(originators),
             ..Self::default()
         }
     }
 }
 
-/// The gate's refusals (`BrowserGate.Word` under (b): an origin not listed
-/// is refused, never pending); a call admitted is its `Origin`.
+/// The gate's refusals (`BrowserGate.Word` under (b): an originator not
+/// listed is refused, never pending); a call admitted is its `Origin`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Refused {
     /// The call names no parseable `Origin`.
     NoOrigin,
-    /// The `Originator` header names another host than the `Origin`.
+    /// The `Originator` header names another originator than the `Origin`.
     Disagrees { origin: String, claimed: String },
-    /// The `Origin` is not in `ALLOWED_ORIGINS`.
-    NotListed { origin: String },
+    /// The `Origin`'s originator is not in `ALLOWED_ORIGINS`.
+    NotListed { origin: String, originator: String },
 }
 
 impl Refused {
@@ -113,8 +152,8 @@ impl Refused {
                      header's {origin}"
                 ),
             ),
-            Refused::NotListed { origin } => {
-                tracing::info!(origin = %origin, "browser gate: origin not in ALLOWED_ORIGINS, refused");
+            Refused::NotListed { origin, originator } => {
+                tracing::info!(origin = %origin, originator = %originator, "browser gate: originator not in ALLOWED_ORIGINS, refused");
                 AppError::new(Kind::OriginDenied, DENIED)
             }
         }
@@ -122,61 +161,86 @@ impl Refused {
     }
 }
 
-/// The host a name is judged by, as the client derives it (`new
-/// URL(x).host`: the host and a port other than the scheme's default); a
-/// name without a scheme is read as `http://`, as the client reads the
-/// `Originator` header.
-fn host_of(name: &str) -> Option<String> {
-    let candidate = if name.contains("://") {
-        name.to_string()
-    } else {
-        format!("http://{name}")
-    };
-    let url = url::Url::parse(&candidate).ok()?;
-    let host = url.host_str()?;
+/// The originator of an `Origin` header, as the client derives it (`new
+/// URL(origin).host`, `onWalletReady.ts:51`) in the reference's form: the
+/// host lowercased, with its port only when the header names one, never
+/// the scheme. `https://App.Example:8443` is `app.example:8443`;
+/// `http://localhost` is `localhost`.
+pub(crate) fn originator_of(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
     Some(match url.port() {
         Some(port) => format!("{host}:{port}"),
-        None => host.to_string(),
+        None => host,
     })
 }
 
-/// The `Origin` header, when it is one a URL parser reads with a host.
-fn origin_of(headers: &HeaderMap) -> Option<&str> {
-    let origin = headers.get("origin")?.to_str().ok()?;
-    url::Url::parse(origin).ok()?.host_str()?;
-    Some(origin)
+/// The originator another field names, in the same form: a name with a
+/// scheme as an `Origin`, one without (the reference's form,
+/// `app.example:8443`) read as its host and port.
+fn claimed_originator(name: &str) -> Option<String> {
+    if crate::config::originator::has_scheme(name) {
+        originator_of(name)
+    } else {
+        originator_of(&format!("http://{name}"))
+    }
 }
 
-/// The gate on a call's headers: the admitted `Origin`, or the refusal.
-/// The order is `BrowserGate.gate`'s: the `Origin`, the other field's
+/// An originator's hostname, its port dropped (`WPM:5702-5729`).
+fn hostname_of(originator: &str) -> Option<String> {
+    url::Url::parse(&format!("http://{originator}"))
+        .ok()?
+        .host_str()
+        .map(str::to_ascii_lowercase)
+}
+
+/// The `Origin` header and its originator, when it is one a URL parser
+/// reads with a host.
+fn origin_of(headers: &HeaderMap) -> Option<(&str, String)> {
+    let origin = headers.get("origin")?.to_str().ok()?;
+    Some((origin, originator_of(origin)?))
+}
+
+/// The gate on a call's headers: the admitted call, or the refusal. The
+/// order is `BrowserGate.gate`'s: the `Origin`, the other field's
 /// agreement, then the list.
-pub(crate) fn judge(headers: &HeaderMap, allowed: &AllowedOrigins) -> Result<String, Refused> {
-    let origin = origin_of(headers).ok_or(Refused::NoOrigin)?;
+pub(crate) fn judge(headers: &HeaderMap, allowed: &AllowedOrigins) -> Result<Admitted, Refused> {
+    let (origin, originator) = origin_of(headers).ok_or(Refused::NoOrigin)?;
     if let Some(claimed) = headers.get("originator") {
         let claimed = String::from_utf8_lossy(claimed.as_bytes()).into_owned();
-        if host_of(&claimed) != host_of(origin) {
+        if claimed_originator(&claimed).as_ref() != Some(&originator) {
             return Err(Refused::Disagrees {
                 origin: origin.to_string(),
                 claimed,
             });
         }
     }
-    if allowed.admits(origin) {
-        Ok(origin.to_string())
-    } else {
-        Err(Refused::NotListed {
+    match allowed.admits(&originator) {
+        Some(entry) => Ok(Admitted {
             origin: origin.to_string(),
-        })
+            entry: entry.to_string(),
+            originator,
+        }),
+        None => Err(Refused::NotListed {
+            origin: origin.to_string(),
+            originator,
+        }),
     }
 }
 
-/// The admitted call's origin, for the body's check after it is read.
-#[derive(Clone, Debug)]
-pub(crate) struct Admitted(pub(crate) String);
+/// The admitted call: its `Origin` as sent, its originator, and the entry
+/// that admitted it, for the log and the body's check after it is read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Admitted {
+    pub(crate) origin: String,
+    pub(crate) originator: String,
+    pub(crate) entry: String,
+}
 
 /// The gate, after the bearer and before the body is read: a call is
-/// admitted, logged at info with its origin, or refused in the client's
-/// shape. Inside the CORS layer, so a listed page reads its refusal.
+/// admitted, logged at info with its origin, its originator and the entry
+/// that admitted it, or refused in the client's shape. Inside the CORS
+/// layer, so a listed page reads its refusal.
 pub(crate) async fn gate(
     axum::Extension(allowed): axum::Extension<AllowedOrigins>,
     mut request: Request,
@@ -186,9 +250,15 @@ pub(crate) async fn gate(
         return next.run(request).await;
     }
     match judge(request.headers(), &allowed) {
-        Ok(origin) => {
-            tracing::info!(origin = %origin, path = %request.uri().path(), "browser gate: admitted");
-            request.extensions_mut().insert(Admitted(origin));
+        Ok(admitted) => {
+            tracing::info!(
+                origin = %admitted.origin,
+                originator = %admitted.originator,
+                entry = %admitted.entry,
+                path = %request.uri().path(),
+                "browser gate: admitted"
+            );
+            request.extensions_mut().insert(admitted);
             next.run(request).await
         }
         Err(refused) => refused.answer(),
@@ -196,8 +266,8 @@ pub(crate) async fn gate(
 }
 
 /// The preflight's gate, outside the CORS layer: an `OPTIONS` from an
-/// origin not listed (or with none) is refused before CORS answers it, so a
-/// preflight is answered only for a listed origin.
+/// originator not listed (or with no `Origin`) is refused before CORS
+/// answers it, so a preflight is answered only for a listed originator.
 pub(crate) async fn preflight(
     axum::Extension(allowed): axum::Extension<AllowedOrigins>,
     request: Request,
@@ -207,9 +277,10 @@ pub(crate) async fn preflight(
         return next.run(request).await;
     }
     match origin_of(request.headers()) {
-        Some(origin) if allowed.admits(origin) => next.run(request).await,
-        Some(origin) => Refused::NotListed {
+        Some((_, originator)) if allowed.admits(&originator).is_some() => next.run(request).await,
+        Some((origin, originator)) => Refused::NotListed {
             origin: origin.to_string(),
+            originator,
         }
         .answer(),
         None => Refused::NoOrigin.answer(),
@@ -223,8 +294,8 @@ pub(crate) fn refuse_body(extensions: &axum::http::Extensions, body: &[u8]) -> O
     body_disagrees(admitted, body).map(IntoResponse::into_response)
 }
 
-/// A body's top-level `originator`, when it names another host than the
-/// admitted `Origin` (or is not a string): the refusal. It fails closed: a
+/// A body's top-level `originator`, when it names another originator than
+/// the admitted `Origin`'s (or is not a string): the refusal. It fails closed: a
 /// second `originator` is a disagreement by itself, and so is a body the
 /// walk cannot read once it has met one. A body that is not a JSON object
 /// names none, and a fault before any `originator` is the door's own (its
@@ -241,7 +312,7 @@ pub(crate) fn body_disagrees(admitted: &Admitted, body: &[u8]) -> Option<AppErro
             Kind::Validation,
             format!(
                 "the body's originator {claim}, which disagrees with the Origin header's {}",
-                admitted.0
+                admitted.origin
             ),
         )
     };
@@ -255,7 +326,7 @@ pub(crate) fn body_disagrees(admitted: &Admitted, body: &[u8]) -> Option<AppErro
         (Ok(()), [Some(claim)]) => {
             let agrees = claim
                 .as_str()
-                .is_some_and(|c| host_of(c).is_some() && host_of(c) == host_of(&admitted.0));
+                .is_some_and(|c| claimed_originator(c).as_ref() == Some(&admitted.originator));
             let claim = claim
                 .as_str()
                 .map_or_else(|| claim.to_string(), str::to_string);
@@ -314,7 +385,23 @@ mod tests {
     }
 
     fn listed() -> AllowedOrigins {
-        AllowedOrigins::new(["http://app.example", "http://localhost:5173"])
+        AllowedOrigins::new(["App.Example", "localhost:5173"])
+    }
+
+    /// The key (the owner's word of 2026-11-02): an `Origin` is judged as
+    /// its originator, the host lowercased with its port when named and no
+    /// scheme, as the reference names one.
+    #[test]
+    fn an_origin_is_judged_as_its_originator() {
+        for (origin, originator) in [
+            ("https://App.Example:8443", "app.example:8443"),
+            ("http://localhost:5173", "localhost:5173"),
+            ("https://app.example", "app.example"),
+            ("http://127.0.0.1:3000", "127.0.0.1:3000"),
+            ("http://[::1]:3000", "[::1]:3000"),
+        ] {
+            assert_eq!(originator_of(origin).as_deref(), Some(originator));
+        }
     }
 
     /// The scenario no-origin: no `Origin` is refused whatever the
@@ -333,21 +420,22 @@ mod tests {
         }
     }
 
-    /// The scenarios new-origin and revoked-origin under (b): an origin the
-    /// list does not name (or no longer names) is refused, the list exact.
+    /// The scenarios new-origin and revoked-origin under (b): an originator
+    /// whose hostname the list does not name (or no longer names) is
+    /// refused.
     #[test]
-    fn an_origin_not_listed_is_refused() {
-        for origin in [
-            "http://new.example",
-            "https://app.example",
-            "http://app.example:8080",
-            "http://localhost",
-            "http://localhost:5174",
+    fn an_originator_not_listed_is_refused() {
+        for (origin, originator) in [
+            ("http://new.example", "new.example"),
+            ("http://sub.app.example", "sub.app.example"),
+            ("http://app.example.evil", "app.example.evil"),
+            ("http://127.0.0.1:5173", "127.0.0.1:5173"),
         ] {
             assert_eq!(
                 judge(&headers(&[("origin", origin)]), &listed()),
                 Err(Refused::NotListed {
-                    origin: origin.into()
+                    origin: origin.into(),
+                    originator: originator.into()
                 })
             );
         }
@@ -358,38 +446,59 @@ mod tests {
         ));
     }
 
-    /// The scenario granted-origin: a listed origin is admitted, with or
-    /// without an agreeing `Originator` (the reference's Node client sends
-    /// the same value in both, HTTPWalletJSON.ts:314).
+    /// The scenario granted-origin, by the reference's hostname scope: a
+    /// listed host is admitted under either scheme and on every port, with
+    /// or without an agreeing `Originator` (the reference's Node client
+    /// sends the same value in both, HTTPWalletJSON.ts:314). The lookup is
+    /// the reference's: the originator as named, then its hostname, then an
+    /// entry for another port of the host (`WPM:5786-5794`).
     #[test]
-    fn a_listed_origin_is_admitted_with_an_agreeing_field() {
-        for h in [
-            headers(&[("origin", "http://app.example")]),
-            headers(&[
-                ("origin", "http://app.example"),
-                ("originator", "app.example"),
-            ]),
-            headers(&[
-                ("origin", "http://app.example"),
-                ("originator", "http://app.example"),
-            ]),
-            headers(&[
-                ("origin", "http://localhost:5173"),
-                ("originator", "localhost:5173"),
-            ]),
+    fn a_listed_host_is_admitted_on_every_port_and_scheme() {
+        for (origin, claimed, entry) in [
+            ("http://app.example", None, "app.example"),
+            ("https://app.example", None, "app.example"),
+            ("http://APP.example:8080", None, "app.example"),
+            ("http://app.example", Some("app.example"), "app.example"),
+            (
+                "http://app.example",
+                Some("http://app.example"),
+                "app.example",
+            ),
+            (
+                "https://app.example:8443",
+                Some("App.Example:8443"),
+                "app.example",
+            ),
+            (
+                "http://localhost:5173",
+                Some("localhost:5173"),
+                "localhost:5173",
+            ),
+            ("http://localhost:5174", None, "localhost:5173"),
+            ("http://localhost", None, "localhost:5173"),
         ] {
-            assert!(judge(&h, &listed()).is_ok(), "{h:?}");
+            let mut pairs = vec![("origin", origin)];
+            pairs.extend(claimed.map(|c| ("originator", c)));
+            let admitted = judge(&headers(&pairs), &listed()).expect(origin);
+            assert_eq!(admitted.entry, entry, "{origin}");
+            assert_eq!(admitted.origin, origin);
         }
+        let both = AllowedOrigins::new(["localhost:5173", "localhost"]);
+        let at = |origin| judge(&headers(&[("origin", origin)]), &both).unwrap().entry;
+        assert_eq!(at("http://localhost:5173"), "localhost:5173");
+        assert_eq!(at("http://localhost:3000"), "localhost");
     }
 
-    /// The scenario disagreeing-originator: another host in the
-    /// `Originator` header is refused, listed or not, before the list.
+    /// The scenario disagreeing-originator: another originator in the
+    /// `Originator` header is refused, listed or not, before the list; it
+    /// is compared in the `Origin`'s form, host and port.
     #[test]
     fn a_disagreeing_originator_is_refused_before_the_list() {
         for (origin, claimed) in [
             ("http://evil.example", "app.example"),
             ("http://app.example", "evil.example"),
             ("http://localhost:5173", "localhost"),
+            ("http://app.example", "app.example:8080"),
             ("http://app.example", ""),
         ] {
             assert!(
@@ -405,6 +514,14 @@ mod tests {
         }
     }
 
+    /// An entry is an originator or a programmer's error, never stripped
+    /// to its host.
+    #[test]
+    #[should_panic(expected = "without a URL scheme")]
+    fn an_entry_with_a_scheme_is_refused() {
+        let _ = AllowedOrigins::new(["http://localhost"]);
+    }
+
     /// A body's originator agrees with the `Origin` or is refused, and the
     /// check fails closed (the review of PR 419): a second `originator` is a
     /// disagreement by itself (serde's derive refused the duplicate and the
@@ -413,11 +530,17 @@ mod tests {
     /// (fixture 032).
     #[test]
     fn a_body_originator_must_agree_with_the_origin() {
-        let admitted = Admitted("http://app.example".into());
+        let admitted = Admitted {
+            origin: "http://app.example".into(),
+            originator: "app.example".into(),
+            entry: "app.example".into(),
+        };
         for body in [
             &br#"{"keyID":"1"}"#[..],
             br#"{"originator":"app.example"}"#,
             br#"{"originator":"app.example","keyID":"1"}"#,
+            br#"{"originator":"APP.example"}"#,
+            br#"{"originator":"http://app.example"}"#,
             br"[1,2]",
             br#"["evil.example",{"keyID":"1"}]"#,
             b"not json",

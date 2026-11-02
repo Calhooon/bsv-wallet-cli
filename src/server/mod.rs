@@ -55,7 +55,7 @@ pub struct ServerConfig {
     /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
     /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
-    /// The exact origins the browser gate admits (`ALLOWED_ORIGINS`, #411);
+    /// The originators the browser gate admits (`ALLOWED_ORIGINS`, #411);
     /// empty admits none, the bearer's callers included.
     pub allowed_origins: AllowedOrigins,
     /// Optional TLS config. Requires `--features tls` at build time.
@@ -342,7 +342,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .route("/arc-callback", post(arc_callback))
         // The last layer added runs first: body limit, trace, extensions, the
         // preflight's gate (an OPTIONS from an origin not listed is refused,
-        // #411), CORS (it answers a listed origin's OPTIONS, a preflight
+        // #411), CORS (it answers a listed originator's OPTIONS, a preflight
         // carries no bearer, and rides a 401 so a browser reads it: #138),
         // auth, the browser gate (#411), both BEFORE the body is read (an
         // uncapped BEEF door is open only to the wallet's own caller), the body.

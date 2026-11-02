@@ -588,7 +588,7 @@ impl World {
         }
         let mut config = ServerConfig {
             settings: crate::wire_support::quiet_config(),
-            ..ServerConfig::admitting([super::recorder::ORIGIN, "https://app.example"])
+            ..ServerConfig::admitting([super::recorder::ORIGINATOR, "app.example"])
         };
         match name {
             "auth" => config.auth_token = Some(WIRE_BEARER.to_string()),

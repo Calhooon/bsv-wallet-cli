@@ -108,15 +108,15 @@ fn valid_response(valid: bool) -> Json<serde_json::Value> {
     Json(json!({ "valid": valid }))
 }
 
-/// The originator a door judges: the `Origin` header's host, which the
-/// browser gate (`origin_gate`) admitted before the door (#411). The
-/// `Originator` header never stands in for it.
+/// The originator a door judges: the `Origin` header's, in the
+/// reference's form (`origin_gate::originator_of`: the host lowercased,
+/// its port when named, no scheme), which the browser gate admitted before
+/// the door (#411). The `Originator` header never stands in for it.
 fn extract_originator(headers: &HeaderMap) -> Result<String, AppError> {
     headers
         .get("origin")
         .and_then(|v| v.to_str().ok())
-        .and_then(|origin| url::Url::parse(origin).ok())
-        .and_then(|url| url.host_str().map(str::to_string))
+        .and_then(super::origin_gate::originator_of)
         .ok_or_else(|| AppError::new(Kind::Validation, super::origin_gate::NO_ORIGIN))
 }
 

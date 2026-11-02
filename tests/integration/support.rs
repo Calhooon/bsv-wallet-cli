@@ -11,15 +11,11 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tempfile::TempDir;
 
-/// The origin the tests' client sends on every call, and the origins their
-/// servers admit (`ALLOWED_ORIGINS`, #411): a served door refuses a call
-/// without an `Origin` it names.
+/// The origin the tests' client sends on every call, and the originators
+/// their servers admit (`ALLOWED_ORIGINS`, #411): a served door refuses a
+/// call without an `Origin` whose originator it names.
 pub(crate) const ORIGIN: &str = "http://test.local";
-pub(crate) const ORIGINS: [&str; 3] = [
-    ORIGIN,
-    "http://browser.test",
-    "http://privileged-audit.test",
-];
+pub(crate) const ORIGINS: [&str; 3] = ["test.local", "browser.test", "privileged-audit.test"];
 
 /// The default server settings admitting [`ORIGINS`].
 pub(crate) fn admitting() -> ServerConfig {

@@ -12,6 +12,8 @@ use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
+use crate::server::AllowedOrigins;
+
 const HTML: &str = include_str!("../ui/index.html");
 
 struct AppState {
@@ -19,7 +21,7 @@ struct AppState {
     db_path: String,
 }
 
-pub async fn run(db_path: &str, port: u16, allowed: &[String]) -> Result<()> {
+pub async fn run(db_path: &str, port: u16, allowed: AllowedOrigins) -> Result<()> {
     let url = format!("sqlite:{db_path}");
     let pool = SqlitePool::connect(&url).await?;
     let state = Arc::new(AppState {
@@ -34,10 +36,7 @@ pub async fn run(db_path: &str, port: u16, allowed: &[String]) -> Result<()> {
         .route("/api/tables/{name}/schema", get(table_schema))
         .route("/api/stats", get(stats))
         .route("/api/query", post(query))
-        .layer(middleware::from_fn_with_state(
-            Arc::new(allowed.to_vec()),
-            same_origin,
-        ))
+        .layer(middleware::from_fn_with_state(allowed, same_origin))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{port}");
@@ -49,14 +48,14 @@ pub async fn run(db_path: &str, port: u16, allowed: &[String]) -> Result<()> {
 
 /// The inspector's browser gate (#411), the served doors' rule on its own
 /// routes: a call is admitted when its `Origin` is the inspector's own
-/// (`http://` and the `Host` it was asked by) or one `ALLOWED_ORIGINS`
-/// names. The one exemption: a `GET` or `HEAD` with no `Origin`, the only
+/// (`http://` and the `Host` it was asked by) or one whose originator
+/// `ALLOWED_ORIGINS` admits (the served doors' hostname scope). The one exemption: a `GET` or `HEAD` with no `Origin`, the only
 /// requests a browser sends without one (its own page's reads, and a
 /// command line's); a page of another origin cannot read their answers, as
 /// the inspector answers no CORS. Every call must name a loopback `Host`,
 /// so a page rebinding its name to this port is refused before any read.
 async fn same_origin(
-    State(allowed): State<Arc<Vec<String>>>,
+    State(allowed): State<AllowedOrigins>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -70,7 +69,11 @@ async fn same_origin(
     }
 }
 
-fn inspector_word(method: &Method, headers: &HeaderMap, allowed: &[String]) -> Result<(), String> {
+fn inspector_word(
+    method: &Method,
+    headers: &HeaderMap,
+    allowed: &AllowedOrigins,
+) -> Result<(), String> {
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
@@ -87,9 +90,7 @@ fn inspector_word(method: &Method, headers: &HeaderMap, allowed: &[String]) -> R
     match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
         None if matches!(*method, Method::GET | Method::HEAD) => Ok(()),
         None => Err("Origin header is required".to_string()),
-        Some(origin)
-            if origin == format!("http://{host}") || allowed.iter().any(|o| o == origin) =>
-        {
+        Some(origin) if origin == format!("http://{host}") || allowed.admits_origin(origin) => {
             Ok(())
         }
         Some(origin) => Err(format!(
@@ -546,12 +547,13 @@ mod tests {
         h
     }
 
-    /// #411: the inspector's own page and the listed origins are admitted;
+    /// #411: the inspector's own page and the origins whose originator is
+    /// listed (any port of a listed host) are admitted;
     /// a GET without an Origin is its own page's read; anything else, or a
     /// Host that is not loopback, is refused.
     #[test]
     fn the_inspector_admits_its_own_origin_and_the_listed() {
-        let listed = vec!["http://localhost:5173".to_string()];
+        let listed = AllowedOrigins::new(["app.example"]);
         let host = (header::HOST, "localhost:9321");
         let ok = |m: Method, h: HeaderMap| inspector_word(&m, &h, &listed).is_ok();
         assert!(ok(Method::GET, headers(std::slice::from_ref(&host))));
@@ -565,7 +567,7 @@ mod tests {
         ));
         assert!(ok(
             Method::POST,
-            headers(&[host.clone(), (header::ORIGIN, "http://localhost:5173")])
+            headers(&[host.clone(), (header::ORIGIN, "https://app.example:5173")])
         ));
         assert!(!ok(Method::POST, headers(std::slice::from_ref(&host))));
         assert!(!ok(

@@ -270,7 +270,7 @@ async fn cors_exposes_retry_after() {
         .header("Origin", "https://app.example")
         .body(axum::body::Body::empty())
         .unwrap();
-    let response = served_by(&["https://app.example"], request).await;
+    let response = served_by(&["app.example"], request).await;
     let exposed = response
         .headers()
         .get(axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS)
@@ -278,7 +278,7 @@ async fn cors_exposes_retry_after() {
     assert_eq!(exposed.as_deref(), Some("retry-after"));
 }
 
-/// `request` served by a fresh wallet's router admitting `origins`.
+/// `request` served by a fresh wallet's router admitting `originators`.
 async fn served_by(
     origins: &[&str],
     request: axum::http::Request<axum::body::Body>,
@@ -350,7 +350,7 @@ async fn encrypt_served(content_type: &str, fields: &str) -> (u16, serde_json::V
         .header("Content-Type", content_type)
         .body(axum::body::Body::from(body))
         .unwrap();
-    let response = served_by(&["http://app.example"], request).await;
+    let response = served_by(&["app.example"], request).await;
     let (served, _, answer) = crate::test_support::response_answer(response).await;
     (served.as_u16(), answer)
 }
@@ -666,7 +666,7 @@ async fn host_route_store_faults(path: &str, code: &str) {
     let storage = wallet.storage();
     let app = crate::server::make_router(
         wallet.clone(),
-        crate::server::ServerConfig::admitting(["http://host-route.test"]),
+        crate::server::ServerConfig::admitting(["host-route.test"]),
     );
     let request = || {
         axum::http::Request::get(path)

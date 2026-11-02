@@ -8,21 +8,29 @@
  * a satoshi: every call is refused before a door or is a key read.
  *
  * The scenes follow the stack's five scenarios step by step
- * (bsv-stack-lean 76004514, corpus/scenarios/2026-11-01-wallet-browser-gate-*.md),
- * their origins `app.example`, `new.example` and `evil.example` read as the
- * pages `http://app.example` and so on.
+ * (bsv-stack-lean 4372ea39, corpus/scenarios/2026-11-01-wallet-browser-gate-*.md).
+ * The scenarios' grant rows name originators (`app.example`), the
+ * reference's form and hostname scope (`BrowserGate.Origin`; ts-stack
+ * edf6e03 WalletPermissionsManager.ts:5702-5729), and so does
+ * `ALLOWED_ORIGINS` (the owner's word of 2026-11-02): a scene lists
+ * `app.example` and its pages send the browser's `Origin`,
+ * `http://app.example`, or another scheme or port of the same host.
  */
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { startWallet, teardownWallet, BSV } = require('./setup');
-const { WalletClient, E2E_ORIGIN } = require('./wallet-client');
+const { WalletClient, E2E_ORIGIN, E2E_ORIGINATOR } = require('./wallet-client');
 const record = require('./record');
 
 const D_PORT = parseInt(process.env.WALLET_D_PORT || '3374');
+/** The pages' `Origin` headers, as a browser sends them. */
 const APP = 'http://app.example';
 const NEW = 'http://new.example';
 const EVIL = 'http://evil.example';
+/** The owner's grants: the originators `ALLOWED_ORIGINS` lists. */
+const APP_GRANT = 'app.example';
+const NEW_GRANT = 'new.example';
 const TOKEN = 'e2e-gate-bearer';
 
 /** The client's two refusals (bsv-desktop bcb6003 src/onWalletReady.ts:82-88; ts-stack edf6e03 WalletPermissionsManager.ts:1348). */
@@ -53,9 +61,9 @@ async function callNow(wallet, method, endpoint, { origin, originator, bearer, b
   return { status: resp.status, body: json, allowOrigin: resp.headers.get('access-control-allow-origin') };
 }
 
-/** Start the scene's wallet with `allowed` listed (the harness's origin too). */
+/** Start the scene's wallet with the originators `allowed` listed (the harness's too). */
 async function startGated(name, allowed) {
-  const wallet = await startWallet(D_PORT, name, { env: { ALLOWED_ORIGINS: [E2E_ORIGIN, ...allowed].join(',') } });
+  const wallet = await startWallet(D_PORT, name, { env: { ALLOWED_ORIGINS: [E2E_ORIGINATOR, ...allowed].join(',') } });
   wallet.name = name;
   return wallet;
 }
@@ -69,7 +77,7 @@ async function restartGated(wallet, allowed, { token } = {}) {
   const envPath = path.join(wallet.dir, '.env');
   const kept = fs.readFileSync(envPath, 'utf-8').split('\n')
     .filter(l => l && !l.startsWith('ALLOWED_ORIGINS=') && !l.startsWith('AUTH_TOKEN='));
-  kept.push(`ALLOWED_ORIGINS='${[E2E_ORIGIN, ...allowed].join(',')}'`);
+  kept.push(`ALLOWED_ORIGINS='${[E2E_ORIGINATOR, ...allowed].join(',')}'`);
   if (token) kept.push(`AUTH_TOKEN='${token}'`);
   fs.writeFileSync(envPath, kept.join('\n') + '\n');
   await new Promise((resolve) => {
@@ -128,6 +136,6 @@ async function scene(name, allowed, body) {
 }
 
 module.exports = {
-  APP, NEW, EVIL, TOKEN, NO_ORIGIN, DENIED, ARGS, D_PORT,
+  APP, NEW, EVIL, APP_GRANT, NEW_GRANT, TOKEN, NO_ORIGIN, DENIED, ARGS, D_PORT,
   call, restartGated, audited, scene, WalletClient,
 };
