@@ -89,7 +89,7 @@ with its value and its source (`env` or `default`), and exits:
 | Variable | Default | |
 |---|---|---|
 | `WALLET_URL` | `http://localhost:3322` | the wallet's HTTP server; an http or https URL |
-| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank |
+| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank; the wallet's `ALLOWED_ORIGINS` must list it (#411) |
 | `RELAY_URL` | none | the callback relay; unset or empty is no relay |
 | `RELAY_ADMIN_TOKEN` | none | the relay's admin bearer, printed `<set>` (or `empty`) |
 | `RUST_LOG` | `error` | the log filter, to stderr; `bsv_wallet_mcp=info` is always added |
@@ -111,6 +111,30 @@ The server implements the wallet interface and serializes spending operations.
 `AUTH_TOKEN`, unless the operator explicitly supplies `--allow-no-token`.
 Under `AUTH_TOKEN` a browser client passes the CORS preflight, which carries
 no credentials, and sends its bearer on the request (#138).
+
+The browser gate (#411, the first step of the owner's word of 2026-11-01): every
+served call but `POST /arc-callback` carries an `Origin`, and only the origins
+`ALLOWED_ORIGINS` names are answered, as the MetaNet Client asks an `Origin` of
+every call. The originator a door judges is the `Origin`'s host; the legacy
+`Originator` header never stands in for a missing `Origin`, and an `Originator`
+header or a body's `originator` naming another host is refused.
+
+| variable | effect |
+|---|---|
+| `ALLOWED_ORIGINS` | the exact origins the served doors and the inspector answer, comma-separated, as a browser sends them (`http://localhost`, `http://localhost:5173`, `https://app.example:8443`): no path, no trailing slash, no wildcard, no scheme-less entry, the default port left out; any other spelling is refused at start by name. Unset or blank answers no origin (the stricter default, until the owner's word). Each admitted call is logged at info with its origin |
+| `AUTH_TOKEN` | the bearer for the owner's non-browser callers, checked ahead of the gate; it never stands in for an origin: a bearer caller still sends an `Origin` the list names, and is judged by it |
+
+A call without an `Origin` is the client's 400 `{"code": "VALIDATION_ERROR",
+"message": "Origin header is required"}`; an origin the list does not name is
+the client's denial, 400 `{"code": "ERR_PERMISSION_DENIED", "message": "The
+user has denied the request for permission."}`, with no CORS header, so a page
+cannot read it; its preflight is refused the same way. A caller of the served
+wallet sends the header as the x402 skill does:
+`curl -H 'Origin: http://localhost' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:3322/getVersion`,
+with `ALLOWED_ORIGINS=http://localhost` in the wallet's `.env`. The inspector
+(`bsv-wallet ui`) answers its own origin and the listed ones, a `GET` without
+an `Origin` (its page's reads), and a loopback `Host` only. See
+[docs/WIRE.md](docs/WIRE.md#the-browser-gate-411).
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. `CHAINTRACKS_URL=off` runs
 with no header service: nothing is marked proven (every merkle proof is
