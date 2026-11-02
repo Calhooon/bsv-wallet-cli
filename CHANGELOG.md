@@ -5,6 +5,151 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## [Unreleased]
 
+## [0.19.0-beta.6] - 2026-11-02
+
+- **`send` to the wallet's own address keeps its sats (#38):** the payment to its own BRC-29 deposit address (or its identity or deposit key in hex) is no longer tagged `relinquish` and is internalized back as a wallet payment after the broadcast, so the balance moves by the fee alone; a send to another address is unchanged.
+
+- **The framework's own rejections are refusals (#122 item 3):** a body that does not parse and a field missing or of the wrong type answer `{code, message}` at 400 `VALIDATION_ERROR` with axum's words, where they were plain text at 400 and 422; a missing field is named as the wire spells it (`protocolID`, not `protocolId`). A body is read as the MetaNet Client reads it: valid JSON under any content type (`text/plain` and the like) is the call, with the same surrogate cleaning and refusal words as a JSON-typed body, where it was axum's 415 in text; a request with no content type is the call with `{}`.
+- **signAction's unknown reference is the caller's 400 (#122 item 5):** a reference with no pending action answers 400 `VALIDATION_ERROR`, as `abortAction` answers the same reference, where it was 501 `NOT_IMPLEMENTED`; the words are unchanged.
+- **getVersion names this wallet (#122 item 6):** it answers `bsv-wallet-cli-<major>.<minor>.<patch>` (`bsv-wallet-cli-0.19.0` at 0.19.0-beta.4), BRC-100's `[vendor]-[major].[minor].[patch]`, where it answered the toolbox's `bsv-wallet-toolbox-0.1.0`.
+- **An unknown allowPending word is refused (#122 item 7):** on the served `/createAction`, an `allowPending` value other than `"received"` or `{"received": [...]}` is 400 `VALIDATION_ERROR` naming the words, as a wrong coin in the scoped form is, where it was quietly off. The CLI's `--allow-pending` already took no other word.
+
+- **The Nightly measures the benches (#142):** a `bench` job in `nightly.yml` runs bench.yml's measure on each dispatched night and keeps the candidate baseline as `bench-night-<run id>-<cpu key>`, and `tools/bench-compare --append` adds that night's one run to `benches/baseline.json` by its own PR, refusing a duplicate run id, a CPU-less entry and anything the gate would fail; five nights on a CPU and its entry gates.
+
+- **No BEEF dumps in the temp folder (#155):** toolbox 0.14.0-beta.6 (#530)
+  no longer writes `beef-<txid8>.hex` to the temp folder on every immediate
+  broadcast, nor (#546) `beef-rejected-*.hex` for a refused graph. Files left
+  by earlier versions are not removed; clear them by name. Tooling that read
+  them reads the store's `proven_tx_reqs.input_beef`.
+
+- **The Nightly's mutation shards test their mutants again (#310):** each shard runs every test target and bench that reaches a floored file, whole, with each mutant's tests stopped at twice the shard's measured baseline instead of a fixed 300 s, and a shard whose baseline fails or whose invocation is refused fails instead of ending green with no outcome. The mutants run in fifty shards dealt round-robin, and the score refuses to judge a night unless every shard succeeded, so a shard cut at its limit is never scored from a partial outcomes file.
+
+- **The tracker's dead row under the daemon's feed (#328):** a creator whose stored proof does not parse or check is checked again after the feed's next tip, not after its pause of up to about 10.7 hours; it is reported once on its mark and again only on a change of its state, never at each end of its pause; and a could-not-look fault (`Unavailable`, `Headers`) takes the age re-ask's backoff with no mark instead of being selected on every pass.
+
+- **listActions under bsv-rs's result rows (#371):** fixture 145, an unsigned
+  template's input with no `unlockingScript`, passes bsv-rs's R56 from this
+  pin (bsv-rs #491) and R51 once the wire harness's seed gives each coin its
+  own description of five bytes or more (`a caller puzzle` where it wrote
+  `c`). Every recorded 200 wallet answer now passes bsv-rs's result rows; the
+  reference's validator still refuses the unsigned input (ts-stack #1451).
+
+- **`CHAINTRACKS_URL=off` again spends the wallet's own coins (#372):** with
+  no header service the wallet's own signed spends of its proven coins reach
+  allocation and are judged at the latest era (toolbox #506), where at beta.4
+  every signed spend was refused at the tip read. An incoming or
+  caller-supplied BEEF with proofs (`internalizeAction`, a `createAction`
+  whose `inputBEEF` brings an unproven transaction) still needs headers and
+  is refused with the toolbox's text, `the merkle proofs of a BEEF the wallet
+  did not sign need headers, and no header service is configured`, and a
+  caller's `inputBEEF` roots are never admitted unchecked (toolbox #509 and
+  toolbox #511). The startup warning and the setting's documentation say both
+  halves.
+
+- **The beta.5 pin (#376):** bsv-rs `=0.9.0-beta.5`, bsv-wallet-toolbox-rs
+  `=0.14.0-beta.5` and bsv-tracker `=0.9.0-beta.5`, one of each in both locks.
+  The spend gate strips its rule labels through the toolbox's own
+  `normalize_label`, public from this toolbox (toolbox #505), in place of its
+  private copy of ECMAScript's whitespace set; the drift test now guards the
+  toolbox's set. An input whose transaction passes the per-transaction work
+  budget (bsv-rs #519, `TransactionWorkBudgetExceeded`) is the stack's own
+  500, as the per-input budget is. Discovery's overlay leg verifies each
+  overlay output's chain evidence with the wallet's chain tracker, and with
+  `CHAINTRACKS_URL=off` answers no overlay certificate (toolbox #502); the
+  local and configured records answer as before. No served row moves for the
+  packages; bsv-rs's `Contact`, `WorkBudget`, the `05` key tag and the token
+  readers have no surface here.
+- **`certificates --reverify` at the beta.5 pin (#376):** a stored
+  certificate whose subject or certifier is written as an uncompressed `04`
+  key now counts as failed, where beta.4 counted it verified, and is logged
+  `stored certificate does not verify under the derived key`; odd-length and
+  hybrid key texts fail as at beta.4. The toolbox reads these keys as the
+  reference's `toBinary` does (bsv-wallet-toolbox-rs 0.14.0-beta.5,
+  CHANGELOG Fixed, bsv-rs #498: `Wallet::reverify_stored_certificates`).
+
+- **Key arguments read by the reference's rule (#377, #386):** the doors'
+  `counterparty` and `verifier` arguments are read by bsv-rs 0.9.0-beta.6's
+  `wallet::validate_public_key` (bsv-rs #579), the reference wallet's
+  `validatePublicKey`, in place of the host's strict reader. A bad key is
+  400 `VALIDATION_ERROR` in the reference's words (`The counterparty
+  parameter must be hexadecimal string.`), where it was 400 `ERROR` with the
+  hex parser's text; an uncompressed `04` key is now refused and surrounding
+  whitespace is trimmed, as the reference does.
+
+- **Key arguments read strictly (#377):** bsv-rs 0.9.0-beta.5's
+  `PublicKey::from_hex` reads the reference's lenient key strings (odd-length,
+  hybrid, a coordinate at or above p; bsv-rs #498). The doors' `counterparty`
+  and `verifier` arguments keep beta.4's strict reading and words, as the
+  reference wallet's validators refuse those forms; no answer moves.
+
+- **The census cells as scoreboard records (#380):** `tools/scoreboard` reads
+  `docs/scoreboard/fuzz.json` (the fuzz hours of each target of
+  `fuzz/Cargo.toml`, with executions, corpus additions and crashes at the
+  commit a dispatched Nightly fuzzed) and `docs/scoreboard/differential.json`
+  (`tools/differential`'s verdict line and its `--same` floor from a
+  Differential run), each row naming its producing run. A present record
+  matches its shape or the tool exits 1 naming the file and the field; until
+  the records land the rows read "unmeasured" and "no report yet". Against the
+  base, no measured fuzz target may be lost, no crash count and no same-build
+  floor may rise, and a complete report may not turn incomplete.
+
+- **The beta.6 pin (#386):** bsv-rs `=0.9.0-beta.6`, bsv-wallet-toolbox-rs
+  `=0.14.0-beta.6` and bsv-tracker `=0.9.0-beta.6`, one of each in both locks;
+  no new crate.
+  - The four key doors read a caller's key through bsv-rs's
+    `validate_public_key` (bsv-rs #579); row 026 moves to 400
+    `VALIDATION_ERROR` in the reference's sentence (see #377's entry).
+  - A refused BEEF graph at the create door is served 400 `VALIDATION_ERROR`
+    by its class, and its text no longer ends in a temp-folder path; nothing
+    is written there (toolbox #546; new row 179).
+  - No BEEF hex is written to the temp folder on an immediate broadcast
+    (toolbox #530; see #155's entry).
+  - A header service that faults (other than not-configured) is the discover
+    call's answer, 502 `SERVICE_ERROR` by its family, never an empty overlay
+    part (toolbox #521).
+  - The header services (Chaintracks, BHS) pass the ladder's Retry-After gate
+    (toolbox #148): one call per window after a 429.
+  - The doors' script judge names its stack memory figure, 100,000,000 bytes
+    on the node's count; no verdict moves (toolbox #395, #539).
+  - The create door asks for a header service only when the caller's BEEF
+    carries a root; `CHAINTRACKS_URL=off` and a configured header service
+    answer as before (toolbox #515).
+  - A storage server or certifier sending its identity key in upper case is
+    refused (bsv-rs #582 at the toolbox's two `Peer` doors). This program
+    configures no storage server, but `acquireCertificate` issuance reaches
+    the caller's certifier through the toolbox's `Peer`: a certifier
+    answering with an upper-case identity key is served 502 `SERVICE_ERROR`
+    (the toolbox's Transport fault), and a caller's upper-case `certifier`
+    argument is read as its lower-case form (bsv-rs's `validate_public_key`
+    in the toolbox). The wallet wire's `sendWithResults` status bytes are
+    1/2/3 (bsv-rs #590); this server is HTTP JSON and matches the status by
+    name, so nothing moves.
+  - A discovery answer can carry one more certificate: an overlay identity
+    record behind a leading byte-order mark is read and verified, as the
+    reference reads it (bsv-rs #553, read in the toolbox); no wire world has
+    an overlay, so no row moves.
+  - Deferred to the next pin (on the toolbox's beta after the
+    v0.14.0-beta.6 tag): the Chaintracks client's tip-read fault class
+    (toolbox #554), the seven key calls' privileged routing (toolbox #186
+    and #142; this server refuses `privileged: true` at its door, its
+    own #145), and the OS CSPRNG draws (toolbox #191, #558).
+  - Deferred too: bsv-rs's seven key-call validators (bsv-rs #613), which
+    the next pin calls with `validate_<call>_args(&args)` before routing a
+    privileged request to the key manager.
+  - Deferred too: verifySignature's permission ask (toolbox #576); this
+    program runs no `WalletPermissionsManager`, so no served call moves.
+
+- **The census figures at beta 45fecea8 (#387):** `docs/scoreboard/fuzz.json`
+  records the five fuzz targets' hour of Nightly run 41253247135 (executions,
+  corpus additions, no crash) and `docs/scoreboard/differential.json` the
+  Differential run 41253245406 against v0.19.0-beta.4 (0 differences over 375
+  calls and 37 commands, complete, the same-build floor 0); the ratchet is
+  re-measured at the tip with every number unchanged. The mutation cell keeps
+  its 2026-10-27 record until #310's fix and a re-dispatched Nightly.
+
+- **The Nightly's mutation oracle takes in the hermetic e2e suite (#393):** a cargo test target, `tests/e2e_hermetic.rs`, runs the hermetic suite against the binary cargo built for the tree when `E2E_HERMETIC_ORACLE=1` (and passes at once otherwise), and the Nightly's six `Mutants-hermetic` shards judge by it every mutant the cargo pass did not catch, so a file's score is the union of the two passes.
+
+- **The fuzz targets' properties judge the Nightly's mutants (#396):** each of the five fuzz targets now calls a property function of the fuzz crate's library, and the new test target `fuzz_replay` replays every committed seed through those functions on stable, so the mutation oracle runs their assertions over `spend_gate.rs`, `server/handlers.rs`, `broadcast_verify.rs` and `explorers.rs`.
+
 ## [0.19.0-beta.4] - 2026-10-31
 
 - **Discovery's trust settings (#331):** `TRUST_SETTINGS`, the reference's
