@@ -61,4 +61,13 @@ pub(crate) async fn record(r: &mut Recorder) {
         .body
         .as_ref()
         .is_some_and(|b| b.pointer("/ciphertext").is_some()));
+    // A body's top-level originator naming another host.
+    let mut claimed = encrypt();
+    claimed["originator"] = json!("evil.example");
+    r.case(
+        "gate.encrypt.bodyOriginatorDisagrees",
+        "fresh",
+        post("/encrypt", claimed),
+    )
+    .await;
 }
