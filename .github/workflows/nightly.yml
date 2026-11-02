@@ -68,8 +68,9 @@ env:
   # cargo-mutants: the upstream commit that makes -F select struct-field
   # deletion mutants too (sourcefrog/cargo-mutants #632, fixed by #634 after
   # 27.1.0, unreleased); 27.1.0 adds every such mutant to every selection.
-  # Its --list of the five files equals 27.1.0's name for name (1,191 at
-  # 6bf9a2c), and each shard checks its selection against the survivors.
+  # Its --list of the five files equals 27.1.0's name for name and in order
+  # (1,191 at 6bf9a2c; 923, each once, since #400), and each shard checks its
+  # selection against the survivors, refusing a name listed twice.
   MUTANTS_HERMETIC_SHARDS: 6
   CARGO_MUTANTS_HERMETIC_REV: b00aff0c6ca0670bccdf4eb2ece9e15c4c35c8b9
 
@@ -228,8 +229,13 @@ jobs:
             exit 1
           fi
 
-  # cargo-mutants over the hot paths, in fifty shards (about 1,190 mutants,
-  # about 24 a shard; one mutant is a build and the oracle's tests below).
+  # cargo-mutants over the hot paths, in fifty shards (923 mutants, about 19
+  # a shard; one mutant is a build and the oracle's tests below). Each mutant
+  # is listed once (#400): cargo-mutants walks the modules of each crate from
+  # its root with no record of the files it has visited, so a file both
+  # main.rs and lib.rs declared was listed twice under one name (1,224 at
+  # edd3ea0, 301 of them repeats: broadcast_verify.rs, explorers.rs and
+  # server/handlers.rs); the binary now takes those modules from the library.
   # Copy mode (never --in-place); a mutant's tests stop at twice the shard's
   # own baseline, a timeout, scored as not caught. Fifty shards, dealt
   # round-robin (#310): the missed mutants lie in runs of the list (one
@@ -643,7 +649,8 @@ jobs:
       # mutants_score.py --sha refuses the night, naming each shard and its
       # sha, unless every cargo shard, every hermetic shard and the survivors
       # name the dispatch's commit; the summary prints that commit above the
-      # table, for the record's writer.
+      # table, for the record's writer. A mutant is judged once (#400): a name
+      # with more than one outcome in either pass refuses the night, named.
       # The target is 80 percent a file; a floor is the measured score rounded
       # down and only rises, with the tests that earn it (the rule in the
       # header). The measured night: run 40473522272, the last scheduled one
