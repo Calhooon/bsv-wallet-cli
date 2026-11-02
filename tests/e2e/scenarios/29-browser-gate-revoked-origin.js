@@ -1,7 +1,7 @@
 /**
  * E2E.29: the browser gate, a revoked origin (#411, step (b)). The stack's
  * scenario 2026-11-01-wallet-browser-gate-revoked-origin (bsv-stack-lean
- * 76004514), step by step; under (b) the revocation is (c)'s stand-in:
+ * 4372ea39), step by step; under (b) the revocation is (c)'s stand-in:
  * app.example's line removed from ALLOWED_ORIGINS and the wallet restarted.
  *   1. app.example calls: admitted;
  *   2. the owner revokes app.example: its line removed, the wallet restarted;
@@ -18,7 +18,7 @@ module.exports = {
   description: "a revoked origin (under (b): removed from ALLOWED_ORIGINS, restarted) is refused",
 
   async run(_walletA, _walletB, assert) {
-    return g.scene('wallet-D-revoked-origin', [g.APP], async (wallet) => {
+    return g.scene('wallet-D-revoked-origin', [g.APP_GRANT], async (wallet) => {
       const one = await g.call(wallet, 'POST', 'getPublicKey', { origin: g.APP, body: g.ARGS.getPublicKey });
       assert(one.status === 200, `1: app.example is admitted (got ${one.status} ${JSON.stringify(one.body)})`);
       await g.restartGated(wallet, []);
