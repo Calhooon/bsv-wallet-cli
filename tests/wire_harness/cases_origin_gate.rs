@@ -139,4 +139,20 @@ async fn record_hostname_scope(r: &mut Recorder) {
         options("/encrypt", "POST").header("origin", "http://app.example:5173"),
     )
     .await;
+    // A body's originator naming the host without the Origin's port (#448):
+    // one originator under the hostname key, compared in the lookup form,
+    // so the call is admitted.
+    let mut hostname = encrypt();
+    hostname["originator"] = json!("app.example");
+    let agrees = r
+        .case(
+            "gate.encrypt.bodyOriginatorHostname",
+            "fresh",
+            post("/encrypt", hostname).header("origin", "https://app.example:8080"),
+        )
+        .await;
+    assert!(agrees
+        .body
+        .as_ref()
+        .is_some_and(|b| b.pointer("/ciphertext").is_some()));
 }
