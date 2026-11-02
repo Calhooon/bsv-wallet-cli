@@ -31,7 +31,7 @@ pub enum Kind {
     /// The toolbox's permission refusal.
     AccessDenied,
     /// The browser gate's refusal of an origin `ALLOWED_ORIGINS` does not
-    /// name (#411): the MetaNet Client's denial, 400 with the reference's
+    /// name (#411): the desktop client's denial, 400 with the reference's
     /// code (ts-stack edf6e03 `WalletPermissionsManager.ts:1348-1349`).
     OriginDenied,
     /// The wallet's state refuses a well-formed request.

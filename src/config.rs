@@ -35,6 +35,8 @@ use serde::Serialize;
 
 mod arc_mode;
 mod knobs;
+#[cfg(test)]
+mod origins_tests;
 mod read;
 #[cfg(test)]
 mod seed_tests;
