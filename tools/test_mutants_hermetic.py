@@ -6,7 +6,10 @@ round-robin shards and anchored escapes, its list check; and
 .github/nightly/mutants_score.py's union with `--hermetic` (a survivor the
 hermetic pass caught is caught, one it missed stays missed, a timeout it
 caught is caught, a survivor it never judged fails the score), the plain
-score unchanged without the flag. Each case writes its files in a directory
+score unchanged without the flag; and the score's one tree with `--sha`
+(#423: two shards on different commits refused, naming each; a shard or the
+survivors without a sha refused; all on the dispatch's commit accepted, the
+commit printed above the table). Each case writes its files in a directory
 of its own under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_mutants_hermetic.py
 """
@@ -65,11 +68,14 @@ class Case(unittest.TestCase):
     def path(self, *parts):
         return os.path.join(self.dir, *parts)
 
-    def plant(self, root, shards):
+    def plant(self, root, shards, shas=None):
         for i, outcomes in enumerate(shards):
             os.makedirs(self.path(root, f"shard-{i}"))
             with open(self.path(root, f"shard-{i}", "outcomes.json"), "w") as f:
                 json.dump({"outcomes": outcomes}, f)
+            if shas is not None and shas[i] is not None:
+                with open(self.path(root, f"shard-{i}", "sha"), "w") as f:
+                    f.write(shas[i] + "\n")
 
     def run_py(self, *args, env=None):
         env = {k: v for k, v in (env or os.environ).items() if k != "GITHUB_STEP_SUMMARY"}
@@ -156,6 +162,56 @@ class Case(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("1 survivor(s) of the cargo pass have no hermetic outcome", r.stdout)
         self.assertIn(SURVIVORS[1], r.stdout)
+
+
+    # The hermetic pass of the union case above: every survivor judged.
+    HERMETIC_ALL = [[outcome(GATE, n, "CaughtMutant") for n in SURVIVORS]]
+
+    def night(self, cargo_shas, hermetic_shas, survivors_sha):
+        self.plant("cargo", CARGO, cargo_shas)
+        self.plant("hermetic", self.HERMETIC_ALL, hermetic_shas)
+        os.makedirs(self.path("survivors"))
+        if survivors_sha is not None:
+            with open(self.path("survivors", "sha"), "w") as f:
+                f.write(survivors_sha + "\n")
+        env = dict(os.environ, MUTANTS_FLOORS=json.dumps({GATE: 0, EXPL: 0}))
+        return self.run_py(SCORE, "--sha", DISPATCH, "--survivors", self.path("survivors"),
+                           "--hermetic", self.path("hermetic"), self.path("cargo"), env=env)
+
+    def test_a_night_on_the_dispatch_commit_is_scored_and_names_it(self):
+        r = self.night([DISPATCH, DISPATCH], [DISPATCH], DISPATCH)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn(f"The night's commit: `{DISPATCH}`", r.stdout)
+        self.assertLess(r.stdout.index(DISPATCH), r.stdout.index("| file |"))
+
+    def test_two_shards_on_different_commits_are_refused_by_name(self):
+        r = self.night([DISPATCH, OTHER], [DISPATCH], DISPATCH)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("A night is one tree", r.stdout)
+        self.assertIn(f"- `shard-1`: `{OTHER}`", r.stdout)
+        self.assertNotIn("`shard-0`", r.stdout)
+        self.assertNotIn("| file |", r.stdout)  # no figure is judged
+
+    def test_shards_all_on_one_commit_not_the_dispatch_are_refused(self):
+        r = self.night([OTHER, OTHER], [OTHER], OTHER)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("4 of 4 artifact(s)", r.stdout)
+        self.assertNotIn("| file |", r.stdout)
+
+    def test_a_shard_without_a_sha_is_refused(self):
+        r = self.night([DISPATCH, DISPATCH], [None], DISPATCH)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("- `shard-0`: no sha", r.stdout)
+        self.assertNotIn("| file |", r.stdout)
+
+    def test_survivors_without_a_sha_are_refused(self):
+        r = self.night([DISPATCH, DISPATCH], [DISPATCH], None)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("- `survivors`: no sha", r.stdout)
+
+
+DISPATCH = "6bf9a2c" + "0" * 33
+OTHER = "54c7276" + "0" * 33
 
 
 if __name__ == "__main__":

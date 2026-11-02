@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The mutation score per file from cargo-mutants' outcomes (#75).
 
-Usage: mutants_score.py [--hermetic <dir>] <outcomes.json or a directory holding them>...
+Usage: mutants_score.py [--sha <commit> [--survivors <dir>]] [--hermetic <dir>]
+                        <outcomes.json or a directory holding them>...
 
 Reads every `outcomes.json` given (one per shard), and prints a Markdown
 table of each file's score: caught / (caught + missed + timeout) * 100. A
@@ -21,6 +22,14 @@ only the cargo pass's survivors, by name). A survivor the hermetic pass caught
 is caught, and is counted in the column `by e2e_hermetic` too; any other
 outcome stands as the cargo pass gave it. Exit 1 when a survivor has no
 hermetic outcome: a survivor the hermetic pass did not judge is no union.
+
+With `--sha <commit>` (#423) a night is one tree: each shard's artifact (an
+immediate subdirectory of each directory given, the cargo pass's and the
+hermetic pass's, as `download-artifact` lays them out) holds a file `sha`, the
+commit its job checked out, and `--survivors <dir>` names the survivors'
+artifact, which holds one too. Before any figure is judged, exit 1 naming each
+shard whose sha is missing or is not `<commit>` (the dispatch's), with the sha
+it names; otherwise the night's commit is printed above the table.
 """
 
 import json
@@ -49,17 +58,71 @@ def mutant_outcomes(args):
                 yield scenario["Mutant"], outcome["summary"]
 
 
+def shard_shas(dirs):
+    """Each shard's directory name and the sha its artifact names (None without one)."""
+    for d in dirs:
+        for shard in sorted(p for p in Path(d).iterdir() if p.is_dir()):
+            sha = shard / "sha"
+            yield shard.name, sha.read_text().strip() if sha.is_file() else None
+
+
+def one_tree(dispatch, shards):
+    """The refusal's lines when the shards are not all on the dispatch's commit, else []."""
+    off = [(name, sha) for name, sha in shards if sha != dispatch]
+    if not shards:
+        return [f"**A night is one tree (#423)**: no shard's sha was found; the dispatch is `{dispatch}`; nothing is scored."]
+    if not off:
+        return []
+    lines = [
+        f"**A night is one tree (#423)**: the dispatch is `{dispatch}`, and {len(off)} of {len(shards)}"
+        " artifact(s) (the shards and the survivors) name another commit or none; nothing is scored:",
+        "",
+    ]
+    lines += [f"- `{name}`: {f'`{sha}`' if sha else 'no sha'}" for name, sha in off]
+    return lines
+
+
+def write(text):
+    sys.stdout.write(text)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as out:
+            out.write(text)
+
+
 def main(args):
     hermetic = None
-    if args[:1] == ["--hermetic"]:
+    hermetic_dir = None
+    dispatch = None
+    survivors_dir = None
+    while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"]):
         if len(args) < 2:
-            print("--hermetic needs a directory", file=sys.stderr)
+            print(f"{args[0]} needs a value", file=sys.stderr)
             return 1
+        if args[0] == "--hermetic":
+            hermetic_dir = args[1]
+        elif args[0] == "--sha":
+            dispatch = args[1]
+        else:
+            survivors_dir = args[1]
+        args = args[2:]
+    if survivors_dir is not None and dispatch is None:
+        print("--survivors needs --sha", file=sys.stderr)
+        return 1
+    if dispatch is not None:
+        shards = list(shard_shas([a for a in args if Path(a).is_dir()] + ([hermetic_dir] if hermetic_dir else [])))
+        if survivors_dir is not None:
+            sha = Path(survivors_dir) / "sha"
+            shards.append((Path(survivors_dir).name, sha.read_text().strip() if sha.is_file() else None))
+        refusal = one_tree(dispatch, shards)
+        if refusal:
+            write("\n".join(refusal) + "\n")
+            return 1
+    if hermetic_dir is not None:
         # Each name the hermetic pass judged: caught when any copy was.
         hermetic = defaultdict(bool)
-        for mutant, summary in mutant_outcomes([args[1]]):
+        for mutant, summary in mutant_outcomes([hermetic_dir]):
             hermetic[mutant["name"]] |= summary == "CaughtMutant"
-        args = args[2:]
     floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
     counts = defaultdict(lambda: defaultdict(int))
     by_hermetic = defaultdict(int)
@@ -77,6 +140,8 @@ def main(args):
             missed[mutant["file"]].append(mutant["name"])
 
     lines = ["## Mutation score per file", ""]
+    if dispatch is not None:
+        lines += [f"The night's commit: `{dispatch}` (the dispatch's; every shard ran on it, #423).", ""]
     if hermetic is not None:
         lines += [
             "The union of two passes (#393): the cargo targets, then `e2e_hermetic` (the hermetic",
@@ -120,12 +185,7 @@ def main(args):
         failed = True
         lines += ["", f"**{len(unjudged)} survivor(s) of the cargo pass have no hermetic outcome**; no union:", ""]
         lines += [f"- `{name}`" for name in sorted(unjudged)]
-    text = "\n".join(lines) + "\n"
-    sys.stdout.write(text)
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a") as out:
-            out.write(text)
+    write("\n".join(lines) + "\n")
     return 1 if failed else 0
 
 
