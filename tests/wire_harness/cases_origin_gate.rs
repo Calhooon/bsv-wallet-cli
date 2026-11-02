@@ -4,7 +4,7 @@
 //! `http://wire.test` and `https://app.example` (`worlds.rs`).
 use serde_json::json;
 
-use super::recorder::{options, post, Recorder};
+use super::recorder::{get, options, post, Recorder};
 
 const UNLISTED: &str = "http://unlisted.test";
 
@@ -68,6 +68,14 @@ pub(crate) async fn record(r: &mut Recorder) {
         "gate.encrypt.bodyOriginatorDisagrees",
         "fresh",
         post("/encrypt", claimed),
+    )
+    .await;
+    // A status door is gated as a BRC-100 call is (the client asks an
+    // Origin of every path).
+    r.case(
+        "gate.getVersion.noOrigin",
+        "fresh",
+        get("/getVersion").without("origin"),
     )
     .await;
 }
