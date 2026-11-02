@@ -1,0 +1,21 @@
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:33:37.8687959Z HEAD is now at 2ca0173 ci(#401): the Mutants shards' left-out targets are guarded by their measured reach, not trusted by name
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:33:46.6562285Z   nightly-2026-10-30-x86_64-unknown-linux-gnu installed - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:33:46.6848220Z   nightly-2026-10-30-x86_64-unknown-linux-gnu unchanged - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:34:05.5777345Z ^[[36;1m  echo "crashed=true" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:34:05.5777979Z ^[[36;1m  echo "crashed=false" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:38:43.7845320Z INFO: Running with entropic power schedule (0xFF, 100).
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T08:38:43.7858367Z INFO: Seed: 2671092295
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.7952427Z #117285867	DONE   cov: 6038 ft: 23780 corp: 7527/2082Kb lim: 4096 exec/s: 32570 rss: 819Mb
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265044Z Done 117285867 runs in 3601 second(s)
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265157Z stat::number_of_executed_units: 117285867
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265260Z stat::average_exec_per_sec:     32570
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265354Z stat::new_units_added:          103266
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265480Z stat::slowest_unit_time_sec:    0
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:44.8265580Z stat::peak_rss_mb:              819
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:45.1040659Z ^[[36;1mecho "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"^[[0m
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:48.1912520Z #7486	DONE   cov: 6053 ft: 23791 exec/s: 3743 rss: 165Mb
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:48.1913003Z MERGE-OUTER: successful in 1 attempt(s)
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:48.1913401Z MERGE-OUTER: the control file has 856573 bytes
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:48.1913857Z MERGE-OUTER: consumed 0Mb (80Mb rss) to parse the control file
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:38:48.1914507Z MERGE-OUTER: 6211 new files with 22161 new features added; 4731 new coverage edges
+Fuzz (served_json)	UNKNOWN STEP	2026-11-02T09:39:02.0665264Z corpus additions: 6211

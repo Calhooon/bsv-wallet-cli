@@ -1,0 +1,33 @@
+{
+  "createdAt": "2026-11-02T08:33:31Z",
+  "databaseId": 41413946663,
+  "headSha": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+  "jobs": [
+    {
+      "conclusion": "success",
+      "databaseId": 125173162645,
+      "name": "Fuzz (served_json)"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 125173162784,
+      "name": "Fuzz (brc29_remittance)"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 125173162862,
+      "name": "Fuzz (explorer_bodies)"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 125173162874,
+      "name": "Fuzz (allow_pending)"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 125173163025,
+      "name": "Fuzz (beef_reader)"
+    }
+  ],
+  "workflowName": "Nightly"
+}

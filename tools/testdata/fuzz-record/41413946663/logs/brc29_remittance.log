@@ -1,0 +1,21 @@
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:33:51.7475245Z HEAD is now at 2ca0173 ci(#401): the Mutants shards' left-out targets are guarded by their measured reach, not trusted by name
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:34:01.0170214Z   nightly-2026-10-30-x86_64-unknown-linux-gnu installed - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:34:01.0589384Z   nightly-2026-10-30-x86_64-unknown-linux-gnu unchanged - rustc 1.101.0-nightly (92b5b8c87 2026-10-29)
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:34:24.8573396Z ^[[36;1m  echo "crashed=true" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:34:24.8573914Z ^[[36;1m  echo "crashed=false" >> "$GITHUB_OUTPUT"^[[0m
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:40:07.1362508Z INFO: Running with entropic power schedule (0xFF, 100).
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T08:40:07.1363142Z INFO: Seed: 123431319
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1535584Z #2132718	DONE   cov: 3103 ft: 6110 corp: 482/66Kb lim: 4096 exec/s: 592 rss: 501Mb
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1600048Z Done 2132718 runs in 3601 second(s)
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1600491Z stat::number_of_executed_units: 2132718
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1600914Z stat::average_exec_per_sec:     592
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1601311Z stat::new_units_added:          2445
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1601710Z stat::slowest_unit_time_sec:    0
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.1602099Z stat::peak_rss_mb:              501
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:08.4255177Z ^[[36;1mecho "corpus additions: $(find additions -type f | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"^[[0m
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:09.9035928Z #484	DONE   cov: 3098 ft: 6093 exec/s: 0 rss: 72Mb
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:09.9036619Z MERGE-OUTER: successful in 1 attempt(s)
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:09.9037134Z MERGE-OUTER: the control file has 101262 bytes
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:09.9037639Z MERGE-OUTER: consumed 0Mb (80Mb rss) to parse the control file
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:09.9038265Z MERGE-OUTER: 411 new files with 2805 new features added; 460 new coverage edges
+Fuzz (brc29_remittance)	UNKNOWN STEP	2026-11-02T09:40:11.0050242Z corpus additions: 411

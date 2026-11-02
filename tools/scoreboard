@@ -47,8 +47,8 @@ malformed record as an absent one.
                                  nightly's "Mutation score" summary (shape below)
   fuzz/Cargo.toml                the fuzz targets: its [[bin]] tables' names, read with
                                  tomllib, never a list written here
-  docs/scoreboard/fuzz.json      the fuzz hours, written by the captain or a lane from
-                                 the Nightly run it names (shape below)
+  docs/scoreboard/fuzz.json      the fuzz hours, written by tools/fuzz-record from the
+                                 Nightly run it names, never typed (#445; shape below)
   docs/scoreboard/differential.json
                                  the differential report, written by the captain or a
                                  lane from the Differential run it names (shape below)
