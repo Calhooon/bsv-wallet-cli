@@ -1,6 +1,6 @@
 {
   "about": "Every difference between the CLI's spend gate and the stack's wallet-gate vectors (tests/vectors/wallet_gate_vectors.json at its pin), by row, door and field, with the finding it belongs to. tests/gate_vectors.rs holds this list exact: a difference not here fails, an entry that no longer differs fails. A finding is the gate's to fix, never a row's: when the gate changes, its entries leave this file in the same commit. docs/GATE-VECTORS.md.",
-  "vectors_sha256": "8ea731e553ec1ac0ffb6711e7007adae51d89d9d6793241d6174b0d1d1bab87d",
+  "vectors_sha256": "6326f29c677b4346886a311f237c6d9535153fb2a95e57c89776ece76427a98e",
   "findings": {},
   "divergences": []
 }
