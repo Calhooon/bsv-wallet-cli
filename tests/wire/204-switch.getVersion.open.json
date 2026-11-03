@@ -1,0 +1,23 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "GET",
+    "path": "/getVersion",
+    "headers": {
+      "origin": "http://page.test"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://page.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "version": "bsv-wallet-cli-<major>.<minor>.<patch>"
+    }
+  }
+}
