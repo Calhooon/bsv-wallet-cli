@@ -47,6 +47,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_origin_gate::record(r).await;
     super::cases_owner_door::record(r).await;
     super::cases_switch::record(r).await;
+    super::cases_probes::record(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.

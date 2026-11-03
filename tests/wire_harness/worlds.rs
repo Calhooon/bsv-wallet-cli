@@ -8,9 +8,8 @@ use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 
-use super::fixture::NORMALIZER;
 pub(crate) use super::world_names::{known_world, WORLDS};
-use crate::wire_support::{header_stub, serve_local, services, Req, Resp, CLOSED, J, ROOT_KEY};
+use crate::wire_support::{header_stub, serve_local, services, Req, CLOSED, J, ROOT_KEY};
 
 // ---------------------------------------------------------------------------
 // The worlds.
@@ -78,6 +77,7 @@ pub(crate) struct World {
     /// The served wallet and its held calls, for the owner's step (#414).
     pub(super) wallet: server::handlers::WalletState,
     pub(super) held: server::powers::Held,
+    pub(super) probes: server::probes::Probes,
     /// Held for the world's life: the stubs' tasks, a temp store, the
     /// other connection holding the write lock.
     _keep: Vec<Box<dyn std::any::Any + Send>>,
@@ -603,7 +603,7 @@ impl World {
             "callback" | "busy-read" => config.callback_token = Some(WIRE_CALLBACK.to_string()),
             _ => {}
         }
-        let held = config.held.clone();
+        let (held, probes) = (config.held.clone(), config.probes.clone());
         let wallet = server::make_wallet_state(wallet);
         let router = server::make_router(wallet.clone(), config);
         super::trust::hold_the_harness_certificate(name, &router).await;
@@ -611,6 +611,7 @@ impl World {
             router,
             wallet,
             held,
+            probes,
             _keep: keep,
         }
     }
@@ -720,11 +721,6 @@ impl World {
             CLOSED.to_string()
         };
         services(stub, arc)
-    }
-
-    /// The normalized response, and the JSON body as served.
-    pub(crate) async fn serve_raw(&self, req: &Req) -> (Resp, Option<J>) {
-        NORMALIZER.serve(&self.router, req).await
     }
 }
 
