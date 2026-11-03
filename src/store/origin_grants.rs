@@ -17,8 +17,9 @@
 //! < now` is expired, `WalletPermissionsManager.ts:2900-2903`); a
 //! `spending` row never expires, its ceiling resetting each UTC month.
 //!
-//! Nothing reads these rows at a door yet: the gate still reads
-//! `ALLOWED_ORIGINS` (the design's L5b is the switch).
+//! The served doors read these rows per power from the switch on (the
+//! design's L5b, `src/server/powers.rs`); `ALLOWED_ORIGINS` is a seed beside
+//! them and writes no row.
 
 use anyhow::Result;
 use bsv_wallet_toolbox::StorageSqlx;
@@ -254,6 +255,18 @@ async fn pending_row(conn: &mut SqliteConnection, pending_id: i64) -> Result<Opt
     row.map(PendingRow::from_tuple).transpose()
 }
 
+/// The pending row `pending_id`, open or answered, or none (a row a
+/// disconnect or a restart deleted): what a held call reads at each wake.
+///
+/// # Errors
+///
+/// The store's error.
+pub async fn pending(storage: &StorageSqlx, pending_id: i64) -> Result<Option<PendingRow>> {
+    ensure(storage).await?;
+    let mut reader = storage.pool().acquire().await?;
+    pending_row(&mut reader, pending_id).await
+}
+
 /// How `originator` (any name of its host) stands for `power` at `now`
 /// (section (1)'s lookup): an indexed read on the reader.
 ///
@@ -450,7 +463,8 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
 /// # Errors
 ///
 /// [`Refused`]: no such row, the row already answered (the second answer),
-/// `once` on a row of another kind than spending, a grant's amount or
+/// `once` on a row of another kind than spending, `grant` on a spending row
+/// (until L6), a grant's amount or
 /// expiry out of place, a stored key that does not read back; or the
 /// store's error.
 pub async fn answer(
@@ -471,6 +485,9 @@ pub async fn answer(
             at,
         }
         .into());
+    }
+    if reply.answer == Answer::Grant && row.kind == Kind::Spending {
+        return Err(Refused::GrantOnSpending(pending_id).into());
     }
     if reply.answer == Answer::Once && row.kind != Kind::Spending {
         return Err(Refused::OnceOnKind {
@@ -511,8 +528,7 @@ pub async fn answer(
 /// `originator` (any name of its host) among `ids`, the snapshot its
 /// held call took, of every kind, spending rows included; an answered
 /// row, or an open row the list does not name, is kept. Logged at info by
-/// name (`browser gate: abandoned`). Answers the rows deleted. Unused
-/// until the switch (L5b).
+/// name (`browser gate: abandoned`). Answers the rows deleted.
 ///
 /// # Errors
 ///
@@ -560,7 +576,7 @@ pub async fn abandon(
 
 /// The restart's sweep (section (2)): delete every open pending row, since
 /// no caller survives a restart; logged by name with the count. Answers
-/// the count. Unused until the switch (L5b).
+/// the count.
 ///
 /// # Errors
 ///

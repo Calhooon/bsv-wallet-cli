@@ -593,7 +593,7 @@ async fn a_row_is_answered_once_and_the_second_answer_is_refused() {
 #[tokio::test]
 async fn each_kind_is_answered_into_its_own_power() {
     let (_dir, storage) = wallet_db().await;
-    for (power, usage, amount) in every_kind() {
+    for (power, usage, amount) in asked_kinds() {
         let row = ask(&storage, &call("app.example", &power, usage, "/x")).await;
         let answered = say(&storage, row.pending_id, Answer::Grant, amount)
             .await
@@ -606,7 +606,7 @@ async fn each_kind_is_answered_into_its_own_power() {
         let standing = lookup(&storage, "app.example", &power, NOW).await.unwrap();
         assert!(matches!(standing, Standing::Live(_)), "{power:?}");
     }
-    assert_eq!(count(&storage, "origin_grants").await, 5);
+    assert_eq!(count(&storage, "origin_grants").await, 4);
 }
 
 #[tokio::test]
@@ -652,17 +652,29 @@ async fn once_answers_a_spend_alone() {
 }
 
 #[tokio::test]
-async fn a_spending_grant_names_its_ceiling_and_a_deny_writes_no_grant() {
+async fn a_spend_is_answered_once_or_deny_until_l6_and_a_deny_writes_no_grant() {
     let (_dir, storage) = wallet_db().await;
+    // The switch (#414 L5b): a spending row's `grant` is refused by name
+    // until the ceilings land (L6), with or without an amount; the row
+    // stays open for `once` or `deny`.
     let spend = ask(&storage, &spend_call("app.example", 2500)).await;
-    let e = say(&storage, spend.pending_id, Answer::Grant, None)
-        .await
-        .unwrap_err();
-    assert_eq!(refusal(&e), Refused::AmountRequired);
-    let ceiling = say(&storage, spend.pending_id, Answer::Grant, Some(60_000))
+    for amount in [None, Some(60_000)] {
+        let e = say(&storage, spend.pending_id, Answer::Grant, amount)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal(&e), Refused::GrantOnSpending(spend.pending_id));
+        assert!(
+            e.to_string().contains("answered once or deny, never grant"),
+            "{e}"
+        );
+    }
+    let once = say(&storage, spend.pending_id, Answer::Once, None)
         .await
         .unwrap();
-    assert_eq!(ceiling.grant.unwrap().amount, Some(60_000));
+    assert_eq!(
+        (once.pending.answer, once.grant),
+        (Some(Answer::Once), None)
+    );
 
     let listing = ask(&storage, &listing_call("app.example")).await;
     let e = say(&storage, listing.pending_id, Answer::Grant, Some(5))

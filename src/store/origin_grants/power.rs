@@ -28,6 +28,36 @@ const LABEL: &str = "action label ";
 /// (`WalletPermissionsManager.ts:5190-5221`).
 const COUNTERPARTY_LINKAGE: &str = "counterparty key linkage revelation ";
 const SPECIFIC_LINKAGE: &str = "specific key linkage revelation ";
+/// The two certificate protocols' name prefixes the manager builds over a
+/// certificate type (`WalletPermissionsManager.ts:5387-5420`): a base64
+/// type holds what a protocol name may not, so the type is read by
+/// `validate_base64_string`, not the name's rule.
+const CERT_ACQUISITION: &str = "certificate acquisition ";
+const CERT_RELINQUISHMENT: &str = "certificate relinquishment ";
+
+/// The protocol names the manager builds whose tail a protocol name's
+/// rule would refuse: each prefix and whether its tail reads.
+const BUILT_NAMES: [(&str, fn(&str) -> bool); 3] = [
+    (SPECIFIC_LINKAGE, specific_tail),
+    (CERT_ACQUISITION, type_tail),
+    (CERT_RELINQUISHMENT, type_tail),
+];
+
+/// A specific linkage name's tail: the protocol's validated name, a space
+/// and its key id or `all`. The name and the key id are joined by a space
+/// and either may hold one: any split whose name is canonical reads.
+fn specific_tail(rest: &str) -> bool {
+    rest.match_indices(' ').any(|(at, _)| {
+        let inner = &rest[..at];
+        at + 1 < rest.len() && validate_protocol_name(inner).is_ok_and(|v| v == inner)
+    })
+}
+
+/// A certificate protocol's tail: a type `validate_base64_string` returns
+/// unchanged.
+fn type_tail(rest: &str) -> bool {
+    validate_base64_string(rest, "type", None, None).is_ok_and(|t| t == rest)
+}
 
 /// One power: a kind and its instance (section (1)'s key table).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +221,25 @@ impl Power {
         Self::leveled(false, 2, name, Some(verifier))
     }
 
+    /// The certificate protocol the manager builds for
+    /// `acquireCertificate` (`certificate acquisition <type>`) or
+    /// `relinquishCertificate` (`certificate relinquishment <type>`): level
+    /// 1, the type through `validate_base64_string` (trimmed).
+    ///
+    /// # Errors
+    ///
+    /// A type the validator refuses.
+    pub fn certificate_protocol(relinquish: bool, cert_type: &str) -> Result<Self, Refused> {
+        let read = validate_base64_string(cert_type, "type", None, None)
+            .map_err(|e| bad(Kind::Protocol, cert_type, e))?;
+        let prefix = if relinquish {
+            CERT_RELINQUISHMENT
+        } else {
+            CERT_ACQUISITION
+        };
+        Self::leveled(false, 1, format!("{prefix}{read}"), None)
+    }
+
     /// A basket's power, the basket through `validate_basket`.
     ///
     /// # Errors
@@ -342,22 +391,19 @@ impl Power {
         if let Some(label) = name.strip_prefix(LABEL) {
             return Self::label(label);
         }
-        if let Some(rest) = name.strip_prefix(SPECIFIC_LINKAGE) {
-            // The protocol name and the key id are joined by a space and
-            // either may hold one: any split whose name is canonical reads.
-            let readable = rest.match_indices(' ').any(|(at, _)| {
-                let inner = &rest[..at];
-                at + 1 < rest.len() && validate_protocol_name(inner).is_ok_and(|v| v == inner)
-            });
-            if !readable {
-                return Err(bad(
-                    Kind::Protocol,
-                    name,
-                    "a specific linkage name is the protocol's validated name, a space and its \
-                     key id or all",
-                ));
+        for (prefix, reads) in BUILT_NAMES {
+            if let Some(rest) = name.strip_prefix(prefix) {
+                if !reads(rest) {
+                    return Err(bad(
+                        Kind::Protocol,
+                        name,
+                        "a name the manager builds is its prefix and its tail: a specific \
+                         linkage's protocol name, a space and its key id or all; a certificate \
+                         protocol's type as validate_base64_string returns it",
+                    ));
+                }
+                return Self::leveled(privileged, level, name.to_string(), named);
             }
-            return Self::leveled(privileged, level, name.to_string(), named);
         }
         Self::protocol(privileged, level, name, named)
     }
