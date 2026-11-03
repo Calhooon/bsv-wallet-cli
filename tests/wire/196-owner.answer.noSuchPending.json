@@ -18,7 +18,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "no pending request #1"
+      "message": "no pending request #1 (a request is withdrawn when its caller disconnects)"
     }
   }
 }
