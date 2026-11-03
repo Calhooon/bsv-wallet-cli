@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "rule": "A recorded rise of an architecture rule's allowlist (#546): tools/scoreboard --check --base refuses any rise of allowlist:A<n>:files or :sites unless a row here names the rule, the file and the exact counts of both keys at the base (from) and in the tree (to), and the rise is that file's alone. A row admits one rise only; it never lowers a ceiling, never applies to other counts, another rule or another file. A row is written only on a word that admitted the entry, with the issue, the word, the date and the entry's reason.",
+  "exceptions": [
+    {
+      "rule": "A5",
+      "file": "src/store/origin_grants/power.rs",
+      "files": {"from": 5, "to": 6},
+      "sites": {"from": 8, "to": 13},
+      "issue": 414,
+      "word": "the captain's word of 2026-11-03",
+      "date": "2026-11-03",
+      "reason": "the reference's admin-reserved name rule and the protocol-name encodings' parse: names, never messages"
+    }
+  ]
+}
