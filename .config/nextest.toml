@@ -5,9 +5,10 @@
 # started late and the run ended on them alone. A higher priority starts
 # earlier (nextest's `priority`, -100 to 100, default 0); within a tier the
 # order is nextest's own. The tiers are by the seconds the Test job's log
-# and a 4-thread local run gave each test at #506's tip; a test whose wait
-# is the behaviour it tests (a busy ceiling, a deadline, a stress loop)
-# keeps its wait and starts first instead. Re-tier from the next timings.
+# (PR 521's run 41629365902) and a 4-thread local run gave each test at
+# #506's tip; a test whose wait is the behaviour it tests (a busy ceiling,
+# a deadline, a stress loop) keeps its wait and starts first instead.
+# Re-tier from the next timings.
 
 # 8 s and more.
 [[profile.default.overrides]]
@@ -17,6 +18,7 @@ test(=spend_gate::tests::create_action_beside_a_monitor_shaped_writer_answers_no
 | binary_id(bsv-wallet-cli::json_refusal)
 | binary_id(bsv-wallet-cli::gate_vectors)
 | binary_id(bsv-wallet-cli::served_beef_doors)
+| (binary_id(bsv-wallet-cli::wire) & test(/^(wire|a_recording_is_not_a_replay|.*_under_the_knob|two_message_only_differences_report_two_markers)$/))
 """
 priority = 100
 
@@ -27,6 +29,7 @@ test(=store::tests::only_the_writers_acquire_timeout_is_busy)
 | test(/^server::arc_callback_tests::arc_callback_(under_a_busy_store|busy_store_under|writer_not_acquired|deadline_)/)
 | binary_id(bsv-wallet-cli::arcade_webhook_vector_tests)
 | binary_id(bsv-wallet-cli::wire_consumers)
+| test(=commands::daemon_tenant::tests::relay_router_retries_busy_items_in_order_and_deletes_acked_rows)
 """
 priority = 50
 
