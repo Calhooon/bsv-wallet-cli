@@ -3219,6 +3219,9 @@ mod pass_rules_tests;
 mod announce_rules_tests;
 
 #[cfg(test)]
+mod store_rules_tests;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::broadcast_reconcile::DEFAULT_ABSENCE_MINUTES;
