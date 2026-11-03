@@ -208,7 +208,8 @@
     "206-switch.listOutputs.adminBasket.json",
     "207-switch.listOutputs.pendingLimit.json",
     "208-switch.permission-audit.page.json",
-    "209-switch.listOutputs.heldAtShutdown.json"
+    "209-switch.listOutputs.heldAtShutdown.json",
+    "210-probe.getVersion.once.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -298,6 +299,7 @@
     "206-switch.listOutputs.adminBasket.json": "#414 L5b: the basket default is admin-reserved (WPM:1589, 5620-5624), refused at once to a page in the reference's words, 400 ERR_PERMISSION_DENIED `Basket “default” is admin-only.`, with no row; a seed-listed originator is not refused it.",
     "207-switch.listOutputs.pendingLimit.json": "#414 L5b, W14: with two calls of the page held (the owner step's holding), the third is answered at once, 429 ERR_PERMISSION_PENDING_LIMIT with Retry-After 5 and the echo, writing no row. The first fixture answering 429 ERR_PERMISSION_PENDING_LIMIT: a new code of APP_CODES.",
     "208-switch.permission-audit.page.json": "#414 L5b: a host route answers the owner (no Origin, a loopback Host, the bearer under AUTH_TOKEN) or the seed, never a page's grant: no kind names it, so the page is refused 400 ERR_PERMISSION_DENIED at once, with the echo.",
-    "209-switch.listOutputs.heldAtShutdown.json": "#414 L5b, W13: the server shuts down while the page's call is held (the owner step's shutdown): 503 WALLET_BRIDGE_UNAVAILABLE, \"WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down\", the MetaNet Client's code and text (electron/httpServer.ts:277-281, 336 at bsv-desktop b791cb2) in the port's carrier, the call's row withdrawn. Served from the `shutdown` world, whose server stays shut. The first fixture answering it: a new code of APP_CODES."
+    "209-switch.listOutputs.heldAtShutdown.json": "#414 L5b, W13: the server shuts down while the page's call is held (the owner step's shutdown): 503 WALLET_BRIDGE_UNAVAILABLE, \"WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down\", the MetaNet Client's code and text (electron/httpServer.ts:277-281, 336 at bsv-desktop b791cb2) in the port's carrier, the call's row withdrawn. Served from the `shutdown` world, whose server stays shut. The first fixture answering it: a new code of APP_CODES.",
+    "210-probe.getVersion.once.json": "#539: a page the seed does not list (http://probe.test:8080), holding no row, at an open door: 200 with the echo, as 204; its answer is counted in the probe record off the call's path, never a grant or a pending row. Served from the `fresh` world after the owner's door's fixtures."
   }
 }
