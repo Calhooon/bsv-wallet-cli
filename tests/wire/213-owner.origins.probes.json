@@ -1,0 +1,52 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/origins",
+    "headers": {
+      "host": "127.0.0.1:3322"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "grants": [
+        {
+          "originator": "owner.example",
+          "rawOriginator": "owner.example:8443",
+          "kind": "basket",
+          "key": "[\"todo items\"]",
+          "amount": null,
+          "spentThisMonth": null,
+          "grantedAt": "<uint:10>",
+          "expiry": 0,
+          "revokedAt": "<uint:10>"
+        }
+      ],
+      "pending": [],
+      "probes": [
+        {
+          "originator": "probe.test",
+          "rawOriginator": "probe.test:8080",
+          "door": "createSignature",
+          "power": "[false,0,\"wire probe\",\"\"]",
+          "count": 1,
+          "firstSeen": "<uint:10>",
+          "lastSeen": "<uint:10>"
+        },
+        {
+          "originator": "probe.test",
+          "rawOriginator": "probe.test:8080",
+          "door": "getVersion",
+          "power": null,
+          "count": 2,
+          "firstSeen": "<uint:10>",
+          "lastSeen": "<uint:10>"
+        }
+      ]
+    }
+  }
+}
