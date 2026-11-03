@@ -745,7 +745,10 @@ pub const WALLET_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION_PATCH"),
 );
 
-/// GET /getVersion: [`WALLET_VERSION`], never the toolbox's own string.
+/// GET /getVersion: [`WALLET_VERSION`], never the toolbox's own string. Its
+/// shape, and that it names nothing of the build (a pre-release, a sha, the
+/// toolchain), is pinned by #540's test
+/// (`the_version_door_is_brc100s_shape_and_names_nothing_of_the_build`).
 pub async fn get_version() -> Json<GetVersionResult> {
     Json(GetVersionResult {
         version: WALLET_VERSION.to_string(),
