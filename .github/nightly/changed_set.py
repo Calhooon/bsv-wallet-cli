@@ -9,8 +9,8 @@ Usage:
 The Nightly has two modes. A COMPLETE night mutates every floored file (the
 files of MUTANTS_FLOORS in .github/workflows/nightly.yml) in
 MUTANTS_SHARDS_COMPLETE shards (`--complete-shards`, twenty: the account's
-concurrent-job limit, #460), fourteen at a time, then six (COMPLETE_PARALLEL,
-#496), the night of record cut at each pin (docs/RELEASING.md). An
+concurrent-job limit, #460), six at a time in four waves (HEAVY_RUN_PARALLEL,
+#513), the night of record cut at each pin (docs/RELEASING.md). An
 INCREMENTAL night, the default on the captain's dispatch, mutates only the
 floored files whose figure may have moved since the last complete run, and
 the score carries every other file's figure from that run with its run and
@@ -69,9 +69,9 @@ The plan names the selection the shards pass `cargo test` (`--lib --bins`, a
 `--test` for every target under tests/ and a `--bench` for every bench, less
 the left-out list's entries: the oracle complete per floored file, the owner's
 23.9 word), the shard count, the matrix and the matrix's max-parallel. A
-complete night: `--complete-shards` shards (#460), COMPLETE_PARALLEL at once
-(#496: the account's concurrent-job limit less a PR run's six jobs, so twenty
-shards run in two waves, fourteen then six). An incremental night keeps its own
+complete night: `--complete-shards` shards (#460), HEAVY_RUN_PARALLEL at once
+(#513: every heavy run of the fleet caps at six while the account's runner
+pool reads busy, so twenty shards run in four waves of six, the last two). An incremental night keeps its own
 sizing (#462): a whole set `--max-shards` (MUTANTS_SHARDS_INCREMENTAL);
 otherwise one shard per PER_SHARD of the changed files' mutants, by the
 record's counts, and at least PARALLEL while there are that many mutants, at
@@ -104,19 +104,21 @@ MODES = ("incremental", "complete")
 PER_SHARD = 19
 # A complete night's count (#460): the account's concurrent-job limit.
 COMPLETE_SHARDS = 20
-# A complete night's max-parallel (#496; the keeper's fleet line of 06:2xZ
-# 11-03): the account's twenty runners are one pool across four repositories,
-# and a PR run's six jobs (lint, Build, Test, vectors, wire, e2e-hermetic;
-# `changes` is seconds) need six of them. Night 3 (run 41516017523) held all
-# twenty and the PR runs of 11-03 took 47 to 55 minutes for 5 minutes of work.
-# So twenty shards run fourteen, then six; 14 until a later row reads the
-# limit from the API.
-ACCOUNT_RUNNERS = 20
-PR_RUN_JOBS = 6
-COMPLETE_PARALLEL = ACCOUNT_RUNNERS - PR_RUN_JOBS
+# A complete night's max-parallel (#513; the keeper's fleet line of 10:0xZ
+# 11-03, from the opening API read of the account's runner pool: 12,251 jobs
+# over three days). The account's twenty runners are one pool across four
+# repositories, and it sat at twenty at its peak in 22 of 24 hours; a job
+# queued beside a heavy run waited a median 0:38 and a worst 88:53, against
+# 0:02 and 3:16 beside none; the non-heavy jobs' p95 is 14 slots, so #496's
+# 14 (20 less a PR run's six) beside them asked for 28 of 20. Every heavy run
+# of the fleet caps at six: twenty shards run in four waves (6, 6, 6, 2).
+# Raise it only when the next occupancy read (every 48 hours, fleet-wide)
+# shows the non-heavy p95 under 10 slots.
+HEAVY_RUN_PARALLEL = 6
 # An incremental night's max-parallel (#144): a small set still fills the six runners a
 # night may hold, since a shard's wall clock is its baseline (about 11 minutes
-# in run 41516017523) and its mutants, not their count across shards.
+# in run 41516017523) and its mutants, not their count across shards. Six is
+# already HEAVY_RUN_PARALLEL's cap (#513), so the incremental rule is unchanged.
 PARALLEL = 6
 WHOLE = {
     "Cargo.lock": "the lockfile changed: a dependency counts as changing every file that uses it",
@@ -481,9 +483,9 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
         shards = max_shards
     else:
         shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD), min(PARALLEL, mutants)))
-    # Fourteen at a time on a complete night, a PR run's six runners left (#496);
-    # six at a time on an incremental one (#144); never more than the count.
-    parallel = max(1, min(COMPLETE_PARALLEL if mode == "complete" else PARALLEL, shards))
+    # Six at a time on a complete night, the fleet's heavy-run cap (#513); six
+    # at a time on an incremental one (#144); never more than the count.
+    parallel = max(1, min(HEAVY_RUN_PARALLEL if mode == "complete" else PARALLEL, shards))
     return {
         "mode": mode,
         "base": base,
