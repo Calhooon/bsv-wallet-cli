@@ -19,8 +19,10 @@
 //! row (question 6). The host routes answer the owner (no `Origin`, a
 //! loopback `Host`, the bearer under `AUTH_TOKEN`) or the seed, never a
 //! page's grant; the open doors (W15, ruled (i)) answer any page with a
-//! parsed `Origin` and an agreeing originator with no row. Every other door
-//! asks its powers after its arguments parse (`powers::Asker::ask`).
+//! parsed `Origin` and an agreeing originator with no row, within the
+//! bound per originator (#541, `super::open_bounds`; past it 429
+//! `ERR_RATE_LIMITED`). Every other door asks its powers after its
+//! arguments parse (`powers::Asker::ask`).
 //!
 //! Where this is stricter than the client, by the ruling's rule 1 and the
 //! stack's charter section 13 (`lean/BrowserGate.lean` `gate`): the legacy
@@ -41,6 +43,7 @@ use axum::response::{IntoResponse, Response};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use super::error::{AppError, Kind};
+use super::open_bounds::{Class, OpenBounds};
 use super::probes::Probes;
 pub use crate::config::originator::OriginatorRule;
 
@@ -331,9 +334,9 @@ fn route_of(request: &Request) -> &str {
 /// The gate, after the bearer and before the body is read: the owner at a
 /// host route; the `Origin` and the agreement; then the seed (admitted at
 /// every door and host route, logged with its entry), a host route a page
-/// asks (refused), an open door (answered, W15), and every other door
-/// (its powers asked by its handler). Inside the CORS layer, so a page
-/// reads its refusal.
+/// asks (refused), an open door (answered within its bound, W15, #541),
+/// and every other door (its powers asked by its handler). Inside the CORS
+/// layer, so a page reads its refusal.
 pub(crate) async fn gate(
     axum::Extension(allowed): axum::Extension<AllowedOrigins>,
     mut request: Request,
@@ -370,7 +373,18 @@ pub(crate) async fn gate(
         }
         None if OPEN_DOORS.contains(&route.as_str()) => {
             let probes = request.extensions().get::<Probes>().cloned();
-            super::powers::open(&admitted, &probes.unwrap_or_default(), &route, None);
+            let bounds = request.extensions().get::<OpenBounds>().cloned();
+            let open = super::powers::open(
+                &admitted,
+                &probes.unwrap_or_default(),
+                &bounds.unwrap_or_default(),
+                &route,
+                Class::Open,
+                None,
+            );
+            if let Err(limited) = open {
+                return limited.into_response();
+            }
         }
         None => {}
     }

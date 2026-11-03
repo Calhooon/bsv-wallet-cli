@@ -5,6 +5,7 @@ pub mod broadcast_follow_up;
 pub mod error;
 pub mod handlers;
 mod host_reads;
+pub mod open_bounds;
 pub mod origin_gate;
 pub mod owner_door;
 mod page_bounds;
@@ -279,6 +280,8 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let allowed = config.allowed_origins.clone();
     let held = config.held.clone();
     let probes = config.probes.started(&wallet);
+    // The open doors' bound (#541): this process's counters, never the store's.
+    let bounds = open_bounds::OpenBounds::default();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -410,6 +413,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .layer(axum::Extension(allowed))
         .layer(axum::Extension(held))
         .layer(axum::Extension(probes))
+        .layer(axum::Extension(bounds))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -791,3 +795,6 @@ mod powers_tests;
 
 #[cfg(test)]
 mod probes_tests;
+
+#[cfg(test)]
+mod open_bounds_tests;

@@ -39,6 +39,9 @@ pub enum Kind {
     /// A held call past the cap (#414, the design's W14): at most 2 held
     /// calls per originator and 4 in all; answered at once, never held.
     PendingLimit,
+    /// An open door or a level-0 power past its bound (#541): a page the
+    /// seed does not list, answered at once with the wait.
+    RateLimited,
     /// A held call at the server's shutdown (#414, W13): the MetaNet
     /// Client's code and text in the port's carrier.
     BridgeUnavailable,
@@ -81,6 +84,7 @@ impl Kind {
                 StatusCode::TOO_MANY_REQUESTS,
                 "ERR_PERMISSION_PENDING_LIMIT",
             ),
+            Kind::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "ERR_RATE_LIMITED"),
             Kind::BridgeUnavailable => {
                 (StatusCode::SERVICE_UNAVAILABLE, "WALLET_BRIDGE_UNAVAILABLE")
             }
@@ -159,6 +163,9 @@ pub struct AppError {
     /// The operator's recovery hint, selected on a typed record (an
     /// abort's stored acceptance, #342) and served after the message.
     hint: Option<String>,
+    /// A `Retry-After` of the refusal's own, in seconds, over the kind's
+    /// (the open doors' bound, #541: the wait until the next admission).
+    retry_after: Option<u64>,
 }
 
 impl AppError {
@@ -170,7 +177,14 @@ impl AppError {
             refusal: None,
             review: None,
             hint: None,
+            retry_after: None,
         }
+    }
+
+    /// The refusal served with `Retry-After: secs`.
+    pub(crate) fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after = Some(secs);
+        self
     }
 
     /// A store busy by its type, preserving its Display at the host routes
@@ -432,7 +446,7 @@ impl IntoResponse for AppError {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
         }
-        match self.kind.retry_after_secs() {
+        match self.retry_after.or(self.kind.retry_after_secs()) {
             // Retry after the pause. A callback deadline can leave partial
             // status writes, which repeated delivery converges.
             Some(secs) => (
