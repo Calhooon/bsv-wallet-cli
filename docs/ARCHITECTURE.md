@@ -739,7 +739,7 @@ files of this pinned map.
 | `src/commands/export_beefs.rs` | 360 | One BEEF file per transaction holding a coin of ours, from the store alone (C10) | wallet host |
 | `src/commands/backup.rs` | 58 | Copy `.env` and the store, with a digest | plumbing |
 | `src/commands/services.rs` | 57 | The services' health (chain, height) | plumbing |
-| `src/commands/ui.rs` | 479 | The read-only database inspector (its own Axum server, SELECT only) | plumbing |
+| `src/commands/ui.rs` | 479 | The database inspector (its own Axum server): every read on a read-only pool (#440); its origins view in `ui/origins.rs` writes through `origin_grants` from its own page alone (#414) | plumbing |
 | `src/ui/index.html` | | The inspector's page, embedded by `ui.rs` | plumbing |
 | `src/gift/mod.rs` | 16 | The TimeLockedGift covenant module | wallet host |
 | `src/gift/covenant.rs` | 245 | The byte-exact covenant locking script, 110 vectors | wallet host |
