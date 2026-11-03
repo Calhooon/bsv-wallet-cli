@@ -326,3 +326,93 @@ fn the_stored_words_read_back() {
     );
     assert_eq!(key_of("[::1]:3000").unwrap().0, "[::1]");
 }
+
+/// L5a's block as it landed (`origin_pending` keyed by a bare `INTEGER
+/// PRIMARY KEY`): its other objects are the current block's.
+const L5A_PENDING: &str = "CREATE TABLE origin_pending (pending_id INTEGER PRIMARY KEY, \
+     originator TEXT NOT NULL, raw_originator TEXT NOT NULL, \
+     kind TEXT NOT NULL CHECK (kind IN ('protocol', 'basket', 'certificate', 'spending')), \
+     key TEXT NOT NULL, usage TEXT, call TEXT NOT NULL, reason TEXT, amount INTEGER, \
+     renewal INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL, answered_at INTEGER, \
+     answer TEXT CHECK (answer IN ('grant', 'once', 'deny')), \
+     CHECK ((kind = 'spending') = (amount IS NOT NULL)))";
+
+/// An open basket row of `originator` (any name of its host).
+async fn opened(storage: &StorageSqlx, originator: &str, basket: &str) -> i64 {
+    let power = Power::basket(basket).unwrap();
+    let asking = Asking {
+        originator,
+        power: &power,
+        usage: Some("listing"),
+        call: "/listOutputs",
+        reason: None,
+        amount: None,
+        renewal: false,
+    };
+    open_or_join(storage, &asking, NOW)
+        .await
+        .unwrap()
+        .row
+        .pending_id
+}
+
+/// #414 L5b: a row whose caller left is deleted, and its id is never given
+/// to another request, so an owner answering `#N` from a listing read
+/// before the deletion cannot answer another page's request.
+#[tokio::test]
+async fn a_withdrawn_requests_id_is_never_given_again() {
+    let (_dir, storage) = wallet_db().await;
+    let gone = opened(&storage, "gone.example", "browser gate").await;
+    assert_eq!(
+        abandon(&storage, "gone.example", &[gone])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let next = opened(&storage, "evil.example", "browser gate").await;
+    assert!(
+        next > gone,
+        "the deleted top id {gone} is given again as {next}"
+    );
+    assert_eq!(sweep_open(&storage).await.unwrap(), 1);
+    let after = opened(&storage, "evil.example", "browser gate").await;
+    assert!(
+        after > next,
+        "the swept id {next} is given again as {after}"
+    );
+}
+
+/// An L5a store (every object, `origin_pending` without `AUTOINCREMENT`)
+/// is rebuilt once with its rows and their ids, and its next id passes
+/// them; a second ensure sends nothing to the writer.
+#[tokio::test]
+async fn an_l5a_store_gains_ids_never_reused_with_its_rows_carried() {
+    let (_dir, storage) = wallet_db().await;
+    let (markers, _guard) = Markers::capture();
+    ensure(&storage).await.unwrap();
+    for sql in [
+        "DROP TABLE origin_pending",
+        L5A_PENDING,
+        "CREATE UNIQUE INDEX origin_pending_open ON origin_pending (originator, kind, key) \
+         WHERE answered_at IS NULL AND kind <> 'spending'",
+        "INSERT INTO origin_pending (pending_id, originator, raw_originator, kind, key, usage, \
+         call, first_seen, answered_at, answer) VALUES \
+         (7, 'app.example', 'app.example', 'basket', '[\"todo items\"]', 'listing', \
+          '/listOutputs', 1793697120, 1793697130, 'deny')",
+    ] {
+        sqlx::query(sql).execute(storage.writer()).await.unwrap();
+    }
+    assert!(ensure(&storage).await.unwrap(), "the rebuild wrote");
+    assert_eq!(own_objects(&storage).await, new_objects());
+    let kept = listing(&storage, true).await.unwrap().pending;
+    assert_eq!(
+        kept.iter()
+            .map(|r| (r.pending_id, r.answer))
+            .collect::<Vec<_>>(),
+        [(7, Some(Answer::Deny))]
+    );
+    assert!(opened(&storage, "app.example", "next basket").await > 7);
+    assert_eq!(markers.named("origin_grants_sequenced").len(), 1);
+    a_second_ensure_writes_nothing(&storage).await;
+}

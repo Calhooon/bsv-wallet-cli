@@ -68,7 +68,7 @@ const DDL: [&str; 6] = [
     "CREATE UNIQUE INDEX IF NOT EXISTS origin_grants_power \
         ON origin_grants (originator, kind, key)",
     "CREATE TABLE IF NOT EXISTS origin_pending (\
-        pending_id INTEGER PRIMARY KEY, \
+        pending_id INTEGER PRIMARY KEY AUTOINCREMENT, \
         originator TEXT NOT NULL, \
         raw_originator TEXT NOT NULL, \
         kind TEXT NOT NULL CHECK (kind IN ('protocol', 'basket', 'certificate', 'spending')), \
@@ -124,6 +124,10 @@ pub async fn ensure(storage: &StorageSqlx) -> Result<bool> {
             return Ok(false);
         }
         Case::L1 { pending } => Some(move_l1(&mut tx, pending).await?),
+        Case::Unsequenced => {
+            sequence_pending(&mut tx).await?;
+            None
+        }
         Case::Missing => {
             create(&mut tx).await?;
             None
@@ -151,7 +155,13 @@ async fn shape(conn: &mut SqliteConnection) -> Result<Case> {
     )
     .fetch_one(&mut *conn)
     .await?;
-    Ok(Case::of(&present, kinded > 0))
+    let sequenced: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'origin_pending' \
+         AND sql LIKE '%AUTOINCREMENT%'",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Case::of(&present, kinded > 0, sequenced > 0))
 }
 
 /// Move L1's shape inside the caller's transaction ([`migrate`]): rename
@@ -195,6 +205,40 @@ async fn move_l1(conn: &mut SqliteConnection, pending: bool) -> Result<Moved> {
         sqlx::query(sql).execute(&mut *conn).await?;
     }
     Ok(Moved::of(rows, count))
+}
+
+/// Rebuild L5a's `origin_pending` as the block writes it, its ids never
+/// reused (`AUTOINCREMENT`), inside the caller's transaction: rename it
+/// aside, drop its index, run the block, carry every row with its id, drop
+/// the old table. From the switch (L5b) a row whose caller left is
+/// deleted; without the sequence SQLite would give its id to the next
+/// request, and an owner answering `#N` from a listing read before the
+/// deletion would answer another page's request.
+async fn sequence_pending(conn: &mut SqliteConnection) -> Result<()> {
+    for sql in [
+        "ALTER TABLE origin_pending RENAME TO origin_pending_unsequenced".to_string(),
+        "DROP INDEX IF EXISTS origin_pending_open".to_string(),
+    ] {
+        sqlx::query(&sql).execute(&mut *conn).await?;
+    }
+    create(conn).await?;
+    let carried = sqlx::query(&format!(
+        "INSERT INTO origin_pending ({PENDING_COLUMNS}) \
+         SELECT {PENDING_COLUMNS} FROM origin_pending_unsequenced ORDER BY pending_id"
+    ))
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    sqlx::query("DROP TABLE origin_pending_unsequenced")
+        .execute(&mut *conn)
+        .await?;
+    tracing::info!(
+        marker = "origin_grants_sequenced",
+        carried,
+        "origin grants: the pending requests' ids are never reused from now on ({carried} rows \
+         carried)"
+    );
+    Ok(())
 }
 
 /// The block, on the transaction's connection.
