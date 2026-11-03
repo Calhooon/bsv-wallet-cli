@@ -56,7 +56,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at 0aa81a1 |
 | ratchet `duplicated_tokens` | 31965 |  | `docs/ratchets.json` at 0aa81a1 |
 | ratchet `missing_docs` | 126 |  | `docs/ratchets.json` at 0aa81a1 |
-| wire fixtures | 209 |  | `tests/wire/MANIFEST.json` |
+| wire fixtures | 213 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
 | arch rule A1 allowlist | 0 files, 0 sites |  | `tests/arch_env_reads.rs` ALLOWED |
@@ -64,7 +64,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | arch rule A3 allowlist | 6 files, 48 sites |  | `tests/arch_explorer_sites.rs` ALLOWED |
 | arch rule A4 allowlist | 4 files, 4 sites |  | `tests/arch_no_unwrap.rs` ALLOWED |
 | arch rule A5 allowlist | 6 files, 13 sites | the rise of `src/store/origin_grants/power.rs` recorded, #414: 5 to 6 files, 8 to 13 sites (2026-11-03) | `tests/arch_no_prefix_errors.rs` ALLOWED |
-| arch rule A6 allowlist | 6 files, 11 sites | the rise of `src/server/powers.rs` recorded, #414: 5 to 6 files, 10 to 11 sites (2026-11-03) | `tests/arch_spawn_sites.rs` ALLOWED |
+| arch rule A6 allowlist | 7 files, 12 sites | the rise of `src/server/probes.rs` recorded, #539: 6 to 7 files, 11 to 12 sites (2026-11-03) | `tests/arch_spawn_sites.rs` ALLOWED |
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |
 | mutation floor `src/broadcast_verify.rs` | 86 | 86.0 at f2976ef | `.github/workflows/nightly.yml` |
@@ -79,7 +79,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | fuzz hours `allow_pending` | 1.0 | 103851079 executions, 3483 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
 | bench baseline `ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | bench baseline `ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
-| e2e scenarios | 30 |  | `tests/e2e/scenarios/` |
+| e2e scenarios | 31 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/browsers.js` |
 | differential `45fecea` against `e5bf424` | 0 | 375 calls, 37 commands; the same-build floor 0; complete | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253245406 |
 <!-- scoreboard:end -->
