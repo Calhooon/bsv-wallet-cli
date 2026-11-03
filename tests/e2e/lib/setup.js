@@ -13,7 +13,7 @@ const BSV = process.env.BSV_WALLET_BIN || path.resolve(__dirname, '../../../targ
 // before this file and the scenarios take it from child_process.
 record.install(BSV);
 
-const { execSync, spawn } = require('child_process');
+const { execSync, execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const { WalletClient, ANYONE_KEY, buildP2PKH, E2E_ORIGINATOR } = require('./wallet-client');
 const { fetchBeef, buildAtomicBEEF, sleep } = require('./woc');
@@ -31,11 +31,15 @@ const WALLET_TMP = process.env.E2E_WALLET_TMP || '/tmp';
  * wallet's `.env` carries beside the key `init` wrote (wallet B's
  * TRUST_SETTINGS, #331), read by `serve` and every CLI command alike.
  * `ALLOWED_ORIGINS` is the harness's originator, `e2e-test`, unless `env`
- * names it (#411: the served doors refuse an origin whose originator the
- * list does not name).
+ * names it: the seed, which admits its originator at every door (#414,
+ * question 6); `null` leaves it unset, so every page is asked per power.
+ * `grants` are the owner's `origin-grant` argument lists, run in the
+ * wallet's directory before it serves (the browser gate's wallet D grants
+ * the harness's originator the identity key's power, which the start's
+ * identity check asks).
  * Returns { dir, proc, client, identityKey, address }.
  */
-async function startWallet(port, name, { env = {} } = {}) {
+async function startWallet(port, name, { env = {}, grants = [] } = {}) {
   env = { ALLOWED_ORIGINS: E2E_ORIGINATOR, ...env };
   // The port must be free. A process already answering there (another
   // wallet's daemon, a leftover) would take this wallet's requests: the
@@ -57,8 +61,12 @@ async function startWallet(port, name, { env = {} } = {}) {
   const key = record.rootKeyFor(name);
   execSync(`cd "${dir}" && "${BSV}" init${key ? ` --key ${key}` : ''}`, { stdio: 'pipe' });
   for (const [variable, value] of Object.entries(env)) {
+    if (value === null) continue;
     if (value.includes("'")) throw new Error(`${name}: ${variable} cannot be single-quoted in .env`);
     fs.appendFileSync(path.join(dir, '.env'), `${variable}='${value}'\n`);
+  }
+  for (const args of grants) {
+    execFileSync(BSV, ['origin-grant', ...args], { cwd: dir, stdio: 'pipe' });
   }
 
   // Start serve in background. The monitor daemon is NOT needed for test wallets
