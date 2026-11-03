@@ -69,6 +69,9 @@ pub struct ServerConfig {
     /// The probe record's queue (#539, `probes::Probes`): started on the
     /// served wallet by [`make_router`], shared by every clone.
     pub probes: probes::Probes,
+    /// The open doors' bound (#541, `open_bounds::OpenBounds`): this
+    /// process's counters, shared by every clone; never the store's.
+    pub bounds: open_bounds::OpenBounds,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
     /// Network the served wallet is on. Drives post-broadcast verification
@@ -98,6 +101,7 @@ impl Default for ServerConfig {
             allowed_origins: AllowedOrigins::default(),
             held: powers::Held::default(),
             probes: probes::Probes::default(),
+            bounds: open_bounds::OpenBounds::default(),
             tls: None,
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
@@ -132,6 +136,7 @@ impl ServerConfig {
             allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned())?,
             held: powers::Held::default(),
             probes: probes::Probes::default(),
+            bounds: open_bounds::OpenBounds::default(),
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -280,8 +285,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let allowed = config.allowed_origins.clone();
     let held = config.held.clone();
     let probes = config.probes.started(&wallet);
-    // The open doors' bound (#541): this process's counters, never the store's.
-    let bounds = open_bounds::OpenBounds::default();
+    let bounds = config.bounds.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC

@@ -595,6 +595,10 @@ impl World {
             // The gate's header re-read at once: `headers-down` (fixture
             // 084) answers the same bytes without the served 2 s (#506).
             header_retry_pause: std::time::Duration::ZERO,
+            // The open doors' bound on a clock that stands still: fixtures
+            // 214 to 216 refuse the call past the burst however fast the
+            // calls before it ran (#541).
+            bounds: server::open_bounds::OpenBounds::stopped(),
             ..ServerConfig::admitting([super::recorder::ORIGINATOR, "app.example"])
                 .expect("an originator")
         };
