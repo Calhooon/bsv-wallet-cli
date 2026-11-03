@@ -197,7 +197,7 @@ A PR that changes what the server answers changes its fixture in the same PR, in
 3. `cargo test --locked --test wire` replays what was recorded.
 4. `git diff tests/wire` shows exactly the bytes the change moved. Commit them alone, with a subject that says which answer changed and why (`wire: /listActions carries underRule`).
 
-CI's `wire` job replays only: it fails before cargo runs if `WIRE_RECORD` is set to anything, the empty string included, and it refuses a run that left a fixture changed.
+CI's `wire` job replays only: it fails before cargo runs if `WIRE_RECORD` is set to anything, the empty string included, and it refuses a run that left a fixture changed. CI runs the binary under cargo-nextest, one process per test (#472): the harness's lock serializes the worlds within a process, whose permission audit they share, and each process has its own, so the tests replay at once.
 
 A new served call or refusal gets a case in one of the `record_*` functions `record_all` calls in order (`tests/wire_harness/cases.rs`, `cases_routes.rs`, `cases_spending.rs`) and, if it is a route or a code the judge must keep, an entry in `ENDPOINTS`, `HOST_ROUTES`, `APP_CODES` or `ROUTER_CODES` (a new `AppError` code with no entry fails `every_app_error_code_is_judged`). Re-recording writes the files with fresh sequence numbers, so a case added in the middle renames the files after it; the diff shows them as moved, their bodies unchanged.
 
