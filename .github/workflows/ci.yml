@@ -22,7 +22,13 @@ name: CI
 # the `changes` job at the head reads the changed paths once and every
 # required job's steps skip on its `docs_only` (never the job, whose context
 # would then go missing), all but `lint`'s docs gates. `changes` is not a
-# required context; when it fails, every job runs the full set.
+# required context; when it fails, every job runs the full set. On a pull
+# request (#473), Test and wire run the test targets the diff reaches
+# (.github/ci/affected.py, the incremental Nightly's oracle, read by
+# `changes`) and lint's deny runs when a path it reads changed; a merge-queue
+# group, a push and a tag run the whole suite. The same contexts report in
+# both modes, each job's log naming its selection: a PR's green is the
+# reached tests', the queue's green is the suite's.
 # Every action is pinned by commit sha.
 on:
   pull_request:
@@ -89,6 +95,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
+      # The tests a PR runs (#473), from .github/ci/affected.py; each is
+      # empty, which every reader takes as the whole suite, off the success path.
+      test_args: ${{ steps.diff.outputs.test_args }}
+      test_run: ${{ steps.diff.outputs.test_run }}
+      wire: ${{ steps.diff.outputs.wire }}
+      deny: ${{ steps.diff.outputs.deny }}
+      selection: ${{ steps.diff.outputs.line }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -131,6 +144,8 @@ jobs:
           [ -n "$paths" ] || answer false "no changed path"
           echo "changes: $EVENT, $base..$head"
           docs=true
+          code="$RUNNER_TEMP/code-paths"
+          : > "$code"
           while IFS= read -r path; do
             kind=docs
             case "$path" in *.md) ;; *) kind="not docs" ;; esac
@@ -144,9 +159,16 @@ jobs:
             for read_by_code in $DOCS_READ_BY_CODE; do
               if [ "$path" = "$read_by_code" ]; then kind="not docs (the code reads it)"; fi
             done
-            if [ "$kind" != docs ]; then docs=false; fi
+            if [ "$kind" != docs ]; then docs=false; echo "$path" >> "$code"; fi
             echo "  $kind: $path"
           done <<< "$paths"
+          # The tests the diff reaches (#473): on a PR the targets of its
+          # non-docs paths, else the whole suite. A failed selector writes
+          # nothing, and nothing is the whole suite.
+          if [ "$docs" != true ]; then
+            python3 -B .github/ci/affected.py --event "$EVENT" --paths "$code" --github-output "$GITHUB_OUTPUT" \
+              || echo "changes: the selector failed (#473); every job runs the whole suite"
+          fi
           answer "$docs" "$(wc -l <<< "$paths" | tr -d ' ') changed paths"
 
   # The lint gates in one job (#471): Rustfmt, locks, deny, Clippy and the
@@ -278,10 +300,18 @@ jobs:
       # checks advisories, bans, licenses and sources against the committed
       # lock. Its tree is the PR's head on a pull request and the event's
       # commit otherwise (a push, a merge-queue group), as its own job's
-      # checkout was.
+      # checkout was. On a PR it runs when a path it reads changed (#473:
+      # the manifests, the lockfile, deny.toml, the template's stamp,
+      # ci.yml); a merge-queue group, a push and a tag always run it, so an
+      # advisory published since the lock last moved reds the queue, never a
+      # PR that did not touch the lock.
+      - name: "deny: the paths it reads"
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' && needs.changes.outputs.deny == 'false' }}
+        run: 'echo "deny: no path cargo-deny reads changed: skipped by #473 (the queue runs it)"'
+
       - name: "deny: the tree"
         id: deny-tree
-        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' && needs.changes.outputs.deny != 'false' }}
         env:
           DENY_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -460,6 +490,8 @@ jobs:
           # score's carried figures and refusals.
           python3 -B tools/test_changed_set.py
           python3 -B tools/test_mutants_score.py
+          # CI's own test selection on a PR (#473), on the same oracle.
+          python3 -B tools/test_affected.py
           # The Mutants shards' left-out targets (#401): the recorded reach
           # holds every entry of the list at zero lines of a floored file.
           python3 -B tools/test_no_floored.py
@@ -646,11 +678,24 @@ jobs:
         if: ${{ needs.changes.outputs.docs_only == 'true' }}
         run: 'echo "docs-only PR: Test skipped by #476"'
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The selection (#473): on a PR the test targets its diff reaches
+      # (.github/ci/affected.py, the Nightly's oracle), on a merge-queue
+      # group, a push and a tag the whole suite. A PR's green is the reached
+      # tests', the queue's the suite's (docs/lanes/README.md rule 18).
+      - name: The selection
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        env:
+          SELECTION: "${{ needs.changes.outputs.selection || 'selection: all (the whole suite; no selection read)' }}"
+          TEST_RUN: ${{ needs.changes.outputs.test_run }}
+        run: |
+          echo "$SELECTION"
+          if [ "$TEST_RUN" = false ]; then echo "no test target reached: Test skipped by #473"; fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
         with:
           toolchain: stable
 
@@ -665,20 +710,24 @@ jobs:
       # build with --workspace: the root package alone unifies other
       # features (serde_json, syn) and would rebuild what the key holds.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
         with:
           shared-key: test
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
 
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
         with:
           tool: cargo-nextest@0.9.150
 
       # The compile, its own step so its time is its own line in the run.
       - name: Build the workspace's tests
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: cargo test --workspace --locked --no-run
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
+        env:
+          TEST_ARGS: ${{ needs.changes.outputs.test_args || '--workspace' }}
+        run: |
+          read -ra args <<< "$TEST_ARGS"
+          cargo test "${args[@]}" --locked --no-run
 
       # nextest runs exactly what cargo test would (#472): the multiset of
       # test names nextest lists, ignored ones included, equals the one
@@ -688,13 +737,16 @@ jobs:
       # printed, not chosen: stable has linked with rust-lld on x86_64
       # Linux since 1.90, and lld names itself in the binary's .comment.
       - name: "nextest's list is cargo test's"
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
+        env:
+          TEST_ARGS: ${{ needs.changes.outputs.test_args || '--workspace' }}
         run: |
           set -euo pipefail
+          read -ra args <<< "$TEST_ARGS"
           list="$RUNNER_TEMP/lists"
           mkdir -p "$list"
-          cargo nextest list --workspace --locked --run-ignored all --message-format oneline --color never > "$list/nextest.txt"
-          cargo test --workspace --locked --color never -- --list > "$list/cargo.txt"
+          cargo nextest list "${args[@]}" --locked --run-ignored all --message-format oneline --color never > "$list/nextest.txt"
+          cargo test "${args[@]}" --locked --color never -- --list > "$list/cargo.txt"
           cut -d' ' -f2- "$list/nextest.txt" | sort > "$list/nextest.names"
           sed -n 's/: test$//p' "$list/cargo.txt" | sort > "$list/cargo.names"
           n=$(wc -l < "$list/nextest.names" | tr -d ' ')
@@ -706,20 +758,32 @@ jobs:
           fi
           [ "$n" -gt 0 ] || { echo "::error::no test listed"; exit 1; }
           rustc -vV
+          # A selection without the unit tests builds no bsv_wallet_cli-*
+          # binary (#473): the newest test binary of the selection then.
           bin=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'bsv_wallet_cli-*' | head -n 1)
-          echo "the linker of $bin:"
-          readelf -p .comment "$bin" | sed -n 's/^ *\[ *[0-9a-f]*\] *//p'
+          [ -n "$bin" ] || bin=$(find target/debug/deps -maxdepth 1 -type f -executable -name '*-*' -newer Cargo.lock | head -n 1)
+          if [ -n "$bin" ]; then
+            echo "the linker of $bin:"
+            readelf -p .comment "$bin" | sed -n 's/^ *\[ *[0-9a-f]*\] *//p'
+          else
+            echo "no test binary found to name the linker"
+          fi
 
-      # Every target of the workspace, not the synthetic integration tests
-      # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
-      # (the callback intake, the tracker-off refusals) live in the others.
+      # Every target of the workspace off a PR, not the synthetic integration
+      # tests alone: the unit tests and the witnesses of the 0.3.x and 0.4.0
+      # fixes (the callback intake, the tracker-off refusals) live in the
+      # others. On a PR, the targets the selection names (#473).
       # nextest runs each test in its own process, every binary at once
       # (#472): libtest ran the binaries one after another, and the wire
       # binary's tests one at a time behind its in-process lock (the audit
       # log is the process's), about 300 of the job's 450 seconds.
       - name: Run the workspace's tests
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: cargo nextest run --workspace --locked --no-fail-fast
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
+        env:
+          TEST_ARGS: ${{ needs.changes.outputs.test_args || '--workspace' }}
+        run: |
+          read -ra args <<< "$TEST_ARGS"
+          cargo nextest run "${args[@]}" --locked --no-fail-fast
 
   # The vector-backed tests as one named check: the Arcade status vector
   # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
@@ -797,11 +861,22 @@ jobs:
         if: ${{ needs.changes.outputs.docs_only == 'true' }}
         run: 'echo "docs-only PR: wire skipped by #476"'
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The selection (#473): the replay runs when the diff reaches the wire
+      # target, and always off a PR; see Test's.
+      - name: The selection
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        env:
+          SELECTION: "${{ needs.changes.outputs.selection || 'selection: all (the whole suite; no selection read)' }}"
+          WIRE: ${{ needs.changes.outputs.wire }}
+        run: |
+          echo "$SELECTION"
+          if [ "$WIRE" = false ]; then echo "the wire target is not reached: wire skipped by #473"; fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         with:
           toolchain: stable
 
@@ -812,25 +887,25 @@ jobs:
       # Test's compile was 56 seconds and this job's own warm compile 31 in
       # run 41570593531, so waiting would cost more than it saves.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         with:
           shared-key: test
           save-if: false
 
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         with:
           tool: cargo-nextest@0.9.150
 
       - name: The fixtures and their manifest are present
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         run: ls tests/wire/*.json > /dev/null && test -f tests/wire/MANIFEST.json
 
       # Replay only. A recording never passes (the test fails with the word
       # to replay it), and this job refuses to start one: WIRE_RECORD set to
       # anything fails here before cargo runs.
       - name: WIRE_RECORD is not set
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         run: |
           if [ -n "${WIRE_RECORD+set}" ]; then
             echo "WIRE_RECORD is set (${WIRE_RECORD}); the wire job replays, never records"
@@ -838,7 +913,7 @@ jobs:
           fi
 
       - name: Build the wire binary
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         run: cargo test --workspace --locked --no-run --test wire
 
       # Each test in its own process (#472), so the harness's lock, which
@@ -846,11 +921,11 @@ jobs:
       # process's), no longer serializes the binary: about 300 seconds under
       # libtest, one test at a time.
       - name: Replay the wire fixtures
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         run: cargo nextest run --workspace --locked --no-fail-fast --test wire
 
       - name: No fixture was written by the run
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.wire != 'false' }}
         run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
 
 
