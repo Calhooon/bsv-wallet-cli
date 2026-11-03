@@ -438,69 +438,163 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ratchet"
           python3 tools/ratchet --check "${base[@]}" --out "$RUNNER_TEMP/ratchet/ratchets.json"
 
-      # docs/NORTH-STAR.md's table is rendered from the records in the tree
-      # (#77); a PR that moves a record runs tools/scoreboard --render. The
-      # base's values are the base ref's tree (a git archive, never the PR's
-      # own records) rendered by the BASE'S OWN tools/scoreboard, so a PR that
-      # weakens the tool cannot also choose what the base says; only while the
-      # base holds no tools/scoreboard (beta before #77 lands) is this tree's
-      # tool used, and the log says which. The comparison itself is this
-      # tree's falls(), so a PR that weakens it is a diff of tools/scoreboard
-      # for its review to read. No floor, fixture, scenario or rule count may
-      # fall, no allowlist may grow, no list of names may lose one and no key
-      # may vanish. A base ref whose tree the tool cannot read fails the step
-      # (a malformed base record is never "no base").
-      - name: scoreboard
+      # The lint job's Python gates (#525), four groups side by side, each
+      # to its own log under $RUNNER_TEMP: the step waits for all, prints
+      # every log in order with its group's exit code and seconds, and fails
+      # if any group failed. Each group was its own step under `if:
+      # !cancelled()`, and each runs under this step's (the same condition,
+      # docs-only PRs included: tools/test_docs_only.py reads it); a group
+      # that needs another condition is its own step. A group stops at its
+      # first failed command, as its step did; `t` names each command's
+      # seconds in the log.
+      #
+      # scoreboard: docs/NORTH-STAR.md's table is rendered from the records
+      # in the tree (#77); a PR that moves a record runs tools/scoreboard
+      # --render. The base's values are the base ref's tree (a git archive,
+      # never the PR's own records) rendered by the BASE'S OWN
+      # tools/scoreboard, so a PR that weakens the tool cannot also choose
+      # what the base says; only while the base holds no tools/scoreboard
+      # (beta before #77 lands) is this tree's tool used, and the log says
+      # which. The comparison itself is this tree's falls(), so a PR that
+      # weakens it is a diff of tools/scoreboard for its review to read. No
+      # floor, fixture, scenario or rule count may fall, no allowlist may
+      # grow, no list of names may lose one and no key may vanish. A base ref
+      # whose tree the tool cannot read fails the group (a malformed base
+      # record is never "no base").
+      #
+      # changelog fragment: a push's PR was checked; on a PR the ratchet
+      # job's base ref is the PR's base branch, fetched by The base ref
+      # above. A merge-queue group has no PR number in its event and may
+      # batch several PRs, so no label is read: each PR's own pull_request
+      # run checked its fragment and label (the queue admits a PR only with
+      # its required checks green), and the group's tree is checked here for
+      # a malformed fragment, which no label excuses. The labels are read at
+      # run time, as the differential step does: a re-run reuses the event
+      # payload, so a later label must be read here.
+      - name: "scoreboard, links and citations, changelog fragment"
         if: ${{ !cancelled() }}
         env:
           REV: ${{ steps.base.outputs.rev }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 -B tools/test_scoreboard.py
-          python3 -B tools/test_fuzz_record.py
-          python3 -B tools/test_mutants_hermetic.py
-          # The bench gate's cases and the bench jobs' shape (#503), which the
-          # Nightly's bench job runs before it measures.
-          python3 -B tools/test_bench_compare.py
-          # The Nightly's two modes (#462): the plan's changed set and the
-          # score's carried figures and refusals.
-          python3 -B tools/test_changed_set.py
-          python3 -B tools/test_mutants_score.py
-          # CI's own test selection on a PR (#473), on the same oracle.
-          python3 -B tools/test_affected.py
-          # The docs-only exit never skips a gate's input (#509): every
-          # input planted through .github/ci/docs_only.sh --paths.
-          python3 -B tools/test_docs_only.py
-          # The Mutants shards' left-out targets (#401): the recorded reach
-          # holds every entry of the list at zero lines of a floored file.
-          python3 -B tools/test_no_floored.py
-          python3 -B .github/nightly/no_floored.py check .github/nightly/no-floored-reach.json
-          base=()
-          if [ -n "$REV" ]; then
-            mkdir -p "$RUNNER_TEMP/base-tree"
-            git archive "$REV" | tar -x -C "$RUNNER_TEMP/base-tree"
-            if git show "$REV:tools/scoreboard" > "$RUNNER_TEMP/base-scoreboard-tool" 2>/dev/null; then
-              tool="$RUNNER_TEMP/base-scoreboard-tool"
-              echo "scoreboard: the base values are $REV's tree, rendered by $REV's own tools/scoreboard"
+          now() { if [ -n "${EPOCHREALTIME:-}" ]; then echo "$EPOCHREALTIME"; else python3 -c 'import time; print(time.time())'; fi; }
+          t() {
+            local start code=0
+            start=$(now)
+            "$@" || code=$?
+            awk -v s="$start" -v e="$(now)" -v c="$code" -v cmd="$*" \
+              'BEGIN { printf "time: %6.2fs exit %d: %s\n", e - s, c, cmd }' >&2
+            return "$code"
+          }
+          scoreboard() {
+            t python3 -B tools/test_scoreboard.py
+            t python3 -B tools/test_fuzz_record.py
+            t python3 -B tools/test_mutants_hermetic.py
+            # The bench gate's cases and the bench jobs' shape (#503), which the
+            # Nightly's bench job runs before it measures.
+            t python3 -B tools/test_bench_compare.py
+            # The Nightly's two modes (#462): the plan's changed set and the
+            # score's carried figures and refusals.
+            t python3 -B tools/test_changed_set.py
+            t python3 -B tools/test_mutants_score.py
+            # CI's own test selection on a PR (#473), on the same oracle.
+            t python3 -B tools/test_affected.py
+            # The docs-only exit never skips a gate's input (#509): every
+            # input planted through .github/ci/docs_only.sh --paths.
+            t python3 -B tools/test_docs_only.py
+            # The Mutants shards' left-out targets (#401): the recorded reach
+            # holds every entry of the list at zero lines of a floored file.
+            t python3 -B tools/test_no_floored.py
+            t python3 -B .github/nightly/no_floored.py check .github/nightly/no-floored-reach.json
+            base=()
+            if [ -n "$REV" ]; then
+              mkdir -p "$RUNNER_TEMP/base-tree"
+              git archive "$REV" | tar -x -C "$RUNNER_TEMP/base-tree"
+              if git show "$REV:tools/scoreboard" > "$RUNNER_TEMP/base-scoreboard-tool" 2>/dev/null; then
+                tool="$RUNNER_TEMP/base-scoreboard-tool"
+                echo "scoreboard: the base values are $REV's tree, rendered by $REV's own tools/scoreboard"
+              else
+                tool=tools/scoreboard
+                echo "scoreboard: the base values are $REV's tree, rendered by this tree's tools/scoreboard ($REV has none)"
+              fi
+              t python3 -B "$tool" --root "$RUNNER_TEMP/base-tree" --json > "$RUNNER_TEMP/base-scoreboard.json"
+              base=(--base "$RUNNER_TEMP/base-scoreboard.json")
             else
-              tool=tools/scoreboard
-              echo "scoreboard: the base values are $REV's tree, rendered by this tree's tools/scoreboard ($REV has none)"
+              echo "::notice::no base ref: the table is checked against the tree alone"
             fi
-            python3 -B "$tool" --root "$RUNNER_TEMP/base-tree" --json > "$RUNNER_TEMP/base-scoreboard.json"
-            base=(--base "$RUNNER_TEMP/base-scoreboard.json")
-          else
-            echo "::notice::no base ref: the table is checked against the tree alone"
+            t python3 -B tools/scoreboard --check "${base[@]}"
+          }
+          ratchet_cases() {
+            t python3 -B tools/test_ratchet.py
+          }
+          links() {
+            t python3 -B tools/test_check_links.py
+            t python3 -B tools/check-links
+            t python3 -B tools/test_check_cites.py
+            t python3 -B tools/check-cites
+            t python3 -B tools/test_aggregate.py
+          }
+          changelog() {
+            set -euo pipefail
+            t python3 -B tools/test_changelog.py
+            if [ "$EVENT" = merge_group ]; then
+              echo "changelog: merge_group: the fragment requirement was checked on each PR; validating the group's fragments"
+              t python3 -B tools/changelog --list
+              exit 0
+            fi
+            if [ "$EVENT" != pull_request ]; then
+              echo "changelog: $EVENT: the fragment requirement is checked on the PR"
+              exit 0
+            fi
+            if [ -z "$REV" ]; then
+              echo "::error::the PR's base ref is empty"
+              exit 1
+            fi
+            if ! allow=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels \
+                --jq '[.labels[].name] | index("no-changelog") != null'); then
+              echo "::error::the PR's labels could not be read (gh pr view)"
+              exit 1
+            fi
+            echo "label no-changelog: $allow (read at run time)"
+            check=(--check --base "$REV")
+            if [ "$allow" = true ]; then
+              check+=(--allow-missing)
+            fi
+            t python3 -B tools/changelog "${check[@]}"
+          }
+          groups=(scoreboard ratchet_cases links changelog)
+          logs="$RUNNER_TEMP/lint-groups"
+          mkdir -p "$logs"
+          pids=()
+          for g in "${groups[@]}"; do
+            # Only the changelog group reads the PR's labels with the token.
+            ( start=$(now); [ "$g" = changelog ] || unset GH_TOKEN; set -e; trap 'awk -v s="$start" -v e="$(now)" "BEGIN { printf \"%.1f\", e - s }" > "$logs/$g.seconds"' EXIT; "$g" ) > "$logs/$g.log" 2>&1 &
+            pids+=("$!")
+          done
+          failed=()
+          for i in "${!groups[@]}"; do
+            g=${groups[$i]}
+            code=0
+            wait "${pids[$i]}" || code=$?
+            echo "::group::$g: exit $code in $(cat "$logs/$g.seconds" 2>/dev/null || echo '?')s"
+            cat "$logs/$g.log"
+            echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::lint group $g failed (exit $code); its log is the group above"
+              failed+=("$g")
+            fi
+          done
+          for i in "${!groups[@]}"; do
+            g=${groups[$i]}
+            echo "lint group $g: $(cat "$logs/$g.seconds" 2>/dev/null || echo '?')s"
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "lint groups failed: ${failed[*]}"
+            exit 1
           fi
-          python3 -B tools/scoreboard --check "${base[@]}"
-
-      - name: links and citations
-        if: ${{ !cancelled() }}
-        run: |
-          python3 -B tools/test_ratchet.py
-          python3 -B tools/test_check_links.py
-          python3 -B tools/check-links
-          python3 -B tools/test_check_cites.py
-          python3 -B tools/check-cites
-          python3 -B tools/test_aggregate.py
+          echo "lint groups: all ${#groups[@]} passed"
 
       # The ensemble chain's dry runs (#392): tools/lanes/chain-ensemble.sh
       # and ensemble-read.sh against stub-runner.sh standing in for cca and
@@ -521,50 +615,6 @@ jobs:
             zsh --version
           fi
           zsh -f tools/test_chain_ensemble.sh
-
-      - name: changelog fragment
-        if: ${{ !cancelled() }}
-        env:
-          REV: ${{ steps.base.outputs.rev }}
-          EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 -B tools/test_changelog.py
-          # A push's PR was checked; on a PR the ratchet job's base ref is
-          # the PR's base branch, fetched by The base ref above.
-          # A merge-queue group has no PR number in its event and may batch
-          # several PRs, so no label is read: each PR's own pull_request run
-          # checked its fragment and label (the queue admits a PR only with
-          # its required checks green), and the group's tree is checked here
-          # for a malformed fragment, which no label excuses.
-          if [ "$EVENT" = merge_group ]; then
-            echo "changelog: merge_group: the fragment requirement was checked on each PR; validating the group's fragments"
-            python3 -B tools/changelog --list
-            exit 0
-          fi
-          if [ "$EVENT" != pull_request ]; then
-            echo "changelog: $EVENT: the fragment requirement is checked on the PR"
-            exit 0
-          fi
-          if [ -z "$REV" ]; then
-            echo "::error::the PR's base ref is empty"
-            exit 1
-          fi
-          # Read current labels, as the differential step does: a re-run
-          # reuses the event payload, so a later label must be read here.
-          if ! allow=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels \
-              --jq '[.labels[].name] | index("no-changelog") != null'); then
-            echo "::error::the PR's labels could not be read (gh pr view)"
-            exit 1
-          fi
-          echo "label no-changelog: $allow (read at run time)"
-          check=(--check --base "$REV")
-          if [ "$allow" = true ]; then
-            check+=(--allow-missing)
-          fi
-          python3 -B tools/changelog "${check[@]}"
 
       - name: Keep the measured JSON
         if: always()
