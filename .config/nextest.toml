@@ -1,0 +1,41 @@
+# nextest's settings for the workspace (#506, loop three of the speed line).
+#
+# The long tests start first. nextest runs the suite as one queue on the
+# runner's four threads; in the binaries' own order the 5 to 15 s tests
+# started late and the run ended on them alone. A higher priority starts
+# earlier (nextest's `priority`, -100 to 100, default 0); within a tier the
+# order is nextest's own. The tiers are by the seconds the Test job's log
+# and a 4-thread local run gave each test at #506's tip; a test whose wait
+# is the behaviour it tests (a busy ceiling, a deadline, a stress loop)
+# keeps its wait and starts first instead. Re-tier from the next timings.
+
+# 8 s and more.
+[[profile.default.overrides]]
+filter = """
+test(=spend_gate::tests::create_action_beside_a_monitor_shaped_writer_answers_no_store_error)
+| test(=server::arc_callback_tests::arc_callback_deadline_served_default_is_eight_seconds)
+| binary_id(bsv-wallet-cli::json_refusal)
+| binary_id(bsv-wallet-cli::gate_vectors)
+| binary_id(bsv-wallet-cli::served_beef_doors)
+"""
+priority = 100
+
+# 3 to 8 s.
+[[profile.default.overrides]]
+filter = """
+test(=store::tests::only_the_writers_acquire_timeout_is_busy)
+| test(/^server::arc_callback_tests::arc_callback_(under_a_busy_store|busy_store_under|writer_not_acquired|deadline_)/)
+| binary_id(bsv-wallet-cli::arcade_webhook_vector_tests)
+| binary_id(bsv-wallet-cli::wire_consumers)
+"""
+priority = 50
+
+# 1 to 3 s.
+[[profile.default.overrides]]
+filter = """
+test(/^commands::cleanup_abandoned::tests::/)
+| test(/^broadcast_reconcile::tests::a_seen_but_absent/)
+| binary_id(bsv-wallet-cli::wire)
+| binary_id(bsv-wallet-cli::origins_cli)
+"""
+priority = 20
