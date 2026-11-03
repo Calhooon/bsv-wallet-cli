@@ -2765,3 +2765,226 @@ as GitHub shows them at 07:16Z; the certificate re-issue (#333)
 at the production upgrade. Closed in the morning: #494 and #503 (07:09Z).
 The lines, read with `git ls-remote origin beta main` at 07:16Z: beta
 f7db9f60 (PR 505); main at this entry's parent, 41160935.
+
+## 2026-11-03, the day (the morning to the night): night 3 closed, the speed line's four loops closed but for two held rows, the fleet line and the merge queue's truth, the browser gate (c) switched on beta under the owner's W1, W4 and W15 words with L6 held for the captain, night 4 green and recorded, and the day's lessons (states as of 23:51Z 11-03)
+
+The night's entry ends at beta f7db9f60 and main 41160935 (states as of
+07:16Z). The states of issues and PRs below are as GitHub read them at
+23:51Z 11-03 (`gh issue view`, `gh pr view`, the lines by `git ls-remote`);
+a state that moved after that time is the next entry's. Every time below is
+the verified clock of the captain's day line
+(/Volumes/Lanes/out/bsv-wallet-cli/day-line-2026-11-03.md, from its 06:08Z
+entry on); GitHub's merge stamps agree with it to the minute, and where
+they differ by a minute or two this entry gives GitHub's. The verdicts and
+scores of the reads are the day line's figures. Where a later entry of the
+day line corrects an earlier one, the correction stands and this entry says
+so.
+
+Night 3, closed. Run 41516017523 (on f2976ef1) closed with conclusion
+failure: 64 of 65 jobs green and the Mutation score job red by design (the
+day line's 06:40Z entry corrects its 06:37Z "every job green"): the union
+of the two passes judged, the hermetic six run to the end; broadcast_verify
+86.0, explorers 100.0, handlers 100.0, spend_gate 90.8 (one mutant caught
+by e2e_hermetic alone), tracker_host 74.2 against its floor of 75, judged,
+and 75.8 with the six declared equivalents (#482), the verdict lifted at
+this complete night as planned. Its record, PR 501 (review merge at 0.9),
+merged at 06:54Z, beta cca58c91 (the queue wait 9 minutes), with the fuzz
+record by the tool and the bench's Intel Xeon 6975P entry at night 1 of 5
+(#142 open); #393 closed at 06:54Z on the hermetic union judged. The record
+lane's finding, the stale bench test (tools/test_bench_compare.py asserting
+no `needs:` on the night's bench job), was #503, PR 504 (review merge at
+0.95) merged at 07:08Z, beta 58946be5; #503 closed at 07:09Z. The night's
+HANDOFF, PR 502, took three passes (fix at 0.88, fix at 0.86 on states that
+moved after its writing, then merge at 0.9 once its heading named the time
+its states were read: the named-time rule, the day line's 07:14Z entry) and
+merged on main at 07:25Z, e376b6e8.
+
+The speed line. Each loop is measure, cut, measure, record, under the
+owner's words as the day line's 07:15Z entry records them, verbatim as the
+keeper relayed them: "it is very very very beneficial to optimize it"; "be
+a field expert... balling on a budget"; "even when that's all done, another
+round of optimizing"; and the loops' word of 02:1xZ, "do 3 or 4 loops even
+man... like huge chance for prodicut ity gains etc".
+
+- Loop one, closed: #471 (the lint gates in one job), #472 (the cached
+  build), #473 (the affected tests on a PR, by PR 493, beta 5e493123 at
+  06:06Z) and #486 (closed at 06:06Z on the cache witness), all closed.
+- Loop two, closed: #477 by PR 492 after three passes (the ensemble split
+  at 06:18Z, A merge 0.85 and B fix 0.78 on a claim without output; the
+  second read fix 0.8; the third merge 0.82 with every kill shown by
+  output, 156 of the 455 caught candidates killed by carried.rs and
+  dead_proof_tests.rs and all caught at the tip), merged 09:22Z, beta
+  fcadddeb, the tests step 220 to 149 s on its group run; #477 closed at
+  09:23Z. #494 closed at 07:09Z on the full witness (PR 504's group run
+  restored all six jobs "full match: true"); #496 by PR 505 after a port
+  (PR 499 conflicted with PR 501's NIGHTLY.md row), beta f7db9f60, open for
+  a complete night's figures; #497 by PR 498, closed at 06:43Z.
+- Loop three, closed: #507 (cargo-deny from the pinned prebuilt tarball
+  with its sha256, PR 508, beta 30c18663; lint 4m53s to 2m05s, the install
+  119 s to 0 s); #509 (the docs-only proof from the keeper's class
+  question, PR 511 after one fix pass, 87 planted rows, beta b15e8169);
+  #510 (the shards keep cargo-mutants' log/, PR 512, beta 43dc1b99); #506
+  (the next ten slowest): its PR 521 was refused by the merge queue
+  (below), the port PR 531 (the seven own commits over beta, read merge
+  0.9) merged at 13:39Z, beta 23f630ae, the tests step 91 s, and the
+  fragment PR 535 (changelog.d/506.md for the library's new public field,
+  read merge 0.92) at 13:48Z, beta c854953f; #506 closed at 13:40Z.
+- Loop four, closed but for #526 (re-planned at 16:3xZ after the toolbox's
+  loopback table landed: the lane moves after the toolbox's next prerelease
+  and our pin) and #549 (held): #524 by PR 529 (the hermetic job's warm
+  build measured by `--timings` and cut by opt-level 0 for our three crates
+  alone, 93 to 25 s on its group run; review merge 0.9; beta bb9a742a; the
+  cache-beta.yml comment carried to main by hand as PR 532, main 1de2d7ad
+  at 13:28Z); #525 by PR 530 (lint's tool tests in process and side by
+  side, 2m43s to 1m27s; review merge 0.88; beta 4b639c33); #527 closed at
+  15:02Z on its measurement, PR 536 closed unmerged as the record (eight
+  threads on four cores, ten attempts' median 97.7 s against the base 77.4
+  s: the long tests compute); #528 by PR 543 (the relay test's 5.2 s was
+  the writer pool's 5 s busy timeout, gone since #506's port; beta
+  cd86b54a); #538 by PR 542 (the template-copy race with git's maintenance
+  lock that reddened PR 537's group run once; beta c72960e3); #545 by PR
+  550 (the served pipe: the refusal read while the body is written; beta
+  be4906ad); #548 closed at 16:28Z refuted by a plant (the pause planted at
+  10 s and the class still 6.53 s: the time is the 490-row replay, re-aimed
+  as #549).
+
+The five figures by hour, as the day line's notes record them (a PR's CI
+wall clock, the queue wait, the nightly's length, a cold read's length, the
+landing latency). At 06:17Z PR 492's and 493's runs took 55 and 47 minutes
+end to end, about 5 of work and the rest runner wait behind night 3's fifty
+shards. 06:20Z to 07:20Z: PR runs 2 to 6 minutes, queue waits 7 to 10,
+night 3 10 h 16 min dispatch to completion, cold reads 2 to 7 minutes, the
+landing latency median 16.4 minutes on beta (n=4) against the morning's
+queue era 50.4 and the serial era's 103.8. 08:21Z: a PR run 4m59s, a queue
+wait 6 min, no nightly, cold reads 1 to 3 min, PR 508's latency 13 min.
+12:24Z: PR runs 3m01s, cold reads 3, 4 and 22 min, no landing. 22:20Z: PR
+555's CI 3m39s, its queue wait 5 min, its read 33 min, its latency 38 min.
+23:20Z: PR 558's CI 3m21s, night 4 5 h 25 min, the read 11 min. Beside
+them: PR 492's latency 4 h 27 min across three passes (the reads' asks, not
+the machinery), PR 529's 16 min, PR 530's 20, L5b's PR 551's 30, PR 554's
+41.
+
+The fleet line. The runner-wait finding (06:17Z) became the keeper's fleet
+line at 06:25Z: one pool of twenty runners across the four repositories.
+The keeper's memory line (07:18Z): a builder launches only at 8 GB or more
+free plus inactive, the gate in every launch; swap above half means one
+builder per captain at CARGO_BUILD_JOBS=2. The pool's occupancy read
+(10:08Z: 12,251 jobs over three days, twenty at peak in 22 of 24 hours)
+moved the slots, revised again at 11:05Z: bsv-rs 07:00Z, ours 17:00Z from
+11-04, the toolbox 18:00Z; today's night at 17:30Z (#514 by PR 515, beta
+80b157c0; #514 closed at 17:31Z with night 4's run id). The cap six (every
+heavy run at max-parallel 6): #513 by PR 519 (the port of PR 516; beta
+b0e405e0), #517 by PR 520 (the port of PR 518 with the captain's three fuzz
+beside three hermetic shards; beta 48ed38e7); the slot rows #514 and #522
+(PR 523, beta 4207082f; open until the 17:00Z night of 11-04). The paved
+road adopted #507's install (the keeper at 08:25Z: the stack's
+template/ci.yml at its main f353f6b6); our template pointer did not move.
+
+The merge queue's truth. PR 521 was not "lost to a 503": the day line's
+13:19Z entry corrects its 13:08Z reading. Its timeline showed every enqueue
+removed within seconds for merge_conflict (added 12:40:42Z, removed
+12:40:58Z, and the same pair every minute from 13:08Z, nine removals by
+13:14Z), no group run ever created: the queue rebases, and a branch
+carrying a merge commit or a sibling's cherry-picks (four copies of PR
+492's commits made before it landed) reads CLEAN as a PR while its rebase
+cannot replay. The landing script now reads the queue entry back after
+every merge call and exits on merge_conflict as a port; the port rule: the
+lane's own commits cherry-picked over beta's tip, never the copies and
+never the merge, proven by an empty diff against the refused tip. The
+loop-host clause: LOW's L59 held the box from its launched line at
+19:53:39Z (the day line's 19:00Z entry corrects the 18:22Z launch at
+18:14Z, which never happened) to its FREE line at 21:49:02Z; nothing of
+this repository's ran on the box between (the box-hold file kept every box
+launcher waiting; removed at 21:49:35Z).
+
+The browser gate (c), the day's main line (#414). The owner's word on W1
+and W4, as the day line's 13:3xZ entry records it, verbatim through the
+keeper: "okay I like your reccomendations then....." (the keeper's
+recommendations W1 (a), W4 (a)). It ruled the reference's four permission
+kinds granted separately per origin, and a page that disconnects with its
+prompt open denied with no row kept; it reversed two of the landed design's
+choices, so the design was revised before any build. The revision, PR 537
+(the four kinds with canonical keys through bsv-rs's validators, the
+disconnect's deny, the cap shrunk to held calls, L5 split; ensemble fix 2/2
+at 0.83, two fix passes, re-read merge 0.93), merged at 14:21Z, beta
+9e99a333. The keeper's two rows from the ruling are #533 (grant expiry and
+spending ceilings) and #534 (the prompt keyed by its nonce). L5a, the store
+and the four surfaces on the kinds with no admission moved, was PR 544
+after three passes (ensemble fix 2/3 at 0.89 on lint's ratchet and the A5
+allowlist; the captain's word that power.rs's prefix sites test names,
+never messages, so A5 takes it with its count; the scoreboard's mechanical
+ceiling met by #546, the recorded exception, PR 547, beta 79f2a87c; the
+render on the new base re-read merge 0.9), merged at 16:46Z, beta 85376ded.
+The owner's word on W15, as the day line's 16:3xZ entry records it,
+verbatim through the keeper: "okay go with (i) for W15 if its god tier and
+ndorth star". RULED (i): the level-0 doors answer an admitted origin with
+no grant row, inside the allow-list; the condition read as binding by the
+keeper's reading at 14:3xZ, met by three refinement rows: #539 (every
+level-0 answer a row of record), #540 (the version door's shape) and #541
+(the open doors bounded). L5b, the switch, was PR 551 (ensemble merge 2/2
+at 0.84, held for the captain's hand; the A6 row by the captain's word;
+scene 30 step 4's draft corrected as a docs-only fold under ruling (b); the
+residual rows #552 and #553), merged at 18:42Z, beta 626e901e: every served
+door now admits a page by the owner's grant per power from the store. #539
+was PR 554 (read merge 0.86), merged 20:17Z, beta c2b20f9f; #540 was met
+inside PR 551 and closed at 21:22Z; #541 was PR 555 (read merge 0.88; the
+residual row #556), merged 22:07Z, beta fa1e28f9. The W15 condition is met
+in full. L6, the spending power, launched on the box at 22:09Z with its
+ensemble, its chain holding a merge consensus for the captain's hand. The
+mainnet gate runs once, on the release carrying L5b and L6; L7 (the seed's
+retirement) after. #533, #534 and #557 are held.
+
+Night 4. Run 41684822793 on be4906ad, dispatched at 17:30:02Z, the
+incremental mode: the changed set was the whole five floored files in fifty
+shards, six at once. It completed at 22:54:41Z, success, 5 h 25 min (the
+shards 4 h 43 min, none failed; the stage after the matrix 33 min, the fuzz
+at 600 s each, the day line's 23:2xZ entry correcting its 22:20Z "an
+hour"). Every floored file at or above its floor: broadcast_verify 86.0,
+explorers 100, handlers 100, spend_gate 91.2, tracker_host 97.6; no floor
+moved. The speed is loop three's and loop four's (the suite 220 to 91 s),
+not the plan's. The record, PR 558 (read fix 0.9 on two asks; the fix
+pass's re-read fix 0.85 on a second red, a test asserting a complete base,
+settled by the captain's ruling as the invariant per mode; re-read merge
+0.88), merged at 23:49Z, beta 974bc6df. The record lane's finding filed two
+plan rows: #559 (a whole incremental night re-bases the record) and #560
+(the plan's reach by the module graph). The 11-04 night at 17:00Z is
+incremental by the rule.
+
+#491 is held for the 0.19.0 cut (07:29Z): main is the 0.18.2 tree, and
+beta's ci.yml needs files main lacks, so main keeps its own workflow and
+its seven contexts, restored by hand at 07:28Z. The keeper's class question
+of 22:2xZ (which CLI release carries the header fault's class to the seats)
+was answered in the 23:20Z note (the day line's 22:3xZ and 23:2xZ entries):
+every prerelease since v0.19.0-beta.1 answers the header fault 502
+SERVICE_ERROR by type; the stable line answers 400; #557 (the fault as
+HEADERS_UNAVAILABLE 503 with Retry-After) is held until the toolbox names
+it by type.
+
+The lessons of the day, one line each:
+
+- The merge queue's entry is the truth: a PR's CLEAN is not the queue's,
+  and a removal for merge_conflict is a port (13:19Z).
+- The ENSEMBLE line is read from the chain's stdout captured to a file,
+  never a folder that holds none (12:20Z).
+- The bounded form's DECISION is one line; an aggregate refuses a
+  multi-line one (14:0xZ).
+- A brief carries the standing clause "For #N" and never the closing
+  keyword, so a merge leaves its issue open for its closer (16:23Z).
+- A cloned brief keeps the stale lines of the brief it came from; every
+  brief is re-read against the day before its launch (23:4xZ).
+- A chain script is never patched while it runs; a fix is a new file or a
+  patch with none alive (13:08Z, 13:19Z).
+- An entry names the time its states were read; a state that moves after it
+  is the next entry's (07:14Z).
+- The funder's floor is the default basket as the harness reads it, never
+  every row (22:3xZ: 195,179 sats, not 3,904,450).
+
+Open after the day, at 23:51Z: L6 (running on the box, held for the
+captain's hand), L7, the mainnet gate once at the release carrying L5b and
+L6; #414; #491 at the 0.19.0 cut; #526 after the toolbox's next prerelease
+and our pin; #549 held; #533, #534, #552, #553, #556, #557; #559 and #560;
+#496 for a complete night's figures; #522 closing on 11-04's 17:00Z run;
+#175 and #142; the certificate re-issue (#333) at the production upgrade;
+the next pin's intake on #386. The lines, read with `git ls-remote origin
+beta main` at 23:51Z: beta 974bc6df (PR 558); main at this entry's parent,
+1de2d7ad.
