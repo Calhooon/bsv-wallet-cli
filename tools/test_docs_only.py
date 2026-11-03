@@ -18,7 +18,8 @@ changing it would carry, and feeds it to the script's `--paths` mode:
   skips on docs-only fails here, and the fix is its name in DOCS_READ_BY_CODE.
 
 Each row's job and steps must exist in ci.yml and run on a full-set pull
-request, and every required job carries a row. The git mode is driven on a
+request, each plant is a file of the tree (or a file a PR would add), and
+every required job carries a row. The git mode is driven on a
 scratch repository under $TMPDIR (a push, a PR's merge commit, a merge-queue
 group, a tag, no base). Run by the CI job lint: python3 tools/test_docs_only.py
 (`--table` prints the table with each row's classification instead).
@@ -51,6 +52,11 @@ ENSEMBLE = ("ensemble chain dry runs",)
 WIRE = ("The fixtures and their manifest are present", "Replay the wire fixtures")
 VECTORS = ("The vector files are present", "Replay the wallet-gate vectors against the gate")
 E2E = ("Check the hermetic BEEF codecs and kept-template demand", "Run the 30 scenarios against the stub")
+E2E_CHECK = E2E[:1]
+E2E_BUILD = ("Build the release binaries the harness drives",)
+NPM = ("Install the harness's dependency (Playwright)",)
+CHROMIUM = ("Install Chromium",)
+FMT_CLIPPY = ("Rustfmt", "Clippy")
 BUILD = ("Build workspace (release)", "Build MCP subcrate (release)", "Check the fuzz crate (every target)")
 
 # Every required job's gate inputs: (input, job, the steps that read it, the
@@ -67,6 +73,14 @@ TABLE = [
         "add an unwrap the ratchet counts", "src/commands/send.rs"),
     Row("clippy.toml", "lint", ("Clippy",), "clippy",
         "raise a threshold", "clippy.toml"),
+    Row("benches/*.rs", "lint", FMT_CLIPPY, "cargo fmt --all, clippy --all-targets",
+        "a bench clippy warns on", "benches/gate_assess.rs"),
+    Row("benches/common/mod.rs", "lint", FMT_CLIPPY, "cargo fmt --all, clippy --all-targets",
+        "a helper rustfmt would rewrite", "benches/common/mod.rs"),
+    Row("tests/**/*.rs", "lint", FMT_CLIPPY, "cargo fmt --all, clippy --all-targets",
+        "a test helper clippy warns on", "tests/integration/support.rs"),
+    Row("mcp/src/**", "lint", FMT_CLIPPY, "cargo fmt --all, clippy --workspace",
+        "a companion clippy warns on", "mcp/src/config.rs"),
     # lint: the scoreboard and the tools tests beside it
     Row("docs/scoreboard/mutants.json", "lint", SCOREBOARD, "tools/scoreboard, tools/test_mutants_score.py",
         "lower a file's floor", "docs/scoreboard/mutants.json"),
@@ -78,6 +92,8 @@ TABLE = [
         "drop a scenario from the record", "docs/scoreboard/differential.json"),
     Row("docs/NORTH-STAR.md", "lint", SCOREBOARD + LINKS, "tools/scoreboard --check, tools/check-links",
         "a table cell above the record", "docs/NORTH-STAR.md"),
+    Row("fuzz/Cargo.toml", "lint", SCOREBOARD, "tools/scoreboard (the fuzz targets)",
+        "drop a target the record names", "fuzz/Cargo.toml"),
     Row("benches/baseline.json", "lint", SCOREBOARD, "tools/scoreboard (tools/bench-compare in bench.yml)",
         "widen a bench's tolerance", "benches/baseline.json"),
     Row(".github/workflows/nightly.yml", "lint", SCOREBOARD,
@@ -98,6 +114,10 @@ TABLE = [
         "classify a record as docs", ".github/ci/docs_only.sh"),
     Row("tools/scoreboard and the tools tests", "lint", SCOREBOARD, "python3 -B tools/test_*.py",
         "let a floor fall", "tools/scoreboard"),
+    Row("tools/bench-compare", "lint", SCOREBOARD, "tools/test_bench_compare.py",
+        "pass a bench past its tolerance", "tools/bench-compare"),
+    Row("tools/fuzz-record", "lint", SCOREBOARD, "tools/test_fuzz_record.py",
+        "record a run that found a crash", "tools/fuzz-record"),
     Row("tools/testdata/**", "lint", SCOREBOARD, "tools/test_fuzz_record.py",
         "a captured run that passes a crash", "tools/testdata/fuzz-record/41413946663/artifacts.json"),
     Row("tests/wire/MANIFEST.json", "lint", SCOREBOARD, "tools/scoreboard",
@@ -137,7 +157,7 @@ TABLE = [
         "stamp a loosened deny.toml's sha256", "template/stack.toml"),
     Row("Cargo.toml", "lint", DENY + ("Clippy",), "cargo-deny, clippy",
         "a git dependency", "Cargo.toml"),
-    Row("mcp/Cargo.toml", "lint", DENY, "cargo-deny",
+    Row("mcp/Cargo.toml", "lint", DENY + ("Clippy",), "cargo-deny, clippy",
         "a crate of a banned licence", "mcp/Cargo.toml"),
     Row("Cargo.lock", "lint", DENY + LOCKS, "cargo-deny, the locks step",
         "a yanked or second bsv-rs", "Cargo.lock"),
@@ -155,9 +175,24 @@ TABLE = [
         "a companion that does not build", "mcp/src/main.rs"),
     Row("fuzz/Cargo.toml, fuzz/fuzz_targets/*.rs", "build", BUILD[2:], "cargo check --manifest-path fuzz/Cargo.toml",
         "a target that does not check", "fuzz/Cargo.toml"),
+    Row("fuzz/src/**, fuzz/examples/*.rs", "build", BUILD[2:],
+        "cargo check --manifest-path fuzz/Cargo.toml --all-targets",
+        "a property that does not check", "fuzz/src/props/beef_reader.rs"),
+    Row("fuzz/Cargo.lock", "build", BUILD[2:], "cargo check --locked",
+        "a lock the fuzz crate cannot build from", "fuzz/Cargo.lock"),
+    Row("mcp/Cargo.toml", "build", BUILD[1:2], "cargo build -p bsv-wallet-mcp",
+        "a companion manifest that does not build", "mcp/Cargo.toml"),
     # test
     Row("src/**, tests/*.rs", "test", TESTS, "cargo nextest",
         "a test that no longer asserts", "tests/wire.rs"),
+    Row("mcp/src/tests.rs", "test", TESTS, "cargo nextest --workspace",
+        "a companion test that no longer asserts", "mcp/src/tests.rs"),
+    Row("src/ui/index.html", "test", TESTS, "src/commands/ui.rs (include_str!)",
+        "the inspector page the binary embeds", "src/ui/index.html"),
+    Row("tests/wire/*.json", "test", TESTS, "tests/wire.rs, tests/brc100.rs (the manifest)",
+        "a fixture's response loosened", "tests/wire/037-createAction.insufficientFunds.json"),
+    Row("tests/vectors/*", "test", TESTS, "tests/gate_vectors.rs, tests/arcade_webhook_vector_tests.rs",
+        "a vector's verdict flipped", "tests/vectors/wallet_gate_vectors.json"),
     Row("GIFT.md", "test", TESTS, "src/commands/gift_chain.rs (include_str!)",
         "the gift's text the binary embeds", "GIFT.md"),
     Row("docs/BRC-100-EXTENSIONS.md", "test", TESTS, "tests/brc100.rs",
@@ -171,20 +206,55 @@ TABLE = [
     Row("a .md in tests/ (a code-scanned folder)", "test", TESTS, "a harness reading every file of its folder",
         "a fixture named .md", "tests/wire/planted.md"),
     # vectors
-    Row("tests/vectors/*", "vectors", VECTORS, "tests/gate_vectors.rs",
+    Row("tests/vectors/wallet_gate_vectors.json", "vectors", VECTORS, "tests/gate_vectors.rs",
         "a vector's verdict flipped", "tests/vectors/wallet_gate_vectors.json"),
+    Row("tests/vectors/wallet_gate_vectors.pin", "vectors", VECTORS, "tests/gate_vectors.rs (the copy's pin)",
+        "a pin moved to a loosened copy", "tests/vectors/wallet_gate_vectors.pin"),
+    Row("tests/vectors/wallet_gate_divergences.json", "vectors", VECTORS[1:], "tests/gate_vectors.rs",
+        "a divergence recorded to excuse a row", "tests/vectors/wallet_gate_divergences.json"),
+    Row("tests/vectors/arcade_status_verdicts.json", "vectors",
+        ("The vector files are present", "Run the Arcade status vector through the webhook intake"),
+        "tests/arcade_webhook_vector_tests.rs", "a status's verdict flipped",
+        "tests/vectors/arcade_status_verdicts.json"),
+    Row("tests/gate_vectors.rs, tests/gate_vectors_store/", "vectors", VECTORS[1:], "cargo test --test gate_vectors",
+        "a row the replay no longer judges", "tests/gate_vectors_store/mod.rs"),
+    Row("tests/arcade_webhook_vector_tests.rs", "vectors",
+        ("Run the Arcade status vector through the webhook intake",), "cargo test --test arcade_webhook_vector_tests",
+        "a vector read but not asserted", "tests/arcade_webhook_vector_tests.rs"),
+    Row("src/gift/covenant.rs", "vectors", ("Run the covenant vectors",), "gift::covenant::tests",
+        "a covenant test that skips its vectors", "src/gift/covenant.rs"),
     Row("src/gift/covenant_vectors.json", "vectors", ("The vector files are present", "Run the covenant vectors"),
         "gift::covenant::tests", "a covenant vector removed", "src/gift/covenant_vectors.json"),
     # wire
     Row("tests/wire/*.json", "wire", WIRE, "tests/wire.rs",
-        "a fixture's response loosened", "tests/wire/MANIFEST.json"),
+        "a fixture's response loosened", "tests/wire/037-createAction.insufficientFunds.json"),
+    Row("tests/wire/MANIFEST.json", "wire", WIRE, "tests/wire_harness/manifest.rs",
+        "drop a fixture from the manifest", "tests/wire/MANIFEST.json"),
+    Row("tests/wire_harness/**, tests/wire_support/**", "wire", WIRE[1:], "tests/wire.rs",
+        "a judge that passes any body", "tests/wire_harness/judge.rs"),
     # e2e-hermetic
     Row("tests/e2e/scenarios/*.js", "e2e-hermetic", E2E, "tests/e2e/run.js",
         "a scenario that no longer asserts", "tests/e2e/scenarios/planted.js"),
     Row("tests/e2e/run.js, lib/, stub/", "e2e-hermetic", E2E, "node",
         "the stub answers every call", "tests/e2e/stub/server.js"),
-    Row("tests/e2e/package-lock.json", "e2e-hermetic", ("Install the harness's dependency (Playwright)",) + E2E,
-        "npm ci", "an unpinned Playwright", "tests/e2e/package-lock.json"),
+    Row("tests/e2e/package-lock.json", "e2e-hermetic", NPM + ("Cache Playwright's Chromium",) + CHROMIUM + E2E,
+        "npm ci, the Chromium cache's key, install-browsers.js", "an unpinned Playwright",
+        "tests/e2e/package-lock.json"),
+    Row("tests/e2e/package.json", "e2e-hermetic", NPM + CHROMIUM, "npm ci, install-browsers.js (the Node range)",
+        "a Node range that admits an unproven Node", "tests/e2e/package.json"),
+    Row("tests/e2e/install-browsers.js, lib/browsers.js", "e2e-hermetic", CHROMIUM,
+        "node tests/e2e/install-browsers.js",
+        "install without the Node range's refusal", "tests/e2e/install-browsers.js"),
+    Row("tests/e2e/24-busy-store.test.js", "e2e-hermetic", E2E_CHECK, "node --test",
+        "a demand check that no longer asserts", "tests/e2e/24-busy-store.test.js"),
+    Row("tests/e2e/stub/tx.test.js", "e2e-hermetic", E2E_CHECK, "node --test",
+        "a codec check that no longer asserts", "tests/e2e/stub/tx.test.js"),
+    Row("tests/wire/103-internalizeAction.badUnlock.json", "e2e-hermetic", E2E_CHECK, "tests/e2e/stub/tx.test.js",
+        "the fixture the codec check parses loosened", "tests/wire/103-internalizeAction.badUnlock.json"),
+    Row("tests/e2e/stub/fixtures/headers.json", "e2e-hermetic", E2E[1:], "tests/e2e/stub/chain.js",
+        "a header chain the stub cannot serve", "tests/e2e/stub/fixtures/headers.json"),
+    Row("src/**, mcp/src/**, Cargo.lock (the binaries driven)", "e2e-hermetic", E2E_BUILD + E2E[1:],
+        "cargo build --release, run.js", "a served route that no longer answers", "src/server/mod.rs"),
 ]
 
 REQUIRED = {"lint", "build", "test", "vectors", "wire", "e2e-hermetic"}
@@ -418,6 +488,15 @@ class DocsOnlyInputs(unittest.TestCase):
             ran = steps_run(self.jobs[row.job], FULL_SET)
             for step in row.steps:
                 self.assertIn(step, ran, f"{row.input}: {row.job} has no step {step!r} on the full set")
+
+    def test_every_plant_is_a_tracked_path_or_a_new_one(self):
+        # A plant is a file of the tree the input names, or a file a PR would
+        # add (`planted.*`, a new changelog fragment), never a stand-in.
+        tracked = set(subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True,
+                                     check=True).stdout.splitlines())
+        for row in TABLE:
+            new = os.path.basename(row.plant).startswith("planted.") or re.fullmatch(r"changelog\.d/\d+\.md", row.plant)
+            self.assertTrue(row.plant in tracked or new, f"{row.input}: {row.plant} is not in the tree")
 
     def test_every_required_job_has_a_row(self):
         self.assertEqual(set(self.jobs) - {"changes"}, REQUIRED)
