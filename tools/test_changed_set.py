@@ -32,6 +32,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), ".github", "nightly", "changed_set.py")
 sys.path.insert(0, os.path.dirname(SCRIPT))
 import changed_set  # noqa: E402  (the named limit and the six, #496)
+sys.path.insert(0, HERE)
+import in_process as tools_in_process  # noqa: E402  (#525: a plan runs main() here, as the script)
 
 NIGHTLY = """jobs:
   mutants-score:
@@ -118,12 +120,12 @@ class Tree:
         if not git:
             self.write("changed.txt", "".join(p + "\n" for p in paths))
             args += ["--paths", os.path.join(self.root, "changed.txt"), "--head", "f" * 40]
-        r = subprocess.run(args, capture_output=True, text=True)
-        text = (r.stdout + r.stderr).strip()
-        if r.returncode != 0:
-            return r.returncode, text, None
+        code, stdout, stderr = tools_in_process.run(SCRIPT, args[3:])
+        text = (stdout + stderr).strip()
+        if code != 0:
+            return code, text, None
         with open(out) as f:
-            return r.returncode, text, json.load(f)
+            return code, text, json.load(f)
 
     def git(self, *args):
         return subprocess.run(["git", "-C", self.root, *args], capture_output=True, text=True, check=True).stdout.strip()
@@ -374,16 +376,52 @@ class Repo(unittest.TestCase):
                 with open(os.path.join(scratch, "changed.txt"), "w") as f:
                     f.write(path + "\n")
                 out = os.path.join(scratch, "plan.json")
-                r = subprocess.run([sys.executable, "-B", SCRIPT, "--root", root, "--mode", "incremental",
-                                    "--paths", os.path.join(scratch, "changed.txt"), "--head", "f" * 40,
-                                    "--out", out], capture_output=True, text=True)
-                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                code, stdout, stderr = tools_in_process.run(SCRIPT, [
+                    "--root", root, "--mode", "incremental", "--paths", os.path.join(scratch, "changed.txt"),
+                    "--head", "f" * 40, "--out", out])
+                self.assertEqual(code, 0, stdout + stderr)
                 with open(out) as f:
                     p = json.load(f)
                 self.assertEqual((p["files"], p["shards"]), (sorted(floored), 50), path)
                 print(f"\n    {path}: {len(p['files'])} files, {p['shards']} shards", end=" ", file=sys.stderr)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
+
+
+class TheScriptIsTheInProcessRun(unittest.TestCase):
+    """(#525) A plan runs main() in this process; the script itself gives the
+    same exit code, stdout, stderr and plan, byte for byte: an incremental plan,
+    a complete one with its GitHub output, a fault and a usage error."""
+
+    def setUp(self):
+        self.tree = Tree()
+        self.addCleanup(self.tree.cleanup)
+
+    def same(self, *args):
+        out = os.path.join(self.tree.root, "plan.json")
+        gh = os.path.join(self.tree.root, "github-output")
+        self.tree.write("changed.txt", "src/a.rs\ntests/measured.rs\n")
+        runs = []
+        for run in (lambda: tools_in_process.run(SCRIPT, args),
+                    lambda: (lambda r: (r.returncode, r.stdout, r.stderr))(
+                        subprocess.run([sys.executable, "-B", SCRIPT, *args], capture_output=True, text=True))):
+            for f in (out, gh):
+                if os.path.exists(f):
+                    os.remove(f)
+            result = run()
+            runs.append((result, *(open(f).read() if os.path.exists(f) else None for f in (out, gh))))
+        self.assertEqual(runs[0], runs[1], args)
+        return runs[1][0][0]
+
+    def test_each_way_the_plan_ends_is_the_scripts(self):
+        root, out = self.tree.root, os.path.join(self.tree.root, "plan.json")
+        common = ["--root", root, "--out", out, "--head", "f" * 40]
+        codes = [self.same(*common, "--mode", "incremental", "--paths", os.path.join(root, "changed.txt")),
+                 self.same(*common, "--mode", "complete", "--github-output", os.path.join(root, "github-output")),
+                 self.same(*common, "--mode", "nightly"),
+                 self.same("--root", root)]
+        self.assertEqual(codes, [0, 0, 1, 2])
+        print(f"\n    agree: {len(codes)} runs, exit codes {codes}", end=" ", file=sys.stderr)
 
 
 if __name__ == "__main__":

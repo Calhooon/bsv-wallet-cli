@@ -13,8 +13,13 @@ A line beginning with three or more backticks or tildes after the same
 stripping is a fence and is refused with its line number (#282), even where
 CommonMark would not open one ("    ```", "``` a ` b"); two backticks and
 two tildes are inline and allowed.
+
+The base commit is built once and copied into each case's tree, and a case runs
+the tool's main() in this process (#525); TheScriptIsTheInProcessRun runs the
+script itself beside it and proves the two agree.
 """
 
+import atexit
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -26,6 +31,8 @@ import unittest
 
 sys.dont_write_bytecode = True
 TOOL = Path(__file__).resolve().with_name("changelog")
+sys.path.insert(0, str(TOOL.parent))
+import in_process as tools_in_process  # noqa: E402
 BODY = ("\n### Beta.1: the pins together (#140)\n\n"
         "A pin paragraph with **words** and a second line.  \n"
         "The next line keeps its spaces and café.\n\n"
@@ -35,16 +42,31 @@ CHANGELOG = "# Changelog\n\n## [Unreleased]\n" + BODY + HISTORY
 FRAGMENTS = {"2.md": "- **Two.** A change.\n", "10.md": "A paragraph\non two lines.\n"}
 
 
+BASE = []  # (the committed base tree, its commit), built once per run of this file
+
+
 class Tree:
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="changelog-case.", dir=os.environ.get("TMPDIR")))
-        self.git("init", "-q", "-b", "base")
-        self.write("tools/changelog", TOOL.read_bytes())
-        self.write("changelog.d/README.md", "# Fragments\n")
-        self.write("CHANGELOG.md", CHANGELOG)
-        self.write("src/lib.rs", "// base\n")
-        self.write("Cargo.toml", "# base\n")
-        self.base = self.commit("base")
+        if not BASE:
+            BASE.append(Tree.build())
+        template, self.base = BASE[0]
+        shutil.copytree(template, self.root, symlinks=True, dirs_exist_ok=True)
+
+    @staticmethod
+    def build():
+        """The base commit, built once and copied into each case's tree (#525:
+        five git processes per case were a fifth of the file's seconds)."""
+        tree = Tree.__new__(Tree)
+        tree.root = Path(tempfile.mkdtemp(prefix="changelog-base.", dir=os.environ.get("TMPDIR")))
+        atexit.register(shutil.rmtree, tree.root, True)
+        tree.git("init", "-q", "--template=", "-b", "base")  # no sample hooks to copy per case
+        tree.write("tools/changelog", TOOL.read_bytes())
+        tree.write("changelog.d/README.md", "# Fragments\n")
+        tree.write("CHANGELOG.md", CHANGELOG)
+        tree.write("src/lib.rs", "// base\n")
+        tree.write("Cargo.toml", "# base\n")
+        return tree.root, tree.commit("base", sha=True)
 
     def cleanup(self):
         shutil.rmtree(self.root)
@@ -64,15 +86,28 @@ class Tree:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
 
-    def commit(self, message="head"):
+    def remove(self, name):
+        (self.root / name).unlink()
+
+    def commit(self, message="head", sha=False):
+        """Commit the tree; with sha=True, return the commit's id (a base)."""
         self.git("add", "--all")
         self.git("commit", "-q", "--allow-empty", "-m", message)
-        return self.git("rev-parse", "HEAD")
+        return self.git("rev-parse", "HEAD") if sha else None
 
     def run(self, *args):
+        code, stdout, stderr = self.in_process(*args)
+        return code, (stdout + stderr).strip()
+
+    def in_process(self, *args):
+        """The tree's tools/changelog run as `python3 -B tools/changelog ARGS` in the
+        tree runs it, in this process (#525); its ROOT is the tree's."""
+        return tools_in_process.run(TOOL, args, ROOT=self.root)
+
+    def script(self, *args):
         result = subprocess.run([sys.executable, "-B", self.root / "tools/changelog", *args],
                                 cwd=self.root, capture_output=True, text=True)
-        return result.returncode, (result.stdout + result.stderr).strip()
+        return result.returncode, result.stdout, result.stderr
 
     def snapshot(self):
         files = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*")
@@ -85,8 +120,11 @@ class Case(unittest.TestCase):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
 
-    def result(self, code, needle, *args, readonly=True):
-        before = self.tree.snapshot()
+    def result(self, code, needle, *args, readonly=True, before=None):
+        """Run the tool; with readonly, the tree after is `before` (taken here
+        unless the caller holds the snapshot of a tree no run has changed)."""
+        if before is None:
+            before = self.tree.snapshot()
         actual, out = self.tree.run(*args)
         self.assertEqual(actual, code, out)
         self.assertIn(needle, out)
@@ -147,7 +185,7 @@ class WatchedChanges(Case):
 
     def test_deleting_a_fragment_does_not_count_as_adding_one(self):
         self.tree.write("changelog.d/195.md", "- A change.\n")
-        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.base = self.tree.commit("base with fragment", sha=True)
         (self.tree.root / "changelog.d/195.md").unlink()
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
@@ -155,7 +193,7 @@ class WatchedChanges(Case):
 
     def test_editing_a_fragment_does_not_count_as_adding_one(self):
         self.tree.write("changelog.d/195.md", "- A change.\n")
-        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.base = self.tree.commit("base with fragment", sha=True)
         self.tree.write("changelog.d/195.md", "- Another change.\n")
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
@@ -163,7 +201,7 @@ class WatchedChanges(Case):
 
     def test_an_added_readme_does_not_count_as_a_fragment(self):
         (self.tree.root / "changelog.d/README.md").unlink()
-        self.tree.base = self.tree.commit("base without readme")
+        self.tree.base = self.tree.commit("base without readme", sha=True)
         self.tree.write("changelog.d/README.md", "# Fragments\n")
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
@@ -186,7 +224,7 @@ class WatchedChanges(Case):
         self.tree.git("config", "diff.renames", "true")
         shared = "- Keep pending rows visible until the refreshed balance is ready.\n" * 4
         self.tree.write("changelog.d/100.md", shared + "- Fix an old balance refresh.\n")
-        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.base = self.tree.commit("base with fragment", sha=True)
         (self.tree.root / "changelog.d/100.md").unlink()
         self.tree.write("changelog.d/195.md", shared + "- Fix a new balance refresh.\n")
         self.tree.write("src/lib.rs", "// changed\n")
@@ -197,7 +235,7 @@ class WatchedChanges(Case):
     def copy_fragment(self, content, renames="true"):
         self.tree.git("config", "diff.renames", renames)
         self.tree.write("changelog.d/10.md", "- Change A.\n")
-        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.base = self.tree.commit("base with fragment", sha=True)
         self.tree.write("changelog.d/11.md", content)
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
@@ -225,7 +263,7 @@ class WatchedChanges(Case):
     def test_renamed_fragment_is_not_new_with_rename_detection_enabled(self):
         self.tree.git("config", "diff.renames", "true")
         self.tree.write("changelog.d/100.md", "- An existing change.\n")
-        self.tree.base = self.tree.commit("base with fragment")
+        self.tree.base = self.tree.commit("base with fragment", sha=True)
         self.tree.git("mv", "changelog.d/100.md", "changelog.d/195.md")
         self.tree.write("src/lib.rs", "// changed\n")
         self.tree.commit()
@@ -391,10 +429,12 @@ class Malformed(Case):
     def malformed(self, name, content):
         self.tree.write(f"changelog.d/{name}", content)
         self.tree.commit()
+        # Each run is readonly, so the tree after each is the one snapshot before all four.
+        before = self.tree.snapshot()
         for args in (("--list",), ("--check", "--base", self.tree.base),
                      ("--check", "--base", self.tree.base, "--allow-missing"),
                      ("--assemble", "0.19.0")):
-            self.result(1, f"changelog.d/{name.split('/')[0]}", *args)
+            self.result(1, f"changelog.d/{name.split('/')[0]}", *args, before=before)
 
     def test_a_subdirectory_is_refused(self):
         self.malformed("195.md/nested.md", "- Nested.\n")
@@ -513,6 +553,48 @@ for case, version in (("word", "latest"), ("partial", "0.19"), ("v_prefix", "v0.
                       ("leading_zero", "00.19.0"), ("prerelease_zero", "0.19.0-beta.01"),
                       ("empty_prerelease", "0.19.0-"), ("empty_identifier", "0.19.0-beta..1")):
     setattr(Assembly, f"test_invalid_version_{case}_writes_nothing", invalid_version_case(version))
+
+
+class TheScriptIsTheInProcessRun(Case):
+    """(#525) The cases above run main() in this process; the script itself, run
+    in the tree as CI runs it, gives the same exit code, stdout and stderr, byte
+    for byte, for each way the tool ends: a list, a check that passes and one
+    that fails, a malformed fragment, an unknown base, a usage error and an
+    assembly, whose CHANGELOG.md and fragments are the same bytes."""
+
+    def same(self, *args):
+        want = self.tree.script(*args)
+        self.assertEqual(self.tree.in_process(*args), want, args)
+        return want[0]
+
+    def test_each_way_the_tool_ends_is_the_scripts(self):
+        self.tree.write("changelog.d/195.md", "- A change.\n")
+        self.tree.write("src/lib.rs", "// changed\n")
+        self.tree.commit()
+        codes = [self.same("--list"), self.same("--check", "--base", self.tree.base)]
+        self.tree.remove("changelog.d/195.md")
+        self.tree.commit()
+        codes.append(self.same("--check", "--base", self.tree.base))
+        codes += [self.same("--check", "--base", "no-such-rev"), self.same("--allow-missing", "--list")]
+        self.tree.write("changelog.d/entry.md", "- A change.\n")
+        codes.append(self.same("--list"))
+        self.tree.remove("changelog.d/entry.md")
+        for name, content in FRAGMENTS.items():
+            self.tree.write(f"changelog.d/{name}", content)
+        self.tree.commit()
+        twin = Tree()
+        self.addCleanup(twin.cleanup)
+        for name, content in FRAGMENTS.items():
+            twin.write(f"changelog.d/{name}", content)
+        twin.commit()
+        args = ("--assemble", "0.19.0", "--date", "2026-10-26")
+        self.assertEqual(twin.in_process(*args), self.tree.script(*args))
+        assembled = [{k: v for k, v in t.snapshot()[0].items() if k == "CHANGELOG.md" or k.startswith("changelog.d/")}
+                     for t in (twin, self.tree)]
+        self.assertEqual(assembled[0], assembled[1])
+        self.assertEqual(sorted(assembled[0]), ["CHANGELOG.md", "changelog.d/README.md"])
+        self.assertEqual(codes, [0, 0, 1, 2, 2, 1])
+        print(f"\n    agree: {len(codes) + 1} runs, exit codes {codes + [0]}", end=" ", file=sys.stderr)
 
 
 if __name__ == "__main__":

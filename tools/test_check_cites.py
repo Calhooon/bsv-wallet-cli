@@ -2,7 +2,8 @@
 """Planted cases for check-cites (#184, #210, #243), run by CI's ratchet job.
 
 Each case runs the command in its own git repository under $TMPDIR, with a
-commit pin and a changed HEAD. No network, cargo, or project fixtures are used.
+commit pin and a changed HEAD (one repository built per run of the file and
+copied into each case's directory, #525). No network, cargo, or project fixtures are used.
 The process's exit status proves that a wrong citation or count fails the gate.
 """
 
@@ -21,26 +22,37 @@ SOURCE = "pub fn alpha() {}\n\npub fn beta() {}\n"
 
 
 class PinnedCitations(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        """The repository (a pin, then HEAD moved past it), built once and copied
+        into each case's own directory (#525: six git processes per case)."""
+        temp = tempfile.TemporaryDirectory(prefix="check-cites-base.", dir=os.environ.get("TMPDIR"))
+        cls.addClassCleanup(temp.cleanup)
+        cls.template = base = cls.__new__(cls)
+        base.root = Path(temp.name)
+        (base.root / "tools").mkdir()
+        shutil.copy(TOOL, base.root / "tools/check-cites")
+        base.git("init", "-q", "--template=")  # no sample hooks to copy per case
+        base.write("src/lib.rs", SOURCE)
+        base.write("src/main.rs", SOURCE)
+        base.write("src/name.rs", SOURCE)
+        base.write("src/present.rs", SOURCE)
+        base.write("tests/integration.rs", SOURCE)
+        base.write("tests/present/example.rs", SOURCE)
+        base.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n\npub fn nested_beta() {}\n")
+        base.git("add", "src", "tests", "mcp")
+        base.git("commit", "-qm", "pin")
+        base.pin = base.git("rev-parse", "--short=12", "HEAD").strip()
+        base.write("src/lib.rs", "// moved at HEAD\n" + SOURCE + "\n")
+        base.git("commit", "-qam", "move the source after the pin")
+        base.head = base.git("rev-parse", "--short=12", "HEAD").strip()
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix="check-cites-case.", dir=os.environ.get("TMPDIR"))
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        (self.root / "tools").mkdir()
-        shutil.copy(TOOL, self.root / "tools/check-cites")
-        self.git("init", "-q")
-        self.write("src/lib.rs", SOURCE)
-        self.write("src/main.rs", SOURCE)
-        self.write("src/name.rs", SOURCE)
-        self.write("src/present.rs", SOURCE)
-        self.write("tests/integration.rs", SOURCE)
-        self.write("tests/present/example.rs", SOURCE)
-        self.write("mcp/src/main.rs", "pub fn nested_alpha() {}\n\npub fn nested_beta() {}\n")
-        self.git("add", "src", "tests", "mcp")
-        self.git("commit", "-qm", "pin")
-        self.pin = self.git("rev-parse", "--short=12", "HEAD").strip()
-        self.write("src/lib.rs", "// moved at HEAD\n" + SOURCE + "\n")
-        self.git("commit", "-qam", "move the source after the pin")
-        self.head = self.git("rev-parse", "--short=12", "HEAD").strip()
+        shutil.copytree(self.template.root, self.root, symlinks=True, dirs_exist_ok=True)
+        self.pin, self.head = self.template.pin, self.template.head
 
     def git(self, *args):
         return subprocess.run(["git", "-c", "user.name=Check Cites", "-c",
