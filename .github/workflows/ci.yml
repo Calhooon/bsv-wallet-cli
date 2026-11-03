@@ -89,7 +89,8 @@ jobs:
   # push to a branch the commit before it to the commit. Anything else (a tag's
   # run through workflow_call, an unreadable base, no changed path) is false:
   # the full set. The answer never fails the job; a failed job leaves the
-  # output empty, and empty is not true.
+  # output empty, and empty is not true. The rule is .github/ci/docs_only.sh
+  # (#509), whose every gate input tools/test_docs_only.py plants and proves.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -119,57 +120,7 @@ jobs:
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
           GROUP_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
           GROUP_HEAD: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || '' }}
-        run: |
-          set -uo pipefail
-          answer() {
-            echo "docs_only=$1" >> "$GITHUB_OUTPUT"
-            echo "changes: docs_only=$1 ($2)"
-            exit 0
-          }
-          case "$EVENT" in
-            pull_request) base=HEAD^1 head=HEAD ;;
-            merge_group) base=$GROUP_BASE head=$GROUP_HEAD ;;
-            push)
-              [[ $REF == refs/heads/* ]] || answer false "a push of $REF"
-              base=$BEFORE head=$SHA ;;
-            *) answer false "$EVENT: the full set" ;;
-          esac
-          [ -n "$base" ] && [ -n "${base//0/}" ] && [ -n "$head" ] || answer false "no base for $EVENT"
-          for rev in "$base" "$head"; do
-            git cat-file -e "$rev^{commit}" 2> /dev/null \
-              || git fetch --no-tags --filter=blob:none origin "$rev" \
-              || answer false "$rev is not fetchable"
-          done
-          paths=$(git diff --no-renames --name-only "$base" "$head") || answer false "git diff $base $head failed"
-          [ -n "$paths" ] || answer false "no changed path"
-          echo "changes: $EVENT, $base..$head"
-          docs=true
-          code="$RUNNER_TEMP/code-paths"
-          : > "$code"
-          while IFS= read -r path; do
-            kind=docs
-            case "$path" in *.md) ;; *) kind="not docs" ;; esac
-            case "$path" in
-              tests/* | fuzz/*)
-                if [ "$kind" = docs ]; then kind="not docs (a code-scanned folder)"; fi
-                for prose in $PROSE_IN_CODE_FOLDERS; do
-                  if [ "$path" = "$prose" ]; then kind=docs; fi
-                done ;;
-            esac
-            for read_by_code in $DOCS_READ_BY_CODE; do
-              if [ "$path" = "$read_by_code" ]; then kind="not docs (the code reads it)"; fi
-            done
-            if [ "$kind" != docs ]; then docs=false; echo "$path" >> "$code"; fi
-            echo "  $kind: $path"
-          done <<< "$paths"
-          # The tests the diff reaches (#473): on a PR the targets of its
-          # non-docs paths, else the whole suite. A failed selector writes
-          # nothing, and nothing is the whole suite.
-          if [ "$docs" != true ]; then
-            python3 -B .github/ci/affected.py --event "$EVENT" --paths "$code" --github-output "$GITHUB_OUTPUT" \
-              || echo "changes: the selector failed (#473); every job runs the whole suite"
-          fi
-          answer "$docs" "$(wc -l <<< "$paths" | tr -d ' ') changed paths"
+        run: bash .github/ci/docs_only.sh
 
   # The lint gates in one job (#471): Rustfmt, locks, deny, Clippy and the
   # ratchet, with one checkout and one cache restore. Their setup (a runner,
@@ -516,6 +467,9 @@ jobs:
           python3 -B tools/test_mutants_score.py
           # CI's own test selection on a PR (#473), on the same oracle.
           python3 -B tools/test_affected.py
+          # The docs-only exit never skips a gate's input (#509): every
+          # input planted through .github/ci/docs_only.sh --paths.
+          python3 -B tools/test_docs_only.py
           # The Mutants shards' left-out targets (#401): the recorded reach
           # holds every entry of the list at zero lines of a floored file.
           python3 -B tools/test_no_floored.py

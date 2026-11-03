@@ -9,8 +9,10 @@ workspace manifest change brings in the whole set; no change plans no shard
 module tree (#464's review: a test module reaches the floored files its tests
 can run by name, other code the whole set), on a planted crate and on this
 repository's own; a complete night mutates every file in
-MUTANTS_SHARDS_COMPLETE shards (twenty, #460) fourteen at a time, then six
-(#496), where an incremental night keeps its own sizing six at a time; a record without a mode
+MUTANTS_SHARDS_COMPLETE shards (twenty, #460) six at a time in four waves
+(#513), where an incremental night keeps its own sizing six at a time; the
+stage after the matrix, three fuzz targets beside three hermetic shards, then
+reach and bench, refused over the cap and wired so in nightly.yml (#517); a record without a mode
 is refused; and the git diff
 against the record's last complete run, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
@@ -239,21 +241,24 @@ class Case(unittest.TestCase):
         self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6))
 
     def test_a_complete_night_mutates_every_file(self):
-        # Twenty shards (#460), the account's concurrent-job limit, fourteen at a
-        # time (#496): a PR run keeps its six runners.
+        # Twenty shards (#460), the account's concurrent-job limit, six at a
+        # time (#513): the fleet's heavy-run cap while the pool reads busy.
         p, out = self.planned("README.md", mode="complete")
         self.assertEqual((p["files"], p["shards"], p["carried"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 20, []))
-        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 14))
-        self.assertIn("in 20 shards, 14 at once (2 waves: 14, then 6).", out)
-        self.assertEqual(changed_set.COMPLETE_PARALLEL, changed_set.ACCOUNT_RUNNERS - changed_set.PR_RUN_JOBS)
+        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 6))
+        self.assertIn("in 20 shards, 6 at once (4 waves: 6, then 6, then 6, then 2).", out)
+        self.assertEqual(changed_set.HEAVY_RUN_PARALLEL, 6)
         # The count is the workflow's MUTANTS_SHARDS_COMPLETE, passed in; the
-        # incremental ceiling does not touch it; a smaller plan runs its count.
+        # incremental ceiling does not touch it; a smaller plan runs its count,
+        # a larger one six at a time.
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "4", "--max-shards", "50"))
+        self.assertEqual((p["shards"], p["parallel"]), (4, 4))
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "6"))
+        self.assertEqual((p["shards"], p["parallel"]), (6, 6))
         p, _ = self.planned(mode="complete", extra=("--complete-shards", "12", "--max-shards", "50"))
-        self.assertEqual((p["shards"], p["parallel"]), (12, 12))
-        p, _ = self.planned(mode="complete", extra=("--complete-shards", "14"))
-        self.assertEqual((p["shards"], p["parallel"]), (14, 14))
+        self.assertEqual((p["shards"], p["parallel"]), (12, 6))
         p, _ = self.planned(mode="complete", extra=("--complete-shards", "30"))
-        self.assertEqual((p["shards"], p["parallel"]), (30, 14))
+        self.assertEqual((p["shards"], p["parallel"]), (30, 6))
 
     def test_an_incremental_night_keeps_its_own_sizing_six_at_a_time(self):
         p, _ = self.planned("src/a.rs", extra=("--complete-shards", "20"))
@@ -262,6 +267,57 @@ class Case(unittest.TestCase):
         self.assertEqual((p["shards"], p["whole"], p["parallel"]), (50, True, 6))
         p, _ = self.planned("README.md")
         self.assertEqual((p["shards"], p["matrix"], p["parallel"]), (0, [], 1))
+
+    def test_the_stage_after_the_matrix_runs_under_the_cap(self):
+        # #517: the fuzz targets three at once beside the hermetic shards three
+        # at a time (3 + 3, the cap of six, the captain's call), reach and bench last; both modes
+        # plan the same stage, named in the outputs and the summary.
+        self.assertEqual((changed_set.FUZZ_PARALLEL, changed_set.HERMETIC_PARALLEL, changed_set.TAIL_JOBS), (3, 3, 2))
+        self.assertLessEqual(changed_set.FUZZ_PARALLEL + changed_set.HERMETIC_PARALLEL, changed_set.HEAVY_RUN_PARALLEL)
+        for kw in ({"mode": "complete"}, {}):
+            p, out = self.planned("src/a.rs", **kw)
+            self.assertEqual(p["stage"], {"cap": 6, "fuzz_parallel": 3, "hermetic_parallel": 3, "tail": 2})
+            self.assertIn("After the matrix (#517): the fuzz targets 3 at once beside the hermetic shards "
+                          "3 at a time (6 of the cap's 6)", out)
+        out_file = os.path.join(self.tree.root, "gh-output")
+        code, out, _ = self.tree.plan("README.md", extra=("--github-output", out_file))
+        self.assertEqual(code, 0, out)
+        with open(out_file) as f:
+            lines = f.read().splitlines()
+        self.assertIn("fuzz_parallel=3", lines)
+        self.assertIn("hermetic_parallel=3", lines)
+
+    def test_a_stage_over_the_cap_is_refused(self):
+        # #517: a fourth fuzz slot, a fourth hermetic one or a zero figure
+        # fails the plan, naming the sum and the cap.
+        self.assertEqual(changed_set.stage(6, 3, 3)["fuzz_parallel"], 3)
+        self.assertEqual(changed_set.stage(6, 5, 1)["fuzz_parallel"], 5)
+        for args, said in (((6, 4, 3), "fuzz 4 + hermetic 3 = 7 jobs at once, over the cap of 6"),
+                           ((6, 3, 4), "fuzz 3 + hermetic 4 = 7 jobs at once, over the cap of 6"),
+                           ((6, 0, 3), "a parallel figure is at least 1"),
+                           ((6, 3, 3, 7), "reach and bench, are 7, over the cap of 6")):
+            with self.assertRaises(SystemExit) as e:
+                changed_set.stage(*args)
+            self.assertIn(said, str(e.exception.code))
+
+    def test_the_workflow_wires_the_stage(self):
+        # #517: nightly.yml reads the plan's figures for both matrices, and
+        # reach and bench wait for the fuzz targets and the hermetic shards.
+        with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", "nightly.yml")) as f:
+            text = f.read()
+
+        def job(name):
+            return text.split(f"\n  {name}:\n", 1)[1].split("\n  # ", 1)[0]
+
+        self.assertIn("      max-parallel: ${{ fromJSON(needs.plan.outputs.fuzz_parallel) }}\n", job("fuzz"))
+        self.assertIn("    needs: [plan, mutants]\n", job("fuzz"))
+        self.assertIn("      max-parallel: ${{ fromJSON(needs.plan.outputs.hermetic_parallel) }}\n",
+                      job("mutants-hermetic"))
+        for name in ("mutants-reach", "bench"):
+            self.assertIn("    needs: [plan, mutants, fuzz, mutants-hermetic]\n", job(name), name)
+            self.assertIn("!cancelled() && needs.plan.result == 'success'", job(name), name)
+        for key in ("fuzz_parallel", "hermetic_parallel"):
+            self.assertIn(f"      {key}: ${{{{ steps.plan.outputs.{key} }}}}\n", job("plan"), key)
 
     def test_a_shard_count_below_one_is_refused(self):
         code, out, _ = self.tree.plan(mode="complete", extra=("--complete-shards", "0"))

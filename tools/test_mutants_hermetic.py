@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The planted cases of the Nightly's hermetic pass (#393):
 .github/nightly/mutants_hermetic.py's survivors (missed and timeout in,
-caught, unviable and the baseline out), its
+caught, unviable and the baseline out; the shards' log/ never read, #510), its
 round-robin shards and anchored escapes, its list check (a name listed
 twice refused, #400; a coloured listing compared colour-free, a wrong name
 still refused, #435); and
@@ -93,6 +93,19 @@ class Case(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.lines("survivors.txt"), SURVIVORS)
         self.assertIn("4 survivors", r.stdout)
+
+    def test_the_shards_logs_are_never_read_as_survivors(self):
+        # cargo-mutants' log/ beside each shard's outcomes (#510).
+        self.plant("cargo", CARGO)
+        for i in range(len(CARGO)):
+            os.makedirs(self.path("cargo", f"shard-{i}", "log"))
+            with open(self.path("cargo", f"shard-{i}", "log", "baseline.log"), "w") as f:
+                f.write("test result: ok. 866 passed\n")
+            with open(self.path("cargo", f"shard-{i}", "log", "src__spend_gate.rs_line_9_col_1.log"), "w") as f:
+                json.dump({"outcomes": [outcome(GATE, "src/spend_gate.rs:9:1: a log", "MissedMutant")]}, f)
+        r = self.run_py(HERMETIC, "survivors", self.path("cargo"), self.path("survivors.txt"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.lines("survivors.txt"), SURVIVORS)
 
     def test_shards_deal_round_robin_and_escape_to_exact_matches(self):
         with open(self.path("survivors.txt"), "w") as f:

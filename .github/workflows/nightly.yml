@@ -34,7 +34,7 @@ name: Nightly
 # and carries every other file's figure from that run with its run and sha;
 # its fuzz targets run FUZZ_SECONDS_INCREMENTAL each and the bench runs only
 # when `bench` is set. COMPLETE mutates every floored file in
-# MUTANTS_SHARDS_COMPLETE shards (twenty, #460, fourteen then six, #496), fuzzes each
+# MUTANTS_SHARDS_COMPLETE shards (twenty, #460, six at a time in four waves, #513), fuzzes each
 # target an hour and runs the bench: the night of record,
 # dispatched at each pin (docs/RELEASING.md), and the only night that may move
 # a floor. `gh workflow run nightly.yml --ref beta` is an incremental night;
@@ -55,22 +55,33 @@ on:
 permissions:
   contents: read
 
-# One night at a time (#144), and a complete night in two waves (#460, #496). The
+# One night at a time (#144), and a complete night in four waves (#460, #513). The
 # earliest dispatched night (run 40074725488) started its twenty shards and five
 # fuzz targets at once, took every runner the account has for over an hour
 # and starved every PR check, so the matrix ran six at a time; at fifty
 # shards (#310) a complete night then took ten hours (run 41340299977) and
-# 8h12m (run 41413946663). A complete night now runs at the fleet's 03:00Z
-# slot (#456, docs/NIGHTLY.md), when the day's landings are off the
-# account, as twenty shards, the account's concurrent-job limit, fourteen at
-# a time, then six (the plan's max-parallel, #496: the account's twenty
-# runners are one pool across four repositories, and a PR run's six jobs keep
-# six of them; under night 3's fifty shards, which held all twenty, the PR
-# runs of 11-03 took 47 to 55 minutes for 5 minutes of work); the fuzz targets, the bench and
-# the reach job wait for the matrix (needs: mutants) so that no shard waits
-# for them, and run beside the hermetic pass's six once the matrix ends, at
-# thirteen jobs. An incremental night keeps six at a time (#144): its
-# shards, then the same after-matrix jobs. The group is one name, never one per
+# 8h12m (run 41413946663). A complete night now runs at the fleet's 17:00Z
+# slot from 2026-11-04 (#456, #514, #522, docs/NIGHTLY.md: the keeper's read
+# of the runner pool put 03:00Z in a busy hour; the slot table of 11-03 puts
+# the light window at 17:00Z to 18:00Z, hour 16 at the day's highest
+# non-heavy p95, and the toolbox's slot at 18:00Z, after this hour ends), as
+# twenty shards, the account's concurrent-job limit, six at a
+# time in four waves of 6, 6, 6 and 2 (the plan's max-parallel,
+# HEAVY_RUN_PARALLEL, #513: the account's twenty runners are one pool across
+# four repositories, which the opening API read of 11-03 found at twenty at its
+# peak in 22 of 24 hours, a job beside a heavy run waiting a median 0:38 and
+# a worst 88:53 against 0:02 and 3:16 beside none, and the non-heavy p95 at
+# 14 slots; every heavy run caps at six until a read shows that p95 under
+# 10). The stage after the matrix runs under the same cap (#517): the fuzz
+# targets wait for the matrix (needs: mutants) so that no shard waits for
+# them, then run three at once beside the hermetic shards three at a time (the
+# plan's FUZZ_PARALLEL and HERMETIC_PARALLEL, three plus three, the captain's
+# call on run 41516017523's figures: about two hours; the plan refuses
+# figures whose sum passes the cap), and the reach job and the bench wait for
+# both and run last, two jobs. Before #517 the hermetic six, the five
+# targets, reach and bench could run together, thirteen jobs at once. An
+# incremental night keeps six at a time (#144): its shards, then the same
+# stage. The group is one name, never one per
 # ref: the schedule runs from main and a dispatch from the ref it names, so a
 # group of nightly-${{ github.ref }} would let a dispatched night on beta and
 # the scheduled one run side by side. A night started while one runs waits
@@ -92,8 +103,8 @@ env:
   FUZZ_NIGHTLY: nightly-2026-10-30
   CARGO_MUTANTS_VERSION: 27.1.0
   # A complete night's shards (#460): the account's concurrent-job limit,
-  # fourteen in the opening wave and six after (the plan's COMPLETE_PARALLEL,
-  # #496); 923 mutants, 46 or 47 a shard. The
+  # six at a time in four waves (the plan's HEAVY_RUN_PARALLEL, #513);
+  # 923 mutants, 46 or 47 a shard. The
   # count is this limit, never a figure a night's worst shard raises: a shard
   # past the job's limit (timeout-minutes below) is a refusal of the night,
   # with the shard named by the score (docs/NIGHTLY.md).
@@ -129,7 +140,7 @@ env:
 jobs:
   # The night's plan (#462): which floored files tonight mutates, in how many
   # shards, under which cargo test selection. A complete night: every floored
-  # file in MUTANTS_SHARDS_COMPLETE shards, fourteen at a time (#496). An incremental night: the floored files
+  # file in MUTANTS_SHARDS_COMPLETE shards, six at a time (#513). An incremental night: the floored files
   # changed since the last complete run (docs/scoreboard/mutants.json names
   # it), every floored file a changed test reaches (by the reach record of
   # #401; a target it does not measure reaches all of them), and the whole set
@@ -146,6 +157,8 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       matrix: ${{ steps.plan.outputs.matrix }}
       parallel: ${{ steps.plan.outputs.parallel }}
+      fuzz_parallel: ${{ steps.plan.outputs.fuzz_parallel }}
+      hermetic_parallel: ${{ steps.plan.outputs.hermetic_parallel }}
       empty: ${{ steps.plan.outputs.empty }}
       selection: ${{ steps.plan.outputs.selection }}
     steps:
@@ -174,8 +187,9 @@ jobs:
           retention-days: 30
 
   # After the Mutants matrix (#460), whatever it concluded, so that a complete
-  # night's twenty shards (fourteen, then six, #496) run alone; a night without a plan
-  # fuzzes nothing.
+  # night's twenty shards (six at a time, four waves, #513) run alone; a night without a plan
+  # fuzzes nothing. The plan's fuzz_parallel at once (#517: three, the cap less
+  # the hermetic shards' three beside them), so the five run in two rounds.
   fuzz:
     name: Fuzz (${{ matrix.target }})
     needs: [plan, mutants]
@@ -187,6 +201,7 @@ jobs:
       issues: write
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.fuzz_parallel) }}
       matrix:
         target: [beef_reader, brc29_remittance, served_json, explorer_bodies, allow_pending]
     steps:
@@ -356,7 +371,7 @@ jobs:
   # success marker, and the score refuses the night naming it.
   #
   # The shards, the files, the selection and the max-parallel are the plan's
-  # (#462): a complete night's twenty over the five files, fourteen then six (#496), an
+  # (#462): a complete night's twenty over the five files, six at a time in four waves (#513), an
   # incremental night's few over its changed files alone, six at a time; no
   # shard when the plan is empty.
   mutants:
@@ -367,8 +382,8 @@ jobs:
     timeout-minutes: 340
     strategy:
       fail-fast: false
-      # The plan's: a complete night's twenty at the 03:00Z slot (#460),
-      # fourteen at a time, leaving a PR run its six runners (#496); an
+      # The plan's: a complete night's twenty at the 17:00Z slot (#460, #522),
+      # six at a time in four waves, the fleet's heavy-run cap (#513); an
       # incremental night's six at a time, leaving runners for the PR checks
       # (#144).
       max-parallel: ${{ fromJSON(needs.plan.outputs.parallel) }}
@@ -471,6 +486,12 @@ jobs:
         if: always()
         run: mkdir -p out/mutants.out && git rev-parse HEAD | tee out/mutants.out/sha
 
+      # The per-mutant logs beside the outcomes (#510): cargo-mutants writes
+      # one log a mutant (its build and its cargo test output, the failing
+      # tests by name) and baseline.log, so a night's record can say which
+      # tests killed each caught mutant, and a later PR's rule-15 evidence is
+      # selected from the night by name, never re-measured blind. The score
+      # and the survivors' job read outcomes.json, sha and shard-ok alone.
       - name: Upload the outcomes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -481,6 +502,7 @@ jobs:
             out/mutants.out/sha
             out/mutants.out/missed.txt
             out/mutants.out/diff/
+            out/mutants.out/log/
             out/mutants.out/shard-ok
           retention-days: 30
 
@@ -491,7 +513,9 @@ jobs:
   # each entry that runs a line of a floored file (the files of
   # MUTANTS_FLOORS) and that line, since such a target judges a floored file
   # and belongs in the oracle. One runner, after the shards (#460: the opening
-  # wave is theirs alone, as for the fuzz targets): 674 s
+  # wave is theirs alone, as for the fuzz targets), and after the fuzz
+  # targets and the hermetic shards, whatever they concluded (#517: the stage
+  # under the cap, so reach and bench run last, two jobs): 674 s
   # of measurement and a 199 s cold build on the Studio Mac at load 34, where
   # re-measuring in each of twenty shards would cost twenty times that. The
   # score refuses a night whose reach job did not succeed. The artifact
@@ -500,7 +524,7 @@ jobs:
   # change, and CI's ratchet job checks that record against the list.
   mutants-reach:
     name: Mutants left-out reach
-    needs: [plan, mutants]
+    needs: [plan, mutants, fuzz, mutants-hermetic]
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -611,9 +635,9 @@ jobs:
   # The hermetic pass (#393): tests/e2e_hermetic.rs, the hermetic e2e suite
   # as a cargo test target, judges only the cargo pass's survivors, dealt
   # round-robin over MUTANTS_HERMETIC_SHARDS shards; the score is the union.
-  # It starts after the cargo matrix ends: its six beside
-  # the five fuzz targets and the reach job, thirteen jobs at most under the
-  # account's twenty (#460). Each shard: the e2e-hermetic job's setup (Node
+  # It starts after the cargo matrix ends, three shards at a time (the plan's
+  # hermetic_parallel, #517) beside three fuzz targets: six jobs, the
+  # fleet's cap; the reach job and the bench wait for it. Each shard: the e2e-hermetic job's setup (Node
   # 24, npm ci, Playwright's Chromium with its system libraries), the MCP
   # binary built once (the mcp package is not mutated), the unmutated suite
   # once as a stability check (a flaky scene would read as a caught mutant,
@@ -638,7 +662,7 @@ jobs:
       NODE_USE_ENV_PROXY: '1'
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: ${{ fromJSON(needs.plan.outputs.hermetic_parallel) }}
       matrix:
         # 0 to the survivors job's hermetic_shards - 1; the score job counts the same.
         shard: ${{ fromJSON(needs.mutants-survivors.outputs.hermetic_matrix) }}
@@ -958,7 +982,9 @@ jobs:
   # run appended, stamped with the commit and the run id; an entry that gates
   # (five runs) fails the night on a p99 over the margin, as on a PR.
   # After the Mutants matrix (#460: a complete night's shards run alone,
-  # fourteen then six, #496), whatever it concluded, and one runner. The artifact
+  # six at a time in four waves, #513), and after the fuzz targets and the
+  # hermetic shards (#517: the stage under the cap, reach and bench last),
+  # whatever each concluded, and one runner. The artifact
   # bench-night-<run id>-<CPU key> is what the captain appends to
   # benches/baseline.json, one night per PR: tools/bench-compare --append
   # (docs/BENCHES.md).
@@ -967,7 +993,7 @@ jobs:
   # once a week; #303 allows no schedule) or on a complete night.
   bench:
     name: Bench (the night's candidate baseline)
-    needs: [plan, mutants]
+    needs: [plan, mutants, fuzz, mutants-hermetic]
     if: ${{ !cancelled() && needs.plan.result == 'success' && (inputs.bench || inputs.mode == 'complete') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
