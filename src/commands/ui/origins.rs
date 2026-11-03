@@ -25,21 +25,17 @@
 //! `ALLOWED_ORIGINS` lists or a grant admits, since a granted page must not
 //! write a grant.
 
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use anyhow::Result;
-use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
-use bsv_wallet_cli::server::owner_door::ANSWERED_SHOWN;
-use bsv_wallet_cli::store::origin_grants::{
-    self as grants, Answer, GrantRow, PendingRow, Refused, Reply, Scope, Shown,
+use axum::{
+    extract::{Request, State},
+    http::{header, HeaderMap, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
 };
-use serde::Deserialize;
+use bsv_wallet_cli::server::owner_door::{now, Answering, Revoking, ANSWERED_SHOWN};
+use bsv_wallet_cli::store::origin_grants::{self as grants, GrantRow, PendingRow, Refused, Shown};
+use std::sync::Arc;
 
 use super::AppState;
 
@@ -83,17 +79,15 @@ pub fn write_refusal(headers: &HeaderMap) -> Option<String> {
 
 /// The own-page admission of the write routes: [`write_refusal`]'s 403.
 async fn own_page(request: Request, next: Next) -> Response {
-    match write_refusal(request.headers()) {
-        None => next.run(request).await,
-        Some(why) => {
-            tracing::warn!(path = %request.uri().path(), why = %why, "inspector: write refused");
-            refusal(StatusCode::FORBIDDEN, why)
-        }
-    }
+    let Some(why) = write_refusal(request.headers()) else {
+        return next.run(request).await;
+    };
+    tracing::warn!(path = %request.uri().path(), why = %why, "inspector: write refused");
+    refusal(StatusCode::FORBIDDEN, &why)
 }
 
 /// The inspector's error shape, `{"error": ...}`, at `status`.
-fn refusal(status: StatusCode, why: String) -> Response {
+fn refusal(status: StatusCode, why: &str) -> Response {
     (status, Json(serde_json::json!({ "error": why }))).into_response()
 }
 
@@ -107,80 +101,14 @@ fn refused(e: &anyhow::Error) -> Response {
         None if bsv_wallet_cli::store::is_store_busy(e) => StatusCode::SERVICE_UNAVAILABLE,
         None => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    refusal(status, e.to_string())
-}
-
-/// A scope as the body names it.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ScopeWord {
-    Wallet,
-    Spending,
-}
-
-impl From<ScopeWord> for Scope {
-    fn from(word: ScopeWord) -> Self {
-        match word {
-            ScopeWord::Wallet => Scope::Wallet,
-            ScopeWord::Spending => Scope::Spending,
-        }
-    }
-}
-
-/// An answer as the body names it.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum AnswerWord {
-    Grant,
-    Once,
-    Deny,
-}
-
-impl From<AnswerWord> for Answer {
-    fn from(word: AnswerWord) -> Self {
-        match word {
-            AnswerWord::Grant => Answer::Grant,
-            AnswerWord::Once => Answer::Once,
-            AnswerWord::Deny => Answer::Deny,
-        }
-    }
-}
-
-/// `POST /api/origins/answer`'s body, the owner's door's.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Answering {
-    pending_id: i64,
-    answer: AnswerWord,
-    #[serde(default)]
-    expiry: i64,
-    amount: Option<i64>,
-}
-
-/// `POST /api/origins/revoke`'s body, the owner's door's.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Revoking {
-    originator: String,
-    scope: Option<ScopeWord>,
-}
-
-fn now() -> Result<i64> {
-    Ok(i64::try_from(
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-    )?)
+    refusal(status, &e.to_string())
 }
 
 /// The rows, read with the month's tally, as the listing's JSON.
 async fn shown(state: &AppState, rows: Vec<GrantRow>, pending: Vec<PendingRow>) -> Response {
-    let read = async {
-        let now = now()?;
-        Shown::of(&state.store, rows, pending, now).await
-    };
-    match read.await {
-        Ok(shown) => Json(shown.json()).into_response(),
-        Err(e) => refused(&e),
-    }
+    let read = async { Shown::of(&state.store, rows, pending, now()?).await };
+    read.await
+        .map_or_else(|e| refused(&e), |rows| Json(rows.json()).into_response())
 }
 
 /// `GET /api/origins`.
@@ -194,19 +122,12 @@ async fn list(State(state): State<Arc<AppState>>) -> Response {
 /// `POST /api/origins/answer`: the answered row, and the grant row a
 /// `grant` wrote.
 async fn answer(State(state): State<Arc<AppState>>, Json(body): Json<Answering>) -> Response {
-    let reply = Reply {
-        answer: body.answer.into(),
-        expiry: body.expiry,
-        amount: body.amount,
-    };
-    let written = async {
-        let now = now()?;
-        grants::answer(&state.store, body.pending_id, &reply, now).await
-    };
+    let reply = body.reply();
+    let written = async { grants::answer(&state.store, body.pending_id(), &reply, now()?).await };
     match written.await {
         Ok(answered) => {
             tracing::info!(
-                pending_id = body.pending_id,
+                pending_id = body.pending_id(),
                 answer = reply.answer.as_str(),
                 "inspector: answered"
             );
@@ -220,20 +141,12 @@ async fn answer(State(state): State<Arc<AppState>>, Json(body): Json<Answering>)
 /// `POST /api/origins/revoke`: the rows stamped; 409 naming the
 /// originator when it holds no live row.
 async fn revoke(State(state): State<Arc<AppState>>, Json(body): Json<Revoking>) -> Response {
-    let scope = body.scope.map(Scope::from);
-    let written = async {
-        let now = now()?;
-        grants::revoke(&state.store, &body.originator, scope, now).await
-    };
+    let originator = body.originator();
+    let written = async { grants::revoke(&state.store, originator, body.scope(), now()?).await };
     match written.await {
-        Ok(rows) if rows.is_empty() => {
-            let key = grants::key_of(&body.originator).map_or(body.originator.clone(), |(k, _)| k);
-            let scoped = scope.map_or(String::new(), |s| format!(" of the {} scope", s.as_str()));
-            let why = format!("{key} holds no live grant row{scoped}: nothing to revoke");
-            refusal(StatusCode::CONFLICT, why)
-        }
+        Ok(rows) if rows.is_empty() => refusal(StatusCode::CONFLICT, &body.nothing_to_revoke()),
         Ok(rows) => {
-            tracing::info!(originator = %body.originator, rows = rows.len(), "inspector: revoked");
+            tracing::info!(originator = %originator, rows = rows.len(), "inspector: revoked");
             shown(&state, rows, vec![]).await
         }
         Err(e) => refused(&e),

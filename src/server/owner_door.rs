@@ -175,10 +175,11 @@ impl From<AnswerWord> for Answer {
     }
 }
 
-/// `POST /origins/answer`'s body.
+/// `POST /origins/answer`'s body (the inspector's `POST
+/// /api/origins/answer` reads the same).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Answering {
+pub struct Answering {
     pending_id: i64,
     answer: AnswerWord,
     #[serde(default)]
@@ -197,15 +198,63 @@ struct Granted {
     expiry: i64,
 }
 
-/// `POST /origins/revoke`'s body.
+impl Answering {
+    /// The pending row answered.
+    #[must_use]
+    pub fn pending_id(&self) -> i64 {
+        self.pending_id
+    }
+
+    /// The answer as the module takes it.
+    #[must_use]
+    pub fn reply(&self) -> Reply {
+        Reply {
+            answer: self.answer.into(),
+            expiry: self.expiry,
+            amount: self.amount,
+        }
+    }
+}
+
+/// `POST /origins/revoke`'s body (the inspector's `POST
+/// /api/origins/revoke` reads the same).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Revoking {
+pub struct Revoking {
     originator: String,
     scope: Option<ScopeWord>,
 }
 
-fn now() -> Result<i64> {
+impl Revoking {
+    /// The originator named.
+    #[must_use]
+    pub fn originator(&self) -> &str {
+        &self.originator
+    }
+
+    /// The scope named; `None` revokes both.
+    #[must_use]
+    pub fn scope(&self) -> Option<Scope> {
+        self.scope.map(Scope::from)
+    }
+
+    /// The refusal of a revoke that stamped no row, naming the originator.
+    #[must_use]
+    pub fn nothing_to_revoke(&self) -> String {
+        let key = grants::key_of(&self.originator).map_or(self.originator.clone(), |(k, _)| k);
+        let scoped = self
+            .scope()
+            .map_or(String::new(), |s| format!(" of the {} scope", s.as_str()));
+        format!("{key} holds no live grant row{scoped}: nothing to revoke")
+    }
+}
+
+/// Now, in unix seconds, as the rows hold times.
+///
+/// # Errors
+///
+/// A clock before the epoch, or past `i64`.
+pub fn now() -> Result<i64> {
     Ok(i64::try_from(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
     )?)
@@ -255,11 +304,7 @@ async fn list(State(wallet): State<WalletState>) -> Response {
 /// `POST /origins/answer`: the answered row, and the grant row a `grant`
 /// wrote.
 async fn answer(State(wallet): State<WalletState>, Json(body): Json<Answering>) -> Response {
-    let reply = Reply {
-        answer: body.answer.into(),
-        expiry: body.expiry,
-        amount: body.amount,
-    };
+    let reply = body.reply();
     let written = async {
         let now = now()?;
         let answered = grants::answer(wallet.storage(), body.pending_id, &reply, now).await?;
@@ -304,18 +349,14 @@ async fn grant(State(wallet): State<WalletState>, Json(body): Json<Granted>) -> 
 /// `POST /origins/revoke`: the rows stamped; 409 naming the originator
 /// when it holds no live row (the CLI's exit 1).
 async fn revoke(State(wallet): State<WalletState>, Json(body): Json<Revoking>) -> Response {
-    let scope = body.scope.map(Scope::from);
     let written = async {
         let now = now()?;
-        let rows = grants::revoke(wallet.storage(), &body.originator, scope, now).await?;
+        let rows = grants::revoke(wallet.storage(), &body.originator, body.scope(), now).await?;
         anyhow::Ok((rows, now))
     };
     match written.await {
         Ok((rows, _)) if rows.is_empty() => {
-            let key = grants::key_of(&body.originator).map_or(body.originator.clone(), |(k, _)| k);
-            let scoped = scope.map_or(String::new(), |s| format!(" of the {} scope", s.as_str()));
-            let why = format!("{key} holds no live grant row{scoped}: nothing to revoke");
-            AppError::new(Kind::Conflict, why).into_response()
+            AppError::new(Kind::Conflict, body.nothing_to_revoke()).into_response()
         }
         Ok((rows, now)) => {
             tracing::info!(originator = %body.originator, rows = rows.len(), "owner's door: revoked");
