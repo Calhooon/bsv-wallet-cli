@@ -467,14 +467,19 @@ class TheJobsInputs(unittest.TestCase):
     def test_the_nights_bench_is_the_bench_jobs_measure(self):
         # #142: the Nightly's bench job measures as bench.yml's does, on the
         # same pin, and keeps its candidate under the run id and the CPU.
+        # #460, #462: the job waits for the plan and the mutants matrix, so no
+        # shard waits for a runner, and runs on the plan's success; the
+        # measure is unchanged (the pin, tools/bench-compare --ci and
+        # --gate-key, the candidate under the run id and the CPU).
         night_job = job("nightly.yml", "bench")
+        self.assertIn("    needs: [plan, mutants]\n", night_job)
+        self.assertIn("needs.plan.result == 'success'", night_job)
         self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", night_job)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", night_job)
         self.assertIn("python3 tools/test_bench_compare.py", night_job)
         self.assertIn("tools/bench-compare --ci", night_job)
         self.assertIn("tools/bench-compare --gate-key", night_job)
         self.assertIn("bench-night-${{ github.run_id }}-${{ steps.measure.outputs.key }}", night_job)
-        self.assertNotIn("needs:", night_job)
 
     def test_ci_refuses_a_renamed_profile(self):
         r = self.tool("--ci", "--out", os.devnull, BENCH_PROFILE="ubuntu-fast")
