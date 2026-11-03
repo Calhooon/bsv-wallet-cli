@@ -203,7 +203,8 @@
     "201-switch.listOutputs.heldGranted.json",
     "202-switch.listOutputs.revoked.json",
     "203-switch.createSignature.expiredHeldGranted.json",
-    "204-switch.getVersion.open.json"
+    "204-switch.getVersion.open.json",
+    "205-switch.createSignature.levelZero.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -288,6 +289,7 @@
     "201-switch.listOutputs.heldGranted.json": "#414 L5b: a page the seed does not list (http://page.test) asks the basket [\"wire basket\"] (listing), holds no row, and is held on its pending row; the owner grants it (the owner step) and the call is the door's own 200, echoed. Served from the `pages` world.",
     "202-switch.listOutputs.revoked.json": "#414 L5b, W3: the page's basket row granted then revoked (the owner step's before): 400 ERR_PERMISSION_DENIED in the client's grouped denial (\"The user has denied the request for permission.\") at once, with the echo, and no pending row.",
     "203-switch.createSignature.expiredHeldGranted.json": "#414 L5b: the page's protocol row [false,2,\"wire renewal\",\"<G>\"] granted with an expiry long past: held as a renewal, granted by the owner, the door's signature (RFC 6979 under the fixed key, so the bytes are stable).",
-    "204-switch.getVersion.open.json": "#414 L5b, W15 ruled (i) by the owner on 2026-11-03: an open door answers a page with a parsed Origin and an agreeing originator, holding no row, with the echo; no row is read or written."
+    "204-switch.getVersion.open.json": "#414 L5b, W15 ruled (i) by the owner on 2026-11-03: an open door answers a page with a parsed Origin and an agreeing originator, holding no row, with the echo; no row is read or written.",
+    "205-switch.createSignature.levelZero.json": "#414 L5b, W15 (i): a protocol at security level 0 is open access (BRC-100 line 65, \"Level 0: No restrictions, open access\"; WPM:1505), answered to a page holding no row."
   }
 }

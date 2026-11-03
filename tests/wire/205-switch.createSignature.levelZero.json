@@ -1,0 +1,107 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "origin": "http://page.test"
+    },
+    "json": {
+      "counterparty": "self",
+      "data": [
+        1,
+        2,
+        3
+      ],
+      "keyID": "1",
+      "protocolID": [
+        0,
+        "wire open"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://page.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "signature": [
+        48,
+        68,
+        2,
+        32,
+        86,
+        246,
+        177,
+        11,
+        242,
+        2,
+        1,
+        39,
+        104,
+        144,
+        32,
+        167,
+        29,
+        181,
+        24,
+        51,
+        41,
+        126,
+        86,
+        225,
+        123,
+        251,
+        179,
+        170,
+        233,
+        173,
+        25,
+        190,
+        186,
+        128,
+        2,
+        220,
+        2,
+        32,
+        30,
+        213,
+        195,
+        174,
+        24,
+        73,
+        61,
+        237,
+        210,
+        28,
+        57,
+        68,
+        20,
+        213,
+        144,
+        46,
+        107,
+        52,
+        213,
+        4,
+        50,
+        208,
+        96,
+        235,
+        83,
+        83,
+        124,
+        207,
+        63,
+        219,
+        21,
+        163
+      ]
+    }
+  }
+}
