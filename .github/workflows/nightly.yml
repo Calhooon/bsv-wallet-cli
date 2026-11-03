@@ -471,6 +471,12 @@ jobs:
         if: always()
         run: mkdir -p out/mutants.out && git rev-parse HEAD | tee out/mutants.out/sha
 
+      # The per-mutant logs beside the outcomes (#510): cargo-mutants writes
+      # one log a mutant (its build and its cargo test output, the failing
+      # tests by name) and baseline.log, so a night's record can say which
+      # tests killed each caught mutant, and a later PR's rule-15 evidence is
+      # selected from the night by name, never re-measured blind. The score
+      # and the survivors' job read outcomes.json, sha and shard-ok alone.
       - name: Upload the outcomes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -481,6 +487,7 @@ jobs:
             out/mutants.out/sha
             out/mutants.out/missed.txt
             out/mutants.out/diff/
+            out/mutants.out/log/
             out/mutants.out/shard-ok
           retention-days: 30
 

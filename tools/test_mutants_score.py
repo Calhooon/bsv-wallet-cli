@@ -12,7 +12,8 @@ dispatched matrix's (#460): a twenty-shard complete night is scored and its
 record names its matrix, nineteen artifacts of twenty are refused naming the
 absent shard, as are a shard without its success marker (cut at the job's
 limit) and an artifact outside the matrix, by the score and by its
---shards-only gate. A declared equivalent (#482, --equivalents) the night
+--shards-only gate; the shards' per-mutant logs (#510, log/ in each
+artifact) change neither. A declared equivalent (#482, --equivalents) the night
 missed is scored equivalent, outside the denominator and in its own column
 and the written record; an entry the night caught, a stale entry (a name no
 mutant of a mutated file carries) and a malformed entry are refused by name,
@@ -257,6 +258,24 @@ class Case(unittest.TestCase):
         self.assertEqual(self.night.written()["matrix"], {"shards": 20, "parallel": 14})
         print("\n    exit 0: twenty shards of twenty, src/a.rs 95.0, src/b.rs 80.0, matrix 20, 14 at once (2 waves: 14, then 6)",
               end=" ", file=sys.stderr)
+
+    def test_the_shards_logs_are_never_read_as_outcomes(self):
+        # Each shard's artifact carries cargo-mutants' log/ (#510): the
+        # baseline's, one a mutant, and a stray file; the gate and the score
+        # read the same night as without them.
+        self.twenty_shards()
+        for k in range(20):
+            self.night.put(f"outcomes/mutants-{k}/log/baseline.log", "test result: ok. 866 passed\n")
+            self.night.put(f"outcomes/mutants-{k}/log/src__a.rs_line_{k}_col_1.log",
+                           json.dumps({"outcomes": [outcome("src/a.rs", 900 + k, "MissedMutant")]}) + "\n")
+            self.night.put(f"outcomes/mutants-{k}/log/stray", "not a log\n")
+        the_plan = plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20)
+        self.assertEqual(self.night.gate(the_plan)[0], 0)
+        code, out = self.night.score(the_plan, complete_record())
+        self.assertEqual(code, 0, out)
+        self.assertIn("| `src/a.rs` | 38 | 0 | 2 | 0 | 95.0 | 90 | ok |", out)
+        self.assertIn("| `src/b.rs` | 32 | 0 | 8 | 0 | 80.0 | 75 | ok |", out)
+        print("\n    exit 0: twenty shards with log/, src/a.rs 95.0, src/b.rs 80.0, as without", end=" ", file=sys.stderr)
 
     def test_a_complete_night_of_nineteen_shards_is_refused(self):
         # Twenty dispatched, nineteen artifacts: shard 13 never uploaded.
