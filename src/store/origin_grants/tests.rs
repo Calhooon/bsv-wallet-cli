@@ -651,3 +651,26 @@ async fn the_listing_holds_every_grant_and_the_open_rows_unless_all() {
     let ids: Vec<_> = every.pending.iter().map(|p| p.pending_id).collect();
     assert_eq!(ids, [open.pending_id, shut.pending_id]);
 }
+
+#[tokio::test]
+async fn the_owners_listing_holds_the_open_rows_and_the_last_answered() {
+    let (_dir, storage) = wallet_db().await;
+    granted(&storage, "a.example").await;
+    let mut shut = Vec::new();
+    for (i, at) in [(1, NOW + 3), (2, NOW + 1), (3, NOW + 2)] {
+        let row = ask(&storage, &spend_call("b.example", i)).await;
+        answer(&storage, row.pending_id, &reply(Answer::Deny, None), at)
+            .await
+            .unwrap();
+        shut.push(row.pending_id);
+    }
+    let open = ask(&storage, &wallet_call("c.example", "/listOutputs")).await;
+
+    let rows = owners_listing(&storage, 2).await.unwrap();
+    assert_eq!(rows.grants.len(), 1);
+    let ids: Vec<_> = rows.pending.iter().map(|p| p.pending_id).collect();
+    // The two answered last (the first and the third), and the open row.
+    assert_eq!(ids, [shut[0], shut[2], open.pending_id]);
+    let none = owners_listing(&storage, 0).await.unwrap();
+    assert_eq!(none.pending, std::slice::from_ref(&open));
+}

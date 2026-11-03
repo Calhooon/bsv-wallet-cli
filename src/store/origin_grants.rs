@@ -21,6 +21,7 @@ use bsv_wallet_toolbox::StorageSqlx;
 use sqlx::{Sqlite, SqliteConnection};
 
 mod rows;
+mod shown;
 
 pub use rows::{
     expired, key_of, month_of, unlisted_text, when, Answer, Answered, Asking, Fold, FoldLine,
@@ -28,6 +29,7 @@ pub use rows::{
     Standing, SEED_NOTICE,
 };
 use rows::{GrantTuple, PendingTuple};
+pub use shown::{Shown, ShownJson};
 
 /// The three tables and their three indexes, `(type, name)`, as
 /// [`ensure`] reads them from `sqlite_master`.
@@ -475,17 +477,36 @@ pub async fn fold(storage: &StorageSqlx, entries: &[String], now: i64) -> Result
 ///
 /// The store's error.
 pub async fn listing(storage: &StorageSqlx, all: bool) -> Result<Listing> {
+    listed(storage, "? OR answered_at IS NULL", i64::from(all)).await
+}
+
+/// The listing the owner's door answers (`GET /origins`, section (3)):
+/// every grant row as [`listing`] reads them, and the open pending rows
+/// with the last `answered` answered ones (by their answer's time, then
+/// id), by id. Read on the reader.
+///
+/// # Errors
+///
+/// The store's error.
+pub async fn owners_listing(storage: &StorageSqlx, answered: i64) -> Result<Listing> {
+    let recent = "answered_at IS NULL OR pending_id IN (SELECT pending_id FROM origin_pending \
+                  WHERE answered_at IS NOT NULL ORDER BY answered_at DESC, pending_id DESC LIMIT ?)";
+    listed(storage, recent, answered).await
+}
+
+/// Every grant row, and the pending rows `pending_where` (one bound
+/// number) selects, by id.
+async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Result<Listing> {
     ensure(storage).await?;
     let sql = format!(
         "SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, scope = 'spending'"
     );
     let grants: Vec<GrantTuple> = sqlx::query_as(&sql).fetch_all(storage.pool()).await?;
     let sql = format!(
-        "SELECT {PENDING_COLUMNS} FROM origin_pending \
-         WHERE ? OR answered_at IS NULL ORDER BY pending_id"
+        "SELECT {PENDING_COLUMNS} FROM origin_pending WHERE {pending_where} ORDER BY pending_id"
     );
     let pending: Vec<PendingTuple> = sqlx::query_as(&sql)
-        .bind(all)
+        .bind(bound)
         .fetch_all(storage.pool())
         .await?;
     Ok(Listing {
