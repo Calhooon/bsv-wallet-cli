@@ -4,6 +4,11 @@ malformed exits 1 naming its file and field, each number that falls from the
 base's values fails --check --base, and the cases it must let through. Each
 case runs the tool on a tree of its own under $TMPDIR (--root). Run by the CI
 job ratchet: python3 tools/test_scoreboard.py
+
+A case runs the tool's main() in this process, loaded once, with the exit code
+and the output the script gives (#525: one interpreter per run was 348 of them,
+about 13 s of the file's 14); TheScriptIsTheInProcessRun runs the script itself
+beside it and proves the two agree.
 """
 
 import json
@@ -13,11 +18,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.dont_write_bytecode = True  # nothing in the tree
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 TOOL = os.path.join(HERE, "scoreboard")
+sys.path.insert(0, HERE)
+import in_process as tools_in_process  # noqa: E402
 
 SHA = "abcdef0" + "1" * 33
 DOC = "# x\n\n<!-- scoreboard:begin -->\n<!-- scoreboard:end -->\n"
@@ -109,9 +117,8 @@ class Tree:
         shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
 
     def run(self, *args):
-        r = subprocess.run([sys.executable, "-B", TOOL, "--root", self.root, *args],
-                           capture_output=True, text=True)
-        return r.returncode, (r.stdout + r.stderr).strip()
+        code, stdout, stderr = in_process("--root", self.root, *args)
+        return code, (stdout + stderr).strip()
 
     def values(self):
         code, out = self.run("--json")
@@ -123,6 +130,11 @@ class Tree:
 
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
+
+
+def in_process(*args):
+    """tools/scoreboard's main() run here as `python3 -B tools/scoreboard ARGS` runs it."""
+    return tools_in_process.run(TOOL, args, ROOT=Path(TOOL).resolve().parent.parent)
 
 
 def counted(score):
@@ -1444,6 +1456,33 @@ class TheRecordNamesEachFiguresProvenance(Case):
         mutants["mode"] = "partial"
         self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
         self.refused('docs/scoreboard/mutants.json: mode: must be "complete" or "incremental"')
+
+
+class TheScriptIsTheInProcessRun(Case):
+    """(#525) The cases above run main() in this process; the script itself, run
+    as CI runs it, gives the same exit code, stdout and stderr, byte for byte, for
+    each way the tool ends: a table, values, a render, a current and a stale
+    check, a record's named fault, a fall from the base and a usage error."""
+
+    def same(self, *args):
+        r = subprocess.run([sys.executable, "-B", TOOL, "--root", self.tree.root, *args],
+                           capture_output=True, text=True)
+        self.assertEqual(in_process("--root", self.tree.root, *args), (r.returncode, r.stdout, r.stderr), args)
+        return r.returncode
+
+    def test_each_way_the_tool_ends_is_the_scripts(self):
+        codes = [self.same(), self.same("--json")]
+        base = self.tree.values()
+        codes.append(self.same("--check"))  # stale: the table is unrendered
+        self.assertEqual(in_process("--root", self.tree.root, "--render")[0], 0)
+        codes.append(self.same("--check", "--base", base))
+        self.tree.remove("tests/e2e/scenarios/02-s.js")
+        codes.append(self.same("--check", "--base", base))  # a fall
+        self.tree.write("docs/scoreboard/mutants.json", "{")
+        codes.append(self.same("--json"))  # a named fault
+        codes.append(self.same("--base", base))  # usage: --base goes with --check
+        self.assertEqual(codes, [0, 0, 1, 0, 1, 1, 2])
+        print(f"\n    agree: {len(codes)} runs, exit codes {codes}", end=" ", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ that print a chosen version and no warning, so no real build runs. Run by the
 CI job ratchet: python3 tools/test_ratchet.py
 """
 
+import atexit
 import hashlib
 import json
 import os
@@ -62,13 +63,28 @@ echo "$STUB_RUSTC"
 """
 
 
+TEMPLATE = []  # the committed tree, built once per run of this file
+
+
 class Tree:
-    """A committed tree holding the tool and one source file, under $TMPDIR."""
+    """A committed tree holding the tool and one source file, under $TMPDIR:
+    the first is built and committed once, and each case copies it (#525: a
+    git init and a commit per case)."""
 
     def __init__(self):
         # Resolved, as the tool resolves its own ROOT (macOS's $TMPDIR is a symlink).
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="ratchet-case.", dir=os.environ.get("TMPDIR")))
         self.bin = os.path.join(self.root, ".stub-bin")
+        if not TEMPLATE:
+            base = Tree.__new__(Tree)
+            base.root = os.path.realpath(tempfile.mkdtemp(prefix="ratchet-base.", dir=os.environ.get("TMPDIR")))
+            atexit.register(shutil.rmtree, base.root, True)
+            base.bin = os.path.join(base.root, ".stub-bin")
+            base.build()
+            TEMPLATE.append(base.root)
+        shutil.copytree(TEMPLATE[0], self.root, symlinks=True, dirs_exist_ok=True)
+
+    def build(self):
         os.makedirs(os.path.join(self.root, "tools"))
         os.makedirs(self.bin)
         shutil.copy(os.path.join(HERE, "ratchet"), os.path.join(self.root, "tools", "ratchet"))
@@ -86,7 +102,7 @@ class Tree:
             os.chmod(p, 0o755)
         with open(os.path.join(self.root, ".gitignore"), "w") as f:
             f.write(".stub-bin/\n")
-        self.git("init", "-q")
+        self.git("init", "-q", "--template=")  # no sample hooks to copy per case
         self.commit("the tree")
 
     @property
