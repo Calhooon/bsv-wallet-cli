@@ -1,7 +1,7 @@
 # nextest's settings for the workspace (#506, loop three of the speed line).
 #
 # The long tests start first. nextest runs the suite as one queue on the
-# runner's four threads; in the binaries' own order the 5 to 15 s tests
+# runner's threads; in the binaries' own order the 5 to 15 s tests
 # started late and the run ended on them alone. A higher priority starts
 # earlier (nextest's `priority`, -100 to 100, default 0); within a tier the
 # order is nextest's own. The tiers are by the seconds the Test job's log
@@ -9,6 +9,19 @@
 # #506's tip; a test whose wait is the behaviour it tests (a busy ceiling,
 # a deadline, a stress loop) keeps its wait and starts first instead.
 # Re-tier from the next timings.
+#
+# The Test job's threads (#527, loop four): the `ci` profile, which the Test
+# job's run selects (`--profile ci` in .github/workflows/ci.yml), runs eight
+# tests at once on the runner's four cores. The long tests wait rather than
+# compute (the callback's 8 s deadline, json_refusal's busy run on a
+# binary, the toolbox's 5 s writer acquire, the recoveries' polls), and at
+# one thread a core the four threads idled through those waits while the
+# short tests queued behind them. The default profile keeps nextest's one
+# thread a core, so a local run is unchanged. The `ci` profile inherits
+# the default's settings, and the default's overrides (the tiers above)
+# apply under it too.
+[profile.ci]
+test-threads = 8
 
 # 8 s and more.
 [[profile.default.overrides]]

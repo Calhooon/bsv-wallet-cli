@@ -804,14 +804,16 @@ jobs:
       # nextest runs each test in its own process, every binary at once
       # (#472): libtest ran the binaries one after another, and the wire
       # binary's tests one at a time behind its in-process lock (the audit
-      # log is the process's), about 300 of the job's 450 seconds.
+      # log is the process's), about 300 of the job's 450 seconds. The `ci`
+      # profile runs eight tests at once on the runner's four cores (#527):
+      # the long tests wait rather than compute (.config/nextest.toml).
       - name: Run the workspace's tests
         if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.test_run != 'false' }}
         env:
           TEST_ARGS: ${{ needs.changes.outputs.test_args || '--workspace' }}
         run: |
           read -ra args <<< "$TEST_ARGS"
-          cargo nextest run "${args[@]}" --locked --no-fail-fast
+          cargo nextest run "${args[@]}" --locked --no-fail-fast --profile ci
 
   # The vector-backed tests as one named check: the Arcade status vector
   # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
