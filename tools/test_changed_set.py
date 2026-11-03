@@ -9,8 +9,8 @@ workspace manifest change brings in the whole set; no change plans no shard
 module tree (#464's review: a test module reaches the floored files its tests
 can run by name, other code the whole set), on a planted crate and on this
 repository's own; a complete night mutates every file in
-MUTANTS_SHARDS_COMPLETE shards (twenty, #460) fourteen at a time, then six
-(#496), where an incremental night keeps its own sizing six at a time; a record without a mode
+MUTANTS_SHARDS_COMPLETE shards (twenty, #460) six at a time in four waves
+(#513), where an incremental night keeps its own sizing six at a time; a record without a mode
 is refused; and the git diff
 against the record's last complete run, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
@@ -239,21 +239,24 @@ class Case(unittest.TestCase):
         self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6))
 
     def test_a_complete_night_mutates_every_file(self):
-        # Twenty shards (#460), the account's concurrent-job limit, fourteen at a
-        # time (#496): a PR run keeps its six runners.
+        # Twenty shards (#460), the account's concurrent-job limit, six at a
+        # time (#513): the fleet's heavy-run cap while the pool reads busy.
         p, out = self.planned("README.md", mode="complete")
         self.assertEqual((p["files"], p["shards"], p["carried"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 20, []))
-        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 14))
-        self.assertIn("in 20 shards, 14 at once (2 waves: 14, then 6).", out)
-        self.assertEqual(changed_set.COMPLETE_PARALLEL, changed_set.ACCOUNT_RUNNERS - changed_set.PR_RUN_JOBS)
+        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 6))
+        self.assertIn("in 20 shards, 6 at once (4 waves: 6, then 6, then 6, then 2).", out)
+        self.assertEqual(changed_set.HEAVY_RUN_PARALLEL, 6)
         # The count is the workflow's MUTANTS_SHARDS_COMPLETE, passed in; the
-        # incremental ceiling does not touch it; a smaller plan runs its count.
+        # incremental ceiling does not touch it; a smaller plan runs its count,
+        # a larger one six at a time.
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "4", "--max-shards", "50"))
+        self.assertEqual((p["shards"], p["parallel"]), (4, 4))
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "6"))
+        self.assertEqual((p["shards"], p["parallel"]), (6, 6))
         p, _ = self.planned(mode="complete", extra=("--complete-shards", "12", "--max-shards", "50"))
-        self.assertEqual((p["shards"], p["parallel"]), (12, 12))
-        p, _ = self.planned(mode="complete", extra=("--complete-shards", "14"))
-        self.assertEqual((p["shards"], p["parallel"]), (14, 14))
+        self.assertEqual((p["shards"], p["parallel"]), (12, 6))
         p, _ = self.planned(mode="complete", extra=("--complete-shards", "30"))
-        self.assertEqual((p["shards"], p["parallel"]), (30, 14))
+        self.assertEqual((p["shards"], p["parallel"]), (30, 6))
 
     def test_an_incremental_night_keeps_its_own_sizing_six_at_a_time(self):
         p, _ = self.planned("src/a.rs", extra=("--complete-shards", "20"))
