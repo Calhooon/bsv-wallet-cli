@@ -2,10 +2,14 @@
  * E2E.20: UI (Playwright).
  * Tests the database inspector UI via Playwright.
  * Starts the UI server, navigates to it, verifies page renders with wallet data.
- * Cost: 0 sats (read-only).
+ * The origins view (#414): a pending row seeded with sqlite3 renders at
+ * /origins and is granted from the page (the row answered in the store); a
+ * listed origin cannot answer it (the write routes admit the inspector's
+ * own page alone). Cost: 0 sats.
  */
 
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
+const path = require('path');
 const { BSV } = require('../lib/setup');
 const { sleep } = require('../lib/woc');
 const { launchOptions } = require('../lib/browsers');
@@ -99,6 +103,37 @@ module.exports = {
       });
       assert(foreignResp.status === 403, `a foreign origin's query is refused 403, got ${foreignResp.status}`);
 
+      // ─── The origins view's API (#414) ───
+      // The read creates the module's tables (its `ensure`); the row is then
+      // seeded beside the wallet's own writer, as the switch's gate (L5)
+      // will write it.
+      const originsResp = await fetch(`http://localhost:${UI_PORT}/api/origins`);
+      assert(originsResp.ok, `/api/origins should return 200, got ${originsResp.status}`);
+      const originsBefore = await originsResp.json();
+      assert(Array.isArray(originsBefore.grants) && Array.isArray(originsBefore.pending),
+        `/api/origins must return {grants, pending}: ${JSON.stringify(originsBefore)}`);
+      const db = path.join(walletA.dir, 'wallet.db');
+      const sql = query => execFileSync('sqlite3', ['-batch', '-bail', '-cmd', '.timeout 5000', db, query],
+        { encoding: 'utf8', timeout: 15000 }).trim();
+      const pendingId = Number(sql(
+        "INSERT INTO origin_pending (originator, raw_originator, scope, call, renewal, first_seen) " +
+        "VALUES ('seeded.example', 'seeded.example:5173', 'wallet', '/listOutputs', 0, strftime('%s','now')); " +
+        'SELECT last_insert_rowid();'));
+      assert(pendingId > 0, `the seeded pending row has an id, got ${pendingId}`);
+
+      // A listed origin (the harness's ALLOWED_ORIGINS, which the inspector
+      // reads from the wallet's .env) cannot answer it: 403 naming the rule.
+      const listedAnswer = await fetch(`http://localhost:${UI_PORT}/api/origins/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': walletA.client.origin },
+        body: JSON.stringify({ pendingId, answer: 'grant' }),
+      });
+      const listedBody = await listedAnswer.json();
+      assert(listedAnswer.status === 403 && /a granted page must not write a grant/.test(listedBody.error),
+        `a listed origin's answer is refused 403 by the rule, got ${listedAnswer.status} ${JSON.stringify(listedBody)}`);
+      assert(sql(`SELECT answered_at IS NULL FROM origin_pending WHERE pending_id = ${pendingId}`) === '1',
+        'the refused answer left the row open');
+
       // ─── Playwright browser test ───
       const { chromium } = require('playwright');
       let browserChecks = 0;
@@ -158,9 +193,25 @@ module.exports = {
           browserChecks++;
         }
 
+        // The origins view: the seeded row renders, and Grant answers it.
+        await page.goto(`http://localhost:${UI_PORT}/origins`, { waitUntil: 'networkidle' });
+        const row = page.locator(`#originsPending tr[data-pending-id="${pendingId}"]`);
+        await row.waitFor({ timeout: 5000 });
+        const rowText = await row.textContent();
+        assert(rowText.includes('seeded.example:5173') && rowText.includes('/listOutputs'),
+          `the pending row shows its originator with its port and its call, got '${rowText}'`);
+        await row.locator('button', { hasText: /^Grant$/ }).click();
+        await page.locator('#originsGrants tr[data-originator="seeded.example"]').waitFor({ timeout: 5000 });
+        browserChecks++;
       } finally {
         await browser.close();
       }
+
+      // The row is answered in the store, and its grant written by the owner.
+      const answered = sql(`SELECT answer FROM origin_pending WHERE pending_id = ${pendingId} AND answered_at IS NOT NULL`);
+      assert(answered === 'grant', `the seeded row is answered grant in the store, got '${answered}'`);
+      const granted = sql("SELECT scope || ' ' || source || ' ' || expiry || ' ' || (revoked_at IS NULL) FROM origin_grants WHERE originator = 'seeded.example'");
+      assert(granted === 'wallet owner 0 1', `the grant row is wallet, owner, never expiring, live; got '${granted}'`);
 
       return {
         txid: null,
@@ -171,6 +222,7 @@ module.exports = {
         utxos: stats.total_utxo_count,
         playwrightAvailable: true,
         browserChecks,
+        originGranted: pendingId,
       };
 
     } finally {
