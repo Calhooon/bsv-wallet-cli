@@ -63,7 +63,8 @@ the owner's routes on the wallet (#414): `list_origins` (`GET /origins`, the
 per-origin grant rows and the pending requests), `answer_origin`
 (`POST /origins/answer`: `pendingId`, `answer` `grant`, `once` or `deny`,
 `expiry`, `amount`) and `revoke_origin` (`POST /origins/revoke`:
-`originator`, `scope`). They send no `Origin` header (the owner's routes
+`originator`, and `kind` and `key` for one power, `kind` alone for every row
+of a kind, neither for every row). They send no `Origin` header (the owner's routes
 refuse any call carrying one, and answer only a loopback `Host`, so
 `WALLET_URL` names the wallet on loopback) and carry `WALLET_AUTH_TOKEN` as
 the bearer when the wallet has an `AUTH_TOKEN`.
@@ -159,19 +160,25 @@ an `Origin` (its page's reads), and a loopback `Host` only. See
 The per-origin grant rows (#414) are kept in the wallet's store and listed
 and answered from the command line; the served doors still admit by
 `ALLOWED_ORIGINS` until the design's switch
-([docs/design/origin-grants.md](docs/design/origin-grants.md), section (4)):
+([docs/design/origin-grants.md](docs/design/origin-grants.md), section (4)).
+Each row is one power of one of the reference's four kinds, `protocol`,
+`basket`, `certificate` and `spending`, named by its key, the canonical text
+`origins` prints (`[false,2,"todo list","self"]`, `["todo items"]`; `[]` for
+spending):
 
 | command | does |
 |---|---|
 | `origins [--all] [--json]` | lists every grant row and the open pending requests (`--all` adds the answered ones); `--json` prints `{"grants", "pending"}`, times in unix seconds |
-| `origin-grant <originator \| #pending-id> [--scope wallet\|spending] [--amount SATS] [--expires SECONDS\|never] [--once]` | grants an originator (a host with an optional port, no scheme) directly or answers a pending request; `--amount` is required for spending unless `--once`; prints the rows written |
+| `origin-grant <originator> --kind protocol\|basket\|certificate\|spending [--key KEY] [--amount SATS] [--expires SECONDS\|never]` | grants an originator (a host with an optional port, no scheme) one power directly; `--key` is required but for spending, and a key that is not its canonical text (or names an admin-reserved name, or level 0) is refused naming the rule and the canonical form; `--amount` is required for spending; prints the row written |
+| `origin-grant <#pending-id> [--amount SATS] [--expires SECONDS\|never] [--once]` | answers a pending request with a grant of the power it asks; `--amount` is required for spending unless `--once`; prints the rows written |
 | `origin-deny <#pending-id>` | denies a pending request and prints it |
-| `origin-revoke <originator> [--scope wallet\|spending]` | stamps the originator's live rows revoked and prints each; exits 1 naming the originator when it holds none |
+| `origin-revoke <originator> [--kind KIND [--key KEY]]` | stamps the originator's live rows revoked (one power's with `--kind` and `--key`, a kind's with `--kind`, else every row) and prints each; exits 1 naming the originator and the power when it holds none |
 
 The inspector (`bsv-wallet ui`) shows the same rows at `/origins`: each open
-pending request (originator with its port, scope, call, amount, seen at,
-renewal) with Grant, Grant once (a spending request) and Deny, and each grant
-row with Revoke. Its API is `GET /api/origins` and `POST /api/origins/answer`
+pending request (originator with its port, kind, the power it asks with the
+page's reason, call, amount, seen at, renewal) with Grant, Grant once (a
+spending request) and Deny, and each grant row (originator, kind, key, a
+spending row's ceiling) with Revoke of that one power. Its API is `GET /api/origins` and `POST /api/origins/answer`
 and `POST /api/origins/revoke`, in the owner's door's bodies and the JSON
 `origins --json` prints. The two writes admit only the inspector's own page
 (`Origin` `http://` and the `Host` it was asked by), never an origin
