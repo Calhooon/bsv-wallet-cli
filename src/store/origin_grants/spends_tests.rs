@@ -1,0 +1,187 @@
+//! The month's tally in `origin_spends` (#414, the design's L6, W7): a
+//! spend per flow, its month in UTC, the deferred path's reference then its
+//! txid, and the abort's delete.
+
+use super::tests::{wallet_db, NOV_FIRST, NOW, OCT_LAST};
+use super::*;
+
+async fn rows(storage: &StorageSqlx) -> Vec<(String, String, Option<String>, Option<String>, i64)> {
+    sqlx::query_as(
+        "SELECT originator, month, txid, reference, satoshis FROM origin_spends ORDER BY spend_id",
+    )
+    .fetch_all(storage.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_spend_is_tallied_per_flow_under_its_hostname_and_month() {
+    let (_dir, storage) = wallet_db().await;
+    let txid = "ab".repeat(32);
+    spent(&storage, "app.example:8443", Flow::Signed(&txid), 2500, NOW)
+        .await
+        .unwrap();
+    spent(&storage, "App.Example", Flow::Deferred("cmVm"), 500, NOW)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(&storage).await,
+        vec![
+            (
+                "app.example".into(),
+                "2026-11".into(),
+                Some(txid),
+                None,
+                2500
+            ),
+            (
+                "app.example".into(),
+                "2026-11".into(),
+                None,
+                Some("cmVm".into()),
+                500
+            ),
+        ]
+    );
+    assert_eq!(
+        month_tally(&storage, "app.example", NOW).await.unwrap(),
+        3000
+    );
+    assert_eq!(
+        month_tally(&storage, "other.example", NOW).await.unwrap(),
+        0
+    );
+    let e = spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&"cd".repeat(32)),
+        -1,
+        NOW,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.downcast_ref::<Refused>(), Some(&Refused::Negative));
+    assert_eq!(rows(&storage).await.len(), 2, "a refused spend writes none");
+}
+
+#[tokio::test]
+async fn the_tally_crosses_a_utc_month_boundary() {
+    let (_dir, storage) = wallet_db().await;
+    spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&"ab".repeat(32)),
+        60_000,
+        OCT_LAST,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        month_tally(&storage, "app.example", OCT_LAST)
+            .await
+            .unwrap(),
+        60_000
+    );
+    assert_eq!(
+        month_tally(&storage, "app.example", NOV_FIRST)
+            .await
+            .unwrap(),
+        0
+    );
+    spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&"cd".repeat(32)),
+        1,
+        NOV_FIRST,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        month_tally(&storage, "app.example", NOV_FIRST)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        month_tally(&storage, "app.example", OCT_LAST)
+            .await
+            .unwrap(),
+        60_000
+    );
+}
+
+#[tokio::test]
+async fn the_deferred_path_holds_its_reference_then_its_txid() {
+    let (_dir, storage) = wallet_db().await;
+    spent(&storage, "app.example", Flow::Deferred("cmVm"), 2500, NOW)
+        .await
+        .unwrap();
+    let txid = "ab".repeat(32);
+    assert_eq!(signed(&storage, "cmVm", &txid).await.unwrap(), 1);
+    assert_eq!(
+        rows(&storage).await,
+        vec![(
+            "app.example".into(),
+            "2026-11".into(),
+            Some(txid.clone()),
+            Some("cmVm".into()),
+            2500
+        )]
+    );
+    // A second signing fills nothing; an unknown reference fills nothing.
+    assert_eq!(signed(&storage, "cmVm", &"cd".repeat(32)).await.unwrap(), 0);
+    assert_eq!(signed(&storage, "b3RoZXI=", &txid).await.unwrap(), 0);
+    assert_eq!(rows(&storage).await[0].2, Some(txid));
+}
+
+#[tokio::test]
+async fn an_abort_deletes_the_row_its_reference_or_txid_names_for_its_originator() {
+    let (_dir, storage) = wallet_db().await;
+    let (signed_txid, kept) = ("ab".repeat(32), "cd".repeat(32));
+    spent(&storage, "app.example", Flow::Deferred("cmVm"), 2500, NOW)
+        .await
+        .unwrap();
+    spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&signed_txid),
+        700,
+        NOW,
+    )
+    .await
+    .unwrap();
+    spent(&storage, "app.example", Flow::Signed(&kept), 300, NOW)
+        .await
+        .unwrap();
+    spent(
+        &storage,
+        "other.example",
+        Flow::Deferred("b3RoZXI="),
+        900,
+        NOW,
+    )
+    .await
+    .unwrap();
+    // Another originator's abort of the name deletes nothing of this one's.
+    assert_eq!(unspent(&storage, "other.example", "cmVm").await.unwrap(), 0);
+    assert_eq!(
+        unspent(&storage, "app.example:8443", "cmVm").await.unwrap(),
+        1
+    );
+    assert_eq!(
+        unspent(&storage, "app.example", &signed_txid)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(unspent(&storage, "app.example", "cmVm").await.unwrap(), 0);
+    assert_eq!(
+        month_tally(&storage, "app.example", NOW).await.unwrap(),
+        300
+    );
+    assert_eq!(
+        month_tally(&storage, "other.example", NOW).await.unwrap(),
+        900
+    );
+}

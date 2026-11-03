@@ -652,24 +652,30 @@ async fn once_answers_a_spend_alone() {
 }
 
 #[tokio::test]
-async fn a_spend_is_answered_once_or_deny_until_l6_and_a_deny_writes_no_grant() {
+async fn a_spend_is_granted_with_its_ceiling_and_a_deny_writes_no_grant() {
     let (_dir, storage) = wallet_db().await;
-    // The switch (#414 L5b): a spending row's `grant` is refused by name
-    // until the ceilings land (L6), with or without an amount; the row
-    // stays open for `once` or `deny`.
+    // L6: a spending row's `grant` names its ceiling, the month's; without
+    // one it is refused by name and the row stays open.
     let spend = ask(&storage, &spend_call("app.example", 2500)).await;
-    for amount in [None, Some(60_000)] {
-        let e = say(&storage, spend.pending_id, Answer::Grant, amount)
-            .await
-            .unwrap_err();
-        assert_eq!(refusal(&e), Refused::GrantOnSpending(spend.pending_id));
-        assert!(
-            e.to_string().contains("answered once or deny, never grant"),
-            "{e}"
-        );
-    }
+    let e = say(&storage, spend.pending_id, Answer::Grant, None)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal(&e), Refused::AmountRequired);
+    let granted = say(&storage, spend.pending_id, Answer::Grant, Some(60_000))
+        .await
+        .unwrap();
+    let row = granted.grant.unwrap();
+    assert_eq!(
+        (row.kind, row.key.as_str(), row.amount, row.expiry),
+        (Kind::Spending, "[]", Some(60_000), 0)
+    );
+    assert_eq!(granted.pending.answer, Some(Answer::Grant));
+
+    let spend = ask(&storage, &spend_call("other.example", 2500)).await;
     let denied = say(&storage, spend.pending_id, Answer::Deny, None).await;
     assert_eq!(denied.unwrap().pending.answer, Some(Answer::Deny));
+    let standing = lookup(&storage, "other.example", &Power::Spending, NOW).await;
+    assert_eq!(standing.unwrap(), Standing::None);
 
     let listing = ask(&storage, &listing_call("app.example")).await;
     let e = say(&storage, listing.pending_id, Answer::Grant, Some(5))

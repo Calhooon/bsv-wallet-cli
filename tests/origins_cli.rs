@@ -364,15 +364,9 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     let twice = refused(&dir, &["origin-deny", &ids[1].to_string()]);
     assert!(twice.contains("was already answered deny at"), "{twice}");
 
-    // The switch (#414 L5b): a spend is answered once or deny until L6.
-    let spend = format!("#{}", ids[2]);
-    for extra in [&[][..], &["--amount", "60000"]] {
-        let e = refused(
-            &dir,
-            &[&["origin-grant", spend.as_str()][..], extra].concat(),
-        );
-        assert!(e.contains("answered once or deny, never grant"), "{e}");
-    }
+    // L6: a spend's grant names its ceiling.
+    let e = refused(&dir, &["origin-grant", &format!("#{}", ids[2])]);
+    assert!(e.contains("the spending kind needs --amount SATS"), "{e}");
     let kinded = refused(
         &dir,
         &[
@@ -390,10 +384,35 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     assert!(once.starts_with(&format!("answered  #{}  shop.example", ids[2])));
     assert!(once.contains("  once at "), "{once}");
 
+    let again = Asking {
+        originator: "shop.example",
+        power: &Power::Spending,
+        usage: None,
+        call: "/createAction",
+        reason: None,
+        amount: Some(2500),
+        renewal: false,
+    };
+    let spend = seed(&dir, &[again]).await[0];
+    let granted = said(
+        &dir,
+        &["origin-grant", &format!("#{spend}"), "--amount", "60000"],
+    );
+    let granted: Vec<&str> = granted.lines().collect();
+    assert!(
+        granted[0].starts_with("granted  shop.example  spending     []  60000/month (0 spent "),
+        "{granted:?}"
+    );
+    assert!(granted[1].contains("  grant at "), "{granted:?}");
+
     let open = said(&dir, &["origins"]);
-    assert_eq!(open.lines().count(), 1, "only new.example's grant: {open}");
+    assert_eq!(
+        open.lines().count(),
+        2,
+        "new.example's and shop.example's grants: {open}"
+    );
     let all = said(&dir, &["origins", "--all"]);
-    assert_eq!(all.lines().count(), 4, "{all}");
+    assert_eq!(all.lines().count(), 6, "{all}");
 }
 
 #[test]
