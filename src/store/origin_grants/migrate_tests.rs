@@ -82,6 +82,9 @@ const L1_LINES: [&str; 4] = [
 #[tokio::test]
 async fn an_l1_store_with_no_rows_moves_and_a_second_ensure_sends_nothing() {
     let (_dir, storage) = wallet_db().await;
+    // Every test that moves L1 logs under a capture: a callsite first
+    // reached with no live subscriber may cache its interest as never.
+    let (_markers, _guard) = Markers::capture();
     l1_store(&storage, &[]).await;
     assert!(!grant_columns(&storage).await.contains(&"kind".to_string()));
 
@@ -176,6 +179,7 @@ async fn two_ensures_on_one_l1_store_both_answer_and_move_it_once() {
 #[tokio::test]
 async fn the_move_leaves_the_toolboxs_side_byte_identical() {
     let (_dir, storage) = wallet_db().await;
+    let (_markers, _guard) = Markers::capture();
     l1_store(&storage, &L1_ROWS).await;
     let before = toolbox_dump(&storage).await;
 
@@ -201,6 +205,7 @@ async fn the_move_leaves_the_toolboxs_side_byte_identical() {
 #[tokio::test]
 async fn an_interrupted_move_leaves_l1_and_the_next_ensure_moves_it() {
     let (_dir, storage) = wallet_db().await;
+    let (_markers, _guard) = Markers::capture();
     l1_store(&storage, &L1_ROWS).await;
     // The move's transaction, interrupted before its commit.
     let mut tx = storage.write_tx().await.unwrap();
