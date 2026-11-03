@@ -1,0 +1,24 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/origins/answer",
+    "headers": {
+      "host": "127.0.0.1:3322"
+    },
+    "json": {
+      "answer": "deny",
+      "pendingId": 1
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "VALIDATION_ERROR",
+      "message": "no pending request #1"
+    }
+  }
+}

@@ -138,7 +138,7 @@ impl Recorder {
                 ("134-listOutputs.offsetNegative.json".into(), "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.".into()),
                 ("141-signAction.sequenceNumberAboveType.json".into(), "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
                 ("142-listActions.offsetAboveType.json".into(), "The u32 argument type refuses offset 4294967296 before listActions is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
-            ].into_iter().chain(gate_notes()).collect(),
+            ].into_iter().chain(gate_notes()).chain(owner_notes()).collect(),
         })
         .unwrap();
         text.push('\n');
@@ -193,6 +193,23 @@ fn gate_notes() -> Vec<(String, String)> {
         ("187-gate.isAuthenticated.bearerNoOrigin.json", "#411: the bearer never stands in for an Origin (the ruling's rule 4; BrowserGate.lean bearer_changes_no_word): with the right bearer and no Origin, the no-origin refusal."),
     ].map(|(f, n)| (f.to_string(), n.to_string())));
     notes
+}
+
+/// The owner's door's fixtures (#414), with their reasons.
+fn owner_notes() -> Vec<(String, String)> {
+    [
+        ("192-owner.origins.empty.json", "#414 (the design's L3, docs/design/origin-grants.md section (3)): GET /origins from the owner's side (no Origin, a loopback Host) on a wallet with no rows: {\"grants\": [], \"pending\": []}, section (4)'s --json shape, no CORS header. A host route, not BRC-100; recorded last, so no file before it moves."),
+        ("193-owner.grant.json", "#414: POST /origins/grant {originator, scope}: the owner's direct grant written through store::origin_grants, its row in section (4)'s keys and order, keyed by the hostname (owner.example) with the name as given kept (owner.example:8443); grantedAt is the clock's (a volatile key)."),
+        ("194-owner.origins.granted.json", "#414: GET /origins lists the row 193 wrote."),
+        ("195-owner.revoke.json", "#414: POST /origins/revoke {originator} with no scope stamps every live row of the host (its one wallet row here); revokedAt is the clock's, nothing is deleted."),
+        ("196-owner.answer.noSuchPending.json", "#414: POST /origins/answer naming a pending row the store does not hold is the module's refusal in its words, 400 VALIDATION_ERROR. The answer-once race (409 CONFLICT, \"pending request #N was already answered ...\") needs a held call's row, which only L5's gate writes; the router tests drive it (src/server/owner_door_tests.rs)."),
+        ("197-owner.origins.page.json", "#414: a call to the owner's routes carrying an Origin, a listed one included, is 403 ACCESS_DENIED naming the rule (owner_door::PAGE), with no CORS header: a page that could reach them could grant itself. The first fixture answering ACCESS_DENIED: it moves from UNPRODUCED to APP_CODES."),
+        ("198-owner.options.page.json", "#414: a preflight to the owner's routes is refused, 403 ACCESS_DENIED (owner_door::PREFLIGHT), outside the doors' preflight gate and CORS layer, which never see these paths."),
+        ("199-owner.origins.remoteHost.json", "#414: a Host beyond loopback (a page rebinding its name to the port) is 403 ACCESS_DENIED naming the Host, the inspector's rule on the daemon."),
+        ("200-owner.origins.noBearer.json", "#414: under AUTH_TOKEN the owner's call without the bearer is the bearer's 401 UNAUTHORIZED (auth_middleware, unchanged), after the owner's admission."),
+    ]
+    .map(|(f, n)| (f.to_string(), n.to_string()))
+    .to_vec()
 }
 
 pub(crate) fn get(path: &str) -> Req {

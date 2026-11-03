@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/origins/answer",
+    "headers": {
+      "access-control-request-headers": "content-type, authorization",
+      "access-control-request-method": "POST",
+      "host": "127.0.0.1:3322",
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "ACCESS_DENIED",
+      "message": "the owner's routes answer no preflight: no page reaches them, so none is answered"
+    }
+  }
+}

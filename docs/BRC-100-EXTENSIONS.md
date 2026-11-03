@@ -134,9 +134,9 @@ Fields the server's types can serve that no fixture shows. Each is an extension 
 | `proveCertificate` | `fieldsToReveal: []` | 200 with `keyringForVerifier: {}`, even with a stored field and master key | Toolbox #240 closes the prior disclosure of every field; fixture 159 records the empty keyring, with no field recovery. |
 | `proveCertificate` | a serial that decodes to 31 bytes | 400 `VALIDATION_ERROR` before field recovery | Toolbox #240 requires exactly 32 bytes; the served #311 argument validator enforces that bound earlier, recorded in fixture 160. Direct acquisition uses the same bound. |
 
-## Host routes: 5 rows
+## Host routes: 9 rows
 
-The router's own routes beyond BRC-100 (`src/server/mod.rs`), not endpoint extensions: no BRC call is reached through them, and a BRC-100 client never needs them. Their bodies are the host's and are not judged against `fields.json`; their shapes are the wire fixtures'. The MCP server's `chain_feed_status` and `tx_word` tools read `/chain-feed` and `/tx/{txid}`.
+The router's own routes beyond BRC-100 (`src/server/mod.rs`), not endpoint extensions: no BRC call is reached through them, and a BRC-100 client never needs them. Their bodies are the host's and are not judged against `fields.json`; their shapes are the wire fixtures'. The MCP server's `chain_feed_status` and `tx_word` tools read `/chain-feed` and `/tx/{txid}`; its `list_origins`, `answer_origin` and `revoke_origin` call the owner's `/origins` routes (#414), which admit no page: a call with an `Origin`, its preflight or a `Host` beyond loopback is 403 `ACCESS_DENIED` naming the rule (`src/server/owner_door.rs`), and the bearer under `AUTH_TOKEN` is checked after.
 
 | route | method | what it answers | added |
 |---|---|---|---|
@@ -144,6 +144,10 @@ The router's own routes beyond BRC-100 (`src/server/mod.rs`), not endpoint exten
 | `/permission-audit/reset` | POST | Clears the audit: `ok`. | d42ee8d (2026-08-14) |
 | `/chain-feed` | GET | The daemon's chain-event feed: `status`, `cursor`, `frozenCount` (0.11.0); any store fault from those reads is 500 `ERR_CHAIN_FEED` with its message unless busy by type, which is 503 `STORE_BUSY` with `Retry-After: 1` ([#203](https://github.com/Calhooon/bsv-wallet-cli/issues/203), [#227](https://github.com/Calhooon/bsv-wallet-cli/issues/227)). | 0.9.0 (#26) |
 | `/tx/{txid}` | GET | The tracker's stored word for one transaction: `txid`, `word`, `height`, `reask`, `evidence`; 404 for an unknown txid; 500 `ERR_TX_WORD`; 503 `STORE_BUSY` with `Retry-After: 1` when the store is busy (#203). | 0.11.0 (e891c4b) |
+| `/origins` | GET | The owner's listing of the per-origin grants (#414): `grants` (every row: `originator`, `rawOriginator`, `scope`, `amount`, `spentThisMonth`, `grantedAt`, `expiry`, `revokedAt`, `source`) and `pending` (the open requests and the last 50 answered: `pendingId`, `originator`, `rawOriginator`, `scope`, `call`, `amount`, `renewal`, `firstSeen`, `answeredAt`, `answer`), `bsv-wallet origins --json`'s shape. | #414 (L3) |
+| `/origins/answer` | POST | The owner's answer to a pending request, `{pendingId, answer, expiry?, amount?}` (`answer` one of `grant`, `once`, `deny`): the answered row and a `grant`'s row; a second answer to one request is 409 `CONFLICT` naming the first. | #414 (L3) |
+| `/origins/grant` | POST | The owner's direct grant, `{originator, scope, expiry?, amount?}`: the row written. | #414 (L3) |
+| `/origins/revoke` | POST | The owner's revoke, `{originator, scope?}` (no scope revokes both): the rows stamped, none deleted; 409 `CONFLICT` naming an originator with no live row. | #414 (L3) |
 | `/arc-callback` | POST | The ARC/Arcade proof-delivery webhook, behind the callback token, not the wallet's bearer: `ok`, `action`; 404 `CALLBACK_DISABLED` without a token configured; 503 `STORE_BUSY` with `Retry-After: 1` for a typed store busy (#226); other payload faults keep 400 `BAD_PAYLOAD` and their messages. | 9b0d436 (#6, 2026-07-14) |
 
 The callback relay is a binary of its own (`bsv-wallet-relay`, `src/relay.rs`): `GET /health`, `POST /arc-callback`, `GET /pull`, `POST /register`. The MCP server's `health`, `pull` and `register` tools reach them on `RELAY_URL`. They are not the wallet's routes and no wire fixture calls them.

@@ -47,7 +47,7 @@ const KEPT_HEADERS: [&str; 9] = [
 // ---------------------------------------------------------------------------
 
 /// Keys whose values differ on every run, anywhere in a body.
-const VOLATILE_KEYS: [&str; 6] = [
+const VOLATILE_KEYS: [&str; 8] = [
     // AES-GCM under a fresh random IV: a new ciphertext each call.
     "ciphertext",
     // A key linkage revealed is encrypted for the verifier the same way.
@@ -61,6 +61,10 @@ const VOLATILE_KEYS: [&str; 6] = [
     // The reference of a signable transaction: the toolbox draws it at
     // random.
     "reference",
+    // A grant row's times, the clock's now when the owner's door wrote
+    // them (#414).
+    "grantedAt",
+    "revokedAt",
 ];
 
 /// The placeholder for a volatile value: its shape, never its bytes.
