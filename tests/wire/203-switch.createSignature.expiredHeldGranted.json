@@ -1,0 +1,121 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "POST",
+    "path": "/createSignature",
+    "headers": {
+      "origin": "http://page.test"
+    },
+    "json": {
+      "counterparty": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "data": [
+        1,
+        2,
+        3
+      ],
+      "keyID": "1",
+      "protocolID": [
+        2,
+        "wire renewal"
+      ]
+    }
+  },
+  "owner": {
+    "before": [
+      {
+        "grant": {
+          "originator": "page.test",
+          "kind": "protocol",
+          "key": "[false,2,\"wire renewal\",\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"]",
+          "expiry": 1
+        }
+      }
+    ],
+    "after_ms": 200,
+    "answer": "grant"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://page.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "signature": [
+        48,
+        68,
+        2,
+        32,
+        26,
+        65,
+        51,
+        167,
+        52,
+        254,
+        165,
+        214,
+        101,
+        165,
+        211,
+        251,
+        175,
+        234,
+        209,
+        144,
+        188,
+        252,
+        91,
+        245,
+        132,
+        217,
+        237,
+        90,
+        138,
+        205,
+        232,
+        90,
+        139,
+        40,
+        97,
+        47,
+        2,
+        32,
+        105,
+        94,
+        86,
+        235,
+        116,
+        107,
+        24,
+        51,
+        106,
+        139,
+        27,
+        26,
+        35,
+        130,
+        122,
+        105,
+        169,
+        215,
+        11,
+        199,
+        3,
+        221,
+        82,
+        134,
+        96,
+        54,
+        143,
+        168,
+        213,
+        255,
+        237,
+        57
+      ]
+    }
+  }
+}
