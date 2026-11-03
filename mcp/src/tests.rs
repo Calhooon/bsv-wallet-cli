@@ -230,11 +230,12 @@ fn echoed(method: &str, path: &str, bearer: Option<&str>, body: &Value) -> Value
            "authorization": authorization, "body": body})
 }
 
-/// `revoke_origin` of `app.example`, in `scope`.
-fn revoking(scope: Option<OriginScope>) -> Parameters<RevokeOriginParams> {
+/// `revoke_origin` of `app.example`: `kind` and `key`.
+fn revoking(kind: Option<OriginKind>, key: Option<&str>) -> Parameters<RevokeOriginParams> {
     Parameters(RevokeOriginParams {
         originator: "app.example".into(),
-        scope,
+        kind,
+        key: key.map(str::to_string),
     })
 }
 
@@ -258,20 +259,32 @@ async fn the_owners_tools_send_no_origin_and_the_wallet_bearer() {
     let body = json!({"pendingId": 7, "answer": "grant", "amount": 60000});
     assert_eq!(answered, echoed("POST", "/origins/answer", bearer, &body));
 
-    let scoped = revoking(Some(OriginScope::Spending));
-    let revoked = text(mcp.revoke_origin(scoped).await.unwrap());
-    let body = json!({"originator": "app.example", "scope": "spending"});
+    let one = revoking(Some(OriginKind::Basket), Some(r#"["todo items"]"#));
+    let revoked = text(mcp.revoke_origin(one).await.unwrap());
+    let body = json!({"originator": "app.example", "kind": "basket", "key": "[\"todo items\"]"});
     assert_eq!(revoked, echoed("POST", "/origins/revoke", bearer, &body));
+
+    // Each kind is its word; a kind alone sends no key.
+    for (kind, word) in [
+        (OriginKind::Protocol, "protocol"),
+        (OriginKind::Basket, "basket"),
+        (OriginKind::Certificate, "certificate"),
+        (OriginKind::Spending, "spending"),
+    ] {
+        let revoked = text(mcp.revoke_origin(revoking(Some(kind), None)).await.unwrap());
+        let body = json!({"originator": "app.example", "kind": word});
+        assert_eq!(revoked, echoed("POST", "/origins/revoke", bearer, &body));
+    }
 }
 
 #[tokio::test]
 async fn without_wallet_auth_token_the_owners_tools_send_no_bearer() {
     let base = owner_stub().await;
-    // An empty token is none; still no Origin. No scope is absent from the
-    // body (the route revokes both).
+    // An empty token is none; still no Origin. No kind and no key are
+    // absent from the body (the route revokes every row).
     let tokenless =
         WalletMcp::new(base, "http://localhost".into()).with_wallet_bearer(Some(String::new()));
-    let revoked = text(tokenless.revoke_origin(revoking(None)).await.unwrap());
+    let revoked = text(tokenless.revoke_origin(revoking(None, None)).await.unwrap());
     let body = json!({"originator": "app.example"});
     assert_eq!(revoked, echoed("POST", "/origins/revoke", None, &body));
     let listed = text(tokenless.list_origins().await.unwrap());
