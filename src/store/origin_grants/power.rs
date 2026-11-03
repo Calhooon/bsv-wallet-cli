@@ -35,9 +35,12 @@ const SPECIFIC_LINKAGE: &str = "specific key linkage revelation ";
 const CERT_ACQUISITION: &str = "certificate acquisition ";
 const CERT_RELINQUISHMENT: &str = "certificate relinquishment ";
 
+/// Whether a built name's tail reads.
+type Tail = fn(&str) -> bool;
+
 /// The protocol names the manager builds whose tail a protocol name's
 /// rule would refuse: each prefix and whether its tail reads.
-const BUILT_NAMES: [(&str, fn(&str) -> bool); 3] = [
+const BUILT_NAMES: [(&str, Tail); 3] = [
     (SPECIFIC_LINKAGE, specific_tail),
     (CERT_ACQUISITION, type_tail),
     (CERT_RELINQUISHMENT, type_tail),
