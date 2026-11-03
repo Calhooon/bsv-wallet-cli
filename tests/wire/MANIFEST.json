@@ -200,7 +200,8 @@
     "198-owner.options.page.json",
     "199-owner.origins.remoteHost.json",
     "200-owner.origins.noBearer.json",
-    "201-switch.listOutputs.heldGranted.json"
+    "201-switch.listOutputs.heldGranted.json",
+    "202-switch.listOutputs.revoked.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -282,6 +283,7 @@
     "198-owner.options.page.json": "#414: a preflight to the owner's routes is refused, 403 ACCESS_DENIED (owner_door::PREFLIGHT), outside the doors' preflight gate and CORS layer, which never see these paths.",
     "199-owner.origins.remoteHost.json": "#414: a Host beyond loopback (a page rebinding its name to the port) is 403 ACCESS_DENIED naming the Host, the inspector's rule on the daemon.",
     "200-owner.origins.noBearer.json": "#414: under AUTH_TOKEN the owner's call without the bearer is the bearer's 401 UNAUTHORIZED (auth_middleware, unchanged), after the owner's admission.",
-    "201-switch.listOutputs.heldGranted.json": "#414 L5b: a page the seed does not list (http://page.test) asks the basket [\"wire basket\"] (listing), holds no row, and is held on its pending row; the owner grants it (the owner step) and the call is the door's own 200, echoed. Served from the `pages` world."
+    "201-switch.listOutputs.heldGranted.json": "#414 L5b: a page the seed does not list (http://page.test) asks the basket [\"wire basket\"] (listing), holds no row, and is held on its pending row; the owner grants it (the owner step) and the call is the door's own 200, echoed. Served from the `pages` world.",
+    "202-switch.listOutputs.revoked.json": "#414 L5b, W3: the page's basket row granted then revoked (the owner step's before): 400 ERR_PERMISSION_DENIED in the client's grouped denial (\"The user has denied the request for permission.\") at once, with the echo, and no pending row."
   }
 }
