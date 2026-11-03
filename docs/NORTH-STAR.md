@@ -72,11 +72,11 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | mutation floor `src/server/handlers.rs` | 100 | 100.0 at 2ca0173 | `.github/workflows/nightly.yml` |
 | mutation floor `src/spend_gate.rs` | 90 | 90.4 at 2ca0173 | `.github/workflows/nightly.yml` |
 | mutation floor `src/tracker_host.rs` | 75 | 74.2 at 2ca0173, below the floor (red by design, #175) | `.github/workflows/nightly.yml` |
-| fuzz hours `beef_reader` | 1.0 | 12580902 executions, 781 corpus, 0 crashes at 2ca0173 | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663 |
-| fuzz hours `brc29_remittance` | 1.0 | 2132718 executions, 411 corpus, 0 crashes at 2ca0173 | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663 |
-| fuzz hours `served_json` | 1.0 | 117285867 executions, 6211 corpus, 0 crashes at 2ca0173 | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663 |
-| fuzz hours `explorer_bodies` | 1.0 | 12430 executions, 379 corpus, 0 crashes at 2ca0173 | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663 |
-| fuzz hours `allow_pending` | 1.0 | 149265139 executions, 3640 corpus, 0 crashes at 2ca0173 | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41413946663 |
+| fuzz hours `beef_reader` | 1.0 | 12740944 executions, 795 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
+| fuzz hours `brc29_remittance` | 1.0 | 2353523 executions, 406 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
+| fuzz hours `served_json` | 1.0 | 161461156 executions, 6273 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
+| fuzz hours `explorer_bodies` | 1.0 | 14285 executions, 395 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
+| fuzz hours `allow_pending` | 1.0 | 103851079 executions, 3483 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
 | bench baseline `ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | bench baseline `ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | e2e scenarios | 30 |  | `tests/e2e/scenarios/` |
