@@ -246,6 +246,15 @@ async fn heal_owed(
     next.run(request).await
 }
 
+/// The spend gate's settings [`make_router_owing`] serves: the
+/// configuration's, with `config`'s pause before the header re-read.
+fn gate_options(config: &ServerConfig) -> crate::spend_gate::GateOptions {
+    crate::spend_gate::GateOptions {
+        header_retry_pause: config.header_retry_pause,
+        ..crate::spend_gate::GateOptions::from_config(&config.settings)
+    }
+}
+
 #[allow(dead_code)] // the binary serves through `run`; the tests build it
 pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
     make_router_owing(wallet, config, HealOwed::default())
@@ -263,10 +272,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let verifier = crate::broadcast_verify::BroadcastVerifier::new(config.chain, &config.settings);
     // The spend gate's settings, once: a request reads these, never the
     // environment.
-    let gate = crate::spend_gate::GateOptions {
-        header_retry_pause: config.header_retry_pause,
-        ..crate::spend_gate::GateOptions::from_config(&config.settings)
-    };
+    let gate = gate_options(&config);
 
     let doors = Router::new()
         // Status endpoints accept BOTH GET and POST: @bsv/sdk's HTTPWalletJSON substrate
@@ -788,3 +794,6 @@ mod bind_guard_tests;
 
 #[cfg(test)]
 mod owner_door_tests;
+
+#[cfg(test)]
+mod retry_pause_tests;
