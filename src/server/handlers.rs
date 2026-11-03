@@ -310,8 +310,8 @@ pub async fn create_action(
     // The request to the toolbox's arguments and the door's `allowPending`
     // word (`create_action_args`; the fuzz target `served_json` calls it).
     let (args, allow_pending) = create_action_args(req)?;
-    // Its powers, before the lock (#414 L5b): each output's basket, each
-    // label, then the spend.
+    // Its powers, before the lock (#414 L5b): each output's basket, then
+    // each label; the spend is asked inside the lock (L6), below.
     asker
         .ask(
             "/createAction",
@@ -340,6 +340,20 @@ pub async fn create_action(
         .map(|o| o.iter().map(|x| x.satoshis).sum())
         .unwrap_or(0);
 
+    // Acquire spending lock — queues behind any in-flight createAction.
+    // Once the previous tx completes (and its change UTXO exists), we proceed.
+    // The spend is judged under it (#414 L6, W6: the outputs' sum against
+    // the month's tally and the ceiling), and a spend the owner must answer
+    // waits with the lock released.
+    let (_guard, tally) = asker
+        .spend(
+            "/createAction",
+            Some(&args.description),
+            total_sats,
+            &spending_lock,
+        )
+        .await?;
+
     // A real wallet prompts here unless the app declared a BRC-73
     // `spendingAuthorization` budget — including for a FEE-ONLY action (an
     // OP_RETURN marker, total_sats == 0) which still costs a miner fee.
@@ -349,10 +363,6 @@ pub async fn create_action(
         Some(args.description.clone()),
         &originator,
     ));
-
-    // Acquire spending lock — queues behind any in-flight createAction.
-    // Once the previous tx completes (and its change UTXO exists), we proceed.
-    let _guard = spending_lock.lock().await;
     // A coin whose transaction drew no accepting word on its immediate post,
     // with no status source holding it, is not selected (`spend_guard`).
     crate::spend_guard::run(wallet.storage())
@@ -371,6 +381,9 @@ pub async fn create_action(
     )
     .await
     .map_err(AppError::from_gate_error)?;
+    if let Some(tally) = tally {
+        tally.write(&wallet, &result).await;
+    }
     drop(_guard);
 
     tracing::info!(
@@ -480,12 +493,12 @@ pub async fn create_action(
     }))
 }
 
-/// `createAction`'s powers in the reference's order (WPM:4305-4321): the
-/// basket of each output that names one (insertion), each label (apply),
-/// then the spend when its amount is above 0. The amount is W6's, the
-/// requested outputs' sum before the toolbox builds, so an action whose
-/// outputs sum to 0 asks no spend here, where the reference asks one for
-/// its fee.
+/// `createAction`'s powers before the lock, in the reference's order
+/// (WPM:4305-4321): the basket of each output that names one (insertion),
+/// then each label (apply). The spend follows them inside the lock
+/// (`Asker::spend`), its amount W6's: the requested outputs' sum before the
+/// toolbox builds, so an action whose outputs sum to 0 asks no spend here,
+/// where the reference asks one for its fee.
 fn create_action_asks(args: &CreateActionArgs) -> Vec<Ask> {
     let outputs = args.outputs.as_deref().unwrap_or_default();
     let mut asks = baskets_asked(
@@ -493,10 +506,6 @@ fn create_action_asks(args: &CreateActionArgs) -> Vec<Ask> {
         "insertion",
     );
     asks.extend(labels_asked(args.labels.as_deref(), "apply"));
-    let amount: u64 = outputs.iter().map(|o| o.satoshis).sum();
-    if amount > 0 {
-        asks.push(Ask::spending(i64::try_from(amount).unwrap_or(i64::MAX)));
-    }
     asks
 }
 
@@ -1118,6 +1127,14 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_sign_action)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
+    // The deferred spend's tally row gains its txid (#414 L6).
+    if let Some(txid) = result.txid.as_ref() {
+        if let Err(e) =
+            crate::store::origin_grants::signed(wallet.storage(), &reference, &to_hex(txid)).await
+        {
+            tracing::warn!(reference = %reference, error = %e, "browser gate: the signed spend's txid was not tallied");
+        }
+    }
     let broadcast = match result.txid.as_ref() {
         Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
             super::post_word::post_word(wallet.storage(), &to_hex(t)).await
@@ -1164,10 +1181,17 @@ pub async fn abort_action(
             ),
         ));
     }
+    let name = args.reference.clone();
     let result = wallet
         .abort_action(args, Some(&originator))
         .await
         .map_err(AppError::from)?;
+    // The aborted spend leaves the month's tally (#414 L6): the row its
+    // reference or its txid names, of this originator.
+    if let Err(e) = crate::store::origin_grants::unspent(wallet.storage(), &originator, &name).await
+    {
+        tracing::warn!(originator = %originator, reference = %name, error = %e, "browser gate: the aborted spend was not taken from the tally");
+    }
     Ok(Json(result))
 }
 
