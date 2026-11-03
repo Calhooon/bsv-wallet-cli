@@ -230,7 +230,9 @@ jobs:
   # Build's key, `release` (#494), which e2e-hermetic restores: the same two
   # toolchains in order and the two workspaces (`fuzz -> target` is
   # fuzz/target). Build's three invocations fill it; e2e-hermetic's two
-  # release builds are within them.
+  # release builds read the same dependencies: they set the workspace's own
+  # crates to opt-level 0 alone (#524), which no key holds (rust-cache keeps
+  # no workspace crate), so nothing here builds them.
   release-key:
     name: beta's release build under main's scope
     if: ${{ contains(fromJSON('["all", "release"]'), inputs.key || 'all') }}
