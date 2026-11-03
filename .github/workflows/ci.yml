@@ -18,6 +18,11 @@ name: CI
 # hours, #303) and `build-macos.yml`; RELEASING.md names the hour. A run a
 # newer push cancels (the concurrency group below) is never a red. Renaming a
 # job removes its context and blocks every PR until the protection is updated.
+# A docs-only change (#476) runs the same six jobs, each reporting its context:
+# the `changes` job at the head reads the changed paths once and every
+# required job's steps skip on its `docs_only` (never the job, whose context
+# would then go missing), all but `lint`'s docs gates. `changes` is not a
+# required context; when it fails, every job runs the full set.
 # Every action is pinned by commit sha.
 on:
   pull_request:
@@ -42,8 +47,82 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # The Markdown the code reads, which is never docs (#476): GIFT.md by
+  # include_str! (src/commands/gift_chain.rs) and the extensions page by
+  # tests/brc100.rs. lint's step "the docs set" fails on a read not named here.
+  DOCS_READ_BY_CODE: GIFT.md docs/BRC-100-EXTENSIONS.md
 
 jobs:
+  # The changed paths, read once (#476). docs_only is true when every changed
+  # path is docs: the issue's `docs/**`, `**/*.md`, `HANDOFF.md`, `CHANGELOG.md`
+  # and `changelog.d/**`, read as prose, which is every path ending `.md` but
+  # DOCS_READ_BY_CODE. docs/'s records (ratchets.json, scoreboard/, brc100/)
+  # are the gates' inputs, and a scenario, a fixture, a workflow, a tool or any
+  # code is not docs. The diff, renames split into their two paths: on a PR the
+  # merge commit against HEAD^1 (the PR's base as merged); on a
+  # merge-queue group its base_sha to its head_sha (as #451's base ref); on a
+  # push to a branch the commit before it to the commit. Anything else (a tag's
+  # run through workflow_call, an unreadable base, no changed path) is false:
+  # the full set. The answer never fails the job; a failed job leaves the
+  # output empty, and empty is not true.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The history's commits and trees, no blob but the checkout's.
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: The changed paths
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          GROUP_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          GROUP_HEAD: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || '' }}
+        run: |
+          set -uo pipefail
+          answer() {
+            echo "docs_only=$1" >> "$GITHUB_OUTPUT"
+            echo "changes: docs_only=$1 ($2)"
+            exit 0
+          }
+          case "$EVENT" in
+            pull_request) base=HEAD^1 head=HEAD ;;
+            merge_group) base=$GROUP_BASE head=$GROUP_HEAD ;;
+            push)
+              [[ $REF == refs/heads/* ]] || answer false "a push of $REF"
+              base=$BEFORE head=$SHA ;;
+            *) answer false "$EVENT: the full set" ;;
+          esac
+          [ -n "$base" ] && [ -n "${base//0/}" ] && [ -n "$head" ] || answer false "no base for $EVENT"
+          for rev in "$base" "$head"; do
+            git cat-file -e "$rev^{commit}" 2> /dev/null \
+              || git fetch --no-tags --filter=blob:none origin "$rev" \
+              || answer false "$rev is not fetchable"
+          done
+          paths=$(git diff --no-renames --name-only "$base" "$head") || answer false "git diff $base $head failed"
+          [ -n "$paths" ] || answer false "no changed path"
+          echo "changes: $EVENT, $base..$head"
+          docs=true
+          while IFS= read -r path; do
+            kind=docs
+            case "$path" in *.md) ;; *) kind="not docs" ;; esac
+            for read_by_code in $DOCS_READ_BY_CODE; do
+              if [ "$path" = "$read_by_code" ]; then kind="not docs (the code reads it)"; fi
+            done
+            if [ "$kind" != docs ]; then docs=false; fi
+            echo "  $kind: $path"
+          done <<< "$paths"
+          answer "$docs" "$(wc -l <<< "$paths" | tr -d ' ') changed paths"
+
   # The lint gates in one job (#471): Rustfmt, locks, deny, Clippy and the
   # ratchet, with one checkout and one cache restore. Their setup (a runner,
   # a checkout, a toolchain, a cache) was the larger share of Rustfmt, locks
@@ -60,31 +139,69 @@ jobs:
   # record's, set per step), then stable with rustfmt and clippy, the
   # default, before the cache step so its key considers both. The runner is
   # deny's paved-road switch (a private repository's self-hosted runner).
+  # On a docs-only change (#476) the toolchains and the cache are skipped, so
+  # every Rust gate and the ratchet skip with them; the docs set's guard, The
+  # base ref, scoreboard, links and citations and the changelog fragment run:
+  # a docs PR still passes its own checks, under the required `lint` context.
   lint:
     name: lint
+    needs: changes
+    # Never skipped (a skipped job's context passes the protection unread): a
+    # failed `changes` leaves docs_only empty, and every gate runs.
+    if: ${{ !cancelled() }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: lint skipped by #476 (its Rust gates and the ratchet; its docs gates run)"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # check-cites reads the document's pin and proves its ancestry.
           fetch-depth: 0
           persist-credentials: false
 
+      # Every .md path the code or the e2e harness reads must be named in
+      # DOCS_READ_BY_CODE, or a docs-only change could skip the test that
+      # reads it. The search is literal: a read through a computed path is
+      # the reviewer's to name.
+      - name: "the docs set: the Markdown the code reads"
+        run: |
+          set -euo pipefail
+          read_md=$( { git grep -hoE '(include_str!|include_bytes!|read_to_string|readFileSync|readFile)\([^;]*\.md' -- '*.rs' '*.js' || true; } \
+            | grep -oE '[A-Za-z0-9_.-]+\.md$' | sort -u || true)
+          status=0
+          for name in $read_md; do
+            named=false
+            for path in $DOCS_READ_BY_CODE; do
+              if [ "$(basename "$path")" = "$name" ]; then named=true; fi
+            done
+            echo "read by the code: $name (named in DOCS_READ_BY_CODE: $named)"
+            if [ "$named" != true ]; then
+              echo "::error::$name is read by the code and is not in DOCS_READ_BY_CODE (ci.yml); a docs-only change to it would skip its test"
+              status=1
+            fi
+          done
+          exit "$status"
+
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: 1.98.1
           components: clippy
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         id: cache
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - name: Rustfmt
         if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
@@ -192,7 +309,7 @@ jobs:
       # pin reachable from HEAD) then fails with git exit 1.
       - name: The base ref
         id: base
-        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.cache.outcome == 'success' || needs.changes.outputs.docs_only == 'true') }}
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -219,7 +336,7 @@ jobs:
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
 
       - name: No number above the base's record
-        if: ${{ !cancelled() && steps.base.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.base.outcome == 'success' && needs.changes.outputs.docs_only != 'true' }}
         env:
           REV: ${{ steps.base.outputs.rev }}
           RUSTUP_TOOLCHAIN: 1.98.1
@@ -353,7 +470,7 @@ jobs:
       # the runner image may lack it, so the step installs it when absent
       # and says which.
       - name: ensemble chain dry runs
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
         run: |
           set -euo pipefail
           if command -v zsh > /dev/null; then
@@ -420,6 +537,9 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
+    needs: changes
+    # Never skipped: see lint's. Each step skips on a docs-only change (#476).
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -429,16 +549,23 @@ jobs:
         # job in release.yml builds the macOS targets.
         os: [ubuntu-latest]
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: Build (ubuntu-latest) skipped by #476"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       # The fuzz check's pinned toolchain is installed before the cache step,
       # so the cache key considers it (rust-cache hashes every installed
       # toolchain); stable after it stays the default (#452).
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: 1.98.1
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
 
@@ -446,15 +573,18 @@ jobs:
       # fuzz/target (`fuzz -> fuzz/target` cached fuzz/fuzz/target, which
       # never exists, and the fuzz check built cold on every hit, #452).
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           workspaces: |
             . -> target
             fuzz -> target
 
       - name: Build workspace (release)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: cargo build --release --locked
 
       - name: Build MCP subcrate (release)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: cargo build --release --locked -p bsv-wallet-mcp
 
       # The fuzz crate (fuzz/, its own workspace and lock) is built by no
@@ -464,26 +594,38 @@ jobs:
       # the pinned toolchain (installed above); libfuzzer-sys checks on
       # stable, so no nightly and no cargo-fuzz here.
       - name: Check the fuzz crate (every target)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         env:
           RUSTUP_TOOLCHAIN: 1.98.1
         run: cargo check --manifest-path fuzz/Cargo.toml --locked --all-targets
 
   test:
     name: Test
+    needs: changes
+    # Never skipped: see lint's. Each step skips on a docs-only change (#476).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: Test skipped by #476"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       # Every target of the workspace, not the synthetic integration tests
       # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
       # (the callback intake, the tracker-off refusals) live in the others.
       - name: Run the workspace's tests
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: cargo test --workspace --locked
 
   # The vector-backed tests as one named check: the Arcade status vector
@@ -493,17 +635,28 @@ jobs:
   # (tests/vectors/wallet_gate_vectors.json at the pin beside it, #130).
   vectors:
     name: vectors
+    needs: changes
+    # Never skipped: see lint's. Each step skips on a docs-only change (#476).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: vectors skipped by #476"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - name: The vector files are present
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           test -s tests/vectors/arcade_status_verdicts.json
           test -s src/gift/covenant_vectors.json
@@ -511,10 +664,12 @@ jobs:
           test -s tests/vectors/wallet_gate_vectors.pin
 
       - name: Run the Arcade status vector through the webhook intake
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: cargo test --locked --test arcade_webhook_vector_tests
 
       # A filter that matches nothing passes; the grep refuses a renamed module.
       - name: Run the covenant vectors
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           set -o pipefail
           cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
@@ -524,6 +679,7 @@ jobs:
       # (docs/GATE-VECTORS.md): the copy checked against its pin, the
       # unexpressed rows and the recorded divergences exact.
       - name: Replay the wallet-gate vectors against the gate
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           set -o pipefail
           cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
@@ -535,23 +691,35 @@ jobs:
   # response byte fails here unless it changes the fixture too (docs/WIRE.md).
   wire:
     name: wire
+    needs: changes
+    # Never skipped: see lint's. Each step skips on a docs-only change (#476).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: wire skipped by #476"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - name: The fixtures and their manifest are present
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: ls tests/wire/*.json > /dev/null && test -f tests/wire/MANIFEST.json
 
       # Replay only. A recording never passes (the test fails with the word
       # to replay it), and this job refuses to start one: WIRE_RECORD set to
       # anything fails here before cargo runs.
       - name: WIRE_RECORD is not set
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           if [ -n "${WIRE_RECORD+set}" ]; then
             echo "WIRE_RECORD is set (${WIRE_RECORD}); the wire job replays, never records"
@@ -559,9 +727,11 @@ jobs:
           fi
 
       - name: Replay the wire fixtures
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: cargo test --locked --test wire
 
       - name: No fixture was written by the run
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
 
 
@@ -579,6 +749,9 @@ jobs:
   # stub's log and the run's log are uploaded.
   e2e-hermetic:
     name: e2e-hermetic
+    needs: changes
+    # Never skipped: see lint's. Each step skips on a docs-only change (#476).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The runner context is not available in a job's env; the wallets' tmp
@@ -586,15 +759,23 @@ jobs:
     env:
       NODE_USE_ENV_PROXY: '1'
     steps:
+      - name: docs-only PR
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: 'echo "docs-only PR: e2e-hermetic skipped by #476"'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
       - name: Build the release binaries the harness drives
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           cargo build --release --locked
           cargo build --release --locked -p bsv-wallet-mcp
@@ -602,28 +783,34 @@ jobs:
       # Node 24: its fetch and http obey the proxy environment under
       # NODE_USE_ENV_PROXY=1 (Node 20 ignores it).
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           node-version: '24'
 
       # Scenario 20 drives the inspector UI through Playwright's Chromium;
       # the browser is cached by the lock file, its system libraries are not.
       - name: Install the harness's dependency (Playwright)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         working-directory: tests/e2e
         run: npm ci
 
       - name: Cache Playwright's Chromium
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cca/pw-browsers
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
 
       - name: Install Chromium
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: node tests/e2e/install-browsers.js --with-deps
 
       - name: Check the hermetic BEEF codecs and kept-template demand
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: node --test tests/e2e/stub/tx.test.js tests/e2e/24-busy-store.test.js
 
       - name: Run the 30 scenarios against the stub
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         env:
           E2E_WALLET_TMP: ${{ runner.temp }}/e2e
         run: |
