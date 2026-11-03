@@ -151,9 +151,9 @@ async fn past_the_cap_the_rows_seen_longest_ago_fold_into_the_remainder() {
 async fn ensure_makes_the_table_and_the_grants_never_touch_it() {
     let (_dir, storage) = wallet_db().await;
     ensure(&storage).await.unwrap();
-    for sql in ["DROP INDEX origin_probes_seen", "DROP TABLE origin_probes"] {
-        sqlx::query(sql).execute(storage.writer()).await.unwrap();
-    }
+    // The table dropped takes its index with it.
+    let dropped = sqlx::query("DROP TABLE origin_probes");
+    dropped.execute(storage.writer()).await.unwrap();
     assert!(
         ensure(&storage).await.unwrap(),
         "the missing table was not seen"
