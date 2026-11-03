@@ -37,6 +37,29 @@ async fn l1_store(storage: &StorageSqlx, rows: &[&str]) {
     }
 }
 
+/// A store holding L1's tables and their rows, under a capture: every test
+/// that moves L1 logs under one, since a callsite first reached with no
+/// live subscriber may cache its interest as never.
+struct L1 {
+    dir: tempfile::TempDir,
+    storage: StorageSqlx,
+    markers: Markers,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+/// [`L1`] with `rows` run after L1's tables.
+async fn l1_captured(rows: &[&str]) -> L1 {
+    let (dir, storage) = wallet_db().await;
+    let (markers, _guard) = Markers::capture();
+    l1_store(&storage, rows).await;
+    L1 {
+        dir,
+        storage,
+        markers,
+        _guard,
+    }
+}
+
 /// The grants' columns, in order.
 async fn grant_columns(storage: &StorageSqlx) -> Vec<String> {
     sqlx::query_scalar("SELECT name FROM pragma_table_info('origin_grants') ORDER BY cid")
@@ -81,11 +104,8 @@ const L1_LINES: [&str; 4] = [
 
 #[tokio::test]
 async fn an_l1_store_with_no_rows_moves_and_a_second_ensure_sends_nothing() {
-    let (_dir, storage) = wallet_db().await;
-    // Every test that moves L1 logs under a capture: a callsite first
-    // reached with no live subscriber may cache its interest as never.
-    let (_markers, _guard) = Markers::capture();
-    l1_store(&storage, &[]).await;
+    let l1 = l1_captured(&[]).await;
+    let storage = l1.storage;
     assert!(!grant_columns(&storage).await.contains(&"kind".to_string()));
 
     assert!(ensure(&storage).await.unwrap(), "the move wrote");
@@ -98,9 +118,8 @@ async fn an_l1_store_with_no_rows_moves_and_a_second_ensure_sends_nothing() {
 
 #[tokio::test]
 async fn an_l1_store_keeps_its_ceilinged_spending_row_alone_and_logs_the_rest_by_name() {
-    let (_dir, storage) = wallet_db().await;
-    l1_store(&storage, &L1_ROWS).await;
-    let (markers, _guard) = Markers::capture();
+    let l1 = l1_captured(&L1_ROWS).await;
+    let (storage, markers) = (l1.storage, l1.markers);
 
     assert!(ensure(&storage).await.unwrap());
 
@@ -158,19 +177,18 @@ async fn an_l1_store_keeps_its_ceilinged_spending_row_alone_and_logs_the_rest_by
 
 #[tokio::test]
 async fn two_ensures_on_one_l1_store_both_answer_and_move_it_once() {
-    let (dir, first) = wallet_db().await;
-    l1_store(&first, &L1_ROWS).await;
+    let l1 = l1_captured(&L1_ROWS).await;
+    let first = l1.storage;
     // A second handle on the file, as a second process holds it.
-    let path = dir.path().join("wallet.db");
+    let path = l1.dir.path().join("wallet.db");
     let second = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
-    let (markers, _guard) = Markers::capture();
 
     let (a, b) = tokio::join!(ensure(&first), ensure(&second));
 
     let mut wrote = [a.unwrap(), b.unwrap()];
     wrote.sort_unstable();
     assert_eq!(wrote, [false, true], "one moved, the other found it moved");
-    assert_eq!(markers.named("origin_grants_moved").len(), 1);
+    assert_eq!(l1.markers.named("origin_grants_moved").len(), 1);
     assert_eq!(own_objects(&first).await, new_objects());
     assert_eq!(count(&first, "origin_grants").await, 1, "carried once");
     assert!(!ensure(&second).await.unwrap());
@@ -178,9 +196,8 @@ async fn two_ensures_on_one_l1_store_both_answer_and_move_it_once() {
 
 #[tokio::test]
 async fn the_move_leaves_the_toolboxs_side_byte_identical() {
-    let (_dir, storage) = wallet_db().await;
-    let (_markers, _guard) = Markers::capture();
-    l1_store(&storage, &L1_ROWS).await;
+    let l1 = l1_captured(&L1_ROWS).await;
+    let storage = l1.storage;
     let before = toolbox_dump(&storage).await;
 
     ensure(&storage).await.unwrap();
@@ -204,9 +221,8 @@ async fn the_move_leaves_the_toolboxs_side_byte_identical() {
 
 #[tokio::test]
 async fn an_interrupted_move_leaves_l1_and_the_next_ensure_moves_it() {
-    let (_dir, storage) = wallet_db().await;
-    let (_markers, _guard) = Markers::capture();
-    l1_store(&storage, &L1_ROWS).await;
+    let l1 = l1_captured(&L1_ROWS).await;
+    let storage = l1.storage;
     // The move's transaction, interrupted before its commit.
     let mut tx = storage.write_tx().await.unwrap();
     move_l1(&mut tx, true).await.unwrap();
