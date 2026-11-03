@@ -14,7 +14,8 @@
     },
     "json": {
       "grants": [],
-      "pending": []
+      "pending": [],
+      "probes": []
     }
   }
 }
