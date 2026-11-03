@@ -60,9 +60,11 @@ permissions:
 # fuzz targets at once, took every runner the account has for over an hour
 # and starved every PR check, so the matrix ran six at a time; at fifty
 # shards (#310) a complete night then took ten hours (run 41340299977) and
-# 8h12m (run 41413946663). A complete night now runs at the fleet's 17:30Z
-# slot (#456, #514, docs/NIGHTLY.md: the keeper's read of the runner pool
-# put 16Z to 18Z among its lightest hours and 03:00Z in a busy one), as
+# 8h12m (run 41413946663). A complete night now runs at the fleet's 17:00Z
+# slot from 2026-11-04 (#456, #514, #522, docs/NIGHTLY.md: the keeper's read
+# of the runner pool put 03:00Z in a busy hour; the slot table of 11-03 puts
+# the light window at 17:00Z to 18:00Z, hour 16 at the day's highest
+# non-heavy p95, and the toolbox's slot at 18:00Z, after this hour ends), as
 # twenty shards, the account's concurrent-job limit, six at a
 # time in four waves of 6, 6, 6 and 2 (the plan's max-parallel,
 # HEAVY_RUN_PARALLEL, #513: the account's twenty runners are one pool across
@@ -380,7 +382,7 @@ jobs:
     timeout-minutes: 340
     strategy:
       fail-fast: false
-      # The plan's: a complete night's twenty at the 17:30Z slot (#460, #514),
+      # The plan's: a complete night's twenty at the 17:00Z slot (#460, #522),
       # six at a time in four waves, the fleet's heavy-run cap (#513); an
       # incremental night's six at a time, leaving runners for the PR checks
       # (#144).
