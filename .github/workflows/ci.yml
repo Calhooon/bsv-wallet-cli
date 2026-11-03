@@ -658,7 +658,8 @@ jobs:
       # vectors, which restore it and never save it. This job builds the
       # superset (every test target of the workspace) and saves the key on a
       # push to beta or main alone: a PR reads its base branch's entry, a
-      # merge-queue group reads the default branch's (main), and an entry
+      # merge-queue group reads the default branch's (main), where
+      # cache-beta.yml saves this key from beta's tree (#486), and an entry
       # saved under a PR's or a group's ref was never read again (5.6 of the
       # cache's 10.4 GB on 2026-11-03 was the queue's dead refs). The three
       # build with --workspace: the root package alone unifies other
@@ -926,9 +927,13 @@ jobs:
         working-directory: tests/e2e
         run: npm ci
 
+      # Restored on every run, saved by a push to beta or main alone, as the
+      # rust-cache keys (#472): a group's ref saved its own copy that no run
+      # read again (#486).
       - name: Cache Playwright's Chromium
+        id: playwright
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cca/pw-browsers
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
@@ -936,6 +941,13 @@ jobs:
       - name: Install Chromium
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: node tests/e2e/install-browsers.js --with-deps
+
+      - name: Save Playwright's Chromium
+        if: ${{ needs.changes.outputs.docs_only != 'true' && steps.playwright.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cca/pw-browsers
+          key: ${{ steps.playwright.outputs.cache-primary-key }}
 
       - name: Check the hermetic BEEF codecs and kept-template demand
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
