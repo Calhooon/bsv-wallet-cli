@@ -10,8 +10,9 @@
 //!   the owner's `GET /origins` answers it;
 //! - `POST /api/origins/answer`: `{"pendingId", "answer":
 //!   "grant"|"once"|"deny", "expiry"?, "amount"?}`;
-//! - `POST /api/origins/revoke`: `{"originator", "scope"?}`, no scope
-//!   revoking both.
+//! - `POST /api/origins/revoke`: `{"originator", "kind"?, "key"?}`: a
+//!   kind and a key revoke one power's row, a kind alone every row of
+//!   that kind, neither every row of the originator.
 //!
 //! Each write goes through `store::origin_grants` once, on the
 //! inspector's own store handle; an answer is `UPDATE .. WHERE pending_id
@@ -142,10 +143,16 @@ async fn answer(State(state): State<Arc<AppState>>, Json(body): Json<Answering>)
 /// originator when it holds no live row.
 async fn revoke(State(state): State<Arc<AppState>>, Json(body): Json<Revoking>) -> Response {
     let originator = body.originator();
-    let written = async { grants::revoke(&state.store, originator, body.scope(), now()?).await };
+    let written = async {
+        let reach = body.reach()?;
+        let rows = grants::revoke(&state.store, originator, &reach, now()?).await?;
+        anyhow::Ok((rows, reach))
+    };
     match written.await {
-        Ok(rows) if rows.is_empty() => refusal(StatusCode::CONFLICT, &body.nothing_to_revoke()),
-        Ok(rows) => {
+        Ok((rows, reach)) if rows.is_empty() => {
+            refusal(StatusCode::CONFLICT, &body.nothing_to_revoke(&reach))
+        }
+        Ok((rows, _)) => {
             tracing::info!(originator = %originator, rows = rows.len(), "inspector: revoked");
             shown(&state, rows, vec![]).await
         }

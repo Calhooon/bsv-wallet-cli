@@ -7,9 +7,12 @@
 //!   answered ones, in section (4)'s `--json` shape ([`Shown`]);
 //! - `POST /origins/answer`: `{"pendingId", "answer": "grant"|"once"|"deny",
 //!   "expiry"?, "amount"?}`;
-//! - `POST /origins/grant`: `{"originator", "scope", "expiry"?, "amount"?}`;
-//! - `POST /origins/revoke`: `{"originator", "scope"?}`, no scope revoking
-//!   both.
+//! - `POST /origins/grant`: `{"originator", "kind", "key"?, "expiry"?,
+//!   "amount"?}`, the key the power's canonical text (required but for
+//!   spending);
+//! - `POST /origins/revoke`: `{"originator", "kind"?, "key"?}`: a kind and
+//!   a key revoke one power's row, a kind alone every row of that kind,
+//!   neither every row of the originator.
 //!
 //! Each writes through `store::origin_grants` once; an answer is
 //! `UPDATE .. WHERE pending_id = ? AND answered_at IS NULL`, so of two
@@ -40,11 +43,11 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::Deserialize;
 
-use super::error::{AppError, Kind};
+use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::json_body::Json;
 use super::handlers::WalletState;
-use crate::store::origin_grants::{self as grants, Answer, Granting, Refused, Reply, Scope};
-use crate::store::origin_grants::{Shown, Source};
+use crate::store::origin_grants::{self as grants, Answer, Granting, Kind, Power, Reach};
+use crate::store::origin_grants::{Refused, Reply, Shown};
 
 /// How many answered pending rows `GET /origins` shows beside the open
 /// ones (section (3)).
@@ -129,29 +132,33 @@ async fn admit(request: Request, next: Next) -> Response {
         None => next.run(request).await,
         Some(why) => {
             tracing::warn!(path = %request.uri().path(), why = %why, "owner's door: refused");
-            AppError::new(Kind::AccessDenied, why).into_response()
+            AppError::new(ErrorKind::AccessDenied, why).into_response()
         }
     }
 }
 
 /// A preflight's answer, should one pass the admission: refused.
 async fn preflight() -> Response {
-    AppError::new(Kind::AccessDenied, PREFLIGHT).into_response()
+    AppError::new(ErrorKind::AccessDenied, PREFLIGHT).into_response()
 }
 
-/// A scope as the body names it.
+/// A kind as the body names it.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum ScopeWord {
-    Wallet,
+enum KindWord {
+    Protocol,
+    Basket,
+    Certificate,
     Spending,
 }
 
-impl From<ScopeWord> for Scope {
-    fn from(word: ScopeWord) -> Self {
+impl From<KindWord> for Kind {
+    fn from(word: KindWord) -> Self {
         match word {
-            ScopeWord::Wallet => Scope::Wallet,
-            ScopeWord::Spending => Scope::Spending,
+            KindWord::Protocol => Kind::Protocol,
+            KindWord::Basket => Kind::Basket,
+            KindWord::Certificate => Kind::Certificate,
+            KindWord::Spending => Kind::Spending,
         }
     }
 }
@@ -192,7 +199,8 @@ pub struct Answering {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Granted {
     originator: String,
-    scope: ScopeWord,
+    kind: KindWord,
+    key: Option<String>,
     amount: Option<i64>,
     #[serde(default)]
     expiry: i64,
@@ -222,7 +230,8 @@ impl Answering {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Revoking {
     originator: String,
-    scope: Option<ScopeWord>,
+    kind: Option<KindWord>,
+    key: Option<String>,
 }
 
 impl Revoking {
@@ -232,20 +241,26 @@ impl Revoking {
         &self.originator
     }
 
-    /// The scope named; `None` revokes both.
-    #[must_use]
-    pub fn scope(&self) -> Option<Scope> {
-        self.scope.map(Scope::from)
+    /// What the revoke reaches: one power's row (a kind and a key), every
+    /// row of a kind, or (neither) every row of the originator.
+    ///
+    /// # Errors
+    ///
+    /// A key without a kind, or a key that is not its kind's canonical
+    /// text ([`Power::parse`]).
+    pub fn reach(&self) -> Result<Reach, Refused> {
+        Reach::named(self.kind.map(Kind::from), self.key.as_deref())
     }
 
-    /// The refusal of a revoke that stamped no row, naming the originator.
+    /// The refusal of a revoke that stamped no row, naming the originator
+    /// and the power, the kind or neither.
     #[must_use]
-    pub fn nothing_to_revoke(&self) -> String {
+    pub fn nothing_to_revoke(&self, reach: &Reach) -> String {
         let key = grants::key_of(&self.originator).map_or(self.originator.clone(), |(k, _)| k);
-        let scoped = self
-            .scope()
-            .map_or(String::new(), |s| format!(" of the {} scope", s.as_str()));
-        format!("{key} holds no live grant row{scoped}: nothing to revoke")
+        format!(
+            "{key} holds no live grant row{}: nothing to revoke",
+            reach.words()
+        )
     }
 }
 
@@ -269,9 +284,9 @@ fn refused(e: &anyhow::Error) -> Response {
         return busy.into_response();
     }
     let kind = match e.downcast_ref::<Refused>() {
-        Some(Refused::AlreadyAnswered { .. }) => Kind::Conflict,
-        Some(_) => Kind::Validation,
-        None => Kind::Internal,
+        Some(Refused::AlreadyAnswered { .. }) => ErrorKind::Conflict,
+        Some(_) => ErrorKind::Validation,
+        None => ErrorKind::Internal,
     };
     AppError::new(kind, e.to_string()).into_response()
 }
@@ -324,22 +339,27 @@ async fn answer(State(wallet): State<WalletState>, Json(body): Json<Answering>) 
     }
 }
 
-/// `POST /origins/grant`: the owner's direct grant (`source` `owner`).
+/// `POST /origins/grant`: the owner's direct grant of one power.
 async fn grant(State(wallet): State<WalletState>, Json(body): Json<Granted>) -> Response {
-    let granting = Granting {
-        originator: &body.originator,
-        scope: body.scope.into(),
-        amount: body.amount,
-        expiry: body.expiry,
-        source: Source::Owner,
-    };
     let written = async {
+        let power = Power::named(body.kind.into(), body.key.as_deref())?;
+        let granting = Granting {
+            originator: &body.originator,
+            power: &power,
+            amount: body.amount,
+            expiry: body.expiry,
+        };
         let now = now()?;
         anyhow::Ok((grants::grant(wallet.storage(), &granting, now).await?, now))
     };
     match written.await {
         Ok((row, now)) => {
-            tracing::info!(originator = %row.originator, scope = row.scope.as_str(), "owner's door: granted");
+            tracing::info!(
+                originator = %row.originator,
+                kind = row.kind.as_str(),
+                key = %row.key,
+                "owner's door: granted"
+            );
             shown(&wallet, vec![row], vec![], now).await
         }
         Err(e) => refused(&e),
@@ -350,15 +370,16 @@ async fn grant(State(wallet): State<WalletState>, Json(body): Json<Granted>) -> 
 /// when it holds no live row (the CLI's exit 1).
 async fn revoke(State(wallet): State<WalletState>, Json(body): Json<Revoking>) -> Response {
     let written = async {
+        let reach = body.reach()?;
         let now = now()?;
-        let rows = grants::revoke(wallet.storage(), &body.originator, body.scope(), now).await?;
-        anyhow::Ok((rows, now))
+        let rows = grants::revoke(wallet.storage(), &body.originator, &reach, now).await?;
+        anyhow::Ok((rows, reach, now))
     };
     match written.await {
-        Ok((rows, _)) if rows.is_empty() => {
-            AppError::new(Kind::Conflict, body.nothing_to_revoke()).into_response()
+        Ok((rows, reach, _)) if rows.is_empty() => {
+            AppError::new(ErrorKind::Conflict, body.nothing_to_revoke(&reach)).into_response()
         }
-        Ok((rows, now)) => {
+        Ok((rows, _, now)) => {
             tracing::info!(originator = %body.originator, rows = rows.len(), "owner's door: revoked");
             shown(&wallet, rows, vec![], now).await
         }

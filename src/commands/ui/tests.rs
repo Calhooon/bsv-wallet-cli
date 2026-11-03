@@ -4,7 +4,7 @@
 
 use super::*;
 use axum::body::Body;
-use bsv_wallet_cli::store::origin_grants::{self as grants, Asking, Granting, Scope, Source};
+use bsv_wallet_cli::store::origin_grants::{self as grants, Asking, Granting, Power};
 use std::fmt::Write as _;
 use tower::ServiceExt;
 
@@ -57,28 +57,31 @@ fn the_inspector_admits_its_own_origin_and_the_listed() {
 /// The inspector's own origin, as its page names it.
 const OWN: &str = "http://localhost:9321";
 
-/// An inspector over a fresh store holding one open `wallet` pending row
-/// (`new.example:5173`) and a grant row for `granted.example`; its routes
-/// admit `app.example` by `ALLOWED_ORIGINS`.
+/// An inspector over a fresh store holding one open pending row
+/// (`new.example:5173` listing the basket `todo items`) and a grant row
+/// of that basket for `granted.example`; its routes admit `app.example`
+/// by `ALLOWED_ORIGINS`.
 async fn inspector() -> (tempfile::TempDir, Arc<AppState>, Router, i64) {
     let dir = tempfile::TempDir::new().unwrap();
     let file = dir.path().join("inspector.db");
     let path = file.to_str().unwrap().to_string();
     let seed = StorageSqlx::open(&path).await.unwrap();
+    let power = Power::basket("todo items").unwrap();
     let asking = Asking {
         originator: "new.example:5173",
-        scope: Scope::Wallet,
+        power: &power,
+        usage: Some("listing"),
         call: "/listOutputs",
+        reason: None,
         amount: None,
         renewal: false,
     };
     let pending = grants::open_or_join(&seed, &asking, 1_000).await.unwrap();
     let granting = Granting {
         originator: "granted.example",
-        scope: Scope::Wallet,
+        power: &power,
         amount: None,
         expiry: 0,
-        source: Source::Owner,
     };
     grants::grant(&seed, &granting, 1_000).await.unwrap();
     drop(seed);
@@ -182,6 +185,11 @@ async fn the_inspectors_own_page_answers_and_revokes() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed["pending"][0]["rawOriginator"], "new.example:5173");
     assert_eq!(listed["grants"][0]["originator"], "granted.example");
+    assert_eq!(listed["grants"][0]["kind"], "basket");
+    assert_eq!(
+        listed["pending"][0]["asked"],
+        "list the basket \"todo items\""
+    );
     assert_eq!(read(Some("https://app.example")).await.0, StatusCode::OK);
     assert_eq!(
         read(Some("http://evil.example")).await.0,
@@ -190,13 +198,15 @@ async fn the_inspectors_own_page_answers_and_revokes() {
 
     // Each step: the route, the body, the status, and a word the answer
     // carries. The own page answers; the second answer loses and is told;
-    // it revokes; a second revoke names the originator.
+    // it revokes one power's row; a second revoke names the originator and
+    // the power; a key without its kind is refused.
+    let todo = r#"["todo items"]"#;
     let steps = [
         (
             "answer",
             serde_json::json!({"pendingId": id, "answer": "grant"}),
             200,
-            "\"source\":\"owner\"",
+            "\"key\":\"[\\\"todo items\\\"]\"",
         ),
         (
             "answer",
@@ -206,15 +216,21 @@ async fn the_inspectors_own_page_answers_and_revokes() {
         ),
         (
             "revoke",
-            serde_json::json!({"originator": "granted.example"}),
+            serde_json::json!({"originator": "granted.example", "kind": "basket", "key": todo}),
             200,
             "\"revokedAt\":1",
         ),
         (
             "revoke",
-            serde_json::json!({"originator": "granted.example"}),
+            serde_json::json!({"originator": "granted.example", "kind": "basket", "key": todo}),
             409,
-            "granted.example holds no live grant row",
+            "granted.example holds no live grant row for basket [\\\"todo items\\\"]",
+        ),
+        (
+            "revoke",
+            serde_json::json!({"originator": "granted.example", "key": todo}),
+            400,
+            "name the kind with the key",
         ),
     ];
     for (route, body, status, word) in steps {
@@ -277,8 +293,8 @@ async fn a_write_disguised_as_a_read_fails_on_the_read_only_pool() {
     let (dir, _state, app, _) = inspector().await;
     let path = dir.path().join("inspector.db");
     let path = path.to_str().unwrap();
-    let insert = "INSERT INTO origin_grants (originator, raw_originator, scope, granted_at, \
-                  source) VALUES ('evil.example', 'evil.example', 'wallet', 1, 'owner')";
+    let insert = "INSERT INTO origin_grants (originator, raw_originator, kind, key, granted_at) \
+                  VALUES ('evil.example', 'evil.example', 'basket', '[\"x\"]', 1)";
     let before = dump(path).await;
     for sql in [
         format!("WITH x AS (SELECT 1) {insert}"),
