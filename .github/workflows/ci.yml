@@ -813,6 +813,19 @@ jobs:
           read -ra args <<< "$TEST_ARGS"
           cargo nextest run "${args[@]}" --locked --no-fail-fast
 
+      # TEMP #528 probe, removed before the review: the relay router test
+      # under trace, the path before 208c217 (P528_PREFIX=1) and the tip's.
+      - name: "TEMP #528: the relay router test under trace"
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        env:
+          RUST_LOG: trace
+        run: |
+          t=commands::daemon_tenant::tests::relay_router_retries_busy_items_in_order_and_deletes_acked_rows
+          echo "== P528_PREFIX=1 (the writer keeps sqlx's 5 s busy_timeout)"
+          P528_PREFIX=1 cargo test --locked --bin bsv-wallet -- --exact "$t" --nocapture
+          echo "== the tip (no_busy_wait on the writer)"
+          cargo test --locked --bin bsv-wallet -- --exact "$t" --nocapture
+
   # The vector-backed tests as one named check: the Arcade status vector
   # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
   # webhook intake, the gift covenant's sCrypt parity vectors

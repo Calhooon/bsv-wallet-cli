@@ -421,7 +421,10 @@ mod tests {
             let (dir, wallet, mut holder) = busy_read_wallet().await;
             // The relay's writes busy at once too: no test here reads the
             // wait, and SQLite's 5,000 ms under the lock never succeeds (#506).
-            crate::test_support::no_busy_wait(wallet.storage().writer()).await;
+            // TEMP #528 probe: P528_PREFIX=1 replays the path before 208c217.
+            if std::env::var_os("P528_PREFIX").is_none() {
+                crate::test_support::no_busy_wait(wallet.storage().writer()).await;
+            }
             set_read_lock(&mut holder, false).await;
             let txids = ["31".repeat(32), "42".repeat(32)];
             seed_arc_requests(wallet.storage(), &txids).await;
@@ -577,6 +580,11 @@ mod tests {
     #[tokio::test]
     async fn relay_router_retries_busy_items_in_order_and_deletes_acked_rows() {
         use bsv_wallet_cli::relay::{make_relay_router, open_relay_db, RelayState};
+        // TEMP #528 probe: RUST_LOG's events with timestamps.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
 
         let dir = tempfile::tempdir().unwrap();
         let pool = open_relay_db(dir.path().join("relay.db").to_str().unwrap())
@@ -602,7 +610,9 @@ mod tests {
         assert_eq!(ids.len(), 4);
         assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
         set_read_lock(&mut fixture.holder, true).await;
+        tracing::info!("p528: ingest under the held lock starts");
         let (cursor, busy) = ingest_relay_items(fixture.wallet.storage(), items, 0).await;
+        tracing::info!("p528: ingest under the held lock returned");
         assert_eq!((cursor, busy), (ids[0], true));
         let ack = format!("/pull?token=relay-test&after={cursor}&ack={cursor}");
         let again = relay_response(&app, &ack, None).await;
