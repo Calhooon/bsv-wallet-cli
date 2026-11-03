@@ -47,6 +47,18 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # The cached build (#472). No CI step reads a test binary's debuginfo
+  # (a panic names its line without it), and it was most of the link and
+  # of the cache, so the dev and test profiles build none. Incremental is
+  # off: CI builds each commit once and never reuses incremental's state.
+  # rust-cache (v2.9.2, restore.ts) already exports CARGO_INCREMENTAL=0
+  # after its restore, before any cargo step; it is set here so every step
+  # says it. rust-cache hashes every CARGO* and RUST* variable into its key,
+  # so these move every key once, and a job-level one would split the keys
+  # that jobs share.
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
   # The Markdown the code reads, which is never docs (#476): GIFT.md by
   # include_str! (src/commands/gift_chain.rs) and the extensions page by
   # tests/brc100.rs. lint's step "the docs set" fails on a read not named here.
@@ -213,9 +225,12 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      # Saved by a push to beta or main alone (#472); see Test's.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         id: cache
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
 
       - name: Rustfmt
         if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
@@ -586,9 +601,16 @@ jobs:
       # A workspace's target is relative to its root: `fuzz -> target` is
       # fuzz/target (`fuzz -> fuzz/target` cached fuzz/fuzz/target, which
       # never exists, and the fuzz check built cold on every hit, #452).
+      # The release build's one key (#472), `release`, which e2e-hermetic
+      # restores: this job saves it on a push to beta or main, and only
+      # here. Sharing it needs the same toolchains (they are hashed into the
+      # key) and the same workspaces (the cached paths are the entry's
+      # version), so e2e-hermetic installs 1.98.1 too and names fuzz/target.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
+          shared-key: release
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
           workspaces: |
             . -> target
             fuzz -> target
@@ -632,15 +654,71 @@ jobs:
         with:
           toolchain: stable
 
+      # The test build's one key (#472), `test`, shared with wire and
+      # vectors, which restore it and never save it. This job builds the
+      # superset (every test target of the workspace) and saves the key on a
+      # push to beta or main alone: a PR reads its base branch's entry, a
+      # merge-queue group reads the default branch's (main), and an entry
+      # saved under a PR's or a group's ref was never read again (5.6 of the
+      # cache's 10.4 GB on 2026-11-03 was the queue's dead refs). The three
+      # build with --workspace: the root package alone unifies other
+      # features (serde_json, syn) and would rebuild what the key holds.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          shared-key: test
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
+
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          tool: cargo-nextest@0.9.150
+
+      # The compile, its own step so its time is its own line in the run.
+      - name: Build the workspace's tests
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        run: cargo test --workspace --locked --no-run
+
+      # nextest runs exactly what cargo test would (#472): the multiset of
+      # test names nextest lists, ignored ones included, equals the one
+      # libtest lists for the same build. nextest runs no doctest, so a
+      # doctest shows here as cargo's alone and fails the step until a
+      # `cargo test --doc` step stands beside the run. The linker is
+      # printed, not chosen: stable has linked with rust-lld on x86_64
+      # Linux since 1.90, and lld names itself in the binary's .comment.
+      - name: "nextest's list is cargo test's"
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/lists"
+          mkdir -p "$list"
+          cargo nextest list --workspace --locked --run-ignored all --message-format oneline --color never > "$list/nextest.txt"
+          cargo test --workspace --locked --color never -- --list > "$list/cargo.txt"
+          cut -d' ' -f2- "$list/nextest.txt" | sort > "$list/nextest.names"
+          sed -n 's/: test$//p' "$list/cargo.txt" | sort > "$list/cargo.names"
+          n=$(wc -l < "$list/nextest.names" | tr -d ' ')
+          c=$(wc -l < "$list/cargo.names" | tr -d ' ')
+          echo "nextest list: $n tests; cargo test -- --list: $c tests"
+          if ! diff -u "$list/cargo.names" "$list/nextest.names"; then
+            echo "::error::nextest lists $n tests and cargo test $c; the diff above names each (a doctest needs cargo test --doc beside nextest)"
+            exit 1
+          fi
+          [ "$n" -gt 0 ] || { echo "::error::no test listed"; exit 1; }
+          rustc -vV
+          bin=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'bsv_wallet_cli-*' | head -n 1)
+          echo "the linker of $bin:"
+          readelf -p .comment "$bin" | sed -n 's/^ *\[ *[0-9a-f]*\] *//p'
 
       # Every target of the workspace, not the synthetic integration tests
       # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
       # (the callback intake, the tracker-off refusals) live in the others.
+      # nextest runs each test in its own process, every binary at once
+      # (#472): libtest ran the binaries one after another, and the wire
+      # binary's tests one at a time behind its in-process lock (the audit
+      # log is the process's), about 300 of the job's 450 seconds.
       - name: Run the workspace's tests
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --no-fail-fast
 
   # The vector-backed tests as one named check: the Arcade status vector
   # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
@@ -666,8 +744,12 @@ jobs:
         with:
           toolchain: stable
 
+      # Test's key, restored and never saved (#472); --workspace as Test's.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          shared-key: test
+          save-if: false
 
       - name: The vector files are present
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
@@ -679,14 +761,14 @@ jobs:
 
       - name: Run the Arcade status vector through the webhook intake
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: cargo test --locked --test arcade_webhook_vector_tests
+        run: cargo test --workspace --locked --test arcade_webhook_vector_tests
 
       # A filter that matches nothing passes; the grep refuses a renamed module.
       - name: Run the covenant vectors
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           set -o pipefail
-          cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
+          cargo test --workspace --locked --lib gift::covenant::tests:: | tee covenant.log
           grep -q 'test result: ok. 5 passed' covenant.log
 
       # Every row of the stack's wallet-gate vectors replayed against the gate
@@ -696,7 +778,7 @@ jobs:
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           set -o pipefail
-          cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
+          cargo test --workspace --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
           grep -q '^gate vectors: 490 rows' gate_vectors.log
           grep -q 'test result: ok. 3 passed' gate_vectors.log
 
@@ -722,8 +804,22 @@ jobs:
         with:
           toolchain: stable
 
+      # Test's key, restored and never saved (#472): the dependencies come
+      # from Test's build on beta, and this job compiles the workspace's own
+      # crates alone. Taking the PR's own Test build instead (an artifact)
+      # would start the replay only after Test's compile and upload ended:
+      # Test's compile was 56 seconds and this job's own warm compile 31 in
+      # run 41570593531, so waiting would cost more than it saves.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          shared-key: test
+          save-if: false
+
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          tool: cargo-nextest@0.9.150
 
       - name: The fixtures and their manifest are present
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
@@ -740,9 +836,17 @@ jobs:
             exit 1
           fi
 
+      - name: Build the wire binary
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        run: cargo test --workspace --locked --no-run --test wire
+
+      # Each test in its own process (#472), so the harness's lock, which
+      # serializes the worlds within a process (the permission audit is the
+      # process's), no longer serializes the binary: about 300 seconds under
+      # libtest, one test at a time.
       - name: Replay the wire fixtures
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: cargo test --locked --test wire
+        run: cargo nextest run --workspace --locked --no-fail-fast --test wire
 
       - name: No fixture was written by the run
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
@@ -780,6 +884,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
 
+      # Build's key, `release`, restored and never saved (#472): the same
+      # toolchains in the same order (1.98.1 is installed for the key alone;
+      # stable stays the default) and the same workspaces as Build's.
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          toolchain: 1.98.1
+
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
@@ -787,6 +899,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        with:
+          shared-key: release
+          save-if: false
+          workspaces: |
+            . -> target
+            fuzz -> target
 
       - name: Build the release binaries the harness drives
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
