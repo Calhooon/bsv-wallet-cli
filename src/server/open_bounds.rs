@@ -40,7 +40,9 @@ pub const PRESENCE_DOORS: [&str; 2] = ["/isAuthenticated", "/waitForAuthenticati
 /// One bound's figures: one call admitted every `every`, `burst` at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Figure {
+    /// The calls admitted at once.
     pub burst: u32,
+    /// The emission interval: one call admitted each.
     pub every: Duration,
 }
 
@@ -126,7 +128,9 @@ struct Counters {
 /// A call past its bound: the wait until the next would be admitted.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Limited {
+    /// How long until the next call would be admitted.
     pub wait: Duration,
+    /// The bound's words, as the refusal names them.
     pub window: &'static str,
 }
 
@@ -154,15 +158,20 @@ impl OpenBounds {
 
     /// Admit one call of `host` at `door` as `class` at `now`, or refuse it
     /// with the wait. A refusal moves no counter.
+    ///
+    /// # Errors
+    ///
+    /// The call past its bound: [`Limited`], the wait and the window.
     pub fn take(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
         let bound = bound_of(class, door);
         let mut map = self.0.map.lock().unwrap_or_else(PoisonError::into_inner);
         let key = (host.to_string(), bound.counter);
         let due = map.get(&key).copied().map_or(now, |t| t.max(now));
-        let ahead = due - now;
-        if ahead > bound.figure.tolerance() {
+        let ahead = due.saturating_duration_since(now);
+        let past = ahead.checked_sub(bound.figure.tolerance());
+        if let Some(wait) = past.filter(|wait| !wait.is_zero()) {
             return Err(Limited {
-                wait: ahead - bound.figure.tolerance(),
+                wait,
                 window: bound.window,
             });
         }
@@ -210,6 +219,10 @@ impl OpenBounds {
 }
 
 #[cfg(test)]
+#[path = "open_bounds_tests.rs"]
+mod served_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -217,6 +230,19 @@ mod tests {
 
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
+    }
+
+    /// Bounds whose chain burst `HOST` spent at the instant returned.
+    fn spent_burst() -> (OpenBounds, Instant) {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        for n in 0..10 {
+            assert_eq!(
+                bounds.take(HOST, "/getHeight", Class::Open, t),
+                Ok(()),
+                "{n}"
+            );
+        }
+        (bounds, t)
     }
 
     /// The chain doors at the burst's edge: the tenth call at once is
@@ -253,10 +279,7 @@ mod tests {
     /// admitted and the next refused; a minute of quiet refills the burst.
     #[test]
     fn the_window_resets() {
-        let (bounds, t) = (OpenBounds::default(), Instant::now());
-        for _ in 0..10 {
-            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
-        }
+        let (bounds, t) = spent_burst();
         assert!(bounds
             .take(HOST, "/getHeight", Class::Open, at(t, 999))
             .is_err());
@@ -333,10 +356,7 @@ mod tests {
     /// presence bounds whole.
     #[test]
     fn each_originator_and_class_has_its_own_bound() {
-        let (bounds, t) = (OpenBounds::default(), Instant::now());
-        for _ in 0..10 {
-            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
-        }
+        let (bounds, t) = spent_burst();
         assert!(bounds.take(HOST, "/getHeight", Class::Open, t).is_err());
         for n in 0..10 {
             assert_eq!(
@@ -408,10 +428,7 @@ mod tests {
     /// a busy one stays.
     #[test]
     fn idle_counters_are_pruned() {
-        let (bounds, t) = (OpenBounds::default(), Instant::now());
-        for _ in 0..10 {
-            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
-        }
+        let (bounds, t) = spent_burst();
         for n in 1..PRUNE_AT {
             bounds
                 .take(&format!("h{n}.example"), "/getHeight", Class::Open, t)

@@ -69,8 +69,7 @@ pub struct ServerConfig {
     /// The probe record's queue (#539, `probes::Probes`): started on the
     /// served wallet by [`make_router`], shared by every clone.
     pub probes: probes::Probes,
-    /// The open doors' bound (#541, `open_bounds::OpenBounds`): this
-    /// process's counters, shared by every clone; never the store's.
+    /// The open doors' bound (#541): this process's counters, never the store's.
     pub bounds: open_bounds::OpenBounds,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
@@ -285,7 +284,6 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let allowed = config.allowed_origins.clone();
     let held = config.held.clone();
     let probes = config.probes.started(&wallet);
-    let bounds = config.bounds.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -417,7 +415,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .layer(axum::Extension(allowed))
         .layer(axum::Extension(held))
         .layer(axum::Extension(probes))
-        .layer(axum::Extension(bounds))
+        .layer(axum::Extension(cfg.bounds.clone()))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -799,6 +797,3 @@ mod powers_tests;
 
 #[cfg(test)]
 mod probes_tests;
-
-#[cfg(test)]
-mod open_bounds_tests;

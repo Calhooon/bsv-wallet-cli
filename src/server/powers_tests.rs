@@ -14,12 +14,12 @@ use crate::store::origin_grants::{self as grants, Answer, PendingRow, Power, Rep
 use crate::test_support::serve_router;
 use tokio::io::AsyncWriteExt;
 
-const PAGE: &str = "http://page.example";
-const OTHER: &str = "http://other.example";
+pub(super) const PAGE: &str = "http://page.example";
+pub(super) const OTHER: &str = "http://other.example";
 
 /// A call's answer as a page reads it: the status, the CORS echo, the
 /// `Retry-After` and the body.
-type Read = (u16, Option<String>, Option<String>, serde_json::Value);
+pub(super) type Read = (u16, Option<String>, Option<String>, serde_json::Value);
 
 /// The router served by `axum::serve` on a bound `TcpListener` at
 /// 127.0.0.1:0 (`serve_router`), as `run` serves it: its address and the
@@ -27,17 +27,22 @@ type Read = (u16, Option<String>, Option<String>, serde_json::Value);
 async fn served(wallet: &WalletState, seeded: &[&str]) -> (SocketAddr, powers::Held) {
     let config = ServerConfig::admitting(seeded.iter().copied()).unwrap();
     let held = config.held.clone();
+    (serve_at(wallet, config).await, held)
+}
+
+/// `config`'s router served on a loopback listener: its address.
+pub(super) async fn serve_at(wallet: &WalletState, config: ServerConfig) -> SocketAddr {
     let (url, _task) = serve_router(make_router(wallet.clone(), config)).await;
-    (url.trim_start_matches("http://").parse().unwrap(), held)
+    url.trim_start_matches("http://").parse().unwrap()
 }
 
 /// The router's URL for `path`.
-fn at(addr: SocketAddr, path: &str) -> String {
+pub(super) fn at(addr: SocketAddr, path: &str) -> String {
     format!("http://{addr}{path}")
 }
 
 /// A response as a page reads it.
-async fn read(response: reqwest::Response) -> Read {
+pub(super) async fn read(response: reqwest::Response) -> Read {
     let status = response.status().as_u16();
     let header = |name: &str| {
         response
@@ -51,7 +56,12 @@ async fn read(response: reqwest::Response) -> Read {
 }
 
 /// A page's POST on a connection of its own.
-async fn page_call(addr: SocketAddr, origin: &str, path: &str, body: serde_json::Value) -> Read {
+pub(super) async fn page_call(
+    addr: SocketAddr,
+    origin: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> Read {
     let request = reqwest::Client::new().post(at(addr, path));
     read(
         request
@@ -65,7 +75,7 @@ async fn page_call(addr: SocketAddr, origin: &str, path: &str, body: serde_json:
 }
 
 /// A GET from `origin`, or from the owner's side with none.
-async fn get_from(addr: SocketAddr, origin: Option<&str>, path: &str) -> Read {
+pub(super) async fn get_from(addr: SocketAddr, origin: Option<&str>, path: &str) -> Read {
     let mut request = reqwest::Client::new().get(at(addr, path));
     if let Some(origin) = origin {
         request = request.header("origin", origin);
@@ -88,7 +98,7 @@ fn basket(name: &str) -> serde_json::Value {
     json!({"basket": name})
 }
 
-fn signature(protocol: &str, level: u8) -> serde_json::Value {
+pub(super) fn signature(protocol: &str, level: u8) -> serde_json::Value {
     json!({"protocolID": [level, protocol], "keyID": "1", "counterparty": "self",
            "data": [1, 2, 3]})
 }
