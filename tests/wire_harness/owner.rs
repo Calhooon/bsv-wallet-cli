@@ -199,6 +199,14 @@ impl Owner {
 }
 
 impl World {
+    /// The normalized response, and the JSON body as served, once the
+    /// probe record holds the answers served before it (#539: its writer
+    /// is off the call's path).
+    pub(crate) async fn serve_raw(&self, req: &Req) -> (Resp, Option<J>) {
+        self.probes.settled().await;
+        NORMALIZER.serve(&self.router, req).await
+    }
+
     /// The world's `serve_raw` with the owner's step around the request:
     /// the rows written before it, the calls held first, the owner's act
     /// while it is held, then every call still held denied.
@@ -206,6 +214,7 @@ impl World {
         let Some(owner) = owner else {
             return self.serve_raw(req).await;
         };
+        self.probes.settled().await;
         owner.before(&self.wallet).await;
         let calls = owner.hold(&self.router, &self.held).await;
         let (served, ()) = tokio::join!(
