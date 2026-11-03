@@ -193,6 +193,21 @@ async function audited(wallet, bearer) {
   return r.body.count;
 }
 
+/** The inspector on wallet D's store, on its own port, until stopped. */
+async function inspector(wallet) {
+  const proc = spawn(BSV, ['--db', 'wallet.db', 'ui', '--ui-port', String(D_UI_PORT)], {
+    cwd: wallet.dir, stdio: ['ignore', 'ignore', 'ignore'], detached: false,
+  });
+  for (let i = 0; i < 40; i++) {
+    try {
+      if ((await fetch(`http://localhost:${D_UI_PORT}/api/origins`)).ok) return proc;
+    } catch { /* not listening yet */ }
+    await sleep(250);
+  }
+  proc.kill('SIGTERM');
+  throw new Error(`the inspector on :${D_UI_PORT} did not answer`);
+}
+
 /** The arguments of the scenes' calls. */
 const ARGS = {
   createSignature: { protocolID: [2, 'browser gate'], keyID: '1', counterparty: 'self', data: [1, 2, 3] },
@@ -223,5 +238,5 @@ module.exports = {
   APP, NEW, DENY, GONE, EVIL, SEEDED, TOKEN, NO_ORIGIN, DENIED, PERMISSION_DENIED, POWER, ARGS,
   D_PORT, D_UI_PORT,
   call, begin, owner, listing, cli, cliRefused, origins, untilPending, log, restartGated, audited,
-  scene, sleep,
+  inspector, scene, sleep,
 };
