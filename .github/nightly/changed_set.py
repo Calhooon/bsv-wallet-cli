@@ -77,8 +77,8 @@ otherwise one shard per PER_SHARD of the changed files' mutants, by the
 record's counts, and at least PARALLEL while there are that many mutants, at
 most `--max-shards`; PARALLEL (six) at a time. An empty changed set plans no
 shard: the night carries every figure and says so. Either night's stage after
-the matrix (#517): the fuzz targets FUZZ_PARALLEL (five) at once beside the
-hermetic shards HERMETIC_PARALLEL (one) at a time, then reach and bench, the
+the matrix (#517): the fuzz targets FUZZ_PARALLEL (three) at once beside the
+hermetic shards HERMETIC_PARALLEL (three) at a time, then reach and bench, the
 figures the plan's outputs `fuzz_parallel` and `hermetic_parallel`, refused
 when their sum passes HEAVY_RUN_PARALLEL.
 
@@ -126,15 +126,20 @@ HEAVY_RUN_PARALLEL = 6
 PARALLEL = 6
 # The stage after the matrix (#517), under the same cap. Once the cargo matrix
 # ends, the fuzz targets and the hermetic shards run together, FUZZ_PARALLEL
-# and HERMETIC_PARALLEL at once (5 and 1: the five targets, an hour each on a
-# complete night, beside the hermetic shards one at a time), and the reach job
-# and the bench wait for both (needs: in nightly.yml) and run last, two jobs.
-# Before #517 the hermetic six, the five targets, reach and bench could run
-# together, thirteen jobs. The fuzz figure is the cap less the hermetic one, an
-# explicit max-parallel so that a sixth target queues rather than slips past;
-# the plan refuses a night whose figures sum past the cap (stage() below).
-FUZZ_PARALLEL = 5
-HERMETIC_PARALLEL = 1
+# and HERMETIC_PARALLEL at once (3 and 3: the five targets, an hour each on a
+# complete night, in two rounds, beside the six hermetic shards in two rounds
+# of about 35 minutes), and the reach job and the bench wait for both
+# (needs: in nightly.yml) and run last, two jobs. Before #517 the hermetic
+# six, the five targets, reach and bench could run together, thirteen jobs.
+# The split is the captain's call on the lane's figures from run 41516017523:
+# five plus one ran the hermetic shards in file, 196 minutes, and grew the
+# stage from about 1h15m to about 3h30m; three plus three runs it in about two
+# hours, the fuzz targets' two rounds. The fuzz figure is the cap less the
+# hermetic one, an explicit max-parallel so that a fourth target queues rather
+# than slips past; the plan refuses a night whose figures sum past the cap
+# (stage() below).
+FUZZ_PARALLEL = 3
+HERMETIC_PARALLEL = 3
 # The last two jobs of the night (#517): reach and bench, after both.
 TAIL_JOBS = 2
 WHOLE = {
