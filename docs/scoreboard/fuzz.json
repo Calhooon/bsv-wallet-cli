@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
-  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-  "date": "2026-11-02",
+  "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+  "date": "2026-11-03",
   "targets": {
-    "allow_pending": {"seconds": 3601, "executions": 103851079, "corpus_added": 3483, "crashes": 0},
-    "beef_reader": {"seconds": 3601, "executions": 12740944, "corpus_added": 795, "crashes": 0},
-    "brc29_remittance": {"seconds": 3601, "executions": 2353523, "corpus_added": 406, "crashes": 0},
-    "explorer_bodies": {"seconds": 3601, "executions": 14285, "corpus_added": 395, "crashes": 0},
-    "served_json": {"seconds": 3601, "executions": 161461156, "corpus_added": 6273, "crashes": 0}
+    "allow_pending": {"seconds": 601, "executions": 21315611, "corpus_added": 2755, "crashes": 0},
+    "beef_reader": {"seconds": 601, "executions": 2505352, "corpus_added": 589, "crashes": 0},
+    "brc29_remittance": {"seconds": 601, "executions": 404211, "corpus_added": 361, "crashes": 0},
+    "explorer_bodies": {"seconds": 601, "executions": 2116, "corpus_added": 173, "crashes": 0},
+    "served_json": {"seconds": 601, "executions": 23107017, "corpus_added": 4001, "crashes": 0}
   }
 }
