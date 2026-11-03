@@ -9,6 +9,13 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { sleep } = require('../lib/woc');
 
+/** JSON with every object's keys sorted, so two answers compare by content. */
+function canonical(value) {
+  return JSON.stringify(value, (_, v) => (v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]]))
+    : v));
+}
+
 // The MCP binary: the repository's target by default; BSV_WALLET_MCP_BIN names
 // another (a shared CARGO_TARGET_DIR), as BSV_WALLET_BIN does for the wallet.
 const MCP_BIN = process.env.BSV_WALLET_MCP_BIN || path.resolve(__dirname, '../../../target/release/bsv-wallet-mcp');
@@ -70,8 +77,11 @@ module.exports = {
       const httpOrigins = await (await fetch(ownersUrl)).json();
       assert(Array.isArray(mcpOrigins.grants) && Array.isArray(mcpOrigins.pending),
         `MCP list_origins must return {grants, pending}: ${JSON.stringify(mcpOrigins)}`);
-      assert(JSON.stringify(mcpOrigins) === JSON.stringify(httpOrigins),
-        `MCP list_origins must match GET /origins: ${JSON.stringify(mcpOrigins)} vs ${JSON.stringify(httpOrigins)}`);
+      // The same rows, compared with their keys sorted: the MCP re-serializes
+      // the door's JSON with its keys in order, the door keeps section (4)'s
+      // order, and scenario 20 leaves wallet A a granted row to compare.
+      assert(canonical(mcpOrigins) === canonical(httpOrigins),
+        `MCP list_origins must match GET /origins: ${canonical(mcpOrigins)} vs ${canonical(httpOrigins)}`);
       // The harness's page origin is refused there: the owner's door is no page's.
       const asPage = await fetch(ownersUrl, { headers: { Origin: walletA.client.origin } });
       const pageBody = await asPage.json();
