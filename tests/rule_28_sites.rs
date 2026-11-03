@@ -79,6 +79,10 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
         "src/commands/daemon_tenant.rs",
         "our own relay's /pull, not an explorer",
     ),
+    (
+        "src/server/powers_tests.rs",
+        "the switch's router tests (#414 L5b): a page's and the owner's calls to the wallet's own router on a loopback listener, not an explorer",
+    ),
 ];
 
 fn root() -> PathBuf {

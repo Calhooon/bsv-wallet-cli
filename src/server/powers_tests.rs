@@ -46,8 +46,9 @@ async fn page_call(
     path: &str,
     body: serde_json::Value,
 ) -> (u16, Option<String>, Option<String>, serde_json::Value) {
+    let url = format!("http://{addr}{path}");
     let response = reqwest::Client::new()
-        .post(format!("http://{addr}{path}"))
+        .post(url)
         .header("origin", origin)
         .json(&body)
         .send()
@@ -63,6 +64,11 @@ async fn page_call(
     let (echo, retry) = (header("access-control-allow-origin"), header("retry-after"));
     let body = response.json().await.unwrap_or(serde_json::Value::Null);
     (status, echo, retry, body)
+}
+
+/// The router's URL for `path`.
+fn at(addr: SocketAddr, path: &str) -> String {
+    format!("http://{addr}{path}")
 }
 
 fn basket(name: &str) -> serde_json::Value {
@@ -286,7 +292,7 @@ async fn a_power_granted_listed_revoked_and_refused_after() {
         ("basket", r#"["todo items"]"#, Some("listing"))
     );
     let answered = owner
-        .post(format!("http://{addr}/origins/answer"))
+        .post(at(addr, "/origins/answer"))
         .json(&json!({"pendingId": open[0].pending_id, "answer": "grant"}))
         .send()
         .await
@@ -297,7 +303,7 @@ async fn a_power_granted_listed_revoked_and_refused_after() {
     assert!(body["outputs"].is_array());
 
     let listed: serde_json::Value = owner
-        .get(format!("http://{addr}/origins"))
+        .get(at(addr, "/origins"))
         .send()
         .await
         .unwrap()
@@ -311,7 +317,7 @@ async fn a_power_granted_listed_revoked_and_refused_after() {
     assert_eq!(status, 200, "granted: answered at once");
 
     let revoked = owner
-        .post(format!("http://{addr}/origins/revoke"))
+        .post(at(addr, "/origins/revoke"))
         .json(&json!({"originator": "page.example", "kind": "basket", "key": r#"["todo items"]"#}))
         .send()
         .await
@@ -421,7 +427,8 @@ async fn the_seed_admits_every_door_and_host_route_and_a_page_reads_no_host_rout
         "the seed is not refused an admin-reserved basket"
     );
     let get = |origin: Option<&str>, path: &str| {
-        let mut request = reqwest::Client::new().get(format!("http://{addr}{path}"));
+        let url = format!("http://{addr}{path}");
+        let mut request = reqwest::Client::new().get(url);
         if let Some(origin) = origin {
             request = request.header("origin", origin);
         }
@@ -466,8 +473,9 @@ async fn the_open_doors_and_level_zero_answer_a_page_with_no_row() {
         "/getNetwork",
         "/waitForAuthentication",
     ] {
+        let url = format!("http://{addr}{path}");
         let response = reqwest::Client::new()
-            .get(format!("http://{addr}{path}"))
+            .get(url)
             .header("origin", PAGE)
             .send()
             .await
@@ -503,7 +511,7 @@ async fn the_open_doors_and_level_zero_answer_a_page_with_no_row() {
         )
     );
     let disagreeing = reqwest::Client::new()
-        .post(format!("http://{addr}/listOutputs"))
+        .post(at(addr, "/listOutputs"))
         .header("origin", "http://evil.example")
         .header("originator", "page.example")
         .json(&basket("one"))
