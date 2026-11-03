@@ -960,11 +960,34 @@ jobs:
             . -> target
             fuzz -> target
 
+      # Each build writes cargo's timings report (#524): every unit's start,
+      # its frontend and codegen seconds and whether it was fresh, the record
+      # of where this step's seconds go on each run, kept as an artifact.
       - name: Build the release binaries the harness drives
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
-          cargo build --release --locked
-          cargo build --release --locked -p bsv-wallet-mcp
+          cargo build --release --locked --timings
+          cargo build --release --locked -p bsv-wallet-mcp --timings
+
+      # The report's HTML carries its units as a JSON array (UNIT_DATA);
+      # stable cargo writes no JSON file, so the array is copied out beside it.
+      - name: Keep the build's timings
+        if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+        run: |
+          python3 - <<'EOF'
+          import glob, re
+          for html in sorted(glob.glob("target/cargo-timings/cargo-timing-*.html")):
+              m = re.search(r"^const UNIT_DATA = (\[.*?^\]);$", open(html).read(), re.M | re.S)
+              if m:
+                  open(html[:-len(".html")] + ".json", "w").write(m.group(1) + "\n")
+          EOF
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+        with:
+          name: e2e-hermetic-build-timings
+          path: target/cargo-timings/
+          if-no-files-found: warn
 
       # Node 24: its fetch and http obey the proxy environment under
       # NODE_USE_ENV_PROXY=1 (Node 20 ignores it).
