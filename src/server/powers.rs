@@ -47,6 +47,7 @@ use tokio::sync::{watch, Notify};
 use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::WalletState;
 use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
+use super::probes::Probes;
 use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
 
 /// At most this many held calls per originator (the key, the hostname).
@@ -275,6 +276,8 @@ pub(crate) struct Ask {
     power: Result<Power, Refused>,
     usage: Option<&'static str>,
     amount: Option<i64>,
+    /// A level-0 protocol's key, for the probe record (#539).
+    level_zero: Option<String>,
 }
 
 impl Ask {
@@ -283,6 +286,7 @@ impl Ask {
             power,
             usage: Some(usage),
             amount: None,
+            level_zero: None,
         }
     }
 
@@ -295,7 +299,15 @@ impl Ask {
         counterparty: Option<&str>,
         usage: &'static str,
     ) -> Self {
-        Self::of(Power::protocol(false, level, name, counterparty), usage)
+        let power = Power::protocol(false, level, name, counterparty);
+        let level_zero = match power {
+            Err(Refused::LevelZero) => Power::level_zero_key(name),
+            _ => None,
+        };
+        Self {
+            level_zero,
+            ..Self::of(power, usage)
+        }
     }
 
     /// A door's parsed protocol and counterparty (`self` when it names
@@ -379,15 +391,18 @@ impl Ask {
             power: Ok(Power::Spending),
             usage: None,
             amount: Some(amount),
+            level_zero: None,
         }
     }
 }
 
-/// A door's view of the gate: the wallet, the held calls and the admitted
-/// `Origin` (none on a route the gate does not judge).
+/// A door's view of the gate: the wallet, the held calls, the probe
+/// record's queue and the admitted `Origin` (none on a route the gate does
+/// not judge).
 pub struct Asker {
     wallet: WalletState,
     held: Held,
+    probes: Probes,
     admitted: Option<Admitted>,
 }
 
@@ -401,6 +416,11 @@ impl FromRequestParts<WalletState> for Asker {
         Ok(Self {
             wallet: wallet.clone(),
             held: parts.extensions.get::<Held>().cloned().unwrap_or_default(),
+            probes: parts
+                .extensions
+                .get::<Probes>()
+                .cloned()
+                .unwrap_or_default(),
             admitted: parts.extensions.get::<Admitted>().cloned(),
         })
     }
@@ -408,17 +428,20 @@ impl FromRequestParts<WalletState> for Asker {
 
 /// The open doors' and level 0's answer with no row (W15, ruled (i) by the
 /// owner on 2026-11-03): a page with a parsed `Origin` and an agreeing
-/// originator, past the seed, is answered at `what` (an open door's path,
-/// or a level-0 protocol) with no row read or written.
-pub(crate) fn open(admitted: &Admitted, what: &str) {
+/// originator, past the seed, is answered at `door` (an open door's path,
+/// or a door's level-0 protocol, `power` its key) with no grant read or
+/// written. The answer is counted in the probe record off the call's path
+/// (#539, [`Probes::note`]): the call never waits on it.
+pub(crate) fn open(admitted: &Admitted, probes: &Probes, door: &str, power: Option<&str>) {
     // #541: the bound is checked here, after the allow-list and before the door
-    // #539: the probe record is written here
     tracing::info!(
         origin = %admitted.origin,
         originator = %admitted.originator,
-        what,
+        door,
+        power,
         "browser gate: open, no row (W15)"
     );
+    probes.note(&admitted.originator, door, power);
 }
 
 /// A row function's error at a door: the store busy by its type, a revoked
@@ -457,7 +480,7 @@ impl Asker {
             let power = match ask.power {
                 Ok(power) => power,
                 Err(Refused::LevelZero) => {
-                    open(admitted, call);
+                    open(admitted, &self.probes, call, ask.level_zero.as_deref());
                     continue;
                 }
                 Err(Refused::AdminOnly(text)) => {

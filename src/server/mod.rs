@@ -10,6 +10,7 @@ pub mod owner_door;
 mod page_bounds;
 pub mod post_word;
 pub mod powers;
+pub mod probes;
 pub mod types;
 
 use anyhow::Result;
@@ -64,6 +65,9 @@ pub struct ServerConfig {
     /// The served doors' held calls (#414 L5b, `powers::Held`): their open
     /// rows, the cap's count and the shutdown, shared by every clone.
     pub held: powers::Held,
+    /// The probe record's queue (#539, `probes::Probes`): started on the
+    /// served wallet by [`make_router`], shared by every clone.
+    pub probes: probes::Probes,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
     /// Network the served wallet is on. Drives post-broadcast verification
@@ -92,6 +96,7 @@ impl Default for ServerConfig {
             auth_token: None,
             allowed_origins: AllowedOrigins::default(),
             held: powers::Held::default(),
+            probes: probes::Probes::default(),
             tls: None,
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
@@ -125,6 +130,7 @@ impl ServerConfig {
             auth_token: server.auth_token.as_ref().map(owned),
             allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned())?,
             held: powers::Held::default(),
+            probes: probes::Probes::default(),
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -272,6 +278,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let cors = origin_gate::cors();
     let allowed = config.allowed_origins.clone();
     let held = config.held.clone();
+    let probes = config.probes.started(&wallet);
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -402,6 +409,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .fallback_service(doors)
         .layer(axum::Extension(allowed))
         .layer(axum::Extension(held))
+        .layer(axum::Extension(probes))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -780,3 +788,6 @@ mod retry_pause_tests;
 
 #[cfg(test)]
 mod powers_tests;
+
+#[cfg(test)]
+mod probes_tests;
