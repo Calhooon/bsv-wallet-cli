@@ -16,7 +16,10 @@
  *      leaves the record;
  *   5. busy.example signs under 40 level-0 protocols: its rows stop at the
  *      cap (32), the ones seen longest ago folded into one remainder row
- *      (door `*`, count 9), every answer counted.
+ *      (door `*`, count 9), every answer counted. The level-0 powers answer
+ *      a site 60 a minute with a burst of 10 (#541): a call past it is
+ *      answered 429 with Retry-After and sent again after the wait, and a
+ *      refused call is never counted.
  * Cost: 0 sats.
  */
 const g = require('../lib/browser-gate');
@@ -97,8 +100,13 @@ module.exports = {
       // 5.
       const calls = 40;
       for (let i = 1; i <= calls; i++) {
-        const r = await g.call(wallet, 'POST', 'createSignature',
+        const sign = () => g.call(wallet, 'POST', 'createSignature',
           { origin: BUSY, body: { ...g.ARGS.createSignature, protocolID: [0, `probe number ${i}`] } });
+        let r = await sign();
+        for (let tries = 0; r.status === 429 && tries < 5; tries++) {
+          await g.sleep(Number(r.retryAfter) * 1000 + 50);
+          r = await sign();
+        }
         assert(r.status === 200, `5: level-0 call ${i} answered (got ${r.status})`);
       }
       const busy = await untilCounted(wallet, 'busy.example', calls);
