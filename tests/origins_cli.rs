@@ -6,13 +6,14 @@
 //! of each kind seeded through the store's module and answered from the
 //! CLI; a key off its canonical form refused naming it; the refused
 //! originator forms with their rules; the `--json` keys in section (4)'s
-//! order; a revoke of no live row exits 1 naming the originator and the
+//! order with the probe record (#539) in its own section, which a revoke
+//! leaves; a revoke of no live row exits 1 naming the originator and the
 //! power. No door is called and nothing is broadcast.
 
 use std::process::{Command, Output};
 
 use bsv_wallet_cli::config::originator::{NAME, PARTS, SCHEME};
-use bsv_wallet_cli::store::origin_grants::{self as grants, Asking, Power};
+use bsv_wallet_cli::store::origin_grants::{self as grants, Asking, Power, Probe};
 use bsv_wallet_toolbox::StorageSqlx;
 use tempfile::TempDir;
 
@@ -85,10 +86,7 @@ fn refused(dir: &TempDir, args: &[&str]) -> String {
 /// Pending rows written through the store's module, as a held call
 /// writes them: their ids in order.
 async fn seed(dir: &TempDir, asks: &[Asking<'_>]) -> Vec<i64> {
-    let path = dir.path().join("wallet.db");
-    let storage = StorageSqlx::open(path.to_str().expect("utf-8 path"))
-        .await
-        .expect("open the store");
+    let storage = opened(dir).await;
     let mut ids = Vec::new();
     for asking in asks {
         let pending = grants::open_or_join(&storage, asking, 1_793_577_600)
@@ -97,6 +95,28 @@ async fn seed(dir: &TempDir, asks: &[Asking<'_>]) -> Vec<i64> {
         ids.push(pending.row.pending_id);
     }
     ids
+}
+
+async fn opened(dir: &TempDir) -> StorageSqlx {
+    let path = dir.path().join("wallet.db");
+    StorageSqlx::open(path.to_str().expect("utf-8 path"))
+        .await
+        .expect("open the store")
+}
+
+/// The probe record's rows, as the gate's writer writes them: `getVersion`
+/// twice from `new.example`.
+async fn probed(dir: &TempDir) {
+    let probe = |at| Probe {
+        originator: "new.example:5173".to_string(),
+        door: "getVersion".to_string(),
+        power: None,
+        at,
+    };
+    let seen = [probe(1_793_577_600), probe(1_793_577_660)];
+    grants::probes::record(&opened(dir).await, &seen)
+        .await
+        .expect("the record");
 }
 
 /// The generator's public key, a verifier; a certificate type.
@@ -451,6 +471,19 @@ fn section_four_keys() -> Vec<String> {
     keys.extend(grant.iter().map(ToString::to_string));
     keys.push("pending".to_string());
     keys.extend(pending.iter().map(ToString::to_string));
+    keys.push("probes".to_string());
+    keys.extend(
+        [
+            "originator",
+            "rawOriginator",
+            "door",
+            "power",
+            "count",
+            "firstSeen",
+            "lastSeen",
+        ]
+        .map(ToString::to_string),
+    );
     keys
 }
 
@@ -485,6 +518,15 @@ fn section_four_row(granted_at: i64, id: i64) -> serde_json::Value {
             "firstSeen": 1_793_577_600,
             "answeredAt": null,
             "answer": null
+        }],
+        "probes": [{
+            "originator": "new.example",
+            "rawOriginator": "new.example:5173",
+            "door": "getVersion",
+            "power": null,
+            "count": 2,
+            "firstSeen": 1_793_577_600,
+            "lastSeen": 1_793_577_660
         }]
     })
 }
@@ -508,6 +550,7 @@ async fn the_json_shape_is_section_fours() {
         renewal: true,
     };
     let ids = seed(&dir, &[renewal]).await;
+    probed(&dir).await;
     let out = said(&dir, &["--json", "origins"]);
     assert_eq!(keys_in_order(&out), section_four_keys(), "{out}");
 
@@ -519,4 +562,9 @@ async fn the_json_shape_is_section_fours() {
     let v: serde_json::Value = serde_json::from_str(&revoked).expect("JSON");
     assert!(v["grants"][0]["revokedAt"].is_i64(), "{revoked}");
     assert_eq!(v["pending"], serde_json::json!([]));
+    assert!(v.get("probes").is_none(), "an answer carries no record");
+    let probe = "probe  new.example  getVersion  2 times  first 2026-11-02T00:00Z  last \
+                 2026-11-02T00:01Z";
+    let lines = said(&dir, &["origins"]);
+    assert_eq!(lines.lines().last(), Some(probe), "the revoke left it");
 }

@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use bsv_wallet_cli::store::origin_grants::{
-    self as grants, expired, month_of, when, Answer, GrantRow, Granting, Kind, PendingRow, Power,
-    Reach, Refused, Reply, Shown,
+    self as grants, expired, month_of, probes, when, Answer, GrantRow, Granting, Kind, PendingRow,
+    Power, ProbeRow, Reach, Refused, Reply, Shown,
 };
 
 use crate::context::WalletContext;
@@ -249,11 +249,35 @@ fn print(shown: &Shown, json: bool, now: i64) -> Result<()> {
     for (p, asked) in &shown.pending {
         println!("{}", pending_line(p, asked));
     }
+    for p in shown.probes.iter().flatten() {
+        println!("{}", probe_line(p));
+    }
     Ok(())
 }
 
-/// `bsv-wallet origins [--all]`: every grant row and the open pending
-/// rows (`--all` adds the answered ones).
+/// One probe row's line (#539): the door, the level-0 power when one was
+/// named, the count and the first and last times; the remainder row
+/// names the rows it folded.
+fn probe_line(p: &ProbeRow) -> String {
+    let door = if p.door == probes::REMAINDER {
+        "* (older rows folded)".to_string()
+    } else {
+        p.power
+            .as_ref()
+            .map_or_else(|| p.door.clone(), |power| format!("{}  {power}", p.door))
+    };
+    let times = if p.count == 1 { "time" } else { "times" };
+    format!(
+        "probe  {}  {door}  {} {times}  first {}  last {}",
+        p.originator,
+        p.count,
+        when(p.first_seen),
+        when(p.last_seen)
+    )
+}
+
+/// `bsv-wallet origins [--all]`: every grant row, the open pending rows
+/// (`--all` adds the answered ones) and the probe record (#539).
 ///
 /// # Errors
 ///
@@ -262,7 +286,7 @@ pub async fn list(ctx: &WalletContext, all: bool) -> Result<()> {
     let storage = ctx.wallet.storage();
     let now = now()?;
     let rows = grants::listing(storage, all).await?;
-    let shown = Shown::of(storage, rows.grants, rows.pending, now).await?;
+    let shown = Shown::listed(storage, rows, now).await?;
     print(&shown, ctx.json_output, now)
 }
 
