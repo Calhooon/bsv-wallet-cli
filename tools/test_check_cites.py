@@ -18,10 +18,12 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 TOOL = Path(__file__).with_name("check-cites")
+sys.path.insert(0, str(TOOL.resolve().parent))
+import git_template  # noqa: E402
 SOURCE = "pub fn alpha() {}\n\npub fn beta() {}\n"
 
 
-class PinnedCitations(unittest.TestCase):
+class PinnedCitations(git_template.PlantedCopies, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """The repository (a pin, then HEAD moved past it), built once and copied
@@ -33,6 +35,7 @@ class PinnedCitations(unittest.TestCase):
         (base.root / "tools").mkdir()
         shutil.copy(TOOL, base.root / "tools/check-cites")
         base.git("init", "-q", "--template=")  # no sample hooks to copy per case
+        git_template.quiet(base.root)  # #538: no detached maintenance in the template
         base.write("src/lib.rs", SOURCE)
         base.write("src/main.rs", SOURCE)
         base.write("src/name.rs", SOURCE)
@@ -51,8 +54,12 @@ class PinnedCitations(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix="check-cites-case.", dir=os.environ.get("TMPDIR"))
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        shutil.copytree(self.template.root, self.root, symlinks=True, dirs_exist_ok=True)
+        git_template.copy(self.template.root, self.root)  # #538: never git's transient files
         self.pin, self.head = self.template.pin, self.template.head
+
+    def template_root(self):
+        """#538's plant (git_template.PlantedCopies) copies this repository."""
+        return str(self.template.root)
 
     def git(self, *args):
         return subprocess.run(["git", "-c", "user.name=Check Cites", "-c",
@@ -370,7 +377,6 @@ class PinnedCitations(unittest.TestCase):
         result = self.run_tool(self.document(), "docs/missing.md")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("docs/missing.md:1: cannot read document", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
