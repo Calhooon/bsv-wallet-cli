@@ -279,7 +279,7 @@ async fn table_schema(
     Path(name): Path<String>,
 ) -> Json<Vec<ColumnInfo>> {
     let safe_name = name.replace('"', "");
-    let rows = sqlx::query(&format!("PRAGMA table_info(\"{}\")", safe_name))
+    let rows = sqlx::query(&format!("PRAGMA table_info(\"{safe_name}\")"))
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
@@ -324,48 +324,44 @@ struct WalletStats {
 }
 
 /// Common WHERE clause for spendable outputs with valid transaction status.
-const SPENDABLE_WHERE: &str = r#"
+const SPENDABLE_WHERE: &str = r"
     o.spendable = 1
     AND t.status IN ('completed', 'unproven', 'nosend', 'sending')
-"#;
+";
 
 async fn stats(State(state): State<Arc<AppState>>) -> Json<WalletStats> {
     // "default" basket balance — matches SDK's list_outputs(basket: "default")
     let balance_sql = format!(
-        r#"SELECT COALESCE(SUM(o.satoshis), 0) as v
+        r"SELECT COALESCE(SUM(o.satoshis), 0) as v
         FROM outputs o
         JOIN transactions t ON o.transaction_id = t.transaction_id
         JOIN output_baskets b ON o.basket_id = b.basket_id
-        WHERE {} AND b.name = 'default' AND b.is_deleted = 0"#,
-        SPENDABLE_WHERE
+        WHERE {SPENDABLE_WHERE} AND b.name = 'default' AND b.is_deleted = 0"
     );
     // Total across ALL baskets (including basketless outputs)
     let total_sql = format!(
-        r#"SELECT COALESCE(SUM(o.satoshis), 0) as v
+        r"SELECT COALESCE(SUM(o.satoshis), 0) as v
         FROM outputs o
         JOIN transactions t ON o.transaction_id = t.transaction_id
-        WHERE {}"#,
-        SPENDABLE_WHERE
+        WHERE {SPENDABLE_WHERE}"
     );
     let total_utxo_sql = format!(
-        r#"SELECT COUNT(*) as v
+        r"SELECT COUNT(*) as v
         FROM outputs o
         JOIN transactions t ON o.transaction_id = t.transaction_id
-        WHERE {}"#,
-        SPENDABLE_WHERE
+        WHERE {SPENDABLE_WHERE}"
     );
     // Per-basket breakdown
     let basket_sql = format!(
-        r#"SELECT COALESCE(b.name, '(no basket)') as name,
+        r"SELECT COALESCE(b.name, '(no basket)') as name,
                   COALESCE(SUM(o.satoshis), 0) as sats,
                   COUNT(*) as utxos
         FROM outputs o
         JOIN transactions t ON o.transaction_id = t.transaction_id
         LEFT JOIN output_baskets b ON o.basket_id = b.basket_id
-        WHERE {}
+        WHERE {SPENDABLE_WHERE}
         GROUP BY b.name
-        ORDER BY sats DESC"#,
-        SPENDABLE_WHERE
+        ORDER BY sats DESC"
     );
 
     let balance = query_i64(&state.pool, &balance_sql).await;
@@ -519,7 +515,7 @@ fn sqlite_value_to_json(
 }
 
 async fn count_table(pool: &SqlitePool, table: &str) -> i64 {
-    query_i64(pool, &format!("SELECT COUNT(*) as v FROM \"{}\"", table)).await
+    query_i64(pool, &format!("SELECT COUNT(*) as v FROM \"{table}\"")).await
 }
 
 async fn count_filtered(pool: &SqlitePool, table: &str, filter: &str) -> i64 {
@@ -550,7 +546,7 @@ async fn build_filter_where(pool: &SqlitePool, table: &str, filter: &str) -> Str
 }
 
 async fn get_column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
-    sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+    sqlx::query(&format!("PRAGMA table_info(\"{table}\")"))
         .fetch_all(pool)
         .await
         .unwrap_or_default()

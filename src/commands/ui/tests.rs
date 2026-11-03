@@ -5,6 +5,7 @@
 use super::*;
 use axum::body::Body;
 use bsv_wallet_cli::store::origin_grants::{self as grants, Asking, Granting, Scope, Source};
+use std::fmt::Write as _;
 use tower::ServiceExt;
 
 fn headers(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
@@ -103,13 +104,15 @@ fn call(method: &str, path: &str, origin: Option<&str>, body: &serde_json::Value
         .unwrap()
 }
 
+/// The router's answer to `request`: its status and its JSON (`null`
+/// when the body is none).
 async fn answered(app: &Router, request: Request) -> (StatusCode, serde_json::Value) {
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+    let (parts, body) = app.clone().oneshot(request).await.unwrap().into_parts();
+    let read = axum::body::to_bytes(body, 1 << 20).await.unwrap();
+    (
+        parts.status,
+        serde_json::from_slice(&read).unwrap_or_default(),
+    )
 }
 
 /// The store's origin rows, as the module lists them.
@@ -119,9 +122,7 @@ async fn rows(state: &AppState) -> String {
 
 /// The L4 exit test: an origin `ALLOWED_ORIGINS` lists, and an origin
 /// the store grants, cannot answer or revoke (403 naming the rule, the
-/// rows unchanged); the read route admits a listed origin as before; the
-/// inspector's own page answers and revokes, and a second answer is told
-/// the row was already answered.
+/// rows unchanged).
 #[tokio::test]
 async fn a_listed_or_granted_origin_cannot_answer_or_revoke() {
     let (_dir, state, app, id) = inspector().await;
@@ -167,71 +168,64 @@ async fn a_listed_or_granted_origin_cannot_answer_or_revoke() {
     let own = headers(&[(header::HOST, "localhost:9321"), (header::ORIGIN, OWN)]);
     assert_eq!(origins::write_refusal(&own), None);
     assert_eq!(rows(&state).await, before, "a refused write wrote nothing");
+}
 
-    // The read route: the inspector's admission, a listed origin's read
-    // admitted, an unlisted one refused.
-    let (status, listed) = answered(&app, call("GET", "/api/origins", None, &json_null())).await;
+/// The read route keeps the inspector's admission (a listed origin's
+/// read admitted, an unlisted one refused); the inspector's own page
+/// answers and revokes, and a second answer is told the row was already
+/// answered.
+#[tokio::test]
+async fn the_inspectors_own_page_answers_and_revokes() {
+    let (_dir, _state, app, id) = inspector().await;
+    let read = |origin| answered(&app, call("GET", "/api/origins", origin, &json_null()));
+    let (status, listed) = read(None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed["pending"][0]["rawOriginator"], "new.example:5173");
     assert_eq!(listed["grants"][0]["originator"], "granted.example");
-    let read = call(
-        "GET",
-        "/api/origins",
-        Some("https://app.example"),
-        &json_null(),
-    );
-    assert_eq!(answered(&app, read).await.0, StatusCode::OK);
-    let read = call(
-        "GET",
-        "/api/origins",
-        Some("http://evil.example"),
-        &json_null(),
-    );
-    assert_eq!(answered(&app, read).await.0, StatusCode::FORBIDDEN);
-
-    // The own page answers; the second answer loses and is told.
-    let (status, body) = answered(
-        &app,
-        call("POST", "/api/origins/answer", Some(OWN), &answer),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["pending"][0]["answer"], "grant");
-    assert_eq!(body["grants"][0]["originator"], "new.example");
-    assert_eq!(body["grants"][0]["source"], "owner");
-    let deny = serde_json::json!({"pendingId": id, "answer": "deny"});
-    let (status, body) =
-        answered(&app, call("POST", "/api/origins/answer", Some(OWN), &deny)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("already answered"),
-        "{body}"
+    assert_eq!(read(Some("https://app.example")).await.0, StatusCode::OK);
+    assert_eq!(
+        read(Some("http://evil.example")).await.0,
+        StatusCode::FORBIDDEN
     );
 
-    // The own page revokes; a second revoke names the originator.
-    let (status, body) = answered(
-        &app,
-        call("POST", "/api/origins/revoke", Some(OWN), &revoke),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["grants"][0]["revokedAt"].is_i64(), "{body}");
-    let (status, body) = answered(
-        &app,
-        call("POST", "/api/origins/revoke", Some(OWN), &revoke),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("granted.example"),
-        "{body}"
-    );
+    // Each step: the route, the body, the status, and a word the answer
+    // carries. The own page answers; the second answer loses and is told;
+    // it revokes; a second revoke names the originator.
+    let steps = [
+        (
+            "answer",
+            serde_json::json!({"pendingId": id, "answer": "grant"}),
+            200,
+            "\"source\":\"owner\"",
+        ),
+        (
+            "answer",
+            serde_json::json!({"pendingId": id, "answer": "deny"}),
+            409,
+            "already answered",
+        ),
+        (
+            "revoke",
+            serde_json::json!({"originator": "granted.example"}),
+            200,
+            "\"revokedAt\":1",
+        ),
+        (
+            "revoke",
+            serde_json::json!({"originator": "granted.example"}),
+            409,
+            "granted.example holds no live grant row",
+        ),
+    ];
+    for (route, body, status, word) in steps {
+        let path = format!("/api/origins/{route}");
+        let (got, answer) = answered(&app, call("POST", &path, Some(OWN), &body)).await;
+        assert_eq!(got.as_u16(), status, "{route} {body}: {answer}");
+        assert!(
+            answer.to_string().contains(word),
+            "{route} {body}: {answer}"
+        );
+    }
 }
 
 fn json_null() -> serde_json::Value {
@@ -247,14 +241,14 @@ async fn dump(path: &str) -> String {
         .fetch_one(&reads)
         .await
         .unwrap();
-    out.push_str(&format!("user_version {version}\n"));
+    writeln!(out, "user_version {version}").unwrap();
     let master: Vec<(String, String, Option<String>)> =
         sqlx::query_as("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
             .fetch_all(&reads)
             .await
             .unwrap();
     for (kind, name, sql) in &master {
-        out.push_str(&format!("{kind} {name} {sql:?}\n"));
+        writeln!(out, "{kind} {name} {sql:?}").unwrap();
         if kind == "table" {
             let rows = sqlx::query(&format!("SELECT * FROM \"{name}\""))
                 .fetch_all(&reads)
@@ -266,7 +260,7 @@ async fn dump(path: &str) -> String {
                     .iter()
                     .map(|c| sqlite_value_to_json(row, c).to_string())
                     .collect();
-                out.push_str(&format!("  {}\n", cells.join(",")));
+                writeln!(out, "  {}", cells.join(",")).unwrap();
             }
         }
     }
