@@ -583,6 +583,7 @@ impl World {
         }
         // The wallet is opened (its opening writes made), then the lock.
         if name == "busy" || name == "busy-read" {
+            answer_busy_at_once(wallet.storage()).await;
             let lock = hold_write_lock(&storage_path(&keep), name == "busy-read").await;
             keep.push(Box::new(lock));
         }
@@ -750,6 +751,27 @@ const DOTFILE: &str = "unix-dotfile";
 /// Another connection to the store at `path`, holding its write lock
 /// (never closed: the lock is held for as long as it is kept); on the
 /// `dotfile` locking, its one lock.
+/// The store's connections, open and to come, with no busy wait: a call
+/// behind [`hold_write_lock`] answers SQLite's busy (code 5, `database is
+/// locked`) at once instead of after the store's 5,000 ms `busy_timeout`.
+/// The answer's bytes are the same; the wait was 27 of a replay's 30
+/// seconds, five fixtures at 5.4 s (#477). As `busy_read_wallet` in
+/// `src/test_support.rs`.
+async fn answer_busy_at_once(storage: &StorageSqlx) {
+    for pool in [storage.pool(), storage.writer()] {
+        let options = pool.connect_options().as_ref().clone();
+        pool.set_connect_options(options.busy_timeout(std::time::Duration::ZERO));
+        let mut idle = Vec::new();
+        while let Some(mut connection) = pool.try_acquire() {
+            sqlx::query("PRAGMA busy_timeout = 0")
+                .execute(&mut *connection)
+                .await
+                .unwrap();
+            idle.push(connection);
+        }
+    }
+}
+
 async fn hold_write_lock(path: &Path, dotfile: bool) -> sqlx::SqliteConnection {
     use sqlx::{ConnectOptions, Connection};
     let mut options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
