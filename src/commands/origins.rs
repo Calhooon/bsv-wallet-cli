@@ -65,8 +65,7 @@ impl Grant {
     /// `--amount`, an `--expires` that is not seconds or `never`.
     pub fn read(
         target: &str,
-        kind_word: Option<&str>,
-        key: Option<&str>,
+        (kind_word, key): (Option<&str>, Option<&str>),
         amount: Option<u64>,
         expires: Option<&str>,
         once: bool,
@@ -156,7 +155,7 @@ pub fn kind(word: &str) -> Result<Kind> {
 /// # Errors
 ///
 /// A word that is not a kind, or a key [`Power::parse`] refuses.
-pub fn reach(kind_word: Option<&str>, key: Option<&str>) -> Result<Reach> {
+pub fn reach((kind_word, key): (Option<&str>, Option<&str>)) -> Result<Reach> {
     let kind = kind_word.map(kind).transpose()?;
     Ok(Reach::named(kind, key)?)
 }

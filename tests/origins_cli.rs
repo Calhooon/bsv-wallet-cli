@@ -142,63 +142,64 @@ fn grant_args<'a>(
     args
 }
 
-#[test]
-fn a_power_of_each_kind_is_granted_listed_revoked_and_granted_again() {
+/// A wallet holding a grant of each kind to `app.example:8443`, and the
+/// line `origin-grant` printed for each.
+fn granted_each_kind() -> (TempDir, Vec<String>) {
     let dir = made();
     let mut lines = Vec::new();
     for (kind, key, flags) in every_kind() {
-        let granted = said(
-            &dir,
-            &grant_args("App.Example:8443", kind, key.as_deref(), &flags),
-        );
-        let head = format!(
-            "granted  app.example  {kind:<11}  {}  ",
-            key.clone().unwrap_or("[]".into())
-        );
+        let args = grant_args("App.Example:8443", kind, key.as_deref(), &flags);
+        let granted = said(&dir, &args);
+        let key = key.unwrap_or_else(|| "[]".into());
+        let head = format!("granted  app.example  {kind:<11}  {key}  ");
         assert!(granted.starts_with(&head), "{granted}");
         lines.push(granted);
     }
+    (dir, lines)
+}
+
+#[test]
+fn a_power_of_each_kind_is_granted_and_listed() {
+    let (dir, lines) = granted_each_kind();
     let listed = said(&dir, &["origins"]);
     assert_eq!(listed.lines().count(), 5, "{listed}");
     for line in &lines {
         assert!(listed.contains(line.trim_end()), "{line} in {listed}");
     }
-
-    // One power's row by its key; then a kind's; then every row.
     let todo = r#"["todo items"]"#;
-    let one = said(
-        &dir,
-        &[
-            "origin-revoke",
-            "app.example",
-            "--kind",
-            "basket",
-            "--key",
-            todo,
-        ],
-    );
+    let again = grant_args("app.example", "basket", Some(todo), &["--expires", "3600"]);
+    let again = said(&dir, &again);
     assert!(
-        one.starts_with(&format!("revoked  app.example  basket       {todo}  at ")),
-        "{one}"
+        again.starts_with("granted  app.example  basket       "),
+        "{again}"
     );
-    assert_eq!(one.lines().count(), 1, "{one}");
-    let none = refused(
-        &dir,
-        &[
-            "origin-revoke",
-            "app.example",
-            "--kind",
-            "basket",
-            "--key",
-            todo,
-        ],
+    assert!(!again.contains("expires never"), "{again}");
+    assert_eq!(
+        said(&dir, &["origins"]).lines().count(),
+        5,
+        "one row per power"
     );
-    assert!(
-        none.contains(&format!(
-            "app.example holds no live grant row for basket {todo}: nothing to revoke"
-        )),
-        "{none}"
-    );
+}
+
+#[test]
+fn a_revoke_reaches_one_power_a_kind_or_every_row() {
+    let (dir, _) = granted_each_kind();
+    let todo = r#"["todo items"]"#;
+    let one = [
+        "origin-revoke",
+        "app.example",
+        "--kind",
+        "basket",
+        "--key",
+        todo,
+    ];
+    let revoked = said(&dir, &one);
+    let head = format!("revoked  app.example  basket       {todo}  at ");
+    assert!(revoked.starts_with(&head), "{revoked}");
+    assert_eq!(revoked.lines().count(), 1, "{revoked}");
+    let none = refused(&dir, &one);
+    let why = format!("app.example holds no live grant row for basket {todo}: nothing to revoke");
+    assert!(none.contains(&why), "{none}");
     let protocols = said(
         &dir,
         &["origin-revoke", "app.example:9000", "--kind", "protocol"],
@@ -223,21 +224,9 @@ fn a_power_of_each_kind_is_granted_listed_revoked_and_granted_again() {
         "the certificate and spending: {rest}"
     );
     let none = refused(&dir, &["origin-revoke", "app.example"]);
-    assert!(
-        none.contains("app.example holds no live grant row: nothing to revoke"),
-        "{none}"
-    );
+    let why = "app.example holds no live grant row: nothing to revoke";
+    assert!(none.contains(why), "{none}");
     assert_eq!(said(&dir, &["origins", "--all"]).lines().count(), 5);
-
-    let again = said(
-        &dir,
-        &grant_args("app.example", "basket", Some(todo), &["--expires", "3600"]),
-    );
-    assert!(
-        again.starts_with("granted  app.example  basket       "),
-        "{again}"
-    );
-    assert!(!again.contains("expires never"), "{again}");
 }
 
 #[test]
@@ -294,9 +283,10 @@ fn a_key_off_its_rules_is_refused_by_name() {
     assert_eq!(said(&dir, &["origins"]), "");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
-    let dir = made();
+/// Three held calls' rows on `dir`'s wallet: a basket listing from
+/// `new.example:5173`, a protocol signing from `deny.example` and a spend
+/// of 2500 from `shop.example`; their ids.
+async fn three_pending(dir: &TempDir) -> Vec<i64> {
     let todo = Power::basket("todo items").expect("a basket");
     let deny = Power::protocol(false, 2, "todo list", None).expect("a protocol");
     let ask = |originator, power, usage, call| Asking {
@@ -313,15 +303,18 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
         amount: Some(2500),
         ..ask("shop.example", &Power::Spending, None, "/createAction")
     };
-    let ids = seed(
-        &dir,
-        &[
-            ask("new.example:5173", &todo, Some("listing"), "/listOutputs"),
-            ask("deny.example", &deny, Some("signing"), "/createSignature"),
-            spend,
-        ],
-    )
-    .await;
+    let asks = [
+        ask("new.example:5173", &todo, Some("listing"), "/listOutputs"),
+        ask("deny.example", &deny, Some("signing"), "/createSignature"),
+        spend,
+    ];
+    seed(dir, &asks).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
+    let dir = made();
+    let ids = three_pending(&dir).await;
     let listed = said(&dir, &["origins"]);
     let lines: Vec<&str> = listed.lines().collect();
     assert_eq!(lines.len(), 3, "{listed}");
@@ -454,6 +447,41 @@ fn section_four_keys() -> Vec<String> {
     keys
 }
 
+/// The `--json` listing of [`the_json_shape_is_section_fours`]'s grant row
+/// and its pending row `id`.
+fn section_four_row(granted_at: i64, id: i64) -> serde_json::Value {
+    let todo = r#"["todo items"]"#;
+    serde_json::json!({
+        "grants": [{
+            "originator": "app.example",
+            "rawOriginator": "app.example:8443",
+            "kind": "basket",
+            "key": todo,
+            "amount": null,
+            "spentThisMonth": null,
+            "grantedAt": granted_at,
+            "expiry": 0,
+            "revokedAt": null
+        }],
+        "pending": [{
+            "pendingId": id,
+            "originator": "new.example",
+            "rawOriginator": "new.example:5173",
+            "kind": "basket",
+            "key": todo,
+            "usage": "listing",
+            "asked": "list the basket \"todo items\"",
+            "call": "/listOutputs",
+            "reason": null,
+            "amount": null,
+            "renewal": true,
+            "firstSeen": 1_793_577_600,
+            "answeredAt": null,
+            "answer": null
+        }]
+    })
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_json_shape_is_section_fours() {
     let dir = made();
@@ -478,38 +506,7 @@ async fn the_json_shape_is_section_fours() {
 
     let v: serde_json::Value = serde_json::from_str(&out).expect("JSON");
     let granted_at = v["grants"][0]["grantedAt"].as_i64().expect("unix seconds");
-    assert_eq!(
-        v,
-        serde_json::json!({
-            "grants": [{
-                "originator": "app.example",
-                "rawOriginator": "app.example:8443",
-                "kind": "basket",
-                "key": todo,
-                "amount": null,
-                "spentThisMonth": null,
-                "grantedAt": granted_at,
-                "expiry": 0,
-                "revokedAt": null
-            }],
-            "pending": [{
-                "pendingId": ids[0],
-                "originator": "new.example",
-                "rawOriginator": "new.example:5173",
-                "kind": "basket",
-                "key": todo,
-                "usage": "listing",
-                "asked": "list the basket \"todo items\"",
-                "call": "/listOutputs",
-                "reason": null,
-                "amount": null,
-                "renewal": true,
-                "firstSeen": 1_793_577_600,
-                "answeredAt": null,
-                "answer": null
-            }]
-        })
-    );
+    assert_eq!(v, section_four_row(granted_at, ids[0]));
 
     let revoked = said(&dir, &["--json", "origin-revoke", "app.example"]);
     let v: serde_json::Value = serde_json::from_str(&revoked).expect("JSON");
