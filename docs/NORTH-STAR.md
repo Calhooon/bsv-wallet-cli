@@ -67,11 +67,11 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | arch rule A6 allowlist | 7 files, 12 sites | the rise of `src/server/probes.rs` recorded, #539: 6 to 7 files, 11 to 12 sites (2026-11-03) | `tests/arch_spawn_sites.rs` ALLOWED |
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |
-| mutation floor `src/broadcast_verify.rs` | 86 | 86.0 at f2976ef | `.github/workflows/nightly.yml` |
-| mutation floor `src/explorers.rs` | 82 | 100.0 at f2976ef | `.github/workflows/nightly.yml` |
-| mutation floor `src/server/handlers.rs` | 100 | 100.0 at f2976ef | `.github/workflows/nightly.yml` |
-| mutation floor `src/spend_gate.rs` | 90 | 90.8 at f2976ef | `.github/workflows/nightly.yml` |
-| mutation floor `src/tracker_host.rs` | 75 | 75.8 at f2976ef (6 equivalent) | `.github/workflows/nightly.yml` |
+| mutation floor `src/broadcast_verify.rs` | 86 | 86.0 at be4906a | `.github/workflows/nightly.yml` |
+| mutation floor `src/explorers.rs` | 82 | 100.0 at be4906a | `.github/workflows/nightly.yml` |
+| mutation floor `src/server/handlers.rs` | 100 | 100.0 at be4906a | `.github/workflows/nightly.yml` |
+| mutation floor `src/spend_gate.rs` | 90 | 91.2 at be4906a | `.github/workflows/nightly.yml` |
+| mutation floor `src/tracker_host.rs` | 75 | 97.6 at be4906a (6 equivalent) | `.github/workflows/nightly.yml` |
 | fuzz hours `beef_reader` | 0.2 | 2505352 executions, 589 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
 | fuzz hours `brc29_remittance` | 0.2 | 404211 executions, 361 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
 | fuzz hours `served_json` | 0.2 | 23107017 executions, 4001 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
