@@ -231,6 +231,7 @@ fn owner_notes() -> Vec<(String, String)> {
     .into_iter()
     .chain(switch_notes())
     .chain(probe_notes())
+    .chain(bound_notes())
     .collect()
 }
 
@@ -241,6 +242,15 @@ fn probe_notes() -> Vec<(String, String)> {
         ("211-probe.getVersion.again.json", "#539: the same call again: the same answer; its row's count is 2 (fixture 213)."),
         ("212-probe.createSignature.levelZero.json", "#539: the page's createSignature under the level-0 protocol [0, \"wire probe\"]: 200 with the signature (RFC 6979 under the fixed key) and the echo, as 205; counted under the power [false,0,\"wire probe\",\"\"]."),
         ("213-owner.origins.probes.json", "#539: GET /origins from the owner's side lists the probe record beside the grants and the pending rows: two rows of probe.test, createSignature with its level-0 power (count 1) and getVersion (count 2), keyed by the hostname with the name as given kept; firstSeen and lastSeen are the clock's (volatile keys). The world's one revoked row (195) and no pending row: a probe is never a grant."),
+    ]
+    .map(|(f, n)| (f.to_string(), n.to_string()))
+    .to_vec()
+}
+
+/// The open doors' bound's fixtures (#541), with their reasons.
+fn bound_notes() -> Vec<(String, String)> {
+    [
+        ("214-bound.isAuthenticated.presence.json", "#541, the open doors' bound: a page the seed does not list (http://bound.test) calls isAuthenticated once (the owner step's spent, answered 200) and again: a presence door answers a site once a minute (the served auth layer keeps no session), so the second is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 60 (the minute's rest rounded up) and the echo, retry-after exposed; no row, and the refused call is not counted in the probe record. The first fixture answering 429 ERR_RATE_LIMITED: a new code of APP_CODES."),
     ]
     .map(|(f, n)| (f.to_string(), n.to_string()))
     .to_vec()

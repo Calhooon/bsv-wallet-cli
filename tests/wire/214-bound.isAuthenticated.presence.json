@@ -1,0 +1,37 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "GET",
+    "path": "/isAuthenticated",
+    "headers": {
+      "origin": "http://bound.test"
+    }
+  },
+  "owner": {
+    "spent": {
+      "times": 1,
+      "call": {
+        "method": "GET",
+        "path": "/isAuthenticated",
+        "headers": {
+          "origin": "http://bound.test"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 429,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://bound.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "retry-after": "60",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_RATE_LIMITED",
+      "message": "Too many calls to /isAuthenticated from this site: a presence door answers once a minute per site; retry after 60 s."
+    }
+  }
+}
