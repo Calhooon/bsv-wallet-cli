@@ -59,7 +59,7 @@ const HOST_ROUTES: [&str; 9] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 15] = [
+pub(crate) const APP_CODES: [(u16, &str); 16] = [
     (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "ERROR"),
@@ -75,6 +75,7 @@ pub(crate) const APP_CODES: [(u16, &str); 15] = [
     (503, "HEADERS_UNAVAILABLE"),
     (429, "ERR_PERMISSION_PENDING_LIMIT"),
     (503, "WALLET_BRIDGE_UNAVAILABLE"),
+    (429, "ERR_RATE_LIMITED"),
 ];
 
 /// The router's own codes (`src/server/mod.rs`), by status; each must be

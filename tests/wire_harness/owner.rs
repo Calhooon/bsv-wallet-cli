@@ -8,6 +8,9 @@
 //!   {"originator", "kind"?, "key"?}}`; an `expiry` of 1 is long past);
 //! - `holding`: calls sent first and held, their answers not recorded (the
 //!   cap's fixture); each is denied once the request is answered;
+//! - `spent`: a call sent `times` times first, each answered 200 and not
+//!   recorded (the open doors' bound's fixtures, #541: the bound's
+//!   allowance spent, so the request is the call past it);
 //! - `after_ms` and `answer`: once the request's row is open, after that
 //!   many milliseconds, every open row answered `grant`, `once` or `deny`,
 //!   or the server shut down (`shutdown`).
@@ -35,9 +38,19 @@ pub(crate) struct Owner {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) holding: Vec<Req>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) spent: Option<Spent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) answer: Option<String>,
+}
+
+/// A call sent `times` times before the request, each answered 200.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Spent {
+    pub(crate) times: u32,
+    pub(crate) call: Req,
 }
 
 /// A row the owner writes before the request.
@@ -145,6 +158,23 @@ impl Owner {
         }
     }
 
+    /// The spent calls sent first, one after another, each answered 200.
+    pub(crate) async fn spend(&self, router: &Router) {
+        let Some(spent) = &self.spent else {
+            return;
+        };
+        for n in 0..spent.times {
+            let answer = router.clone().oneshot(spent.call.to_http()).await.unwrap();
+            assert_eq!(
+                answer.status().as_u16(),
+                200,
+                "the owner's step: spent call {n} of {} {} was not answered 200",
+                spent.times,
+                spent.call.path
+            );
+        }
+    }
+
     /// The held calls sent first: each held before the request is sent.
     pub(crate) async fn hold(
         &self,
@@ -216,6 +246,7 @@ impl World {
         };
         self.probes.settled().await;
         owner.before(&self.wallet).await;
+        owner.spend(&self.router).await;
         let calls = owner.hold(&self.router, &self.held).await;
         let (served, ()) = tokio::join!(
             NORMALIZER.serve(&self.router, req),
