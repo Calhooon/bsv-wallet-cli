@@ -24,25 +24,8 @@
  *      the inspector, and it answers 200.
  * Cost: 0 sats.
  */
-const { spawn } = require('child_process');
 const g = require('../lib/browser-gate');
 const { McpClient } = require('../lib/mcp');
-const { BSV } = require('../lib/setup');
-
-/** The inspector on wallet D's store, on its own port, until stopped. */
-async function inspector(wallet) {
-  const proc = spawn(BSV, ['--db', 'wallet.db', 'ui', '--ui-port', String(g.D_UI_PORT)], {
-    cwd: wallet.dir, stdio: ['ignore', 'ignore', 'ignore'], detached: false,
-  });
-  for (let i = 0; i < 40; i++) {
-    try {
-      if ((await fetch(`http://localhost:${g.D_UI_PORT}/api/origins`)).ok) return proc;
-    } catch { /* not listening yet */ }
-    await g.sleep(250);
-  }
-  proc.kill('SIGTERM');
-  throw new Error(`the inspector on :${g.D_UI_PORT} did not answer`);
-}
 
 module.exports = {
   name: '2026-11-01-wallet-browser-gate-new-origin',
@@ -63,7 +46,7 @@ module.exports = {
       assert(still[0].pendingId === row.pendingId, '2: the second call joins the one row');
       // 3. The MCP and the inspector read the row; the owner grants it through the MCP.
       const mcp = new McpClient(wallet.port);
-      const ui = await inspector(wallet);
+      const ui = await g.inspector(wallet);
       try {
         await mcp.start();
         await mcp.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'e2e-test', version: '1.0' } });
