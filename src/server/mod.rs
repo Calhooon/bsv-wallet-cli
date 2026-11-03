@@ -6,6 +6,7 @@ pub mod error;
 pub mod handlers;
 mod host_reads;
 pub mod origin_gate;
+pub mod owner_door;
 mod page_bounds;
 pub mod post_word;
 pub mod types;
@@ -258,7 +259,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     // environment.
     let gate = crate::spend_gate::GateOptions::from_config(&config.settings);
 
-    Router::new()
+    let doors = Router::new()
         // Status endpoints accept BOTH GET and POST: @bsv/sdk's HTTPWalletJSON substrate
         // POSTs every method (incl. these), while curl/CLI clients GET them. Supporting
         // both makes the server wire-compatible with browser WalletClient connections.
@@ -362,6 +363,16 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
         .layer(middleware::from_fn(origin_gate::preflight))
+        .with_state(wallet.clone());
+
+    // The owner's routes (#414) take their own paths before the doors,
+    // behind the owner's admission and the bearer, never the page gate,
+    // the CORS layer or the preflight's gate; every other path is the
+    // doors' as before. The extensions, the trace and the body cap below
+    // serve both.
+    owner_door::routes()
+        .with_state(wallet)
+        .fallback_service(doors)
         .layer(axum::Extension(allowed))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
@@ -370,7 +381,6 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .layer(axum::Extension(owed))
         .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(BODY_CAP))
-        .with_state(wallet)
 }
 
 /// `POST /arc-callback` — ARC/Arcade status webhook receiving push status
@@ -766,3 +776,6 @@ mod lenient_json_tests;
 
 #[cfg(test)]
 mod bind_guard_tests;
+
+#[cfg(test)]
+mod owner_door_tests;
