@@ -294,15 +294,18 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         // PERMISSION AUDIT (not BRC-100): what a wallet with a human behind it
         // would have prompted for. See `audit.rs` — this daemon grants everything
         // silently, which is what makes it headless AND blind.
-        .route("/permission-audit", get(permission_audit))
-        .route("/permission-audit/reset", post(permission_audit_reset))
+        .route("/permission-audit", get(host_reads::permission_audit))
+        .route(
+            "/permission-audit/reset",
+            post(host_reads::permission_audit_reset),
+        )
         // CHAIN FEED (not BRC-100): the daemon's chain-event feed status,
         // its stored cursor and, when it stopped, the fault it stopped on.
-        .route("/chain-feed", get(chain_feed_status))
+        .route("/chain-feed", get(host_reads::chain_feed_status))
         // THE TRACKER'S WORD (not BRC-100): one transaction's stored word,
         // its height, its pending re-ask and, for `mined`, the stored
         // proof's root and height. Behind the same auth as `/chain-feed`.
-        .route("/tx/{txid}", get(tx_word))
+        .route("/tx/{txid}", get(host_reads::tx_word))
         .route("/createSignature", post(handlers::create_signature))
         // The two doors that carry a caller's BEEF (`inputBEEF`, `tx`): no
         // body cap, a valid BEEF is never refused for its size (see
@@ -748,23 +751,6 @@ async fn shutdown_signal(fault: tokio::sync::oneshot::Sender<std::io::Error>, he
     held.shut_down();
 }
 
-/// GET /permission-audit — every permissioned request since start or reset.
-async fn permission_audit() -> Json<serde_json::Value> {
-    let entries = audit::snapshot();
-    Json(json!({ "count": entries.len(), "entries": entries }))
-}
-
-/// GET /chain-feed — the feed's stored status and cursor (`chain_feed`).
-/// `{"status": null}` where no feed ran (`serve`, or `CHAINTRACKS_URL=off`).
-async fn chain_feed_status(
-    axum::extract::State(wallet): axum::extract::State<WalletState>,
-) -> Response {
-    host_reads::answer_chain_feed(&host_reads::StoreReads {
-        storage: wallet.storage(),
-    })
-    .await
-}
-
 /// Host-route store faults keep their code unless the store is busy by
 /// type (#203, #227). The position tests feed a real busy error at each read
 /// and require 503 with the shared body and retry header. Helper tests
@@ -778,35 +764,6 @@ fn host_route_fault(e: &anyhow::Error, code: &str) -> Response {
         Json(json!({ "code": code, "message": e.to_string() })),
     )
         .into_response()
-}
-
-/// GET /tx/{txid} — the tracker's stored word for one transaction
-/// (`tracker_host::stored_word`): `{txid, word, height, reask, evidence}`.
-/// `evidence` is, for a `mined` word, the stored proof's root and height
-/// (the toolbox's `proven_txs` row the spend gate reads), else `null`. A
-/// `stale` word adds `tier`, the word its hints alone give (`announced`,
-/// `seen`: the status before its proof, read as "confirming"), and its
-/// `reask` carries the re-ask the reorg left (`reorg@<forkHeight>`). Ruling 7b (b) of 2026-10-20 20:1xZ
-/// (bsv-stack-lean `docs/DECISIONS-2026-10-19.md` section 8c). A view for
-/// a person or an agent; nothing is decided from it. 404 when the tracker
-/// holds no word for the txid.
-async fn tx_word(
-    axum::extract::State(wallet): axum::extract::State<WalletState>,
-    axum::extract::Path(txid): axum::extract::Path<String>,
-) -> Response {
-    host_reads::answer_tx_word(
-        &host_reads::StoreReads {
-            storage: wallet.storage(),
-        },
-        &txid,
-    )
-    .await
-}
-
-/// POST /permission-audit/reset — call immediately before the flow you measure.
-async fn permission_audit_reset() -> Json<serde_json::Value> {
-    audit::reset();
-    Json(json!({ "ok": true }))
 }
 
 #[cfg(test)]

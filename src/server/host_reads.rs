@@ -145,5 +145,53 @@ pub(super) async fn answer_tx_word(reads: &impl TxReads, txid: &str) -> Response
     }
 }
 
+// The host routes' handlers (not BRC-100): the router serves them.
+
+/// GET /permission-audit — every permissioned request since start or reset.
+pub(super) async fn permission_audit() -> Json<serde_json::Value> {
+    let entries = super::audit::snapshot();
+    Json(json!({ "count": entries.len(), "entries": entries }))
+}
+
+/// GET /chain-feed — the feed's stored status and cursor (`chain_feed`).
+/// `{"status": null}` where no feed ran (`serve`, or `CHAINTRACKS_URL=off`).
+pub(super) async fn chain_feed_status(
+    axum::extract::State(wallet): axum::extract::State<super::handlers::WalletState>,
+) -> Response {
+    answer_chain_feed(&StoreReads {
+        storage: wallet.storage(),
+    })
+    .await
+}
+
+/// GET /tx/{txid} — the tracker's stored word for one transaction
+/// (`tracker_host::stored_word`): `{txid, word, height, reask, evidence}`.
+/// `evidence` is, for a `mined` word, the stored proof's root and height
+/// (the toolbox's `proven_txs` row the spend gate reads), else `null`. A
+/// `stale` word adds `tier`, the word its hints alone give (`announced`,
+/// `seen`: the status before its proof, read as "confirming"), and its
+/// `reask` carries the re-ask the reorg left (`reorg@<forkHeight>`). Ruling 7b (b) of 2026-10-20 20:1xZ
+/// (bsv-stack-lean `docs/DECISIONS-2026-10-19.md` section 8c). A view for
+/// a person or an agent; nothing is decided from it. 404 when the tracker
+/// holds no word for the txid.
+pub(super) async fn tx_word(
+    axum::extract::State(wallet): axum::extract::State<super::handlers::WalletState>,
+    axum::extract::Path(txid): axum::extract::Path<String>,
+) -> Response {
+    answer_tx_word(
+        &StoreReads {
+            storage: wallet.storage(),
+        },
+        &txid,
+    )
+    .await
+}
+
+/// POST /permission-audit/reset — call immediately before the flow you measure.
+pub(super) async fn permission_audit_reset() -> Json<serde_json::Value> {
+    super::audit::reset();
+    Json(json!({ "ok": true }))
+}
+
 #[cfg(test)]
 mod tests;
