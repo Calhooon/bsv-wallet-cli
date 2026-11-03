@@ -2,6 +2,7 @@
 """The mutation score per file from cargo-mutants' outcomes (#75).
 
 Usage: mutants_score.py [--sha <commit> [--survivors <dir>]] [--hermetic <dir>]
+                        [--equivalents <equivalents.json>]
                         <outcomes.json or a directory holding them>...
        mutants_score.py --shards-only --plan <plan.json> <directory>...
 
@@ -78,6 +79,21 @@ and max-parallel, #460), per file its counts and
 clause of each carried file (rule 1's exception, as tools/scoreboard reads it:
 a carried figure keeps its clause; a file the night measured has none until
 the owner gives one).
+
+With `--equivalents <file>` (#482; the Nightly passes
+docs/scoreboard/equivalents.json) a declared-equivalent mutant is scored as
+`equivalent`: the file names each by its exact cargo-mutants name, with its
+file, line, the PR that declared it, the reason and the cold review's verdict.
+A missed mutant of that name is neither caught nor missed: it leaves the
+score's denominator, and its count is the column `equivalent` beside caught
+and missed, and `equivalent` in the written record's entry. Before any figure
+is judged, exit 1 naming each entry, with its PR, that the night CAUGHT (by
+the cargo pass or the hermetic one: an equivalent a test kills is not
+equivalent, so the entry is wrong) and each entry whose file the night
+mutated and whose name is no mutant of the night (a stale entry: the line or
+the mutation moved, and the entry is rewritten with the review that confirms
+it again). A malformed file (an entry without its fields, a name that does
+not begin `<file>:<line>:`, a name twice) exits 1 naming the entry.
 """
 
 import datetime
@@ -233,6 +249,54 @@ def shard_refusal(plan, dirs):
     return lines
 
 
+EQUIVALENT_FIELDS = {"name": str, "file": str, "line": int, "pr": int, "reason": str, "review": str}
+
+
+def load_equivalents(path):
+    """docs/scoreboard/equivalents.json's entries by name (#482), and the
+    refusal's lines when the file is malformed (else [])."""
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        return {}, [f"**Malformed equivalents (#482)**: `{path}` does not read as JSON ({e}); nothing is scored."]
+    if not isinstance(doc, dict) or doc.get("schema") != 1 or not isinstance(doc.get("equivalents"), list):
+        return {}, [f"**Malformed equivalents (#482)**: `{path}` is not `{{\"schema\": 1, \"equivalents\": [..]}}`; nothing is scored."]
+    entries, faults = {}, []
+    for i, e in enumerate(doc["equivalents"]):
+        bad = [k for k, t in EQUIVALENT_FIELDS.items()
+               if not isinstance(e, dict) or not isinstance(e.get(k), t) or isinstance(e.get(k), bool) or e.get(k) in ("", 0)]
+        if bad:
+            faults.append(f"- entry {i}: {', '.join(f'`{k}`' for k in bad)} absent or empty")
+        elif not e["name"].startswith(f"{e['file']}:{e['line']}:"):
+            faults.append(f"- `{e['name']}`: does not begin with its file and line, `{e['file']}:{e['line']}:`")
+        elif e["name"] in entries:
+            faults.append(f"- `{e['name']}`: named twice")
+        else:
+            entries[e["name"]] = e
+    if faults:
+        return {}, [f"**Malformed equivalents (#482)**: `{path}`; nothing is scored:", ""] + faults
+    return entries, []
+
+
+def refuse_equivalents(equivalents, caught, judged_files, names):
+    """The refusal's lines for each entry the night caught and each stale entry, else [] (#482)."""
+    stale = sorted(n for n, e in equivalents.items() if e["file"] in judged_files and n not in names)
+    lines = []
+    if caught:
+        lines += [f"**A declared equivalent was caught (#482)**: {len(caught)} entr{'y' if len(caught) == 1 else 'ies'}"
+                  " of the equivalents the night killed; an equivalent a test kills is not equivalent, so the entry"
+                  " is wrong; nothing is scored:", ""]
+        lines += [f"- `{n}` (declared in PR {equivalents[n]['pr']})" for n in sorted(caught)]
+        lines += [""]
+    if stale:
+        lines += [f"**A stale equivalent (#482)**: {len(stale)} entr{'y' if len(stale) == 1 else 'ies'} of the"
+                  " equivalents name(s) no mutant of the night in a file it mutated (the line or the mutation"
+                  " moved); nothing is scored:", ""]
+        lines += [f"- `{n}` (declared in PR {equivalents[n]['pr']})" for n in stale]
+        lines += [""]
+    return lines
+
+
 def write(text):
     sys.stdout.write(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -250,7 +314,8 @@ def main(args):
     shards_only = args[:1] == ["--shards-only"]
     if shards_only:
         args = args[1:]
-    while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"], ["--plan"], ["--record"], ["--run"], ["--write"]):
+    while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"], ["--plan"], ["--record"], ["--run"], ["--write"],
+                       ["--equivalents"]):
         if len(args) < 2:
             print(f"{args[0]} needs a value", file=sys.stderr)
             return 1
@@ -280,6 +345,12 @@ def main(args):
         print("--plan and --record go together, and --write needs them", file=sys.stderr)
         return 1
     floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
+    equivalents = None
+    if "equivalents" in opts:
+        equivalents, refusal = load_equivalents(opts["equivalents"])
+        if refusal:
+            write("\n".join(refusal) + "\n")
+            return 1
     plan = record = None
     if "plan" in opts:
         plan = json.loads(Path(opts["plan"]).read_text())
@@ -318,17 +389,31 @@ def main(args):
     counts = defaultdict(lambda: defaultdict(int))
     by_hermetic = defaultdict(int)
     missed = defaultdict(list)
+    equivalent = defaultdict(list)
     unjudged = set()
+    names, caught_equivalents = set(), []
     for mutant, summary in mutant_outcomes(args):
+        names.add(mutant["name"])
         if hermetic is not None and summary in ("MissedMutant", "Timeout"):
             if mutant["name"] not in hermetic:
                 unjudged.add(mutant["name"])
             elif hermetic[mutant["name"]]:
                 summary = "CaughtMutant"
                 by_hermetic[mutant["file"]] += 1
+        if equivalents and mutant["name"] in equivalents:
+            if summary == "CaughtMutant":
+                caught_equivalents.append(mutant["name"])
+            elif summary == "MissedMutant":
+                summary = "Equivalent"
+                equivalent[mutant["file"]].append(mutant["name"])
         counts[mutant["file"]][summary] += 1
         if summary == "MissedMutant":
             missed[mutant["file"]].append(mutant["name"])
+    if equivalents:
+        refusal = refuse_equivalents(equivalents, caught_equivalents, set(counts), names)
+        if refusal:
+            write("\n".join(refusal))
+            return 1
 
     lines = ["## Mutation score per file", ""]
     carried = {}
@@ -351,17 +436,22 @@ def main(args):
             "on the cargo pass's survivors; `caught` counts both, `by e2e_hermetic` the second's.",
             "",
         ]
+    eq = equivalents is not None
+    if eq:
+        lines += ["A declared equivalent (docs/scoreboard/equivalents.json, #482) is neither caught nor missed:",
+                  "`equivalent` counts them, and the score's denominator excludes them.", ""]
     lines += [
-        "| file | caught | timeout | missed | unviable | score | floor | |"
+        "| file | caught | timeout | missed | " + ("equivalent | " if eq else "") + "unviable | score | floor | |"
         + (" by e2e_hermetic |" if hermetic is not None else ""),
-        "|---|---:|---:|---:|---:|---:|---:|---|" + ("---:|" if hermetic is not None else ""),
+        "|---|---:|---:|---:|" + ("---:|" if eq else "") + "---:|---:|---:|---|" + ("---:|" if hermetic is not None else ""),
     ]
     failed = False
     for file in sorted(set(counts) | set(floors)):
         if file in carried:
             e = carried[file]
             lines.append(
-                f"| `{file}` | {e['caught']} | {e['timeout']} | {e['missed']} | {e['unviable']} | {e['score']:.1f} "
+                f"| `{file}` | {e['caught']} | {e['timeout']} | {e['missed']} | "
+                + (f"{e.get('equivalent', 0)} | " if eq else "") + f"{e['unviable']} | {e['score']:.1f} "
                 f"| {floors.get(file, DEFAULT_FLOOR):g} | carried from run {e.get('run', record.get('run')).rsplit('/', 1)[-1]} "
                 f"at `{e.get('sha', record.get('commit'))[:7]}` |" + (" |" if hermetic is not None else ""))
             continue
@@ -379,13 +469,19 @@ def main(args):
             mark = "below the floor" if value < floor else "ok"
             failed |= value < floor
         lines.append(
-            f"| `{file}` | {caught} | {timeout} | {miss} | {unviable} | {score} | {floor:g} | {mark} |"
+            f"| `{file}` | {caught} | {timeout} | {miss} | " + (f"{c.get('Equivalent', 0)} | " if eq else "")
+            + f"{unviable} | {score} | {floor:g} | {mark} |"
             + (f" {by_hermetic.get(file, 0)} |" if hermetic is not None else "")
         )
     for file in sorted(missed):
         names = sorted(missed[file])
         lines += ["", f"<details><summary>{len(names)} missed in <code>{file}</code></summary>", ""]
         lines += [f"- `{name}`" for name in names]
+        lines += ["", "</details>"]
+    for file in sorted(equivalent):
+        names_eq = sorted(equivalent[file])
+        lines += ["", f"<details><summary>{len(names_eq)} equivalent in <code>{file}</code></summary>", ""]
+        lines += [f"- `{name}` (PR {equivalents[name]['pr']})" for name in names_eq]
         lines += ["", "</details>"]
     if unjudged:
         failed = True
@@ -394,28 +490,31 @@ def main(args):
     write("\n".join(lines) + "\n")
     if "write" in opts:
         night = {f: counts.get(f, {}) for f in plan.get("files", [])}
-        out_record = night_record(plan, record, floors, night, carried, dispatch, opts.get("run"))
+        out_record = night_record(plan, record, floors, night, carried, dispatch, opts.get("run"), eq)
         Path(opts["write"]).write_text(json.dumps(out_record, indent=2) + "\n")
         print(f"wrote {opts['write']}")
     return 1 if failed else 0
 
 
-def night_record(plan, record, floors, night, carried, commit, run):
-    """The night's record, docs/scoreboard/mutants.json's shape, with each file's provenance."""
+def night_record(plan, record, floors, night, carried, commit, run, eq=False):
+    """The night's record, docs/scoreboard/mutants.json's shape, with each file's provenance
+    (and, with eq, each night file's `equivalent` count, #482; a carried entry keeps its own)."""
     base = last_complete(record)
     files = {}
     for f in sorted(floors):
         if f in carried:
             e = carried[f]
-            files[f] = {k: e[k] for k in ("score", "caught", "missed", "timeout", "unviable")}
+            files[f] = {k: e[k] for k in ("score", "caught", "missed", "timeout", "equivalent", "unviable") if k in e}
             files[f].update(source="carried", run=base["run"], sha=base["commit"])
             continue
         c = night.get(f, {})
         caught, missed, timeout = c.get("CaughtMutant", 0), c.get("MissedMutant", 0), c.get("Timeout", 0)
         judged = caught + missed + timeout
         files[f] = {"score": round(100.0 * caught / judged, 1) if judged else None, "caught": caught,
-                    "missed": missed, "timeout": timeout, "unviable": c.get("Unviable", 0),
-                    "source": "night", "run": run, "sha": commit}
+                    "missed": missed, "timeout": timeout}
+        if eq:
+            files[f]["equivalent"] = c.get("Equivalent", 0)
+        files[f].update(unviable=c.get("Unviable", 0), source="night", run=run, sha=commit)
     out = {"schema": 1, "mode": plan["mode"], "commit": commit, "run": run,
            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")}
     if plan["mode"] == "incremental":
