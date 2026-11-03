@@ -2562,23 +2562,25 @@ the certificate re-issue (#333) at the production upgrade with the upgrade
 note naming every caller. The lines: beta 73b5f956; main at this entry's
 parent, 006b0912.
 
-## 2026-11-02 (the night) to 2026-11-03 (the morning): the speed line on the owner's words, the merge queue on beta, loop one landed and the cache-scope cure witnessed, the (c) build's L1 to L4 on beta, the survivors all accounted for, and the night's lessons
+## 2026-11-02 (the night) to 2026-11-03 (the morning): the speed line on the owner's words, the merge queue on beta, loop one landed and the cache-scope cure witnessed, the (c) build's L1 to L4 on beta, the survivors all accounted for, and the night's lessons (states as of 07:16Z 11-03)
 
 The day's entry ends at beta 73b5f956 and main 30eed8cf (its fold, PR 463),
-with the speed line just filed. Every time below is the verified clock;
+with the speed line just filed. The states of issues and PRs below are as
+GitHub read them at 07:16Z 11-03 (`gh`, the lines by `git ls-remote`); a
+state that moved after that time is not in this entry. Every time below is
+the verified clock;
 GitHub's merge stamps agree with it to the minute. The verdicts and scores
 of the reviews are the day line's figures.
 
-The owner's words of the night, through the keeper. At 23:1xZ, on the speed
-line: "it is very very very beneficial to optimize it" (on #451). At
-23:2xZ, to the captain's five asks: "1) okay 2) no... we never wanna use
-our own hardware.. we struggle as it is.. we gotta think god tier shit man
-3) okay 4) okay 5) okay". Then "be a field expert... balling on a budget";
-"even when that's all done, another round of optimizing"; "even the
-nightly... is all that necessary? or maybe a fraction"; and at 02:1xZ
-of 11-03, the owner's words through the keeper (the keeper's message to the
-captain, whose record holds it in full; the day line's 02:2xZ entry quotes
-its opening clause), "do 3 or 4 loops even man... like huge chance for
+The owner's words of the night, through the keeper, each quoted as the day
+line's 07:15Z entry records them (the keeper's relay, verbatim). At 23:1xZ,
+on the speed line: "it is very very very beneficial to optimize it" (on
+#451). At 23:2xZ, to the captain's five asks: "1) okay 2) no... we never
+wanna use our own hardware.. we struggle as it is.. we gotta think god tier
+shit man 3) okay 4) okay 5) okay". Then "be a field expert... balling on a
+budget"; "even when that's all done, another round of optimizing"; "even the
+nightly... is all that necessary? or maybe a fraction"; and at 02:1xZ of
+11-03 (the loops' word), "do 3 or 4 loops even man... like huge chance for
 prodicut ity gains etc". They rule four things: no own hardware (#453, the
 self-hosted runner, closed at 23:13Z), no paid runners (#455, the hosted
 fast-runner label, closed at 23:19Z), the Nightly cut to a fraction (#462
@@ -2654,12 +2656,16 @@ Build and e2e-hermetic still read "No cache found": #494 (PR 495, merged
 41160935): the dispatch ran (run 41591723426, 06:44Z to 06:52Z, three jobs
 green) and saved the lint and release keys under main's scope beside the
 test key (the day line's 06:55Z entry); the witness is the next group run's
-six lines. #497
+six lines: PR 504's group run (41593727284, 07:03Z) restored all six
+with "full match: true", and #494 closed at 07:09Z (the day line's 07:10Z
+entry). #497
 (lint's `runs-on` named a self-hosted runner for a private repo) was PR
 498, merged 06:42Z, beta 05741c59, closed. #496 (a complete night leaves a
 PR run its six runners: fourteen shards, then six) is PR 499, re-read
-merge at 0.93 and enqueued at 06:49Z, then CONFLICTING after PR 501 landed
-and being ported.
+merge at 0.93 and enqueued at 06:49Z, then CONFLICTING after PR 501 landed;
+PR 499 closed as superseded at 07:09Z and its port, PR 505 (review merge
+at 0.93; enqueued 07:10Z), merged at 07:15Z, beta f7db9f60; #496 stays open
+for the next complete night's figures.
 
 The (c) build (#414). L1, the `origin_grants` store, was PR 449 (22:40Z,
 beta 98e81a24, the day's entry). L2, the CLI's `origins`, `origin-grant`,
@@ -2712,9 +2718,11 @@ it at 06:54Z: the hermetic union judged, the opening night whose six
 hermetic shards ran to the end. The record lane's finding, the stale bench
 test (tools/test_bench_compare.py asserts no `needs:` on the night's bench
 job, which #460 gave `needs: [plan, mutants]`; the next bench night would
-go red), was filed as #503 at 06:53Z; its lane's PR 504 is open. A finding from the night: PR runs
-overlapping the fifty shards waited 40 to 50 minutes for runners (the
-account's twenty), filed as #496.
+go red), was filed as #503 at 06:53Z; its lane's PR 504 merged at 07:08Z,
+beta 58946be5, and #503 closed at 07:09Z (the after-figure at the next
+bench night). A finding from the night: PR runs overlapping the fifty
+shards waited 40 to 50 minutes for runners (the account's twenty), filed as
+#496.
 
 The lessons of the night, one line each:
 
@@ -2743,16 +2751,17 @@ The lessons of the night, one line each:
   lands or its review runs, and a name not the captain's is left for its
   owner.
 
-Open after the night: #477 (PR 492 on its fix), #494's witness (its
-dispatch done), #496 (PR 499, being ported after PR 501), #503 (PR 504),
-#142 and #175 (night 3's record), #491 (main's ci.yml, after this entry lands on
-main), #462 and #476 on their recorded figures, #478, #479 and #480, the
+Open after the night, at 07:16Z: #477 (PR 492 on its fix), #496 (PR 505
+merged; the next complete night's figures), this entry's PR 502 (two
+reads, fix at 0.88 and at 0.86, and this third pass), #142 and #175
+(night 3's record), #491 (main's ci.yml, after this entry lands on main),
+#462 and #476 on their recorded figures, #478, #479 and #480, the
 remaining loops' rows; #465, #469, #483, #437, #441; L5 on the owner's W1
 and W4, then L6 and L7; the opening incremental
 night, the captain's dispatch at the 03:00Z slot of 11-04; the next pin's
 intake on #386: bsv-rs #613, #620, #640, #639, #648, #651 and #658 (all
 merged), the toolbox's #554, #186, #142 and #576 (closed) and #585 (open),
-as GitHub shows them at 2026-11-03 morning; the certificate re-issue (#333)
-at the production upgrade. The lines, read with `git ls-remote origin` at
-07:01Z: beta cca58c91 (PR 501, night 3's record); main at this entry's
-parent, 41160935.
+as GitHub shows them at 07:16Z; the certificate re-issue (#333)
+at the production upgrade. Closed in the morning: #494 and #503 (07:09Z).
+The lines, read with `git ls-remote origin beta main` at 07:16Z: beta
+f7db9f60 (PR 505); main at this entry's parent, 41160935.
