@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Json, Router};
+use axum::Router;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_toolbox::Wallet;
 use serde_json::{json, Value};
@@ -19,7 +19,7 @@ use crate::server::powers_tests::{page_call, serve_at, Read};
 use crate::server::*;
 use crate::store::origin_grants::{self as grants, Answer, Flow, Granting, PendingRow, Power};
 use crate::test_support::coins::{mined_coin_with_lock, storage_for};
-use crate::test_support::{mock_services, serve_router};
+use crate::test_support::{header_answer, mock_services, serve_router};
 
 const PAGE: &str = "http://shop.example";
 const SHOP: &str = "shop.example";
@@ -81,34 +81,71 @@ impl World {
         }
     }
 
-    /// A spend of `satoshis` on coin `n`, `options` its options.
-    fn spend(&self, n: usize, satoshis: u64, options: &Value) -> Value {
-        json!({"description": "a spending witness",
-            "inputs": [{"outpoint": format!("{}.0", self.coins[n]), "unlockingScript": "51",
-                "inputDescription": "a coin"}],
+    /// A spend of `satoshis` on coin `n`: signed (`noSend`), or a template
+    /// (`signAndProcess` false, the unlock's length declared).
+    fn body(&self, n: usize, satoshis: u64, template: bool) -> Value {
+        let outpoint = format!("{}.0", self.coins[n]);
+        let (input, options) = if template {
+            (
+                json!({"outpoint": outpoint, "unlockingScriptLength": 1, "inputDescription": "a coin"}),
+                json!({"signAndProcess": false, "randomizeOutputs": false}),
+            )
+        } else {
+            (
+                json!({"outpoint": outpoint, "unlockingScript": "51", "inputDescription": "a coin"}),
+                json!({"noSend": true, "randomizeOutputs": false}),
+            )
+        };
+        json!({"description": "a spending witness", "inputs": [input],
             "outputs": [{"lockingScript": "51", "satoshis": satoshis, "outputDescription": "a spend"}],
             "options": options})
     }
 
-    /// The page's signed `noSend` spend of `satoshis` on coin `n`.
-    async fn call(&self, n: usize, satoshis: u64) -> Read {
-        let body = self.spend(
-            n,
-            satoshis,
-            &json!({"noSend": true, "randomizeOutputs": false}),
-        );
-        page_call(self.addr, PAGE, "/createAction", body).await
+    /// The page's call of `path`.
+    async fn post(&self, path: &str, body: Value) -> Read {
+        page_call(self.addr, PAGE, path, body).await
     }
 
-    /// The same, sent at once and answered later (a held call).
+    /// The page's signed spend of `satoshis` on coin `n`.
+    async fn call(&self, n: usize, satoshis: u64) -> Read {
+        self.post("/createAction", self.body(n, satoshis, false))
+            .await
+    }
+
+    /// The page's template of `satoshis` on coin `n`: its reference.
+    async fn template(&self, n: usize, satoshis: u64) -> String {
+        let unsigned = self
+            .post("/createAction", self.body(n, satoshis, true))
+            .await;
+        assert_eq!(unsigned.0, 200, "{}", unsigned.3);
+        unsigned.3["signableTransaction"]["reference"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// The signed spend, sent at once and answered later (a held call).
     fn begin(&self, n: usize, satoshis: u64) -> tokio::task::JoinHandle<Read> {
-        let body = self.spend(
-            n,
-            satoshis,
-            &json!({"noSend": true, "randomizeOutputs": false}),
-        );
-        let addr = self.addr;
+        let (addr, body) = (self.addr, self.body(n, satoshis, false));
         tokio::spawn(async move { page_call(addr, PAGE, "/createAction", body).await })
+    }
+
+    /// The one open row once it is there: a spend of `amount`, a renewal
+    /// or not.
+    async fn held(&self, amount: i64, renewal: bool) -> PendingRow {
+        let row = self.open(1).await.remove(0);
+        assert_eq!(
+            (row.kind.as_str(), row.key.as_str(), row.amount, row.renewal),
+            ("spending", "[]", Some(amount), renewal)
+        );
+        row
+    }
+
+    /// The owner denies `row`: its call answers 400 `Permission denied.`.
+    async fn deny(&self, row: &PendingRow, call: tokio::task::JoinHandle<Read>) {
+        self.answer(row.pending_id, Answer::Deny, None).await;
+        let refused = call.await.unwrap();
+        assert!(denied(&refused), "{refused:?}");
     }
 
     /// The owner's ceiling for the shop.
@@ -180,29 +217,12 @@ impl World {
 fn header_service(roots: HashMap<u32, String>) -> Router {
     Router::new().fallback(move |uri: axum::http::Uri| {
         let roots = roots.clone();
-        async move {
-            let height = uri
-                .query()
-                .and_then(|q| q.strip_prefix("height="))
-                .and_then(|h| h.parse().ok())
-                .unwrap_or(900);
-            Json(json!({"status": "success", "value": {
-                "height": height, "version": 1, "previousHash": "00".repeat(32),
-                "merkleRoot": roots.get(&height).cloned().unwrap_or_else(|| "0c".repeat(32)),
-                "time": 1_700_000_000, "bits": 486_604_799_u32, "nonce": 0,
-                "hash": format!("{height:064x}")
-            }}))
-        }
+        async move { header_answer(&roots, &uri) }
     })
 }
 
 fn now() -> i64 {
     owner_door::now().unwrap()
-}
-
-/// A held spend's row: its kind, amount and renewal.
-fn asked(row: &PendingRow) -> (&str, Option<i64>, bool) {
-    (row.kind.as_str(), row.amount, row.renewal)
 }
 
 fn denied(read: &Read) -> bool {
@@ -219,15 +239,10 @@ async fn a_spend_equal_to_the_ceiling_is_admitted_and_one_more_is_held_as_a_rene
     assert_eq!(admitted.0, 200, "{}", admitted.3);
     let txid = admitted.3["txid"].as_str().unwrap().to_string();
     assert_eq!(w.spends().await, vec![(Some(txid), None, 3000)]);
-    assert_eq!(w.tally().await, 3000);
 
     let one_more = w.begin(1, 1);
-    let open = w.open(1).await;
-    assert_eq!(asked(&open[0]), ("spending", Some(1), true));
-    assert_eq!(open[0].key, "[]");
-    w.answer(open[0].pending_id, Answer::Deny, None).await;
-    let refused = one_more.await.unwrap();
-    assert!(denied(&refused), "{refused:?}");
+    let row = w.held(1, true).await;
+    w.deny(&row, one_more).await;
     assert_eq!(w.tally().await, 3000, "a refused spend is not tallied");
 }
 
@@ -236,11 +251,9 @@ async fn a_spend_one_satoshi_past_the_ceiling_is_held_before_the_toolbox() {
     let w = World::new(1).await;
     w.ceiling(2999).await;
     let past = w.begin(0, 3000);
-    let open = w.open(1).await;
-    assert_eq!(asked(&open[0]), ("spending", Some(3000), true));
+    let row = w.held(3000, true).await;
     assert!(w.spends().await.is_empty(), "nothing reached the toolbox");
-    w.answer(open[0].pending_id, Answer::Deny, None).await;
-    assert!(denied(&past.await.unwrap()));
+    w.deny(&row, past).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -248,14 +261,13 @@ async fn two_concurrent_spends_against_one_ceiling_admit_one_and_hold_the_other(
     let w = World::new(2).await;
     w.ceiling(3000).await;
     let (first, second) = (w.begin(0, 3000), w.begin(1, 3000));
-    let open = w.open(1).await;
-    assert_eq!(asked(&open[0]), ("spending", Some(3000), true));
+    let row = w.held(3000, true).await;
     // The held one is judged only after the admitted one tallied its spend
     // and let the lock go; a while later it is still the one held.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(w.open(1).await.len(), 1, "never both admitted");
     assert_eq!(w.tally().await, 3000);
-    w.answer(open[0].pending_id, Answer::Deny, None).await;
+    w.answer(row.pending_id, Answer::Deny, None).await;
     let mut answers = [first.await.unwrap(), second.await.unwrap()];
     answers.sort_by_key(|r| r.0);
     assert_eq!(answers[0].0, 200, "{}", answers[0].3);
@@ -267,9 +279,8 @@ async fn two_concurrent_spends_against_one_ceiling_admit_one_and_hold_the_other(
 async fn once_admits_the_one_call_and_writes_no_grant_row() {
     let w = World::new(2).await;
     let call = w.begin(0, 2500);
-    let open = w.open(1).await;
-    assert_eq!(asked(&open[0]), ("spending", Some(2500), false));
-    w.answer(open[0].pending_id, Answer::Once, None).await;
+    let row = w.held(2500, false).await;
+    w.answer(row.pending_id, Answer::Once, None).await;
     let once = call.await.unwrap();
     assert_eq!(once.0, 200, "{}", once.3);
     assert_eq!(w.grant_rows().await, 0);
@@ -277,42 +288,35 @@ async fn once_admits_the_one_call_and_writes_no_grant_row() {
 
     // Once wrote no row: the next spend is held again.
     let again = w.begin(1, 2500);
-    let open = w.open(1).await;
-    assert_eq!(asked(&open[0]), ("spending", Some(2500), false));
-    w.answer(open[0].pending_id, Answer::Deny, None).await;
-    assert!(denied(&again.await.unwrap()));
+    let row = w.held(2500, false).await;
+    w.deny(&row, again).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_grant_below_the_call_is_checked_again_and_a_grant_with_room_admits() {
     let w = World::new(1).await;
     let call = w.begin(0, 2500);
-    let first = w.open(1).await;
-    assert_eq!(asked(&first[0]), ("spending", Some(2500), false));
+    let first = w.held(2500, false).await;
     // A ceiling below the call's amount: checked again under the lock, so
     // the call is held once more, as a renewal.
-    w.answer(first[0].pending_id, Answer::Grant, Some(2000))
-        .await;
+    w.answer(first.pending_id, Answer::Grant, Some(2000)).await;
     let second = loop {
-        let open = w.open(1).await;
-        if open[0].pending_id != first[0].pending_id {
-            break open;
+        let row = w.open(1).await.remove(0);
+        if row.pending_id != first.pending_id {
+            break row;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
-    assert_eq!(asked(&second[0]), ("spending", Some(2500), true));
-    w.answer(second[0].pending_id, Answer::Grant, Some(60_000))
+    assert_eq!((second.amount, second.renewal), (Some(2500), true));
+    w.answer(second.pending_id, Answer::Grant, Some(60_000))
         .await;
     let granted = call.await.unwrap();
     assert_eq!(granted.0, 200, "{}", granted.3);
     let rows = grants::listing(w.wallet.storage(), true).await.unwrap();
+    let only = (rows.grants.len(), rows.grants[0].kind.as_str());
     assert_eq!(
-        (
-            rows.grants.len(),
-            rows.grants[0].kind.as_str(),
-            rows.grants[0].amount
-        ),
-        (1, "spending", Some(60_000))
+        (only, rows.grants[0].amount),
+        ((1, "spending"), Some(60_000))
     );
     assert_eq!(w.tally().await, 2500);
 }
@@ -323,16 +327,15 @@ async fn the_renewal_prompt_past_the_ceiling_names_the_ceiling_and_the_tally() {
     w.ceiling(3000).await;
     assert_eq!(w.call(0, 1000).await.0, 200);
     let call = w.begin(1, 2500);
-    let open = w.open(1).await;
-    let shown = grants::Shown::of(w.wallet.storage(), vec![], open.clone(), now())
+    let row = w.held(2500, true).await;
+    let shown = grants::Shown::of(w.wallet.storage(), vec![], vec![row.clone()], now())
         .await
         .unwrap();
     assert_eq!(
         serde_json::to_value(shown.json()).unwrap()["pending"][0]["asked"],
         "spend 2500 satoshis past this month's ceiling of 3000 (1000 spent)"
     );
-    w.answer(open[0].pending_id, Answer::Grant, Some(5000))
-        .await;
+    w.answer(row.pending_id, Answer::Grant, Some(5000)).await;
     assert_eq!(call.await.unwrap().0, 200);
     assert_eq!(w.tally().await, 3500);
 }
@@ -343,17 +346,11 @@ async fn the_tally_crossing_a_utc_month_boundary_counts_this_month_alone() {
     w.ceiling(3000).await;
     // Last month's spend fills last month's ceiling; 31 days back is always
     // an earlier calendar month.
-    let last_month = now() - 31 * 86_400;
-    let earlier = "ee".repeat(32);
-    grants::spent(
-        w.wallet.storage(),
-        SHOP,
-        Flow::Signed(&earlier),
-        3000,
-        last_month,
-    )
-    .await
-    .unwrap();
+    let (last_month, earlier) = (now() - 31 * 86_400, "ee".repeat(32));
+    let flow = Flow::Signed(&earlier);
+    grants::spent(w.wallet.storage(), SHOP, flow, 3000, last_month)
+        .await
+        .unwrap();
     assert_eq!(w.tally().await, 0);
     let admitted = w.call(0, 3000).await;
     assert_eq!(admitted.0, 200, "{}", admitted.3);
@@ -364,32 +361,19 @@ async fn the_tally_crossing_a_utc_month_boundary_counts_this_month_alone() {
 async fn the_deferred_path_tallies_its_reference_then_sign_action_fills_the_txid() {
     let w = World::new(1).await;
     w.ceiling(10_000).await;
-    let mut template = w.spend(
-        0,
-        3000,
-        &json!({"signAndProcess": false, "randomizeOutputs": false}),
-    );
-    template["inputs"][0] = json!({"outpoint": format!("{}.0", w.coins[0]),
-        "unlockingScriptLength": 1, "inputDescription": "a coin"});
-    let unsigned = page_call(w.addr, PAGE, "/createAction", template).await;
-    assert_eq!(unsigned.0, 200, "{}", unsigned.3);
-    let reference = unsigned.3["signableTransaction"]["reference"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let reference = w.template(0, 3000).await;
     assert_eq!(
         w.spends().await,
         vec![(None, Some(reference.clone()), 3000)]
     );
 
-    let signed = page_call(
-        w.addr,
-        PAGE,
-        "/signAction",
-        json!({"reference": reference, "spends": {"0": {"unlockingScript": "51"}},
-               "options": {"noSend": true}}),
-    )
-    .await;
+    let spends = json!({"0": {"unlockingScript": "51"}});
+    let signed = w
+        .post(
+            "/signAction",
+            json!({"reference": reference, "spends": spends, "options": {"noSend": true}}),
+        )
+        .await;
     assert_eq!(signed.0, 200, "{}", signed.3);
     let txid = signed.3["txid"].as_str().unwrap().to_string();
     assert_eq!(w.spends().await, vec![(Some(txid), Some(reference), 3000)]);
@@ -399,23 +383,9 @@ async fn the_deferred_path_tallies_its_reference_then_sign_action_fills_the_txid
 async fn an_abort_deletes_the_spend_and_a_spend_a_broadcaster_took_keeps_it() {
     let w = World::new(3).await;
     w.ceiling(50_000).await;
+    let abort = |name: String| w.post("/abortAction", json!({ "reference": name }));
     // A template, aborted by its reference.
-    let mut template = w.spend(
-        0,
-        1000,
-        &json!({"signAndProcess": false, "randomizeOutputs": false}),
-    );
-    template["inputs"][0] = json!({"outpoint": format!("{}.0", w.coins[0]),
-        "unlockingScriptLength": 1, "inputDescription": "a coin"});
-    let unsigned = page_call(w.addr, PAGE, "/createAction", template).await;
-    let reference = unsigned.3["signableTransaction"]["reference"].clone();
-    let aborted = page_call(
-        w.addr,
-        PAGE,
-        "/abortAction",
-        json!({"reference": reference}),
-    )
-    .await;
+    let aborted = abort(w.template(0, 1000).await).await;
     assert_eq!(aborted.0, 200, "{}", aborted.3);
     assert!(
         w.spends().await.is_empty(),
@@ -424,8 +394,7 @@ async fn an_abort_deletes_the_spend_and_a_spend_a_broadcaster_took_keeps_it() {
 
     // A noSend action, aborted by its txid.
     let built = w.call(1, 2000).await;
-    let txid = built.3["txid"].clone();
-    let aborted = page_call(w.addr, PAGE, "/abortAction", json!({"reference": txid})).await;
+    let aborted = abort(built.3["txid"].as_str().unwrap().to_string()).await;
     assert_eq!(aborted.0, 200, "{}", aborted.3);
     assert_eq!(w.tally().await, 0);
 
@@ -437,7 +406,7 @@ async fn an_abort_deletes_the_spend_and_a_spend_a_broadcaster_took_keeps_it() {
         .execute(w.wallet.storage().writer())
         .await
         .unwrap();
-    let refused = page_call(w.addr, PAGE, "/abortAction", json!({"reference": txid})).await;
+    let refused = abort(txid.clone()).await;
     assert_eq!(refused.0, 409, "{}", refused.3);
     assert_eq!(w.spends().await, vec![(Some(txid), None, 3000)]);
 }

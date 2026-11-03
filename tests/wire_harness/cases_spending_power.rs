@@ -27,16 +27,22 @@ fn spend(satoshis: u64) -> crate::wire_support::Req {
     .header("origin", PAGE)
 }
 
-fn answered(answer: &str, amount: Option<i64>) -> Option<Owner> {
-    Some(Owner {
+fn answered(answer: &str, amount: Option<i64>) -> Owner {
+    Owner {
         after_ms: Some(200),
         answer: Some(answer.into()),
         amount,
         ..Owner::default()
-    })
+    }
 }
 
 pub(crate) async fn record(r: &mut Recorder) {
+    record_once_and_grant(r).await;
+    record_past_the_ceiling(r).await;
+}
+
+/// 217 and 218: held with no row, answered once, then granted a ceiling.
+async fn record_once_and_grant(r: &mut Recorder) {
     // No spending row: held on a row of its own, answered once; the door's
     // own 200, echoed, and no grant row written.
     let once = r
@@ -44,7 +50,7 @@ pub(crate) async fn record(r: &mut Recorder) {
             "spending.createAction.heldOnce",
             "spending",
             spend(exact(0)),
-            answered("once", None),
+            Some(answered("once", None)),
         )
         .await;
     assert!(once
@@ -58,13 +64,17 @@ pub(crate) async fn record(r: &mut Recorder) {
             "spending.createAction.heldGranted",
             "spending",
             spend(exact(1)),
-            answered("grant", Some(100_000)),
+            Some(answered("grant", Some(100_000))),
         )
         .await;
     assert!(granted
         .body
         .as_ref()
         .is_some_and(|b| b.pointer("/txid").is_some()));
+}
+
+/// 219 and 220: past the ceiling, held as a renewal: denied, and listed.
+async fn record_past_the_ceiling(r: &mut Recorder) {
     // Past the ceiling (89,960 spent of 100,000; this call 29,980): held
     // on a spending row with renewal 1, denied: 400 Permission denied.
     let denied = r
@@ -72,7 +82,7 @@ pub(crate) async fn record(r: &mut Recorder) {
             "spending.createAction.pastCeilingDenied",
             "spending",
             spend(exact(2)),
-            answered("deny", None),
+            Some(answered("deny", None)),
         )
         .await;
     assert!(denied.body.as_ref().is_some_and(

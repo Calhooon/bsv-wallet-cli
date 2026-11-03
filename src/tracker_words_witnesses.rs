@@ -1266,7 +1266,7 @@ async fn a_refused_create_action_is_answered_with_the_word_built_and_its_hint() 
         .expect("a broadcaster's refusal is not an error");
     let txid = result.txid.expect("the txid");
     assert!(crate::server::broadcast_follow_up::sending(
-        &result.send_with_results,
+        result.send_with_results.as_deref(),
         &txid
     ));
     let word = crate::server::post_word::post_word(wallet.storage(), &hex::encode(txid))

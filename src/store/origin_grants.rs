@@ -31,6 +31,7 @@ mod power;
 pub mod probes;
 mod rows;
 mod shown;
+mod spends;
 
 use migrate::{Case, Moved};
 pub use power::Power;
@@ -41,6 +42,7 @@ pub use rows::{
 };
 use rows::{GrantTuple, PendingTuple};
 pub use shown::{Shown, ShownJson};
+pub use spends::{month_tally, signed, spent, unspent, Flow};
 
 /// The four tables and their four indexes, `(type, name)`, as
 /// [`ensure`] reads them from `sqlite_master`.
@@ -703,123 +705,6 @@ async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Resul
             .collect::<Result<_>>()?,
         probes: probes::probes(storage).await?,
     })
-}
-
-/// The month's tally: the satoshis `origin_spends` holds for the
-/// originator (any name of its host) in the UTC month of `now`.
-///
-/// # Errors
-///
-/// [`Refused::NotAnOriginator`], a time outside chrono's range, or the
-/// store's error.
-pub async fn month_tally(storage: &StorageSqlx, originator: &str, now: i64) -> Result<i64> {
-    ensure(storage).await?;
-    let (key, _) = key_of(originator)?;
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(satoshis), 0) FROM origin_spends WHERE originator = ? AND month = ?",
-    )
-    .bind(key)
-    .bind(month_of(now)?)
-    .fetch_one(storage.pool())
-    .await?;
-    Ok(total)
-}
-
-/// A spend's handle in `origin_spends`, per flow (section (1)): the txid
-/// on the signed path, the reference as the door serves it on the deferred
-/// one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Flow<'a> {
-    /// `signAndProcess` true (`noSend` or not): the action's txid, hex.
-    Signed(&'a str),
-    /// `signAndProcess` false: the template's reference.
-    Deferred(&'a str),
-}
-
-/// Tally an admitted spend: one `origin_spends` row of `satoshis` for the
-/// originator (any name of its host) in the UTC month of `now`, written
-/// after the toolbox returned the action.
-///
-/// # Errors
-///
-/// [`Refused::NotAnOriginator`], [`Refused::Negative`], a time outside
-/// chrono's range, or the store's error.
-pub async fn spent(
-    storage: &StorageSqlx,
-    originator: &str,
-    flow: Flow<'_>,
-    satoshis: i64,
-    now: i64,
-) -> Result<()> {
-    ensure(storage).await?;
-    if satoshis < 0 {
-        return Err(Refused::Negative.into());
-    }
-    let (key, _) = key_of(originator)?;
-    let (txid, reference) = match flow {
-        Flow::Signed(txid) => (Some(txid), None),
-        Flow::Deferred(reference) => (None, Some(reference)),
-    };
-    let month = month_of(now)?;
-    let mut tx = storage.write_tx().await?;
-    sqlx::query(
-        "INSERT INTO origin_spends (originator, month, txid, reference, satoshis, at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&key)
-    .bind(month)
-    .bind(txid)
-    .bind(reference)
-    .bind(satoshis)
-    .bind(now)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-/// `signAction`'s answer on the deferred path: the txid filled on the
-/// spend rows of `reference` that hold none. Answers the rows filled.
-///
-/// # Errors
-///
-/// The store's error.
-pub async fn signed(storage: &StorageSqlx, reference: &str, txid: &str) -> Result<u64> {
-    ensure(storage).await?;
-    let mut tx = storage.write_tx().await?;
-    let filled =
-        sqlx::query("UPDATE origin_spends SET txid = ? WHERE reference = ? AND txid IS NULL")
-            .bind(txid)
-            .bind(reference)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-    tx.commit().await?;
-    Ok(filled)
-}
-
-/// `abortAction`'s success: the originator's spend rows `name` names, as
-/// the toolbox resolves it (a reference, else a txid), deleted, so an
-/// aborted template and an aborted `noSend` action both leave the tally.
-/// Answers the rows deleted.
-///
-/// # Errors
-///
-/// [`Refused::NotAnOriginator`], or the store's error.
-pub async fn unspent(storage: &StorageSqlx, originator: &str, name: &str) -> Result<u64> {
-    ensure(storage).await?;
-    let (key, _) = key_of(originator)?;
-    let mut tx = storage.write_tx().await?;
-    let deleted = sqlx::query(
-        "DELETE FROM origin_spends WHERE originator = ?2 AND (reference = ?1 OR txid = ?1)",
-    )
-    .bind(name)
-    .bind(&key)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    tx.commit().await?;
-    Ok(deleted)
 }
 
 #[cfg(test)]
