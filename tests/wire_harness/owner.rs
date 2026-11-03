@@ -13,7 +13,8 @@
 //!   allowance spent, so the request is the call past it);
 //! - `after_ms` and `answer`: once the request's row is open, after that
 //!   many milliseconds, every open row answered `grant`, `once` or `deny`,
-//!   or the server shut down (`shutdown`).
+//!   or the server shut down (`shutdown`); `amount`, a spending grant's
+//!   ceiling (#414 L6).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -43,6 +44,8 @@ pub(crate) struct Owner {
     pub(crate) after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) answer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) amount: Option<i64>,
 }
 
 /// A call sent `times` times before the request, each answered 200.
@@ -106,12 +109,13 @@ async fn until_held(held: &Held, n: usize) {
     panic!("the owner's step: {n} held calls never appeared");
 }
 
-/// Answer every open row `answer`, waking the calls held on them.
-async fn answer_open(wallet: &WalletState, held: &Held, answer: Answer) {
+/// Answer every open row `answer` (a spending grant's ceiling `amount`),
+/// waking the calls held on them.
+async fn answer_open(wallet: &WalletState, held: &Held, answer: Answer, amount: Option<i64>) {
     let reply = Reply {
         answer,
         expiry: 0,
-        amount: None,
+        amount,
     };
     for id in open(wallet).await {
         grants::answer(wallet.storage(), id, &reply, now())
@@ -203,9 +207,9 @@ impl Owner {
         tokio::time::sleep(Duration::from_millis(self.after_ms.unwrap_or(0))).await;
         match answer {
             "shutdown" => held.shut_down(),
-            "grant" => answer_open(wallet, held, Answer::Grant).await,
-            "once" => answer_open(wallet, held, Answer::Once).await,
-            "deny" => answer_open(wallet, held, Answer::Deny).await,
+            "grant" => answer_open(wallet, held, Answer::Grant, self.amount).await,
+            "once" => answer_open(wallet, held, Answer::Once, None).await,
+            "deny" => answer_open(wallet, held, Answer::Deny, None).await,
             other => panic!("the owner's step: {other:?} is not grant, once, deny or shutdown"),
         }
     }
@@ -221,7 +225,7 @@ impl Owner {
         if calls.is_empty() {
             return;
         }
-        answer_open(wallet, held, Answer::Deny).await;
+        answer_open(wallet, held, Answer::Deny, None).await;
         for call in calls {
             call.await.unwrap();
         }
