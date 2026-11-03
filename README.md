@@ -685,9 +685,10 @@ cargo fmt --all -- --check
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs exactly the
 required set on every pull request and every push to main or beta (the owner's
-word of 2026-10-27): workspace tests, formatting, clippy, the Linux release
-build, the status/covenant vector checks, `deny` and `locks`, and on beta the
-ratchet, the wire fixtures and the hermetic suite. The measurements run on
+word of 2026-10-27): workspace tests, the `lint` job (formatting, `locks`,
+`deny`, clippy and the ratchet, each its own named step), the Linux release
+build and the status/covenant vector checks, and on beta the wire fixtures and
+the hermetic suite. The measurements run on
 `workflow_dispatch` and once before a tag, each with its own badge above:
 [bench.yml](.github/workflows/bench.yml), [differential.yml](.github/workflows/differential.yml),
 [nightly.yml](.github/workflows/nightly.yml) (the mutation score and the fuzz

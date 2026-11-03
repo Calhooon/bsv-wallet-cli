@@ -457,9 +457,9 @@ class TheJobsInputs(unittest.TestCase):
 
     def test_the_pin_is_the_jobs(self):
         # The bench job is bench.yml's since 7b32844 (it left ci.yml for a
-        # dispatch); the ratchet job is ci.yml's.
+        # dispatch); the ratchet runs in ci.yml's lint job (#471).
         bench = job("bench.yml", "bench")
-        ratchet = job("ci.yml", "ratchet")
+        ratchet = job("ci.yml", "lint")
         self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", bench)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", ratchet)

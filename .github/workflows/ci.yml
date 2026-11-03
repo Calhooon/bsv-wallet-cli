@@ -1,11 +1,13 @@
 name: CI
 
 # The machine gate. Branch protection requires exactly the checks a pull
-# request runs (the keeper's rule of 2026-10-26): on main `Test`, `Rustfmt`,
-# `Clippy`, `vectors` (the four of the ruling), `Build (ubuntu-latest)`,
-# `deny` (the paved road's cargo-deny gate over the stack's template, adopted
-# at 0.13.x) and `locks`; on beta those and `ratchet`, `wire` (#69) and
-# `e2e-hermetic`. A push to beta or main runs exactly that set, the same as a
+# request runs (the keeper's rule of 2026-10-26): on main `Test`, `lint`,
+# `vectors` and `Build (ubuntu-latest)`; on beta those and `wire` (#69) and
+# `e2e-hermetic`. `lint` (#471) is the five lint gates in one job, each its
+# own named step: Rustfmt and Clippy (with Test and vectors the four of the
+# ruling), `locks`, `deny` (the paved road's cargo-deny gate over the stack's
+# template, adopted at 0.13.x) and the ratchet, which main now requires
+# within it. A push to beta or main runs exactly that set, the same as a
 # pull request, nothing more; so does a merge-queue group (#451: beta lands
 # through GitHub's merge queue, and the queue waits on the same required
 # contexts for the group's commit) (the owner's word of 2026-10-27: "sick of seeing
@@ -42,214 +44,60 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
+  # The lint gates in one job (#471): Rustfmt, locks, deny, Clippy and the
+  # ratchet, with one checkout and one cache restore. Their setup (a runner,
+  # a checkout, a toolchain, a cache) was the larger share of Rustfmt, locks
+  # and deny, and every job waits for one of the org's runners before its
+  # setup starts. Each gate is its own named step and fails by name: every
+  # gate runs when the setup succeeded (`steps.cache.outcome`), whatever an
+  # earlier gate said, so one red names every failing gate. The checkout is
+  # the event's commit (on a PR the merge commit, as every other job), whole
+  # history for check-cites and the ratchet's base; deny reads the PR's head
+  # as its own job did, from a worktree of that commit. No token is left in
+  # the checkout (deny's `persist-credentials: false`): the ratchet's fetches
+  # are a public repository's, and the changelog step passes its own token.
+  # The toolchains: 1.98.1 with clippy for the ratchet (pinned to the
+  # record's, set per step), then stable with rustfmt and clippy, the
+  # default, before the cache step so its key considers both. The runner is
+  # deny's paved-road switch (a private repository's self-hosted runner).
+  lint:
+    name: lint
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
-          components: rustfmt
+          # check-cites reads the document's pin and proves its ancestry.
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
-          components: clippy
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        # Ubuntu alone on every event (the owner's word of 2026-10-27: a push runs
-        # exactly the required set, the same as a pull request, nothing more);
-        # the macOS build is build-macos.yml on workflow_dispatch; the tag's Binaries
-        # job in release.yml builds the macOS targets.
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # The fuzz check's pinned toolchain is installed before the cache step,
-      # so the cache key considers it (rust-cache hashes every installed
-      # toolchain); stable after it stays the default (#452).
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: 1.98.1
+          components: clippy
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
-
-      # A workspace's target is relative to its root: `fuzz -> target` is
-      # fuzz/target (`fuzz -> fuzz/target` cached fuzz/fuzz/target, which
-      # never exists, and the fuzz check built cold on every hit, #452).
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            . -> target
-            fuzz -> target
-
-      - name: Build workspace (release)
-        run: cargo build --release --locked
-
-      - name: Build MCP subcrate (release)
-        run: cargo build --release --locked -p bsv-wallet-mcp
-
-      # The fuzz crate (fuzz/, its own workspace and lock) is built by no
-      # other job but the Nightly, so a pin or an API move broke two targets
-      # silently until the night lost their hour (#301). Every target, its
-      # lib and its seed example are checked against the committed lock on
-      # the pinned toolchain (installed above); libfuzzer-sys checks on
-      # stable, so no nightly and no cargo-fuzz here.
-      - name: Check the fuzz crate (every target)
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.1
-        run: cargo check --manifest-path fuzz/Cargo.toml --locked --all-targets
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        id: cache
 
-      # Every target of the workspace, not the synthetic integration tests
-      # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
-      # (the callback intake, the tracker-off refusals) live in the others.
-      - name: Run the workspace's tests
-        run: cargo test --workspace --locked
+      - name: Rustfmt
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo fmt --all -- --check
 
-  # The vector-backed tests as one named check: the Arcade status vector
-  # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
-  # webhook intake, the gift covenant's sCrypt parity vectors
-  # (src/gift/covenant_vectors.json), and the stack's wallet-gate vectors
-  # (tests/vectors/wallet_gate_vectors.json at the pin beside it, #130).
-  vectors:
-    name: vectors
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - name: The vector files are present
-        run: |
-          test -s tests/vectors/arcade_status_verdicts.json
-          test -s src/gift/covenant_vectors.json
-          test -s tests/vectors/wallet_gate_vectors.json
-          test -s tests/vectors/wallet_gate_vectors.pin
-
-      - name: Run the Arcade status vector through the webhook intake
-        run: cargo test --locked --test arcade_webhook_vector_tests
-
-      # A filter that matches nothing passes; the grep refuses a renamed module.
-      - name: Run the covenant vectors
-        run: |
-          set -o pipefail
-          cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
-          grep -q 'test result: ok. 5 passed' covenant.log
-
-      # Every row of the stack's wallet-gate vectors replayed against the gate
-      # (docs/GATE-VECTORS.md): the copy checked against its pin, the
-      # unexpressed rows and the recorded divergences exact.
-      - name: Replay the wallet-gate vectors against the gate
-        run: |
-          set -o pipefail
-          cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
-          grep -q '^gate vectors: 490 rows' gate_vectors.log
-          grep -q 'test result: ok. 3 passed' gate_vectors.log
-
-  # The wire oracle (#69): every served call and refusal body under
-  # tests/wire/, replayed against the router in-process. A PR that changes a
-  # response byte fails here unless it changes the fixture too (docs/WIRE.md).
-  wire:
-    name: wire
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - name: The fixtures and their manifest are present
-        run: ls tests/wire/*.json > /dev/null && test -f tests/wire/MANIFEST.json
-
-      # Replay only. A recording never passes (the test fails with the word
-      # to replay it), and this job refuses to start one: WIRE_RECORD set to
-      # anything fails here before cargo runs.
-      - name: WIRE_RECORD is not set
-        run: |
-          if [ -n "${WIRE_RECORD+set}" ]; then
-            echo "WIRE_RECORD is set (${WIRE_RECORD}); the wire job replays, never records"
-            exit 1
-          fi
-
-      - name: Replay the wire fixtures
-        run: cargo test --locked --test wire
-
-      - name: No fixture was written by the run
-        run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
-
-  deny:
-    name: deny
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      # The migration lane copies the stamped manifest too. No network trust
-      # or moving branch controls equality; updating the stamp is a line change.
-      - name: Check adopted template hash
-        run: |
-          python3 - <<'PY'
-          import hashlib, pathlib, tomllib
-          stamp = tomllib.loads(pathlib.Path('template/stack.toml').read_text())['deny']
-          assert hashlib.sha256(pathlib.Path('deny.toml').read_bytes()).hexdigest() == stamp['sha256'], 'deny.toml differs from the adopted line'
-          PY
-      - run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
-      - run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
-
-  # One bsv-rs per lock (bsv-stack-lean #182): a committed Cargo.lock holding
-  # two bsv-rs entries fails, the gate a self-merging stack PR stands behind.
-  locks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
+      # One bsv-rs per lock (bsv-stack-lean #182): a committed Cargo.lock holding
+      # two bsv-rs entries fails, the gate a self-merging stack PR stands behind.
       # One bsv-rs per lock is not enough alone: on beta.1 fuzz/Cargo.lock
       # held one bsv-rs, 0.8.2, beside the root's 0.9.0-beta.1, and the fuzz
       # crate stopped building (#301). Every other committed lock holds the
       # root lock's version of each crate of the stack.
-      - name: One bsv-rs per committed Cargo.lock, the stack at the root's versions
+      - name: "locks: one bsv-rs per committed Cargo.lock, the stack at the root's versions"
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: |
           set -euo pipefail
           status=0
@@ -278,37 +126,62 @@ jobs:
           [ "$found" -gt 0 ] || echo "no committed Cargo.lock"
           exit "$status"
 
-  # The ratchet (#72): eight numbers of the tree that may only fall, measured
-  # by tools/ratchet (docs/RATCHETS.md). The tree is checked against the
-  # record of the base, read from the base ref and never from the PR's own
-  # docs/ratchets.json (a PR that edited the record would pass itself): on a
-  # PR the base branch's tip, on a push the commit before it, on a merge-queue
-  # group the group's parent commit (the event's merge_group.base_sha, beta
-  # or the group queued ahead, an ancestor of the group's head). The PR's record
-  # may lower the base's numbers, never raise one. A base with no record yet
-  # checks the tree against this tree's record alone. The toolchain is pinned
-  # to the record's: a new clippy brings new pedantic lints, and the numbers
-  # would move with no change to the tree. The measured JSON is kept as the
-  # run's artifact `ratchets`.
-  ratchet:
-    name: ratchet
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          # check-cites reads the document's pin and proves its ancestry.
-          fetch-depth: 0
+      # The paved road's deny gate, from bsv-stack-lean template/ci.yml:
+      # deny.toml is the template byte for byte (its sha256 stamped in
+      # template/stack.toml), then cargo-deny 0.20.2 from a temporary root
+      # checks advisories, bans, licenses and sources against the committed
+      # lock. Its tree is the PR's head on a pull request and the event's
+      # commit otherwise (a push, a merge-queue group), as its own job's
+      # checkout was.
+      - name: "deny: the tree"
+        id: deny-tree
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        env:
+          DENY_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/deny-tree" "$DENY_REF"
+          echo "deny: the tree is $DENY_REF"
+          echo "dir=$RUNNER_TEMP/deny-tree" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: 1.98.1
-          components: clippy
+      # The migration lane copies the stamped manifest too. No network trust
+      # or moving branch controls equality; updating the stamp is a line change.
+      - name: "deny: check adopted template hash"
+        if: ${{ !cancelled() && steps.deny-tree.outcome == 'success' }}
+        working-directory: ${{ steps.deny-tree.outputs.dir }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, tomllib
+          stamp = tomllib.loads(pathlib.Path('template/stack.toml').read_text())['deny']
+          assert hashlib.sha256(pathlib.Path('deny.toml').read_bytes()).hexdigest() == stamp['sha256'], 'deny.toml differs from the adopted line'
+          PY
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: "deny: install cargo-deny 0.20.2"
+        id: deny-install
+        if: ${{ !cancelled() && steps.deny-tree.outcome == 'success' }}
+        run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
 
+      - name: "deny: cargo-deny check"
+        if: ${{ !cancelled() && steps.deny-install.outcome == 'success' }}
+        working-directory: ${{ steps.deny-tree.outputs.dir }}
+        run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
+
+      - name: Clippy
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The ratchet (#72): eight numbers of the tree that may only fall, measured
+      # by tools/ratchet (docs/RATCHETS.md). The tree is checked against the
+      # record of the base, read from the base ref and never from the PR's own
+      # docs/ratchets.json (a PR that edited the record would pass itself): on a
+      # PR the base branch's tip, on a push the commit before it, on a merge-queue
+      # group the group's parent commit (the event's merge_group.base_sha, beta
+      # or the group queued ahead, an ancestor of the group's head). The PR's record
+      # may lower the base's numbers, never raise one. A base with no record yet
+      # checks the tree against this tree's record alone. The toolchain is pinned
+      # to the record's: a new clippy brings new pedantic lints, and the numbers
+      # would move with no change to the tree. The measured JSON is kept as the
+      # run's artifact `ratchets`.
       # The base ref, read once for the ratchet and the scoreboard: on a PR
       # the base branch's tip, on a push the commit before it, none on a
       # push with no fetchable before; on a merge-queue group its parent
@@ -319,6 +192,7 @@ jobs:
       # pin reachable from HEAD) then fails with git exit 1.
       - name: The base ref
         id: base
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
           BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -345,6 +219,7 @@ jobs:
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
 
       - name: No number above the base's record
+        if: ${{ !cancelled() && steps.base.outcome == 'success' }}
         env:
           REV: ${{ steps.base.outputs.rev }}
           RUSTUP_TOOLCHAIN: 1.98.1
@@ -542,6 +417,153 @@ jobs:
           name: ratchets
           path: ${{ runner.temp }}/ratchet/
           if-no-files-found: warn
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Ubuntu alone on every event (the owner's word of 2026-10-27: a push runs
+        # exactly the required set, the same as a pull request, nothing more);
+        # the macOS build is build-macos.yml on workflow_dispatch; the tag's Binaries
+        # job in release.yml builds the macOS targets.
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The fuzz check's pinned toolchain is installed before the cache step,
+      # so the cache key considers it (rust-cache hashes every installed
+      # toolchain); stable after it stays the default (#452).
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      # A workspace's target is relative to its root: `fuzz -> target` is
+      # fuzz/target (`fuzz -> fuzz/target` cached fuzz/fuzz/target, which
+      # never exists, and the fuzz check built cold on every hit, #452).
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+
+      - name: Build workspace (release)
+        run: cargo build --release --locked
+
+      - name: Build MCP subcrate (release)
+        run: cargo build --release --locked -p bsv-wallet-mcp
+
+      # The fuzz crate (fuzz/, its own workspace and lock) is built by no
+      # other job but the Nightly, so a pin or an API move broke two targets
+      # silently until the night lost their hour (#301). Every target, its
+      # lib and its seed example are checked against the committed lock on
+      # the pinned toolchain (installed above); libfuzzer-sys checks on
+      # stable, so no nightly and no cargo-fuzz here.
+      - name: Check the fuzz crate (every target)
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: cargo check --manifest-path fuzz/Cargo.toml --locked --all-targets
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Every target of the workspace, not the synthetic integration tests
+      # alone: the unit tests and the witnesses of the 0.3.x and 0.4.0 fixes
+      # (the callback intake, the tracker-off refusals) live in the others.
+      - name: Run the workspace's tests
+        run: cargo test --workspace --locked
+
+  # The vector-backed tests as one named check: the Arcade status vector
+  # (tests/vectors/arcade_status_verdicts.json, the toolbox's file) through the
+  # webhook intake, the gift covenant's sCrypt parity vectors
+  # (src/gift/covenant_vectors.json), and the stack's wallet-gate vectors
+  # (tests/vectors/wallet_gate_vectors.json at the pin beside it, #130).
+  vectors:
+    name: vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: The vector files are present
+        run: |
+          test -s tests/vectors/arcade_status_verdicts.json
+          test -s src/gift/covenant_vectors.json
+          test -s tests/vectors/wallet_gate_vectors.json
+          test -s tests/vectors/wallet_gate_vectors.pin
+
+      - name: Run the Arcade status vector through the webhook intake
+        run: cargo test --locked --test arcade_webhook_vector_tests
+
+      # A filter that matches nothing passes; the grep refuses a renamed module.
+      - name: Run the covenant vectors
+        run: |
+          set -o pipefail
+          cargo test --locked --lib gift::covenant::tests:: | tee covenant.log
+          grep -q 'test result: ok. 5 passed' covenant.log
+
+      # Every row of the stack's wallet-gate vectors replayed against the gate
+      # (docs/GATE-VECTORS.md): the copy checked against its pin, the
+      # unexpressed rows and the recorded divergences exact.
+      - name: Replay the wallet-gate vectors against the gate
+        run: |
+          set -o pipefail
+          cargo test --locked --test gate_vectors -- --nocapture | tee gate_vectors.log
+          grep -q '^gate vectors: 490 rows' gate_vectors.log
+          grep -q 'test result: ok. 3 passed' gate_vectors.log
+
+  # The wire oracle (#69): every served call and refusal body under
+  # tests/wire/, replayed against the router in-process. A PR that changes a
+  # response byte fails here unless it changes the fixture too (docs/WIRE.md).
+  wire:
+    name: wire
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: The fixtures and their manifest are present
+        run: ls tests/wire/*.json > /dev/null && test -f tests/wire/MANIFEST.json
+
+      # Replay only. A recording never passes (the test fails with the word
+      # to replay it), and this job refuses to start one: WIRE_RECORD set to
+      # anything fails here before cargo runs.
+      - name: WIRE_RECORD is not set
+        run: |
+          if [ -n "${WIRE_RECORD+set}" ]; then
+            echo "WIRE_RECORD is set (${WIRE_RECORD}); the wire job replays, never records"
+            exit 1
+          fi
+
+      - name: Replay the wire fixtures
+        run: cargo test --locked --test wire
+
+      - name: No fixture was written by the run
+        run: git diff --exit-code -- tests/wire && test -z "$(git status --porcelain -- tests/wire)"
+
 
   # The hermetic e2e suite (#74, docs/E2E-HERMETIC.md): the 30 scenarios of
   # tests/e2e against a local stub of the header service, the three explorers
