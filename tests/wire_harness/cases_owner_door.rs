@@ -18,15 +18,22 @@ pub(crate) async fn record(r: &mut Recorder) {
     // The listing of a wallet with no rows.
     r.case("owner.origins.empty", "fresh", owner(get("/origins")))
         .await;
-    // A direct grant, its row in section (4)'s keys; then listed.
-    let grant = json!({"originator": "owner.example:8443", "scope": "wallet"});
+    // A direct grant of one power (a basket, its canonical key), its row
+    // in section (4)'s keys; then listed.
+    let grant = json!({
+        "originator": "owner.example:8443",
+        "kind": "basket",
+        "key": "[\"todo items\"]"
+    });
     let granted = r
         .case("owner.grant", "fresh", owner(post("/origins/grant", grant)))
         .await;
     assert_eq!(granted.value("/grants/0/originator"), "owner.example");
+    assert_eq!(granted.value("/grants/0/key"), "[\"todo items\"]");
     r.case("owner.origins.granted", "fresh", owner(get("/origins")))
         .await;
-    // The revoke: the row stamped, none deleted.
+    // The revoke with no kind: every live row of the host (its one basket
+    // row) stamped, none deleted.
     let revoked = r
         .case(
             "owner.revoke",

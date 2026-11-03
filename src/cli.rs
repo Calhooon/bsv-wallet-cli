@@ -31,6 +31,9 @@ pub struct Cli {
     pub verbose: bool,
 }
 
+/// The four kinds a grant row names (#414, the design's W1 (a)).
+const KINDS: [&str; 4] = ["protocol", "basket", "certificate", "spending"];
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Generate/import identity, create wallet database
@@ -187,22 +190,29 @@ pub enum Commands {
         #[arg(long)]
         all: bool,
     },
-    /// Grant an originator directly, or answer a pending request (#7) with a
-    /// grant. Prints the row as `origins` does
+    /// Grant an originator one power directly (a kind and its key), or
+    /// answer a pending request (#7) with a grant. Prints the row as
+    /// `origins` does
     OriginGrant {
         /// An originator in the reference's form (`app.example`,
         /// `app.example:8443`: a host with an optional port, no scheme), or a
         /// pending request's id (`#7`, or `7`: a shell reads an unquoted `#`
         /// as a comment)
         target: String,
-        /// The scope of a direct grant; a pending request names its own
-        #[arg(long, value_name = "SCOPE", value_parser = ["wallet", "spending"])]
-        scope: Option<String>,
-        /// The spending scope's ceiling in satoshis a calendar month (UTC);
+        /// The kind of a direct grant's power; a pending request names its
+        /// own
+        #[arg(long, value_name = "KIND", value_parser = KINDS)]
+        kind: Option<String>,
+        /// The power's key, the canonical text `origins` prints (copy it
+        /// from a listing): `[false,2,"todo list","self"]`, `["todo
+        /// items"]`; required but for spending
+        #[arg(long, value_name = "KEY", requires = "kind")]
+        key: Option<String>,
+        /// The spending kind's ceiling in satoshis a calendar month (UTC);
         /// required for spending unless --once
         #[arg(long, value_name = "SATS", conflicts_with = "once")]
         amount: Option<u64>,
-        /// Seconds from now until the wallet grant expires, or `never` (the
+        /// Seconds from now until the grant expires, or `never` (the
         /// default); a spending grant never expires
         #[arg(long, value_name = "SECONDS|never", conflicts_with = "once")]
         expires: Option<String>,
@@ -215,14 +225,18 @@ pub enum Commands {
         /// The pending request's id (`#7`, or `7`)
         pending: String,
     },
-    /// Revoke an originator's live grant rows (both scopes, or --scope);
-    /// exits 1 when it holds none. Nothing is deleted
+    /// Revoke an originator's live grant rows: one power (--kind and
+    /// --key), every row of a kind (--kind), or every row; exits 1 when it
+    /// holds none. Nothing is deleted
     OriginRevoke {
         /// An originator in the reference's form; any port of its host
         originator: String,
-        /// Revoke this scope alone
-        #[arg(long, value_name = "SCOPE", value_parser = ["wallet", "spending"])]
-        scope: Option<String>,
+        /// Revoke this kind's rows alone
+        #[arg(long, value_name = "KIND", value_parser = KINDS)]
+        kind: Option<String>,
+        /// Revoke this power's row alone, its canonical key
+        #[arg(long, value_name = "KEY", requires = "kind")]
+        key: Option<String>,
     },
     /// Break-glass chain scan: ask an explorer for the unspent outputs at our deposit
     /// address and internalize new ones

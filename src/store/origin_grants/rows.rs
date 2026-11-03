@@ -5,36 +5,31 @@
 
 use anyhow::Result;
 
-/// The notice a fold logs when the store holds an env row (section (6)).
-pub const SEED_NOTICE: &str = "ALLOWED_ORIGINS is a seed: the grant rows in the store are the \
-                               gate; list them with bsv-wallet origins";
+use super::power::Power;
 
-/// A grant's scope: `wallet` admits the served doors, `spending` holds
-/// `createAction`'s month's ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// Every served door (the design's W1).
-    Wallet,
+/// A grant's kind: the reference's four permission kinds
+/// (`WalletPermissionsManager.ts:418-423` at ts-stack `edf6e03`), each
+/// row one power of its kind (the design's W1 (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// A protocol at security level 1 or 2 with its counterparty; a label
+    /// rides it as `action label <label>`.
+    Protocol,
+    /// An output basket.
+    Basket,
+    /// A certificate type from a verifier, with the fields revealed.
+    Certificate,
     /// `createAction`'s spend, under a monthly ceiling.
     Spending,
-}
-
-/// Who wrote a grant row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    /// The owner, by the CLI, the MCP or the inspector.
-    Owner,
-    /// The fold of an `ALLOWED_ORIGINS` entry ([`super::fold`]).
-    Env,
 }
 
 /// The owner's answer to a pending row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
-    /// Grant the row's scope: a grant row is written.
+    /// Grant the row's power: a grant row is written.
     Grant,
     /// Admit the one spending call, writing no grant (the reference's
-    /// `ephemeral`); refused on a `wallet` row.
+    /// `ephemeral`); refused on a row of another kind.
     Once,
     /// Deny the call.
     Deny,
@@ -59,11 +54,32 @@ macro_rules! words {
     };
 }
 
-words!(Scope { Wallet => "wallet", Spending => "spending" });
-words!(Source { Owner => "owner", Env => "env" });
+words!(Kind { Protocol => "protocol", Basket => "basket", Certificate => "certificate",
+              Spending => "spending" });
 words!(Answer { Grant => "grant", Once => "once", Deny => "deny" });
 
-/// A row of `origin_grants`.
+impl Kind {
+    /// The four kinds, in the order the tables list them.
+    pub const ALL: [Self; 4] = [
+        Self::Protocol,
+        Self::Basket,
+        Self::Certificate,
+        Self::Spending,
+    ];
+
+    /// A kind as the owner names it (`--kind`, a route's `kind`).
+    ///
+    /// # Errors
+    ///
+    /// A word that is not one of the four.
+    pub fn named(word: &str) -> Result<Self> {
+        Self::parse(word).map_err(|_| {
+            anyhow::anyhow!("{word:?} is not a kind (protocol, basket, certificate, spending)")
+        })
+    }
+}
+
+/// A row of `origin_grants`: one power of one originator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantRow {
     /// The row's id.
@@ -72,10 +88,11 @@ pub struct GrantRow {
     pub originator: String,
     /// The originator as named, with its port.
     pub raw_originator: String,
-    /// The row's scope.
-    pub scope: Scope,
-    /// `spending` only: the month's ceiling in satoshis; `None` is no
-    /// ceiling (env rows only).
+    /// The power's kind.
+    pub kind: Kind,
+    /// The power's instance, in its canonical text ([`Power::key`]).
+    pub key: String,
+    /// `spending` only: the month's ceiling in satoshis.
     pub amount: Option<i64>,
     /// Unix seconds.
     pub granted_at: i64,
@@ -83,8 +100,6 @@ pub struct GrantRow {
     pub expiry: i64,
     /// Unix seconds; `None` is not revoked.
     pub revoked_at: Option<i64>,
-    /// Who wrote it.
-    pub source: Source,
 }
 
 pub(super) type GrantTuple = (
@@ -92,11 +107,11 @@ pub(super) type GrantTuple = (
     String,
     String,
     String,
-    Option<i64>,
-    i64,
-    i64,
-    Option<i64>,
     String,
+    Option<i64>,
+    i64,
+    i64,
+    Option<i64>,
 );
 
 impl GrantRow {
@@ -105,13 +120,22 @@ impl GrantRow {
             grant_id: t.0,
             originator: t.1,
             raw_originator: t.2,
-            scope: Scope::parse(&t.3)?,
-            amount: t.4,
-            granted_at: t.5,
-            expiry: t.6,
-            revoked_at: t.7,
-            source: Source::parse(&t.8)?,
+            kind: Kind::parse(&t.3)?,
+            key: t.4,
+            amount: t.5,
+            granted_at: t.6,
+            expiry: t.7,
+            revoked_at: t.8,
         })
+    }
+
+    /// The row's power, read back from its key.
+    ///
+    /// # Errors
+    ///
+    /// A stored key that is not its kind's canonical text.
+    pub fn power(&self) -> Result<Power, Refused> {
+        Power::parse(self.kind, &self.key)
     }
 }
 
@@ -124,10 +148,18 @@ pub struct PendingRow {
     pub originator: String,
     /// The originator with its port (the reference's `displayOriginator`).
     pub raw_originator: String,
-    /// The scope asked for.
-    pub scope: Scope,
+    /// The power's kind.
+    pub kind: Kind,
+    /// The power asked, as the grant row would hold it.
+    pub key: String,
+    /// The usage of the call that wrote the row (`signing`, `insertion`,
+    /// `listing`, `apply`, ...); `None` for spending.
+    pub usage: Option<String>,
     /// The door's path of the call that wrote the row (`/listOutputs`).
     pub call: String,
+    /// The call's own reason (its `description` or `privilegedReason`),
+    /// the page's words, never the owner's.
+    pub reason: Option<String>,
     /// `spending` only: the call's satoshis.
     pub amount: Option<i64>,
     /// An expired grant, or a ceiling the call would pass.
@@ -146,6 +178,9 @@ pub(super) type PendingTuple = (
     String,
     String,
     String,
+    Option<String>,
+    String,
+    Option<String>,
     Option<i64>,
     bool,
     i64,
@@ -159,14 +194,37 @@ impl PendingRow {
             pending_id: t.0,
             originator: t.1,
             raw_originator: t.2,
-            scope: Scope::parse(&t.3)?,
-            call: t.4,
-            amount: t.5,
-            renewal: t.6,
-            first_seen: t.7,
-            answered_at: t.8,
-            answer: t.9.as_deref().map(Answer::parse).transpose()?,
+            kind: Kind::parse(&t.3)?,
+            key: t.4,
+            usage: t.5,
+            call: t.6,
+            reason: t.7,
+            amount: t.8,
+            renewal: t.9,
+            first_seen: t.10,
+            answered_at: t.11,
+            answer: t.12.as_deref().map(Answer::parse).transpose()?,
         })
+    }
+
+    /// The prompt's text: the power asked, in the words every surface
+    /// prints (section (3)). `past` is a spending renewal's ceiling and the
+    /// month's tally, when the originator's spending row is known.
+    #[must_use]
+    pub fn asked(&self, past: Option<(i64, i64)>) -> String {
+        if self.kind == Kind::Spending {
+            let spend = format!("spend {} satoshis", self.amount.unwrap_or(0));
+            return match past {
+                Some((ceiling, spent)) if self.renewal => {
+                    format!("{spend} past this month's ceiling of {ceiling} ({spent} spent)")
+                }
+                _ => spend,
+            };
+        }
+        Power::parse(self.kind, &self.key).map_or_else(
+            |_| format!("{} {}", self.kind.as_str(), self.key),
+            |p| p.asked(self.usage.as_deref()),
+        )
     }
 }
 
@@ -190,11 +248,15 @@ pub enum Refused {
         /// The rule it breaks (`crate::config::originator::checked`).
         rule: &'static str,
     },
-    /// The originator's row of this scope is revoked: refused at once,
+    /// The originator's row of this power is revoked: refused at once,
     /// no pending row.
     Revoked {
         /// The key.
         originator: String,
+        /// The power's kind.
+        kind: Kind,
+        /// The power's key.
+        key: String,
         /// The revoke's unix seconds.
         at: i64,
     },
@@ -209,26 +271,65 @@ pub enum Refused {
         /// Its unix seconds.
         at: i64,
     },
-    /// `once` names a `wallet` row.
-    OnceOnWallet(i64),
+    /// `once` names a row of another kind than spending.
+    OnceOnKind {
+        /// The row's id.
+        pending_id: i64,
+        /// Its kind.
+        kind: Kind,
+    },
     /// A `spending` grant from the owner, or a spending call, without an
     /// amount.
     AmountRequired,
-    /// A `wallet` row with an amount.
-    AmountOnWallet,
+    /// A row of another kind than spending with an amount.
+    AmountOnKind(Kind),
     /// A `spending` grant with an expiry.
     ExpiryOnSpending,
     /// A negative amount or expiry.
     Negative,
+    /// A key text that is not its kind's shape, or a name in it that its
+    /// validator refuses.
+    BadKey {
+        /// The kind named.
+        kind: Kind,
+        /// The key as given.
+        key: String,
+        /// Why, in the shape's or the validator's words.
+        why: String,
+    },
+    /// A key that reads as a power but is not written in its canonical
+    /// text.
+    NotCanonical {
+        /// The kind named.
+        kind: Kind,
+        /// The key as given.
+        key: String,
+        /// The canonical text of the power it names.
+        canonical: String,
+    },
+    /// An admin-reserved name, in the reference's words.
+    AdminOnly(String),
+    /// A protocol at security level 0: open access, never a row.
+    LevelZero,
+    /// A grant of a kind that names its key, without one.
+    KeyRequired(Kind),
+    /// A key named without its kind.
+    KeyWithoutKind,
 }
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotAnOriginator { name, rule } => write!(f, "{name:?} is not {rule}"),
-            Self::Revoked { originator, at } => write!(
+            Self::Revoked {
+                originator,
+                kind,
+                key,
+                at,
+            } => write!(
                 f,
-                "the grant row {originator} was revoked by the owner at {}",
+                "the grant row {originator} {} {key} was revoked by the owner at {}",
+                kind.as_str(),
                 when(*at)
             ),
             Self::NoSuchPending(id) => write!(f, "no pending request #{id}"),
@@ -242,23 +343,52 @@ impl std::fmt::Display for Refused {
                 answer.map_or("", Answer::as_str),
                 when(*at)
             ),
-            Self::OnceOnWallet(id) => write!(
+            Self::OnceOnKind { pending_id, kind } => write!(
                 f,
-                "pending request #{id} asks for the wallet scope; once answers a spending \
-                 request alone"
+                "pending request #{pending_id} asks for a {} power; once answers a spending \
+                 request alone",
+                kind.as_str()
             ),
             Self::AmountRequired => {
                 f.write_str("a spending grant or call names its amount in satoshis")
             }
-            Self::AmountOnWallet => {
-                f.write_str("a wallet row carries no amount; the ceiling is the spending scope's")
-            }
+            Self::AmountOnKind(kind) => write!(
+                f,
+                "a {} row carries no amount; the ceiling is the spending kind's",
+                kind.as_str()
+            ),
             Self::ExpiryOnSpending => {
                 f.write_str("a spending grant never expires; its ceiling resets each UTC month")
             }
             Self::Negative => f.write_str(
                 "an amount is satoshis, zero or more; an expiry is unix seconds, 0 for never",
             ),
+            Self::BadKey { kind, key, why } => {
+                write!(f, "{key} is not a {} key: {why}", kind.as_str())
+            }
+            Self::NotCanonical {
+                kind,
+                key,
+                canonical,
+            } => write!(
+                f,
+                "the {} key {key} is not in its canonical form; write it {canonical}",
+                kind.as_str()
+            ),
+            Self::AdminOnly(text) => f.write_str(text),
+            Self::LevelZero => f.write_str(
+                "a protocol at security level 0 is open access (BRC-100: \"Level 0: No \
+                 restrictions, open access\") and is never a grant row",
+            ),
+            Self::KeyRequired(kind) => write!(
+                f,
+                "a {} grant names its key, the canonical text bsv-wallet origins prints (a \
+                 spending grant alone has none)",
+                kind.as_str()
+            ),
+            Self::KeyWithoutKind => {
+                f.write_str("a key names a power of a kind: name the kind with the key")
+            }
         }
     }
 }
@@ -315,12 +445,13 @@ pub fn key_of(name: &str) -> Result<(String, String)> {
     Ok((host, raw))
 }
 
-/// How a grant row reads at a time: the gate's four answers (section (2)).
+/// How the rows covering a power read at a time: the gate's four answers
+/// (section (2)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Standing {
     /// Admitted.
     Live(GrantRow),
-    /// Revoked: refused at once, no pending row. Read before the expiry.
+    /// Revoked: refused at once, no pending row.
     Revoked(GrantRow),
     /// Past its expiry: held, as a renewal.
     Expired(GrantRow),
@@ -329,33 +460,40 @@ pub enum Standing {
 }
 
 impl Standing {
-    /// The reading of `row` at `now`.
+    /// The reading of `rows`, each covering the power asked, at `now`
+    /// (section (1)'s lookup): a live row admits; else a revoked row
+    /// refuses; else an expired row is a renewal; else none.
     #[must_use]
-    pub fn of(row: Option<GrantRow>, now: i64) -> Self {
-        match row {
+    pub fn of(rows: Vec<GrantRow>, now: i64) -> Self {
+        let state = |r: &GrantRow| match r.revoked_at {
+            Some(_) => 1,
+            None if expired(r.expiry, now) => 2,
+            None => 0,
+        };
+        let first = rows.into_iter().min_by_key(|r| (state(r), r.grant_id));
+        match first {
             None => Self::None,
-            Some(r) if r.revoked_at.is_some() => Self::Revoked(r),
-            Some(r) if expired(r.expiry, now) => Self::Expired(r),
-            Some(r) => Self::Live(r),
+            Some(r) => match state(&r) {
+                0 => Self::Live(r),
+                1 => Self::Revoked(r),
+                _ => Self::Expired(r),
+            },
         }
     }
 }
 
-/// A grant as asked: the originator (any name of its host), its scope,
-/// ceiling, expiry and source.
+/// A grant as asked: the originator (any name of its host), the power,
+/// its ceiling and expiry.
 #[derive(Debug, Clone, Copy)]
 pub struct Granting<'a> {
     /// The originator as named; the row's `raw_originator`.
     pub originator: &'a str,
-    /// The scope granted.
-    pub scope: Scope,
-    /// `spending`: the month's ceiling (required of the owner); `wallet`:
-    /// `None`.
+    /// The power granted.
+    pub power: &'a Power,
+    /// `spending`: the month's ceiling (required); any other kind: `None`.
     pub amount: Option<i64>,
     /// Unix seconds, `0` never; a `spending` grant is `0`.
     pub expiry: i64,
-    /// Who grants.
-    pub source: Source,
 }
 
 impl Granting<'_> {
@@ -364,12 +502,11 @@ impl Granting<'_> {
         if self.expiry < 0 || self.amount.is_some_and(|a| a < 0) {
             return Err(Refused::Negative);
         }
-        match self.scope {
-            Scope::Wallet if self.amount.is_some() => Err(Refused::AmountOnWallet),
-            Scope::Spending if self.expiry != 0 => Err(Refused::ExpiryOnSpending),
-            Scope::Spending if self.amount.is_none() && self.source == Source::Owner => {
-                Err(Refused::AmountRequired)
-            }
+        match self.power.kind() {
+            Kind::Spending if self.expiry != 0 => Err(Refused::ExpiryOnSpending),
+            Kind::Spending if self.amount.is_none() => Err(Refused::AmountRequired),
+            Kind::Spending => Ok(()),
+            kind if self.amount.is_some() => Err(Refused::AmountOnKind(kind)),
             _ => Ok(()),
         }
     }
@@ -380,11 +517,16 @@ impl Granting<'_> {
 pub struct Asking<'a> {
     /// The `Origin`'s originator, with its port.
     pub originator: &'a str,
-    /// The scope the call needs.
-    pub scope: Scope,
+    /// The power the call needs.
+    pub power: &'a Power,
+    /// The call's usage (`signing`, `insertion`, `listing`, `apply`, ...);
+    /// `None` for spending.
+    pub usage: Option<&'a str>,
     /// The door's path (`/listOutputs`).
     pub call: &'a str,
-    /// `spending`: the call's satoshis (required); `wallet`: `None`.
+    /// The call's own reason, as the reference passes it.
+    pub reason: Option<&'a str>,
+    /// `spending`: the call's satoshis (required); any other kind: `None`.
     pub amount: Option<i64>,
     /// An expired grant, or a ceiling the call would pass.
     pub renewal: bool,
@@ -421,90 +563,43 @@ pub struct Answered {
     pub grant: Option<GrantRow>,
 }
 
-/// What the fold found for one `ALLOWED_ORIGINS` entry.
+/// What a revoke reaches of one originator's live rows (section (3)):
+/// every row (the reference's `revokeAllForOriginator`), every row of a
+/// kind, or one power's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Folded {
-    /// No `wallet` row: the `wallet` row and a ceiling-free `spending`
-    /// row were written, `source` `env`.
-    Granted,
-    /// A live row, left as it is.
-    AlreadyGranted,
-    /// A row past its expiry, left as it is: the entry does not renew it.
-    Expired(i64),
-    /// A revoked row, left as it is: the entry never grants it again.
-    Revoked(i64),
+pub enum Reach {
+    /// Every live row of the originator.
+    Every,
+    /// Every live row of the kind.
+    Kind(Kind),
+    /// The one power's row.
+    Power(Power),
 }
 
-/// One entry's line of the fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FoldLine {
-    /// The entry as listed (checked, lowercased).
-    pub entry: String,
-    /// Its key.
-    pub originator: String,
-    /// What the fold found.
-    pub folded: Folded,
-}
-
-impl std::fmt::Display for FoldLine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (entry, key) = (&self.entry, &self.originator);
-        write!(f, "origin grants: ALLOWED_ORIGINS entry {entry} ")?;
-        match self.folded {
-            Folded::Granted => write!(
-                f,
-                "is now the grant row {key} (wallet, spending without a ceiling; source env)"
-            ),
-            Folded::AlreadyGranted => write!(f, "names the grant row {key}: already granted"),
-            Folded::Expired(at) => write!(
-                f,
-                "names the grant row {key}: expired at {}; the env entry does not renew it",
-                when(at)
-            ),
-            Folded::Revoked(at) => write!(
-                f,
-                "names the grant row {key}: revoked by the owner at {}; the env entry does not \
-                 grant it again",
-                when(at)
-            ),
+impl Reach {
+    /// The reach the owner named: a kind and a key (one power), a kind
+    /// alone, or neither.
+    ///
+    /// # Errors
+    ///
+    /// A key without a kind, or a key [`Power::parse`] refuses.
+    pub fn named(kind: Option<Kind>, key: Option<&str>) -> Result<Self, Refused> {
+        match (kind, key) {
+            (None, None) => Ok(Self::Every),
+            (None, Some(_)) => Err(Refused::KeyWithoutKind),
+            (Some(kind), None) => Ok(Self::Kind(kind)),
+            (Some(kind), Some(key)) => Power::parse(kind, key).map(Self::Power),
         }
     }
-}
 
-/// The fold's account: one line per entry, the env rows no entry names,
-/// and whether the store holds an env row (the seed notice is logged).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fold {
-    /// One line per entry, in the list's order.
-    pub lines: Vec<FoldLine>,
-    /// The keys of env rows not revoked whose entry left the list: they
-    /// stay granted until the owner revokes them.
-    pub unlisted: Vec<String>,
-    /// The store holds an env row: [`SEED_NOTICE`] was logged.
-    pub seeded: bool,
-}
-
-impl Fold {
-    /// Log the fold at info by name: each entry's line, each unlisted env
-    /// row, and [`SEED_NOTICE`] when the store holds an env row.
-    pub fn log(&self) {
-        for line in &self.lines {
-            tracing::info!(originator = %line.originator, "{line}");
-        }
-        for key in &self.unlisted {
-            tracing::info!(originator = %key, "{}", unlisted_text(key));
-        }
-        if self.seeded {
-            tracing::info!("{SEED_NOTICE}");
+    /// The words naming the reach after `holds no live grant row`: none,
+    /// ` of the <kind> kind`, or ` for <kind> <key>`.
+    #[must_use]
+    pub fn words(&self) -> String {
+        match self {
+            Self::Every => String::new(),
+            Self::Kind(kind) => format!(" of the {} kind", kind.as_str()),
+            Self::Power(p) => format!(" for {} {}", p.kind().as_str(), p.key()),
         }
     }
-}
-
-/// The text logged for an env row whose entry left the list.
-#[must_use]
-pub fn unlisted_text(originator: &str) -> String {
-    format!(
-        "origin grants: the grant row {originator} is source env, no ALLOWED_ORIGINS entry; \
-         revoke it with bsv-wallet origin-revoke {originator}"
-    )
 }

@@ -1,5 +1,6 @@
-//! The row functions of `origin_grants` (#414, the design's L1 exit test),
-//! each on a `wallet.db` the toolbox made, in a temporary directory.
+//! The row functions of `origin_grants` over a power of each kind (#414,
+//! the design's L5a exit test), each on a `wallet.db` the toolbox made, in
+//! a temporary directory.
 
 use super::*;
 use bsv_wallet_toolbox::WalletStorageWriter;
@@ -98,27 +99,67 @@ pub(super) fn refusal(e: &anyhow::Error) -> Refused {
         .clone()
 }
 
-pub(super) fn owner(
-    originator: &str,
-    scope: Scope,
+/// The generator's public key: a verifier.
+pub(super) const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+/// A certificate type, 32 bytes in base64.
+pub(super) const TYPE: &str = "AGfk/WrT1eBDXpz3mcw386Zww2HmqcIn3uY6x4Af1eo=";
+
+/// A protocol power at level 2, counterparty `self`.
+pub(super) fn protocol(name: &str) -> Power {
+    Power::protocol(false, 2, name, None).unwrap()
+}
+
+/// A basket power.
+pub(super) fn basket(name: &str) -> Power {
+    Power::basket(name).unwrap()
+}
+
+/// A certificate power of [`TYPE`] from [`G`] over `fields`.
+pub(super) fn certificate(fields: &[&str]) -> Power {
+    Power::certificate(false, TYPE, G, fields).unwrap()
+}
+
+/// One power of each kind, a label among the protocols, each with a
+/// usage of its calls and the spending ceiling a grant of it names.
+pub(super) fn every_kind() -> Vec<(Power, Option<&'static str>, Option<i64>)> {
+    vec![
+        (protocol("todo list"), Some("signing"), None),
+        (Power::label("invoices").unwrap(), Some("apply"), None),
+        (basket("todo items"), Some("listing"), None),
+        (certificate(&["email", "name"]), Some("disclosure"), None),
+        (Power::Spending, None, Some(60_000)),
+    ]
+}
+
+pub(super) fn owner<'a>(
+    originator: &'a str,
+    power: &'a Power,
     amount: Option<i64>,
     expiry: i64,
-) -> Granting<'_> {
+) -> Granting<'a> {
     Granting {
         originator,
-        scope,
+        power,
         amount,
         expiry,
-        source: Source::Owner,
     }
 }
 
-pub(super) fn wallet_call<'a>(originator: &'a str, call: &'a str) -> Asking<'a> {
+/// A call of `power` at `usage` from `originator` to `call`; a spending
+/// power's call asks 2500 satoshis.
+pub(super) fn call<'a>(
+    originator: &'a str,
+    power: &'a Power,
+    usage: Option<&'a str>,
+    call: &'a str,
+) -> Asking<'a> {
     Asking {
         originator,
-        scope: Scope::Wallet,
+        power,
+        usage,
         call,
-        amount: None,
+        reason: None,
+        amount: (power.kind() == Kind::Spending).then_some(2500),
         renewal: false,
     }
 }
@@ -126,11 +167,19 @@ pub(super) fn wallet_call<'a>(originator: &'a str, call: &'a str) -> Asking<'a> 
 pub(super) fn spend_call(originator: &str, amount: i64) -> Asking<'_> {
     Asking {
         originator,
-        scope: Scope::Spending,
+        power: &Power::Spending,
+        usage: None,
         call: "/createAction",
+        reason: Some("Buy a coffee"),
         amount: Some(amount),
         renewal: false,
     }
+}
+
+/// A `listOutputs` call of the basket `todo items`.
+pub(super) fn listing_call(originator: &str) -> Asking<'_> {
+    static TODO: std::sync::LazyLock<Power> = std::sync::LazyLock::new(|| basket("todo items"));
+    call(originator, &TODO, Some("listing"), "/listOutputs")
 }
 
 pub(super) fn reply(answer: Answer, amount: Option<i64>) -> Reply {
@@ -143,6 +192,38 @@ pub(super) fn reply(answer: Answer, amount: Option<i64>) -> Reply {
 
 pub(super) async fn count(storage: &StorageSqlx, table: &str) -> i64 {
     sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(storage.pool())
+        .await
+        .unwrap()
+}
+
+/// The owner's grant of `power` to `name` at [`NOW`], never expiring.
+pub(super) async fn granted(storage: &StorageSqlx, name: &str, power: &Power) -> GrantRow {
+    let amount = (power.kind() == Kind::Spending).then_some(60_000);
+    grant(storage, &owner(name, power, amount, 0), NOW)
+        .await
+        .unwrap()
+}
+
+/// The owner's `answer` to row `id` at [`NOW`].
+pub(super) async fn say(
+    storage: &StorageSqlx,
+    id: i64,
+    said: Answer,
+    amount: Option<i64>,
+) -> Result<Answered> {
+    answer(storage, id, &reply(said, amount), NOW).await
+}
+
+/// A call's pending row, opened or joined at [`NOW`].
+pub(super) async fn ask(storage: &StorageSqlx, asking: &Asking<'_>) -> PendingRow {
+    open_or_join(storage, asking, NOW).await.unwrap().row
+}
+
+/// The `answered_at` stamped on pending row `id`.
+pub(super) async fn answered_at(storage: &StorageSqlx, id: i64) -> Option<i64> {
+    sqlx::query_scalar("SELECT answered_at FROM origin_pending WHERE pending_id = ?")
+        .bind(id)
         .fetch_one(storage.pool())
         .await
         .unwrap()
@@ -181,14 +262,14 @@ async fn a_second_ensure_sends_nothing_to_the_writer() {
     assert_eq!(commits.load(Ordering::SeqCst), 0, "the writer committed");
     assert_eq!(own_objects(&storage).await, schema);
     // The hook counts: a write through the writer is seen.
-    granted(&storage, "app.example").await;
+    granted(&storage, "app.example", &basket("todo items")).await;
     assert!(commits.load(Ordering::SeqCst) > 0);
 }
 
 #[tokio::test]
 async fn a_store_missing_an_index_gains_it_and_keeps_its_rows() {
     let (_dir, storage) = wallet_db().await;
-    granted(&storage, "app.example").await;
+    granted(&storage, "app.example", &basket("todo items")).await;
     sqlx::query("DROP INDEX origin_pending_open")
         .execute(storage.writer())
         .await
@@ -204,43 +285,76 @@ async fn a_store_missing_an_index_gains_it_and_keeps_its_rows() {
 }
 
 #[tokio::test]
-async fn lookup_reads_none_live_expired_and_revoked_by_the_host() {
+async fn each_kind_is_granted_looked_up_and_revoked_by_its_power() {
     let (_dir, storage) = wallet_db().await;
-    let read = |name: &'static str, now| {
-        let storage = &storage;
-        async move { lookup(storage, name, Scope::Wallet, now).await.unwrap() }
-    };
-    assert_eq!(read("app.example", NOW).await, Standing::None);
-
-    let row = grant(
-        &storage,
-        &owner("App.Example:8443", Scope::Wallet, None, NOW + 10),
-        NOW,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        (row.originator.as_str(), row.raw_originator.as_str()),
-        ("app.example", "app.example:8443")
-    );
-    // Every port of the host reads the one row.
-    for name in ["app.example", "app.example:8080", "APP.EXAMPLE:8443"] {
-        assert!(matches!(read(name, NOW).await, Standing::Live(_)), "{name}");
-    }
-    assert_eq!(read("other.example", NOW).await, Standing::None);
-    assert_eq!(
-        lookup(&storage, "app.example", Scope::Spending, NOW)
+    let other = basket("other basket");
+    for (power, _, amount) in every_kind() {
+        let read = |name: &'static str, p: &Power, now| {
+            let (storage, p) = (&storage, p.clone());
+            async move { lookup(storage, name, &p, now).await.unwrap() }
+        };
+        assert_eq!(read("app.example", &power, NOW).await, Standing::None);
+        let row = grant(&storage, &owner("App.Example:8443", &power, amount, 0), NOW)
             .await
-            .unwrap(),
-        Standing::None
-    );
+            .unwrap();
+        assert_eq!(
+            (row.originator.as_str(), row.raw_originator.as_str()),
+            ("app.example", "app.example:8443")
+        );
+        assert_eq!(
+            (row.kind, row.key.clone(), row.amount),
+            (power.kind(), power.key(), amount)
+        );
+        // Every port of the host reads the one row; another host none.
+        for name in ["app.example", "app.example:8080", "APP.EXAMPLE:8443"] {
+            assert!(
+                matches!(read(name, &power, NOW).await, Standing::Live(_)),
+                "{name}"
+            );
+        }
+        assert_eq!(read("other.example", &power, NOW).await, Standing::None);
+        // The row grants its power alone.
+        assert_eq!(read("app.example", &other, NOW).await, Standing::None);
 
-    revoke(&storage, "app.example", None, NOW).await.unwrap();
-    // Revoked is read before the expiry.
-    assert!(matches!(
-        read("app.example", NOW + 11).await,
-        Standing::Revoked(_)
-    ));
+        let reach = Reach::Power(power.clone());
+        let stamped = revoke(&storage, "app.example", &reach, NOW + 1)
+            .await
+            .unwrap();
+        assert_eq!(stamped.len(), 1, "{power:?}");
+        assert!(matches!(
+            read("app.example", &power, NOW + 2).await,
+            Standing::Revoked(_)
+        ));
+    }
+    assert_eq!(count(&storage, "origin_grants").await, 5);
+}
+
+#[tokio::test]
+async fn a_certificate_row_covers_the_calls_whose_fields_it_holds() {
+    let (_dir, storage) = wallet_db().await;
+    granted(&storage, "app.example", &certificate(&["email", "name"])).await;
+    let read = |fields: &'static [&'static str]| {
+        let storage = &storage;
+        async move {
+            lookup(storage, "app.example", &certificate(fields), NOW)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(matches!(read(&["email"]).await, Standing::Live(_)));
+    assert!(matches!(read(&["name", "email"]).await, Standing::Live(_)));
+    assert_eq!(read(&["phone"]).await, Standing::None);
+    assert_eq!(read(&["email", "phone"]).await, Standing::None);
+
+    // A live covering row admits though a narrower one is revoked.
+    granted(&storage, "app.example", &certificate(&["email"])).await;
+    let narrow = Reach::Power(certificate(&["email"]));
+    revoke(&storage, "app.example", &narrow, NOW).await.unwrap();
+    assert!(matches!(read(&["email"]).await, Standing::Live(_)));
+    // With every covering row revoked, the call is refused.
+    let wide = Reach::Power(certificate(&["email", "name"]));
+    revoke(&storage, "app.example", &wide, NOW).await.unwrap();
+    assert!(matches!(read(&["email"]).await, Standing::Revoked(_)));
 }
 
 #[tokio::test]
@@ -252,23 +366,15 @@ async fn the_expiry_reads_at_its_boundary_and_zero_never_expires() {
     assert!(expired(NOW, NOW + 1));
 
     let (_dir, storage) = wallet_db().await;
-    grant(
-        &storage,
-        &owner("a.example", Scope::Wallet, None, NOW),
-        NOW - 60,
-    )
-    .await
-    .unwrap();
-    grant(
-        &storage,
-        &owner("b.example", Scope::Wallet, None, 0),
-        NOW - 60,
-    )
-    .await
-    .unwrap();
+    let power = protocol("todo list");
+    let dated = owner("a.example", &power, None, NOW);
+    grant(&storage, &dated, NOW - 60).await.unwrap();
+    grant(&storage, &owner("b.example", &power, None, 0), NOW - 60)
+        .await
+        .unwrap();
     let at = |name, now| {
-        let storage = &storage;
-        async move { lookup(storage, name, Scope::Wallet, now).await.unwrap() }
+        let (storage, power) = (&storage, &power);
+        async move { lookup(storage, name, power, now).await.unwrap() }
     };
     assert!(matches!(at("a.example", NOW).await, Standing::Live(_)));
     assert!(matches!(
@@ -279,59 +385,66 @@ async fn the_expiry_reads_at_its_boundary_and_zero_never_expires() {
 }
 
 #[tokio::test]
-async fn a_wallet_call_joins_the_open_row_and_never_duplicates_it() {
+async fn open_or_join_joins_per_originator_kind_and_key() {
     let (_dir, storage) = wallet_db().await;
-    let first = open_or_join(
+    for (power, usage, _) in every_kind()
+        .into_iter()
+        .filter(|(p, ..)| p.kind() != Kind::Spending)
+    {
+        let first = open_or_join(
+            &storage,
+            &call("new.example:5173", &power, usage, "/x"),
+            NOW,
+        )
+        .await
+        .unwrap();
+        assert!(!first.joined);
+        assert_eq!(
+            (
+                first.row.kind,
+                first.row.key.clone(),
+                first.row.usage.as_deref()
+            ),
+            (power.kind(), power.key(), usage)
+        );
+        assert_eq!(first.row.raw_originator, "new.example:5173");
+        assert_eq!(first.row.answered_at, None);
+        // Another call of another usage, from another port: the same row,
+        // keeping the usage of the call that wrote it (W16).
+        let again = call("new.example", &power, Some("other"), "/y");
+        let second = open_or_join(&storage, &again, NOW + 5).await.unwrap();
+        assert!(second.joined, "{power:?}");
+        assert_eq!(second.row, first.row);
+    }
+    // One open row per power: four powers, four rows.
+    assert_eq!(count(&storage, "origin_pending").await, 4);
+    // Another basket of the same originator is another power.
+    let other = basket("other basket");
+    let row = ask(
         &storage,
-        &wallet_call("new.example:5173", "/listOutputs"),
-        NOW,
+        &call("new.example", &other, Some("listing"), "/x"),
     )
-    .await
-    .unwrap();
-    assert!(!first.joined);
-    assert_eq!(first.row.raw_originator, "new.example:5173");
-    assert_eq!(first.row.call, "/listOutputs");
-    assert_eq!(first.row.answered_at, None);
+    .await;
+    assert_eq!(count(&storage, "origin_pending").await, 5);
 
-    // Another call, another port of the host: the same row.
-    let second = open_or_join(
-        &storage,
-        &wallet_call("new.example", "/getVersion"),
-        NOW + 5,
-    )
-    .await
-    .unwrap();
-    assert!(second.joined);
-    assert_eq!(second.row, first.row);
-    assert_eq!(count(&storage, "origin_pending").await, 1);
-
-    // The partial unique index refuses a second open wallet row outright.
+    // The partial unique index refuses a second open row of one power.
     let dup = sqlx::query(
-        "INSERT INTO origin_pending (originator, raw_originator, scope, call, first_seen) \
-         VALUES ('new.example', 'new.example', 'wallet', '/x', 0)",
+        "INSERT INTO origin_pending (originator, raw_originator, kind, key, call, first_seen) \
+         VALUES ('new.example', 'new.example', 'basket', '[\"other basket\"]', '/x', 0)",
     )
     .execute(storage.writer())
     .await;
     assert!(dup.is_err());
 
     // Answered, the row is history: the next call opens a new one.
-    answer(
-        &storage,
-        first.row.pending_id,
-        &reply(Answer::Deny, None),
-        NOW + 9,
-    )
-    .await
-    .unwrap();
-    let third = open_or_join(
-        &storage,
-        &wallet_call("new.example", "/listOutputs"),
-        NOW + 10,
-    )
-    .await
-    .unwrap();
+    say(&storage, row.pending_id, Answer::Deny, None)
+        .await
+        .unwrap();
+    let third = open_or_join(&storage, &call("new.example", &other, None, "/x"), NOW + 10)
+        .await
+        .unwrap();
     assert!(!third.joined);
-    assert_ne!(third.row.pending_id, first.row.pending_id);
+    assert_ne!(third.row.pending_id, row.pending_id);
 }
 
 #[tokio::test]
@@ -345,62 +458,73 @@ async fn each_spending_call_writes_its_own_row() {
         .unwrap();
     assert!(!a.joined && !b.joined);
     assert_ne!(a.row.pending_id, b.row.pending_id);
-    assert_eq!(a.row.amount, Some(2500));
+    assert_eq!(
+        (
+            a.row.kind,
+            a.row.key.as_str(),
+            a.row.amount,
+            a.row.usage.clone()
+        ),
+        (Kind::Spending, "[]", Some(2500), None)
+    );
+    assert_eq!(a.row.reason.as_deref(), Some("Buy a coffee"));
 
     let mut no_amount = spend_call("app.example", 1);
     no_amount.amount = None;
     let e = open_or_join(&storage, &no_amount, NOW).await.unwrap_err();
     assert_eq!(refusal(&e), Refused::AmountRequired);
-    let mut wallet_amount = wallet_call("app.example", "/listOutputs");
-    wallet_amount.amount = Some(1);
-    let e = open_or_join(&storage, &wallet_amount, NOW)
+    let mut basket_amount = listing_call("app.example");
+    basket_amount.amount = Some(1);
+    let e = open_or_join(&storage, &basket_amount, NOW)
         .await
         .unwrap_err();
-    assert_eq!(refusal(&e), Refused::AmountOnWallet);
+    assert_eq!(refusal(&e), Refused::AmountOnKind(Kind::Basket));
     assert_eq!(count(&storage, "origin_pending").await, 2);
 }
 
 #[tokio::test]
-async fn a_revoked_origin_is_refused_at_once_with_no_pending_row() {
+async fn a_revoked_power_is_refused_at_once_and_another_power_is_asked() {
     let (_dir, storage) = wallet_db().await;
-    granted(&storage, "old.example").await;
-    revoke(&storage, "old.example", None, NOW + 1)
+    let todo = basket("todo items");
+    granted(&storage, "old.example", &todo).await;
+    revoke(&storage, "old.example", &Reach::Every, NOW + 1)
         .await
         .unwrap();
 
-    let e = open_or_join(
-        &storage,
-        &wallet_call("old.example:8080", "/listOutputs"),
-        NOW + 2,
-    )
-    .await
-    .unwrap_err();
+    let e = open_or_join(&storage, &listing_call("old.example:8080"), NOW + 2)
+        .await
+        .unwrap_err();
 
     assert_eq!(
         refusal(&e),
         Refused::Revoked {
             originator: "old.example".to_string(),
+            kind: Kind::Basket,
+            key: todo.key(),
             at: NOW + 1
         }
     );
     assert_eq!(
         e.to_string(),
-        "the grant row old.example was revoked by the owner at 2026-11-02T00:00Z"
+        "the grant row old.example basket [\"todo items\"] was revoked by the owner at \
+         2026-11-02T00:00Z"
     );
     assert_eq!(count(&storage, "origin_pending").await, 0);
+    // The revoke reaches its own row alone: another power is asked.
+    let other = protocol("todo list");
+    ask(
+        &storage,
+        &call("old.example", &other, Some("signing"), "/createSignature"),
+    )
+    .await;
+    assert_eq!(count(&storage, "origin_pending").await, 1);
 }
 
 #[tokio::test]
 async fn a_row_is_answered_once_and_the_second_answer_is_refused() {
     let (_dir, storage) = wallet_db().await;
-    let asked = open_or_join(
-        &storage,
-        &wallet_call("new.example:5173", "/listOutputs"),
-        NOW,
-    )
-    .await
-    .unwrap();
-    let id = asked.row.pending_id;
+    let asked = ask(&storage, &listing_call("new.example:5173")).await;
+    let id = asked.pending_id;
 
     let won = answer(&storage, id, &reply(Answer::Grant, None), NOW + 30)
         .await
@@ -413,16 +537,16 @@ async fn a_row_is_answered_once_and_the_second_answer_is_refused() {
         (
             granted.originator.as_str(),
             granted.raw_originator.as_str(),
-            granted.scope,
-            granted.source,
+            granted.kind,
+            granted.key.as_str(),
             granted.expiry,
             granted.amount,
         ),
         (
             "new.example",
             "new.example:5173",
-            Scope::Wallet,
-            Source::Owner,
+            Kind::Basket,
+            r#"["todo items"]"#,
             0,
             None
         )
@@ -440,47 +564,70 @@ async fn a_row_is_answered_once_and_the_second_answer_is_refused() {
             }
         );
     }
-    let e = answer(&storage, id, &reply(Answer::Deny, None), NOW + 31)
-        .await
-        .unwrap_err();
+    let e = say(&storage, id, Answer::Deny, None).await.unwrap_err();
     assert_eq!(
         e.to_string(),
         format!("pending request #{id} was already answered grant at 2026-11-02T00:00Z")
     );
-    let e = answer(&storage, id + 1, &reply(Answer::Deny, None), NOW)
-        .await
-        .unwrap_err();
+    let e = say(&storage, id + 1, Answer::Deny, None).await.unwrap_err();
     assert_eq!(refusal(&e), Refused::NoSuchPending(id + 1));
-    // The row is kept: the history of the owner's prompts.
+    // The row is kept: the history of the owner's answers.
     assert_eq!(count(&storage, "origin_pending").await, 1);
     assert_eq!(count(&storage, "origin_grants").await, 1);
 }
 
-/// The owner's `answer` to row `id` at [`NOW`].
-pub(super) async fn say(
-    storage: &StorageSqlx,
-    id: i64,
-    said: Answer,
-    amount: Option<i64>,
-) -> Result<Answered> {
-    answer(storage, id, &reply(said, amount), NOW).await
-}
-
-/// A call's pending row, opened or joined at [`NOW`].
-pub(super) async fn ask(storage: &StorageSqlx, asking: &Asking<'_>) -> PendingRow {
-    open_or_join(storage, asking, NOW).await.unwrap().row
+#[tokio::test]
+async fn each_kind_is_answered_into_its_own_power() {
+    let (_dir, storage) = wallet_db().await;
+    for (power, usage, amount) in every_kind() {
+        let row = ask(&storage, &call("app.example", &power, usage, "/x")).await;
+        let answered = say(&storage, row.pending_id, Answer::Grant, amount)
+            .await
+            .unwrap();
+        let g = answered.grant.unwrap();
+        assert_eq!(
+            (g.kind, g.key, g.amount),
+            (power.kind(), power.key(), amount)
+        );
+        let standing = lookup(&storage, "app.example", &power, NOW).await.unwrap();
+        assert!(matches!(standing, Standing::Live(_)), "{power:?}");
+    }
+    assert_eq!(count(&storage, "origin_grants").await, 5);
 }
 
 #[tokio::test]
 async fn once_answers_a_spend_alone() {
     let (_dir, storage) = wallet_db().await;
-    let wallet = ask(&storage, &wallet_call("app.example", "/listOutputs")).await;
-    let e = say(&storage, wallet.pending_id, Answer::Once, None)
-        .await
-        .unwrap_err();
-    assert_eq!(refusal(&e), Refused::OnceOnWallet(wallet.pending_id));
-    let open = answered_at(&storage, wallet.pending_id).await;
-    assert_eq!(open, None, "a refused answer stamped the row");
+    for (power, usage, _) in every_kind()
+        .into_iter()
+        .filter(|(p, ..)| p.kind() != Kind::Spending)
+    {
+        let row = ask(&storage, &call("app.example", &power, usage, "/x")).await;
+        let e = say(&storage, row.pending_id, Answer::Once, None)
+            .await
+            .unwrap_err();
+        let kind = power.kind();
+        let id = row.pending_id;
+        assert_eq!(
+            refusal(&e),
+            Refused::OnceOnKind {
+                pending_id: id,
+                kind
+            }
+        );
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "pending request #{id} asks for a {} power; once answers a spending request alone",
+                kind.as_str()
+            )
+        );
+        assert_eq!(
+            answered_at(&storage, id).await,
+            None,
+            "a refused answer stamped"
+        );
+    }
 
     let spend = ask(&storage, &spend_call("app.example", 2500)).await;
     let once = say(&storage, spend.pending_id, Answer::Once, None)
@@ -506,40 +653,29 @@ async fn a_spending_grant_names_its_ceiling_and_a_deny_writes_no_grant() {
         .unwrap();
     assert_eq!(ceiling.grant.unwrap().amount, Some(60_000));
 
-    let wallet = ask(&storage, &wallet_call("app.example", "/listOutputs")).await;
-    let denied = say(&storage, wallet.pending_id, Answer::Deny, None)
+    let listing = ask(&storage, &listing_call("app.example")).await;
+    let e = say(&storage, listing.pending_id, Answer::Grant, Some(5))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal(&e), Refused::AmountOnKind(Kind::Basket));
+    let denied = say(&storage, listing.pending_id, Answer::Deny, None)
         .await
         .unwrap();
     assert_eq!(
         (denied.pending.answer, denied.grant),
         (Some(Answer::Deny), None)
     );
-    let standing = lookup(&storage, "app.example", Scope::Wallet, NOW).await;
+    let standing = lookup(&storage, "app.example", &basket("todo items"), NOW).await;
     assert_eq!(standing.unwrap(), Standing::None);
 }
 
-/// The owner's `wallet` grant of `name` at [`NOW`], never expiring.
-pub(super) async fn granted(storage: &StorageSqlx, name: &str) -> GrantRow {
-    let granting = owner(name, Scope::Wallet, None, 0);
-    grant(storage, &granting, NOW).await.unwrap()
-}
-
-/// The `answered_at` stamped on pending row `id`.
-pub(super) async fn answered_at(storage: &StorageSqlx, id: i64) -> Option<i64> {
-    sqlx::query_scalar("SELECT answered_at FROM origin_pending WHERE pending_id = ?")
-        .bind(id)
-        .fetch_one(storage.pool())
-        .await
-        .unwrap()
-}
-
 #[tokio::test]
-async fn a_grant_is_one_row_per_scope_and_a_new_grant_replaces_it() {
+async fn a_grant_is_one_row_per_power_and_a_new_grant_replaces_it() {
     let (_dir, storage) = wallet_db().await;
-    let ceiling = |amount| owner("app.example", Scope::Spending, Some(amount), 0);
+    let ceiling = |amount| owner("app.example", &Power::Spending, Some(amount), 0);
     let first = grant(&storage, &ceiling(100), NOW).await.unwrap();
-    let spending = Some(Scope::Spending);
-    revoke(&storage, "app.example", spending, NOW + 1)
+    let spending = Reach::Kind(Kind::Spending);
+    revoke(&storage, "app.example", &spending, NOW + 1)
         .await
         .unwrap();
 
@@ -549,32 +685,37 @@ async fn a_grant_is_one_row_per_scope_and_a_new_grant_replaces_it() {
 
     assert_eq!(
         again.grant_id, first.grant_id,
-        "one row per (originator, scope)"
+        "one row per (originator, kind, key)"
     );
     assert_eq!(
         (again.amount, again.granted_at, again.revoked_at),
         (Some(500), NOW + 2, None)
     );
     assert_eq!(again.raw_originator, "app.example:9");
-    assert_eq!(count(&storage, "origin_grants").await, 1);
+    // Two baskets are two rows.
+    granted(&storage, "app.example", &basket("one")).await;
+    granted(&storage, "app.example", &basket("two")).await;
+    granted(&storage, "app.example", &basket("one")).await;
+    assert_eq!(count(&storage, "origin_grants").await, 3);
 }
 
 #[tokio::test]
 async fn a_grant_out_of_its_rules_is_refused_by_name() {
     let (_dir, storage) = wallet_db().await;
+    let todo = basket("todo items");
     let cases = [
-        (Scope::Wallet, Some(1), 0, Refused::AmountOnWallet),
-        (Scope::Spending, Some(1), NOW, Refused::ExpiryOnSpending),
-        (Scope::Spending, None, 0, Refused::AmountRequired),
-        (Scope::Wallet, None, -1, Refused::Negative),
-        (Scope::Spending, Some(-1), 0, Refused::Negative),
+        (&todo, Some(1), 0, Refused::AmountOnKind(Kind::Basket)),
+        (&Power::Spending, Some(1), NOW, Refused::ExpiryOnSpending),
+        (&Power::Spending, None, 0, Refused::AmountRequired),
+        (&todo, None, -1, Refused::Negative),
+        (&Power::Spending, Some(-1), 0, Refused::Negative),
     ];
-    for (scope, amount, expiry, refused) in cases {
-        let granting = owner("app.example", scope, amount, expiry);
+    for (power, amount, expiry, refused) in cases {
+        let granting = owner("app.example", power, amount, expiry);
         let e = grant(&storage, &granting, NOW).await.unwrap_err();
         assert_eq!(refusal(&e), refused, "{granting:?}");
     }
-    let schemed = owner("https://app.example", Scope::Wallet, None, 0);
+    let schemed = owner("https://app.example", &todo, None, 0);
     let e = grant(&storage, &schemed, NOW).await.unwrap_err();
     assert!(matches!(refusal(&e), Refused::NotAnOriginator { .. }));
     let text = e.to_string();
@@ -586,91 +727,44 @@ async fn a_grant_out_of_its_rules_is_refused_by_name() {
 }
 
 #[tokio::test]
-async fn a_revoke_stamps_and_deletes_nothing() {
+async fn a_revoke_reaches_a_power_a_kind_or_every_row_and_deletes_nothing() {
     let (_dir, storage) = wallet_db().await;
-    granted(&storage, "app.example").await;
-    grant(
-        &storage,
-        &owner("app.example", Scope::Spending, Some(9), 0),
-        NOW,
-    )
-    .await
-    .unwrap();
+    for (power, ..) in every_kind() {
+        granted(&storage, "app.example", &power).await;
+    }
+    granted(&storage, "app.example", &basket("other basket")).await;
 
-    let wallet_only = revoke(&storage, "app.example", Some(Scope::Wallet), NOW + 1)
+    let one = Reach::Power(basket("todo items"));
+    let stamped = revoke(&storage, "app.example", &one, NOW + 1)
         .await
         .unwrap();
-    assert_eq!(wallet_only.len(), 1);
-    assert_eq!(wallet_only[0].revoked_at, Some(NOW + 1));
-    let rest = revoke(&storage, "app.example:8080", None, NOW + 2)
-        .await
-        .unwrap();
+    assert_eq!(stamped.len(), 1);
     assert_eq!(
-        rest.iter()
-            .map(|r| (r.scope, r.revoked_at))
-            .collect::<Vec<_>>(),
-        vec![(Scope::Spending, Some(NOW + 2))]
+        (stamped[0].key.as_str(), stamped[0].revoked_at),
+        (r#"["todo items"]"#, Some(NOW + 1))
     );
-    assert!(revoke(&storage, "app.example", None, NOW + 3)
+    let kind = Reach::Kind(Kind::Basket);
+    let stamped = revoke(&storage, "app.example:8080", &kind, NOW + 2)
+        .await
+        .unwrap();
+    assert_eq!(stamped.len(), 1, "the other basket, the revoked one passed");
+    assert_eq!(stamped[0].key, r#"["other basket"]"#);
+    let rest = revoke(&storage, "app.example", &Reach::Every, NOW + 3)
+        .await
+        .unwrap();
+    let kinds: Vec<Kind> = rest.iter().map(|r| r.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            Kind::Protocol,
+            Kind::Protocol,
+            Kind::Certificate,
+            Kind::Spending
+        ]
+    );
+    assert!(revoke(&storage, "app.example", &Reach::Every, NOW + 4)
         .await
         .unwrap()
         .is_empty());
-    assert_eq!(count(&storage, "origin_grants").await, 2);
-}
-
-#[tokio::test]
-async fn the_listing_holds_every_grant_and_the_open_rows_unless_all() {
-    let (_dir, storage) = wallet_db().await;
-    let ceiling = owner("b.example", Scope::Spending, Some(500), 0);
-    grant(&storage, &ceiling, NOW).await.unwrap();
-    granted(&storage, "b.example").await;
-    granted(&storage, "a.example").await;
-    revoke(&storage, "a.example", None, NOW).await.unwrap();
-    let open = ask(&storage, &wallet_call("c.example:5173", "/listOutputs")).await;
-    let shut = ask(&storage, &spend_call("b.example", 20)).await;
-    say(&storage, shut.pending_id, Answer::Deny, None)
-        .await
-        .unwrap();
-
-    let rows = listing(&storage, false).await.unwrap();
-    let keys: Vec<_> = rows
-        .grants
-        .iter()
-        .map(|g| (g.originator.as_str(), g.scope, g.revoked_at.is_some()))
-        .collect();
-    assert_eq!(
-        keys,
-        [
-            ("a.example", Scope::Wallet, true),
-            ("b.example", Scope::Wallet, false),
-            ("b.example", Scope::Spending, false),
-        ]
-    );
-    assert_eq!(rows.pending, std::slice::from_ref(&open));
-    let every = listing(&storage, true).await.unwrap();
-    let ids: Vec<_> = every.pending.iter().map(|p| p.pending_id).collect();
-    assert_eq!(ids, [open.pending_id, shut.pending_id]);
-}
-
-#[tokio::test]
-async fn the_owners_listing_holds_the_open_rows_and_the_last_answered() {
-    let (_dir, storage) = wallet_db().await;
-    granted(&storage, "a.example").await;
-    let mut shut = Vec::new();
-    for (i, at) in [(1, NOW + 3), (2, NOW + 1), (3, NOW + 2)] {
-        let row = ask(&storage, &spend_call("b.example", i)).await;
-        answer(&storage, row.pending_id, &reply(Answer::Deny, None), at)
-            .await
-            .unwrap();
-        shut.push(row.pending_id);
-    }
-    let open = ask(&storage, &wallet_call("c.example", "/listOutputs")).await;
-
-    let rows = owners_listing(&storage, 2).await.unwrap();
-    assert_eq!(rows.grants.len(), 1);
-    let ids: Vec<_> = rows.pending.iter().map(|p| p.pending_id).collect();
-    // The two answered last (the first and the third), and the open row.
-    assert_eq!(ids, [shut[0], shut[2], open.pending_id]);
-    let none = owners_listing(&storage, 0).await.unwrap();
-    assert_eq!(none.pending, std::slice::from_ref(&open));
+    assert_eq!(count(&storage, "origin_grants").await, 6);
 }

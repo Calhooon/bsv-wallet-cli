@@ -5,7 +5,7 @@
 //! doors around it keep their gate.
 
 use super::*;
-use crate::store::origin_grants::{self as grants, Asking, Scope};
+use crate::store::origin_grants::{self as grants, Asking, Power};
 use crate::test_support::{response_answer, test_wallet};
 use bsv_sdk::primitives::PrivateKey;
 use tower::ServiceExt;
@@ -22,7 +22,7 @@ fn calls() -> [(&'static str, &'static str, serde_json::Value); 4] {
         (
             "POST",
             "/origins/grant",
-            json!({"originator": "app.example", "scope": "wallet"}),
+            json!({"originator": "app.example", "kind": "basket", "key": "[\"todo items\"]"}),
         ),
         (
             "POST",
@@ -191,13 +191,16 @@ async fn a_preflight_is_refused_on_every_route() {
     }
 }
 
-/// A held call's pending row for `originator`'s `wallet` scope, as the
-/// gate will write it (L5), opened at `now`; its id.
+/// A held call's pending row for `originator`'s listing of the basket
+/// `todo items`, as the gate will write it (L5b), opened at `now`; its id.
 async fn pending(wallet: &WalletState, originator: &str, now: i64) -> i64 {
+    let power = Power::basket("todo items").unwrap();
     let asking = Asking {
         originator,
-        scope: Scope::Wallet,
+        power: &power,
+        usage: Some("listing"),
         call: "/listOutputs",
+        reason: None,
         amount: None,
         renewal: false,
     };
@@ -217,7 +220,7 @@ fn listing() -> Request {
 async fn the_admitted_grant_and_listing_answer_the_shape() {
     let (_dir, wallet) = wallet().await;
     let app = router(&wallet, None);
-    let grant = json!({"originator": "App.Example:8443", "scope": "spending", "amount": 60000});
+    let grant = json!({"originator": "App.Example:8443", "kind": "spending", "amount": 60000});
     in_order(
         &raw(&app, post("/origins/grant", &grant)).await,
         &GRANT_KEYS,
@@ -235,8 +238,8 @@ async fn the_admitted_grant_and_listing_answer_the_shape() {
             &json!(60000)
         )
     );
-    let spent = (&row["spentThisMonth"], &row["source"]);
-    assert_eq!(spent, (&json!(0), &json!("owner")));
+    let spent = (&row["spentThisMonth"], &row["kind"], &row["key"]);
+    assert_eq!(spent, (&json!(0), &json!("spending"), &json!("[]")));
 
     let id = pending(&wallet, "new.example:5173", unix_now()).await;
     let text = raw(&app, listing()).await;
@@ -246,6 +249,10 @@ async fn the_admitted_grant_and_listing_answer_the_shape() {
     assert_eq!(listed["grants"].as_array().unwrap().len(), 1);
     assert_eq!(listed["pending"][0]["pendingId"], json!(id));
     assert_eq!(listed["pending"][0]["rawOriginator"], "new.example:5173");
+    assert_eq!(
+        listed["pending"][0]["asked"],
+        "list the basket \"todo items\""
+    );
 }
 
 #[tokio::test]
@@ -259,9 +266,10 @@ async fn the_admitted_answer_grants_and_the_revoke_stamps() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["pending"][0]["answer"], "grant");
     assert_eq!(body["grants"][0]["originator"], "new.example");
+    assert_eq!(body["grants"][0]["key"], "[\"todo items\"]");
     assert_eq!(body["grants"][0]["expiry"], json!(now + 3600));
 
-    // No scope: every live row of the host (its wallet row) is stamped.
+    // No kind: every live row of the host (its basket row) is stamped.
     let revoke = || post("/origins/revoke", &json!({"originator": "new.example"}));
     let (status, _, body) = answered(&app, revoke()).await;
     assert_eq!(status, StatusCode::OK);
@@ -284,18 +292,53 @@ async fn a_malformed_body_is_refused_by_name() {
         ),
         (
             "/origins/grant",
-            json!({"originator": "a.example", "scope": "wallet", "expires": 5}),
+            json!({"originator": "a.example", "kind": "spending", "amount": 1, "expires": 5}),
             "unknown field `expires`",
         ),
         (
             "/origins/grant",
-            json!({"originator": "https://a.example", "scope": "wallet"}),
+            json!({"originator": "a.example", "kind": "wallet"}),
+            "unknown variant `wallet`",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "a.example", "scope": "spending", "amount": 1}),
+            "unknown field `scope`",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "https://a.example", "kind": "spending", "amount": 1}),
             "is not",
         ),
         (
             "/origins/grant",
-            json!({"originator": "a.example", "scope": "spending"}),
+            json!({"originator": "a.example", "kind": "spending"}),
             "names its amount",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "a.example", "kind": "protocol"}),
+            "a protocol grant names its key",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "a.example", "kind": "basket", "key": "[\"Todo\"]"}),
+            "write it [\"todo\"]",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "a.example", "kind": "basket", "key": "[\"default\"]"}),
+            "Basket \u{201c}default\u{201d} is admin-only.",
+        ),
+        (
+            "/origins/grant",
+            json!({"originator": "a.example", "kind": "protocol", "key": "[false,0,\"todo list\",\"\"]"}),
+            "security level 0",
+        ),
+        (
+            "/origins/revoke",
+            json!({"originator": "a.example", "key": "[\"todo\"]"}),
+            "name the kind with the key",
         ),
         (
             "/origins/answer",
@@ -343,6 +386,87 @@ async fn two_answers_race_to_one_winner_and_the_loser_is_told() {
     assert_eq!(rows.grants.len(), usize::from(word == "grant"));
 }
 
+/// A power of each kind as the routes name it: its kind, its key (none
+/// for spending) and a grant's amount.
+fn every_kind() -> [(&'static str, Option<String>, Option<i64>); 5] {
+    let g = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    let t = "AGfk/WrT1eBDXpz3mcw386Zww2HmqcIn3uY6x4Af1eo=";
+    [
+        (
+            "protocol",
+            Some(r#"[false,2,"todo list","self"]"#.into()),
+            None,
+        ),
+        (
+            "protocol",
+            Some(r#"[false,1,"action label invoices",""]"#.into()),
+            None,
+        ),
+        ("basket", Some(r#"["todo items"]"#.into()), None),
+        (
+            "certificate",
+            Some(format!(r#"[false,"{t}","{g}",["email","name"]]"#)),
+            None,
+        ),
+        ("spending", None, Some(60_000)),
+    ]
+}
+
+#[tokio::test]
+async fn the_routes_grant_list_and_revoke_a_power_of_each_kind() {
+    let (_dir, wallet) = wallet().await;
+    let app = router(&wallet, None);
+    for (kind, key, amount) in every_kind() {
+        let mut body = json!({"originator": "app.example:8443", "kind": kind});
+        if let Some(key) = &key {
+            body["key"] = json!(key);
+        }
+        if let Some(amount) = amount {
+            body["amount"] = json!(amount);
+        }
+        let (status, _, granted) = answered(&app, post("/origins/grant", &body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}: {granted}");
+        let row = &granted["grants"][0];
+        assert_eq!(
+            (&row["kind"], &row["key"]),
+            (&json!(kind), &json!(key.clone().unwrap_or("[]".into())))
+        );
+    }
+    let (_, _, listed) = answered(&app, listing()).await;
+    assert_eq!(listed["grants"].as_array().unwrap().len(), 5);
+
+    // One power's row, then a kind's rows, then every row.
+    let one = json!({"originator": "app.example", "kind": "basket", "key": "[\"todo items\"]"});
+    let (status, _, body) = answered(&app, post("/origins/revoke", &one)).await;
+    assert_eq!(
+        (status, body["grants"].as_array().unwrap().len()),
+        (StatusCode::OK, 1)
+    );
+    let (status, _, body) = answered(&app, post("/origins/revoke", &one)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let why = "app.example holds no live grant row for basket [\"todo items\"]: nothing to revoke";
+    assert_eq!(refused(&body).1, why);
+    let protocols = json!({"originator": "app.example", "kind": "protocol"});
+    let (_, _, body) = answered(&app, post("/origins/revoke", &protocols)).await;
+    assert_eq!(
+        body["grants"].as_array().unwrap().len(),
+        2,
+        "the protocol and the label"
+    );
+    let (_, _, body) = answered(&app, post("/origins/revoke", &protocols)).await;
+    let why = "app.example holds no live grant row of the protocol kind: nothing to revoke";
+    assert_eq!(refused(&body).1, why);
+    let every = json!({"originator": "app.example"});
+    let (_, _, body) = answered(&app, post("/origins/revoke", &every)).await;
+    let kinds: Vec<&str> = body["grants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["certificate", "spending"]);
+}
+
 #[tokio::test]
 async fn the_doors_keep_their_gate_beside_the_owners_routes() {
     let (_dir, wallet) = wallet().await;
@@ -369,22 +493,26 @@ async fn the_doors_keep_their_gate_beside_the_owners_routes() {
 const GRANT_KEYS: [&str; 9] = [
     "\"originator\"",
     "\"rawOriginator\"",
-    "\"scope\"",
+    "\"kind\"",
+    "\"key\"",
     "\"amount\"",
     "\"spentThisMonth\"",
     "\"grantedAt\"",
     "\"expiry\"",
     "\"revokedAt\"",
-    "\"source\"",
 ];
 
 /// Section (4)'s keys of a pending row, in its order.
-const PENDING_KEYS: [&str; 10] = [
+const PENDING_KEYS: [&str; 14] = [
     "\"pendingId\"",
     "\"originator\"",
     "\"rawOriginator\"",
-    "\"scope\"",
+    "\"kind\"",
+    "\"key\"",
+    "\"usage\"",
+    "\"asked\"",
     "\"call\"",
+    "\"reason\"",
     "\"amount\"",
     "\"renewal\"",
     "\"firstSeen\"",

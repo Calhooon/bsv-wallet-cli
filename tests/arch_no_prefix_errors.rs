@@ -41,6 +41,11 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         2,
         "the Authorization header's `Bearer ` scheme, not an error",
     ),
+    (
+        "src/store/origin_grants/power.rs",
+        7,
+        "a power's names (#414, the design's W17): the reference's admin-reserved names (`admin` and `p ` first, WalletPermissionsManager.ts 1509-1511, 1589, 1806-1808) and the label and linkage name forms of a key, never an error's text",
+    ),
 
 ];
 

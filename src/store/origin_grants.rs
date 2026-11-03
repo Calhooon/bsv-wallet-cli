@@ -1,32 +1,39 @@
-//! The served doors' per-origin grants in the store (#414, the design's
-//! row L1, `docs/design/origin-grants.md` section (1)): three tables the
-//! CLI owns beside the toolbox's, `origin_grants`, `origin_pending` and
-//! `origin_spends`, and the row functions over them. This module is the
-//! only writer of the three tables; it touches none of the toolbox's.
+//! The served doors' per-origin grants in the store (#414,
+//! `docs/design/origin-grants.md` section (1), revised under the owner's
+//! ruling W1 (a) of 2026-11-03): three tables the CLI owns beside the
+//! toolbox's, `origin_grants`, `origin_pending` and `origin_spends`, and
+//! the row functions over them. This module is the only writer of the
+//! three tables; it touches none of the toolbox's.
 //!
-//! Every row is keyed by the originator's hostname, lowercased with its
-//! port dropped (the reference's `normalizeOriginator`, ts-stack edf6e03
-//! `WalletPermissionsManager.ts:5702-5729`): one grant covers every port of
-//! its host. The name as given is kept beside it (`raw_originator`).
+//! Every grant row is one power ([`Power`]): an originator, one of the
+//! reference's four kinds and the kind's instance key in its canonical
+//! text, unique per (originator, kind, key). Every row is keyed by the
+//! originator's hostname, lowercased with its port dropped (the
+//! reference's `normalizeOriginator`, ts-stack edf6e03
+//! `WalletPermissionsManager.ts:5702-5729`): one grant covers every port
+//! of its host. The name as given is kept beside it (`raw_originator`).
 //!
 //! An expiry is unix seconds and `0` never expires (`expiry > 0 && expiry
 //! < now` is expired, `WalletPermissionsManager.ts:2900-2903`); a
 //! `spending` row never expires, its ceiling resetting each UTC month.
 //!
 //! Nothing reads these rows at a door yet: the gate still reads
-//! `ALLOWED_ORIGINS` (the design's L5 is the switch).
+//! `ALLOWED_ORIGINS` (the design's L5b is the switch).
 
 use anyhow::Result;
 use bsv_wallet_toolbox::StorageSqlx;
 use sqlx::{Sqlite, SqliteConnection};
 
+mod migrate;
+mod power;
 mod rows;
 mod shown;
 
+use migrate::{Case, Moved};
+pub use power::Power;
 pub use rows::{
-    expired, key_of, month_of, unlisted_text, when, Answer, Answered, Asking, Fold, FoldLine,
-    Folded, GrantRow, Granting, Listing, Pending, PendingRow, Refused, Reply, Scope, Source,
-    Standing, SEED_NOTICE,
+    expired, key_of, month_of, when, Answer, Answered, Asking, GrantRow, Granting, Kind, Listing,
+    Pending, PendingRow, Reach, Refused, Reply, Standing,
 };
 use rows::{GrantTuple, PendingTuple};
 pub use shown::{Shown, ShownJson};
@@ -35,7 +42,7 @@ pub use shown::{Shown, ShownJson};
 /// [`ensure`] reads them from `sqlite_master`.
 const OBJECTS: [(&str, &str); 6] = [
     ("table", "origin_grants"),
-    ("index", "origin_grants_key"),
+    ("index", "origin_grants_power"),
     ("table", "origin_pending"),
     ("index", "origin_pending_open"),
     ("table", "origin_spends"),
@@ -49,26 +56,34 @@ const DDL: [&str; 6] = [
         grant_id INTEGER PRIMARY KEY, \
         originator TEXT NOT NULL, \
         raw_originator TEXT NOT NULL, \
-        scope TEXT NOT NULL CHECK (scope IN ('wallet', 'spending')), \
+        kind TEXT NOT NULL CHECK (kind IN ('protocol', 'basket', 'certificate', 'spending')), \
+        key TEXT NOT NULL, \
         amount INTEGER, \
         granted_at INTEGER NOT NULL, \
         expiry INTEGER NOT NULL DEFAULT 0, \
         revoked_at INTEGER, \
-        source TEXT NOT NULL CHECK (source IN ('owner', 'env')))",
-    "CREATE UNIQUE INDEX IF NOT EXISTS origin_grants_key ON origin_grants (originator, scope)",
+        CHECK ((kind = 'spending') = (amount IS NOT NULL)), \
+        CHECK (kind <> 'spending' OR (key = '[]' AND expiry = 0)))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS origin_grants_power \
+        ON origin_grants (originator, kind, key)",
     "CREATE TABLE IF NOT EXISTS origin_pending (\
         pending_id INTEGER PRIMARY KEY, \
         originator TEXT NOT NULL, \
         raw_originator TEXT NOT NULL, \
-        scope TEXT NOT NULL CHECK (scope IN ('wallet', 'spending')), \
+        kind TEXT NOT NULL CHECK (kind IN ('protocol', 'basket', 'certificate', 'spending')), \
+        key TEXT NOT NULL, \
+        usage TEXT, \
         call TEXT NOT NULL, \
+        reason TEXT, \
         amount INTEGER, \
         renewal INTEGER NOT NULL DEFAULT 0, \
         first_seen INTEGER NOT NULL, \
         answered_at INTEGER, \
-        answer TEXT CHECK (answer IN ('grant', 'once', 'deny')))",
-    "CREATE UNIQUE INDEX IF NOT EXISTS origin_pending_open ON origin_pending (originator) \
-        WHERE answered_at IS NULL AND scope = 'wallet'",
+        answer TEXT CHECK (answer IN ('grant', 'once', 'deny')), \
+        CHECK ((kind = 'spending') = (amount IS NOT NULL)))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS origin_pending_open \
+        ON origin_pending (originator, kind, key) \
+        WHERE answered_at IS NULL AND kind <> 'spending'",
     "CREATE TABLE IF NOT EXISTS origin_spends (\
         spend_id INTEGER PRIMARY KEY, \
         originator TEXT NOT NULL, \
@@ -81,57 +96,153 @@ const DDL: [&str; 6] = [
     "CREATE INDEX IF NOT EXISTS origin_spends_month ON origin_spends (originator, month)",
 ];
 
-/// The tables and indexes, created when any one is missing. Reads
-/// `sqlite_master` on the reader first: a store holding all six sends
-/// nothing to the writer and answers `false`. Otherwise the whole block
-/// runs in one `BEGIN IMMEDIATE` transaction on the writer, so a store
-/// interrupted between a table and its index gains the index, and answers
-/// `true`. The toolbox's tables are never touched.
+/// The tables and indexes, in the shape of the four kinds. The shape is
+/// read on the reader first: a store holding all six objects with the
+/// grants' `kind` column sends nothing to the writer and answers `false`.
+/// Otherwise the case is decided again on the writer after `BEGIN
+/// IMMEDIATE`, under its lock, so two processes that both read an old
+/// shape move it once: a store another process moved in between answers
+/// `false` and commits nothing; a store with no grants table, or the new
+/// one missing an object, gains it; L1's tables are moved ([`migrate`]).
+/// Answers `true` when it wrote. The toolbox's tables are never touched.
 ///
 /// # Errors
 ///
 /// The store's error: the reader's, or the writer's (a busy store is the
 /// toolbox's typed `StoreBusy`, [`super::is_store_busy`]).
 pub async fn ensure(storage: &StorageSqlx) -> Result<bool> {
+    let mut reader = storage.pool().acquire().await?;
+    if shape(&mut reader).await? == Case::Current {
+        return Ok(false);
+    }
+    drop(reader);
+    let mut tx = storage.write_tx().await?;
+    let moved = match shape(&mut tx).await? {
+        Case::Current => {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        Case::L1 { pending } => Some(move_l1(&mut tx, pending).await?),
+        Case::Missing => {
+            create(&mut tx).await?;
+            None
+        }
+    };
+    tx.commit().await?;
+    if let Some(moved) = moved {
+        moved.log();
+    }
+    Ok(true)
+}
+
+/// The store's shape read on `conn` (the reader's for the fast path, the
+/// transaction's after `BEGIN IMMEDIATE` for the decision): the objects
+/// present and whether the grants table has `kind`.
+async fn shape(conn: &mut SqliteConnection) -> Result<Case> {
     let present: Vec<(String, String)> = sqlx::query_as(
         "SELECT type, name FROM sqlite_master WHERE tbl_name IN \
          ('origin_grants', 'origin_pending', 'origin_spends')",
     )
-    .fetch_all(storage.pool())
+    .fetch_all(&mut *conn)
     .await?;
-    if OBJECTS
-        .iter()
-        .all(|(t, n)| present.iter().any(|(pt, pn)| pt == t && pn == n))
-    {
-        return Ok(false);
-    }
-    let mut tx = storage.write_tx().await?;
-    for sql in DDL {
-        sqlx::query(sql).execute(&mut *tx).await?;
-    }
-    tx.commit().await?;
-    Ok(true)
+    let kinded: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('origin_grants') WHERE name = 'kind'",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Case::of(&present, kinded > 0))
 }
 
-const GRANT_COLUMNS: &str = "grant_id, originator, raw_originator, scope, amount, granted_at, \
-                             expiry, revoked_at, source";
+/// Move L1's shape inside the caller's transaction ([`migrate`]): rename
+/// the two tables aside and drop their indexes, run the block, carry each
+/// ceilinged spending row, drop the old tables. `origin_spends` keeps its
+/// shape and its rows.
+async fn move_l1(conn: &mut SqliteConnection, pending: bool) -> Result<Moved> {
+    let rows: Vec<migrate::L1Tuple> = sqlx::query_as(
+        "SELECT originator, scope, amount, granted_at, revoked_at, source FROM origin_grants \
+         ORDER BY grant_id",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let count: i64 = if pending {
+        sqlx::query_scalar("SELECT COUNT(*) FROM origin_pending")
+            .fetch_one(&mut *conn)
+            .await?
+    } else {
+        0
+    };
+    let mut aside = vec![
+        "ALTER TABLE origin_grants RENAME TO origin_grants_l1",
+        "DROP INDEX IF EXISTS origin_grants_key",
+    ];
+    if pending {
+        aside.push("ALTER TABLE origin_pending RENAME TO origin_pending_l1");
+        aside.push("DROP INDEX IF EXISTS origin_pending_open");
+    }
+    for sql in aside {
+        sqlx::query(sql).execute(&mut *conn).await?;
+    }
+    create(conn).await?;
+    for sql in [
+        "INSERT INTO origin_grants \
+            (originator, raw_originator, kind, key, amount, granted_at, expiry, revoked_at) \
+         SELECT originator, raw_originator, 'spending', '[]', amount, granted_at, 0, revoked_at \
+         FROM origin_grants_l1 WHERE scope = 'spending' AND amount IS NOT NULL ORDER BY grant_id",
+        "DROP TABLE origin_grants_l1",
+        "DROP TABLE IF EXISTS origin_pending_l1",
+    ] {
+        sqlx::query(sql).execute(&mut *conn).await?;
+    }
+    Ok(Moved::of(rows, count))
+}
 
-const PENDING_COLUMNS: &str = "pending_id, originator, raw_originator, scope, call, amount, \
-                               renewal, first_seen, answered_at, answer";
+/// The block, on the transaction's connection.
+async fn create(conn: &mut SqliteConnection) -> Result<()> {
+    for sql in DDL {
+        sqlx::query(sql).execute(&mut *conn).await?;
+    }
+    Ok(())
+}
 
-async fn grant_row<'e, E: sqlx::Executor<'e, Database = Sqlite>>(
+const GRANT_COLUMNS: &str = "grant_id, originator, raw_originator, kind, key, amount, \
+                             granted_at, expiry, revoked_at";
+
+const PENDING_COLUMNS: &str = "pending_id, originator, raw_originator, kind, key, usage, call, \
+                               reason, amount, renewal, first_seen, answered_at, answer";
+
+/// The originator's rows that cover `power`: its one (kind, key) row; for
+/// a certificate, the rows of the same `privileged`, type and verifier
+/// whose fields hold every field asked (the subset kept here).
+async fn covering<'e, E: sqlx::Executor<'e, Database = Sqlite>>(
     executor: E,
     key: &str,
-    scope: Scope,
-) -> Result<Option<GrantRow>> {
-    let sql =
-        format!("SELECT {GRANT_COLUMNS} FROM origin_grants WHERE originator = ? AND scope = ?");
-    let row: Option<GrantTuple> = sqlx::query_as(&sql)
-        .bind(key)
-        .bind(scope.as_str())
-        .fetch_optional(executor)
-        .await?;
-    row.map(GrantRow::from_tuple).transpose()
+    power: &Power,
+) -> Result<Vec<GrantRow>> {
+    let rows: Vec<GrantTuple> = if power.kind() == Kind::Certificate {
+        let sql = format!(
+            "SELECT {GRANT_COLUMNS} FROM origin_grants \
+             WHERE originator = ? AND kind = 'certificate' ORDER BY grant_id"
+        );
+        sqlx::query_as(&sql).bind(key).fetch_all(executor).await?
+    } else {
+        let sql = format!(
+            "SELECT {GRANT_COLUMNS} FROM origin_grants WHERE originator = ? AND kind = ? AND key = ?"
+        );
+        sqlx::query_as(&sql)
+            .bind(key)
+            .bind(power.kind().as_str())
+            .bind(power.key())
+            .fetch_all(executor)
+            .await?
+    };
+    let rows = rows
+        .into_iter()
+        .map(GrantRow::from_tuple)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.power().is_ok_and(|p| p.covers(power)))
+        .collect())
 }
 
 async fn pending_row(conn: &mut SqliteConnection, pending_id: i64) -> Result<Option<PendingRow>> {
@@ -143,8 +254,8 @@ async fn pending_row(conn: &mut SqliteConnection, pending_id: i64) -> Result<Opt
     row.map(PendingRow::from_tuple).transpose()
 }
 
-/// The `scope` row of `originator` (any name of its host) read at `now`:
-/// one indexed read on the reader.
+/// How `originator` (any name of its host) stands for `power` at `now`
+/// (section (1)'s lookup): an indexed read on the reader.
 ///
 /// # Errors
 ///
@@ -152,54 +263,55 @@ async fn pending_row(conn: &mut SqliteConnection, pending_id: i64) -> Result<Opt
 pub async fn lookup(
     storage: &StorageSqlx,
     originator: &str,
-    scope: Scope,
+    power: &Power,
     now: i64,
 ) -> Result<Standing> {
     ensure(storage).await?;
     let (key, _) = key_of(originator)?;
     Ok(Standing::of(
-        grant_row(storage.pool(), &key, scope).await?,
+        covering(storage.pool(), &key, power).await?,
         now,
     ))
 }
 
-/// Write `g` as the one row of its (originator, scope), replacing a row
-/// there: `granted_at`, `expiry`, `amount` and `source` set, `revoked_at`
+/// Write `g` as the one row of its (originator, kind, key), replacing a
+/// row there: `granted_at`, `expiry` and `amount` set, `revoked_at`
 /// cleared.
 async fn upsert(conn: &mut SqliteConnection, g: &Granting<'_>, now: i64) -> Result<GrantRow> {
     g.check()?;
-    let (key, raw) = key_of(g.originator)?;
-    sqlx::query(
+    let (originator, raw) = key_of(g.originator)?;
+    let (kind, key) = (g.power.kind().as_str(), g.power.key());
+    let sql = format!(
         "INSERT INTO origin_grants \
-            (originator, raw_originator, scope, amount, granted_at, expiry, revoked_at, source) \
-         VALUES (?, ?, ?, ?, ?, ?, NULL, ?) \
-         ON CONFLICT (originator, scope) DO UPDATE SET \
+            (originator, raw_originator, kind, key, amount, granted_at, expiry, revoked_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL) \
+         ON CONFLICT (originator, kind, key) DO UPDATE SET \
             raw_originator = excluded.raw_originator, amount = excluded.amount, \
-            granted_at = excluded.granted_at, expiry = excluded.expiry, revoked_at = NULL, \
-            source = excluded.source",
-    )
-    .bind(&key)
-    .bind(&raw)
-    .bind(g.scope.as_str())
-    .bind(g.amount)
-    .bind(now)
-    .bind(g.expiry)
-    .bind(g.source.as_str())
-    .execute(&mut *conn)
-    .await?;
-    grant_row(&mut *conn, &key, g.scope)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the grant row {key} was not written"))
+            granted_at = excluded.granted_at, expiry = excluded.expiry, revoked_at = NULL \
+         RETURNING {GRANT_COLUMNS}"
+    );
+    let row: GrantTuple = sqlx::query_as(&sql)
+        .bind(&originator)
+        .bind(&raw)
+        .bind(kind)
+        .bind(&key)
+        .bind(g.amount)
+        .bind(now)
+        .bind(g.expiry)
+        .fetch_one(&mut *conn)
+        .await?;
+    GrantRow::from_tuple(row)
 }
 
-/// Grant: the upsert of the (originator, scope) row, the owner's direct
-/// grant (a revoked row is granted again only here and by [`answer`]).
+/// Grant: the upsert of the (originator, kind, key) row, the owner's
+/// direct grant (a revoked row is granted again only here and by
+/// [`answer`]).
 ///
 /// # Errors
 ///
-/// [`Refused`]: the originator's form, a `wallet` amount, a `spending`
-/// expiry, an owner's `spending` grant with no amount, a negative number;
-/// or the store's error.
+/// [`Refused`]: the originator's form, an amount on a kind other than
+/// spending, a `spending` expiry, a `spending` grant with no amount, a
+/// negative number; or the store's error.
 pub async fn grant(storage: &StorageSqlx, granting: &Granting<'_>, now: i64) -> Result<GrantRow> {
     ensure(storage).await?;
     let mut tx = storage.write_tx().await?;
@@ -208,9 +320,9 @@ pub async fn grant(storage: &StorageSqlx, granting: &Granting<'_>, now: i64) -> 
     Ok(row)
 }
 
-/// Revoke: stamp `revoked_at` on the originator's rows not yet revoked,
-/// of `scope` or (`None`) both; nothing is deleted. Answers the rows
-/// stamped; none when the originator holds no such row.
+/// Revoke: stamp `revoked_at` on the originator's live rows the reach
+/// names (every kind, one kind, or one power's row); nothing is deleted.
+/// Answers the rows stamped; none when the originator holds no such row.
 ///
 /// # Errors
 ///
@@ -218,23 +330,28 @@ pub async fn grant(storage: &StorageSqlx, granting: &Granting<'_>, now: i64) -> 
 pub async fn revoke(
     storage: &StorageSqlx,
     originator: &str,
-    scope: Option<Scope>,
+    reach: &Reach,
     now: i64,
 ) -> Result<Vec<GrantRow>> {
     ensure(storage).await?;
     let (key, _) = key_of(originator)?;
     let sql = format!(
-        "UPDATE origin_grants SET revoked_at = ? \
-         WHERE originator = ? AND revoked_at IS NULL AND (? IS NULL OR scope = ?) \
+        "UPDATE origin_grants SET revoked_at = ?1 \
+         WHERE originator = ?2 AND revoked_at IS NULL \
+           AND (?3 IS NULL OR kind = ?3) AND (?4 IS NULL OR key = ?4) \
          RETURNING {GRANT_COLUMNS}"
     );
-    let scope = scope.map(Scope::as_str);
+    let (kind, power_key) = match reach {
+        Reach::Every => (None, None),
+        Reach::Kind(kind) => (Some(kind.as_str()), None),
+        Reach::Power(p) => (Some(p.kind().as_str()), Some(p.key())),
+    };
     let mut tx = storage.write_tx().await?;
     let rows: Vec<GrantTuple> = sqlx::query_as(&sql)
         .bind(now)
         .bind(&key)
-        .bind(scope)
-        .bind(scope)
+        .bind(kind)
+        .bind(power_key)
         .fetch_all(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -246,10 +363,22 @@ pub async fn revoke(
     Ok(rows)
 }
 
-/// Open or join: a `wallet` call joins its originator's open `wallet` row
-/// (one per originator, never duplicated), else writes one; a `spending`
-/// call writes its own row (the reference's per-request spending key).
-/// A revoked row of the scope refuses at once and writes nothing.
+/// The amount's place on a call: a spending call names its satoshis, a
+/// call of another kind none.
+fn amount_placed(asking: &Asking<'_>) -> Result<(), Refused> {
+    match (asking.power.kind(), asking.amount) {
+        (_, Some(a)) if a < 0 => Err(Refused::Negative),
+        (Kind::Spending, None) => Err(Refused::AmountRequired),
+        (Kind::Spending, Some(_)) | (_, None) => Ok(()),
+        (kind, Some(_)) => Err(Refused::AmountOnKind(kind)),
+    }
+}
+
+/// Open or join: a call joins the open row of its (originator, kind, key)
+/// (one per power, never duplicated; a call of another usage joins it,
+/// the design's W16), else writes one; a spending call writes its own row
+/// (the reference's per-request spending key). A revoked row covering the
+/// power refuses at once and writes nothing.
 ///
 /// # Errors
 ///
@@ -257,47 +386,48 @@ pub async fn revoke(
 /// place; or the store's error.
 pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) -> Result<Pending> {
     ensure(storage).await?;
-    match (asking.scope, asking.amount) {
-        (_, Some(a)) if a < 0 => return Err(Refused::Negative.into()),
-        (Scope::Wallet, Some(_)) => return Err(Refused::AmountOnWallet.into()),
-        (Scope::Spending, None) => return Err(Refused::AmountRequired.into()),
-        _ => {}
-    }
+    amount_placed(asking)?;
     let (key, raw) = key_of(asking.originator)?;
+    let (kind, power_key) = (asking.power.kind(), asking.power.key());
     let mut tx = storage.write_tx().await?;
-    if let Some(Some(at)) = grant_row(&mut *tx, &key, asking.scope)
-        .await?
-        .map(|g| g.revoked_at)
+    if let Standing::Revoked(row) = Standing::of(covering(&mut *tx, &key, asking.power).await?, now)
     {
         return Err(Refused::Revoked {
             originator: key,
-            at,
+            kind: row.kind,
+            key: row.key,
+            at: row.revoked_at.unwrap_or_default(),
         }
         .into());
     }
-    let open: Option<i64> = if asking.scope == Scope::Wallet {
+    let open: Option<i64> = if kind == Kind::Spending {
+        None
+    } else {
         sqlx::query_scalar(
             "SELECT pending_id FROM origin_pending \
-             WHERE originator = ? AND scope = 'wallet' AND answered_at IS NULL",
+             WHERE originator = ? AND kind = ? AND key = ? AND answered_at IS NULL",
         )
         .bind(&key)
+        .bind(kind.as_str())
+        .bind(&power_key)
         .fetch_optional(&mut *tx)
         .await?
-    } else {
-        None
     };
     let joined = open.is_some();
     let id = match open {
         Some(id) => id,
         None => sqlx::query(
-            "INSERT INTO origin_pending \
-                (originator, raw_originator, scope, call, amount, renewal, first_seen) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO origin_pending (originator, raw_originator, kind, key, usage, call, \
+                reason, amount, renewal, first_seen) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&key)
         .bind(&raw)
-        .bind(asking.scope.as_str())
+        .bind(kind.as_str())
+        .bind(&power_key)
+        .bind(asking.usage)
         .bind(asking.call)
+        .bind(asking.reason)
         .bind(asking.amount)
         .bind(asking.renewal)
         .bind(now)
@@ -313,15 +443,16 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
 
 /// Answer once: stamp `answered_at` and `answer` on an open row
 /// (`UPDATE .. WHERE answered_at IS NULL`, so two places answering race to
-/// one winner), and on `grant` write the row's grant ([`grant`]'s upsert,
-/// `source` `owner`) in the same transaction. The row is kept: the table
-/// is the history of the owner's prompts.
+/// one winner), and on `grant` write the row's power ([`grant`]'s upsert)
+/// in the same transaction. The row is kept: the table is the history of
+/// the owner's answers.
 ///
 /// # Errors
 ///
 /// [`Refused`]: no such row, the row already answered (the second answer),
-/// `once` on a `wallet` row, a grant's amount or expiry out of place; or
-/// the store's error.
+/// `once` on a row of another kind than spending, a grant's amount or
+/// expiry out of place, a stored key that does not read back; or the
+/// store's error.
 pub async fn answer(
     storage: &StorageSqlx,
     pending_id: i64,
@@ -341,16 +472,20 @@ pub async fn answer(
         }
         .into());
     }
-    if reply.answer == Answer::Once && row.scope == Scope::Wallet {
-        return Err(Refused::OnceOnWallet(pending_id).into());
+    if reply.answer == Answer::Once && row.kind != Kind::Spending {
+        return Err(Refused::OnceOnKind {
+            pending_id,
+            kind: row.kind,
+        }
+        .into());
     }
     let grant = if reply.answer == Answer::Grant {
+        let power = Power::parse(row.kind, &row.key)?;
         let granting = Granting {
             originator: &row.raw_originator,
-            scope: row.scope,
+            power: &power,
             amount: reply.amount,
             expiry: reply.expiry,
-            source: Source::Owner,
         };
         Some(upsert(&mut tx, &granting, now).await?)
     } else {
@@ -372,106 +507,83 @@ pub async fn answer(
     Ok(Answered { pending, grant })
 }
 
-/// Seed `key`'s env rows: the `wallet` row, and a ceiling-free `spending`
-/// row unless one is already there (the owner's is kept).
-async fn seed_env(conn: &mut SqliteConnection, key: &str, raw: &str, now: i64) -> Result<()> {
-    let wallet = Granting {
-        originator: raw,
-        scope: Scope::Wallet,
-        amount: None,
-        expiry: 0,
-        source: Source::Env,
-    };
-    upsert(&mut *conn, &wallet, now).await?;
-    sqlx::query(
-        "INSERT INTO origin_grants \
-            (originator, raw_originator, scope, amount, granted_at, expiry, source) \
-         VALUES (?, ?, 'spending', NULL, ?, 0, 'env') \
-         ON CONFLICT (originator, scope) DO NOTHING",
-    )
-    .bind(key)
-    .bind(raw)
-    .bind(now)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
-/// Fold one entry inside the fold's transaction.
-async fn fold_entry(conn: &mut SqliteConnection, entry: &str, now: i64) -> Result<FoldLine> {
-    let (key, raw) = key_of(entry)?;
-    let folded = match Standing::of(grant_row(&mut *conn, &key, Scope::Wallet).await?, now) {
-        Standing::None => {
-            seed_env(conn, &key, &raw, now).await?;
-            Folded::Granted
-        }
-        Standing::Revoked(GrantRow {
-            revoked_at: Some(at),
-            ..
-        }) => Folded::Revoked(at),
-        Standing::Expired(g) => Folded::Expired(g.expiry),
-        Standing::Live(_) | Standing::Revoked(_) => Folded::AlreadyGranted,
-    };
-    Ok(FoldLine {
-        entry: raw,
-        originator: key,
-        folded,
-    })
-}
-
-/// The keys of the env rows not revoked, and whether any env row is held.
-async fn env_rows(conn: &mut SqliteConnection) -> Result<(Vec<String>, bool)> {
-    let live: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT originator FROM origin_grants \
-         WHERE source = 'env' AND revoked_at IS NULL ORDER BY originator",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let held: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM origin_grants WHERE source = 'env')")
-            .fetch_one(&mut *conn)
-            .await?;
-    Ok((live, held))
-}
-
-/// The fold of `ALLOWED_ORIGINS` (section (6)), in one transaction: each
-/// entry whose host holds no `wallet` row becomes a `wallet` row and a
-/// ceiling-free `spending` row, `source` `env`, `expiry` `0`; a row of any
-/// state already there is left as it is (a revoked one is never granted
-/// again). Each entry's line, each env row whose entry left the list, and
-/// the seed notice are logged at info by name. A second fold writes
-/// nothing.
+/// The disconnect's deny (section (2), W4 (a)): delete the open rows of
+/// `originator` (any name of its host) among `ids`, the snapshot its
+/// held call took, of every kind, spending rows included; an answered
+/// row, or an open row the list does not name, is kept. Logged at info by
+/// name (`browser gate: abandoned`). Answers the rows deleted. Unused
+/// until the switch (L5b).
 ///
 /// # Errors
 ///
-/// [`Refused::NotAnOriginator`] for an entry (nothing is written), or the
-/// store's error.
-pub async fn fold(storage: &StorageSqlx, entries: &[String], now: i64) -> Result<Fold> {
+/// [`Refused::NotAnOriginator`], or the store's error.
+pub async fn abandon(
+    storage: &StorageSqlx,
+    originator: &str,
+    ids: &[i64],
+) -> Result<Vec<PendingRow>> {
+    ensure(storage).await?;
+    let (key, _) = key_of(originator)?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    let sql = format!(
+        "DELETE FROM origin_pending \
+         WHERE originator = ? AND pending_id IN ({marks}) AND answered_at IS NULL \
+         RETURNING {PENDING_COLUMNS}"
+    );
+    let mut query = sqlx::query_as::<_, PendingTuple>(&sql).bind(&key);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let mut tx = storage.write_tx().await?;
+    let rows = query.fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    let mut rows: Vec<PendingRow> = rows
+        .into_iter()
+        .map(PendingRow::from_tuple)
+        .collect::<Result<_>>()?;
+    rows.sort_by_key(|r| r.pending_id);
+    let named: Vec<String> = rows
+        .iter()
+        .map(|r| format!("#{} {} {}", r.pending_id, r.kind.as_str(), r.key))
+        .collect();
+    tracing::info!(
+        marker = "origin_grants_abandoned",
+        originator = %key,
+        rows = %named.join(", "),
+        "browser gate: abandoned"
+    );
+    Ok(rows)
+}
+
+/// The restart's sweep (section (2)): delete every open pending row, since
+/// no caller survives a restart; logged by name with the count. Answers
+/// the count. Unused until the switch (L5b).
+///
+/// # Errors
+///
+/// The store's error.
+pub async fn sweep_open(storage: &StorageSqlx) -> Result<u64> {
     ensure(storage).await?;
     let mut tx = storage.write_tx().await?;
-    let mut lines = Vec::with_capacity(entries.len());
-    for entry in entries {
-        lines.push(fold_entry(&mut tx, entry, now).await?);
-    }
-    let (env, seeded) = env_rows(&mut tx).await?;
+    let swept = sqlx::query("DELETE FROM origin_pending WHERE answered_at IS NULL")
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     tx.commit().await?;
-    let unlisted = env
-        .into_iter()
-        .filter(|k| lines.iter().all(|l| &l.originator != k))
-        .collect();
-    let fold = Fold {
-        lines,
-        unlisted,
-        seeded,
-    };
-    fold.log();
-    Ok(fold)
+    tracing::info!(
+        marker = "origin_grants_swept",
+        swept,
+        "origin grants: {swept} open requests from a previous run withdrawn; their callers are gone"
+    );
+    Ok(swept)
 }
 
 /// The listing `bsv-wallet origins` prints (section (4)): every grant row,
-/// by originator and then scope (`wallet` first), and the pending rows by
-/// id, the open ones alone unless `all` asks for the answered ones too.
-/// Read on the reader.
+/// by originator, kind and key, and the pending rows by id, the open ones
+/// alone unless `all` asks for the answered ones too. Read on the reader.
 ///
 /// # Errors
 ///
@@ -498,9 +610,7 @@ pub async fn owners_listing(storage: &StorageSqlx, answered: i64) -> Result<List
 /// number) selects, by id.
 async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Result<Listing> {
     ensure(storage).await?;
-    let sql = format!(
-        "SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, scope = 'spending'"
-    );
+    let sql = format!("SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, kind, key");
     let grants: Vec<GrantTuple> = sqlx::query_as(&sql).fetch_all(storage.pool()).await?;
     let sql = format!(
         "SELECT {PENDING_COLUMNS} FROM origin_pending WHERE {pending_where} ORDER BY pending_id"
@@ -542,6 +652,8 @@ pub async fn month_tally(storage: &StorageSqlx, originator: &str, now: i64) -> R
 }
 
 #[cfg(test)]
-mod fold_tests;
+mod migrate_tests;
+#[cfg(test)]
+mod pending_tests;
 #[cfg(test)]
 mod tests;
