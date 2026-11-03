@@ -2561,3 +2561,181 @@ survivors' batches 2 (running) and 3; night 3's record (run 41516017523);
 the certificate re-issue (#333) at the production upgrade with the upgrade
 note naming every caller. The lines: beta 73b5f956; main at this entry's
 parent, 006b0912.
+
+## 2026-11-02 (the night) to 2026-11-03 (the morning): the speed line on the owner's words, the merge queue on beta, loop one landed and the cache-scope cure witnessed, the (c) build's L1 to L4 on beta, the survivors all accounted for, and the night's lessons
+
+The day's entry ends at beta 73b5f956 and main 30eed8cf (its fold, PR 463),
+with the speed line just filed. Every time below is the verified clock;
+GitHub's merge stamps agree with it to the minute. The verdicts and scores
+of the reviews are the day line's figures.
+
+The owner's words of the night, through the keeper. At 23:1xZ, on the speed
+line: "it is very very very beneficial to optimize it" (on #451). At
+23:2xZ, to the captain's five asks: "1) okay 2) no... we never wanna use
+our own hardware.. we struggle as it is.. we gotta think god tier shit man
+3) okay 4) okay 5) okay". Then "be a field expert... balling on a budget";
+"even when that's all done, another round of optimizing"; "even the
+nightly... is all that necessary? or maybe a fraction"; and at 02:1xZ
+(#471's record) "do 3 or 4 loops even man... like huge chance for prodicut
+ity gains etc". They rule four things: no own hardware (#453, the
+self-hosted runner, closed at 23:13Z), no paid runners (#455, the hosted
+fast-runner label, closed at 23:19Z), the Nightly cut to a fraction (#462
+ahead of #460), and four loops per program, each row's record carrying five
+figures (a PR's CI wall clock, the queue wait, the night's length, a cold
+read's time, and the landing latency).
+
+The speed line, loop one. The merge queue (#451): PR 457 (ci.yml's
+`merge_group` trigger and the landing rule, rule 14; re-read merge at 0.9)
+merged at 00:17Z, beta acabc684, and the switch was the captain's hand at
+00:21Z: ruleset 26411919 (merge queue, REBASE, ALLGREEN, up to five a
+group, a 60-minute check timeout) active on beta, `strict` dropped, the
+checks, linear history and admins kept. The opening batch was PR 464 and PR
+466: enqueued 00:28:50Z and 00:41:44Z, merged 00:51:25Z (beta 05cf35d4) and
+01:01:50Z (beta c7d90676), about 22.5 and 20 minutes, one group run each
+(41553176976, 41554702828), no manual rebase and no collision; #451 closed
+on it at 01:02Z. The queue refused `gh pr merge --rebase` ("The merge
+strategy for beta is set by the merge queue"), so the command on beta is
+`gh pr merge <n>` with no strategy flag (`--rebase` on main alone). The
+reads' scope (#452): PR 459 went CONFLICTING after 457 moved README and
+ci.yml, so a port lane opened PR 466 (the untouched files byte-identical,
+both intents in the two moved ones; review merge at 0.93) and 459 closed as
+superseded; rule 15 now says lenses B and C run no cargo and no suite; #452
+closed at 01:02Z. The incremental Nightly (#462): PR 464 (the changed
+floored files mutated by the reach map, the carried figures with their run
+and sha, the complete run per prerelease) came back fix 2/2 on the
+planner's miss (a floored file's own unit-test modules planned no shard)
+and took the module-tree rule and the record's verdict field before its
+re-read said merge at 0.82; #462 stays open. The complete run (#460): PR
+470 (twenty shards in one wave, the hermetic pass in the same run; ensemble
+merge 2/2 at 0.85) merged at 01:35Z, beta d21a1964, #460 closed. The
+stagger (#456): there is no cron (#303, dispatch only), so the slot is a
+dispatch rule, the captain's at 03:00Z; PR 458 merged at 23:32Z, beta
+0488954b, #456 closed. #461 (the twin runs) closed at 23:58Z as already
+true (no `types` on `pull_request`, push filtered to main and beta). The
+lint job (#471): PR 474 bundled Rustfmt, Clippy, deny, locks and the
+ratchet into one `lint` job; at 02:28Z, before its enqueue, the captain
+re-pointed the required contexts by hand (beta six: lint, Test, Build,
+vectors, wire, e2e-hermetic; main four; app 15368; before and after on
+#471); it merged at 02:39Z, beta 4b4d58c4, #471 closed, and the open PRs
+were updated so their runs report `lint`. Main's four names were a slip
+(main's own ci.yml cannot report `lint`, so main's PRs were blocked): at
+04:54Z main went back to its seven names, strict, and #491 carries main's
+ci.yml to beta's. The docs-only exit (#476, loop two): PR 485 (the
+`changes` job; every required job's steps skip on a docs-only diff; rule
+16) came back fix 3/3 on one catch every lens reproduced (a `.md` under a
+code-scanned fixture folder read as docs), took "every path under `tests/`
+and `fuzz/` is never docs" with `tests/e2e/README.md` the one named
+exception, and merged at 03:39Z, beta 2efebc05; #476 stays open for the
+opening docs-only PR's measured figure. The cached build (#472): PR 487
+merged at 04:22Z, beta e9a21b86, #472 closed. The affected tests on a PR
+(#473): PR 489 came back fix 2/3 (a floored-file change dropped
+`header_source`), took the fix, went CONFLICTING after PR 488, and its port
+PR 493 merged at 06:06Z, beta 5e493123, #473 closed (rule 18).
+
+The landing latency (#471's record): the serial era's median 103.8 minutes
+over seven landings, the queue era's 44.4 over four. The loops' rows are
+filed: loop two #477 (the ten slowest tests; PR 492 open, its fix running),
+loop three #478 (compile time by evidence) and #479 (the reads share the
+lane's build), loop four #480 (the landing latency end to end).
+
+The cache-scope witness (#486). At 03:06Z the keeper's two reads confirmed
+it: both merge-group runs restored only main's stale key ("full match:
+false") and read no cache from beta, whose eight caches the queue never
+reads, while the queue refs saved their own unread; every queue landing
+built cold. The cure, a main-scoped cache of beta's build, was PR 488
+(`cache-beta.yml`, merged 04:49Z, beta 1b1efee6) and its carry to main, PR
+490 (merged 05:03Z, main a7407571), then one dispatch (run 41581733679).
+The witness, group run 41586918016 at 05:57Z, restored the test key with
+"full match: true" on Test, vectors and wire; #486 closed at 06:06Z. Lint,
+Build and e2e-hermetic still read "No cache found": #494 (PR 495, merged
+06:29Z, beta 79df0b79; its carry PR 500 merged on main 06:43Z, main
+41160935) waits on the dispatch and the next group's six lines. #497
+(lint's `runs-on` named a self-hosted runner for a private repo) was PR
+498, merged 06:42Z, beta 05741c59, closed. #496 (a complete night leaves a
+PR run its six runners: fourteen shards, then six) is PR 499, open on its
+fix.
+
+The (c) build (#414). L1, the `origin_grants` store, was PR 449 (22:40Z,
+beta 98e81a24, the day's entry). L2, the CLI's `origins`, `origin-grant`,
+`origin-deny` and `origin-revoke`, was PR 454 (review merge at 0.88),
+merged 00:03Z, beta 384624a5. L3, the owner's `/origins` door and the MCP's
+three tools, was PR 468 (review merge at 0.9), merged 01:47Z, beta
+6a9565e5. L4, the inspector's origins view with own-origin writes and a
+read-only pool for `/api/query`, was PR 481 (review merge at 0.88), merged
+03:17Z, beta b6ddf2ca; #440 closed on it. L1 to L4 move no admission. L5
+(the switch) waits on the owner's W1 and W4 word through the keeper. L4's
+reviewer's residue is #483 (the query route and VACUUM INTO and ATTACH).
+
+The survivors (#175). Batch 1 was PR 434 (beta 87ebc88f, the day's entry);
+batch 2 PR 467 (of 24 names 21 applied, 15 killed, 3 equivalent; review
+merge at 0.86), merged 01:18Z, beta 6a5d9dc3; batch 3 PR 475 (of the last
+ten, 4 already caught, 5 killed, 1 equivalent at line 561; review merge at
+0.92), merged 03:04Z, beta 220a9dd4. #175's account: 42 killed, 6 declared
+equivalent, 4 already caught of the opening night's 58. The equivalents
+record (#482): PR 484 (`docs/scoreboard/equivalents.json`, the score's
+third outcome; ensemble merge 2/2 at 0.90) merged 03:28Z, beta 6aaa2fad,
+#482 closed; on run 41413946663's outcomes tracker_host reads 75.8 with the
+six excluded (219 caught, 70 missed, 6 equivalent) against the recorded
+74.2, its floor of 75 unmoved. Batch 2's reviewer filed #469 (the spend
+gate's clock-dependent tests take a fixed clock).
+
+The night's other landings (before 23:1xZ, the day's entry has them in
+full): #435 by PR 436 (beta 62372d6f); the second night's record PR 438
+(beta f2976ef1), #420 and #423 closed; #445 by PR 447 (beta 11860a81), PR
+444 superseded; #401 by PR 446 (beta 475357c8); #433 by PR 442 (beta
+ca8b9ff0); the bench, PR 443 (beta 5c7ffe24); #448 by PR 450 (the pin
+folded to the stack's ab1f89f4; beta 73b5f956); the day's HANDOFF PR 463 on
+main (30eed8cf at 23:45Z, by the captain's hand: main's nine rows met the
+old runner's ten-row guard); the amendment filed as bsv-blockchain/BRCs#372
+(open). Filed and open: #465 (tools/test_differential's two stale tests on
+beta), #437 (an empty `AUTH_TOKEN=`), #441 (signAction and abortAction not
+bound to the originator).
+
+Night 3. Run 41516017523 (dispatched 20:05Z on f2976ef1) completed at
+06:21Z with conclusion failure: 64 of 65 jobs green and the score job red
+by design on tracker_host 74.2 against 75, the union of the two passes
+judged (the hermetic six ran, the opening night since #435):
+broadcast_verify 86.0, explorers 100.0, handlers 100.0, spend_gate 90.8
+(the day line's figures). Its record is PR 501 (lane/p1-night3-record,
+open, its review next): the mutation record with the equivalents counted,
+the fuzz record by the tool, and the bench's opening run of the Intel Xeon
+6975P entry, night 1 of 5 for that entry. A finding from the night: PR runs
+overlapping the fifty shards waited 40 to 50 minutes for runners (the
+account's twenty), filed as #496.
+
+The lessons of the night, one line each:
+
+- The scratchpad does not survive a restart: the work folder lives on the
+  Lanes volume, recovered once from the session transcript.
+- A refused command ran none of its parts.
+- A lane or waiter is stopped by its process tree, the captain's own shell
+  excluded.
+- cca routes by load, and the box's Lanes disk is its own.
+- A box lane cannot read the Studio's volume, so a box brief carries its
+  inputs inline.
+- A PR adding a fixture re-renders NORTH-STAR.md or meets the render guard.
+- The proof class means Fable, so it runs only when Fable has budget.
+- One landing at a time became the persistent queue runner, and readiness
+  is read from `mergeStateStatus`, never a count of rows.
+- No strategy flag under the queue.
+- Renaming the required contexts needs the protection moved before the PR,
+  and a branch's contexts name only its own workflow's jobs.
+- A review lane's target is named by its brief (cca's random branch names
+  escaped the running-lanes guard).
+- The bounded form's RATIONALE is at most five lines and each RISKS line
+  ends with its score.
+- The hygiene sweeps went by name (about 130 GiB on the box, the day line's
+  figure), four names not the captain's left for their owners (the day
+  line's figure).
+
+Open after the night: #477 (PR 492 on its fix), #494's dispatch and
+witness, #496 (PR 499), #491 (main's ci.yml, after this entry lands on
+main), #462 and #476 on their recorded figures, #478, #479 and #480, the
+remaining loops' rows; #465, #469, #483, #437, #441; L5 on the owner's W1
+and W4, then L6 and L7; night 3's record (PR 501); the opening incremental
+night, the captain's dispatch at the 03:00Z slot of 11-04; the next pin's
+intake on #386: bsv-rs #613, #620, #640, #639, #648, #651 and #658 (all
+merged), the toolbox's #554, #186, #142 and #576 (closed) and #585 (open),
+as GitHub shows them at 2026-11-03 morning; the certificate re-issue (#333)
+at the production upgrade. The lines: beta 05741c59; main at this entry's
+parent, 41160935.
