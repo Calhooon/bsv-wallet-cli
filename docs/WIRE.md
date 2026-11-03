@@ -230,6 +230,7 @@ The keys replaced, anywhere in a body (`VOLATILE_KEYS`); a `null` is kept as `nu
 | `ageMinutes` | a refusal's `held` coins | the clock, from the row's time; every seeded row is dated half an hour before its world is built, so the age has two digits on any day and `<uint:2>` is stable |
 | `reference` | `signableTransaction` of `/createAction` | the toolbox draws it at random |
 | `grantedAt`, `revokedAt` | a grant row of the owner's routes (`/origins`, #414) | the clock's now when the route wrote the row |
+| `answeredAt` | a pending row the owner answered, in `/origins` (#414 L6, fixture 220) | the clock's now when the owner answered it |
 | each `keyringForVerifier` value | `/proveCertificate` | freshly encrypted for the verifier; every key, its order and each value's shape/length remain strict |
 
 Inside any string: `127.0.0.1:<n>` becomes `127.0.0.1:<port>` (the local stub's port), `<n> min old` becomes `<minutes> min old` (the same age, in words), and `os error <n>` becomes `os error <errno>` (the platform's number for a refused connection; macOS and Linux differ). One rule is not a run's: this wallet's served version string (`getVersion`, `handlers::WALLET_VERSION`) becomes `bsv-wallet-cli-<major>.<minor>.<patch>` (`package_version` in `tests/wire_support/mod.rs`, both corpora), because it moves with the package's version and never with a behaviour, so a release's version commit moves no fixture; `tests/integration/status.rs` pins the exact string and its shape (#122 item 6).
