@@ -1,10 +1,11 @@
 //! The served doors' browser gate (#411, the owner's word of 2026-11-01,
-//! step (b)): each refusal the gate serves, and the agreeing call it
-//! admits. Recorded last, so no file before them moves. The worlds admit
+//! step (b); #414's switch from L5b): each refusal the gate serves, and
+//! the agreeing call it admits. Recorded last, so no file before them moves. The worlds admit
 //! the originators `wire.test` and `app.example` (`worlds.rs`), by the
 //! reference's hostname scope (the owner's word of 2026-11-02).
 use serde_json::json;
 
+use super::owner::Owner;
 use super::recorder::{get, options, post, Recorder};
 use super::worlds::WIRE_BEARER;
 
@@ -16,20 +17,28 @@ fn encrypt() -> serde_json::Value {
 }
 
 pub(crate) async fn record(r: &mut Recorder) {
-    // An origin ALLOWED_ORIGINS does not name: the MetaNet Client's denial
-    // (400, ERR_PERMISSION_DENIED), no CORS header a page could read it by;
-    // under (b) no pending row is written.
+    // An origin the seed does not list (#414 L5b, the switch): asked per
+    // power, its protocol's call is held on its pending row and the owner
+    // denies it: the client's per-request denial (400 ERR_PERMISSION_DENIED,
+    // `Permission denied.`), with the echo, so the page reads it. Served
+    // from the `pages` world, whose rows no owner's-door fixture lists.
     let denied = r
-        .case(
-            "gate.encrypt.notListed",
-            "fresh",
+        .case_owned(
+            "gate.encrypt.heldDenied",
+            "pages",
             post("/encrypt", encrypt()).header("origin", UNLISTED),
+            Some(Owner {
+                after_ms: Some(200),
+                answer: Some("deny".into()),
+                ..Owner::default()
+            }),
         )
         .await;
-    assert_eq!(denied.value("/code"), "ERR_PERMISSION_DENIED");
-    // Its preflight: refused before CORS answers it.
+    assert_eq!(denied.value("/message"), "Permission denied.");
+    // Its preflight: answered and echoed, so the page's call reaches its
+    // prompt.
     r.case(
-        "gate.options.notListed",
+        "gate.options.unlisted",
         "fresh",
         options("/encrypt", "POST").header("origin", UNLISTED),
     )
