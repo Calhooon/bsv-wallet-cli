@@ -1,0 +1,23 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/getVersion",
+    "headers": {
+      "origin": "http://probe.test:8080"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://probe.test:8080",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "version": "bsv-wallet-cli-<major>.<minor>.<patch>"
+    }
+  }
+}
