@@ -42,10 +42,14 @@ CI = os.path.join(REPO, ".github", "workflows", "ci.yml")
 Row = namedtuple("Row", "input job steps tool loosening plant")
 
 TESTS = ("Build the workspace's tests", "Run the workspace's tests")
-SCOREBOARD = ("scoreboard",)
+# The scoreboard, the links and citations and the changelog fragment are
+# groups of one step since #525, which runs them side by side under the
+# step's `if:` (each was its own step under the same condition).
+TOOLS = "scoreboard, links and citations, changelog fragment"
+SCOREBOARD = (TOOLS,)
 RATCHET = ("No number above the base's record",)
-LINKS = ("links and citations",)
-CHANGELOG = ("changelog fragment",)
+LINKS = (TOOLS,)
+CHANGELOG = (TOOLS,)
 DENY = ("deny: check adopted template hash", "deny: cargo-deny check")
 LOCKS = ("locks: one bsv-rs per committed Cargo.lock, the stack at the root's versions",)
 ENSEMBLE = ("ensemble chain dry runs",)
@@ -528,7 +532,7 @@ class DocsOnlyInputs(unittest.TestCase):
     def test_the_conditions_on_a_docs_only_pr(self):
         lint = steps_run(self.jobs["lint"], DOCS_ONLY)
         for step in ("docs-only PR", "the docs set: the Markdown the code reads", "The base ref",
-                     "scoreboard", "links and citations", "changelog fragment", "Keep the measured JSON"):
+                     TOOLS, "Keep the measured JSON"):
             self.assertIn(step, lint)
         for step in RATCHET + ENSEMBLE + ("Rustfmt", "Clippy") + LOCKS + DENY:
             self.assertNotIn(step, lint)
