@@ -8,8 +8,10 @@ workspace manifest change brings in the whole set; no change plans no shard
 (the night carries everything); a file under src/, read by the crate's
 module tree (#464's review: a test module reaches the floored files its tests
 can run by name, other code the whole set), on a planted crate and on this
-repository's own; a complete night mutates every file in MUTANTS_SHARDS
-shards; a record without a mode is refused; and the git diff
+repository's own; a complete night mutates every file in
+MUTANTS_SHARDS_COMPLETE shards (twenty, #460) all at once, where an
+incremental night keeps its own sizing six at a time; a record without a mode
+is refused; and the git diff
 against the record's last complete run, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_changed_set.py
@@ -106,9 +108,9 @@ class Tree:
         with open(p, "w") as f:
             f.write(text)
 
-    def plan(self, *paths, mode="incremental", git=False):
+    def plan(self, *paths, mode="incremental", git=False, extra=()):
         out = os.path.join(self.root, "plan.json")
-        args = [sys.executable, "-B", SCRIPT, "--root", self.root, "--mode", mode, "--out", out]
+        args = [sys.executable, "-B", SCRIPT, "--root", self.root, "--mode", mode, "--out", out, *extra]
         if not git:
             self.write("changed.txt", "".join(p + "\n" for p in paths))
             args += ["--paths", os.path.join(self.root, "changed.txt"), "--head", "f" * 40]
@@ -235,8 +237,28 @@ class Case(unittest.TestCase):
         self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6))
 
     def test_a_complete_night_mutates_every_file(self):
-        p, _ = self.planned("README.md", mode="complete")
-        self.assertEqual((p["files"], p["shards"], p["carried"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 50, []))
+        # Twenty shards, all twenty at once (#460): the account's concurrent-job limit.
+        p, out = self.planned("README.md", mode="complete")
+        self.assertEqual((p["files"], p["shards"], p["carried"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 20, []))
+        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 20))
+        self.assertIn("in 20 shards, 20 at once.", out)
+        # The count is the workflow's MUTANTS_SHARDS_COMPLETE, passed in; the
+        # incremental ceiling does not touch it.
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "12", "--max-shards", "50"))
+        self.assertEqual((p["shards"], p["parallel"]), (12, 12))
+
+    def test_an_incremental_night_keeps_its_own_sizing_six_at_a_time(self):
+        p, _ = self.planned("src/a.rs", extra=("--complete-shards", "20"))
+        self.assertEqual((p["shards"], p["parallel"]), (6, 6))
+        p, _ = self.planned("Cargo.lock", extra=("--complete-shards", "20"))
+        self.assertEqual((p["shards"], p["whole"], p["parallel"]), (50, True, 6))
+        p, _ = self.planned("README.md")
+        self.assertEqual((p["shards"], p["matrix"], p["parallel"]), (0, [], 1))
+
+    def test_a_shard_count_below_one_is_refused(self):
+        code, out, _ = self.tree.plan(mode="complete", extra=("--complete-shards", "0"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("a shard count is at least 1", out)
 
     def test_the_selection_leaves_out_the_left_out_list_alone(self):
         p, _ = self.planned("src/a.rs")

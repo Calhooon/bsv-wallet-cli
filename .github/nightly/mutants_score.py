@@ -3,6 +3,7 @@
 
 Usage: mutants_score.py [--sha <commit> [--survivors <dir>]] [--hermetic <dir>]
                         <outcomes.json or a directory holding them>...
+       mutants_score.py --shards-only --plan <plan.json> <directory>...
 
 Reads every `outcomes.json` given (one per shard), and prints a Markdown
 table of each file's score: caught / (caught + missed + timeout) * 100. A
@@ -55,12 +56,24 @@ Before any figure is judged, exit 1 naming the fault when:
 - on an incremental night, a floor of `MUTANTS_FLOORS` differs from the
   record's `floors` (a floor moves only on a complete run);
 - an outcome names a file the plan did not mutate, or a complete plan does
-  not mutate every floored file.
+  not mutate every floored file;
+- the cargo pass's artifacts are not the dispatched matrix (#460): the count
+  is the plan's (`shards` and `matrix`, the matrix the workflow dispatched,
+  twenty on a complete night and the changed set's on an incremental one),
+  never a number written here. Each shard k of the matrix must have its
+  artifact `mutants-<k>` (an immediate subdirectory of a directory given)
+  holding `shard-ok`, the marker its step writes only after cargo-mutants
+  ended with 0, 2 or 3; a shard cut at the job's limit, failed or cancelled
+  uploads its partial outcomes without it. The refusal names each shard with
+  no artifact, each without its marker and each artifact outside the matrix.
+  `--shards-only` makes that check alone (the score job's gate, before the
+  survivors are read) and needs no `--record`.
 
 An empty plan mutates nothing: the night carries every figure and says so,
 and `--sha` has no shard to check. With `--run <url>` and `--write <out>` the
 night's record is written: the record's shape (docs/scoreboard/mutants.json)
-with `mode`, `base`, the night's `floors`, per file its counts and
+with `mode`, `base`, the night's `floors`, `matrix` (the plan's shard count
+and max-parallel, #460), per file its counts and
 `{"source": "night"|"carried", "run", "sha"}`, and the record's `verdict`
 clause of each carried file (rule 1's exception, as tools/scoreboard reads it:
 a carried figure keeps its clause; a file the night measured has none until
@@ -189,6 +202,37 @@ def refuse_plan(plan, record, floors, outcome_files):
     return lines
 
 
+SHARD_DIR = re.compile(r"mutants-(\d+)")
+
+
+def shard_refusal(plan, dirs):
+    """The refusal's lines when the cargo pass's artifacts are not the
+    dispatched matrix's, every shard with its marker, else [] (#460)."""
+    shards, matrix = plan.get("shards"), plan.get("matrix")
+    if not isinstance(shards, int) or matrix != list(range(shards)):
+        return [f"**A plan without its matrix (#460)**: the plan names {shards!r} shard(s) and the matrix "
+                f"{matrix!r}; the count is the dispatched matrix's, so nothing is scored."]
+    found = {}
+    for d in dirs:
+        for sub in sorted(p for p in Path(d).iterdir() if p.is_dir()):
+            m = SHARD_DIR.fullmatch(sub.name)
+            if m:
+                found[int(m.group(1))] = sub
+    absent = [k for k in matrix if k not in found]
+    unmarked = [k for k in matrix if k in found and not (found[k] / "shard-ok").is_file()]
+    outside = sorted(k for k in found if k not in matrix)
+    if not (absent or unmarked or outside):
+        return []
+    whole = len(matrix) - len(absent) - len(unmarked)
+    lines = [f"**A partial night (#460)**: the dispatched matrix is {shards} shard(s), {whole} of them with "
+             f"an artifact and its success marker; a partial night is never scored:", ""]
+    lines += [f"- shard {k}: no artifact `mutants-{k}` (it never ran, or was cancelled before its upload)" for k in absent]
+    lines += [f"- shard {k}: no success marker (cut at the job's limit, failed or cancelled; its partial "
+              f"outcomes are evidence, never a score)" for k in unmarked]
+    lines += [f"- `mutants-{k}`: an artifact outside the dispatched matrix" for k in outside]
+    return lines
+
+
 def write(text):
     sys.stdout.write(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -203,6 +247,9 @@ def main(args):
     dispatch = None
     survivors_dir = None
     opts = {}
+    shards_only = args[:1] == ["--shards-only"]
+    if shards_only:
+        args = args[1:]
     while args[:1] in (["--hermetic"], ["--sha"], ["--survivors"], ["--plan"], ["--record"], ["--run"], ["--write"]):
         if len(args) < 2:
             print(f"{args[0]} needs a value", file=sys.stderr)
@@ -219,6 +266,16 @@ def main(args):
     if survivors_dir is not None and dispatch is None:
         print("--survivors needs --sha", file=sys.stderr)
         return 1
+    if shards_only:
+        if "plan" not in opts or set(opts) - {"plan"} or dispatch or hermetic_dir or survivors_dir:
+            print("--shards-only takes --plan and the cargo pass's directories alone", file=sys.stderr)
+            return 1
+        refusal = shard_refusal(json.loads(Path(opts["plan"]).read_text()), [a for a in args if Path(a).is_dir()])
+        if refusal:
+            write("\n".join(refusal) + "\n")
+            return 1
+        print("every shard of the dispatched matrix uploaded its artifact and its success marker")
+        return 0
     if ("plan" in opts) != ("record" in opts) or ("write" in opts and "plan" not in opts):
         print("--plan and --record go together, and --write needs them", file=sys.stderr)
         return 1
@@ -228,6 +285,8 @@ def main(args):
         plan = json.loads(Path(opts["plan"]).read_text())
         record = json.loads(Path(opts["record"]).read_text())
         refusal = refuse_plan(plan, record, floors, {m["file"] for m, _ in mutant_outcomes(args)})
+        if not refusal and plan.get("files"):
+            refusal = shard_refusal(plan, [a for a in args if Path(a).is_dir()])
         if refusal:
             write("\n".join(refusal) + "\n")
             return 1
@@ -362,6 +421,7 @@ def night_record(plan, record, floors, night, carried, commit, run):
     if plan["mode"] == "incremental":
         out["base"] = base
     out["floors"] = {f: int(v) if float(v).is_integer() else v for f, v in floors.items()}
+    out["matrix"] = {"shards": plan.get("shards"), "parallel": plan.get("parallel")}
     said = verdict(record, carried)
     if said:
         out["verdict"] = said

@@ -7,7 +7,12 @@ it writes; it refuses a carried figure whose base is not the last complete
 run (an older run's, or an incremental night's), a plan diffed against
 another base, a floor moved on an incremental night (a complete night may
 move one), an outcome outside the plan and a complete plan short of a floored
-file; an empty plan carries everything and says so. Each case writes its
+file; an empty plan carries everything and says so. The count is the
+dispatched matrix's (#460): a twenty-shard complete night is scored and its
+record names its matrix, nineteen artifacts of twenty are refused naming the
+absent shard, as are a shard without its success marker (cut at the job's
+limit) and an artifact outside the matrix, by the score and by its
+--shards-only gate. Each case writes its
 inputs under a directory of its own in $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_mutants_score.py
 """
@@ -43,9 +48,11 @@ def complete_record():
             "floors": dict(FLOORS), "files": {"src/a.rs": entry(95, 5), "src/b.rs": entry(74, 26)}}
 
 
-def plan(files, mode="incremental", base=None):
+def plan(files, mode="incremental", base=None, shards=None):
+    shards = (1 if files else 0) if shards is None else shards
     return {"mode": mode, "base": base or {"run": RUN_A, "commit": SHA_A}, "head": HEAD,
-            "floored": sorted(FLOORS), "files": files, "shards": 1 if files else 0}
+            "floored": sorted(FLOORS), "files": files, "shards": shards, "matrix": list(range(shards)),
+            "parallel": shards if mode == "complete" else min(6, shards)}
 
 
 def outcome(file, i, summary):
@@ -63,9 +70,18 @@ class Night:
             f.write(value if isinstance(value, str) else json.dumps(value))
         return path
 
-    def shard(self, n, outcomes, sha=HEAD):
+    def shard(self, n, outcomes, sha=HEAD, marker=True):
         self.put(f"outcomes/mutants-{n}/outcomes.json", {"outcomes": outcomes})
         self.put(f"outcomes/mutants-{n}/sha", sha + "\n")
+        if marker:
+            self.put(f"outcomes/mutants-{n}/shard-ok", f"shard {n} exit 2; cargo test --locked --lib\n")
+
+    def gate(self, the_plan):
+        """The score job's gate: --shards-only over the cargo pass's directory."""
+        r = subprocess.run([sys.executable, "-B", SCRIPT, "--shards-only", "--plan", self.put("plan.json", the_plan),
+                            os.path.join(self.root, "outcomes")], capture_output=True, text=True,
+                           env={k: v for k, v in os.environ.items() if k != "GITHUB_STEP_SUMMARY"})
+        return r.returncode, (r.stdout + r.stderr).strip()
 
     def score(self, the_plan, record, floors=FLOORS, outcomes=True):
         args = [sys.executable, "-B", SCRIPT, "--sha", HEAD,
@@ -163,7 +179,7 @@ class Case(unittest.TestCase):
         self.a_night_on_a()
         self.night.shard(1, [outcome("src/b.rs", i, "CaughtMutant") for i in range(9)]
                          + [outcome("src/b.rs", 50, "MissedMutant")])
-        code, out = self.night.score(plan(["src/a.rs", "src/b.rs"], mode="complete"), complete_record(),
+        code, out = self.night.score(plan(["src/a.rs", "src/b.rs"], mode="complete", shards=2), complete_record(),
                                      floors={"src/a.rs": 90, "src/b.rs": 80})
         self.assertEqual(code, 0, out)
         self.assertNotIn("carried", out)
@@ -207,6 +223,65 @@ class Case(unittest.TestCase):
         del record["verdict"]
         self.night.score(plan(["src/a.rs"]), record)
         self.assertNotIn("verdict", self.night.written())
+
+    def twenty_shards(self, skip=()):
+        # A complete night's twenty shards (#460), each 2 mutants of a and 2 of
+        # b dealt round-robin: 40 of a (38 caught), 40 of b (32 caught).
+        for k in range(20):
+            if k in skip:
+                continue
+            self.night.shard(k, [outcome("src/a.rs", k, "CaughtMutant"),
+                                 outcome("src/a.rs", 20 + k, "MissedMutant" if k < 2 else "CaughtMutant"),
+                                 outcome("src/b.rs", k, "CaughtMutant"),
+                                 outcome("src/b.rs", 20 + k, "MissedMutant" if k < 8 else "CaughtMutant")])
+
+    def test_a_twenty_shard_complete_night_is_scored(self):
+        self.twenty_shards()
+        the_plan = plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20)
+        self.assertEqual(self.night.gate(the_plan)[0], 0)
+        code, out = self.night.score(the_plan, complete_record())
+        self.assertEqual(code, 0, out)
+        self.assertIn("| `src/a.rs` | 38 | 0 | 2 | 0 | 95.0 | 90 | ok |", out)
+        self.assertIn("| `src/b.rs` | 32 | 0 | 8 | 0 | 80.0 | 75 | ok |", out)
+        self.assertEqual(self.night.written()["matrix"], {"shards": 20, "parallel": 20})
+        print("\n    exit 0: twenty shards of twenty, src/a.rs 95.0, src/b.rs 80.0, matrix 20 at once",
+              end=" ", file=sys.stderr)
+
+    def test_a_complete_night_of_nineteen_shards_is_refused(self):
+        # Twenty dispatched, nineteen artifacts: shard 13 never uploaded.
+        self.twenty_shards(skip=(13,))
+        the_plan = plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20)
+        self.refused("- shard 13: no artifact `mutants-13`", the_plan, complete_record())
+        code, out = self.night.gate(the_plan)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the dispatched matrix is 20 shard(s), 19 of them with an artifact and its success marker", out)
+        # The same nineteen are whole against a plan of nineteen: the count is the plan's, never a constant.
+        self.assertEqual(self.night.gate(plan(["src/a.rs", "src/b.rs"], mode="complete", shards=19))[0], 1)
+        self.assertIn("`mutants-19`: an artifact outside the dispatched matrix",
+                      self.night.gate(plan(["src/a.rs", "src/b.rs"], mode="complete", shards=19))[1])
+
+    def test_a_shard_cut_at_the_job_limit_is_refused_by_name(self):
+        # The shard's step never wrote its marker (the job's limit cut it);
+        # its partial outcomes were uploaded under always().
+        self.twenty_shards(skip=(7,))
+        self.night.shard(7, [outcome("src/a.rs", 7, "CaughtMutant")], marker=False)
+        the_plan = plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20)
+        self.refused("- shard 7: no success marker (cut at the job's limit", the_plan, complete_record())
+        self.assertEqual(self.night.gate(the_plan)[0], 1)
+
+    def test_a_plan_without_its_matrix_is_refused(self):
+        self.a_night_on_a()
+        the_plan = plan(["src/a.rs"])
+        del the_plan["matrix"]
+        self.refused("A plan without its matrix (#460)", the_plan, complete_record())
+
+    def test_an_incremental_night_counts_its_own_shards(self):
+        # The changed set's six shards (#462's sizing), all six whole.
+        for k in range(6):
+            self.night.shard(k, [outcome("src/a.rs", k, "CaughtMutant")])
+        code, out = self.night.score(plan(["src/a.rs"], shards=6), complete_record())
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.night.written()["matrix"], {"shards": 6, "parallel": 6})
 
     def test_the_committed_record_is_a_complete_base(self):
         # The tree's own record: the last complete run, every file the night's.
