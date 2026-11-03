@@ -1,19 +1,47 @@
 {
   "schema": 1,
-  "mode": "complete",
-  "mode_note": "the night of record cut at the pin: every floored file mutated, so each file's figure is this night's own (source night), and an incremental night carries from it with this run and commit (#462)",
-  "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
-  "commit_note": "the dispatch's sha and the one tree the night ran: every one of the fifty Mutants shards, the survivors' job and the six Mutants-hermetic shards wrote f2976ef as its artifact's sha and checked it out (#423)",
-  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+  "mode": "incremental",
+  "mode_note": "an incremental night (#462) whose changed set was the whole set: the plan diffed be4906a against the last complete run, run 41516017523 at f2976ef (PR 501's record, the source night), and .github/workflows/nightly.yml had changed since, so every floored file was mutated and no figure is carried; every file's figure is this night's own (source night). The base stays run 41516017523: an incremental record never moves it, and a later incremental night that leaves a file out refuses to carry this night's figure for it (mutants_score.py: a figure from another run than the last complete run is never carried again)",
+  "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+  "commit_note": "the dispatch's sha and the one tree the night ran: every one of the fifty Mutants shards, the survivors' job and the three Mutants-hermetic shards wrote be4906a as its artifact's sha (#423)",
+  "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
   "date": "2026-11-03",
-  "dispatched": "2026-11-02T20:05:44Z, workflow_dispatch on beta at f2976ef",
-  "judged": "2026-11-03T06:21:55Z, the Mutation score job (125762351573), on the night's own tree's mutants_score.py (--sha, --survivors, --hermetic; f2976ef predates #482's --equivalents): every shard succeeded, one tree, no name judged twice, the union complete; it printed tracker_host.rs 74.2 (219 caught, 76 missed) below its floor 75 and exited 1. The figures below are beta's mutants_score.py (5e49312) over the same artifacts with the same arguments and --equivalents docs/scoreboard/equivalents.json, as the Nightly's score step passes it since #482: the six declared equivalents of tracker_host.rs are each in the night's missed list under its exact name, none caught, none stale, and tracker_host.rs's code (all but its test modules) is identical at f2976ef and 5e49312. Every other figure is the job's to the digit. Both outputs are kept (score-41516017523.log, the job's own output line for line, and score-41516017523.equivalents-beta5e49312.log)",
+  "dispatched": "2026-11-03T17:30:02Z, workflow_dispatch on beta at be4906a, at the fleet's 17:30Z slot of 2026-11-03 (#514)",
+  "judged": "2026-11-03T22:54:41Z, the Mutation score job (126261079720), on the night's own tree's mutants_score.py with --plan, --record, --sha, --equivalents docs/scoreboard/equivalents.json, --survivors and --hermetic: every shard succeeded, one tree, no name judged twice, the union complete, no refusal (base, floors, equivalents), every file ok against its floor, exit 0. The figures below are the job's to the digit: the same script over the night's artifacts laid out as the job lays them out printed the job's output line for line and wrote the night-record artifact's mutants.json key for key (score-41684822793.log)",
   "tool": "cargo-mutants 27.1.0 (cargo install --version 27.1.0 --locked, every Mutants shard); the hermetic shards cargo-mutants at b00aff0c6ca0670bccdf4eb2ece9e15c4c35c8b9 (CARGO_MUTANTS_HERMETIC_REV, upstream #634)",
   "toolchain": "stable, rustc 1.99.1 (58cf8f9c3 2026-10-13) on the runner, every Mutants and Mutants-hermetic shard",
-  "shape": "fifty shards dealt round-robin (--sharding round-robin), six at a time; --baseline run --timeout-multiplier 2 --build-timeout 900; every shard listed 923 mutants and judged 18 or 19 of them (23 shards 19, 27 shards 18: 923, each once); all fifty concluded success, exit 2 (a mutant missed) on 49 and exit 0 on shard 15; then the hermetic pass, six shards over the 113 survivors (19, 19, 19, 19, 19, 18), all six success (PR 394, #310, #393, #400, #423, #435)",
+  "shape": "fifty shards dealt round-robin (--sharding round-robin; MUTANTS_SHARDS_INCREMENTAL, the whole set), six at a time (the plan's parallel, #513); --baseline run --timeout-multiplier 2 --build-timeout 900; every shard listed 923 mutants and judged 18 or 19 of them (23 shards 19, 27 shards 18: 923, each once); all fifty concluded success, exit 2 (a mutant missed) on 29 and exit 0 on 21 (shards 13, 15, 18, 20, 22, 25, 27, 28, 29, 30, 33, 34, 35, 37, 38, 39, 40, 41, 42, 46, 47); then the stage at three plus three (#517): the fuzz five three at a time beside the hermetic pass, three shards over the 49 survivors (17, 16, 16), all three success; then the reach job; no bench (not dispatched with bench)",
   "matrix": {
     "shards": 50,
     "parallel": 6
+  },
+  "plan": {
+    "job": 126087723233,
+    "base": {
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+      "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+    },
+    "files": [
+      "src/broadcast_verify.rs",
+      "src/explorers.rs",
+      "src/server/handlers.rs",
+      "src/spend_gate.rs",
+      "src/tracker_host.rs"
+    ],
+    "carried": [],
+    "whole": true,
+    "mutants": 917,
+    "mutants_note": "the plan's estimate from the record's counts (caught, missed, timeout, unviable; the six equivalents not counted); the shards listed 923",
+    "shards": 50,
+    "parallel": 6,
+    "stage": {
+      "cap": 6,
+      "fuzz_parallel": 3,
+      "hermetic_parallel": 3,
+      "tail": 2
+    },
+    "paths": 148,
+    "paths_note": "148 paths changed between f2976ef and be4906a; 77 reach a floored file, 71 reach none. The whole set by .github/workflows/nightly.yml (the Nightly's shape changed) and by 19 files of code the lib or a binary compiles outside its tests (the conservative choice: src/cli.rs, src/main.rs, src/store.rs, src/server/mod.rs, src/server/origin_gate.rs, src/server/owner_door.rs, src/store/origin_grants/*, src/commands/*, src/config/originator.rs); two floored files changed themselves (src/spend_gate.rs, src/tracker_host.rs); 24 test-only files, 24 shared inputs of the test targets (tests/wire/, tests/e2e/, the harnesses), seven test targets and src/ui/index.html (include_str!) each reached their files"
   },
   "targets": {
     "cargo": [
@@ -28,6 +56,7 @@
       "--test fuzz_replay",
       "--test gate_vectors",
       "--test json_refusal",
+      "--test origins_cli",
       "--test serve_bind_guard",
       "--test served_beef_doors",
       "--test tx_word_route",
@@ -40,69 +69,547 @@
       "--bench create_action_signed",
       "--bench gate_assess"
     ],
-    "cargo_note": "one list on every shard (each shard-ok line names it), the second night's: the sixteen floored test targets and the two benches; .github/nightly/no-floored-targets leaves out twelve tests and two benches, and the night's reach job (125519667463) measured each of the fourteen at 0 lines of the five files on f2976ef (#401). --test e2e_hermetic passes at once without E2E_HERMETIC_ORACLE=1 (unset in the cargo pass) and judged nothing there; --test fuzz_replay is #396's replay of the five fuzz targets' seeds",
-    "hermetic": "JUDGED (#393): cargo test --locked --test e2e_hermetic under E2E_HERMETIC_ORACLE=1 (serve without a tracker pass, the classic ARC stub, the explorers walled), on the cargo pass's 113 survivors (the survivors' artifact, survivors.txt, equal name for name to .github/nightly/mutants_hermetic.py survivors over the fifty shards' outcomes), dealt round-robin into six shards; each judged its names once, after PR 436's colour-free list check (#435) passed: 112 missed, 1 caught (src/spend_gate.rs:2036:17: replace && with || in run_gated, hermetic shard 5), no timeout, no unviable"
+    "cargo_note": "one list on every shard (each shard-ok line names it): --lib --bins, the seventeen floored test targets (the third night's sixteen and origins_cli) and the two benches; .github/nightly/no-floored-targets leaves out twelve tests and two benches, and the night's reach job (126257287742) measured each of the fourteen at 0 lines of the five files on be4906a, equal to the committed record (#401) but its commit and seconds",
+    "hermetic": "JUDGED (#393): cargo test --locked --test e2e_hermetic under E2E_HERMETIC_ORACLE=1 (serve without a tracker pass, the classic ARC stub, the explorers walled), on the cargo pass's 49 survivors (the survivors' artifact, survivors.txt, equal name for name to .github/nightly/mutants_hermetic.py survivors over the fifty shards' outcomes), dealt round-robin into three shards (one per twenty survivors); each judged its names once: 48 missed, 1 caught (src/spend_gate.rs:2042:17: replace && with || in run_gated, hermetic shard 2), no timeout, no unviable"
   },
   "shards": [
-    {"shard": 0, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668148, "exit": 2, "mutants": 19, "test_timeout_s": 1004, "started": "2026-11-02T20:11:06Z", "completed": "2026-11-02T21:23:15Z"},
-    {"shard": 1, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668265, "exit": 2, "mutants": 19, "test_timeout_s": 1012, "started": "2026-11-02T20:13:24Z", "completed": "2026-11-02T21:17:24Z"},
-    {"shard": 2, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668416, "exit": 2, "mutants": 19, "test_timeout_s": 839, "started": "2026-11-02T20:14:35Z", "completed": "2026-11-02T21:05:29Z"},
-    {"shard": 3, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668310, "exit": 2, "mutants": 19, "test_timeout_s": 851, "started": "2026-11-02T20:12:29Z", "completed": "2026-11-02T21:19:49Z"},
-    {"shard": 4, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668167, "exit": 2, "mutants": 19, "test_timeout_s": 1006, "started": "2026-11-02T20:09:12Z", "completed": "2026-11-02T21:04:59Z"},
-    {"shard": 5, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668173, "exit": 2, "mutants": 19, "test_timeout_s": 921, "started": "2026-11-02T20:09:48Z", "completed": "2026-11-02T21:04:33Z"},
-    {"shard": 6, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668218, "exit": 2, "mutants": 19, "test_timeout_s": 923, "started": "2026-11-02T21:04:46Z", "completed": "2026-11-02T22:00:58Z"},
-    {"shard": 7, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668499, "exit": 2, "mutants": 19, "test_timeout_s": 840, "started": "2026-11-02T21:12:54Z", "completed": "2026-11-02T22:02:14Z"},
-    {"shard": 8, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668412, "exit": 2, "mutants": 19, "test_timeout_s": 845, "started": "2026-11-02T21:14:57Z", "completed": "2026-11-02T22:05:48Z"},
-    {"shard": 9, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668395, "exit": 2, "mutants": 19, "test_timeout_s": 926, "started": "2026-11-02T21:19:13Z", "completed": "2026-11-02T22:13:14Z"},
-    {"shard": 10, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668504, "exit": 2, "mutants": 19, "test_timeout_s": 1003, "started": "2026-11-02T21:21:35Z", "completed": "2026-11-02T22:13:08Z"},
-    {"shard": 11, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668085, "exit": 2, "mutants": 19, "test_timeout_s": 1014, "started": "2026-11-02T21:25:02Z", "completed": "2026-11-02T22:13:23Z"},
-    {"shard": 12, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668488, "exit": 2, "mutants": 19, "test_timeout_s": 927, "started": "2026-11-02T22:01:38Z", "completed": "2026-11-02T22:49:32Z"},
-    {"shard": 13, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668444, "exit": 2, "mutants": 19, "test_timeout_s": 1013, "started": "2026-11-02T22:04:03Z", "completed": "2026-11-02T22:51:19Z"},
-    {"shard": 14, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668581, "exit": 2, "mutants": 19, "test_timeout_s": 1013, "started": "2026-11-02T22:09:23Z", "completed": "2026-11-02T23:20:43Z"},
-    {"shard": 15, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519668376, "exit": 0, "mutants": 19, "test_timeout_s": 1015, "started": "2026-11-02T22:13:15Z", "completed": "2026-11-02T22:53:16Z"},
-    {"shard": 16, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671391, "exit": 2, "mutants": 19, "test_timeout_s": 1011, "started": "2026-11-02T22:16:22Z", "completed": "2026-11-02T23:03:10Z"},
-    {"shard": 17, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671295, "exit": 2, "mutants": 19, "test_timeout_s": 1015, "started": "2026-11-02T22:16:27Z", "completed": "2026-11-02T23:11:26Z"},
-    {"shard": 18, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671216, "exit": 2, "mutants": 19, "test_timeout_s": 964, "started": "2026-11-02T22:50:27Z", "completed": "2026-11-02T23:57:32Z"},
-    {"shard": 19, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671680, "exit": 2, "mutants": 19, "test_timeout_s": 971, "started": "2026-11-02T22:53:18Z", "completed": "2026-11-02T23:58:27Z"},
-    {"shard": 20, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671444, "exit": 2, "mutants": 19, "test_timeout_s": 1160, "started": "2026-11-02T22:53:36Z", "completed": "2026-11-02T23:58:55Z"},
-    {"shard": 21, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671726, "exit": 2, "mutants": 19, "test_timeout_s": 1305, "started": "2026-11-02T23:03:12Z", "completed": "2026-11-03T00:18:14Z"},
-    {"shard": 22, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671638, "exit": 2, "mutants": 19, "test_timeout_s": 1202, "started": "2026-11-02T23:11:29Z", "completed": "2026-11-03T00:02:56Z"},
-    {"shard": 23, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519671909, "exit": 2, "mutants": 18, "test_timeout_s": 1187, "started": "2026-11-02T23:21:04Z", "completed": "2026-11-03T00:13:15Z"},
-    {"shard": 24, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519672033, "exit": 2, "mutants": 18, "test_timeout_s": 1021, "started": "2026-11-03T00:02:00Z", "completed": "2026-11-03T01:18:06Z"},
-    {"shard": 25, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519672054, "exit": 2, "mutants": 18, "test_timeout_s": 942, "started": "2026-11-03T00:02:58Z", "completed": "2026-11-03T00:42:42Z"},
-    {"shard": 26, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519673723, "exit": 2, "mutants": 18, "test_timeout_s": 926, "started": "2026-11-03T00:05:14Z", "completed": "2026-11-03T00:57:11Z"},
-    {"shard": 27, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519674240, "exit": 2, "mutants": 18, "test_timeout_s": 1018, "started": "2026-11-03T00:06:00Z", "completed": "2026-11-03T00:48:56Z"},
-    {"shard": 28, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519674421, "exit": 2, "mutants": 18, "test_timeout_s": 1016, "started": "2026-11-03T00:13:45Z", "completed": "2026-11-03T00:55:40Z"},
-    {"shard": 29, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519674588, "exit": 2, "mutants": 18, "test_timeout_s": 1018, "started": "2026-11-03T00:18:22Z", "completed": "2026-11-03T01:06:30Z"},
-    {"shard": 30, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519674829, "exit": 2, "mutants": 18, "test_timeout_s": 1169, "started": "2026-11-03T00:46:19Z", "completed": "2026-11-03T01:44:16Z"},
-    {"shard": 31, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519675073, "exit": 2, "mutants": 18, "test_timeout_s": 1016, "started": "2026-11-03T00:50:12Z", "completed": "2026-11-03T01:48:09Z"},
-    {"shard": 32, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519675342, "exit": 2, "mutants": 18, "test_timeout_s": 1016, "started": "2026-11-03T00:56:39Z", "completed": "2026-11-03T01:51:06Z"},
-    {"shard": 33, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519675329, "exit": 2, "mutants": 18, "test_timeout_s": 1014, "started": "2026-11-03T00:57:50Z", "completed": "2026-11-03T01:53:56Z"},
-    {"shard": 34, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519675447, "exit": 2, "mutants": 18, "test_timeout_s": 1015, "started": "2026-11-03T01:08:39Z", "completed": "2026-11-03T02:19:48Z"},
-    {"shard": 35, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519675501, "exit": 2, "mutants": 18, "test_timeout_s": 1025, "started": "2026-11-03T01:18:11Z", "completed": "2026-11-03T02:22:06Z"},
-    {"shard": 36, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519676704, "exit": 2, "mutants": 18, "test_timeout_s": 1009, "started": "2026-11-03T01:44:28Z", "completed": "2026-11-03T02:45:46Z"},
-    {"shard": 37, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519677273, "exit": 2, "mutants": 18, "test_timeout_s": 1017, "started": "2026-11-03T01:48:30Z", "completed": "2026-11-03T02:46:43Z"},
-    {"shard": 38, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519677614, "exit": 2, "mutants": 18, "test_timeout_s": 849, "started": "2026-11-03T01:52:54Z", "completed": "2026-11-03T02:28:25Z"},
-    {"shard": 39, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519677734, "exit": 2, "mutants": 18, "test_timeout_s": 1014, "started": "2026-11-03T01:53:57Z", "completed": "2026-11-03T02:37:55Z"},
-    {"shard": 40, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519677972, "exit": 2, "mutants": 18, "test_timeout_s": 1012, "started": "2026-11-03T02:20:33Z", "completed": "2026-11-03T03:01:45Z"},
-    {"shard": 41, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519677838, "exit": 2, "mutants": 18, "test_timeout_s": 1023, "started": "2026-11-03T02:22:18Z", "completed": "2026-11-03T03:06:25Z"},
-    {"shard": 42, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519678576, "exit": 2, "mutants": 18, "test_timeout_s": 935, "started": "2026-11-03T02:28:28Z", "completed": "2026-11-03T03:07:07Z"},
-    {"shard": 43, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519678113, "exit": 2, "mutants": 18, "test_timeout_s": 1020, "started": "2026-11-03T02:37:56Z", "completed": "2026-11-03T03:43:16Z"},
-    {"shard": 44, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519678459, "exit": 2, "mutants": 18, "test_timeout_s": 1014, "started": "2026-11-03T02:48:21Z", "completed": "2026-11-03T03:54:00Z"},
-    {"shard": 45, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519678820, "exit": 2, "mutants": 18, "test_timeout_s": 1014, "started": "2026-11-03T02:49:29Z", "completed": "2026-11-03T03:56:07Z"},
-    {"shard": 46, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519680048, "exit": 2, "mutants": 18, "test_timeout_s": 943, "started": "2026-11-03T03:01:52Z", "completed": "2026-11-03T03:47:50Z"},
-    {"shard": 47, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519680004, "exit": 2, "mutants": 18, "test_timeout_s": 1012, "started": "2026-11-03T03:06:41Z", "completed": "2026-11-03T03:55:26Z"},
-    {"shard": 48, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519680228, "exit": 2, "mutants": 18, "test_timeout_s": 1017, "started": "2026-11-03T03:07:09Z", "completed": "2026-11-03T04:41:53Z"},
-    {"shard": 49, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125519680909, "exit": 2, "mutants": 18, "test_timeout_s": 1072, "started": "2026-11-03T03:43:17Z", "completed": "2026-11-03T05:04:59Z"}
+    {
+      "shard": 0,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859794,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 488,
+      "started": "2026-11-03T17:30:21Z",
+      "completed": "2026-11-03T18:15:20Z"
+    },
+    {
+      "shard": 1,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859706,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 308,
+      "started": "2026-11-03T17:30:22Z",
+      "completed": "2026-11-03T17:55:00Z"
+    },
+    {
+      "shard": 2,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859692,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 493,
+      "started": "2026-11-03T17:30:21Z",
+      "completed": "2026-11-03T18:10:39Z"
+    },
+    {
+      "shard": 3,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859796,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 302,
+      "started": "2026-11-03T17:30:21Z",
+      "completed": "2026-11-03T17:59:38Z"
+    },
+    {
+      "shard": 4,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859642,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 397,
+      "started": "2026-11-03T17:30:21Z",
+      "completed": "2026-11-03T18:00:59Z"
+    },
+    {
+      "shard": 5,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859944,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 394,
+      "started": "2026-11-03T17:30:21Z",
+      "completed": "2026-11-03T18:01:43Z"
+    },
+    {
+      "shard": 6,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859770,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 296,
+      "started": "2026-11-03T17:55:03Z",
+      "completed": "2026-11-03T18:20:53Z"
+    },
+    {
+      "shard": 7,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859871,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 478,
+      "started": "2026-11-03T17:59:40Z",
+      "completed": "2026-11-03T18:36:58Z"
+    },
+    {
+      "shard": 8,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859818,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 487,
+      "started": "2026-11-03T18:01:02Z",
+      "completed": "2026-11-03T18:38:52Z"
+    },
+    {
+      "shard": 9,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859851,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 489,
+      "started": "2026-11-03T18:01:49Z",
+      "completed": "2026-11-03T18:38:31Z"
+    },
+    {
+      "shard": 10,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859751,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 481,
+      "started": "2026-11-03T18:10:41Z",
+      "completed": "2026-11-03T18:43:26Z"
+    },
+    {
+      "shard": 11,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087860168,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 489,
+      "started": "2026-11-03T18:15:37Z",
+      "completed": "2026-11-03T18:45:43Z"
+    },
+    {
+      "shard": 12,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859904,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 475,
+      "started": "2026-11-03T18:20:55Z",
+      "completed": "2026-11-03T18:55:10Z"
+    },
+    {
+      "shard": 13,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087860033,
+      "exit": 0,
+      "mutants": 19,
+      "test_timeout_s": 394,
+      "started": "2026-11-03T18:37:00Z",
+      "completed": "2026-11-03T19:03:28Z"
+    },
+    {
+      "shard": 14,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087860030,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 308,
+      "started": "2026-11-03T18:38:32Z",
+      "completed": "2026-11-03T19:02:13Z"
+    },
+    {
+      "shard": 15,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087859961,
+      "exit": 0,
+      "mutants": 19,
+      "test_timeout_s": 478,
+      "started": "2026-11-03T18:38:55Z",
+      "completed": "2026-11-03T19:10:11Z"
+    },
+    {
+      "shard": 16,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087863158,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 489,
+      "started": "2026-11-03T18:43:28Z",
+      "completed": "2026-11-03T19:15:33Z"
+    },
+    {
+      "shard": 17,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087863519,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 478,
+      "started": "2026-11-03T18:45:45Z",
+      "completed": "2026-11-03T19:20:58Z"
+    },
+    {
+      "shard": 18,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087863873,
+      "exit": 0,
+      "mutants": 19,
+      "test_timeout_s": 397,
+      "started": "2026-11-03T18:55:12Z",
+      "completed": "2026-11-03T19:22:45Z"
+    },
+    {
+      "shard": 19,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864169,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 295,
+      "started": "2026-11-03T19:02:14Z",
+      "completed": "2026-11-03T19:25:58Z"
+    },
+    {
+      "shard": 20,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087863918,
+      "exit": 0,
+      "mutants": 19,
+      "test_timeout_s": 487,
+      "started": "2026-11-03T19:03:31Z",
+      "completed": "2026-11-03T19:34:03Z"
+    },
+    {
+      "shard": 21,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864125,
+      "exit": 2,
+      "mutants": 19,
+      "test_timeout_s": 481,
+      "started": "2026-11-03T19:10:13Z",
+      "completed": "2026-11-03T19:49:01Z"
+    },
+    {
+      "shard": 22,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864163,
+      "exit": 0,
+      "mutants": 19,
+      "test_timeout_s": 487,
+      "started": "2026-11-03T19:15:35Z",
+      "completed": "2026-11-03T19:46:07Z"
+    },
+    {
+      "shard": 23,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864645,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 516,
+      "started": "2026-11-03T19:21:01Z",
+      "completed": "2026-11-03T19:53:21Z"
+    },
+    {
+      "shard": 24,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864391,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 484,
+      "started": "2026-11-03T19:22:47Z",
+      "completed": "2026-11-03T19:58:52Z"
+    },
+    {
+      "shard": 25,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087864270,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 489,
+      "started": "2026-11-03T19:26:01Z",
+      "completed": "2026-11-03T19:53:59Z"
+    },
+    {
+      "shard": 26,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087866085,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 391,
+      "started": "2026-11-03T19:34:05Z",
+      "completed": "2026-11-03T20:03:30Z"
+    },
+    {
+      "shard": 27,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087866644,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 481,
+      "started": "2026-11-03T19:46:09Z",
+      "completed": "2026-11-03T20:13:03Z"
+    },
+    {
+      "shard": 28,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867282,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 477,
+      "started": "2026-11-03T19:49:04Z",
+      "completed": "2026-11-03T20:16:16Z"
+    },
+    {
+      "shard": 29,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867105,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 488,
+      "started": "2026-11-03T19:53:23Z",
+      "completed": "2026-11-03T20:26:11Z"
+    },
+    {
+      "shard": 30,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867250,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 485,
+      "started": "2026-11-03T19:54:01Z",
+      "completed": "2026-11-03T20:26:44Z"
+    },
+    {
+      "shard": 31,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867760,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 390,
+      "started": "2026-11-03T19:58:54Z",
+      "completed": "2026-11-03T20:30:19Z"
+    },
+    {
+      "shard": 32,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867420,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 486,
+      "started": "2026-11-03T20:03:32Z",
+      "completed": "2026-11-03T20:41:16Z"
+    },
+    {
+      "shard": 33,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867485,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 482,
+      "started": "2026-11-03T20:13:05Z",
+      "completed": "2026-11-03T20:39:51Z"
+    },
+    {
+      "shard": 34,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087867575,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 394,
+      "started": "2026-11-03T20:16:18Z",
+      "completed": "2026-11-03T20:43:37Z"
+    },
+    {
+      "shard": 35,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087868113,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 483,
+      "started": "2026-11-03T20:26:13Z",
+      "completed": "2026-11-03T20:59:19Z"
+    },
+    {
+      "shard": 36,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087869302,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 489,
+      "started": "2026-11-03T20:26:46Z",
+      "completed": "2026-11-03T21:01:48Z"
+    },
+    {
+      "shard": 37,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087870010,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 488,
+      "started": "2026-11-03T20:30:22Z",
+      "completed": "2026-11-03T20:58:34Z"
+    },
+    {
+      "shard": 38,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087869942,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 483,
+      "started": "2026-11-03T20:39:53Z",
+      "completed": "2026-11-03T21:08:06Z"
+    },
+    {
+      "shard": 39,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087869971,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 316,
+      "started": "2026-11-03T20:41:18Z",
+      "completed": "2026-11-03T21:01:34Z"
+    },
+    {
+      "shard": 40,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087870105,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 484,
+      "started": "2026-11-03T20:43:39Z",
+      "completed": "2026-11-03T21:11:08Z"
+    },
+    {
+      "shard": 41,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087870097,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 484,
+      "started": "2026-11-03T20:58:36Z",
+      "completed": "2026-11-03T21:26:49Z"
+    },
+    {
+      "shard": 42,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087870267,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 312,
+      "started": "2026-11-03T20:59:20Z",
+      "completed": "2026-11-03T21:19:08Z"
+    },
+    {
+      "shard": 43,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087871031,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 387,
+      "started": "2026-11-03T21:01:36Z",
+      "completed": "2026-11-03T21:30:55Z"
+    },
+    {
+      "shard": 44,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087871098,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 511,
+      "started": "2026-11-03T21:01:50Z",
+      "completed": "2026-11-03T21:44:03Z"
+    },
+    {
+      "shard": 45,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087871666,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 310,
+      "started": "2026-11-03T21:08:08Z",
+      "completed": "2026-11-03T21:35:05Z"
+    },
+    {
+      "shard": 46,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087872572,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 393,
+      "started": "2026-11-03T21:11:09Z",
+      "completed": "2026-11-03T21:36:56Z"
+    },
+    {
+      "shard": 47,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087873121,
+      "exit": 0,
+      "mutants": 18,
+      "test_timeout_s": 492,
+      "started": "2026-11-03T21:19:10Z",
+      "completed": "2026-11-03T21:52:16Z"
+    },
+    {
+      "shard": 48,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087873131,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 488,
+      "started": "2026-11-03T21:26:52Z",
+      "completed": "2026-11-03T22:10:03Z"
+    },
+    {
+      "shard": 49,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126087873345,
+      "exit": 2,
+      "mutants": 18,
+      "test_timeout_s": 483,
+      "started": "2026-11-03T21:30:57Z",
+      "completed": "2026-11-03T22:13:39Z"
+    }
   ],
   "hermetic_shards": [
-    {"shard": 0, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301547, "exit": 2, "mutants": 19, "test_timeout_s": 86, "started": "2026-11-03T05:44:15Z", "completed": "2026-11-03T06:18:54Z"},
-    {"shard": 1, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301356, "exit": 2, "mutants": 19, "test_timeout_s": 84, "started": "2026-11-03T05:48:21Z", "completed": "2026-11-03T06:21:44Z"},
-    {"shard": 2, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301246, "exit": 2, "mutants": 19, "test_timeout_s": 74, "started": "2026-11-03T05:06:06Z", "completed": "2026-11-03T05:34:06Z"},
-    {"shard": 3, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301245, "exit": 2, "mutants": 19, "test_timeout_s": 85, "started": "2026-11-03T05:44:46Z", "completed": "2026-11-03T06:18:37Z"},
-    {"shard": 4, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301322, "exit": 2, "mutants": 19, "test_timeout_s": 85, "started": "2026-11-03T05:44:43Z", "completed": "2026-11-03T06:19:42Z"},
-    {"shard": 5, "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48", "job": 125738301345, "exit": 2, "mutants": 18, "test_timeout_s": 79, "started": "2026-11-03T05:18:38Z", "completed": "2026-11-03T05:50:06Z"}
+    {
+      "shard": 0,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126240949659,
+      "exit": 2,
+      "mutants": 17,
+      "test_timeout_s": 91,
+      "started": "2026-11-03T22:13:53Z",
+      "completed": "2026-11-03T22:46:32Z"
+    },
+    {
+      "shard": 1,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126240949529,
+      "exit": 2,
+      "mutants": 16,
+      "test_timeout_s": 87,
+      "started": "2026-11-03T22:13:53Z",
+      "completed": "2026-11-03T22:44:51Z"
+    },
+    {
+      "shard": 2,
+      "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+      "job": 126240949408,
+      "exit": 2,
+      "mutants": 16,
+      "test_timeout_s": 69,
+      "started": "2026-11-03T22:13:53Z",
+      "completed": "2026-11-03T22:36:20Z"
+    }
   ],
+  "base": {
+    "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+    "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+  },
   "floors": {
     "src/spend_gate.rs": 90,
     "src/tracker_host.rs": 75,
@@ -116,59 +623,734 @@
       "caught": 74,
       "missed": 12,
       "timeout": 0,
-      "unviable": 17,
       "equivalent": 0,
+      "unviable": 17,
       "source": "night",
-      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-      "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+      "sha": "be4906ad637cefc794cf547ea8ce0eacd038e3e5"
     },
     "src/explorers.rs": {
       "score": 100.0,
       "caught": 23,
       "missed": 0,
       "timeout": 0,
-      "unviable": 7,
       "equivalent": 0,
+      "unviable": 7,
       "source": "night",
-      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-      "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+      "sha": "be4906ad637cefc794cf547ea8ce0eacd038e3e5"
     },
     "src/server/handlers.rs": {
       "score": 100.0,
       "caught": 45,
       "missed": 0,
       "timeout": 0,
-      "unviable": 123,
       "equivalent": 0,
+      "unviable": 123,
       "source": "night",
-      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-      "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+      "sha": "be4906ad637cefc794cf547ea8ce0eacd038e3e5"
     },
     "src/spend_gate.rs": {
-      "score": 90.8,
-      "caught": 237,
-      "missed": 24,
+      "score": 91.2,
+      "caught": 238,
+      "missed": 23,
       "timeout": 0,
-      "unviable": 13,
       "equivalent": 0,
+      "unviable": 13,
       "source": "night",
-      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-      "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+      "sha": "be4906ad637cefc794cf547ea8ce0eacd038e3e5"
     },
     "src/tracker_host.rs": {
-      "score": 75.8,
-      "caught": 219,
-      "missed": 70,
+      "score": 97.6,
+      "caught": 282,
+      "missed": 7,
       "timeout": 0,
-      "unviable": 53,
       "equivalent": 6,
+      "unviable": 53,
       "source": "night",
-      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-      "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+      "sha": "be4906ad637cefc794cf547ea8ce0eacd038e3e5"
     }
   },
-  "note": "A complete night on one tree, each mutant judged once, with the hermetic union judged (#393, #400, #423); no earlier night judged it. 923 mutants: the cargo pass caught 597, missed 113 and found 213 unviable, with no timeout; the hermetic pass caught 1 of the 113, src/spend_gate.rs:2036:17 (run_gated's && to ||), and missed 112. Of those 112, six are tracker_host.rs's declared equivalents (#482), so 106 are missed. src/explorers.rs reads 100.0 (23 caught, 0 missed): f2976ef carries PR 429 (dcfb2a9, 2026-11-02T09:58Z), whose tests caught the four survivors of #420, and none of the four survives here. src/tracker_host.rs reads 75.8 (219 caught, 70 missed, 6 equivalent), at or above its floor 75, so the record holds no verdict. The night's own job, on its tree's script without --equivalents, read 74.2 with 76 missed and called it below the floor; that is a choice for the captain (docs/NIGHTLY.md: the record and its verdict move with the next complete run). Its 76 missed names are run 41413946663's 76 name for name, because PR 434's batch 1 (87ebc88f, 2026-11-02T21:56Z) landed after the dispatch. Of the 58 survivors in tracker-host-survivors-all.txt, all 58 persist (47 under the same name, 11 at the lines f2976ef gives them; 55 distinct mutants), and the same 21 as the second night are new against that list. The cargo pass's other survivors are the second night's names exactly: broadcast_verify.rs 12; spend_gate.rs 25, of which the hermetic pass caught 1. The floors are unchanged: 90, 75, 100, 86, 82. The night's fuzz five ran 3601 s each on nightly-2026-10-30 (docs/scoreboard/fuzz.json, tools/fuzz-record). Its bench job ran on an Intel Xeon 6975P-C with 4 cores, which opens that CPU's entry at 1 of 5 (#142). Neither feeds this record. The next complete night is the captain's dispatch at the fleet's 03:00Z slot (the owner's stagger rule of 2026-11-02: bsv-rs 00:00Z, this repository 03:00Z, the toolbox 06:00Z). The Nightly has no cron (#303), and a day dispatch never runs it: the day's dispatches stay off 00:00Z to 09:00Z.",
+  "note": "An incremental night on one tree that mutated every floored file, each mutant judged once, the hermetic union judged; no earlier night judged be4906a. 923 mutants: the cargo pass caught 661, missed 49 and found 213 unviable, with no timeout; the hermetic pass caught 1 of the 49, src/spend_gate.rs:2042:17 (run_gated's && to ||, the third night's 2036:17 at its line on be4906a), and missed 48. Of those 48, six are tracker_host.rs's declared equivalents (#482), each in the missed list under its exact name, none caught, none stale, so 42 are missed. src/tracker_host.rs reads 97.6 (282 caught, 7 missed, 6 equivalent); without the equivalents it reads 95.6 (282 caught, 13 missed), both far above its floor 75, so no ceiling exception and no verdict: the tracker_host batches' tests (PRs 434, 467 and 475; the third night's tree held none of them) caught 63 of the third night's 76 survivors, and its 13 are all among that night's 76 (by name, the line aside). src/spend_gate.rs reads 91.2 (238 caught, 23 missed): its cargo survivors are the third night's less busy_as_json's && to ||. src/broadcast_verify.rs 86.0, src/explorers.rs 100.0 and src/server/handlers.rs 100.0 are the third night's to the count. The floors are unchanged (an incremental night never moves one): 90, 75, 100, 86, 82. The night's fuzz five ran 601 s each (FUZZ_SECONDS_INCREMENTAL, docs/scoreboard/fuzz.json, tools/fuzz-record); no bench ran (#142). The next night is the captain's dispatch at the fleet's 17:00Z slot on 2026-11-04 (#522: bsv-rs 07:00Z, this repository 17:00Z, the toolbox 18:00Z); the Nightly has no cron (#303).",
   "earlier_nights": [
+    {
+      "schema": 1,
+      "mode": "complete",
+      "mode_note": "the night of record cut at the pin: every floored file mutated, so each file's figure is this night's own (source night), and an incremental night carries from it with this run and commit (#462)",
+      "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+      "commit_note": "the dispatch's sha and the one tree the night ran: every one of the fifty Mutants shards, the survivors' job and the six Mutants-hermetic shards wrote f2976ef as its artifact's sha and checked it out (#423)",
+      "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+      "date": "2026-11-03",
+      "dispatched": "2026-11-02T20:05:44Z, workflow_dispatch on beta at f2976ef",
+      "judged": "2026-11-03T06:21:55Z, the Mutation score job (125762351573), on the night's own tree's mutants_score.py (--sha, --survivors, --hermetic; f2976ef predates #482's --equivalents): every shard succeeded, one tree, no name judged twice, the union complete; it printed tracker_host.rs 74.2 (219 caught, 76 missed) below its floor 75 and exited 1. The figures below are beta's mutants_score.py (5e49312) over the same artifacts with the same arguments and --equivalents docs/scoreboard/equivalents.json, as the Nightly's score step passes it since #482: the six declared equivalents of tracker_host.rs are each in the night's missed list under its exact name, none caught, none stale, and tracker_host.rs's code (all but its test modules) is identical at f2976ef and 5e49312. Every other figure is the job's to the digit. Both outputs are kept (score-41516017523.log, the job's own output line for line, and score-41516017523.equivalents-beta5e49312.log)",
+      "tool": "cargo-mutants 27.1.0 (cargo install --version 27.1.0 --locked, every Mutants shard); the hermetic shards cargo-mutants at b00aff0c6ca0670bccdf4eb2ece9e15c4c35c8b9 (CARGO_MUTANTS_HERMETIC_REV, upstream #634)",
+      "toolchain": "stable, rustc 1.99.1 (58cf8f9c3 2026-10-13) on the runner, every Mutants and Mutants-hermetic shard",
+      "shape": "fifty shards dealt round-robin (--sharding round-robin), six at a time; --baseline run --timeout-multiplier 2 --build-timeout 900; every shard listed 923 mutants and judged 18 or 19 of them (23 shards 19, 27 shards 18: 923, each once); all fifty concluded success, exit 2 (a mutant missed) on 49 and exit 0 on shard 15; then the hermetic pass, six shards over the 113 survivors (19, 19, 19, 19, 19, 18), all six success (PR 394, #310, #393, #400, #423, #435)",
+      "matrix": {
+        "shards": 50,
+        "parallel": 6
+      },
+      "targets": {
+        "cargo": [
+          "--lib",
+          "--bins",
+          "--test arc_callback_tests",
+          "--test arcade_webhook_vector_tests",
+          "--test certificate_pin",
+          "--test chaintracks_off",
+          "--test compact_tracker_off",
+          "--test e2e_hermetic",
+          "--test fuzz_replay",
+          "--test gate_vectors",
+          "--test json_refusal",
+          "--test serve_bind_guard",
+          "--test served_beef_doors",
+          "--test tx_word_route",
+          "--test wire",
+          "--test wire_consumers",
+          "--test integration",
+          "--test respend_witness"
+        ],
+        "benches": [
+          "--bench create_action_signed",
+          "--bench gate_assess"
+        ],
+        "cargo_note": "one list on every shard (each shard-ok line names it), the second night's: the sixteen floored test targets and the two benches; .github/nightly/no-floored-targets leaves out twelve tests and two benches, and the night's reach job (125519667463) measured each of the fourteen at 0 lines of the five files on f2976ef (#401). --test e2e_hermetic passes at once without E2E_HERMETIC_ORACLE=1 (unset in the cargo pass) and judged nothing there; --test fuzz_replay is #396's replay of the five fuzz targets' seeds",
+        "hermetic": "JUDGED (#393): cargo test --locked --test e2e_hermetic under E2E_HERMETIC_ORACLE=1 (serve without a tracker pass, the classic ARC stub, the explorers walled), on the cargo pass's 113 survivors (the survivors' artifact, survivors.txt, equal name for name to .github/nightly/mutants_hermetic.py survivors over the fifty shards' outcomes), dealt round-robin into six shards; each judged its names once, after PR 436's colour-free list check (#435) passed: 112 missed, 1 caught (src/spend_gate.rs:2036:17: replace && with || in run_gated, hermetic shard 5), no timeout, no unviable"
+      },
+      "shards": [
+        {
+          "shard": 0,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668148,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T20:11:06Z",
+          "completed": "2026-11-02T21:23:15Z"
+        },
+        {
+          "shard": 1,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668265,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1012,
+          "started": "2026-11-02T20:13:24Z",
+          "completed": "2026-11-02T21:17:24Z"
+        },
+        {
+          "shard": 2,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668416,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 839,
+          "started": "2026-11-02T20:14:35Z",
+          "completed": "2026-11-02T21:05:29Z"
+        },
+        {
+          "shard": 3,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668310,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 851,
+          "started": "2026-11-02T20:12:29Z",
+          "completed": "2026-11-02T21:19:49Z"
+        },
+        {
+          "shard": 4,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668167,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1006,
+          "started": "2026-11-02T20:09:12Z",
+          "completed": "2026-11-02T21:04:59Z"
+        },
+        {
+          "shard": 5,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668173,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 921,
+          "started": "2026-11-02T20:09:48Z",
+          "completed": "2026-11-02T21:04:33Z"
+        },
+        {
+          "shard": 6,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668218,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 923,
+          "started": "2026-11-02T21:04:46Z",
+          "completed": "2026-11-02T22:00:58Z"
+        },
+        {
+          "shard": 7,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668499,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 840,
+          "started": "2026-11-02T21:12:54Z",
+          "completed": "2026-11-02T22:02:14Z"
+        },
+        {
+          "shard": 8,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668412,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 845,
+          "started": "2026-11-02T21:14:57Z",
+          "completed": "2026-11-02T22:05:48Z"
+        },
+        {
+          "shard": 9,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668395,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 926,
+          "started": "2026-11-02T21:19:13Z",
+          "completed": "2026-11-02T22:13:14Z"
+        },
+        {
+          "shard": 10,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668504,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1003,
+          "started": "2026-11-02T21:21:35Z",
+          "completed": "2026-11-02T22:13:08Z"
+        },
+        {
+          "shard": 11,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668085,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1014,
+          "started": "2026-11-02T21:25:02Z",
+          "completed": "2026-11-02T22:13:23Z"
+        },
+        {
+          "shard": 12,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668488,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 927,
+          "started": "2026-11-02T22:01:38Z",
+          "completed": "2026-11-02T22:49:32Z"
+        },
+        {
+          "shard": 13,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668444,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1013,
+          "started": "2026-11-02T22:04:03Z",
+          "completed": "2026-11-02T22:51:19Z"
+        },
+        {
+          "shard": 14,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668581,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1013,
+          "started": "2026-11-02T22:09:23Z",
+          "completed": "2026-11-02T23:20:43Z"
+        },
+        {
+          "shard": 15,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519668376,
+          "exit": 0,
+          "mutants": 19,
+          "test_timeout_s": 1015,
+          "started": "2026-11-02T22:13:15Z",
+          "completed": "2026-11-02T22:53:16Z"
+        },
+        {
+          "shard": 16,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671391,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1011,
+          "started": "2026-11-02T22:16:22Z",
+          "completed": "2026-11-02T23:03:10Z"
+        },
+        {
+          "shard": 17,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671295,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1015,
+          "started": "2026-11-02T22:16:27Z",
+          "completed": "2026-11-02T23:11:26Z"
+        },
+        {
+          "shard": 18,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671216,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 964,
+          "started": "2026-11-02T22:50:27Z",
+          "completed": "2026-11-02T23:57:32Z"
+        },
+        {
+          "shard": 19,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671680,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 971,
+          "started": "2026-11-02T22:53:18Z",
+          "completed": "2026-11-02T23:58:27Z"
+        },
+        {
+          "shard": 20,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671444,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1160,
+          "started": "2026-11-02T22:53:36Z",
+          "completed": "2026-11-02T23:58:55Z"
+        },
+        {
+          "shard": 21,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671726,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1305,
+          "started": "2026-11-02T23:03:12Z",
+          "completed": "2026-11-03T00:18:14Z"
+        },
+        {
+          "shard": 22,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671638,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1202,
+          "started": "2026-11-02T23:11:29Z",
+          "completed": "2026-11-03T00:02:56Z"
+        },
+        {
+          "shard": 23,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519671909,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1187,
+          "started": "2026-11-02T23:21:04Z",
+          "completed": "2026-11-03T00:13:15Z"
+        },
+        {
+          "shard": 24,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519672033,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1021,
+          "started": "2026-11-03T00:02:00Z",
+          "completed": "2026-11-03T01:18:06Z"
+        },
+        {
+          "shard": 25,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519672054,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 942,
+          "started": "2026-11-03T00:02:58Z",
+          "completed": "2026-11-03T00:42:42Z"
+        },
+        {
+          "shard": 26,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519673723,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 926,
+          "started": "2026-11-03T00:05:14Z",
+          "completed": "2026-11-03T00:57:11Z"
+        },
+        {
+          "shard": 27,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519674240,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1018,
+          "started": "2026-11-03T00:06:00Z",
+          "completed": "2026-11-03T00:48:56Z"
+        },
+        {
+          "shard": 28,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519674421,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1016,
+          "started": "2026-11-03T00:13:45Z",
+          "completed": "2026-11-03T00:55:40Z"
+        },
+        {
+          "shard": 29,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519674588,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1018,
+          "started": "2026-11-03T00:18:22Z",
+          "completed": "2026-11-03T01:06:30Z"
+        },
+        {
+          "shard": 30,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519674829,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1169,
+          "started": "2026-11-03T00:46:19Z",
+          "completed": "2026-11-03T01:44:16Z"
+        },
+        {
+          "shard": 31,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519675073,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1016,
+          "started": "2026-11-03T00:50:12Z",
+          "completed": "2026-11-03T01:48:09Z"
+        },
+        {
+          "shard": 32,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519675342,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1016,
+          "started": "2026-11-03T00:56:39Z",
+          "completed": "2026-11-03T01:51:06Z"
+        },
+        {
+          "shard": 33,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519675329,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1014,
+          "started": "2026-11-03T00:57:50Z",
+          "completed": "2026-11-03T01:53:56Z"
+        },
+        {
+          "shard": 34,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519675447,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1015,
+          "started": "2026-11-03T01:08:39Z",
+          "completed": "2026-11-03T02:19:48Z"
+        },
+        {
+          "shard": 35,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519675501,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1025,
+          "started": "2026-11-03T01:18:11Z",
+          "completed": "2026-11-03T02:22:06Z"
+        },
+        {
+          "shard": 36,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519676704,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1009,
+          "started": "2026-11-03T01:44:28Z",
+          "completed": "2026-11-03T02:45:46Z"
+        },
+        {
+          "shard": 37,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519677273,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1017,
+          "started": "2026-11-03T01:48:30Z",
+          "completed": "2026-11-03T02:46:43Z"
+        },
+        {
+          "shard": 38,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519677614,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 849,
+          "started": "2026-11-03T01:52:54Z",
+          "completed": "2026-11-03T02:28:25Z"
+        },
+        {
+          "shard": 39,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519677734,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1014,
+          "started": "2026-11-03T01:53:57Z",
+          "completed": "2026-11-03T02:37:55Z"
+        },
+        {
+          "shard": 40,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519677972,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1012,
+          "started": "2026-11-03T02:20:33Z",
+          "completed": "2026-11-03T03:01:45Z"
+        },
+        {
+          "shard": 41,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519677838,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1023,
+          "started": "2026-11-03T02:22:18Z",
+          "completed": "2026-11-03T03:06:25Z"
+        },
+        {
+          "shard": 42,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519678576,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 935,
+          "started": "2026-11-03T02:28:28Z",
+          "completed": "2026-11-03T03:07:07Z"
+        },
+        {
+          "shard": 43,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519678113,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1020,
+          "started": "2026-11-03T02:37:56Z",
+          "completed": "2026-11-03T03:43:16Z"
+        },
+        {
+          "shard": 44,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519678459,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1014,
+          "started": "2026-11-03T02:48:21Z",
+          "completed": "2026-11-03T03:54:00Z"
+        },
+        {
+          "shard": 45,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519678820,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1014,
+          "started": "2026-11-03T02:49:29Z",
+          "completed": "2026-11-03T03:56:07Z"
+        },
+        {
+          "shard": 46,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519680048,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 943,
+          "started": "2026-11-03T03:01:52Z",
+          "completed": "2026-11-03T03:47:50Z"
+        },
+        {
+          "shard": 47,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519680004,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1012,
+          "started": "2026-11-03T03:06:41Z",
+          "completed": "2026-11-03T03:55:26Z"
+        },
+        {
+          "shard": 48,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519680228,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1017,
+          "started": "2026-11-03T03:07:09Z",
+          "completed": "2026-11-03T04:41:53Z"
+        },
+        {
+          "shard": 49,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125519680909,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1072,
+          "started": "2026-11-03T03:43:17Z",
+          "completed": "2026-11-03T05:04:59Z"
+        }
+      ],
+      "hermetic_shards": [
+        {
+          "shard": 0,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301547,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 86,
+          "started": "2026-11-03T05:44:15Z",
+          "completed": "2026-11-03T06:18:54Z"
+        },
+        {
+          "shard": 1,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301356,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 84,
+          "started": "2026-11-03T05:48:21Z",
+          "completed": "2026-11-03T06:21:44Z"
+        },
+        {
+          "shard": 2,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301246,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 74,
+          "started": "2026-11-03T05:06:06Z",
+          "completed": "2026-11-03T05:34:06Z"
+        },
+        {
+          "shard": 3,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301245,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 85,
+          "started": "2026-11-03T05:44:46Z",
+          "completed": "2026-11-03T06:18:37Z"
+        },
+        {
+          "shard": 4,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301322,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 85,
+          "started": "2026-11-03T05:44:43Z",
+          "completed": "2026-11-03T06:19:42Z"
+        },
+        {
+          "shard": 5,
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "job": 125738301345,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 79,
+          "started": "2026-11-03T05:18:38Z",
+          "completed": "2026-11-03T05:50:06Z"
+        }
+      ],
+      "floors": {
+        "src/spend_gate.rs": 90,
+        "src/tracker_host.rs": 75,
+        "src/server/handlers.rs": 100,
+        "src/broadcast_verify.rs": 86,
+        "src/explorers.rs": 82
+      },
+      "files": {
+        "src/broadcast_verify.rs": {
+          "score": 86.0,
+          "caught": 74,
+          "missed": 12,
+          "timeout": 0,
+          "unviable": 17,
+          "equivalent": 0,
+          "source": "night",
+          "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+          "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+        },
+        "src/explorers.rs": {
+          "score": 100.0,
+          "caught": 23,
+          "missed": 0,
+          "timeout": 0,
+          "unviable": 7,
+          "equivalent": 0,
+          "source": "night",
+          "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+          "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+        },
+        "src/server/handlers.rs": {
+          "score": 100.0,
+          "caught": 45,
+          "missed": 0,
+          "timeout": 0,
+          "unviable": 123,
+          "equivalent": 0,
+          "source": "night",
+          "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+          "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+        },
+        "src/spend_gate.rs": {
+          "score": 90.8,
+          "caught": 237,
+          "missed": 24,
+          "timeout": 0,
+          "unviable": 13,
+          "equivalent": 0,
+          "source": "night",
+          "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+          "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+        },
+        "src/tracker_host.rs": {
+          "score": 75.8,
+          "caught": 219,
+          "missed": 70,
+          "timeout": 0,
+          "unviable": 53,
+          "equivalent": 6,
+          "source": "night",
+          "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
+          "sha": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+        }
+      },
+      "note": "A complete night on one tree, each mutant judged once, with the hermetic union judged (#393, #400, #423); no earlier night judged it. 923 mutants: the cargo pass caught 597, missed 113 and found 213 unviable, with no timeout; the hermetic pass caught 1 of the 113, src/spend_gate.rs:2036:17 (run_gated's && to ||), and missed 112. Of those 112, six are tracker_host.rs's declared equivalents (#482), so 106 are missed. src/explorers.rs reads 100.0 (23 caught, 0 missed): f2976ef carries PR 429 (dcfb2a9, 2026-11-02T09:58Z), whose tests caught the four survivors of #420, and none of the four survives here. src/tracker_host.rs reads 75.8 (219 caught, 70 missed, 6 equivalent), at or above its floor 75, so the record holds no verdict. The night's own job, on its tree's script without --equivalents, read 74.2 with 76 missed and called it below the floor; that is a choice for the captain (docs/NIGHTLY.md: the record and its verdict move with the next complete run). Its 76 missed names are run 41413946663's 76 name for name, because PR 434's batch 1 (87ebc88f, 2026-11-02T21:56Z) landed after the dispatch. Of the 58 survivors in tracker-host-survivors-all.txt, all 58 persist (47 under the same name, 11 at the lines f2976ef gives them; 55 distinct mutants), and the same 21 as the second night are new against that list. The cargo pass's other survivors are the second night's names exactly: broadcast_verify.rs 12; spend_gate.rs 25, of which the hermetic pass caught 1. The floors are unchanged: 90, 75, 100, 86, 82. The night's fuzz five ran 3601 s each on nightly-2026-10-30 (docs/scoreboard/fuzz.json, tools/fuzz-record). Its bench job ran on an Intel Xeon 6975P-C with 4 cores, which opens that CPU's entry at 1 of 5 (#142). Neither feeds this record. The next complete night is the captain's dispatch at the fleet's 03:00Z slot (the owner's stagger rule of 2026-11-02: bsv-rs 00:00Z, this repository 03:00Z, the toolbox 06:00Z). The Nightly has no cron (#303), and a day dispatch never runs it: the day's dispatches stay off 00:00Z to 09:00Z."
+    },
     {
       "mode": "complete",
       "mode_note": "the night of record cut at the pin: every floored file mutated, so each file's figure is this night's own (source night), and an incremental night carries from it with this run and commit (#462)",
@@ -210,56 +1392,506 @@
         "hermetic": "ABSENT on #435: the six Mutants-hermetic shards failed before testing a mutant (the selection guard compared cargo-mutants' coloured --list names under CARGO_TERM_COLOR=always with the plain survivors and refused every shard), so this night carries no hermetic figure and no union; the figures below are the cargo pass alone"
       },
       "shards": [
-        {"shard": 0, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163171, "exit": 2, "mutants": 19, "test_timeout_s": 841, "started": "2026-11-02T08:35:38Z", "completed": "2026-11-02T09:34:56Z"},
-        {"shard": 1, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163034, "exit": 2, "mutants": 19, "test_timeout_s": 914, "started": "2026-11-02T08:33:43Z", "completed": "2026-11-02T09:31:01Z"},
-        {"shard": 2, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162932, "exit": 2, "mutants": 19, "test_timeout_s": 1002, "started": "2026-11-02T08:33:34Z", "completed": "2026-11-02T09:37:48Z"},
-        {"shard": 3, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162995, "exit": 2, "mutants": 19, "test_timeout_s": 820, "started": "2026-11-02T08:33:34Z", "completed": "2026-11-02T09:38:46Z"},
-        {"shard": 4, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162970, "exit": 2, "mutants": 19, "test_timeout_s": 1004, "started": "2026-11-02T08:34:17Z", "completed": "2026-11-02T09:30:58Z"},
-        {"shard": 5, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162977, "exit": 2, "mutants": 19, "test_timeout_s": 994, "started": "2026-11-02T08:33:41Z", "completed": "2026-11-02T09:34:23Z"},
-        {"shard": 6, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162996, "exit": 2, "mutants": 19, "test_timeout_s": 1002, "started": "2026-11-02T09:31:06Z", "completed": "2026-11-02T10:33:27Z"},
-        {"shard": 7, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163114, "exit": 2, "mutants": 19, "test_timeout_s": 1000, "started": "2026-11-02T09:31:03Z", "completed": "2026-11-02T10:31:01Z"},
-        {"shard": 8, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163185, "exit": 2, "mutants": 19, "test_timeout_s": 1005, "started": "2026-11-02T09:34:25Z", "completed": "2026-11-02T10:34:55Z"},
-        {"shard": 9, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163146, "exit": 2, "mutants": 19, "test_timeout_s": 824, "started": "2026-11-02T09:35:50Z", "completed": "2026-11-02T10:22:14Z"},
-        {"shard": 10, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163031, "exit": 2, "mutants": 19, "test_timeout_s": 1031, "started": "2026-11-02T09:37:49Z", "completed": "2026-11-02T10:35:32Z"},
-        {"shard": 11, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173162998, "exit": 2, "mutants": 19, "test_timeout_s": 1000, "started": "2026-11-02T09:38:48Z", "completed": "2026-11-02T10:25:52Z"},
-        {"shard": 12, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163106, "exit": 2, "mutants": 19, "test_timeout_s": 1003, "started": "2026-11-02T10:22:16Z", "completed": "2026-11-02T11:15:18Z"},
-        {"shard": 13, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163116, "exit": 2, "mutants": 19, "test_timeout_s": 1004, "started": "2026-11-02T10:26:01Z", "completed": "2026-11-02T11:11:19Z"},
-        {"shard": 14, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163092, "exit": 2, "mutants": 19, "test_timeout_s": 1006, "started": "2026-11-02T10:31:03Z", "completed": "2026-11-02T11:32:35Z"},
-        {"shard": 15, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173163033, "exit": 0, "mutants": 19, "test_timeout_s": 992, "started": "2026-11-02T10:33:29Z", "completed": "2026-11-02T11:12:21Z"},
-        {"shard": 16, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165085, "exit": 2, "mutants": 19, "test_timeout_s": 1002, "started": "2026-11-02T10:35:03Z", "completed": "2026-11-02T11:18:07Z"},
-        {"shard": 17, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165228, "exit": 2, "mutants": 19, "test_timeout_s": 918, "started": "2026-11-02T10:35:35Z", "completed": "2026-11-02T11:17:24Z"},
-        {"shard": 18, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165201, "exit": 2, "mutants": 19, "test_timeout_s": 1002, "started": "2026-11-02T11:11:21Z", "completed": "2026-11-02T12:06:21Z"},
-        {"shard": 19, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165301, "exit": 2, "mutants": 19, "test_timeout_s": 1001, "started": "2026-11-02T11:12:23Z", "completed": "2026-11-02T12:04:54Z"},
-        {"shard": 20, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165273, "exit": 2, "mutants": 19, "test_timeout_s": 826, "started": "2026-11-02T11:15:19Z", "completed": "2026-11-02T11:51:01Z"},
-        {"shard": 21, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165456, "exit": 2, "mutants": 19, "test_timeout_s": 1000, "started": "2026-11-02T11:17:56Z", "completed": "2026-11-02T12:17:36Z"},
-        {"shard": 22, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165218, "exit": 2, "mutants": 19, "test_timeout_s": 1004, "started": "2026-11-02T11:18:13Z", "completed": "2026-11-02T12:03:03Z"},
-        {"shard": 23, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165542, "exit": 2, "mutants": 18, "test_timeout_s": 1015, "started": "2026-11-02T11:32:37Z", "completed": "2026-11-02T12:21:12Z"},
-        {"shard": 24, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165457, "exit": 2, "mutants": 18, "test_timeout_s": 841, "started": "2026-11-02T11:51:06Z", "completed": "2026-11-02T12:51:57Z"},
-        {"shard": 25, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173165760, "exit": 2, "mutants": 18, "test_timeout_s": 1005, "started": "2026-11-02T12:03:10Z", "completed": "2026-11-02T12:46:08Z"},
-        {"shard": 26, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167258, "exit": 2, "mutants": 18, "test_timeout_s": 1003, "started": "2026-11-02T12:05:06Z", "completed": "2026-11-02T13:03:00Z"},
-        {"shard": 27, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167528, "exit": 2, "mutants": 18, "test_timeout_s": 991, "started": "2026-11-02T12:06:48Z", "completed": "2026-11-02T12:48:20Z"},
-        {"shard": 28, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167545, "exit": 2, "mutants": 18, "test_timeout_s": 992, "started": "2026-11-02T12:17:48Z", "completed": "2026-11-02T12:58:18Z"},
-        {"shard": 29, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167579, "exit": 2, "mutants": 18, "test_timeout_s": 1000, "started": "2026-11-02T12:21:14Z", "completed": "2026-11-02T13:15:02Z"},
-        {"shard": 30, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167827, "exit": 2, "mutants": 18, "test_timeout_s": 918, "started": "2026-11-02T12:46:10Z", "completed": "2026-11-02T13:34:35Z"},
-        {"shard": 31, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167941, "exit": 2, "mutants": 18, "test_timeout_s": 1000, "started": "2026-11-02T12:48:21Z", "completed": "2026-11-02T13:51:03Z"},
-        {"shard": 32, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173167918, "exit": 2, "mutants": 18, "test_timeout_s": 836, "started": "2026-11-02T12:51:58Z", "completed": "2026-11-02T13:41:40Z"},
-        {"shard": 33, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173168061, "exit": 2, "mutants": 18, "test_timeout_s": 839, "started": "2026-11-02T12:58:20Z", "completed": "2026-11-02T13:43:28Z"},
-        {"shard": 34, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173168190, "exit": 2, "mutants": 18, "test_timeout_s": 828, "started": "2026-11-02T13:03:07Z", "completed": "2026-11-02T13:58:59Z"},
-        {"shard": 35, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173168125, "exit": 2, "mutants": 18, "test_timeout_s": 1003, "started": "2026-11-02T13:15:14Z", "completed": "2026-11-02T14:18:09Z"},
-        {"shard": 36, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173169593, "exit": 2, "mutants": 18, "test_timeout_s": 923, "started": "2026-11-02T13:34:37Z", "completed": "2026-11-02T14:29:25Z"},
-        {"shard": 37, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173169611, "exit": 2, "mutants": 18, "test_timeout_s": 1001, "started": "2026-11-02T13:41:45Z", "completed": "2026-11-02T14:39:27Z"},
-        {"shard": 38, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173169655, "exit": 2, "mutants": 18, "test_timeout_s": 999, "started": "2026-11-02T13:43:30Z", "completed": "2026-11-02T14:25:52Z"},
-        {"shard": 39, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173169693, "exit": 2, "mutants": 18, "test_timeout_s": 989, "started": "2026-11-02T13:51:05Z", "completed": "2026-11-02T14:34:24Z"},
-        {"shard": 40, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173169913, "exit": 2, "mutants": 18, "test_timeout_s": 837, "started": "2026-11-02T13:59:01Z", "completed": "2026-11-02T14:31:30Z"},
-        {"shard": 41, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173170087, "exit": 2, "mutants": 18, "test_timeout_s": 911, "started": "2026-11-02T14:18:18Z", "completed": "2026-11-02T14:56:35Z"},
-        {"shard": 42, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173170284, "exit": 2, "mutants": 18, "test_timeout_s": 991, "started": "2026-11-02T14:26:53Z", "completed": "2026-11-02T15:08:35Z"},
-        {"shard": 43, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173170380, "exit": 2, "mutants": 18, "test_timeout_s": 1003, "started": "2026-11-02T14:29:27Z", "completed": "2026-11-02T15:31:13Z"},
-        {"shard": 44, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173170535, "exit": 2, "mutants": 18, "test_timeout_s": 999, "started": "2026-11-02T14:33:58Z", "completed": "2026-11-02T15:36:30Z"},
-        {"shard": 45, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173170576, "exit": 2, "mutants": 18, "test_timeout_s": 1004, "started": "2026-11-02T14:35:15Z", "completed": "2026-11-02T15:38:08Z"},
-        {"shard": 46, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173171635, "exit": 2, "mutants": 18, "test_timeout_s": 998, "started": "2026-11-02T14:39:29Z", "completed": "2026-11-02T15:25:36Z"},
-        {"shard": 47, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173171815, "exit": 2, "mutants": 18, "test_timeout_s": 1001, "started": "2026-11-02T14:56:37Z", "completed": "2026-11-02T15:44:43Z"},
-        {"shard": 48, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173171848, "exit": 2, "mutants": 18, "test_timeout_s": 1004, "started": "2026-11-02T15:08:40Z", "completed": "2026-11-02T16:37:47Z"},
-        {"shard": 49, "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7", "job": 125173172208, "exit": 2, "mutants": 18, "test_timeout_s": 1004, "started": "2026-11-02T15:25:39Z", "completed": "2026-11-02T16:40:03Z"}
+        {
+          "shard": 0,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163171,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 841,
+          "started": "2026-11-02T08:35:38Z",
+          "completed": "2026-11-02T09:34:56Z"
+        },
+        {
+          "shard": 1,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163034,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 914,
+          "started": "2026-11-02T08:33:43Z",
+          "completed": "2026-11-02T09:31:01Z"
+        },
+        {
+          "shard": 2,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162932,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1002,
+          "started": "2026-11-02T08:33:34Z",
+          "completed": "2026-11-02T09:37:48Z"
+        },
+        {
+          "shard": 3,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162995,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 820,
+          "started": "2026-11-02T08:33:34Z",
+          "completed": "2026-11-02T09:38:46Z"
+        },
+        {
+          "shard": 4,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162970,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T08:34:17Z",
+          "completed": "2026-11-02T09:30:58Z"
+        },
+        {
+          "shard": 5,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162977,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 994,
+          "started": "2026-11-02T08:33:41Z",
+          "completed": "2026-11-02T09:34:23Z"
+        },
+        {
+          "shard": 6,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162996,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1002,
+          "started": "2026-11-02T09:31:06Z",
+          "completed": "2026-11-02T10:33:27Z"
+        },
+        {
+          "shard": 7,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163114,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1000,
+          "started": "2026-11-02T09:31:03Z",
+          "completed": "2026-11-02T10:31:01Z"
+        },
+        {
+          "shard": 8,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163185,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1005,
+          "started": "2026-11-02T09:34:25Z",
+          "completed": "2026-11-02T10:34:55Z"
+        },
+        {
+          "shard": 9,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163146,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 824,
+          "started": "2026-11-02T09:35:50Z",
+          "completed": "2026-11-02T10:22:14Z"
+        },
+        {
+          "shard": 10,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163031,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1031,
+          "started": "2026-11-02T09:37:49Z",
+          "completed": "2026-11-02T10:35:32Z"
+        },
+        {
+          "shard": 11,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173162998,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1000,
+          "started": "2026-11-02T09:38:48Z",
+          "completed": "2026-11-02T10:25:52Z"
+        },
+        {
+          "shard": 12,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163106,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1003,
+          "started": "2026-11-02T10:22:16Z",
+          "completed": "2026-11-02T11:15:18Z"
+        },
+        {
+          "shard": 13,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163116,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T10:26:01Z",
+          "completed": "2026-11-02T11:11:19Z"
+        },
+        {
+          "shard": 14,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163092,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1006,
+          "started": "2026-11-02T10:31:03Z",
+          "completed": "2026-11-02T11:32:35Z"
+        },
+        {
+          "shard": 15,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173163033,
+          "exit": 0,
+          "mutants": 19,
+          "test_timeout_s": 992,
+          "started": "2026-11-02T10:33:29Z",
+          "completed": "2026-11-02T11:12:21Z"
+        },
+        {
+          "shard": 16,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165085,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1002,
+          "started": "2026-11-02T10:35:03Z",
+          "completed": "2026-11-02T11:18:07Z"
+        },
+        {
+          "shard": 17,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165228,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 918,
+          "started": "2026-11-02T10:35:35Z",
+          "completed": "2026-11-02T11:17:24Z"
+        },
+        {
+          "shard": 18,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165201,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1002,
+          "started": "2026-11-02T11:11:21Z",
+          "completed": "2026-11-02T12:06:21Z"
+        },
+        {
+          "shard": 19,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165301,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1001,
+          "started": "2026-11-02T11:12:23Z",
+          "completed": "2026-11-02T12:04:54Z"
+        },
+        {
+          "shard": 20,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165273,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 826,
+          "started": "2026-11-02T11:15:19Z",
+          "completed": "2026-11-02T11:51:01Z"
+        },
+        {
+          "shard": 21,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165456,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1000,
+          "started": "2026-11-02T11:17:56Z",
+          "completed": "2026-11-02T12:17:36Z"
+        },
+        {
+          "shard": 22,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165218,
+          "exit": 2,
+          "mutants": 19,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T11:18:13Z",
+          "completed": "2026-11-02T12:03:03Z"
+        },
+        {
+          "shard": 23,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165542,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1015,
+          "started": "2026-11-02T11:32:37Z",
+          "completed": "2026-11-02T12:21:12Z"
+        },
+        {
+          "shard": 24,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165457,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 841,
+          "started": "2026-11-02T11:51:06Z",
+          "completed": "2026-11-02T12:51:57Z"
+        },
+        {
+          "shard": 25,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173165760,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1005,
+          "started": "2026-11-02T12:03:10Z",
+          "completed": "2026-11-02T12:46:08Z"
+        },
+        {
+          "shard": 26,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167258,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1003,
+          "started": "2026-11-02T12:05:06Z",
+          "completed": "2026-11-02T13:03:00Z"
+        },
+        {
+          "shard": 27,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167528,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 991,
+          "started": "2026-11-02T12:06:48Z",
+          "completed": "2026-11-02T12:48:20Z"
+        },
+        {
+          "shard": 28,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167545,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 992,
+          "started": "2026-11-02T12:17:48Z",
+          "completed": "2026-11-02T12:58:18Z"
+        },
+        {
+          "shard": 29,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167579,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1000,
+          "started": "2026-11-02T12:21:14Z",
+          "completed": "2026-11-02T13:15:02Z"
+        },
+        {
+          "shard": 30,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167827,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 918,
+          "started": "2026-11-02T12:46:10Z",
+          "completed": "2026-11-02T13:34:35Z"
+        },
+        {
+          "shard": 31,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167941,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1000,
+          "started": "2026-11-02T12:48:21Z",
+          "completed": "2026-11-02T13:51:03Z"
+        },
+        {
+          "shard": 32,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173167918,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 836,
+          "started": "2026-11-02T12:51:58Z",
+          "completed": "2026-11-02T13:41:40Z"
+        },
+        {
+          "shard": 33,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173168061,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 839,
+          "started": "2026-11-02T12:58:20Z",
+          "completed": "2026-11-02T13:43:28Z"
+        },
+        {
+          "shard": 34,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173168190,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 828,
+          "started": "2026-11-02T13:03:07Z",
+          "completed": "2026-11-02T13:58:59Z"
+        },
+        {
+          "shard": 35,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173168125,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1003,
+          "started": "2026-11-02T13:15:14Z",
+          "completed": "2026-11-02T14:18:09Z"
+        },
+        {
+          "shard": 36,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173169593,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 923,
+          "started": "2026-11-02T13:34:37Z",
+          "completed": "2026-11-02T14:29:25Z"
+        },
+        {
+          "shard": 37,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173169611,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1001,
+          "started": "2026-11-02T13:41:45Z",
+          "completed": "2026-11-02T14:39:27Z"
+        },
+        {
+          "shard": 38,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173169655,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 999,
+          "started": "2026-11-02T13:43:30Z",
+          "completed": "2026-11-02T14:25:52Z"
+        },
+        {
+          "shard": 39,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173169693,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 989,
+          "started": "2026-11-02T13:51:05Z",
+          "completed": "2026-11-02T14:34:24Z"
+        },
+        {
+          "shard": 40,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173169913,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 837,
+          "started": "2026-11-02T13:59:01Z",
+          "completed": "2026-11-02T14:31:30Z"
+        },
+        {
+          "shard": 41,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173170087,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 911,
+          "started": "2026-11-02T14:18:18Z",
+          "completed": "2026-11-02T14:56:35Z"
+        },
+        {
+          "shard": 42,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173170284,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 991,
+          "started": "2026-11-02T14:26:53Z",
+          "completed": "2026-11-02T15:08:35Z"
+        },
+        {
+          "shard": 43,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173170380,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1003,
+          "started": "2026-11-02T14:29:27Z",
+          "completed": "2026-11-02T15:31:13Z"
+        },
+        {
+          "shard": 44,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173170535,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 999,
+          "started": "2026-11-02T14:33:58Z",
+          "completed": "2026-11-02T15:36:30Z"
+        },
+        {
+          "shard": 45,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173170576,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T14:35:15Z",
+          "completed": "2026-11-02T15:38:08Z"
+        },
+        {
+          "shard": 46,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173171635,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 998,
+          "started": "2026-11-02T14:39:29Z",
+          "completed": "2026-11-02T15:25:36Z"
+        },
+        {
+          "shard": 47,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173171815,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1001,
+          "started": "2026-11-02T14:56:37Z",
+          "completed": "2026-11-02T15:44:43Z"
+        },
+        {
+          "shard": 48,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173171848,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T15:08:40Z",
+          "completed": "2026-11-02T16:37:47Z"
+        },
+        {
+          "shard": 49,
+          "commit": "2ca0173029cecefe50526b23669cfc9c2ad70cd7",
+          "job": 125173172208,
+          "exit": 2,
+          "mutants": 18,
+          "test_timeout_s": 1004,
+          "started": "2026-11-02T15:25:39Z",
+          "completed": "2026-11-02T16:40:03Z"
+        }
       ],
       "floors": {
         "src/spend_gate.rs": 90,
@@ -334,77 +1966,339 @@
       "toolchain": "stable, rustc 1.99.1 (58cf8f9c3 2026-10-13) on the runner",
       "shape": "fifty shards dealt round-robin (--sharding round-robin), six at a time; --baseline run --timeout-multiplier 2 --build-timeout 900; each shard listed and dealt the mutants of its own checkout and judged them under its own list; all fifty concluded success and the score job judged the night (PR 394, #310)",
       "targets": {
-        "A": {"shards": "0-17", "cargo": ["--lib", "--bins", "--test arc_callback_tests", "--test arcade_webhook_vector_tests",
-                  "--test certificate_pin", "--test chaintracks_off", "--test compact_tracker_off",
-                  "--test gate_vectors", "--test json_refusal", "--test serve_bind_guard",
-                  "--test served_beef_doors", "--test tx_word_route", "--test wire",
-                  "--test wire_consumers", "--test integration", "--test respend_witness"],
-              "benches": ["--bench create_action_signed", "--bench gate_assess"]},
-        "B": {"shards": "18-23", "cargo": "A's, with --test fuzz_replay", "benches": "A's"},
-        "C": {"shards": "24-49", "cargo": "B's, with --test e2e_hermetic, which passes at once without E2E_HERMETIC_ORACLE=1 (unset in the cargo pass) and judged nothing", "benches": "A's"},
+        "A": {
+          "shards": "0-17",
+          "cargo": [
+            "--lib",
+            "--bins",
+            "--test arc_callback_tests",
+            "--test arcade_webhook_vector_tests",
+            "--test certificate_pin",
+            "--test chaintracks_off",
+            "--test compact_tracker_off",
+            "--test gate_vectors",
+            "--test json_refusal",
+            "--test serve_bind_guard",
+            "--test served_beef_doors",
+            "--test tx_word_route",
+            "--test wire",
+            "--test wire_consumers",
+            "--test integration",
+            "--test respend_witness"
+          ],
+          "benches": [
+            "--bench create_action_signed",
+            "--bench gate_assess"
+          ]
+        },
+        "B": {
+          "shards": "18-23",
+          "cargo": "A's, with --test fuzz_replay",
+          "benches": "A's"
+        },
+        "C": {
+          "shards": "24-49",
+          "cargo": "B's, with --test e2e_hermetic, which passes at once without E2E_HERMETIC_ORACLE=1 (unset in the cargo pass) and judged nothing",
+          "benches": "A's"
+        },
         "hermetic": "not in this night: PR 415's hermetic pass landed after the dispatch; the next dispatched night carries it (#393)"
       },
       "shards": [
-        {"shard": 0, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 1, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 2, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 3, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 4, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 5, "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3", "targets": "A"},
-        {"shard": 6, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 7, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 8, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 9, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 10, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 11, "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8", "targets": "A"},
-        {"shard": 12, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 13, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 14, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 15, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 16, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 17, "commit": "f916968205b38f112368ac60e8802325fa40928b", "targets": "A"},
-        {"shard": 18, "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c", "targets": "B"},
-        {"shard": 19, "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c", "targets": "B"},
-        {"shard": 20, "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c", "targets": "B"},
-        {"shard": 21, "commit": "59f8bc1b0f5409d5d12dc97fe7066244f5af5623", "targets": "B"},
-        {"shard": 22, "commit": "59f8bc1b0f5409d5d12dc97fe7066244f5af5623", "targets": "B"},
-        {"shard": 23, "commit": "98099aa952ab55c8c50acf9e96acc30cadb7b6c6", "targets": "B"},
-        {"shard": 24, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 25, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 26, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 27, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 28, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 29, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 30, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 31, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 32, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 33, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 34, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 35, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 36, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 37, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 38, "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae", "targets": "C"},
-        {"shard": 39, "commit": "5aa43539c67ae97db6eedde5df9030c611a22a83", "targets": "C"},
-        {"shard": 40, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 41, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 42, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 43, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 44, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 45, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 46, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 47, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 48, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"},
-        {"shard": 49, "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d", "targets": "C"}
+        {
+          "shard": 0,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 1,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 2,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 3,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 4,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 5,
+          "commit": "4d330f816ad1414ac590ed04d2eda31f0f684ed3",
+          "targets": "A"
+        },
+        {
+          "shard": 6,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 7,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 8,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 9,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 10,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 11,
+          "commit": "a80d6b38aa8bb8f50691374bab6527b148773ee8",
+          "targets": "A"
+        },
+        {
+          "shard": 12,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 13,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 14,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 15,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 16,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 17,
+          "commit": "f916968205b38f112368ac60e8802325fa40928b",
+          "targets": "A"
+        },
+        {
+          "shard": 18,
+          "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c",
+          "targets": "B"
+        },
+        {
+          "shard": 19,
+          "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c",
+          "targets": "B"
+        },
+        {
+          "shard": 20,
+          "commit": "f480e016d641968d96120b5ab2c4adfdc4cd796c",
+          "targets": "B"
+        },
+        {
+          "shard": 21,
+          "commit": "59f8bc1b0f5409d5d12dc97fe7066244f5af5623",
+          "targets": "B"
+        },
+        {
+          "shard": 22,
+          "commit": "59f8bc1b0f5409d5d12dc97fe7066244f5af5623",
+          "targets": "B"
+        },
+        {
+          "shard": 23,
+          "commit": "98099aa952ab55c8c50acf9e96acc30cadb7b6c6",
+          "targets": "B"
+        },
+        {
+          "shard": 24,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 25,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 26,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 27,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 28,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 29,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 30,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 31,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 32,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 33,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 34,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 35,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 36,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 37,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 38,
+          "commit": "45ae661f3130bc77bae74f0c136910b25e70ddae",
+          "targets": "C"
+        },
+        {
+          "shard": 39,
+          "commit": "5aa43539c67ae97db6eedde5df9030c611a22a83",
+          "targets": "C"
+        },
+        {
+          "shard": 40,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 41,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 42,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 43,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 44,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 45,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 46,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 47,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 48,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        },
+        {
+          "shard": 49,
+          "commit": "54c7276f6e16b35d81440676ddf3e03f238efd3d",
+          "targets": "C"
+        }
       ],
-      "floors": {"src/spend_gate.rs": 90, "src/tracker_host.rs": 75, "src/server/handlers.rs": 100,
-                 "src/broadcast_verify.rs": 86, "src/explorers.rs": 82},
+      "floors": {
+        "src/spend_gate.rs": 90,
+        "src/tracker_host.rs": 75,
+        "src/server/handlers.rs": 100,
+        "src/broadcast_verify.rs": 86,
+        "src/explorers.rs": 82
+      },
       "verdict": "red by design: src/explorers.rs 78.0 below its floor 82; the floor does not move (the owner's word); its four surviving mutants are #420",
       "files": {
-        "src/broadcast_verify.rs": {"score": 86.7, "caught": 144, "missed": 22, "timeout": 0, "unviable": 37},
-        "src/explorers.rs": {"score": 78.0, "caught": 39, "missed": 11, "timeout": 0, "unviable": 9},
-        "src/server/handlers.rs": {"score": 100.0, "caught": 77, "missed": 0, "timeout": 0, "unviable": 251},
-        "src/spend_gate.rs": {"score": 93.3, "caught": 238, "missed": 17, "timeout": 0, "unviable": 12},
-        "src/tracker_host.rs": {"score": 75.3, "caught": 216, "missed": 71, "timeout": 0, "unviable": 63}
+        "src/broadcast_verify.rs": {
+          "score": 86.7,
+          "caught": 144,
+          "missed": 22,
+          "timeout": 0,
+          "unviable": 37
+        },
+        "src/explorers.rs": {
+          "score": 78.0,
+          "caught": 39,
+          "missed": 11,
+          "timeout": 0,
+          "unviable": 9
+        },
+        "src/server/handlers.rs": {
+          "score": 100.0,
+          "caught": 77,
+          "missed": 0,
+          "timeout": 0,
+          "unviable": 251
+        },
+        "src/spend_gate.rs": {
+          "score": 93.3,
+          "caught": 238,
+          "missed": 17,
+          "timeout": 0,
+          "unviable": 12
+        },
+        "src/tracker_host.rs": {
+          "score": 75.3,
+          "caught": 216,
+          "missed": 71,
+          "timeout": 0,
+          "unviable": 63
+        }
       },
       "note": "The figures are the score job's, the night's word, and they carry repeats from two causes. #400: the listing names src/broadcast_verify.rs and src/explorers.rs twice. The mixed tree (#423): shards on different commits dealt different lists, so a mutant could be judged more than once or not at all; src/tracker_host.rs changed at f916968, and src/server/handlers.rs and src/spend_gate.rs at 98099aa. The score job's summary names 12 distinct missed of broadcast_verify.rs's 22, 4 of explorers.rs's 11 and 58 of tracker_host.rs's 71. explorers.rs and broadcast_verify.rs are the same on all nine commits; counted once per distinct name, the artifacts read explorers.rs at 82.6 (19 caught, 4 missed) and broadcast_verify.rs at 86.0 (74, 12). Those are readings, not scores: they do not lift explorers.rs's red, which stands until a night with #400 and #423 landed measures each mutant once. A name count on the three files that changed is no reading, since their mutants' lines moved between commits. List A is shard 9's printed line (job 124953006471); it left out arch_config_env arch_env_reads arch_explorer_sites arch_no_error_words arch_no_prefix_errors arch_no_unwrap arch_spawn_sites arch_sql_sites brc100 header_source rule_28_sites signing_digest_vector, and the benches internalize_action and list_outputs. The night's five Fuzz jobs failed (dispatched before #395's pin) and feed no record."
     }
