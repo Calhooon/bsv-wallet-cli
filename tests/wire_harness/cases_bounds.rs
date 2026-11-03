@@ -15,11 +15,11 @@ use crate::wire_support::Req;
 const PAGE: &str = "http://bound.test";
 
 /// The request with `call` sent `times` times first, each answered.
-fn spent(times: u32, call: Req) -> Option<Owner> {
-    Some(Owner {
+fn spent(times: u32, call: Req) -> Owner {
+    Owner {
         spent: Some(Spent { times, call }),
         ..Owner::default()
-    })
+    }
 }
 
 pub(crate) async fn record(r: &mut Recorder) {
@@ -30,7 +30,7 @@ pub(crate) async fn record(r: &mut Recorder) {
         "bound.isAuthenticated.presence",
         "pages",
         presence.clone(),
-        spent(1, presence),
+        Some(spent(1, presence)),
     )
     .await;
     // The chain doors, one bound for the four: ten getNetwork calls spend
@@ -39,7 +39,7 @@ pub(crate) async fn record(r: &mut Recorder) {
         "bound.getHeight.chain",
         "pages",
         get("/getHeight").header("origin", PAGE),
-        spent(10, get("/getNetwork").header("origin", PAGE)),
+        Some(spent(10, get("/getNetwork").header("origin", PAGE))),
     )
     .await;
     // A level-0 protocol power, a bound of its own at the chain doors'
@@ -54,7 +54,7 @@ pub(crate) async fn record(r: &mut Recorder) {
         "bound.createSignature.levelZero",
         "pages",
         signature.clone(),
-        spent(10, signature),
+        Some(spent(10, signature)),
     )
     .await;
 }
