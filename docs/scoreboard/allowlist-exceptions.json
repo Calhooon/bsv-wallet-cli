@@ -21,6 +21,16 @@
       "word": "the captain's word of 2026-11-03: the task is the design's own, section (2) (Abandon's drop spawns abandon), under the owner's ruling W4 (a)",
       "date": "2026-11-03",
       "reason": "a held call's disconnect: its guard's drop cannot await, so the withdrawal of the originator's open rows runs as a task"
+    },
+    {
+      "rule": "A6",
+      "file": "src/server/probes.rs",
+      "files": {"from": 6, "to": 7},
+      "sites": {"from": 11, "to": 12},
+      "issue": 539,
+      "word": "the captain's brief of 2026-11-03 for #539: the record written off the request's path, \"a task fed by a channel, or a write after the response is sent; no call waits on the record\"",
+      "date": "2026-11-03",
+      "reason": "the probe record's writer, one per served router: the gate's answers with no row are queued and written by one task, so no call waits on the record"
     }
   ]
 }
