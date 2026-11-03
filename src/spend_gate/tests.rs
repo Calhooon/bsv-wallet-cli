@@ -2492,6 +2492,10 @@ async fn a_busy_before_the_door_answers_503_with_nothing_posted_and_the_coins_un
     services.set_tip_header(header_with_hash(900, &"0e".repeat(32), 0));
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let before = store_state(wallet.storage()).await;
+    // The ceiling at once: the lock is held until the end, so SQLite's
+    // 5,000 ms wait never succeeds and its busy is the same (#506).
+    crate::test_support::no_busy_wait(wallet.storage().pool()).await;
+    crate::test_support::no_busy_wait(wallet.storage().writer()).await;
 
     // Another process on the file holds the write lock.
     let mut other = sqlx::sqlite::SqliteConnectOptions::new()

@@ -419,6 +419,9 @@ mod tests {
     impl RelayFixture {
         async fn new() -> Self {
             let (dir, wallet, mut holder) = busy_read_wallet().await;
+            // The relay's writes busy at once too: no test here reads the
+            // wait, and SQLite's 5,000 ms under the lock never succeeds (#506).
+            crate::test_support::no_busy_wait(wallet.storage().writer()).await;
             set_read_lock(&mut holder, false).await;
             let txids = ["31".repeat(32), "42".repeat(32)];
             seed_arc_requests(wallet.storage(), &txids).await;
