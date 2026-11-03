@@ -1,0 +1,27 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://page.test"
+    },
+    "json": {
+      "basket": "default"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://page.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_PERMISSION_DENIED",
+      "message": "Basket “default” is admin-only."
+    }
+  }
+}
