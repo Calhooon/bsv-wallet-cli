@@ -452,6 +452,24 @@ body {
   flex: 1;
   overflow: auto;
 }
+/* Origins view (#414) */
+.origins { padding: 16px 20px; overflow: auto; flex: 1; }
+.origins h3 { font-size: 13px; color: var(--text-secondary); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+.origins h3:first-child { margin-top: 0; }
+.origin-btn {
+  padding: 4px 10px;
+  margin-right: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.origin-btn.grant { background: var(--accent); color: #000; border-color: var(--accent); }
+.origin-btn:hover { box-shadow: 0 0 10px var(--accent-glow-strong); }
+.origin-amount { width: 110px; padding: 3px 6px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; margin-right: 6px; }
 .sql-error {
   padding: 12px 20px;
   color: var(--error);
@@ -607,6 +625,9 @@ body {
       <button class="nav-btn" onclick="showSql()" id="navSql">
         <span class="icon">&gt;_</span> SQL Console
       </button>
+      <button class="nav-btn" onclick="showOrigins()" id="navOrigins">
+        <span class="icon">&#9873;</span> Origins
+      </button>
     </div>
   </div>
 
@@ -663,6 +684,21 @@ const api = {
       body: JSON.stringify({ sql }),
     });
     return r.json();
+  },
+  async origins() {
+    const r = await fetch('/api/origins');
+    return r.json();
+  },
+  // The origins view's writes (#414): the browser names this page's own
+  // Origin, the one origin the inspector's write routes admit.
+  async originsWrite(path, body) {
+    const r = await fetch(`/api/origins/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await r.json().catch(() => ({}));
+    return { ok: r.ok, json };
   }
 };
 
@@ -875,6 +911,115 @@ function renderSqlView() {
   if (ta) ta.focus();
 }
 
+// ═══════════════ RENDER: ORIGINS ═══════════════
+// The store's per-origin rows (#414): the open pending requests, answered
+// grant, grant once (a spending request alone) or deny; the grant rows,
+// revoked. The same rows `bsv-wallet origins` and the owner's door read.
+function when(secs) {
+  return secs ? new Date(secs * 1000).toISOString().replace('.000', '') : '';
+}
+
+function renderOriginsView() {
+  const main = document.getElementById('mainContent');
+  const o = S.origins || { grants: [], pending: [] };
+  const open = (o.pending || []).filter(p => p.answeredAt === null);
+  const pendingRows = open.map(p => `<tr data-pending-id="${p.pendingId}">
+      <td class="number">#${p.pendingId}</td>
+      <td>${esc(p.rawOriginator)}</td>
+      <td>${esc(p.scope)}</td>
+      <td>${esc(p.call)}</td>
+      <td class="number">${p.amount === null ? '' : esc(p.amount.toLocaleString()) + ' sat'}</td>
+      <td>${esc(when(p.firstSeen))}</td>
+      <td>${p.renewal ? 'renewal' : ''}</td>
+      <td>${p.scope === 'spending'
+        ? `<input class="origin-amount" id="amount-${p.pendingId}" type="number" min="0" value="${esc(p.amount ?? '')}" title="the month's ceiling in satoshis">`
+        : ''}<button class="origin-btn grant" onclick="answerOrigin(${p.pendingId}, 'grant')">Grant</button>${p.scope === 'spending'
+        ? `<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'once')">Grant once</button>`
+        : ''}<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'deny')">Deny</button></td>
+    </tr>`).join('');
+  const grantRows = (o.grants || []).map(g => `<tr data-originator="${esc(g.originator)}" data-scope="${esc(g.scope)}">
+      <td>${esc(g.originator)}</td>
+      <td>${esc(g.scope)}</td>
+      <td class="number">${g.scope === 'spending'
+        ? (g.amount === null ? 'no ceiling' : esc(g.amount.toLocaleString()) + '/month') + ` (${esc((g.spentThisMonth ?? 0).toLocaleString())} spent)`
+        : ''}</td>
+      <td>${esc(when(g.grantedAt))}</td>
+      <td>${g.expiry ? esc(when(g.expiry)) : 'never'}</td>
+      <td>${esc(g.source)}</td>
+      <td>${g.revokedAt === null
+        ? `<button class="origin-btn" onclick="revokeOrigin(this.closest('tr').dataset.originator, this.closest('tr').dataset.scope)">Revoke</button>`
+        : 'revoked ' + esc(when(g.revokedAt))}</td>
+    </tr>`).join('');
+  main.innerHTML = `
+    <div class="table-bar">
+      <div class="table-bar-left">
+        <span class="table-name">Origins</span>
+        <span class="table-count">${open.length} pending, ${(o.grants || []).length} grant rows</span>
+      </div>
+    </div>
+    ${S.originsError ? `<div class="sql-error">${esc(S.originsError)}</div>` : ''}
+    <div class="origins fade-in">
+      <h3>Pending requests</h3>
+      ${open.length === 0
+        ? '<div class="empty-state" style="padding:20px"><div class="msg">No pending requests</div></div>'
+        : `<table class="data-table" id="originsPending">
+            <thead><tr><th>#</th><th>originator</th><th>scope</th><th>call</th><th>amount</th><th>seen at</th><th>renewal</th><th></th></tr></thead>
+            <tbody>${pendingRows}</tbody>
+          </table>`}
+      <h3>Grants</h3>
+      ${(o.grants || []).length === 0
+        ? '<div class="empty-state" style="padding:20px"><div class="msg">No grant rows</div></div>'
+        : `<table class="data-table" id="originsGrants">
+            <thead><tr><th>originator</th><th>scope</th><th>ceiling</th><th>granted at</th><th>expires</th><th>source</th><th></th></tr></thead>
+            <tbody>${grantRows}</tbody>
+          </table>`}
+    </div>
+  `;
+}
+
+async function loadOrigins() {
+  const r = await api.origins();
+  if (r.error) {
+    S.originsError = r.error;
+  } else {
+    S.origins = r;
+  }
+  if (S.view === 'origins') renderOriginsView();
+}
+
+async function answerOrigin(pendingId, answer) {
+  const body = { pendingId, answer };
+  const input = document.getElementById(`amount-${pendingId}`);
+  if (answer === 'grant' && input) {
+    if (input.value === '') {
+      S.originsError = 'a spending grant needs its ceiling: the month\'s satoshis';
+      renderOriginsView();
+      return;
+    }
+    body.amount = Number(input.value);
+  }
+  const r = await api.originsWrite('answer', body);
+  S.originsError = r.ok ? null : (r.json.error || 'the answer was refused');
+  if (r.ok) toast(`#${pendingId} answered ${answer}`);
+  await loadOrigins();
+}
+
+async function revokeOrigin(originator, scope) {
+  const r = await api.originsWrite('revoke', { originator, scope });
+  S.originsError = r.ok ? null : (r.json.error || 'the revoke was refused');
+  if (r.ok) toast(`${originator} ${scope} revoked`);
+  await loadOrigins();
+}
+
+async function showOrigins() {
+  S.view = 'origins';
+  S.originsError = null;
+  updateNavState();
+  if (location.pathname !== '/origins') history.pushState(null, '', '/origins');
+  await loadOrigins();
+  renderOriginsView();
+}
+
 // ═══════════════ RENDER: DASHBOARD ═══════════════
 function renderDashboard() {
   const main = document.getElementById('mainContent');
@@ -1068,6 +1213,8 @@ function updateNavState() {
   if (S.view === 'dashboard') document.getElementById('navDashboard')?.classList.add('active');
   if (S.view === 'schema') document.getElementById('navSchema')?.classList.add('active');
   if (S.view === 'sql') document.getElementById('navSql')?.classList.add('active');
+  if (S.view === 'origins') document.getElementById('navOrigins')?.classList.add('active');
+  if (S.view !== 'origins' && location.pathname === '/origins') history.replaceState(null, '', '/');
 }
 
 function copyCell(el, text) {
@@ -1101,7 +1248,8 @@ function formatSats(sats) {
   S.stats = stats;
   renderSidebar();
   renderHeaderStats();
-  showDashboard();
+  if (location.pathname === '/origins') showOrigins();
+  else showDashboard();
 })();
 </script>
 </body>
