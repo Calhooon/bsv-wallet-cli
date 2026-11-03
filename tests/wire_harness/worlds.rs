@@ -659,7 +659,7 @@ impl World {
         match name {
             "tracked" => seed(storage, &identity, true).await,
             "received" | "headers-down" => seed(storage, &identity, false).await,
-            "funded" => return seed_funded(storage, &identity, key).await,
+            "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "pin-spend" | "review-race" => {
                 let roots = seed_funded(storage, &identity, key).await;
                 seed_puzzle(storage, &identity).await;
@@ -719,7 +719,7 @@ impl World {
         } else {
             stub
         };
-        let arc = if matches!(name, "funded" | "pin-spend") {
+        let arc = if matches!(name, "funded" | "pin-spend" | "spending") {
             arc_stub().await
         } else {
             CLOSED.to_string()
