@@ -168,6 +168,20 @@ and answered from the command line; the served doors still admit by
 | `origin-deny <#pending-id>` | denies a pending request and prints it |
 | `origin-revoke <originator> [--scope wallet\|spending]` | stamps the originator's live rows revoked and prints each; exits 1 naming the originator when it holds none |
 
+The inspector (`bsv-wallet ui`) shows the same rows at `/origins`: each open
+pending request (originator with its port, scope, call, amount, seen at,
+renewal) with Grant, Grant once (a spending request) and Deny, and each grant
+row with Revoke. Its API is `GET /api/origins` and `POST /api/origins/answer`
+and `POST /api/origins/revoke`, in the owner's door's bodies and the JSON
+`origins --json` prints. The two writes admit only the inspector's own page
+(`Origin` `http://` and the `Host` it was asked by), never an origin
+`ALLOWED_ORIGINS` lists or a grant admits: a granted page must not write a
+grant. Every read the inspector makes, the SQL console's `/api/query` among
+them, is on a pool opened read-only (`SQLITE_OPEN_READONLY`), so the database
+refuses a write whatever the SQL's text (#440); the console's
+`SELECT`/`WITH`/`PRAGMA`/`EXPLAIN` prefix check is a courtesy message, not the
+guard.
+
 `CHAINTRACKS_URL` selects the header service. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. `CHAINTRACKS_URL=off` runs
 with no header service: nothing is marked proven (every merkle proof is
