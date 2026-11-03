@@ -22,7 +22,7 @@ name: cache-beta
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, lane/p1-486-cache-scope]
 
 permissions:
   contents: read
