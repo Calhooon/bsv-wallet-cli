@@ -396,3 +396,19 @@ async fn the_spend_guard_never_offers_a_word_short_of_mined() {
     assert_eq!(guard_state(&mut state, &params, &snapshot), Ok(false));
     assert!(!state.suspect());
 }
+
+/// The host's clock is the wall clock in seconds since the epoch (R3 (b):
+/// the age threshold, the re-ask's pauses and the backoffs are seconds of
+/// the host's clock), never a fixed instant that no pause would pass.
+#[test]
+fn the_host_clock_reads_the_seconds_since_the_epoch() {
+    let epoch = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let before = epoch();
+    let now = SystemClock.now();
+    assert!((before..=epoch()).contains(&now), "{now} read at {before}");
+}
