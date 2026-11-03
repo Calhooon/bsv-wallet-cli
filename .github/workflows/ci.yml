@@ -51,14 +51,21 @@ env:
   # include_str! (src/commands/gift_chain.rs) and the extensions page by
   # tests/brc100.rs. lint's step "the docs set" fails on a read not named here.
   DOCS_READ_BY_CODE: GIFT.md docs/BRC-100-EXTENSIONS.md
+  # tests/ and fuzz/ are code-scanned folders, never docs (#476): a harness
+  # reads every file of a folder there (the wire manifest, the consumers'
+  # lists, the fuzz corpora, the vectors, the e2e scenarios), so a .md placed
+  # in one is a test's input. The prose there is named here, file by file,
+  # never a glob.
+  PROSE_IN_CODE_FOLDERS: tests/e2e/README.md
 
 jobs:
   # The changed paths, read once (#476). docs_only is true when every changed
   # path is docs: the issue's `docs/**`, `**/*.md`, `HANDOFF.md`, `CHANGELOG.md`
   # and `changelog.d/**`, read as prose, which is every path ending `.md` but
-  # DOCS_READ_BY_CODE. docs/'s records (ratchets.json, scoreboard/, brc100/)
-  # are the gates' inputs, and a scenario, a fixture, a workflow, a tool or any
-  # code is not docs. The diff, renames split into their two paths: on a PR the
+  # DOCS_READ_BY_CODE and every path under tests/ or fuzz/ (a code-scanned
+  # folder is never docs) but PROSE_IN_CODE_FOLDERS. docs/'s records
+  # (ratchets.json, scoreboard/, brc100/) are the gates' inputs, and a
+  # scenario, a fixture, a workflow, a tool or any code is not docs. The diff, renames split into their two paths: on a PR the
   # merge commit against HEAD^1 (the PR's base as merged); on a
   # merge-queue group its base_sha to its head_sha (as #451's base ref); on a
   # push to a branch the commit before it to the commit. Anything else (a tag's
@@ -115,6 +122,13 @@ jobs:
           while IFS= read -r path; do
             kind=docs
             case "$path" in *.md) ;; *) kind="not docs" ;; esac
+            case "$path" in
+              tests/* | fuzz/*)
+                if [ "$kind" = docs ]; then kind="not docs (a code-scanned folder)"; fi
+                for prose in $PROSE_IN_CODE_FOLDERS; do
+                  if [ "$path" = "$prose" ]; then kind=docs; fi
+                done ;;
+            esac
             for read_by_code in $DOCS_READ_BY_CODE; do
               if [ "$path" = "$read_by_code" ]; then kind="not docs (the code reads it)"; fi
             done
