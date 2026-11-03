@@ -171,6 +171,7 @@ async fn a_named_inputs_status_hold_maps_to_its_record_or_creator_clause() {
         own_change: true,
         allow_pending: AllowPending::Received,
         tracker: TickOptions::default(),
+        ..GateOptions::default()
     };
     for status in ["nosend", "unsigned", "sending", "failed"] {
         built
@@ -269,6 +270,7 @@ fn words(row: &Value, built: &Built) -> Vec<(&'static str, GateOptions)> {
         own_change: s(row, "host_rule_made").is_some(),
         allow_pending: AllowPending::Off,
         tracker: TickOptions::default(),
+        ..GateOptions::default()
     };
     if b(row, "allow_received") != Some(true) {
         return vec![("", base)];
