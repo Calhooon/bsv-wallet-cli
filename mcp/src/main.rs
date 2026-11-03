@@ -565,20 +565,27 @@ pub struct RegisterParams {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OriginAnswer {
-    /// Grant the request's scope (a spending request names `amount`)
+    /// Grant the request's power (a spending request names `amount`)
     Grant,
-    /// Admit the one spending call, writing no grant (refused on a wallet request)
+    /// Admit the one spending call, writing no grant (refused on a request
+    /// of another kind than spending)
     Once,
     /// Deny the call
     Deny,
 }
 
-/// A grant's scope.
+/// A grant's kind: the reference's four permission kinds, each row one
+/// power.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum OriginScope {
-    /// Every served door
-    Wallet,
+pub enum OriginKind {
+    /// A protocol at security level 1 or 2 with its counterparty (a label
+    /// rides it as `action label <label>`)
+    Protocol,
+    /// An output basket
+    Basket,
+    /// A certificate type from a verifier, with the fields revealed
+    Certificate,
     /// `createAction`'s spend, under a monthly ceiling
     Spending,
 }
@@ -606,9 +613,15 @@ pub struct AnswerOriginParams {
 pub struct RevokeOriginParams {
     /// The originator: a host with an optional port, no scheme (app.example)
     pub originator: String,
-    /// wallet or spending; absent revokes both
+    /// protocol, basket, certificate or spending; absent revokes every
+    /// row of the originator
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<OriginScope>,
+    pub kind: Option<OriginKind>,
+    /// The power's key, the canonical text `list_origins` prints
+    /// (`["todo items"]`); with kind it revokes that one row, and it is
+    /// refused without kind
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 // ── Tool definitions ───────────────────────────────────────────
@@ -1018,7 +1031,7 @@ impl WalletMcp {
     // ── The owner's routes (#414, not BRC-100) ────────────────
 
     #[tool(
-        description = "The owner's per-origin grants and prompts (GET /origins): every grant row (originator, scope, a spending row's monthly ceiling and this month's spend, expiry, revoked) and the pending requests, the open ones and the last 50 answered. Sent without an Origin header, with WALLET_AUTH_TOKEN as the bearer when set."
+        description = "The owner's per-origin grants and prompts (GET /origins): every grant row, one power each (originator, kind, key, a spending row's monthly ceiling and this month's spend, expiry, revoked), and the pending requests with the power each asks (kind, key, usage, the prompt's words, the call and its reason), the open ones and the last 50 answered. Sent without an Origin header, with WALLET_AUTH_TOKEN as the bearer when set."
     )]
     async fn list_origins(&self) -> Result<CallToolResult, ErrorData> {
         let url = format!("{}/origins", self.url);
@@ -1026,7 +1039,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Answer a pending origin request as the owner (POST /origins/answer): grant (a spending request names amount, its monthly ceiling), once (a spending request alone, no grant written) or deny. A request is answered once: a second answer, from here, the CLI or anywhere, is refused naming the first."
+        description = "Answer a pending origin request as the owner (POST /origins/answer): grant (the one power the request names; a spending request names amount, its monthly ceiling), once (a spending request alone, no grant written) or deny. A request is answered once: a second answer, from here, the CLI or anywhere, is refused naming the first."
     )]
     async fn answer_origin(
         &self,
@@ -1038,7 +1051,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Revoke an originator's grant as the owner (POST /origins/revoke): the wallet scope, the spending scope, or both when scope is absent. The rows are stamped revoked, never deleted; an originator holding no live row is refused by name."
+        description = "Revoke an originator's grants as the owner (POST /origins/revoke): one power's row (kind and key, the key as list_origins prints it), every row of a kind (kind alone), or every row of the originator (neither). The rows are stamped revoked, never deleted; an originator holding no live row is refused by name."
     )]
     async fn revoke_origin(
         &self,
