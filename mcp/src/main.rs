@@ -6,7 +6,10 @@
 //! the owner's: they refuse any call carrying one.
 //!
 //! The host routes: `chain_feed_status` (`GET /chain-feed`) and `tx_word`
-//! (`GET /tx/{txid}`) on the wallet; `health` (`GET /health`), `pull`
+//! (`GET /tx/{txid}`) on the wallet, sent as the owner's routes are (no
+//! `Origin`, the wallet's bearer when set): from the switch (#414 L5b) a
+//! host route answers the owner's admission or the seed, never a page's
+//! grant; `health` (`GET /health`), `pull`
 //! (`GET /pull`) and `register` (`POST /register`, the relay's admin bearer
 //! `RELAY_ADMIN_TOKEN`) on the callback relay at RELAY_URL
 //! (`bsv-wallet-relay`).
@@ -82,9 +85,10 @@ impl WalletMcp {
         Self::answer(request.header("Origin", &self.origin), route).await
     }
 
-    /// One of the owner's routes (`/origins`): never an `Origin` header,
-    /// which they refuse, and the wallet's bearer when one is named; its
-    /// answer as [`Self::host`]'s.
+    /// One of the owner's routes (`/origins`) or the wallet's host routes
+    /// (`/chain-feed`, `/tx/{txid}`): never an `Origin` header (the owner's
+    /// admission), and the wallet's bearer when one is named; its answer as
+    /// [`Self::host`]'s.
     async fn owner(
         &self,
         request: reqwest::RequestBuilder,
@@ -971,7 +975,7 @@ impl WalletMcp {
     )]
     async fn chain_feed_status(&self) -> Result<CallToolResult, ErrorData> {
         let url = format!("{}/chain-feed", self.url);
-        self.host(self.client.get(url), "/chain-feed").await
+        self.owner(self.client.get(url), "/chain-feed").await
     }
 
     #[tool(
@@ -986,7 +990,7 @@ impl WalletMcp {
             ));
         }
         let url = format!("{}/tx/{txid}", self.url);
-        self.host(self.client.get(url), "/tx/{txid}").await
+        self.owner(self.client.get(url), "/tx/{txid}").await
     }
 
     #[tool(
