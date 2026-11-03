@@ -76,7 +76,11 @@ sizing (#462): a whole set `--max-shards` (MUTANTS_SHARDS_INCREMENTAL);
 otherwise one shard per PER_SHARD of the changed files' mutants, by the
 record's counts, and at least PARALLEL while there are that many mutants, at
 most `--max-shards`; PARALLEL (six) at a time. An empty changed set plans no
-shard: the night carries every figure and says so.
+shard: the night carries every figure and says so. Either night's stage after
+the matrix (#517): the fuzz targets FUZZ_PARALLEL (five) at once beside the
+hermetic shards HERMETIC_PARALLEL (one) at a time, then reach and bench, the
+figures the plan's outputs `fuzz_parallel` and `hermetic_parallel`, refused
+when their sum passes HEAVY_RUN_PARALLEL.
 
 Exit 1, naming the fault, on a record without a mode or a base, a mode other
 than the two, or a git diff that fails.
@@ -120,6 +124,19 @@ HEAVY_RUN_PARALLEL = 6
 # in run 41516017523) and its mutants, not their count across shards. Six is
 # already HEAVY_RUN_PARALLEL's cap (#513), so the incremental rule is unchanged.
 PARALLEL = 6
+# The stage after the matrix (#517), under the same cap. Once the cargo matrix
+# ends, the fuzz targets and the hermetic shards run together, FUZZ_PARALLEL
+# and HERMETIC_PARALLEL at once (5 and 1: the five targets, an hour each on a
+# complete night, beside the hermetic shards one at a time), and the reach job
+# and the bench wait for both (needs: in nightly.yml) and run last, two jobs.
+# Before #517 the hermetic six, the five targets, reach and bench could run
+# together, thirteen jobs. The fuzz figure is the cap less the hermetic one, an
+# explicit max-parallel so that a sixth target queues rather than slips past;
+# the plan refuses a night whose figures sum past the cap (stage() below).
+FUZZ_PARALLEL = 5
+HERMETIC_PARALLEL = 1
+# The last two jobs of the night (#517): reach and bench, after both.
+TAIL_JOBS = 2
 WHOLE = {
     "Cargo.lock": "the lockfile changed: a dependency counts as changing every file that uses it",
     "Cargo.toml": "a workspace manifest changed: a dependency counts as changing every file that uses it",
@@ -150,6 +167,20 @@ INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
 
 def fault(why):
     sys.exit(f"changed_set: {why}")
+
+
+def stage(cap=HEAVY_RUN_PARALLEL, fuzz=FUZZ_PARALLEL, hermetic=HERMETIC_PARALLEL, tail=TAIL_JOBS):
+    """The stage after the matrix (#517): the fuzz targets beside the hermetic
+    shards, then reach and bench; refused when a figure is below one or a
+    step of the stage would run more than the cap at once."""
+    if min(cap, fuzz, hermetic) < 1:
+        fault(f"a parallel figure is at least 1 (cap {cap}, fuzz {fuzz}, hermetic {hermetic})")
+    if fuzz + hermetic > cap:
+        fault(f"the stage after the matrix runs fuzz {fuzz} + hermetic {hermetic} = {fuzz + hermetic} "
+              f"jobs at once, over the cap of {cap} (#517)")
+    if tail > cap:
+        fault(f"the night's last jobs, reach and bench, are {tail}, over the cap of {cap} (#517)")
+    return {"cap": cap, "fuzz_parallel": fuzz, "hermetic_parallel": hermetic, "tail": tail}
 
 
 def last_complete(record):
@@ -498,6 +529,7 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
         "shards": shards,
         "matrix": list(range(shards)),
         "parallel": parallel,
+        "stage": stage(),
         "selection": selection(root),
         "paths": [{"path": p, "files": sorted(f), "why": why} for p, f, why in found],
     }
@@ -528,6 +560,12 @@ def summary(p):
         lines.append(f"Mutated: {', '.join(f'`{f}`' for f in p['files'])} ({p['mutants']} mutants by the record, "
                      f"{p['shards']} shards, {p['parallel']} at once){'; the whole set' if p['whole'] else ''}.")
         lines.append(f"Carried from the last complete run: {', '.join(f'`{f}`' for f in p['carried']) or 'none'}.")
+    st = p["stage"]
+    lines.append("")
+    lines.append(f"After the matrix (#517): the fuzz targets {st['fuzz_parallel']} at once beside the hermetic "
+                 f"shards {st['hermetic_parallel']} at a time ({st['fuzz_parallel'] + st['hermetic_parallel']} "
+                 f"of the cap's {st['cap']}), then the reach job and the bench (on a complete night or with `bench`), "
+                 f"{st['tail']} at most, last.")
     reaching = [e for e in p["paths"] if e["files"]]
     if reaching:
         lines += ["", "| changed path | brings in | why |", "|---|---|---|"]
@@ -580,6 +618,8 @@ def main(argv):
             out.write(f"shards={p['shards']}\n")
             out.write(f"matrix={json.dumps(p['matrix'])}\n")
             out.write(f"parallel={p['parallel']}\n")
+            out.write(f"fuzz_parallel={p['stage']['fuzz_parallel']}\n")
+            out.write(f"hermetic_parallel={p['stage']['hermetic_parallel']}\n")
             out.write(f"empty={'true' if not p['files'] else 'false'}\n")
             out.write(f"selection={p['selection']}\n")
     return 0

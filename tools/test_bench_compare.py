@@ -470,9 +470,13 @@ class TheJobsInputs(unittest.TestCase):
         # #460, #462: the job waits for the plan and the mutants matrix, so no
         # shard waits for a runner, and runs on the plan's success; the
         # measure is unchanged (the pin, tools/bench-compare --ci and
-        # --gate-key, the candidate under the run id and the CPU).
+        # --gate-key, the candidate under the run id and the CPU). #517: it
+        # waits for the fuzz targets and the hermetic shards too and runs
+        # last beside the reach job, so the stage after the matrix stays under
+        # the fleet's cap of six.
         night_job = job("nightly.yml", "bench")
-        self.assertIn("    needs: [plan, mutants]\n", night_job)
+        self.assertIn("    needs: [plan, mutants, fuzz, mutants-hermetic]\n", night_job)
+        self.assertIn("!cancelled()", night_job)
         self.assertIn("needs.plan.result == 'success'", night_job)
         self.assertIn(f"RUSTUP_TOOLCHAIN: {bc.TOOLCHAIN_PIN}\n", night_job)
         self.assertIn(f"toolchain: {bc.TOOLCHAIN_PIN}\n", night_job)
