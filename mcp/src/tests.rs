@@ -1,7 +1,9 @@
 //! The five host-route tools against an in-process stub of the wallet's
 //! and the relay's routes: their method, path, query, body and bearer as
-//! `src/server/mod.rs` and `src/relay.rs` define them. Nothing reaches the
-//! network.
+//! `src/server/mod.rs` and `src/relay.rs` define them; the owner's three
+//! (#414) against a stub of `src/server/owner_door.rs`'s routes that
+//! echoes each call's method, path, `Origin` and bearer. Nothing reaches
+//! the network.
 
 use super::*;
 use axum::extract::Query;
@@ -9,6 +11,16 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::collections::HashMap;
+
+/// `app` on a loopback port of its own: its base URL.
+async fn serve(app: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    format!("http://{addr}")
+}
 
 async fn stub() -> String {
     let app = Router::new()
@@ -59,12 +71,7 @@ async fn stub() -> String {
                 (StatusCode::OK, Json(json!({"registered": body["token"]})))
             }),
         );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.ok();
-    });
-    format!("http://{addr}")
+    serve(app).await
 }
 
 fn text(result: CallToolResult) -> Value {
@@ -148,12 +155,15 @@ async fn the_five_host_tools_reach_their_routes() {
 }
 
 #[test]
-fn the_tools_are_the_29_and_the_five() {
+fn the_tools_are_the_29_the_five_and_the_owners_three() {
     let tools = WalletMcp::tool_router().list_all();
-    assert_eq!(tools.len(), 34);
-    for name in ["chain_feed_status", "tx_word", "health", "pull", "register"] {
+    assert_eq!(tools.len(), 37);
+    let described = |name: &str| {
         let tool = tools.iter().find(|t| t.name == name).expect(name);
-        let description = tool.description.as_deref().unwrap_or_default();
+        tool.description.as_deref().unwrap_or_default().to_string()
+    };
+    for name in ["chain_feed_status", "tx_word", "health", "pull", "register"] {
+        let description = described(name);
         assert!(
             [
                 "proof",
@@ -166,6 +176,106 @@ fn the_tools_are_the_29_and_the_five() {
             "{name}: {description}"
         );
     }
+    for (name, route) in [
+        ("list_origins", "GET /origins"),
+        ("answer_origin", "POST /origins/answer"),
+        ("revoke_origin", "POST /origins/revoke"),
+    ] {
+        let description = described(name);
+        assert!(description.contains(route), "{name}: {description}");
+    }
+    let answer = tools.iter().find(|t| t.name == "answer_origin").unwrap();
+    let schema = serde_json::to_value(&*answer.input_schema).unwrap();
+    let required = schema["required"].as_array().unwrap();
+    assert_eq!(required, &[json!("pendingId"), json!("answer")]);
+    let text = schema.to_string();
+    for word in [r#""grant""#, r#""once""#, r#""deny""#] {
+        assert!(text.contains(word), "{word} in {text}");
+    }
+}
+
+/// The owner's three routes, each answering the call as it came: its
+/// method, path, `Origin` (or null), `Authorization` (or null) and body.
+async fn owner_stub() -> String {
+    async fn echo(request: axum::extract::Request) -> Json<Value> {
+        let (parts, body) = request.into_parts();
+        let header = |name: &str| {
+            parts
+                .headers
+                .get(name)
+                .map(|v| v.to_str().unwrap().to_string())
+        };
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        Json(json!({
+            "method": parts.method.as_str(),
+            "path": parts.uri.path(),
+            "origin": header("origin"),
+            "authorization": header("authorization"),
+            "body": body,
+        }))
+    }
+    let app = Router::new()
+        .route("/origins", get(echo))
+        .route("/origins/answer", post(echo))
+        .route("/origins/revoke", post(echo));
+    serve(app).await
+}
+
+/// The call the owner's stub echoes: `method` and `path`, no `Origin`,
+/// `bearer` (or none) and `body`.
+fn echoed(method: &str, path: &str, bearer: Option<&str>, body: &Value) -> Value {
+    let authorization = bearer.map(|t| format!("Bearer {t}"));
+    json!({"method": method, "path": path, "origin": null,
+           "authorization": authorization, "body": body})
+}
+
+/// `revoke_origin` of `app.example`, in `scope`.
+fn revoking(scope: Option<OriginScope>) -> Parameters<RevokeOriginParams> {
+    Parameters(RevokeOriginParams {
+        originator: "app.example".into(),
+        scope,
+    })
+}
+
+#[tokio::test]
+async fn the_owners_tools_send_no_origin_and_the_wallet_bearer() {
+    let base = owner_stub().await;
+    let mcp = WalletMcp::new(base, "http://localhost".into())
+        .with_wallet_bearer(Some("owner-token".into()));
+    let bearer = Some("owner-token");
+
+    let listed = text(mcp.list_origins().await.unwrap());
+    assert_eq!(listed, echoed("GET", "/origins", bearer, &Value::Null));
+
+    let answering = Parameters(AnswerOriginParams {
+        pending_id: 7,
+        answer: OriginAnswer::Grant,
+        expiry: None,
+        amount: Some(60_000),
+    });
+    let answered = text(mcp.answer_origin(answering).await.unwrap());
+    let body = json!({"pendingId": 7, "answer": "grant", "amount": 60000});
+    assert_eq!(answered, echoed("POST", "/origins/answer", bearer, &body));
+
+    let scoped = revoking(Some(OriginScope::Spending));
+    let revoked = text(mcp.revoke_origin(scoped).await.unwrap());
+    let body = json!({"originator": "app.example", "scope": "spending"});
+    assert_eq!(revoked, echoed("POST", "/origins/revoke", bearer, &body));
+}
+
+#[tokio::test]
+async fn without_wallet_auth_token_the_owners_tools_send_no_bearer() {
+    let base = owner_stub().await;
+    // An empty token is none; still no Origin. No scope is absent from the
+    // body (the route revokes both).
+    let tokenless =
+        WalletMcp::new(base, "http://localhost".into()).with_wallet_bearer(Some(String::new()));
+    let revoked = text(tokenless.revoke_origin(revoking(None)).await.unwrap());
+    let body = json!({"originator": "app.example"});
+    assert_eq!(revoked, echoed("POST", "/origins/revoke", None, &body));
+    let listed = text(tokenless.list_origins().await.unwrap());
+    assert_eq!(listed, echoed("GET", "/origins", None, &Value::Null));
 }
 
 // ── The configuration (#171) ───────────────────────────────────
@@ -212,6 +322,10 @@ fn an_empty_environment_is_the_defaults() {
     );
     assert_eq!(row(&table, "RELAY_URL"), ["RELAY_URL", "-", "default"]);
     assert_eq!(
+        row(&table, "WALLET_AUTH_TOKEN"),
+        ["WALLET_AUTH_TOKEN", "-", "default"]
+    );
+    assert_eq!(
         row(&table, "RELAY_ADMIN_TOKEN"),
         ["RELAY_ADMIN_TOKEN", "-", "default"]
     );
@@ -231,6 +345,7 @@ fn each_variable_set_is_read_from_the_environment() {
     let c = config(&[
         ("WALLET_URL", "http://127.0.0.1:3370"),
         ("WALLET_ORIGIN", "http://e2e-test"),
+        ("WALLET_AUTH_TOKEN", "wallet-bearer-bytes"),
         ("RELAY_URL", "http://127.0.0.1:3390/"),
         ("RELAY_ADMIN_TOKEN", "admin-token-bytes"),
         ("RUST_LOG", "debug"),
@@ -266,13 +381,27 @@ fn each_variable_set_is_read_from_the_environment() {
     );
     assert_eq!(mcp.relay_url.as_deref(), Some("http://127.0.0.1:3390"));
     assert_eq!(mcp.relay_admin_token.as_deref(), Some("admin-token-bytes"));
+    assert_eq!(
+        mcp.wallet_auth_token.as_deref(),
+        Some("wallet-bearer-bytes")
+    );
+    assert_eq!(
+        row(&table, "WALLET_AUTH_TOKEN"),
+        ["WALLET_AUTH_TOKEN", "<set>", "env"]
+    );
 }
 
 #[test]
 fn an_empty_relay_url_is_no_relay_and_an_empty_token_none() {
-    let c = config(&[("RELAY_URL", ""), ("RELAY_ADMIN_TOKEN", "")]).unwrap();
+    let c = config(&[
+        ("RELAY_URL", ""),
+        ("RELAY_ADMIN_TOKEN", ""),
+        ("WALLET_AUTH_TOKEN", ""),
+    ])
+    .unwrap();
     assert_eq!(c.relay_url, None);
     assert_eq!(c.relay_admin_token, None);
+    assert_eq!(c.wallet_auth_token, None);
     assert_eq!(c.source("RELAY_URL"), Source::Env);
     let table = c.table();
     assert_eq!(row(&table, "RELAY_URL"), ["RELAY_URL", "-", "env"]);
@@ -280,14 +409,21 @@ fn an_empty_relay_url_is_no_relay_and_an_empty_token_none() {
         row(&table, "RELAY_ADMIN_TOKEN"),
         ["RELAY_ADMIN_TOKEN", "empty", "env"]
     );
+    assert_eq!(
+        row(&table, "WALLET_AUTH_TOKEN"),
+        ["WALLET_AUTH_TOKEN", "empty", "env"]
+    );
     let mcp = WalletMcp::from_config(&c);
+    assert_eq!(mcp.wallet_auth_token, None);
     assert_eq!((mcp.relay_url, mcp.relay_admin_token), (None, None));
 }
 
 #[test]
 fn the_printed_configuration_never_holds_a_credential() {
     let token = "s3cr3t-admin-token-never-printed";
+    let bearer = "s3cr3t-wallet-bearer-never-printed";
     let c = config(&[
+        ("WALLET_AUTH_TOKEN", bearer),
         (
             "WALLET_URL",
             "http://user:pass-in-url@127.0.0.1:3370/?key=q-secret",
@@ -297,10 +433,11 @@ fn the_printed_configuration_never_holds_a_credential() {
     ])
     .unwrap();
     let table = c.table();
-    for bytes in [token, "pass-in-url", "q-secret", "relay-pass"] {
+    for bytes in [token, bearer, "pass-in-url", "q-secret", "relay-pass"] {
         assert!(!table.contains(bytes), "{bytes} in {table}");
     }
     assert!(!format!("{c:?}").contains(token));
+    assert!(!format!("{c:?}").contains(bearer));
     assert_eq!(
         row(&table, "WALLET_URL"),
         ["WALLET_URL", "http://<set>@127.0.0.1:3370/?<set>", "env"]

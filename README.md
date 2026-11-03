@@ -58,7 +58,15 @@ over the host's own routes, one per route, no route added: `chain_feed_status`
 (`GET /chain-feed`), `tx_word` (`GET /tx/{txid}`), and on the callback relay
 `health` (`GET /health`), `pull` (`GET /pull`) and `register`
 (`POST /register`, with the relay's admin bearer). Each tool's description
-says what its word rests on: headers and a proof, or a hint.
+says what its word rests on: headers and a proof, or a hint. Three more call
+the owner's routes on the wallet (#414): `list_origins` (`GET /origins`, the
+per-origin grant rows and the pending requests), `answer_origin`
+(`POST /origins/answer`: `pendingId`, `answer` `grant`, `once` or `deny`,
+`expiry`, `amount`) and `revoke_origin` (`POST /origins/revoke`:
+`originator`, `scope`). They send no `Origin` header (the owner's routes
+refuse any call carrying one, and answer only a loopback `Host`, so
+`WALLET_URL` names the wallet on loopback) and carry `WALLET_AUTH_TOKEN` as
+the bearer when the wallet has an `AUTH_TOKEN`.
 
 It is a workspace member, so build it from the workspace root:
 
@@ -78,6 +86,7 @@ paths and URLs your own:
       "env": {
         "WALLET_URL": "http://localhost:3322",
         "WALLET_ORIGIN": "http://localhost",
+        "WALLET_AUTH_TOKEN": "<the wallet's AUTH_TOKEN, only when it has one>",
         "RELAY_URL": "http://localhost:3390",
         "RELAY_ADMIN_TOKEN": "<the relay's admin token, only for register>"
       }
@@ -86,7 +95,7 @@ paths and URLs your own:
 }
 ```
 
-`RELAY_URL` and `RELAY_ADMIN_TOKEN` are optional; without `RELAY_URL` the
+`WALLET_AUTH_TOKEN`, `RELAY_URL` and `RELAY_ADMIN_TOKEN` are optional; without `RELAY_URL` the
 three relay tools answer that no relay is named and ask nothing.
 
 The variables are read once at start. `bsv-wallet-mcp --config` prints each
@@ -95,7 +104,8 @@ with its value and its source (`env` or `default`), and exits:
 | Variable | Default | |
 |---|---|---|
 | `WALLET_URL` | `http://localhost:3322` | the wallet's HTTP server; an http or https URL |
-| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request carries; not blank; the wallet's `ALLOWED_ORIGINS` must list its originator (`localhost` for the default, #411) |
+| `WALLET_ORIGIN` | `http://localhost` | the `Origin` header every request but the owner's three carries; not blank; the wallet's `ALLOWED_ORIGINS` must list its originator (`localhost` for the default, #411) |
+| `WALLET_AUTH_TOKEN` | none | the wallet's bearer (its `AUTH_TOKEN`), sent on the three owner's tools alone; printed `<set>` (or `empty`) |
 | `RELAY_URL` | none | the callback relay; unset or empty is no relay |
 | `RELAY_ADMIN_TOKEN` | none | the relay's admin bearer, printed `<set>` (or `empty`) |
 | `RUST_LOG` | `error` | the log filter, to stderr; `bsv_wallet_mcp=info` is always added |
