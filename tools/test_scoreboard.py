@@ -12,6 +12,7 @@ beside it and proves the two agree.
 """
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -557,38 +558,84 @@ class NoNumberFallsFromTheBase(Case):
         self.assertIn("no number moved the wrong way from the base", out)
         print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
 
-    def test_the_real_floors_against_the_nights_record_pass(self):
-        # PR 176's three provisional floors (80 at the base, before any night)
-        # against the tree's record and the workflow's floors: a floor under
-        # 80 is its first measurement replacing the provisional one (the
-        # notice); a floor over 80 rose with the record; a file the record's
-        # verdict holds below its floor is red by design, never the notice.
+    # PR 176's three provisional floors (80 at the base, before any night)
+    # against the workflow's floors and a record: a floor under 80 that is the
+    # record's score rounded down is its first measurement replacing the
+    # provisional one (the notice); one under the score rounded down is
+    # refused; a floor over 80 rose with the record; a file the record's
+    # verdict holds below its floor is red by design, never the notice. Each
+    # file's expectation is derived from the record's measured score, so the
+    # case holds whatever a night measures.
+
+    REAL_FLOORS = {"src/broadcast_verify.rs": 86, "src/server/handlers.rs": 100, "src/tracker_host.rs": 75}
+
+    def provisional_against(self, mutants):
         with open(os.path.join(REPO, ".github/workflows/nightly.yml")) as f:
             nightly = f.read()
-        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
-            mutants = f.read()
-        real = {"src/broadcast_verify.rs": 86, "src/server/handlers.rs": 100, "src/tracker_host.rs": 75}
         provisional = nightly
-        for file, floor in real.items():
+        for file, floor in self.REAL_FLOORS.items():
             self.assertIn(f'"{file}": {floor}', nightly)
             provisional = provisional.replace(f'"{file}": {floor}', f'"{file}": 80')
         self.tree.write(".github/workflows/nightly.yml", provisional)
         base = self.tree.values()
         self.tree.write(".github/workflows/nightly.yml", nightly)
-        self.tree.write("docs/scoreboard/mutants.json", mutants)
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
         code, out = self.checked(base)
-        self.assertEqual(code, 0, out)
-        verdict = json.loads(mutants).get("verdict", "")
-        for file, floor in real.items():
-            notice = f"notice: floor:{file}: 80 at the base (provisional, unmeasured), {floor} in the tree"
+        verdict = mutants.get("verdict", "")
+        expected, refused = {}, False
+        for file, floor in self.REAL_FLOORS.items():
+            score = mutants["files"][file]["score"]
             if f"{file} " in verdict and f"below its floor {floor}" in verdict:
                 self.assertIn(f"RED BY DESIGN: floor:{file}:", out)
                 self.assertNotIn(f"notice: floor:{file}:", out)
+                expected[file] = "red"
+            elif floor < 80 and floor == math.floor(score):
+                self.assertIn(f"notice: floor:{file}: 80 at the base (provisional, unmeasured), {floor} in the tree",
+                              out)
+                expected[file] = "notice"
             elif floor < 80:
-                self.assertIn(notice, out)
+                self.assertIn(f"floor:{file}: measured {score:g} in the tree's record, floor {floor} in the tree; "
+                              f"a provisional floor takes the measured score rounded down: "
+                              f"{math.floor(score)}, not {floor}", out)
+                self.assertNotIn(f"notice: floor:{file}:", out)
+                expected[file], refused = "refused", True
             else:
                 self.assertNotIn(f"notice: floor:{file}:", out)
-        print(f"\n    exit 0: {tail(out)}", end=" ", file=sys.stderr)
+                self.assertNotIn(f"floor:{file}: measured", out)
+                expected[file] = "rose"
+        self.assertEqual(code, 1 if refused else 0, out)
+        print(f"\n    exit {code}: {expected}: {tail(out)}", end=" ", file=sys.stderr)
+        return expected
+
+    def test_the_real_floors_against_the_nights_record(self):
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            mutants = json.load(f)
+        expected = self.provisional_against(mutants)
+        self.assertEqual(expected["src/broadcast_verify.rs"], "rose")
+        self.assertEqual(expected["src/server/handlers.rs"], "rose")
+
+    def test_a_first_measurement_under_80_against_the_real_floors_is_the_notice(self):
+        # The night's record with tracker_host measured at its floor, 75 of
+        # 100: the under-80 side, whatever the tree's record measures.
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            mutants = json.load(f)
+        floor = self.REAL_FLOORS["src/tracker_host.rs"]
+        mutants["files"]["src/tracker_host.rs"].update(
+            score=float(floor), caught=floor, missed=100 - floor, timeout=0, equivalent=0)
+        expected = self.provisional_against(mutants)
+        self.assertEqual(expected, {"src/broadcast_verify.rs": "rose", "src/server/handlers.rs": "rose",
+                                    "src/tracker_host.rs": "notice"})
+
+    def test_a_verdict_below_the_real_floor_is_red_by_design_never_the_notice(self):
+        # The night's record with tracker_host measured 70 of 100 and the
+        # verdict holding it below its floor 75: red by design.
+        with open(os.path.join(REPO, "docs/scoreboard/mutants.json")) as f:
+            mutants = json.load(f)
+        mutants["files"]["src/tracker_host.rs"].update(score=70.0, caught=70, missed=30, timeout=0, equivalent=0)
+        mutants["verdict"] = "red by design: src/tracker_host.rs 70.0 below its floor 75; #175"
+        expected = self.provisional_against(mutants)
+        self.assertEqual(expected, {"src/broadcast_verify.rs": "rose", "src/server/handlers.rs": "rose",
+                                    "src/tracker_host.rs": "red"})
 
     # The ceiling is the tree's alone (rule 1): a plain --check, with no base,
     # holds every floor of MUTANTS_FLOORS, a new one too, under its record.
