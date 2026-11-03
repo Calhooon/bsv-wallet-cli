@@ -54,11 +54,15 @@ fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
 /// Run `recover` once the tip has been asked `calls` times: the retry's
 /// re-read comes [`TEST_PAUSE`] after, so the service is back for it. The
 /// recovery waits on the service's own count, never a clock (#506: it
-/// slept 300 ms inside the served two seconds).
+/// slept 300 ms inside the served two seconds), and at most the served
+/// pause: a gate that never asks fails its test, never hangs it.
 async fn after_tip_calls(services: &MockWalletServices, calls: usize, recover: impl FnOnce()) {
-    while services.call_count("get_chain_tip_header") < calls {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
+    let asked = async {
+        while services.call_count("get_chain_tip_header") < calls {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    };
+    let _ = tokio::time::timeout(HEADER_RETRY_PAUSE, asked).await;
     recover();
 }
 
