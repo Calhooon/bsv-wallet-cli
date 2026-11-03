@@ -4,8 +4,10 @@
 //! window, with `Retry-After` and the echo. Served from the `pages` world
 //! by an origin of their own (no earlier fixture spent its allowance);
 //! recorded last, so no file before them moves.
+use serde_json::json;
+
 use super::owner::{Owner, Spent};
-use super::recorder::{get, Recorder};
+use super::recorder::{get, post, Recorder};
 use crate::wire_support::Req;
 
 /// A page the seed does not list, whose allowance only these fixtures
@@ -38,6 +40,21 @@ pub(crate) async fn record(r: &mut Recorder) {
         "pages",
         get("/getHeight").header("origin", PAGE),
         spent(10, get("/getNetwork").header("origin", PAGE)),
+    )
+    .await;
+    // A level-0 protocol power, a bound of its own at the chain doors'
+    // figures: ten signatures spend the burst, the eleventh is 429.
+    let signature = post(
+        "/createSignature",
+        json!({"protocolID": [0, "wire bound"], "keyID": "1", "counterparty": "self",
+               "data": [1, 2, 3]}),
+    )
+    .header("origin", PAGE);
+    r.case_owned(
+        "bound.createSignature.levelZero",
+        "pages",
+        signature.clone(),
+        spent(10, signature),
     )
     .await;
 }
