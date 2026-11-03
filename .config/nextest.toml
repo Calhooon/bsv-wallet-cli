@@ -29,7 +29,6 @@ test(=store::tests::only_the_writers_acquire_timeout_is_busy)
 | test(/^server::arc_callback_tests::arc_callback_(under_a_busy_store|busy_store_under|writer_not_acquired|deadline_)/)
 | binary_id(bsv-wallet-cli::arcade_webhook_vector_tests)
 | binary_id(bsv-wallet-cli::wire_consumers)
-| test(=commands::daemon_tenant::tests::relay_router_retries_busy_items_in_order_and_deletes_acked_rows)
 """
 priority = 50
 
