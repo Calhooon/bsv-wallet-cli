@@ -63,6 +63,8 @@ malformed record as an absent one.
   tests/e2e/run.js, lib/*.js     the hermetic flag: present when the code (comments
                                  and string literals blanked) reads the knob,
                                  `process.env.E2E_HERMETIC` or `process.env['E2E_HERMETIC']`
+  docs/scoreboard/allowlist-exceptions.json
+                                 the recorded rises of the allowlists (#546; shape below)
 
 docs/scoreboard/mutants.json, the measured column of the floors' rows:
 
@@ -165,6 +167,41 @@ malformed, since tools/differential reads no calls or no commands as INCOMPLETE.
 The row's value is the differences, or INCOMPLETE and never a verdict when
 `complete` is false; while the file is absent it reads "no report yet".
 
+docs/scoreboard/allowlist-exceptions.json, the recorded rises of the allowlists
+(#546), as docs/scoreboard/equivalents.json records the declared equivalents (#482):
+
+  {
+    "schema": 1,
+    "rule": "<the record's rule, prose; not read>",
+    "exceptions": [
+      {"rule": "A5", "file": "src/store/origin_grants/power.rs",
+       "files": {"from": 5, "to": 6}, "sites": {"from": 8, "to": 13},
+       "issue": 414, "word": "the captain's word of 2026-11-03", "date": "2026-11-03",
+       "reason": "names, never messages"}
+    ]
+  }
+
+An allowlist may not grow: --check --base refuses a rise of `allowlist:A<n>:files`
+or `allowlist:A<n>:sites` whatever the entry's reason, unless a row of this record
+names the rule, the file and the EXACT counts of both keys, `from` the base's and
+`to` the tree's, and the rise is that file's alone. The file is judged on the
+values' per-entry keys (below): with the base's, the file is the one entry whose
+count rose (or that is new) and every other entry stands at or below its base
+count; with a base rendered by a tool older than those keys, the file is an entry
+of the tree's allowlist whose count covers the rise of the sites, and the files
+rose by at most one. So a row admits one rise only: once it lands, the base's
+counts are its `to`, and a later rise past them names other `from` counts and
+needs another row. A row never lowers a ceiling (it only admits the rise it
+names), never applies to other counts, another rule or another file, and is
+never a flag, an environment variable or a comment the scanner reads. Each row
+carries every field above and no other: `rule` A<n>, `file` a src/ .rs path,
+`files` and `sites` counts with at least one `to` above its `from`, `issue` the
+issue number, `word` whose word admitted it, `date` YYYY-MM-DD and `reason`; two
+rows of one rule at the same counts are malformed, and a malformed row exits 1
+naming the field. The rule's arch row reads, in its measured column, each row in
+force (its `to` the tree's counts, its file an entry of the tree): "the rise of
+`<file>` recorded, #<issue>: <from> to <to> files, <from> to <to> sites (<date>)".
+
 The values --json prints and --base reads: {"schema": 1, "values": {key: value}}.
 A key `floor:<file>`, `fixtures:wire`, `fixtures:consumers`, `consumers`,
 `e2e:scenarios`, `e2e:hermetic` (1 or 0) or `arch:rules` is a number that may
@@ -179,8 +216,11 @@ measures) or `differential:complete` (1 or 0) may not fall; a key
 `fuzz:<target>:crashes` or `differential:same_floor` (the floor's differences,
 whose only right value is 0) may not rise. A key `fuzz:<target>:seconds` is the
 latest run's seconds, which a later run of one hour replaces, so it is held to no
-direction: only to not vanishing. A key the base holds may not vanish from the
-tree, of any kind.
+direction: only to not vanishing. A key `allowlist:<rule>:file:<file>` is one
+entry's count, the evidence the exceptions above are judged on: held to no
+direction and free to vanish (an entry removed is an allowlist shrunk), since
+the rule's own `:files` and `:sites` keys hold the ceiling. Any other key the
+base holds may not vanish from the tree, of any kind.
 The ratchets' own numbers are tools/ratchet's to compare.
 
 A key `floor:<file>:measured` (true or false) says whether
@@ -243,6 +283,7 @@ FUZZ_MANIFEST = "fuzz/Cargo.toml"
 FUZZ = "docs/scoreboard/fuzz.json"
 DIFFERENTIAL = "docs/scoreboard/differential.json"
 BENCH = "benches/baseline.json"
+EXCEPTIONS = "docs/scoreboard/allowlist-exceptions.json"
 SCENARIOS = "tests/e2e/scenarios"
 HERMETIC_FILES = ["tests/e2e/run.js", "tests/e2e/lib/*.js"]
 
@@ -267,6 +308,8 @@ CEILING_KEYS = re.compile(r"^(allowlist:A\d+:(files|sites)|fuzz:[^:]+:crashes|di
 LATEST_KEYS = re.compile(r"^fuzz:[^:]+:seconds$")
 # A floor's flag: whether docs/scoreboard/mutants.json measured its file (a bool).
 MEASURED_KEYS = re.compile(r"^floor:.+:measured$")
+# One allowlist entry's count (#546): the evidence of a recorded rise, held to no direction.
+ENTRY_KEYS = re.compile(r"^allowlist:(A\d+):file:(src/.+\.rs)$")
 # A key whose value is a sorted list of names: it may not lose an element.
 LIST_KEYS = re.compile(r"^(arch:rule-ids|floor:files|consumers:names|fuzz:target-names)$")
 
@@ -455,7 +498,63 @@ def allowlist(name, text):
     return entries
 
 
+RULE_ID = re.compile(r"^A\d+$")
+SRC_FILE = re.compile(r"^src/[A-Za-z0-9_./-]+\.rs$")
+EXCEPTION_FIELDS = ("rule", "file", "files", "sites", "issue", "word", "date", "reason")
+
+
+def allowlist_exceptions():
+    """docs/scoreboard/allowlist-exceptions.json's rows (#546), each checked against
+    its shape (the header's); [] when the record is absent."""
+    if not path(EXCEPTIONS).exists():
+        return []
+    record = require_object(EXCEPTIONS, "(the file)", load_json(EXCEPTIONS))
+    if record.get("schema") != 1:
+        fail(EXCEPTIONS, "schema", "must be 1")
+    rows = record.get("exceptions")
+    if not isinstance(rows, list):
+        fail(EXCEPTIONS, "exceptions", "must be a list of rows")
+    seen = {}
+    for i, row in enumerate(rows):
+        at = f"exceptions[{i}]"
+        require_object(EXCEPTIONS, at, row)
+        for k in sorted(set(EXCEPTION_FIELDS) - set(row)):
+            fail(EXCEPTIONS, f"{at}.{k}", "missing; a row names " + ", ".join(EXCEPTION_FIELDS))
+        for k in sorted(set(row) - set(EXCEPTION_FIELDS)):
+            fail(EXCEPTIONS, f"{at}.{k}", "is not a field of a row")
+        if not isinstance(row["rule"], str) or not RULE_ID.match(row["rule"]):
+            fail(EXCEPTIONS, f"{at}.rule", "must be a rule id, A<n>")
+        if not isinstance(row["file"], str) or not SRC_FILE.match(row["file"]):
+            fail(EXCEPTIONS, f"{at}.file", "must be a src/ .rs file")
+        for key in ("files", "sites"):
+            pair = require_object(EXCEPTIONS, f"{at}.{key}", row[key])
+            if set(pair) != {"from", "to"}:
+                fail(EXCEPTIONS, f"{at}.{key}", "must be {\"from\": count, \"to\": count}")
+            for end in ("from", "to"):
+                require_count(EXCEPTIONS, f"{at}.{key}.{end}", pair[end])
+        if not any(row[k]["to"] > row[k]["from"] for k in ("files", "sites")):
+            fail(EXCEPTIONS, at, "neither files nor sites rises; a row records a rise")
+        if not is_int(row["issue"]) or row["issue"] < 1:
+            fail(EXCEPTIONS, f"{at}.issue", "must be an issue number")
+        for k in ("word", "reason"):
+            if not isinstance(row[k], str) or not row[k].strip():
+                fail(EXCEPTIONS, f"{at}.{k}", "must be a non-empty string")
+        if not isinstance(row["date"], str) or not DATE.match(row["date"]):
+            fail(EXCEPTIONS, f"{at}.date", "must be YYYY-MM-DD")
+        counts = (row["rule"], row["files"]["from"], row["files"]["to"], row["sites"]["from"], row["sites"]["to"])
+        if counts in seen:
+            fail(EXCEPTIONS, at, f"admits the rise exceptions[{seen[counts]}] admits; one row per rise")
+        seen[counts] = i
+    return rows
+
+
+def counts_text(row):
+    f, s = row["files"], row["sites"]
+    return f"{f['from']} to {f['to']} files, {s['from']} to {s['to']} sites"
+
+
 def arch_rows():
+    exceptions = allowlist_exceptions()
     tests = sorted(ROOT.glob(ARCH_GLOB))
     if not tests:
         return [Row("architecture rules", ABSENT, "", f"`{ARCH_GLOB}`")]
@@ -479,8 +578,15 @@ def arch_rows():
     for rule in ids:
         name, entries = rules[rule]
         files, sites = len(entries), sum(c for _, c in entries)
-        rows.append(Row(f"arch rule {rule} allowlist", f"{files} files, {sites} sites", "", f"`{name}` ALLOWED",
-                        {f"allowlist:{rule}:files": files, f"allowlist:{rule}:sites": sites}))
+        held = dict(entries)
+        cell = "; ".join(f"the rise of `{x['file']}` recorded, #{x['issue']}: {counts_text(x)} ({x['date']})"
+                         for x in exceptions
+                         if x["rule"] == rule and x["file"] in held
+                         and (x["files"]["to"], x["sites"]["to"]) == (files, sites))
+        vals = {f"allowlist:{rule}:files": files, f"allowlist:{rule}:sites": sites}
+        vals.update({f"allowlist:{rule}:file:{f}": c for f, c in entries})
+        rows.append(Row(f"arch rule {rule} allowlist", f"{files} files, {sites} sites", cell, f"`{name}` ALLOWED",
+                        vals))
     return rows
 
 
@@ -964,6 +1070,9 @@ def load_base(file):
         elif LIST_KEYS.match(key):
             if not isinstance(v, list) or not all(isinstance(e, str) and e for e in v):
                 fail(name, f"values.{key}", "must be a list of names")
+        elif ENTRY_KEYS.match(key):
+            if not is_int(v) or v < 1:
+                fail(name, f"values.{key}", "must be an entry's count (an integer at least 1)")
         elif FLOOR_KEYS.match(key) or CEILING_KEYS.match(key) or LATEST_KEYS.match(key):
             if not is_num(v):
                 fail(name, f"values.{key}", "must be a number")
@@ -1007,15 +1116,71 @@ def ceiling(tree, scores):
     return out, notices, reds
 
 
-def falls(base, tree, scores):
+def entries_of(values, rule):
+    """One rule's entries {file: count} from the values' per-entry keys."""
+    out = {}
+    for key, v in values.items():
+        m = ENTRY_KEYS.match(key)
+        if m and m.group(1) == rule:
+            out[m.group(2)] = v
+    return out
+
+
+def allowlist_rises(base, tree, exceptions):
+    """The allowlists that rose from the base (#546): {rule: None} for a rise a row
+    of docs/scoreboard/allowlist-exceptions.json admits, {rule: why} for one it
+    does not, with the notices of the admitted ones. A row admits a rise when it
+    names the rule, the base's and the tree's counts of both keys exactly, and the
+    file whose rise it is (the header's rule)."""
+    out, notices = {}, []
+    rules = sorted({k.split(":")[1] for k in base if CEILING_KEYS.match(k) and k.startswith("allowlist:")},
+                   key=lambda r: int(r[1:]))
+    for rule in rules:
+        fk, sk = f"allowlist:{rule}:files", f"allowlist:{rule}:sites"
+        if fk not in base or sk not in base or fk not in tree or sk not in tree:
+            continue  # A vanished key is falls()'s fault, a half base load_base's.
+        now = (base[fk], tree[fk], base[sk], tree[sk])
+        if not (now[1] > now[0] or now[3] > now[2]):
+            continue
+        was, held = entries_of(base, rule), entries_of(tree, rule)
+        known = len(was) == base[fk] and sum(was.values()) == base[sk]
+        rose = sorted(f for f, c in held.items() if c > was.get(f, 0)) if known else None
+        named = f"; rose: {', '.join(f'{f} {was.get(f, 0)} to {held[f]}' for f in rose)}" if known else (
+            "; the base's values name no entry's count (a base tool older than #546)")
+        rows = [x for x in exceptions if x["rule"] == rule]
+        exact = [x for x in rows
+                 if (x["files"]["from"], x["files"]["to"], x["sites"]["from"], x["sites"]["to"]) == now]
+        why = None
+        if not exact:
+            others = "".join(f"; the row of #{x['issue']} for {x['file']} names {counts_text(x)}, not these counts"
+                             for x in rows)
+            why = f"{named}; no row of {EXCEPTIONS} names {rule} at these counts{others}"
+        else:
+            x = exact[0]
+            if known and rose != [x["file"]]:
+                why = f"{named}; the row of #{x['issue']} names {x['file']}, and the rise is not that file's alone"
+            elif not known and (x["file"] not in held or tree[sk] - base[sk] > held[x["file"]]
+                                or tree[fk] - base[fk] > 1):
+                why = f"{named}; the row of #{x['issue']} names {x['file']}, whose entry in the tree does not cover the rise"
+        out[rule] = why
+        if why is None:
+            notices.append(f"allowlist:{rule}: {base[fk]:g} to {tree[fk]:g} files, {base[sk]:g} to {tree[sk]:g} sites, "
+                           f"the rise of {exact[0]['file']}: admitted by the recorded exception of #{exact[0]['issue']} "
+                           f"({exact[0]['word']}, {exact[0]['date']})")
+    return out, notices
+
+
+def falls(base, tree, scores, exceptions=()):
     """Every value of the tree that moved the wrong way from the base's: a number
-    that fell (or rose, for an allowlist), a list that lost an element, a key
+    that fell (or rose, for an allowlist, unless a recorded exception admits the
+    rise: allowlist_rises()), a list that lost an element, a key
     that vanished, a floor that fell against rules 2 and 3 of the floors' rule
     (scores: the tree's docs/scoreboard/mutants.json, by file); and the notices,
     one per provisional floor its first measurement lowered. A floor above its
     score is ceiling()'s, never this function's, but for rule 1's exception: a
     file the verdict holds red by design must stand at the base's floor."""
-    out, notices = [], []
+    out = []
+    rises, notices = allowlist_rises(base, tree, exceptions)
     floored = {k[len("floor:"):]: tree[k] for k in tree if is_floor(k)}
     for file in sorted(red_by_design(floored, scores)[0]):
         key, t = f"floor:{file}", floored[file]
@@ -1027,6 +1192,8 @@ def falls(base, tree, scores):
                        "the exception never raises or adds a floor")
     for key in sorted(base):
         b, t = base[key], tree.get(key)
+        if ENTRY_KEYS.match(key):
+            continue  # An entry's count: the exceptions' evidence, free to fall or vanish.
         if t is None:
             out.append(f"a key may not vanish: {key}")
         elif MEASURED_KEYS.match(key):
@@ -1057,7 +1224,13 @@ def falls(base, tree, scores):
         elif LATEST_KEYS.match(key):
             pass  # The latest run's own figure: held only to not vanishing (above).
         elif t > b:
-            why = "an allowlist may not grow" if key.startswith("allowlist:") else "it may not rise"
+            if key.startswith("allowlist:"):
+                rule = key.split(":")[1]
+                if rises.get(rule, "") is None:
+                    continue  # Admitted by its recorded exception (#546): allowlist_rises()'s notice.
+                why = "an allowlist may not grow" + (rises.get(rule) or "")
+            else:
+                why = "it may not rise"
             out.append(f"{key}: {b:g} at the base, {t:g} in the tree; {why}")
     return out, notices
 
@@ -1132,7 +1305,7 @@ def main():
         status = 1
     if args.base:
         base = load_base(args.base)
-        fell, notices = falls(base, values(all_rows), scores)
+        fell, notices = falls(base, values(all_rows), scores, allowlist_exceptions())
         for line in notices:
             print(f"scoreboard: notice: {line}")
         for line in fell:

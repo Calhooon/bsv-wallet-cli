@@ -742,6 +742,161 @@ class NoNumberFallsFromTheBase(Case):
         self.assertEqual(code, 2, out)
 
 
+# The row of docs/scoreboard/allowlist-exceptions.json the cases below plant: A4's
+# allowlist of ARCH (2 files, 5 sites) gains src/z.rs at 3 sites.
+GROWN = ARCH.replace('    ("src/a.rs", 2,', '    ("src/z.rs", 3, "a reviewed new entry"),\n    ("src/a.rs", 2,')
+ROW = {"rule": "A4", "file": "src/z.rs", "files": {"from": 2, "to": 3}, "sites": {"from": 5, "to": 8},
+       "issue": 414, "word": "the captain's word of 2026-11-03", "date": "2026-11-03",
+       "reason": "names, never messages"}
+
+
+class AnAllowlistRiseTakesARecordedException(Case):
+    """#546: --check --base refuses a rise of an allowlist unless a row of
+    docs/scoreboard/allowlist-exceptions.json names the rule, the file and the
+    exact counts at the base and in the tree; a row admits one rise only, never
+    other counts and never another file; the rule's row shows it; a malformed
+    row refuses the check by name."""
+
+    def rows(self, *rows):
+        self.tree.write("docs/scoreboard/allowlist-exceptions.json",
+                        json.dumps({"schema": 1, "rule": "prose", "exceptions": list(rows)}))
+
+    def row(self, **changes):
+        r = json.loads(json.dumps(ROW))
+        r.update(changes)
+        return r
+
+    def checked(self, base):
+        code, out = self.tree.run("--render")
+        self.assertEqual(code, 0, out)
+        return self.tree.run("--check", "--base", base)
+
+    def refused_against(self, base, needle):
+        code, out = self.checked(base)
+        self.assertEqual(code, 1, out)
+        self.assertIn(needle, out)
+        print(f"\n    exit 1: {[l for l in out.splitlines() if needle in l][0]}", end=" ", file=sys.stderr)
+
+    def admitted(self, base):
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("admitted by the recorded exception of #414", out)
+        print(f"\n    exit 0: {[l for l in out.splitlines() if 'admitted' in l][0]}", end=" ", file=sys.stderr)
+        return out
+
+    def test_a_rise_without_a_row_is_refused_naming_the_file(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.refused_against(base, "allowlist:A4:sites: 5 at the base, 8 in the tree; an allowlist may not grow; "
+                                   "rose: src/z.rs 0 to 3; no row of docs/scoreboard/allowlist-exceptions.json "
+                                   "names A4 at these counts")
+
+    def test_the_same_rise_with_the_exact_row_is_admitted(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(ROW)
+        out = self.admitted(base)
+        self.assertIn("no number moved the wrong way from the base", out)
+
+    def test_a_row_naming_other_counts_is_refused(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(self.row(sites={"from": 5, "to": 7}))
+        self.refused_against(base, "the row of #414 for src/z.rs names 2 to 3 files, 5 to 7 sites, not these counts")
+        self.rows(self.row(rule="A5"))
+        self.refused_against(base, "no row of docs/scoreboard/allowlist-exceptions.json names A4 at these counts")
+
+    def test_a_second_rise_on_the_same_row_is_refused(self):
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(ROW)
+        base = self.tree.values()  # the row's rise has landed: the base holds 3 files, 8 sites
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN.replace('"src/z.rs", 3,', '"src/z.rs", 4,'))
+        self.refused_against(base, "allowlist:A4:sites: 8 at the base, 9 in the tree; an allowlist may not grow; "
+                                   "rose: src/z.rs 3 to 4; no row of")
+
+    def test_a_row_for_another_file_does_not_apply(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(self.row(file="src/a.rs"))
+        self.refused_against(base, "rose: src/z.rs 0 to 3; the row of #414 names src/a.rs, "
+                                   "and the rise is not that file's alone")
+        # The file's own rise with another file's beside it: the row names one rise, not two.
+        self.rows(ROW)
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN.replace('"src/z.rs", 3,', '"src/z.rs", 2,')
+                        .replace('"src/a.rs", 2,', '"src/a.rs", 3,'))
+        self.refused_against(base, "rose: src/a.rs 2 to 3, src/z.rs 0 to 2; the row of #414 names src/z.rs")
+
+    def test_a_base_older_than_the_entry_keys_judges_the_file_on_the_tree(self):
+        base = self.tree.values()
+        with open(base) as f:
+            old = json.load(f)
+        old["values"] = {k: v for k, v in old["values"].items() if ":file:" not in k}
+        with open(base, "w") as f:
+            json.dump(old, f)
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(ROW)
+        self.admitted(base)
+        self.rows(self.row(file="src/a.rs"))  # 2 sites cannot cover a rise of 3
+        self.refused_against(base, "the row of #414 names src/a.rs, whose entry in the tree does not cover the rise")
+
+    def test_a_removed_entry_is_a_shrunk_allowlist(self):
+        base = self.tree.values()
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH.replace('    ("src/a.rs", 2, "a reason"),\n', ""))
+        code, out = self.checked(base)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no number moved the wrong way from the base", out)
+
+    def test_the_rendering_shows_the_exception(self):
+        self.tree.write("tests/arch_no_unwrap.rs", GROWN)
+        self.rows(ROW)
+        line = ("| arch rule A4 allowlist | 3 files, 8 sites | the rise of `src/z.rs` recorded, #414: "
+                "2 to 3 files, 5 to 8 sites (2026-11-03) | `tests/arch_no_unwrap.rs` ALLOWED |")
+        self.assertIn(line, self.table())
+        print("\n    exit 0: the rise of `src/z.rs` recorded, #414", end=" ", file=sys.stderr)
+        # A row not in force (the tree's counts are not its `to`) shows nothing.
+        self.tree.write("tests/arch_no_unwrap.rs", ARCH)
+        self.assertIn("| arch rule A4 allowlist | 2 files, 5 sites |  |", self.table())
+
+    def test_a_malformed_row_refuses_the_check_by_name(self):
+        name = "docs/scoreboard/allowlist-exceptions.json"
+        for record, needle in (
+                ("{", f"{name}: (the file): not JSON"),
+                (json.dumps({"schema": 2, "exceptions": []}), f"{name}: schema: must be 1"),
+                (json.dumps({"schema": 1, "exceptions": {}}), f"{name}: exceptions: must be a list of rows"),
+        ):
+            self.tree.write(name, record)
+            self.refused(needle, "--check")
+        drop = self.row()
+        del drop["word"]
+        for row, needle in (
+                (drop, "exceptions[0].word: missing"),
+                (self.row(flag=True), "exceptions[0].flag: is not a field of a row"),
+                (self.row(rule="5"), "exceptions[0].rule: must be a rule id, A<n>"),
+                (self.row(file="tests/x.rs"), "exceptions[0].file: must be a src/ .rs file"),
+                (self.row(files={"from": 2}), "exceptions[0].files: must be"),
+                (self.row(sites={"from": 5, "to": -1}), "exceptions[0].sites.to: must be a count"),
+                (self.row(files={"from": 3, "to": 3}, sites={"from": 8, "to": 8}),
+                 "exceptions[0]: neither files nor sites rises"),
+                (self.row(issue="414"), "exceptions[0].issue: must be an issue number"),
+                (self.row(reason=" "), "exceptions[0].reason: must be a non-empty string"),
+                (self.row(date="3 Nov"), "exceptions[0].date: must be YYYY-MM-DD"),
+        ):
+            self.rows(row)
+            self.refused(f"{name}: {needle}", "--check")
+        self.rows(ROW, self.row(file="src/a.rs"))
+        self.refused(f"{name}: exceptions[1]: admits the rise exceptions[0] admits", "--check")
+
+    def test_the_first_row_is_a5s_for_power_rs(self):
+        with open(os.path.join(REPO, "docs/scoreboard/allowlist-exceptions.json")) as f:
+            first = json.load(f)["exceptions"][0]
+        self.assertEqual(first, {
+            "rule": "A5", "file": "src/store/origin_grants/power.rs",
+            "files": {"from": 5, "to": 6}, "sites": {"from": 8, "to": 13}, "issue": 414,
+            "word": "the captain's word of 2026-11-03", "date": "2026-11-03",
+            "reason": "the reference's admin-reserved name rule and the protocol-name encodings' parse: "
+                      "names, never messages"})
+
+
 class TheHermeticFlagIsTheKnobsRead(Case):
     """(G) The flag is a line of code reading process.env.E2E_HERMETIC, never a mention."""
 
