@@ -113,7 +113,15 @@ fn bound_of(class: Class, door: &str) -> Bound {
 /// The server's counters, shared by every clone: per originator's
 /// hostname and counter, the theoretical arrival time of its next call.
 #[derive(Clone, Default)]
-pub struct OpenBounds(Arc<Mutex<HashMap<(String, &'static str), Instant>>>);
+pub struct OpenBounds(Arc<Counters>);
+
+#[derive(Default)]
+struct Counters {
+    map: Mutex<HashMap<(String, &'static str), Instant>>,
+    /// The clock stood still at this instant ([`OpenBounds::stopped`]);
+    /// none reads the time.
+    stopped: Option<Instant>,
+}
 
 /// A call past its bound: the wait until the next would be admitted.
 #[derive(Debug, PartialEq, Eq)]
@@ -132,11 +140,23 @@ impl Limited {
 }
 
 impl OpenBounds {
+    /// Bounds whose clock stands still: no window ever passes, so a
+    /// recorded refusal and its `Retry-After` do not depend on how fast the
+    /// calls before it ran (the wire harness's worlds). The figures are
+    /// the same.
+    #[must_use]
+    pub fn stopped() -> Self {
+        Self(Arc::new(Counters {
+            map: Mutex::default(),
+            stopped: Some(Instant::now()),
+        }))
+    }
+
     /// Admit one call of `host` at `door` as `class` at `now`, or refuse it
     /// with the wait. A refusal moves no counter.
     pub fn take(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
         let bound = bound_of(class, door);
-        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut map = self.0.map.lock().unwrap_or_else(PoisonError::into_inner);
         let key = (host.to_string(), bound.counter);
         let due = map.get(&key).copied().map_or(now, |t| t.max(now));
         let ahead = due - now;
@@ -156,7 +176,11 @@ impl OpenBounds {
     /// The counters kept now (the prune's test).
     #[cfg(test)]
     fn kept(&self) -> usize {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+        self.0
+            .map
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     /// The bound at the gate's seam (`powers::open`): admit `originator`'s
@@ -164,7 +188,8 @@ impl OpenBounds {
     pub(crate) fn check(&self, originator: &str, door: &str, class: Class) -> Result<(), AppError> {
         let host = crate::store::origin_grants::key_of(originator)
             .map_or_else(|_| originator.to_string(), |(host, _)| host);
-        self.take(&host, door, class, Instant::now())
+        let now = self.0.stopped.unwrap_or_else(Instant::now);
+        self.take(&host, door, class, now)
             .map_err(|limited| {
                 let secs = limited.retry_after_secs();
                 tracing::warn!(originator = %host, door, class = ?class, retry_after = secs, "browser gate: rate limited");
@@ -357,6 +382,26 @@ mod tests {
             window: "",
         };
         assert_eq!(none.retry_after_secs(), 1);
+    }
+
+    /// A stopped clock never refills: the burst's eleventh call is refused
+    /// however late it comes, with the full interval's wait.
+    #[tokio::test]
+    async fn a_stopped_clock_never_refills() {
+        let bounds = OpenBounds::stopped();
+        for n in 0..10 {
+            assert!(
+                bounds.check(HOST, "/getNetwork", Class::Open).is_ok(),
+                "{n}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let refused = bounds.check(HOST, "/getHeight", Class::Open).unwrap_err();
+        let text = format!("{refused:?}");
+        assert!(
+            text.contains("RateLimited") && text.contains("retry after 1 s."),
+            "{text}"
+        );
     }
 
     /// The counters stay bounded: past [`PRUNE_AT`] the idle ones go, and
