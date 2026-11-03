@@ -17,13 +17,13 @@
         {
           "originator": "owner.example",
           "rawOriginator": "owner.example:8443",
-          "scope": "wallet",
+          "kind": "basket",
+          "key": "[\"todo items\"]",
           "amount": null,
           "spentThisMonth": null,
           "grantedAt": "<uint:10>",
           "expiry": 0,
-          "revokedAt": null,
-          "source": "owner"
+          "revokedAt": null
         }
       ],
       "pending": []
