@@ -8,52 +8,36 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use super::owner_door_tests::wallet;
 use super::*;
 use crate::store::origin_grants::{self as grants, Answer, PendingRow, Power, Reply};
-use crate::test_support::test_wallet;
-use bsv_sdk::primitives::PrivateKey;
+use crate::test_support::serve_router;
 use tokio::io::AsyncWriteExt;
 
 const PAGE: &str = "http://page.example";
 const OTHER: &str = "http://other.example";
 
-async fn wallet() -> (tempfile::TempDir, WalletState) {
-    let dir = tempfile::TempDir::new().unwrap();
-    let file = dir.path().join("switch.db");
-    let storage = StorageSqlx::open(file.to_str().unwrap()).await.unwrap();
-    let key = PrivateKey::from_hex(&"03".repeat(32)).unwrap();
-    (dir, test_wallet(storage, "switch", key).await)
-}
+/// A call's answer as a page reads it: the status, the CORS echo, the
+/// `Retry-After` and the body.
+type Read = (u16, Option<String>, Option<String>, serde_json::Value);
 
 /// The router served by `axum::serve` on a bound `TcpListener` at
-/// 127.0.0.1:0, as `run` serves it: its address and the config's held
-/// calls. The seed lists `seeded`.
+/// 127.0.0.1:0 (`serve_router`), as `run` serves it: its address and the
+/// config's held calls. The seed lists `seeded`.
 async fn served(wallet: &WalletState, seeded: &[&str]) -> (SocketAddr, powers::Held) {
     let config = ServerConfig::admitting(seeded.iter().copied()).unwrap();
     let held = config.held.clone();
-    let app = make_router(wallet.clone(), config);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await });
-    (addr, held)
+    let (url, _task) = serve_router(make_router(wallet.clone(), config)).await;
+    (url.trim_start_matches("http://").parse().unwrap(), held)
 }
 
-/// A page's call on a connection of its own: the status, the CORS echo
-/// and the body.
-async fn page_call(
-    addr: SocketAddr,
-    origin: &str,
-    path: &str,
-    body: serde_json::Value,
-) -> (u16, Option<String>, Option<String>, serde_json::Value) {
-    let url = format!("http://{addr}{path}");
-    let response = reqwest::Client::new()
-        .post(url)
-        .header("origin", origin)
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
+/// The router's URL for `path`.
+fn at(addr: SocketAddr, path: &str) -> String {
+    format!("http://{addr}{path}")
+}
+
+/// A response as a page reads it.
+async fn read(response: reqwest::Response) -> Read {
     let status = response.status().as_u16();
     let header = |name: &str| {
         response
@@ -66,9 +50,38 @@ async fn page_call(
     (status, echo, retry, body)
 }
 
-/// The router's URL for `path`.
-fn at(addr: SocketAddr, path: &str) -> String {
-    format!("http://{addr}{path}")
+/// A page's POST on a connection of its own.
+async fn page_call(addr: SocketAddr, origin: &str, path: &str, body: serde_json::Value) -> Read {
+    let request = reqwest::Client::new().post(at(addr, path));
+    read(
+        request
+            .header("origin", origin)
+            .json(&body)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await
+}
+
+/// A GET from `origin`, or from the owner's side with none.
+async fn get_from(addr: SocketAddr, origin: Option<&str>, path: &str) -> Read {
+    let mut request = reqwest::Client::new().get(at(addr, path));
+    if let Some(origin) = origin {
+        request = request.header("origin", origin);
+    }
+    read(request.send().await.unwrap()).await
+}
+
+/// One of the owner's routes, from the owner's side: its status.
+async fn owner_post(addr: SocketAddr, path: &str, body: serde_json::Value) -> u16 {
+    let request = reqwest::Client::new().post(at(addr, path)).json(&body);
+    read(request.send().await.unwrap()).await.0
+}
+
+/// The status, code and message of a refusal.
+fn refusal(read: &Read) -> (u16, Option<&str>, Option<&str>) {
+    (read.0, read.3["code"].as_str(), read.3["message"].as_str())
 }
 
 fn basket(name: &str) -> serde_json::Value {
@@ -87,7 +100,7 @@ async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
         .pending
 }
 
-/// Wait until `rows` open rows exist (a held call has written its row).
+/// Wait until `rows` open rows exist (the held calls have written them).
 async fn until_open(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
     for _ in 0..500 {
         let open = open_rows(wallet).await;
@@ -102,6 +115,15 @@ async fn until_open(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
     );
 }
 
+/// The open row of `originator`'s key among `rows`.
+fn row_of(rows: &[PendingRow], originator: &str) -> i64 {
+    rows.iter()
+        .find(|r| r.originator == originator)
+        .unwrap()
+        .pending_id
+}
+
+/// The owner's answer through the store, as the CLI writes it.
 async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
     let reply = Reply {
         answer,
@@ -114,6 +136,20 @@ async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
         .unwrap();
 }
 
+/// A page's listOutputs written whole on a raw HTTP/1.1 connection, which
+/// the test closes.
+async fn raw_listing(addr: SocketAddr, origin: &str, name: &str) -> tokio::net::TcpStream {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let body = basket(name).to_string();
+    let request = format!(
+        "POST /listOutputs HTTP/1.1\r\nHost: {addr}\r\nOrigin: {origin}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    stream
+}
+
 /// The design's L5b exit test (W4 (a)): two held calls of one originator
 /// on two powers, each on its own connection; one connection closed by the
 /// client; both rows gone and the other call answered 400 `Permission
@@ -123,16 +159,7 @@ async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
 async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     let (_dir, wallet) = wallet().await;
     let (addr, held) = served(&wallet, &[]).await;
-
-    // The call whose caller leaves: a raw HTTP/1.1 request, written whole.
-    let mut leaving = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let body = basket("one").to_string();
-    let request = format!(
-        "POST /listOutputs HTTP/1.1\r\nHost: {addr}\r\nOrigin: {PAGE}\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    leaving.write_all(request.as_bytes()).await.unwrap();
+    let mut leaving = raw_listing(addr, PAGE, "one").await;
     until_open(&wallet, 1).await;
     let staying = tokio::spawn(page_call(
         addr,
@@ -142,39 +169,39 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     ));
     until_open(&wallet, 2).await;
     let other = tokio::spawn(page_call(addr, OTHER, "/listOutputs", basket("one")));
-    let open = until_open(&wallet, 3).await;
-    let other_id = open
-        .iter()
-        .find(|r| r.originator == "other.example")
-        .unwrap()
-        .pending_id;
+    let other_id = row_of(&until_open(&wallet, 3).await, "other.example");
     assert_eq!(held.rows_of("page.example").len(), 2);
 
     // The client closes its connection fully, after the request is written.
     leaving.shutdown().await.unwrap();
     drop(leaving);
 
-    let (status, echo, _, body) = staying.await.unwrap();
-    assert_eq!(
-        (status, body["code"].as_str(), body["message"].as_str()),
-        (
-            400,
-            Some("ERR_PERMISSION_DENIED"),
-            Some("Permission denied.")
-        )
+    let staying = staying.await.unwrap();
+    let denied = (
+        400,
+        Some("ERR_PERMISSION_DENIED"),
+        Some("Permission denied."),
     );
-    assert_eq!(echo.as_deref(), Some(PAGE), "the page reads its denial");
-    let open = open_rows(&wallet).await;
+    assert_eq!(refusal(&staying), denied);
     assert_eq!(
-        open.iter().map(|r| r.pending_id).collect::<Vec<_>>(),
+        staying.1.as_deref(),
+        Some(PAGE),
+        "the page reads its denial"
+    );
+    let open: Vec<i64> = open_rows(&wallet)
+        .await
+        .iter()
+        .map(|r| r.pending_id)
+        .collect();
+    assert_eq!(
+        open,
         [other_id],
-        "both of page.example's rows deleted, other.example's kept"
+        "page.example's rows deleted, other.example's kept"
     );
     let all = grants::listing(wallet.storage(), true).await.unwrap();
     assert!(
         all.pending.iter().all(|r| r.originator != "page.example"),
-        "no row kept, answered or open: {:?}",
-        all.pending
+        "no row kept"
     );
     assert!(all.grants.is_empty(), "a disconnect writes no grant");
     assert!(!other.is_finished(), "other.example's call is still held");
@@ -182,12 +209,7 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     // A call of the same page after the close opens a new prompt and is
     // held: the snapshot bounded the withdrawal.
     let again = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
-    let open = until_open(&wallet, 2).await;
-    let again_id = open
-        .iter()
-        .find(|r| r.originator == "page.example")
-        .unwrap()
-        .pending_id;
+    let again_id = row_of(&until_open(&wallet, 2).await, "page.example");
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(open_rows(&wallet).await.len(), 2, "the new row stays open");
     assert!(!again.is_finished());
@@ -195,8 +217,7 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     answer(&wallet, other_id, Answer::Deny).await;
     answer(&wallet, again_id, Answer::Grant).await;
     assert_eq!(other.await.unwrap().0, 400);
-    let (status, _, _, body) = again.await.unwrap();
-    assert_eq!(status, 200, "{body}");
+    assert_eq!(again.await.unwrap().0, 200);
     assert_eq!(held.counts("page.example"), (0, 0));
 }
 
@@ -219,55 +240,46 @@ async fn the_cap_refuses_an_originators_third_held_call_and_the_fifth_in_all() {
     }
     assert_eq!(held.counts("page.example"), (2, 2));
 
-    let (status, echo, retry, body) = page_call(addr, PAGE, "/listOutputs", basket("two")).await;
-    assert_eq!(
-        (status, body["code"].as_str(), body["message"].as_str()),
-        (
-            429,
-            Some("ERR_PERMISSION_PENDING_LIMIT"),
-            Some(powers::PENDING_LIMIT)
-        )
+    let third = page_call(addr, PAGE, "/listOutputs", basket("two")).await;
+    let limit = (
+        429,
+        Some("ERR_PERMISSION_PENDING_LIMIT"),
+        Some(powers::PENDING_LIMIT),
     );
-    assert_eq!((echo.as_deref(), retry.as_deref()), (Some(PAGE), Some("5")));
+    assert_eq!(refusal(&third), limit);
+    assert_eq!(
+        (third.1.as_deref(), third.2.as_deref()),
+        (Some(PAGE), Some("5"))
+    );
     assert_eq!(
         open_rows(&wallet).await.len(),
         1,
         "the refused call wrote no row"
     );
 
-    let second = tokio::spawn(page_call(addr, OTHER, "/listOutputs", basket("one")));
-    let third = tokio::spawn(page_call(
-        addr,
-        "http://third.example",
-        "/listOutputs",
-        basket("one"),
-    ));
+    let others = [OTHER, "http://third.example"]
+        .map(|origin| tokio::spawn(page_call(addr, origin, "/listOutputs", basket("one"))));
     let open = until_open(&wallet, 3).await;
     assert_eq!(held.counts("other.example"), (1, 4));
-    let (status, _, _, _) =
-        page_call(addr, "http://fifth.example", "/listOutputs", basket("one")).await;
-    assert_eq!(status, 429, "the fifth held call in all");
+    let fifth = page_call(addr, "http://fifth.example", "/listOutputs", basket("one")).await;
+    assert_eq!(fifth.0, 429, "the fifth held call in all");
 
     // The owner's answer frees the page's two places at once.
-    let page_id = open
-        .iter()
-        .find(|r| r.originator == "page.example")
-        .unwrap()
-        .pending_id;
-    answer(&wallet, page_id, Answer::Deny).await;
-    assert_eq!(first.await.unwrap().0, 400);
-    assert_eq!(joined.await.unwrap().0, 400);
+    answer(&wallet, row_of(&open, "page.example"), Answer::Deny).await;
+    assert_eq!(
+        (first.await.unwrap().0, joined.await.unwrap().0),
+        (400, 400)
+    );
     let fifth = tokio::spawn(page_call(
         addr,
         "http://fifth.example",
         "/listOutputs",
         basket("one"),
     ));
-    let open = until_open(&wallet, 3).await;
-    for row in open {
+    for row in until_open(&wallet, 3).await {
         answer(&wallet, row.pending_id, Answer::Deny).await;
     }
-    for call in [second, third, fifth] {
+    for call in others.into_iter().chain([fifth]) {
         assert_eq!(call.await.unwrap().0, 400);
     }
     assert_eq!(held.counts("page.example"), (0, 0));
@@ -280,55 +292,38 @@ async fn the_cap_refuses_an_originators_third_held_call_and_the_fifth_in_all() {
 async fn a_power_granted_listed_revoked_and_refused_after() {
     let (_dir, wallet) = wallet().await;
     let (addr, _) = served(&wallet, &[]).await;
-    let owner = reqwest::Client::new();
-    let held = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("todo items")));
-    let open = until_open(&wallet, 1).await;
-    assert_eq!(
-        (
-            open[0].kind.as_str(),
-            open[0].key.as_str(),
-            open[0].usage.as_deref()
-        ),
-        ("basket", r#"["todo items"]"#, Some("listing"))
-    );
-    let answered = owner
-        .post(at(addr, "/origins/answer"))
-        .json(&json!({"pendingId": open[0].pending_id, "answer": "grant"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(answered.status(), 200);
+    let todo = basket("todo items");
+    let held = tokio::spawn(page_call(addr, PAGE, "/listOutputs", todo.clone()));
+    let row = until_open(&wallet, 1).await.remove(0);
+    let asked = (row.kind.as_str(), row.key.as_str(), row.usage.as_deref());
+    assert_eq!(asked, ("basket", r#"["todo items"]"#, Some("listing")));
+    let granting = json!({"pendingId": row.pending_id, "answer": "grant"});
+    assert_eq!(owner_post(addr, "/origins/answer", granting).await, 200);
     let (status, echo, _, body) = held.await.unwrap();
     assert_eq!((status, echo.as_deref()), (200, Some(PAGE)), "{body}");
-    assert!(body["outputs"].is_array());
 
-    let listed: serde_json::Value = owner
-        .get(at(addr, "/origins"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let (_, _, _, listed) = get_from(addr, None, "/origins").await;
     assert_eq!(listed["grants"][0]["key"], r#"["todo items"]"#);
     assert_eq!(listed["grants"][0]["expiry"], 0);
     assert_eq!(listed["pending"][0]["answer"], "grant");
-    let (status, ..) = page_call(addr, PAGE, "/listOutputs", basket("todo items")).await;
-    assert_eq!(status, 200, "granted: answered at once");
+    assert_eq!(
+        page_call(addr, PAGE, "/listOutputs", todo.clone()).await.0,
+        200
+    );
 
-    let revoked = owner
-        .post(at(addr, "/origins/revoke"))
-        .json(&json!({"originator": "page.example", "kind": "basket", "key": r#"["todo items"]"#}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(revoked.status(), 200);
+    let revoking =
+        json!({"originator": "page.example", "kind": "basket", "key": r#"["todo items"]"#});
+    assert_eq!(owner_post(addr, "/origins/revoke", revoking).await, 200);
     for origin in [PAGE, "http://page.example:8080"] {
-        let (status, echo, _, body) =
-            page_call(addr, origin, "/listOutputs", basket("todo items")).await;
+        let refused = page_call(addr, origin, "/listOutputs", todo.clone()).await;
+        let denied = (
+            400,
+            Some("ERR_PERMISSION_DENIED"),
+            Some(origin_gate::DENIED),
+        );
         assert_eq!(
-            (status, body["message"].as_str(), echo.as_deref()),
-            (400, Some(origin_gate::DENIED), Some(origin))
+            (refusal(&refused), refused.1.as_deref()),
+            (denied, Some(origin))
         );
     }
     assert!(
@@ -337,11 +332,15 @@ async fn a_power_granted_listed_revoked_and_refused_after() {
     );
     // Another power of the page is asked as before.
     let other = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("other")));
-    let open = until_open(&wallet, 1).await;
-    answer(&wallet, open[0].pending_id, Answer::Deny).await;
-    let (status, _, _, body) = other.await.unwrap();
+    answer(
+        &wallet,
+        until_open(&wallet, 1).await[0].pending_id,
+        Answer::Deny,
+    )
+    .await;
+    let other = other.await.unwrap();
     assert_eq!(
-        (status, body["message"].as_str()),
+        (other.0, other.3["message"].as_str()),
         (400, Some("Permission denied."))
     );
 }
@@ -361,12 +360,8 @@ async fn an_expired_grant_is_held_as_a_renewal_and_another_process_answers_it() 
         expiry: 1,
     };
     grants::grant(wallet.storage(), &granting, 1).await.unwrap();
-    let call = tokio::spawn(page_call(
-        addr,
-        PAGE,
-        "/createSignature",
-        signature("renewed gate", 2),
-    ));
+    let body = signature("renewed gate", 2);
+    let call = tokio::spawn(page_call(addr, PAGE, "/createSignature", body));
     let open = until_open(&wallet, 1).await;
     assert!(open[0].renewal, "an expired grant is a renewal");
     assert_eq!(open[0].usage.as_deref(), Some("signing"));
@@ -386,23 +381,20 @@ async fn a_held_call_answers_the_shutdown_and_withdraws_its_row() {
     let call = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
     until_open(&wallet, 1).await;
     held.shut_down();
-    let (status, echo, _, body) = call.await.unwrap();
-    assert_eq!(
-        (status, body["code"].as_str(), body["message"].as_str()),
-        (
-            503,
-            Some("WALLET_BRIDGE_UNAVAILABLE"),
-            Some(powers::SHUTTING_DOWN)
-        )
+    let answered = call.await.unwrap();
+    let shut = (
+        503,
+        Some("WALLET_BRIDGE_UNAVAILABLE"),
+        Some(powers::SHUTTING_DOWN),
     );
-    assert_eq!(echo.as_deref(), Some(PAGE));
-    assert!(grants::listing(wallet.storage(), true)
-        .await
-        .unwrap()
-        .pending
-        .is_empty());
-    let (status, ..) = page_call(addr, PAGE, "/listOutputs", basket("two")).await;
-    assert_eq!(status, 503);
+    assert_eq!(refusal(&answered), shut);
+    assert_eq!(answered.1.as_deref(), Some(PAGE));
+    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    assert!(all.pending.is_empty(), "the held call's row is withdrawn");
+    assert_eq!(
+        page_call(addr, PAGE, "/listOutputs", basket("two")).await.0,
+        503
+    );
     assert!(open_rows(&wallet).await.is_empty());
 }
 
@@ -415,41 +407,30 @@ async fn a_held_call_answers_the_shutdown_and_withdraws_its_row() {
 async fn the_seed_admits_every_door_and_host_route_and_a_page_reads_no_host_route() {
     let (_dir, wallet) = wallet().await;
     let (addr, _) = served(&wallet, &["seeded.example"]).await;
-    let (status, ..) = page_call(
-        addr,
-        "http://seeded.example",
-        "/listOutputs",
-        basket("default"),
-    )
-    .await;
+    let seeded = "http://seeded.example";
+    let listing = page_call(addr, seeded, "/listOutputs", basket("default")).await;
     assert_eq!(
-        status, 200,
+        listing.0, 200,
         "the seed is not refused an admin-reserved basket"
     );
-    let get = |origin: Option<&str>, path: &str| {
-        let url = format!("http://{addr}{path}");
-        let mut request = reqwest::Client::new().get(url);
-        if let Some(origin) = origin {
-            request = request.header("origin", origin);
-        }
-        request.send()
-    };
-    let txid = "ab".repeat(32);
-    for path in ["/permission-audit", "/chain-feed", &format!("/tx/{txid}")] {
-        let seeded = get(Some("http://seeded.example:8080"), path).await.unwrap();
-        assert_ne!(seeded.status(), 400, "{path}: the seed reads a host route");
-        let owner = get(None, path).await.unwrap();
-        assert_ne!(owner.status(), 400, "{path}: the owner reads a host route");
-        let page = get(Some(PAGE), path).await.unwrap();
-        assert_eq!(page.status(), 400, "{path}");
-        assert_eq!(
-            page.headers().get("access-control-allow-origin").unwrap(),
-            PAGE
+    let tx = format!("/tx/{}", "ab".repeat(32));
+    for path in ["/permission-audit", "/chain-feed", tx.as_str()] {
+        let by_seed = get_from(addr, Some("http://seeded.example:8080"), path).await;
+        assert_ne!(by_seed.0, 400, "{path}: the seed reads a host route");
+        assert_ne!(
+            get_from(addr, None, path).await.0,
+            400,
+            "{path}: the owner reads it"
         );
-        let body: serde_json::Value = page.json().await.unwrap();
+        let page = get_from(addr, Some(PAGE), path).await;
+        let denied = (
+            400,
+            Some("ERR_PERMISSION_DENIED"),
+            Some(origin_gate::DENIED),
+        );
         assert_eq!(
-            (body["code"].as_str(), body["message"].as_str()),
-            (Some("ERR_PERMISSION_DENIED"), Some(origin_gate::DENIED)),
+            (refusal(&page), page.1.as_deref()),
+            (denied, Some(PAGE)),
             "{path}"
         );
     }
@@ -473,58 +454,32 @@ async fn the_open_doors_and_level_zero_answer_a_page_with_no_row() {
         "/getNetwork",
         "/waitForAuthentication",
     ] {
-        let url = format!("http://{addr}{path}");
-        let response = reqwest::Client::new()
-            .get(url)
-            .header("origin", PAGE)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 200, "{path}");
-        assert_eq!(
-            response
-                .headers()
-                .get("access-control-allow-origin")
-                .unwrap(),
-            PAGE
-        );
+        let open = get_from(addr, Some(PAGE), path).await;
+        assert_eq!((open.0, open.1.as_deref()), (200, Some(PAGE)), "{path}");
     }
-    let (status, echo, _, body) =
-        page_call(addr, PAGE, "/createSignature", signature("open gate", 0)).await;
-    assert_eq!((status, echo.as_deref()), (200, Some(PAGE)), "{body}");
-    let (status, _, _, body) = page_call(addr, PAGE, "/listOutputs", basket(" Default")).await;
+    let level_zero = page_call(addr, PAGE, "/createSignature", signature("open gate", 0)).await;
+    assert_eq!((level_zero.0, level_zero.1.as_deref()), (200, Some(PAGE)));
+    let refused = page_call(addr, PAGE, "/listOutputs", basket(" Default")).await;
+    let words = "Basket \u{201c}default\u{201d} is admin-only.";
     assert_eq!(
-        (status, body["code"].as_str(), body["message"].as_str()),
-        (
-            400,
-            Some("ERR_PERMISSION_DENIED"),
-            Some("Basket \u{201c}default\u{201d} is admin-only.")
-        )
+        refusal(&refused),
+        (400, Some("ERR_PERMISSION_DENIED"), Some(words))
     );
-    let (status, _, _, body) =
-        page_call(addr, PAGE, "/createSignature", signature("admin gate", 2)).await;
+    let protocol = page_call(addr, PAGE, "/createSignature", signature("admin gate", 2)).await;
+    let words = "Protocol \u{201c}admin gate\u{201d} is admin-only.";
     assert_eq!(
-        (status, body["message"].as_str()),
-        (
-            400,
-            Some("Protocol \u{201c}admin gate\u{201d} is admin-only.")
-        )
+        (protocol.0, protocol.3["message"].as_str()),
+        (400, Some(words))
     );
     let disagreeing = reqwest::Client::new()
         .post(at(addr, "/listOutputs"))
         .header("origin", "http://evil.example")
         .header("originator", "page.example")
-        .json(&basket("one"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(disagreeing.status(), 400);
+        .json(&basket("one"));
+    assert_eq!(read(disagreeing.send().await.unwrap()).await.0, 400);
+    let all = grants::listing(wallet.storage(), true).await.unwrap();
     assert!(
-        grants::listing(wallet.storage(), true)
-            .await
-            .unwrap()
-            .pending
-            .is_empty(),
-        "no row for an open door, level 0, an admin name or a disagreement"
+        all.pending.is_empty(),
+        "no row: open doors, level 0, admin names, disagreements"
     );
 }

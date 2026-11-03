@@ -41,6 +41,7 @@ use std::time::Duration;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
+use bsv_sdk::wallet::{Counterparty, Protocol, SecurityLevel};
 use tokio::sync::{watch, Notify};
 
 use super::error::{AppError, Kind as ErrorKind};
@@ -297,6 +298,26 @@ impl Ask {
         Self::of(Power::protocol(false, level, name, counterparty), usage)
     }
 
+    /// A door's parsed protocol and counterparty (`self` when it names
+    /// none, the key in hex), for `usage`.
+    pub(crate) fn of_protocol(
+        p: &Protocol,
+        counterparty: Option<&Counterparty>,
+        usage: &'static str,
+    ) -> Self {
+        let level = match p.security_level {
+            SecurityLevel::Silent => 0,
+            SecurityLevel::App => 1,
+            SecurityLevel::Counterparty => 2,
+        };
+        let named = counterparty.map(|c| match c {
+            Counterparty::Self_ => "self".to_string(),
+            Counterparty::Anyone => "anyone".to_string(),
+            Counterparty::Other(pk) => pk.to_hex(),
+        });
+        Self::protocol(level, &p.protocol_name, named.as_deref(), usage)
+    }
+
     /// A protocol the manager names at level 1 (`identity key retrieval`,
     /// `certificate list`, `identity resolution`).
     pub(crate) fn named(name: &str, usage: &'static str) -> Self {
@@ -451,6 +472,18 @@ impl Asker {
         Ok(())
     }
 
+    /// A crypto door's one protocol power ([`Ask::of_protocol`]).
+    pub(crate) async fn protocol(
+        &self,
+        call: &str,
+        p: &Protocol,
+        counterparty: Option<&Counterparty>,
+        usage: &'static str,
+    ) -> Result<(), AppError> {
+        let ask = Ask::of_protocol(p, counterparty, usage);
+        self.ask(call, None, vec![ask]).await
+    }
+
     /// One power: live, revoked, or held for the owner. A spend is always
     /// the owner's until the ceilings land (L6): no row admits it here.
     async fn one(
@@ -537,18 +570,27 @@ impl Asker {
             joined = pending.joined,
             "browser gate: pending"
         );
-        let notify = self.held.wait_on(id, &originator);
         let waiting = Waiting {
             held: self.held.clone(),
             wallet: self.wallet.clone(),
-            originator: originator.clone(),
+            originator,
             pending_id: id,
             armed: true,
             _place: place,
         };
+        self.wait(waiting).await
+    }
+
+    /// Wait on the row until it is answered, deleted, or the server shuts
+    /// down: its row read every [`READ_EVERY`] and at once on its
+    /// [`Notify`].
+    async fn wait(&self, waiting: Waiting) -> Result<(), AppError> {
+        let id = waiting.pending_id;
+        let notify = self.held.wait_on(id, &waiting.originator);
         let mut shut = self.held.0.shut.subscribe();
         loop {
             if *shut.borrow_and_update() {
+                let originator = waiting.originator.clone();
                 waiting.answered();
                 withdraw(&self.held, &self.wallet, &originator, &[id]).await;
                 return Err(AppError::new(ErrorKind::BridgeUnavailable, SHUTTING_DOWN));
@@ -558,24 +600,23 @@ impl Asker {
                 () = tokio::time::sleep(READ_EVERY) => {}
                 _ = shut.changed() => continue,
             }
-            match grants::pending(storage, id).await {
-                Ok(Some(row)) => match row.answer {
-                    None => {}
-                    Some(Answer::Grant | Answer::Once) => {
-                        waiting.answered();
-                        return Ok(());
-                    }
-                    Some(Answer::Deny) => {
-                        waiting.answered();
-                        return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
-                    }
-                },
-                Ok(None) => {
-                    waiting.answered();
-                    return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
-                }
+            let answer = match grants::pending(self.wallet.storage(), id).await {
+                Ok(Some(row)) => row.answer,
+                Ok(None) => Some(Answer::Deny),
                 Err(e) => {
                     tracing::warn!(pending_id = id, error = %e, "browser gate: a held call's read failed; it reads again");
+                    continue;
+                }
+            };
+            match answer {
+                None => {}
+                Some(Answer::Grant | Answer::Once) => {
+                    waiting.answered();
+                    return Ok(());
+                }
+                Some(Answer::Deny) => {
+                    waiting.answered();
+                    return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
                 }
             }
         }

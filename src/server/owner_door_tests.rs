@@ -32,7 +32,7 @@ fn calls() -> [(&'static str, &'static str, serde_json::Value); 4] {
     ]
 }
 
-async fn wallet() -> (tempfile::TempDir, WalletState) {
+pub(super) async fn wallet() -> (tempfile::TempDir, WalletState) {
     let dir = tempfile::TempDir::new().unwrap();
     let file = dir.path().join("owner.db");
     let storage = StorageSqlx::open(file.to_str().unwrap()).await.unwrap();

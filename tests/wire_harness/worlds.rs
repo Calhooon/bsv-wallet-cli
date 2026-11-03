@@ -9,7 +9,6 @@ use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 
 use super::fixture::NORMALIZER;
-use super::owner::Owner;
 pub(crate) use super::world_names::{known_world, WORLDS};
 use crate::wire_support::{header_stub, serve_local, services, Req, Resp, CLOSED, J, ROOT_KEY};
 
@@ -75,12 +74,10 @@ const FUNDED_PREFIX: &str = "d2lyZQ==";
 const BRC29_PROTOCOL: &str = "3241645161d8";
 
 pub(crate) struct World {
-    router: Router,
-    /// The served wallet and the server's held calls: the owner's step
-    /// answers a held call through the store and shuts the server down
-    /// (#414 L5b, `super::owner`).
-    wallet: server::handlers::WalletState,
-    held: server::powers::Held,
+    pub(super) router: Router,
+    /// The served wallet and its held calls, for the owner's step (#414).
+    pub(super) wallet: server::handlers::WalletState,
+    pub(super) held: server::powers::Held,
     /// Held for the world's life: the stubs' tasks, a temp store, the
     /// other connection holding the write lock.
     _keep: Vec<Box<dyn std::any::Any + Send>>,
@@ -728,23 +725,6 @@ impl World {
     /// The normalized response, and the JSON body as served.
     pub(crate) async fn serve_raw(&self, req: &Req) -> (Resp, Option<J>) {
         NORMALIZER.serve(&self.router, req).await
-    }
-
-    /// [`Self::serve_raw`] with the owner's step around the request: the
-    /// rows written before it, the calls held first, the owner's act while
-    /// it is held, then every call still held denied.
-    pub(crate) async fn serve_owned(&self, req: &Req, owner: Option<&Owner>) -> (Resp, Option<J>) {
-        let Some(owner) = owner else {
-            return self.serve_raw(req).await;
-        };
-        owner.before(&self.wallet).await;
-        let calls = owner.hold(&self.router, &self.held).await;
-        let (served, ()) = tokio::join!(
-            NORMALIZER.serve(&self.router, req),
-            owner.act(&self.wallet, &self.held)
-        );
-        owner.after(&self.wallet, &self.held, calls).await;
-        served
     }
 }
 

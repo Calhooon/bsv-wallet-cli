@@ -9,6 +9,7 @@ use bsv_sdk::primitives::PublicKey;
 mod faults;
 mod mutants;
 mod review;
+mod version;
 
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {
     response_answer(e.into_response()).await
@@ -789,54 +790,4 @@ fn a_lenient_key_form_is_refused_at_the_doors() {
         assert_eq!(validate_public_key(&padded, "verifier").unwrap(), canonical);
     }
     assert!(matches!(parse_counterparty(G).unwrap(), Counterparty::Other(k) if k == canonical));
-}
-
-/// #540 (the keeper's refinement of 2026-11-03, beside W15): the version
-/// door answers BRC-100's `[vendor]-[major].[minor].[patch]` within 7 to 30
-/// bytes (`wallet/0100.md:2671` at `5119a9b`) and nothing of the build:
-/// whatever the package's version reads (a `-beta.6` pre-release
-/// included), the constant carries no pre-release identifier, no build
-/// metadata, no commit sha and no toolchain.
-#[test]
-fn the_version_door_is_brc100s_shape_and_names_nothing_of_the_build() {
-    let version = WALLET_VERSION;
-    assert!(
-        (7..=30).contains(&version.len()),
-        "{version}: 7 to 30 bytes"
-    );
-    let (vendor, numbers) = version.rsplit_once('-').expect("[vendor]-[numbers]");
-    assert_eq!(vendor, env!("CARGO_PKG_NAME"));
-    assert!(vendor
-        .bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
-    let parts: Vec<&str> = numbers.split('.').collect();
-    assert_eq!(parts.len(), 3, "{version}: three numbers");
-    assert!(
-        parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
-        "{version}: decimal numbers alone"
-    );
-    let core = [
-        env!("CARGO_PKG_VERSION_MAJOR"),
-        env!("CARGO_PKG_VERSION_MINOR"),
-        env!("CARGO_PKG_VERSION_PATCH"),
-    ];
-    assert_eq!(parts, core, "{version}: the package's core");
-    let pre = env!("CARGO_PKG_VERSION_PRE");
-    assert!(
-        pre.is_empty() || !version.contains(pre),
-        "{version}: the pre-release {pre} leaked"
-    );
-    for word in [
-        "beta", "alpha", "rc", "+", "rustc", "nightly", "stable", "toolbox",
-    ] {
-        assert!(!numbers.contains(word), "{version}: names {word}");
-    }
-    // A sha is a run of seven or more hex digits holding a letter; the
-    // vendor and the numbers have none.
-    let hex_run = version
-        .split(|c: char| !c.is_ascii_hexdigit())
-        .any(|run| run.len() >= 7 && run.bytes().any(|b| b.is_ascii_alphabetic()));
-    assert!(!hex_run, "{version}: a sha");
 }

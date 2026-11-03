@@ -104,22 +104,6 @@ fn level_num(l: SecurityLevel) -> u8 {
     }
 }
 
-/// A call's protocol power (#414 L5b): its level, its name and its
-/// counterparty (`self` when it names none, the key in hex), for `usage`.
-fn protocol_ask(p: &Protocol, counterparty: Option<&Counterparty>, usage: &'static str) -> Ask {
-    let named = counterparty.map(|c| match c {
-        Counterparty::Self_ => "self".to_string(),
-        Counterparty::Anyone => "anyone".to_string(),
-        Counterparty::Other(pk) => pk.to_hex(),
-    });
-    Ask::protocol(
-        level_num(p.security_level),
-        &p.protocol_name,
-        named.as_deref(),
-        usage,
-    )
-}
-
 /// BRC-100 gives HMAC and signature verification the same result shape.
 fn valid_response(valid: bool) -> Json<serde_json::Value> {
     Json(json!({ "valid": valid }))
@@ -207,7 +191,7 @@ pub async fn get_public_key(
     } else {
         args.protocol_id
             .as_ref()
-            .map(|p| protocol_ask(p, args.counterparty.as_ref(), "publicKey"))
+            .map(|p| Ask::of_protocol(p, args.counterparty.as_ref(), "publicKey"))
     };
     asker
         .ask(
@@ -282,14 +266,11 @@ pub async fn create_signature(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/createSignature",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "signing",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "signing",
         )
         .await?;
 
@@ -511,12 +492,18 @@ fn create_action_asks(args: &CreateActionArgs) -> Vec<Ask> {
         outputs.iter().filter_map(|o| o.basket.as_deref()),
         "insertion",
     );
-    asks.extend(args.labels.iter().flatten().map(|l| Ask::label(l, "apply")));
+    asks.extend(labels_asked(args.labels.as_deref(), "apply"));
     let amount: u64 = outputs.iter().map(|o| o.satoshis).sum();
     if amount > 0 {
         asks.push(Ask::spending(i64::try_from(amount).unwrap_or(i64::MAX)));
     }
     asks
+}
+
+/// One label power per label named, for `usage` (`apply`, `list`).
+fn labels_asked(labels: Option<&[String]>, usage: &'static str) -> Vec<Ask> {
+    let labels = labels.unwrap_or_default();
+    labels.iter().map(|l| Ask::label(l, usage)).collect()
 }
 
 /// One basket power per basket named, in the order first named.
@@ -546,7 +533,7 @@ pub async fn internalize_action(
         .iter()
         .filter_map(|o| o.insertion_remittance.as_ref().map(|i| i.basket.as_str()));
     let mut asks = baskets_asked(baskets, "insertion");
-    asks.extend(args.labels.iter().flatten().map(|l| Ask::label(l, "apply")));
+    asks.extend(labels_asked(args.labels.as_deref(), "apply"));
     asker
         .ask("/internalizeAction", Some(&args.description), asks)
         .await?;
@@ -915,14 +902,11 @@ pub async fn verify_signature(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/verifySignature",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "signing",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "signing",
         )
         .await?;
     let result = wallet
@@ -955,14 +939,11 @@ pub async fn encrypt(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/encrypt",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "encrypting",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "encrypting",
         )
         .await?;
     audit::record(audit::protocol_entry(
@@ -1003,14 +984,11 @@ pub async fn decrypt(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/decrypt",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "encrypting",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "encrypting",
         )
         .await?;
     audit::record(audit::protocol_entry(
@@ -1055,14 +1033,11 @@ pub async fn create_hmac(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/createHmac",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "hmac",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "hmac",
         )
         .await?;
     audit::record(audit::protocol_entry(
@@ -1112,14 +1087,11 @@ pub async fn verify_hmac(
         seek_permission: None,
     };
     asker
-        .ask(
+        .protocol(
             "/verifyHmac",
-            None,
-            vec![protocol_ask(
-                &args.protocol_id,
-                args.counterparty.as_ref(),
-                "hmac",
-            )],
+            &args.protocol_id,
+            args.counterparty.as_ref(),
+            "hmac",
         )
         .await?;
     let result = wallet
@@ -1219,7 +1191,7 @@ pub async fn list_actions(
         .ask(
             "/listActions",
             None,
-            args.labels.iter().map(|l| Ask::label(l, "list")).collect(),
+            labels_asked(Some(&args.labels), "list"),
         )
         .await?;
     let result = wallet
