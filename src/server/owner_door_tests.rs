@@ -156,7 +156,7 @@ async fn no_bearer_under_auth_token_is_refused_on_every_route() {
     let bearer = [("authorization", "Bearer owner-token")];
     let (status, _, body) = answered(&app, call("GET", "/origins", &json!(null), &bearer)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"grants": [], "pending": []}));
+    assert_eq!(body, json!({"grants": [], "pending": [], "probes": []}));
     // The admission runs before the bearer: a page with the bearer is
     // still a page.
     let page = [

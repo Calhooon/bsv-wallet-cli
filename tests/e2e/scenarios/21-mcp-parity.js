@@ -70,8 +70,8 @@ module.exports = {
       const ownersUrl = `http://localhost:${walletA.port}/origins`;
       const mcpOrigins = await mcp.callTool('list_origins', {});
       const httpOrigins = await (await fetch(ownersUrl)).json();
-      assert(Array.isArray(mcpOrigins.grants) && Array.isArray(mcpOrigins.pending),
-        `MCP list_origins must return {grants, pending}: ${JSON.stringify(mcpOrigins)}`);
+      assert(Array.isArray(mcpOrigins.grants) && Array.isArray(mcpOrigins.pending) && Array.isArray(mcpOrigins.probes),
+        `MCP list_origins must return {grants, pending, probes}: ${JSON.stringify(mcpOrigins)}`);
       // The same rows, compared with their keys sorted: the MCP re-serializes
       // the door's JSON with its keys in order, the door keeps section (4)'s
       // order, and scenario 20 leaves wallet A a granted row to compare.

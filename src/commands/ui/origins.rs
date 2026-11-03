@@ -105,19 +105,23 @@ fn refused(e: &anyhow::Error) -> Response {
     refusal(status, &e.to_string())
 }
 
-/// The rows, read with the month's tally, as the listing's JSON.
-async fn shown(state: &AppState, rows: Vec<GrantRow>, pending: Vec<PendingRow>) -> Response {
-    let read = async { Shown::of(&state.store, rows, pending, now()?).await };
-    read.await
-        .map_or_else(|e| refused(&e), |rows| Json(rows.json()).into_response())
+/// The rows read, as the listing's JSON, or the refusal.
+fn json_of(read: anyhow::Result<Shown>) -> Response {
+    read.map_or_else(|e| refused(&e), |rows| Json(rows.json()).into_response())
 }
 
-/// `GET /api/origins`.
+/// The rows, read with the month's tally, as the listing's JSON.
+async fn shown(state: &AppState, rows: Vec<GrantRow>, pending: Vec<PendingRow>) -> Response {
+    json_of(async { Shown::of(&state.store, rows, pending, now()?).await }.await)
+}
+
+/// `GET /api/origins`: the grants, the pending rows and the probe record.
 async fn list(State(state): State<Arc<AppState>>) -> Response {
-    match grants::owners_listing(&state.store, ANSWERED_SHOWN).await {
-        Ok(rows) => shown(&state, rows.grants, rows.pending).await,
-        Err(e) => refused(&e),
-    }
+    let read = async {
+        let rows = grants::owners_listing(&state.store, ANSWERED_SHOWN).await?;
+        Shown::listed(&state.store, rows, now()?).await
+    };
+    json_of(read.await)
 }
 
 /// `POST /api/origins/answer`: the answered row, and the grant row a

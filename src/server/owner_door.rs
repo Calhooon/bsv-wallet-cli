@@ -304,14 +304,14 @@ async fn shown(
     }
 }
 
-/// `GET /origins`.
+/// `GET /origins`: the grants, the pending rows and the probe record.
 async fn list(State(wallet): State<WalletState>) -> Response {
     let read = async {
         let rows = grants::owners_listing(wallet.storage(), ANSWERED_SHOWN).await?;
-        anyhow::Ok((rows, now()?))
+        Shown::listed(wallet.storage(), rows, now()?).await
     };
     match read.await {
-        Ok((rows, now)) => shown(&wallet, rows.grants, rows.pending, now).await,
+        Ok(shown) => Json(shown.json()).into_response(),
         Err(e) => refused(&e),
     }
 }

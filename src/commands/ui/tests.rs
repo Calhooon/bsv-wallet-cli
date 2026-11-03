@@ -59,8 +59,9 @@ const OWN: &str = "http://localhost:9321";
 
 /// An inspector over a fresh store holding one open pending row
 /// (`new.example:5173` listing the basket `todo items`) and a grant row
-/// of that basket for `granted.example`; its routes admit `app.example`
-/// by `ALLOWED_ORIGINS`.
+/// of that basket for `granted.example`, and a probe row (#539:
+/// `new.example`'s `getVersion`); its routes admit `app.example` by
+/// `ALLOWED_ORIGINS`.
 async fn inspector() -> (tempfile::TempDir, Arc<AppState>, Router, i64) {
     let dir = tempfile::TempDir::new().unwrap();
     let file = dir.path().join("inspector.db");
@@ -84,6 +85,13 @@ async fn inspector() -> (tempfile::TempDir, Arc<AppState>, Router, i64) {
         expiry: 0,
     };
     grants::grant(&seed, &granting, 1_000).await.unwrap();
+    let probe = grants::Probe {
+        originator: "new.example:5173".into(),
+        door: "getVersion".into(),
+        power: None,
+        at: 1_000,
+    };
+    grants::probes::record(&seed, &[probe]).await.unwrap();
     drop(seed);
     let state = Arc::new(open(&path).await.unwrap());
     let listed = AllowedOrigins::new(["app.example"]).unwrap();
@@ -186,6 +194,8 @@ async fn the_inspectors_own_page_answers_and_revokes() {
     assert_eq!(listed["pending"][0]["rawOriginator"], "new.example:5173");
     assert_eq!(listed["grants"][0]["originator"], "granted.example");
     assert_eq!(listed["grants"][0]["kind"], "basket");
+    let probe = r#"{"count":1,"door":"getVersion","firstSeen":1000,"lastSeen":1000,"originator":"new.example","power":null,"rawOriginator":"new.example:5173"}"#;
+    assert_eq!(listed["probes"].to_string(), format!("[{probe}]"));
     assert_eq!(
         listed["pending"][0]["asked"],
         "list the basket \"todo items\""

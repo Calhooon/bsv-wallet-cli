@@ -3,13 +3,16 @@
 //! text, and their JSON in the section's keys and order, times in unix
 //! seconds as the rows hold them. `bsv-wallet origins --json` prints it
 //! and the owner's door (`GET /origins`) answers it, so the two places
-//! read one shape.
+//! read one shape. A listing carries the probe record too (#539,
+//! `probes`); the answer to a grant, a deny or a revoke does not.
 
 use anyhow::Result;
 use bsv_wallet_toolbox::StorageSqlx;
 use serde::Serialize;
 
-use super::{lookup, month_tally, Answer, GrantRow, Kind, PendingRow, Power, Standing};
+use super::{
+    lookup, month_tally, Answer, GrantRow, Kind, Listing, PendingRow, Power, ProbeRow, Standing,
+};
 
 /// Rows to show: grant rows, each spending row with the month's tally,
 /// and pending rows, each with its prompt's text.
@@ -20,6 +23,8 @@ pub struct Shown {
     pub grants: Vec<(GrantRow, Option<i64>)>,
     /// The pending rows, each with [`PendingRow::asked`]'s text.
     pub pending: Vec<(PendingRow, String)>,
+    /// The probe record's rows, on a listing alone (#539).
+    pub probes: Option<Vec<ProbeRow>>,
 }
 
 impl Shown {
@@ -57,10 +62,25 @@ impl Shown {
         Ok(Self {
             grants,
             pending: asked,
+            probes: None,
         })
     }
 
-    /// The rows as JSON: `{"grants": [...], "pending": [...]}`.
+    /// A listing's rows ([`Self::of`]) with its probe record.
+    ///
+    /// # Errors
+    ///
+    /// The store's error.
+    pub async fn listed(storage: &StorageSqlx, listing: Listing, now: i64) -> Result<Self> {
+        let shown = Self::of(storage, listing.grants, listing.pending, now).await?;
+        Ok(Self {
+            probes: Some(listing.probes),
+            ..shown
+        })
+    }
+
+    /// The rows as JSON: `{"grants": [...], "pending": [...]}`, and
+    /// `"probes": [...]` on a listing.
     #[must_use]
     pub fn json(&self) -> ShownJson<'_> {
         let grants = self.grants.iter().map(|(g, spent)| GrantJson {
@@ -90,9 +110,23 @@ impl Shown {
             answered_at: p.answered_at,
             answer: p.answer.map(Answer::as_str),
         });
+        let probes = self.probes.as_ref().map(|rows| {
+            rows.iter()
+                .map(|p| ProbeJson {
+                    originator: &p.originator,
+                    raw_originator: &p.raw_originator,
+                    door: &p.door,
+                    power: p.power.as_deref(),
+                    count: p.count,
+                    first_seen: p.first_seen,
+                    last_seen: p.last_seen,
+                })
+                .collect()
+        });
         ShownJson {
             grants: grants.collect(),
             pending: pending.collect(),
+            probes,
         }
     }
 }
@@ -148,9 +182,25 @@ struct PendingJson<'a> {
     answer: Option<&'a str>,
 }
 
-/// [`Shown`] as JSON: `{"grants": [...], "pending": [...]}`.
+/// A probe row in JSON (#539), times in unix seconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeJson<'a> {
+    originator: &'a str,
+    raw_originator: &'a str,
+    door: &'a str,
+    power: Option<&'a str>,
+    count: i64,
+    first_seen: i64,
+    last_seen: i64,
+}
+
+/// [`Shown`] as JSON: `{"grants": [...], "pending": [...]}`, and
+/// `"probes": [...]` on a listing.
 #[derive(Serialize)]
 pub struct ShownJson<'a> {
     grants: Vec<GrantJson<'a>>,
     pending: Vec<PendingJson<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probes: Option<Vec<ProbeJson<'a>>>,
 }
