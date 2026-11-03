@@ -8,18 +8,27 @@ This page is the rule. A cold reviewer checks a captain against it: the trigger 
 
 - **C, every lane and every review.** Every lane REPORT and every review verdict ends in the bounded form below. A review's form opens with its `VERDICT merge|fix` line. Rule 7 of [the lane rules](README.md) carries it.
 - **D, a divergence or ruling call.** A result row refusing a recorded answer; a served class that moved; a fixture's meaning under the reference; a floor or gate rule. It takes three short read-only readers on DIFFERENT EVIDENCE (the BRC text at the pinned commit; the reference implementation; the package's code) with distinct stances (cautious, adversarial, simplicity), each in its own isolated run, aggregated by the captain and recorded with the disagreement shown. D's decisions are categorical, never free text: the question file's first line names its allowed answers (`OPTIONS: A|B|C`, two to four option tokens, e.g. `A|B|C` or `yes|no`), every reader's `DECISION:` line begins with exactly one of them, and the aggregator compares that token; the rationale carries the wording.
-- **B, a pin PR's cold review.** Two reviewers with distinct stances: a package-reader (pins, shas, normalizers, parsers, the build and the suite) and a wire-and-reference reader (the fixtures' meaning under BRC-100 and the reference, the result rows, the classes as a MetaNet client sees them, the replays). A third, adversarial reviewer runs on a split OR on a low mean (two agreeing below a mean of 0.7); the chain prints which.
+- **B, a pin PR's cold review.** Two reviewers with distinct stances: a package-reader (pins, shas, normalizers, parsers, the build and the suite) and a wire-and-reference reader (the fixtures' meaning under BRC-100 and the reference, the result rows, the classes as a MetaNet client sees them, the replays as the lane's tails carry them). A third, adversarial reviewer runs on a split OR on a low mean (two agreeing below a mean of 0.7); the chain prints which. The chain's letters are the lenses: lens A the package-reader, lens B the wire-and-reference reader, lens C the adversarial reviewer; [the reads' scope](#the-reads-scope-452) says which of them runs anything.
 - **A, only where a production spend or a stable cut is at stake.** A full option-set ensemble before the captain's recommendation to the owner.
 
 ## The readers' shape
 
-- **Read-only.** No reader edits anything or moves sats. A D reader reads and builds nothing; under B only the package-reader builds and runs the hermetic suite, and the wire-and-reference reader reproduces the replays and the rows (the cost rule below).
+- **Read-only.** No reader edits anything or moves sats. A D reader reads and builds nothing; under B lens A runs the suite only as [the reads' scope](#the-reads-scope-452) allows, and lenses B and C run no cargo and no suite (the cost rule below).
 - **Short.** A reader answers the question asked, in the bounded form, and stops.
 - **Different evidence.** Each reader holds one evidence pointer: under D, the BRC text at the pinned commit, the reference implementation, or the package's code; under B, the package side or the wire side of the PR.
 - **Distinct stances.** Each reader's stance is named in its preamble under [stances/](../../tools/lanes/stances/): for D, `reader-brc.txt` (cautious), `reader-reference.txt` (adversarial) and `reader-package.txt` (simplicity); for B, `review-package.txt` and `review-wire-reference.txt`, with `review-adversarial.txt` on a split or a low mean.
 - **Isolated.** Each reader is its own `cca run`, holding only the question and its own evidence pointer: never another reader's output, never the captain's leaning. The one exception is the adversarial reviewer under B, which forms its own verdict before it reads the other two, and says so.
 
 Readers are never interchangeable clones. Two readers on the same evidence with the same stance count as one.
+
+## The reads' scope (#452)
+
+The owner's speed line through the keeper (2026-11-02): a read costs the minutes its judgement needs, never 20 to 45 minutes of cargo per lens.
+
+- **One suite run per ensemble.** The suite runs once, in the lane, and its tails and artifacts are the ensemble's evidence. Lens A re-runs it only when the review brief names a run (a refactor's differential, rule 11 of [the lane rules](README.md), is one) or the lane's tails and artifacts do not carry it; lens A's REPORT says which.
+- **Lenses B and C read.** No cargo and no suite: they read the lane's tails, the diff, the fixtures, the pins and the reference at its pinned commit, and judge the package, the wire and the reference from them. A claim no tail carries is a finding for the captain (`VERDICT fix` with the missing run named), never a run of the reader's own.
+- **A plant runs its own test.** A lane whose concern is one test (a planted case, a fixture, a probe) runs only that test, `cargo test --test <name>` or the test's filter (`-- <name>`), and its REPORT names the command; the gate's full `cargo test --locked` is CI's on the PR.
+- **The brief names the lens that runs.** The captain's review brief says whether lens A runs the suite or a named run; a brief that says nothing means lens A reads the lane's tails like the other two. The stances under [stances/](../../tools/lanes/stances/) carry each lens's sentence.
 
 ## The bounded form
 
@@ -49,7 +58,7 @@ The tools: [chain-ensemble.sh](../../tools/lanes/chain-ensemble.sh) runs a lane,
 
 ## The cost rule
 
-The owner's condition is efficiency, and the cost here is signal and time: a D reader is a read, never a build, and short, because a build adds nothing to a reading and a slow reader delays the call; in B only the package-reader runs the hermetic suite, because a second run of the same suite yields the same bits and no new information, and the wire-and-reference reader reproduces the replays and the rows; when agreement is weak the captain adds readers with a new stance or new evidence before escalating. A is rare by definition.
+The owner's condition is efficiency, and the cost here is signal and time: a D reader is a read, never a build, and short, because a build adds nothing to a reading and a slow reader delays the call; in B the suite runs once, in the lane, and lens A re-runs it only when the brief names a run or the lane's artifacts do not carry it, because a second run of the same suite yields the same bits and no new information, and lenses B and C read the lane's tails with no cargo; when agreement is weak the captain adds readers with a new stance or new evidence before escalating. A is rare by definition.
 
 ## The honest limits
 
