@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use super::fixture::{j, Fixture};
 use super::manifest::{Manifest, MANIFEST};
+use super::owner::Owner;
 use super::worlds::{resolve, World};
 use crate::wire_support::{Bound, Req, BOUND, J};
 
@@ -69,9 +70,25 @@ impl Recorder {
     /// file carries `<bound>` in its place, so two recordings are
     /// byte-identical.
     pub(crate) async fn case(&mut self, name: &str, world: &str, req: Req) -> Recorded {
+        self.case_owned(name, world, req, None).await
+    }
+
+    /// [`Self::case`] with the owner's step around the request (#414 L5b,
+    /// `super::owner`), written into the fixture.
+    pub(crate) async fn case_owned(
+        &mut self,
+        name: &str,
+        world: &str,
+        req: Req,
+        owner: Option<Owner>,
+    ) -> Recorded {
         let file = format!("{:03}-{name}.json", self.seq + 1);
         let sent = resolve(&file, &req, &self.served);
-        let (resp, raw) = self.world(world).await.serve_raw(&sent).await;
+        let (resp, raw) = self
+            .world(world)
+            .await
+            .serve_owned(&sent, owner.as_ref())
+            .await;
         self.seq += 1;
         let mut recorded = req;
         for at in recorded.bind.keys().cloned().collect::<Vec<_>>() {
@@ -84,6 +101,7 @@ impl Recorder {
         let fixture = Fixture {
             world: world.to_string(),
             request: recorded,
+            owner,
             response: resp,
         };
         let mut text = serde_json::to_string_pretty(&fixture).unwrap();
@@ -179,8 +197,8 @@ fn gate_notes() -> Vec<(String, String)> {
         .collect();
     notes.extend([
         ("028-encrypt.noOrigin.json", "#411: a call without an Origin is the MetaNet Client's refusal in its words, 400 \"Origin header is required\" (bsv-desktop bcb6003 src/onWalletReady.ts:82-88), served by the typed carrier as VALIDATION_ERROR; \"Origin header required\" before."),
-        ("180-gate.encrypt.notListed.json", "#411: an Origin ALLOWED_ORIGINS does not name is refused in the client's denial, 400 ERR_PERMISSION_DENIED \"The user has denied the request for permission.\" (ts-stack edf6e03 WalletPermissionsManager.ts:1348-1349, served 400 by onWalletReady.ts's handlers), with no access-control-allow-origin, so a page cannot read it; under (b) no pending row is written (the scenario new-origin's step 1 under (b))."),
-        ("181-gate.options.notListed.json", "#411: the preflight of an origin not listed is refused before the CORS layer answers it (the preflight's gate), so a preflight is answered only for a listed origin."),
+        ("180-gate.encrypt.heldDenied.json", "#414 L5b (the switch; the design's section (2)): an Origin the seed (ALLOWED_ORIGINS) does not list is asked per power, not refused: the encrypt call's protocol [false,2,\"wire test\",\"<G>\"] has no row, so the call is held on its pending row and the owner denies it (the fixture's owner step, through the store module): 400 ERR_PERMISSION_DENIED \"Permission denied.\", the reference's per-request denial (denyPermission, ts-stack edf6e03 WalletPermissionsManager.ts:1189-1205), with the CORS echo, so the page reads it. Served from the `pages` world. Under (b) before: refused at once, gate.encrypt.notListed, with no echo."),
+        ("181-gate.options.unlisted.json", "#414 L5b: every preflight from an Origin that parses is answered and echoed, since a page's opening application/json call must pass its preflight to reach its prompt; the client answers every origin * (bsv-desktop b791cb2 electron/httpServer.ts:40-46). Under (b) before: refused before the CORS layer, gate.options.notListed."),
         ("182-gate.encrypt.originatorWithoutOrigin.json", "#411: the legacy Originator header never stands in for a missing Origin (the client falls back to it, onWalletReady.ts:59-68; the ruling's rule 1 and the scenario no-origin's step 1 do not): the no-origin refusal."),
         ("183-gate.encrypt.originatorDisagrees.json", "#411: an Originator header naming another host than the Origin is refused (the ruling's rule 1; BrowserGate.lean disagreeing_refused), 400 VALIDATION_ERROR naming both; the listed origin's page reads it (the CORS echo)."),
         ("184-gate.encrypt.originatorAgrees.json", "#411: an Originator naming the Origin's host is the call, as the reference's Node client sends Origin and Originator with one value (ts-stack edf6e03 HTTPWalletJSON.ts:314)."),
@@ -202,11 +220,32 @@ fn owner_notes() -> Vec<(String, String)> {
         ("193-owner.grant.json", "#414: POST /origins/grant {originator, kind, key}: the owner's direct grant of one power (the basket todo items, its canonical key [\"todo items\"]; the design's L5a under the owner's ruling W1 (a) of 2026-11-03) written through store::origin_grants, its row in section (4)'s keys and order (kind and key in place of L1's scope, source withdrawn), keyed by the hostname (owner.example) with the name as given kept (owner.example:8443); grantedAt is the clock's (a volatile key)."),
         ("194-owner.origins.granted.json", "#414: GET /origins lists the row 193 wrote, its kind and key (L5a)."),
         ("195-owner.revoke.json", "#414: POST /origins/revoke {originator} with no kind and no key stamps every live row of the host (its one basket row here, the reference's revokeAllForOriginator); revokedAt is the clock's, nothing is deleted."),
-        ("196-owner.answer.noSuchPending.json", "#414: POST /origins/answer naming a pending row the store does not hold is the module's refusal in its words, 400 VALIDATION_ERROR. The answer-once race (409 CONFLICT, \"pending request #N was already answered ...\") needs a held call's row, which only L5's gate writes; the router tests drive it (src/server/owner_door_tests.rs)."),
+        ("196-owner.answer.noSuchPending.json", "#414: POST /origins/answer naming a pending row the store does not hold is the module's refusal in its words, 400 VALIDATION_ERROR. From L5b a row whose caller disconnected is deleted, not answered (W4 (a)), and leaves no trace to tell it from an id never written, so the words widen: `no pending request #1 (a request is withdrawn when its caller disconnects)` (the design's racing-the-owner bullet). The answer-once race (409 CONFLICT) is the router tests' (src/server/owner_door_tests.rs)."),
         ("197-owner.origins.page.json", "#414: a call to the owner's routes carrying an Origin, a listed one included, is 403 ACCESS_DENIED naming the rule (owner_door::PAGE), with no CORS header: a page that could reach them could grant itself. The first fixture answering ACCESS_DENIED: it moves from UNPRODUCED to APP_CODES."),
         ("198-owner.options.page.json", "#414: a preflight to the owner's routes is refused, 403 ACCESS_DENIED (owner_door::PREFLIGHT), outside the doors' preflight gate and CORS layer, which never see these paths."),
         ("199-owner.origins.remoteHost.json", "#414: a Host beyond loopback (a page rebinding its name to the port) is 403 ACCESS_DENIED naming the Host, the inspector's rule on the daemon."),
         ("200-owner.origins.noBearer.json", "#414: under AUTH_TOKEN the owner's call without the bearer is the bearer's 401 UNAUTHORIZED (auth_middleware, unchanged), after the owner's admission."),
+    ]
+    .map(|(f, n)| (f.to_string(), n.to_string()))
+    .to_vec()
+    .into_iter()
+    .chain(switch_notes())
+    .collect()
+}
+
+/// The switch's fixtures (#414 L5b, the design's section (2) list), with
+/// their reasons.
+fn switch_notes() -> Vec<(String, String)> {
+    [
+        ("201-switch.listOutputs.heldGranted.json", "#414 L5b: a page the seed does not list (http://page.test) asks the basket [\"wire basket\"] (listing), holds no row, and is held on its pending row; the owner grants it (the owner step) and the call is the door's own 200, echoed. Served from the `pages` world."),
+        ("202-switch.listOutputs.revoked.json", "#414 L5b, W3: the page's basket row granted then revoked (the owner step's before): 400 ERR_PERMISSION_DENIED in the client's grouped denial (\"The user has denied the request for permission.\") at once, with the echo, and no pending row."),
+        ("203-switch.createSignature.expiredHeldGranted.json", "#414 L5b: the page's protocol row [false,2,\"wire renewal\",\"<G>\"] granted with an expiry long past: held as a renewal, granted by the owner, the door's signature (RFC 6979 under the fixed key, so the bytes are stable)."),
+        ("204-switch.getVersion.open.json", "#414 L5b, W15 ruled (i) by the owner on 2026-11-03: an open door answers a page with a parsed Origin and an agreeing originator, holding no row, with the echo; no row is read or written."),
+        ("205-switch.createSignature.levelZero.json", "#414 L5b, W15 (i): a protocol at security level 0 is open access (BRC-100 line 65, \"Level 0: No restrictions, open access\"; WPM:1505), answered to a page holding no row."),
+        ("206-switch.listOutputs.adminBasket.json", "#414 L5b: the basket default is admin-reserved (WPM:1589, 5620-5624), refused at once to a page in the reference's words, 400 ERR_PERMISSION_DENIED `Basket “default” is admin-only.`, with no row; a seed-listed originator is not refused it."),
+        ("207-switch.listOutputs.pendingLimit.json", "#414 L5b, W14: with two calls of the page held (the owner step's holding), the third is answered at once, 429 ERR_PERMISSION_PENDING_LIMIT with Retry-After 5 and the echo, writing no row. The first fixture answering 429 ERR_PERMISSION_PENDING_LIMIT: a new code of APP_CODES."),
+        ("208-switch.permission-audit.page.json", "#414 L5b: a host route answers the owner (no Origin, a loopback Host, the bearer under AUTH_TOKEN) or the seed, never a page's grant: no kind names it, so the page is refused 400 ERR_PERMISSION_DENIED at once, with the echo."),
+        ("209-switch.listOutputs.heldAtShutdown.json", "#414 L5b, W13: the server shuts down while the page's call is held (the owner step's shutdown): 503 WALLET_BRIDGE_UNAVAILABLE, \"WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down\", the MetaNet Client's code and text (electron/httpServer.ts:277-281, 336 at bsv-desktop b791cb2) in the port's carrier, the call's row withdrawn. Served from the `shutdown` world, whose server stays shut. The first fixture answering it: a new code of APP_CODES."),
     ]
     .map(|(f, n)| (f.to_string(), n.to_string()))
     .to_vec()

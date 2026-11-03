@@ -20,6 +20,9 @@ pub(crate) struct Fixture {
     /// The world the request is served from (see [`World::build`]).
     pub(crate) world: String,
     pub(crate) request: Req,
+    /// The owner's step around the request (#414 L5b, `super::owner`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) owner: Option<super::owner::Owner>,
     pub(crate) response: Resp,
 }
 

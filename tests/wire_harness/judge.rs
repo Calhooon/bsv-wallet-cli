@@ -59,7 +59,7 @@ const HOST_ROUTES: [&str; 9] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 13] = [
+pub(crate) const APP_CODES: [(u16, &str); 15] = [
     (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "ERROR"),
@@ -73,6 +73,8 @@ pub(crate) const APP_CODES: [(u16, &str); 13] = [
     (502, "SERVICE_ERROR"),
     (503, "STORE_BUSY"),
     (503, "HEADERS_UNAVAILABLE"),
+    (429, "ERR_PERMISSION_PENDING_LIMIT"),
+    (503, "WALLET_BRIDGE_UNAVAILABLE"),
 ];
 
 /// The router's own codes (`src/server/mod.rs`), by status; each must be
@@ -114,6 +116,7 @@ pub(crate) fn app_codes_in_source() -> BTreeSet<(u16, String)> {
             "FORBIDDEN" => 403,
             "NOT_FOUND" => 404,
             "CONFLICT" => 409,
+            "TOO_MANY_REQUESTS" => 429,
             "INTERNAL_SERVER_ERROR" => 500,
             "NOT_IMPLEMENTED" => 501,
             "BAD_GATEWAY" => 502,
@@ -121,11 +124,20 @@ pub(crate) fn app_codes_in_source() -> BTreeSet<(u16, String)> {
             other => panic!("StatusCode::{other}: not in the scanner's table"),
         }
     };
-    let mut found = BTreeSet::new();
-    for line in source.lines() {
-        let Some((_, rest)) = line.split_once("(StatusCode::") else {
+    // A tuple rustfmt wraps (`(\n StatusCode::NAME,\n "CODE",\n)`) reads as
+    // one written on its line: the whitespace after each `(` is dropped.
+    let mut joined = String::with_capacity(source.len());
+    let mut after_paren = false;
+    for c in source.chars() {
+        if after_paren && c.is_whitespace() {
             continue;
-        };
+        }
+        after_paren = c == '(';
+        joined.push(if c == '\n' { ' ' } else { c });
+    }
+    let mut found = BTreeSet::new();
+    for line in joined.split("(StatusCode::").skip(1) {
+        let rest = line;
         let (name, code) = rest
             .split_once(',')
             .unwrap_or_else(|| panic!("{path}: `{}` has no code", line.trim()));

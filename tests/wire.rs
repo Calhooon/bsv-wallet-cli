@@ -133,7 +133,9 @@ async fn replay(dir: &Path, report_text: bool) -> Result<Replay, String> {
             worlds.insert(fixture.world.clone(), World::build(&fixture.world).await);
         }
         let request = resolve(file, &fixture.request, &served);
-        let (got, body) = worlds[&fixture.world].serve_raw(&request).await;
+        let (got, body) = worlds[&fixture.world]
+            .serve_owned(&request, fixture.owner.as_ref())
+            .await;
         if let Some(body) = body {
             served.insert(file.clone(), body);
         }
@@ -613,6 +615,7 @@ fn a_fixture_of_an_unknown_world_fails_the_replay() {
     let fixture = Fixture {
         world: "nowhere".to_string(),
         request: get("/isAuthenticated"),
+        owner: None,
         response: Resp {
             status: 200,
             headers: BTreeMap::new(),
