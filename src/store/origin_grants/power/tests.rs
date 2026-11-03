@@ -326,3 +326,30 @@ fn the_prompt_names_the_power() {
         format!("reveal the fields email, name of certificates of type {TYPE} to verifier {G}")
     );
 }
+
+/// The certificate protocols the manager builds over a type (#414 L5b,
+/// `acquireCertificate` and `relinquishCertificate`, WPM:5387-5420): a
+/// base64 type holds what a protocol name may not, so the type is read by
+/// `validate_base64_string` (trimmed) and the key reads back, as an answer's
+/// grant parses it; a tail that is not a type's canonical text is refused.
+#[test]
+fn a_certificate_protocol_carries_its_type_and_reads_back() {
+    for (relinquish, words) in [
+        (false, "certificate acquisition"),
+        (true, "certificate relinquishment"),
+    ] {
+        let power = Power::certificate_protocol(relinquish, &format!(" {TYPE} ")).unwrap();
+        let key = format!(r#"[false,1,"{words} {TYPE}",""]"#);
+        assert_eq!(power.key(), key);
+        assert_eq!(Power::parse(Kind::Protocol, &key), Ok(power));
+    }
+    let bad = format!(r#"[false,1,"certificate acquisition {TYPE} x",""]"#);
+    assert!(matches!(
+        refused(Power::parse(Kind::Protocol, &bad)),
+        Refused::BadKey { .. }
+    ));
+    assert!(matches!(
+        refused(Power::certificate_protocol(false, "not base64!")),
+        Refused::BadKey { .. }
+    ));
+}
