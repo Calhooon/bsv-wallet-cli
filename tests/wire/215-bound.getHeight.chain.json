@@ -1,0 +1,37 @@
+{
+  "world": "pages",
+  "request": {
+    "method": "GET",
+    "path": "/getHeight",
+    "headers": {
+      "origin": "http://bound.test"
+    }
+  },
+  "owner": {
+    "spent": {
+      "times": 10,
+      "call": {
+        "method": "GET",
+        "path": "/getNetwork",
+        "headers": {
+          "origin": "http://bound.test"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 429,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://bound.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "retry-after": "1",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_RATE_LIMITED",
+      "message": "Too many calls to /getHeight from this site: the chain doors (getHeight, getHeaderForHeight, getNetwork, getVersion) answer 60 a minute per site, 10 at once; retry after 1 s."
+    }
+  }
+}

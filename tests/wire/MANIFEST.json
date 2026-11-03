@@ -213,7 +213,8 @@
     "211-probe.getVersion.again.json",
     "212-probe.createSignature.levelZero.json",
     "213-owner.origins.probes.json",
-    "214-bound.isAuthenticated.presence.json"
+    "214-bound.isAuthenticated.presence.json",
+    "215-bound.getHeight.chain.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -308,6 +309,7 @@
     "211-probe.getVersion.again.json": "#539: the same call again: the same answer; its row's count is 2 (fixture 213).",
     "212-probe.createSignature.levelZero.json": "#539: the page's createSignature under the level-0 protocol [0, \"wire probe\"]: 200 with the signature (RFC 6979 under the fixed key) and the echo, as 205; counted under the power [false,0,\"wire probe\",\"\"].",
     "213-owner.origins.probes.json": "#539: GET /origins from the owner's side lists the probe record beside the grants and the pending rows: two rows of probe.test, createSignature with its level-0 power (count 1) and getVersion (count 2), keyed by the hostname with the name as given kept; firstSeen and lastSeen are the clock's (volatile keys). The world's one revoked row (195) and no pending row: a probe is never a grant.",
-    "214-bound.isAuthenticated.presence.json": "#541, the open doors' bound: a page the seed does not list (http://bound.test) calls isAuthenticated once (the owner step's spent, answered 200) and again: a presence door answers a site once a minute (the served auth layer keeps no session), so the second is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 60 (the minute's rest rounded up) and the echo, retry-after exposed; no row, and the refused call is not counted in the probe record. The first fixture answering 429 ERR_RATE_LIMITED: a new code of APP_CODES."
+    "214-bound.isAuthenticated.presence.json": "#541, the open doors' bound: a page the seed does not list (http://bound.test) calls isAuthenticated once (the owner step's spent, answered 200) and again: a presence door answers a site once a minute (the served auth layer keeps no session), so the second is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 60 (the minute's rest rounded up) and the echo, retry-after exposed; no row, and the refused call is not counted in the probe record. The first fixture answering 429 ERR_RATE_LIMITED: a new code of APP_CODES.",
+    "215-bound.getHeight.chain.json": "#541: the chain doors (getHeight, getHeaderForHeight, getNetwork, getVersion) answer a site 60 a minute with a burst of 10, one bound for the four: ten getNetwork calls (the owner step's spent, each 200) spend the burst, and the page's getHeight is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 1 (one call a second) and the echo; nothing reaches the header service, no row is written and the refused call is not counted."
   }
 }

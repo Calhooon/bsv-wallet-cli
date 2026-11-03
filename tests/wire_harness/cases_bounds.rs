@@ -31,4 +31,13 @@ pub(crate) async fn record(r: &mut Recorder) {
         spent(1, presence),
     )
     .await;
+    // The chain doors, one bound for the four: ten getNetwork calls spend
+    // the burst, and getHeight is 429 for the second's rest.
+    r.case_owned(
+        "bound.getHeight.chain",
+        "pages",
+        get("/getHeight").header("origin", PAGE),
+        spent(10, get("/getNetwork").header("origin", PAGE)),
+    )
+    .await;
 }

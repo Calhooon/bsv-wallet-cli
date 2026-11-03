@@ -251,6 +251,7 @@ fn probe_notes() -> Vec<(String, String)> {
 fn bound_notes() -> Vec<(String, String)> {
     [
         ("214-bound.isAuthenticated.presence.json", "#541, the open doors' bound: a page the seed does not list (http://bound.test) calls isAuthenticated once (the owner step's spent, answered 200) and again: a presence door answers a site once a minute (the served auth layer keeps no session), so the second is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 60 (the minute's rest rounded up) and the echo, retry-after exposed; no row, and the refused call is not counted in the probe record. The first fixture answering 429 ERR_RATE_LIMITED: a new code of APP_CODES."),
+        ("215-bound.getHeight.chain.json", "#541: the chain doors (getHeight, getHeaderForHeight, getNetwork, getVersion) answer a site 60 a minute with a burst of 10, one bound for the four: ten getNetwork calls (the owner step's spent, each 200) spend the burst, and the page's getHeight is 429 ERR_RATE_LIMITED naming the door and the window, Retry-After 1 (one call a second) and the echo; nothing reaches the header service, no row is written and the refused call is not counted."),
     ]
     .map(|(f, n)| (f.to_string(), n.to_string()))
     .to_vec()
