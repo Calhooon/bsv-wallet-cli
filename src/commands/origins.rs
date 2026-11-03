@@ -11,10 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Result};
 use bsv_wallet_cli::store::origin_grants::{
     self as grants, expired, month_of, when, Answer, GrantRow, Granting, PendingRow, Refused,
-    Reply, Scope, Source,
+    Reply, Scope, Shown, Source,
 };
-use bsv_wallet_toolbox::StorageSqlx;
-use serde::Serialize;
 
 use crate::context::WalletContext;
 
@@ -209,113 +207,19 @@ fn pending_line(p: &PendingRow) -> String {
     parts.join("  ")
 }
 
-/// A grant row in `--json`, the keys of section (4) in its order.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GrantJson<'a> {
-    originator: &'a str,
-    raw_originator: &'a str,
-    scope: &'a str,
-    amount: Option<i64>,
-    spent_this_month: Option<i64>,
-    granted_at: i64,
-    expiry: i64,
-    revoked_at: Option<i64>,
-    source: &'a str,
-}
-
-/// A pending row in `--json`, the keys of section (4) in its order.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PendingJson<'a> {
-    pending_id: i64,
-    originator: &'a str,
-    raw_originator: &'a str,
-    scope: &'a str,
-    call: &'a str,
-    amount: Option<i64>,
-    renewal: bool,
-    first_seen: i64,
-    answered_at: Option<i64>,
-    answer: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct ListingJson<'a> {
-    grants: Vec<GrantJson<'a>>,
-    pending: Vec<PendingJson<'a>>,
-}
-
-/// Rows to print: grant rows with the month's tally of a spending row,
-/// and pending rows.
-#[derive(Default)]
-struct Shown {
-    grants: Vec<(GrantRow, Option<i64>)>,
-    pending: Vec<PendingRow>,
-}
-
-impl Shown {
-    /// `grants` with the month's tally read for each spending row.
-    async fn of(
-        storage: &StorageSqlx,
-        rows: Vec<GrantRow>,
-        pending: Vec<PendingRow>,
-        now: i64,
-    ) -> Result<Self> {
-        let mut grants = Vec::with_capacity(rows.len());
-        for g in rows {
-            let spent = match g.scope {
-                Scope::Spending => Some(grants::month_tally(storage, &g.originator, now).await?),
-                Scope::Wallet => None,
-            };
-            grants.push((g, spent));
-        }
-        Ok(Self { grants, pending })
+/// Print `shown`: its JSON, or one line a row.
+fn print(shown: &Shown, json: bool, now: i64) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&shown.json())?);
+        return Ok(());
     }
-
-    fn json(&self) -> ListingJson<'_> {
-        let grants = self.grants.iter().map(|(g, spent)| GrantJson {
-            originator: &g.originator,
-            raw_originator: &g.raw_originator,
-            scope: g.scope.as_str(),
-            amount: g.amount,
-            spent_this_month: *spent,
-            granted_at: g.granted_at,
-            expiry: g.expiry,
-            revoked_at: g.revoked_at,
-            source: g.source.as_str(),
-        });
-        let pending = self.pending.iter().map(|p| PendingJson {
-            pending_id: p.pending_id,
-            originator: &p.originator,
-            raw_originator: &p.raw_originator,
-            scope: p.scope.as_str(),
-            call: &p.call,
-            amount: p.amount,
-            renewal: p.renewal,
-            first_seen: p.first_seen,
-            answered_at: p.answered_at,
-            answer: p.answer.map(Answer::as_str),
-        });
-        ListingJson {
-            grants: grants.collect(),
-            pending: pending.collect(),
-        }
+    for (g, spent) in &shown.grants {
+        println!("{}", grant_line(g, *spent, now));
     }
-
-    fn print(&self, json: bool, now: i64) -> Result<()> {
-        if json {
-            println!("{}", serde_json::to_string_pretty(&self.json())?);
-            return Ok(());
-        }
-        for (g, spent) in &self.grants {
-            println!("{}", grant_line(g, *spent, now));
-        }
-        for p in &self.pending {
-            println!("{}", pending_line(p));
-        }
-        Ok(())
+    for p in &shown.pending {
+        println!("{}", pending_line(p));
     }
+    Ok(())
 }
 
 /// `bsv-wallet origins [--all]`: every grant row and the open pending
@@ -329,7 +233,7 @@ pub async fn list(ctx: &WalletContext, all: bool) -> Result<()> {
     let now = now()?;
     let rows = grants::listing(storage, all).await?;
     let shown = Shown::of(storage, rows.grants, rows.pending, now).await?;
-    shown.print(ctx.json_output, now)
+    print(&shown, ctx.json_output, now)
 }
 
 /// `bsv-wallet origin-grant`: a direct grant (`source` `owner`), or the
@@ -378,7 +282,7 @@ pub async fn grant(ctx: &WalletContext, asked: &Grant) -> Result<()> {
         }
     };
     let shown = Shown::of(storage, rows, pending, now).await?;
-    shown.print(ctx.json_output, now)
+    print(&shown, ctx.json_output, now)
 }
 
 /// The module's refusal of a spending grant without its amount, in the
@@ -409,7 +313,7 @@ pub async fn deny(ctx: &WalletContext, pending_id: i64) -> Result<()> {
         pending: vec![answered.pending],
         ..Shown::default()
     };
-    shown.print(ctx.json_output, now)
+    print(&shown, ctx.json_output, now)
 }
 
 /// `bsv-wallet origin-revoke <originator> [--scope]`: stamps the live
@@ -429,7 +333,7 @@ pub async fn revoke(ctx: &WalletContext, originator: &str, scope: Option<Scope>)
         bail!("{key} holds no live grant row{scoped}: nothing to revoke");
     }
     let shown = Shown::of(storage, rows, vec![], now).await?;
-    shown.print(ctx.json_output, now)
+    print(&shown, ctx.json_output, now)
 }
 
 #[cfg(test)]
