@@ -1,0 +1,123 @@
+{
+  "world": "spending",
+  "request": {
+    "method": "GET",
+    "path": "/origins",
+    "headers": {
+      "host": "127.0.0.1:3322"
+    }
+  },
+  "owner": {
+    "holding": [
+      {
+        "method": "POST",
+        "path": "/createAction",
+        "headers": {
+          "origin": "http://page.test"
+        },
+        "json": {
+          "description": "wire spending power",
+          "options": {
+            "acceptDelayedBroadcast": false,
+            "randomizeOutputs": false
+          },
+          "outputs": [
+            {
+              "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+              "outputDescription": "an output",
+              "satoshis": 29980
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "grants": [
+        {
+          "originator": "page.test",
+          "rawOriginator": "page.test",
+          "kind": "spending",
+          "key": "[]",
+          "amount": 100000,
+          "spentThisMonth": 89960,
+          "grantedAt": "<uint:10>",
+          "expiry": 0,
+          "revokedAt": null
+        }
+      ],
+      "pending": [
+        {
+          "pendingId": 1,
+          "originator": "page.test",
+          "rawOriginator": "page.test",
+          "kind": "spending",
+          "key": "[]",
+          "usage": null,
+          "asked": "spend 49980 satoshis",
+          "call": "/createAction",
+          "reason": "wire spending power",
+          "amount": 49980,
+          "renewal": false,
+          "firstSeen": "<uint:10>",
+          "answeredAt": "<uint:10>",
+          "answer": "once"
+        },
+        {
+          "pendingId": 2,
+          "originator": "page.test",
+          "rawOriginator": "page.test",
+          "kind": "spending",
+          "key": "[]",
+          "usage": null,
+          "asked": "spend 39980 satoshis",
+          "call": "/createAction",
+          "reason": "wire spending power",
+          "amount": 39980,
+          "renewal": false,
+          "firstSeen": "<uint:10>",
+          "answeredAt": "<uint:10>",
+          "answer": "grant"
+        },
+        {
+          "pendingId": 3,
+          "originator": "page.test",
+          "rawOriginator": "page.test",
+          "kind": "spending",
+          "key": "[]",
+          "usage": null,
+          "asked": "spend 29980 satoshis past this month's ceiling of 100000 (89960 spent)",
+          "call": "/createAction",
+          "reason": "wire spending power",
+          "amount": 29980,
+          "renewal": true,
+          "firstSeen": "<uint:10>",
+          "answeredAt": "<uint:10>",
+          "answer": "deny"
+        },
+        {
+          "pendingId": 4,
+          "originator": "page.test",
+          "rawOriginator": "page.test",
+          "kind": "spending",
+          "key": "[]",
+          "usage": null,
+          "asked": "spend 29980 satoshis past this month's ceiling of 100000 (89960 spent)",
+          "call": "/createAction",
+          "reason": "wire spending power",
+          "amount": 29980,
+          "renewal": true,
+          "firstSeen": "<uint:10>",
+          "answeredAt": null,
+          "answer": null
+        }
+      ],
+      "probes": []
+    }
+  }
+}

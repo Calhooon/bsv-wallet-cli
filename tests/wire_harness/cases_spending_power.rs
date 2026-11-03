@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::cases::exact;
 use super::owner::Owner;
-use super::recorder::{post, Recorder};
+use super::recorder::{get, post, Recorder};
 use super::worlds::P2PKH;
 
 /// A page the seed does not list.
@@ -78,4 +78,25 @@ pub(crate) async fn record(r: &mut Recorder) {
     assert!(denied.body.as_ref().is_some_and(
         |b| b.pointer("/message").and_then(|m| m.as_str()) == Some("Permission denied.")
     ));
+    // The renewal, as the owner reads it: the same spend held past the
+    // ceiling while the owner lists the rows (GET /origins): its row of
+    // kind spending, renewal true, the prompt naming the ceiling and the
+    // month's tally; the spending grant row with this month's spend.
+    let listed = r
+        .case_owned(
+            "spending.owner.origins.renewal",
+            "spending",
+            get("/origins")
+                .without("origin")
+                .header("host", "127.0.0.1:3322"),
+            Some(Owner {
+                holding: vec![spend(exact(2))],
+                ..Owner::default()
+            }),
+        )
+        .await;
+    assert!(listed
+        .body
+        .as_ref()
+        .is_some_and(|b| b.compact().contains(r#""renewal":true"#)));
 }
