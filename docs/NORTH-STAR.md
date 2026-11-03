@@ -63,7 +63,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | arch rule A2 allowlist | 14 files, 261 sites |  | `tests/arch_sql_sites.rs` ALLOWED |
 | arch rule A3 allowlist | 6 files, 48 sites |  | `tests/arch_explorer_sites.rs` ALLOWED |
 | arch rule A4 allowlist | 4 files, 4 sites |  | `tests/arch_no_unwrap.rs` ALLOWED |
-| arch rule A5 allowlist | 6 files, 13 sites |  | `tests/arch_no_prefix_errors.rs` ALLOWED |
+| arch rule A5 allowlist | 6 files, 13 sites | the rise of `src/store/origin_grants/power.rs` recorded, #414: 5 to 6 files, 8 to 13 sites (2026-11-03) | `tests/arch_no_prefix_errors.rs` ALLOWED |
 | arch rule A6 allowlist | 5 files, 10 sites |  | `tests/arch_spawn_sites.rs` ALLOWED |
 | arch rule A7 allowlist | 0 files, 0 sites |  | `tests/arch_config_env.rs` ALLOWED |
 | arch rule A8 allowlist | 0 files, 0 sites |  | `tests/arch_no_error_words.rs` ALLOWED |
