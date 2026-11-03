@@ -4,11 +4,13 @@
 Usage:
   changed_set.py --mode incremental|complete [--record <mutants.json>]
                  [--head <sha>] [--paths <file>] [--out <plan.json>]
-                 [--github-output <file>]
+                 [--github-output <file>] [--complete-shards <n>] [--max-shards <n>]
 
 The Nightly has two modes. A COMPLETE night mutates every floored file (the
-files of MUTANTS_FLOORS in .github/workflows/nightly.yml) in MUTANTS_SHARDS
-shards, the night of record cut at each pin (docs/RELEASING.md). An
+files of MUTANTS_FLOORS in .github/workflows/nightly.yml) in
+MUTANTS_SHARDS_COMPLETE shards (`--complete-shards`, twenty: the account's
+concurrent-job limit, #460), all of them at once, the night of record cut at
+each pin (docs/RELEASING.md). An
 INCREMENTAL night, the default on the captain's dispatch, mutates only the
 floored files whose figure may have moved since the last complete run, and
 the score carries every other file's figure from that run with its run and
@@ -66,11 +68,14 @@ the planted cases give). A path's effect on the set:
 The plan names the selection the shards pass `cargo test` (`--lib --bins`, a
 `--test` for every target under tests/ and a `--bench` for every bench, less
 the left-out list's entries: the oracle complete per floored file, the owner's
-23.9 word), the shard count (a complete night or a whole set: MUTANTS_SHARDS;
+23.9 word), the shard count, the matrix and the matrix's max-parallel. A
+complete night: `--complete-shards` shards (#460), every one at once (its
+max-parallel is its count: one wave). An incremental night keeps its own
+sizing (#462): a whole set `--max-shards` (MUTANTS_SHARDS_INCREMENTAL);
 otherwise one shard per PER_SHARD of the changed files' mutants, by the
-record's counts, and at least PARALLEL (the six a night runs at once) while
-there are that many mutants, at most MUTANTS_SHARDS) and the matrix. An
-empty changed set plans no shard: the night carries every figure and says so.
+record's counts, and at least PARALLEL while there are that many mutants, at
+most `--max-shards`; PARALLEL (six) at a time. An empty changed set plans no
+shard: the night carries every figure and says so.
 
 Exit 1, naming the fault, on a record without a mode or a base, a mode other
 than the two, or a git diff that fails.
@@ -92,9 +97,14 @@ ROOT = HERE.parent.parent
 RECORD = "docs/scoreboard/mutants.json"
 REACH = ".github/nightly/no-floored-reach.json"
 MODES = ("incremental", "complete")
-# The complete night's sizing: 923 mutants in fifty shards, 19 at most a shard.
+# An incremental night's sizing (#462): 19 mutants at most a shard, the
+# complete night's of the record then (923 in fifty); a complete night is
+# --complete-shards since #460, twenty, 47 a shard.
 PER_SHARD = 19
-# The matrix's max-parallel (#144): a small set still fills the six runners a
+# A complete night's count (#460): the account's concurrent-job limit, so
+# every shard starts in the opening wave.
+COMPLETE_SHARDS = 20
+# An incremental night's max-parallel (#144): a small set still fills the six runners a
 # night may hold, since a shard's wall clock is its baseline (about 11 minutes
 # in run 41516017523) and its mutants, not their count across shards.
 PARALLEL = 6
@@ -442,7 +452,7 @@ def mutant_count(record, file):
     return sum(entry.get(k, 0) for k in ("caught", "missed", "timeout", "unviable"))
 
 
-def plan(mode, record, paths, root, head, max_shards):
+def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_SHARDS):
     floored = no_floored.floored(root)
     base = last_complete(record)
     if mode == "complete":
@@ -455,10 +465,14 @@ def plan(mode, record, paths, root, head, max_shards):
     mutants = sum(mutant_count(record, f) for f in files)
     if not files:
         shards = 0
-    elif mode == "complete" or whole:
+    elif mode == "complete":
+        shards = complete_shards
+    elif whole:
         shards = max_shards
     else:
         shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD), min(PARALLEL, mutants)))
+    # One wave on a complete night (#460); six at a time on an incremental one (#144).
+    parallel = max(1, shards if mode == "complete" else min(PARALLEL, shards))
     return {
         "mode": mode,
         "base": base,
@@ -470,6 +484,7 @@ def plan(mode, record, paths, root, head, max_shards):
         "mutants": mutants,
         "shards": shards,
         "matrix": list(range(shards)),
+        "parallel": parallel,
         "selection": selection(root),
         "paths": [{"path": p, "files": sorted(f), "why": why} for p, f, why in found],
     }
@@ -484,13 +499,14 @@ def summary(p):
     lines.append(f"The last complete run: {p['base']['run']} at `{p['base']['commit']}`; the night's tree: `{p['head']}`.")
     lines.append("")
     if p["mode"] == "complete":
-        lines.append(f"A complete night: every floored file, {p['mutants']} mutants by the record, in {p['shards']} shards.")
+        lines.append(f"A complete night: every floored file, {p['mutants']} mutants by the record, in {p['shards']} shards, "
+                     f"{p['parallel']} at once.")
     elif not p["files"]:
         lines.append("No floored file changed and no test or dependency reaches one: the night mutates nothing "
                      "and carries every file's figure from the last complete run.")
     else:
         lines.append(f"Mutated: {', '.join(f'`{f}`' for f in p['files'])} ({p['mutants']} mutants by the record, "
-                     f"{p['shards']} shards){'; the whole set' if p['whole'] else ''}.")
+                     f"{p['shards']} shards, {p['parallel']} at once){'; the whole set' if p['whole'] else ''}.")
         lines.append(f"Carried from the last complete run: {', '.join(f'`{f}`' for f in p['carried']) or 'none'}.")
     reaching = [e for e in p["paths"] if e["files"]]
     if reaching:
@@ -511,7 +527,8 @@ def main(argv):
     ap.add_argument("--out", default=None)
     ap.add_argument("--github-output", default=None)
     ap.add_argument("--root", default=None)
-    ap.add_argument("--max-shards", type=int, default=50)
+    ap.add_argument("--max-shards", type=int, default=50, help="an incremental night's ceiling")
+    ap.add_argument("--complete-shards", type=int, default=COMPLETE_SHARDS, help="a complete night's count")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve() if args.root else ROOT
     if args.mode not in MODES:
@@ -529,7 +546,9 @@ def main(argv):
         if diff.returncode != 0:
             fault(f"git diff {base} {head} failed: {diff.stderr.strip()}")
         paths = [l for l in diff.stdout.splitlines() if l]
-    p = plan(args.mode, record, paths, root, head, args.max_shards)
+    if args.complete_shards < 1 or args.max_shards < 1:
+        fault(f"a shard count is at least 1 (--complete-shards {args.complete_shards}, --max-shards {args.max_shards})")
+    p = plan(args.mode, record, paths, root, head, args.max_shards, args.complete_shards)
     text = summary(p)
     sys.stdout.write(text)
     if args.out:
@@ -540,6 +559,7 @@ def main(argv):
             out.write(f"files={' '.join(p['files'])}\n")
             out.write(f"shards={p['shards']}\n")
             out.write(f"matrix={json.dumps(p['matrix'])}\n")
+            out.write(f"parallel={p['parallel']}\n")
             out.write(f"empty={'true' if not p['files'] else 'false'}\n")
             out.write(f"selection={p['selection']}\n")
     return 0

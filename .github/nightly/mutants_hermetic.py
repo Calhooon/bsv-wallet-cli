@@ -6,7 +6,7 @@ Usage:
   mutants_hermetic.py shard <survivors file> <shard> <shards> <names out> <regexes out>
   mutants_hermetic.py check-list <names file> <list file>
 
-`survivors` reads every `outcomes.json` under the directory (the fifty cargo
+`survivors` reads every `outcomes.json` under the directory (the plan's cargo
 shards') and writes each mutant name whose outcome is missed or timeout, once,
 sorted: the mutants no cargo test target caught. A caught mutant is caught (a
 second judgment adds nothing) and an unviable one does not build, so neither
