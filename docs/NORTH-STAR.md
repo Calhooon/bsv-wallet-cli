@@ -72,11 +72,11 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | mutation floor `src/server/handlers.rs` | 100 | 100.0 at f2976ef | `.github/workflows/nightly.yml` |
 | mutation floor `src/spend_gate.rs` | 90 | 90.8 at f2976ef | `.github/workflows/nightly.yml` |
 | mutation floor `src/tracker_host.rs` | 75 | 75.8 at f2976ef (6 equivalent) | `.github/workflows/nightly.yml` |
-| fuzz hours `beef_reader` | 1.0 | 12740944 executions, 795 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
-| fuzz hours `brc29_remittance` | 1.0 | 2353523 executions, 406 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
-| fuzz hours `served_json` | 1.0 | 161461156 executions, 6273 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
-| fuzz hours `explorer_bodies` | 1.0 | 14285 executions, 395 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
-| fuzz hours `allow_pending` | 1.0 | 103851079 executions, 3483 corpus, 0 crashes at f2976ef | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523 |
+| fuzz hours `beef_reader` | 0.2 | 2505352 executions, 589 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
+| fuzz hours `brc29_remittance` | 0.2 | 404211 executions, 361 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
+| fuzz hours `served_json` | 0.2 | 23107017 executions, 4001 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
+| fuzz hours `explorer_bodies` | 0.2 | 2116 executions, 173 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
+| fuzz hours `allow_pending` | 0.2 | 21315611 executions, 2755 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
 | bench baseline `ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | bench baseline `ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | e2e scenarios | 32 |  | `tests/e2e/scenarios/` |
