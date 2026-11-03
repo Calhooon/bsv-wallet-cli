@@ -317,8 +317,55 @@ pub enum Refused {
     KeyWithoutKind,
 }
 
+impl Refused {
+    /// The words of a key's, a kind's or an amount's refusal; `None` for
+    /// the rows' and the answers' refusals ([`std::fmt::Display`]'s).
+    fn power_words(&self) -> Option<String> {
+        Some(match self {
+            Self::AmountRequired => "a spending grant or call names its amount in satoshis".into(),
+            Self::AmountOnKind(kind) => format!(
+                "a {} row carries no amount; the ceiling is the spending kind's",
+                kind.as_str()
+            ),
+            Self::ExpiryOnSpending => {
+                "a spending grant never expires; its ceiling resets each UTC month".into()
+            }
+            Self::Negative => {
+                "an amount is satoshis, zero or more; an expiry is unix seconds, 0 for never".into()
+            }
+            Self::BadKey { kind, key, why } => {
+                format!("{key} is not a {} key: {why}", kind.as_str())
+            }
+            Self::NotCanonical {
+                kind,
+                key,
+                canonical,
+            } => format!(
+                "the {} key {key} is not in its canonical form; write it {canonical}",
+                kind.as_str()
+            ),
+            Self::AdminOnly(text) => text.clone(),
+            Self::LevelZero => "a protocol at security level 0 is open access (BRC-100: \"Level \
+                                0: No restrictions, open access\") and is never a grant row"
+                .into(),
+            Self::KeyRequired(kind) => format!(
+                "a {} grant names its key, the canonical text bsv-wallet origins prints (a \
+                 spending grant alone has none)",
+                kind.as_str()
+            ),
+            Self::KeyWithoutKind => {
+                "a key names a power of a kind: name the kind with the key".into()
+            }
+            _ => return None,
+        })
+    }
+}
+
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(words) = self.power_words() {
+            return f.write_str(&words);
+        }
         match self {
             Self::NotAnOriginator { name, rule } => write!(f, "{name:?} is not {rule}"),
             Self::Revoked {
@@ -349,46 +396,7 @@ impl std::fmt::Display for Refused {
                  request alone",
                 kind.as_str()
             ),
-            Self::AmountRequired => {
-                f.write_str("a spending grant or call names its amount in satoshis")
-            }
-            Self::AmountOnKind(kind) => write!(
-                f,
-                "a {} row carries no amount; the ceiling is the spending kind's",
-                kind.as_str()
-            ),
-            Self::ExpiryOnSpending => {
-                f.write_str("a spending grant never expires; its ceiling resets each UTC month")
-            }
-            Self::Negative => f.write_str(
-                "an amount is satoshis, zero or more; an expiry is unix seconds, 0 for never",
-            ),
-            Self::BadKey { kind, key, why } => {
-                write!(f, "{key} is not a {} key: {why}", kind.as_str())
-            }
-            Self::NotCanonical {
-                kind,
-                key,
-                canonical,
-            } => write!(
-                f,
-                "the {} key {key} is not in its canonical form; write it {canonical}",
-                kind.as_str()
-            ),
-            Self::AdminOnly(text) => f.write_str(text),
-            Self::LevelZero => f.write_str(
-                "a protocol at security level 0 is open access (BRC-100: \"Level 0: No \
-                 restrictions, open access\") and is never a grant row",
-            ),
-            Self::KeyRequired(kind) => write!(
-                f,
-                "a {} grant names its key, the canonical text bsv-wallet origins prints (a \
-                 spending grant alone has none)",
-                kind.as_str()
-            ),
-            Self::KeyWithoutKind => {
-                f.write_str("a key names a power of a kind: name the kind with the key")
-            }
+            _ => Ok(()),
         }
     }
 }

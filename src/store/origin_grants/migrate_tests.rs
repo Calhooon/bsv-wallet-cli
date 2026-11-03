@@ -2,10 +2,9 @@
 //! test, section (1)'s four cases), the month's tally and the stored
 //! words, on the fixture of `super::tests`.
 
-use std::sync::atomic::Ordering;
-
 use super::tests::{
-    commits_on, count, own_objects, toolbox_dump, wallet_db, NOV_FIRST, NOW, OCT_LAST,
+    a_second_ensure_writes_nothing, count, new_objects, own_objects, toolbox_dump, wallet_db,
+    NOV_FIRST, NOW, OCT_LAST,
 };
 use super::*;
 use crate::test_support::Markers;
@@ -38,16 +37,6 @@ async fn l1_store(storage: &StorageSqlx, rows: &[&str]) {
     }
 }
 
-/// The new shape's objects, `(type, name)`, sorted.
-fn new_objects() -> Vec<(String, String)> {
-    let mut objects: Vec<(String, String)> = OBJECTS
-        .iter()
-        .map(|(t, n)| ((*t).to_string(), (*n).to_string()))
-        .collect();
-    objects.sort();
-    objects
-}
-
 /// The grants' columns, in order.
 async fn grant_columns(storage: &StorageSqlx) -> Vec<String> {
     sqlx::query_scalar("SELECT name FROM pragma_table_info('origin_grants') ORDER BY cid")
@@ -74,6 +63,22 @@ const L1_ROWS: [&str; 4] = [
      ('app.example', '2026-11', 'aa', 2500, 1793697130)",
 ];
 
+/// The move's line for each of [`L1_ROWS`]' grant rows and its pending
+/// rows' count, in order.
+const L1_LINES: [&str; 4] = [
+    "origin grants: the L1 wallet grant for app.example (granted 2026-11-03T09:12Z) names \
+             no power under the four kinds and is not carried; the page is asked per power from \
+             the switch on",
+    "origin grants: the L1 spending grant for app.example (granted 2026-11-03T09:12Z, \
+             60000/month, revoked at 2026-11-03T09:13Z) is carried as the row app.example \
+             spending []",
+    "origin grants: the L1 spending grant for env.example (granted 2026-11-03T09:12Z, \
+             source env) has no ceiling and is not carried: a spending row names its month's \
+             ceiling",
+    "origin grants: 2 L1 pending requests are not carried: no server wrote one, and an \
+             answered one answers a scope that no longer exists",
+];
+
 #[tokio::test]
 async fn an_l1_store_with_no_rows_moves_and_a_second_ensure_sends_nothing() {
     let (_dir, storage) = wallet_db().await;
@@ -85,9 +90,7 @@ async fn an_l1_store_with_no_rows_moves_and_a_second_ensure_sends_nothing() {
     assert_eq!(own_objects(&storage).await, new_objects());
     let columns = grant_columns(&storage).await;
     assert!(columns.contains(&"kind".to_string()) && !columns.contains(&"scope".to_string()));
-    let commits = commits_on(&storage).await;
-    assert!(!ensure(&storage).await.unwrap(), "the second ensure wrote");
-    assert_eq!(commits.load(Ordering::SeqCst), 0, "the writer committed");
+    a_second_ensure_writes_nothing(&storage).await;
 }
 
 #[tokio::test]
@@ -137,22 +140,7 @@ async fn an_l1_store_keeps_its_ceilinged_spending_row_alone_and_logs_the_rest_by
         .into_iter()
         .map(|m| m.message.unwrap_or_default())
         .collect();
-    assert_eq!(
-        lines,
-        [
-            "origin grants: the L1 wallet grant for app.example (granted 2026-11-03T09:12Z) names \
-             no power under the four kinds and is not carried; the page is asked per power from \
-             the switch on",
-            "origin grants: the L1 spending grant for app.example (granted 2026-11-03T09:12Z, \
-             60000/month, revoked at 2026-11-03T09:13Z) is carried as the row app.example \
-             spending []",
-            "origin grants: the L1 spending grant for env.example (granted 2026-11-03T09:12Z, \
-             source env) has no ceiling and is not carried: a spending row names its month's \
-             ceiling",
-            "origin grants: 2 L1 pending requests are not carried: no server wrote one, and an \
-             answered one answers a scope that no longer exists",
-        ]
-    );
+    assert_eq!(lines, L1_LINES);
     let moved = markers.named("origin_grants_moved");
     assert_eq!(moved.len(), 1);
     assert_eq!(moved[0].level, Some(tracing::Level::WARN));

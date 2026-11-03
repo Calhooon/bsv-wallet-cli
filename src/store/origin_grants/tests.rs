@@ -145,6 +145,13 @@ pub(super) fn owner<'a>(
     }
 }
 
+/// [`every_kind`] but spending: the powers a call asks one open row of.
+pub(super) fn asked_kinds() -> Vec<(Power, Option<&'static str>, Option<i64>)> {
+    let mut kinds = every_kind();
+    kinds.retain(|(p, ..)| p.kind() != Kind::Spending);
+    kinds
+}
+
 /// A call of `power` at `usage` from `originator` to `call`; a spending
 /// power's call asks 2500 satoshis.
 pub(super) fn call<'a>(
@@ -242,25 +249,35 @@ async fn an_existing_wallet_db_gains_the_three_tables_and_nothing_else_moves() {
         before,
         "the toolbox's side moved"
     );
-    let mut expected: Vec<(String, String)> = OBJECTS
+    assert_eq!(own_objects(&storage).await, new_objects());
+}
+
+/// The new shape's objects, `(type, name)`, sorted.
+pub(super) fn new_objects() -> Vec<(String, String)> {
+    let mut objects: Vec<(String, String)> = OBJECTS
         .iter()
         .map(|(t, n)| ((*t).to_string(), (*n).to_string()))
         .collect();
-    expected.sort();
-    assert_eq!(own_objects(&storage).await, expected);
+    objects.sort();
+    objects
+}
+
+/// A second `ensure` on `storage` answers `false`, the writer commits
+/// nothing and the schema stands.
+pub(super) async fn a_second_ensure_writes_nothing(storage: &StorageSqlx) -> Arc<AtomicU64> {
+    let commits = commits_on(storage).await;
+    let schema = own_objects(storage).await;
+    assert!(!ensure(storage).await.unwrap(), "the second ensure wrote");
+    assert_eq!(commits.load(Ordering::SeqCst), 0, "the writer committed");
+    assert_eq!(own_objects(storage).await, schema);
+    commits
 }
 
 #[tokio::test]
 async fn a_second_ensure_sends_nothing_to_the_writer() {
     let (_dir, storage) = wallet_db().await;
     ensure(&storage).await.unwrap();
-    let commits = commits_on(&storage).await;
-    let schema = own_objects(&storage).await;
-
-    assert!(!ensure(&storage).await.unwrap(), "the second ensure wrote");
-
-    assert_eq!(commits.load(Ordering::SeqCst), 0, "the writer committed");
-    assert_eq!(own_objects(&storage).await, schema);
+    let commits = a_second_ensure_writes_nothing(&storage).await;
     // The hook counts: a write through the writer is seen.
     granted(&storage, "app.example", &basket("todo items")).await;
     assert!(commits.load(Ordering::SeqCst) > 0);
@@ -387,10 +404,7 @@ async fn the_expiry_reads_at_its_boundary_and_zero_never_expires() {
 #[tokio::test]
 async fn open_or_join_joins_per_originator_kind_and_key() {
     let (_dir, storage) = wallet_db().await;
-    for (power, usage, _) in every_kind()
-        .into_iter()
-        .filter(|(p, ..)| p.kind() != Kind::Spending)
-    {
+    for (power, usage, _) in asked_kinds() {
         let first = open_or_join(
             &storage,
             &call("new.example:5173", &power, usage, "/x"),
@@ -598,10 +612,7 @@ async fn each_kind_is_answered_into_its_own_power() {
 #[tokio::test]
 async fn once_answers_a_spend_alone() {
     let (_dir, storage) = wallet_db().await;
-    for (power, usage, _) in every_kind()
-        .into_iter()
-        .filter(|(p, ..)| p.kind() != Kind::Spending)
-    {
+    for (power, usage, _) in asked_kinds() {
         let row = ask(&storage, &call("app.example", &power, usage, "/x")).await;
         let e = say(&storage, row.pending_id, Answer::Once, None)
             .await

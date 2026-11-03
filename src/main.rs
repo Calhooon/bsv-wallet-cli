@@ -178,16 +178,14 @@ async fn main() -> Result<()> {
         }
         Commands::OriginGrant {
             target,
-            kind,
-            key,
+            power,
             amount,
             expires,
             once,
         } => {
             let asked = commands::origins::Grant::read(
                 target,
-                kind.as_deref(),
-                key.as_deref(),
+                power.named(),
                 *amount,
                 expires.as_deref(),
                 *once,
@@ -198,12 +196,8 @@ async fn main() -> Result<()> {
             let id = commands::origins::pending_id(pending)?;
             commands::origins::deny(&open().await?, id).await?;
         }
-        Commands::OriginRevoke {
-            originator,
-            kind,
-            key,
-        } => {
-            let reach = commands::origins::reach(kind.as_deref(), key.as_deref())?;
+        Commands::OriginRevoke { originator, power } => {
+            let reach = commands::origins::reach(power.named())?;
             commands::origins::revoke(&open().await?, originator, &reach).await?;
         }
         Commands::Sync { reconcile_spent } => {

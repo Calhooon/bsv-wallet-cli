@@ -245,8 +245,8 @@ async fn the_admitted_grant_and_listing_answer_the_shape() {
     let text = raw(&app, listing()).await;
     in_order(&text, &["\"grants\"", "\"pending\""]);
     in_order(&text, &PENDING_KEYS);
+    assert_eq!(grant_rows(&app).await, 1);
     let (_, _, listed) = answered(&app, listing()).await;
-    assert_eq!(listed["grants"].as_array().unwrap().len(), 1);
     assert_eq!(listed["pending"][0]["pendingId"], json!(id));
     assert_eq!(listed["pending"][0]["rawOriginator"], "new.example:5173");
     assert_eq!(
@@ -280,72 +280,87 @@ async fn the_admitted_answer_grants_and_the_revoke_stamps() {
     assert_eq!(refused(&body).1, why);
 }
 
+/// Malformed bodies, each with words its refusal names: `(path, body,
+/// words)`.
+const MALFORMED: [(&str, &str, &str); 14] = [
+    (
+        "/origins/answer",
+        r#"{"pendingId": 1, "answer": "maybe"}"#,
+        "unknown variant `maybe`",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "spending", "amount": 1, "expires": 5}"#,
+        "unknown field `expires`",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "wallet"}"#,
+        "unknown variant `wallet`",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "scope": "spending", "amount": 1}"#,
+        "unknown field `scope`",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "https://a.example", "kind": "spending", "amount": 1}"#,
+        "is not",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "spending"}"#,
+        "names its amount",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "protocol"}"#,
+        "a protocol grant names its key",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "basket", "key": "[\"Todo\"]"}"#,
+        r#"write it ["todo"]"#,
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "basket", "key": "[\"default\"]"}"#,
+        "Basket \u{201c}default\u{201d} is admin-only.",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "protocol", "key": "[false,0,\"todo list\",\"\"]"}"#,
+        "security level 0",
+    ),
+    (
+        "/origins/grant",
+        r#"{"originator": "a.example", "kind": "basket", "key": "[\"x\"]", "amount": 5}"#,
+        "a basket row carries no amount",
+    ),
+    (
+        "/origins/revoke",
+        r#"{"originator": "a.example", "key": "[\"todo\"]"}"#,
+        "name the kind with the key",
+    ),
+    (
+        "/origins/revoke",
+        r#"{"originator": "a.example", "kind": "basket", "key": "todo"}"#,
+        "a basket key is",
+    ),
+    (
+        "/origins/answer",
+        r#"{"pendingId": 99, "answer": "deny"}"#,
+        "no pending request #99",
+    ),
+];
+
 #[tokio::test]
 async fn a_malformed_body_is_refused_by_name() {
     let (_dir, wallet) = wallet().await;
     let app = router(&wallet, None);
-    for (path, body, words) in [
-        (
-            "/origins/answer",
-            json!({"pendingId": 1, "answer": "maybe"}),
-            "unknown variant `maybe`",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "spending", "amount": 1, "expires": 5}),
-            "unknown field `expires`",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "wallet"}),
-            "unknown variant `wallet`",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "scope": "spending", "amount": 1}),
-            "unknown field `scope`",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "https://a.example", "kind": "spending", "amount": 1}),
-            "is not",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "spending"}),
-            "names its amount",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "protocol"}),
-            "a protocol grant names its key",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "basket", "key": "[\"Todo\"]"}),
-            "write it [\"todo\"]",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "basket", "key": "[\"default\"]"}),
-            "Basket \u{201c}default\u{201d} is admin-only.",
-        ),
-        (
-            "/origins/grant",
-            json!({"originator": "a.example", "kind": "protocol", "key": "[false,0,\"todo list\",\"\"]"}),
-            "security level 0",
-        ),
-        (
-            "/origins/revoke",
-            json!({"originator": "a.example", "key": "[\"todo\"]"}),
-            "name the kind with the key",
-        ),
-        (
-            "/origins/answer",
-            json!({"pendingId": 99, "answer": "deny"}),
-            "no pending request #99",
-        ),
-    ] {
+    for (path, body, words) in MALFORMED {
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
         let (status, _, answer) = answered(&app, call("POST", path, &body, &[])).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path} {body}");
         let (code, message) = refused(&answer);
@@ -432,8 +447,7 @@ async fn the_routes_grant_list_and_revoke_a_power_of_each_kind() {
             (&json!(kind), &json!(key.clone().unwrap_or("[]".into())))
         );
     }
-    let (_, _, listed) = answered(&app, listing()).await;
-    assert_eq!(listed["grants"].as_array().unwrap().len(), 5);
+    assert_eq!(grant_rows(&app).await, 5);
 
     // One power's row, then a kind's rows, then every row.
     let one = json!({"originator": "app.example", "kind": "basket", "key": "[\"todo items\"]"});
@@ -519,6 +533,12 @@ const PENDING_KEYS: [&str; 14] = [
     "\"answeredAt\"",
     "\"answer\"",
 ];
+
+/// How many grant rows `GET /origins` lists.
+async fn grant_rows(app: &Router) -> usize {
+    let (_, _, listed) = answered(app, listing()).await;
+    listed["grants"].as_array().map_or(0, Vec::len)
+}
 
 /// The body's text as served.
 async fn raw(app: &Router, request: Request) -> String {

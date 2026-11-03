@@ -131,7 +131,7 @@ fn the_pending_lines_are_section_fours_with_their_seen_time() {
 
 #[test]
 fn origin_grant_reads_a_pending_id_or_an_originator_and_a_power() {
-    let answer = Grant::read("#7", None, None, None, None, true).unwrap();
+    let answer = Grant::read("#7", (None, None), None, None, true).unwrap();
     assert_eq!(
         answer,
         Grant::Answer {
@@ -141,19 +141,21 @@ fn origin_grant_reads_a_pending_id_or_an_originator_and_a_power() {
             expires: None
         }
     );
-    assert_eq!(Grant::read("7", None, None, None, None, false).unwrap(), {
-        Grant::Answer {
-            pending_id: 7,
-            once: false,
-            amount: None,
-            expires: None,
+    assert_eq!(
+        Grant::read("7", (None, None), None, None, false).unwrap(),
+        {
+            Grant::Answer {
+                pending_id: 7,
+                once: false,
+                amount: None,
+                expires: None,
+            }
         }
-    });
+    );
     let key = r#"[false,2,"todo list","self"]"#;
     let direct = Grant::read(
         "app.example:8443",
-        Some("protocol"),
-        Some(key),
+        (Some("protocol"), Some(key)),
         None,
         Some("3600"),
         false,
@@ -169,8 +171,7 @@ fn origin_grant_reads_a_pending_id_or_an_originator_and_a_power() {
     );
     let spending = Grant::read(
         "app.example",
-        Some("spending"),
-        None,
+        (Some("spending"), None),
         Some(60_000),
         None,
         false,
@@ -190,16 +191,15 @@ fn origin_grant_reads_a_pending_id_or_an_originator_and_a_power() {
 #[test]
 fn origin_grant_refuses_its_flags_out_of_place_by_name() {
     let refused = |r: Result<Grant>| r.unwrap_err().to_string();
-    let spending = Grant::read("app.example", Some("spending"), None, None, None, false);
+    let spending = Grant::read("app.example", (Some("spending"), None), None, None, false);
     assert_eq!(refused(spending), AMOUNT_NEEDED);
-    let kindless = Grant::read("app.example", None, None, None, None, false);
+    let kindless = Grant::read("app.example", (None, None), None, None, false);
     assert_eq!(refused(kindless), KIND_NEEDED);
-    let keyless = Grant::read("app.example", Some("basket"), None, None, None, false);
+    let keyless = Grant::read("app.example", (Some("basket"), None), None, None, false);
     assert!(refused(keyless).starts_with("a basket grant names its key"));
     let loose = Grant::read(
         "app.example",
-        Some("basket"),
-        Some(r#"[ "x"]"#),
+        (Some("basket"), Some(r#"[ "x"]"#)),
         None,
         None,
         false,
@@ -208,15 +208,14 @@ fn origin_grant_refuses_its_flags_out_of_place_by_name() {
         refused(loose),
         r#"the basket key [ "x"] is not in its canonical form; write it ["x"]"#
     );
-    let once = Grant::read("app.example", Some("spending"), None, None, None, true);
+    let once = Grant::read("app.example", (Some("spending"), None), None, None, true);
     assert!(refused(once).starts_with("--once answers a pending spending request"));
-    let kinded = Grant::read("#7", Some("basket"), None, None, None, false);
+    let kinded = Grant::read("#7", (Some("basket"), None), None, None, false);
     assert!(refused(kinded).contains("--kind and --key are for a direct grant"));
     for word in ["0", "-1", "soon"] {
         let e = refused(Grant::read(
             "app.example",
-            None,
-            None,
+            (None, None),
             None,
             Some(word),
             false,
@@ -228,14 +227,17 @@ fn origin_grant_refuses_its_flags_out_of_place_by_name() {
 
 #[test]
 fn origin_revoke_reads_its_reach() {
-    assert_eq!(reach(None, None).unwrap(), Reach::Every);
+    assert_eq!(reach((None, None)).unwrap(), Reach::Every);
     assert_eq!(
-        reach(Some("basket"), None).unwrap(),
+        reach((Some("basket"), None)).unwrap(),
         Reach::Kind(Kind::Basket)
     );
-    let one = reach(Some("basket"), Some(r#"["todo items"]"#)).unwrap();
+    let one = reach((Some("basket"), Some(r#"["todo items"]"#))).unwrap();
     assert_eq!(one, Reach::Power(todo_items()));
-    let e = reach(Some("basket"), Some(r#"["Todo Items"]"#)).unwrap_err();
+    let e = reach((Some("basket"), Some(r#"["Todo Items"]"#))).unwrap_err();
     assert!(e.to_string().contains(r#"write it ["todo items"]"#), "{e}");
-    assert!(reach(Some("wallet"), None).is_err(), "the withdrawn scope");
+    assert!(
+        reach((Some("wallet"), None)).is_err(),
+        "the withdrawn scope"
+    );
 }

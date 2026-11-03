@@ -2,7 +2,7 @@
 // terminal: `<seat-dir>:<port>` is a placeholder there, not an HTML tag.
 #![allow(rustdoc::invalid_html_tags)]
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "bsv-wallet", about = "Self-contained BSV wallet", version)]
@@ -33,6 +33,29 @@ pub struct Cli {
 
 /// The four kinds a grant row names (#414, the design's W1 (a)).
 const KINDS: [&str; 4] = ["protocol", "basket", "certificate", "spending"];
+
+/// A power as `origin-grant` and `origin-revoke` name it: a kind, and the
+/// key of one power of it.
+#[derive(Args, Debug, Clone)]
+pub struct PowerArgs {
+    /// The power's kind (a direct grant names one; a pending request names
+    /// its own)
+    #[arg(long, value_name = "KIND", value_parser = KINDS)]
+    pub kind: Option<String>,
+    /// The power's key, the canonical text `origins` prints (copy it from
+    /// a listing): `[false,2,"todo list","self"]`, `["todo items"]`; a
+    /// grant names it but for spending
+    #[arg(long, value_name = "KEY", requires = "kind")]
+    pub key: Option<String>,
+}
+
+impl PowerArgs {
+    /// The kind's word and the key, as given.
+    #[must_use]
+    pub fn named(&self) -> (Option<&str>, Option<&str>) {
+        (self.kind.as_deref(), self.key.as_deref())
+    }
+}
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -199,15 +222,8 @@ pub enum Commands {
         /// pending request's id (`#7`, or `7`: a shell reads an unquoted `#`
         /// as a comment)
         target: String,
-        /// The kind of a direct grant's power; a pending request names its
-        /// own
-        #[arg(long, value_name = "KIND", value_parser = KINDS)]
-        kind: Option<String>,
-        /// The power's key, the canonical text `origins` prints (copy it
-        /// from a listing): `[false,2,"todo list","self"]`, `["todo
-        /// items"]`; required but for spending
-        #[arg(long, value_name = "KEY", requires = "kind")]
-        key: Option<String>,
+        #[command(flatten)]
+        power: PowerArgs,
         /// The spending kind's ceiling in satoshis a calendar month (UTC);
         /// required for spending unless --once
         #[arg(long, value_name = "SATS", conflicts_with = "once")]
@@ -231,12 +247,10 @@ pub enum Commands {
     OriginRevoke {
         /// An originator in the reference's form; any port of its host
         originator: String,
-        /// Revoke this kind's rows alone
-        #[arg(long, value_name = "KIND", value_parser = KINDS)]
-        kind: Option<String>,
-        /// Revoke this power's row alone, its canonical key
-        #[arg(long, value_name = "KEY", requires = "kind")]
-        key: Option<String>,
+        // `--kind` alone revokes the kind's rows; with `--key`, the one
+        // power's row.
+        #[command(flatten)]
+        power: PowerArgs,
     },
     /// Break-glass chain scan: ask an explorer for the unspent outputs at our deposit
     /// address and internalize new ones
