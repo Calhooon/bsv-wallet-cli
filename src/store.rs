@@ -461,13 +461,16 @@ mod tests {
     /// D2 of the #44 delta review: no command opens the wallet file beside
     /// its context's store (`reconcile-outputs` once kept its own pool). A
     /// command opens the file itself only when it carries no Wallet at all:
-    /// `init` (it creates the file), `tick` (a Monitor alone) and `ui` (the
-    /// read-only inspector), each exactly once. Every file in
+    /// `init` (it creates the file) and `tick` (a Monitor alone), each
+    /// exactly once, and `ui` (the inspector) twice: its store, the one
+    /// writer its origins view writes through (#414), and its reads' pool,
+    /// opened read-only so no SQL writes through it (#440). Every file in
     /// `src/commands/` is read, so a new command is held to the rule too.
     #[test]
     fn no_command_opens_the_wallet_file_beside_its_store() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
         let alone = ["init.rs", "tick.rs", "ui.rs"];
+        let opens = |name: &str| if name == "ui.rs" { 2 } else { 1 };
         let mut read = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -478,8 +481,13 @@ mod tests {
             let src = std::fs::read_to_string(&path).unwrap();
             read += 1;
             if alone.contains(&name.as_str()) {
-                assert_eq!(direct_opens(&src), 1, "{name} opens its file once");
+                assert_eq!(direct_opens(&src), opens(&name), "{name} opens its file");
                 let prod = production(&src);
+                if name == "ui.rs" {
+                    assert_eq!(prod.matches("StorageSqlx::open(").count(), 1);
+                    assert_eq!(prod.matches(".read_only(true)").count(), 1);
+                    assert_eq!(prod.matches(".connect_with(").count(), 1);
+                }
                 for wallet in ["WalletContext", "Wallet::new(", "open_shared("] {
                     assert!(!prod.contains(wallet), "{name} carries no Wallet");
                 }

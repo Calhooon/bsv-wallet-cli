@@ -7,43 +7,88 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use bsv_wallet_toolbox::StorageSqlx;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::{Column, Row, TypeInfo};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 
 use crate::server::AllowedOrigins;
 
+mod origins;
+
 const HTML: &str = include_str!("../ui/index.html");
 
 struct AppState {
+    /// Every read, `/api/query`'s among them: opened read-only
+    /// ([`read_only_pool`]), so the database refuses a write whatever the
+    /// SQL's text.
     pool: SqlitePool,
+    /// The store the origins view writes through (`store::origin_grants`,
+    /// the module's own transactions on the store's writer).
+    store: StorageSqlx,
     db_path: String,
 }
 
-pub async fn run(db_path: &str, port: u16, allowed: AllowedOrigins) -> Result<()> {
-    let url = format!("sqlite:{db_path}");
-    let pool = SqlitePool::connect(&url).await?;
-    let state = Arc::new(AppState {
+/// The pool every read of the inspector uses (#440): each connection is
+/// opened with `SQLITE_OPEN_READONLY` (`SqliteConnectOptions::read_only`),
+/// so SQLite refuses any write (`attempt to write a readonly database`),
+/// whatever the statement: a second statement after a `;`, a CTE before an
+/// `INSERT`, a `PRAGMA` that writes. The open flag, not `PRAGMA query_only
+/// = ON`, because sqlx runs every statement of a query's text and
+/// `PRAGMA query_only = OFF` is itself a statement a query could send,
+/// leaving its pooled connection writable; a connection's open flags no
+/// SQL changes, and an `ATTACH` inherits them.
+async fn read_only_pool(db_path: &str) -> Result<SqlitePool> {
+    let reads = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true)
+        .busy_timeout(Duration::from_secs(5));
+    Ok(SqlitePoolOptions::new().connect_with(reads).await?)
+}
+
+/// The inspector's state over the wallet's file: the store's handle for
+/// the origins view's writes, opened first (its writer sets WAL), then
+/// the read-only pool. A missing file is refused, never created.
+async fn open(db_path: &str) -> Result<AppState> {
+    if !std::path::Path::new(db_path).is_file() {
+        anyhow::bail!("no wallet database at {db_path}: the inspector opens an existing one");
+    }
+    let store = StorageSqlx::open(db_path).await?;
+    let pool = read_only_pool(db_path).await?;
+    Ok(AppState {
         pool,
+        store,
         db_path: db_path.to_string(),
-    });
+    })
+}
 
-    let app = Router::new()
-        .route("/", get(index))
-        .route("/api/tables", get(list_tables))
-        .route("/api/tables/{name}", get(table_data))
-        .route("/api/tables/{name}/schema", get(table_schema))
-        .route("/api/stats", get(stats))
-        .route("/api/query", post(query))
-        .layer(middleware::from_fn_with_state(allowed, same_origin))
-        .with_state(state);
-
+pub async fn run(db_path: &str, port: u16, allowed: AllowedOrigins) -> Result<()> {
+    let app = router(Arc::new(open(db_path).await?), allowed);
     let addr = format!("127.0.0.1:{port}");
     println!("Wallet Inspector running at http://{addr}");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// The inspector's routes, every one behind its admission
+/// ([`inspector_word`]); the origins view's writes behind its own page's
+/// too (`origins::write_refusal`).
+fn router(state: Arc<AppState>, allowed: AllowedOrigins) -> Router {
+    Router::new()
+        .route("/", get(index))
+        .route("/origins", get(index))
+        .route("/api/tables", get(list_tables))
+        .route("/api/tables/{name}", get(table_data))
+        .route("/api/tables/{name}/schema", get(table_schema))
+        .route("/api/stats", get(stats))
+        .route("/api/query", post(query))
+        .merge(origins::routes())
+        .layer(middleware::from_fn_with_state(allowed, same_origin))
+        .with_state(state)
 }
 
 /// The inspector's browser gate (#411), the served doors' rule on its own
@@ -389,14 +434,19 @@ struct QueryRes {
 async fn query(State(state): State<Arc<AppState>>, Json(req): Json<QueryReq>) -> Json<QueryRes> {
     let sql = req.sql.trim();
 
-    // Safety: only allow SELECT and PRAGMA
+    // A courtesy message, never the guard: the pool is read-only
+    // (`read_only_pool`, #440), so a write the prefix lets through (a `;`
+    // and a second statement, a CTE before an INSERT, a PRAGMA that
+    // writes) is refused by the database itself.
     let upper = sql.to_uppercase();
-    if !upper.starts_with("SELECT") && !upper.starts_with("PRAGMA") && !upper.starts_with("EXPLAIN")
+    if !["SELECT", "WITH", "PRAGMA", "EXPLAIN"]
+        .iter()
+        .any(|p| upper.starts_with(p))
     {
         return Json(QueryRes {
             columns: vec![],
             rows: vec![],
-            error: Some("Only SELECT, PRAGMA, and EXPLAIN queries are allowed".to_string()),
+            error: Some("Only SELECT, WITH, PRAGMA, and EXPLAIN queries are allowed".to_string()),
         });
     }
 
@@ -536,52 +586,4 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn headers(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        for (k, v) in pairs {
-            h.insert(k.clone(), v.parse().unwrap());
-        }
-        h
-    }
-
-    /// #411: the inspector's own page and the origins whose originator is
-    /// listed (any port of a listed host) are admitted;
-    /// a GET without an Origin is its own page's read; anything else, or a
-    /// Host that is not loopback, is refused.
-    #[test]
-    fn the_inspector_admits_its_own_origin_and_the_listed() {
-        let listed = AllowedOrigins::new(["app.example"]).expect("an originator");
-        let host = (header::HOST, "localhost:9321");
-        let ok = |m: Method, h: HeaderMap| inspector_word(&m, &h, &listed).is_ok();
-        assert!(ok(Method::GET, headers(std::slice::from_ref(&host))));
-        assert!(ok(
-            Method::HEAD,
-            headers(&[(header::HOST, "127.0.0.1:9321")])
-        ));
-        assert!(ok(
-            Method::POST,
-            headers(&[host.clone(), (header::ORIGIN, "http://localhost:9321")])
-        ));
-        assert!(ok(
-            Method::POST,
-            headers(&[host.clone(), (header::ORIGIN, "https://app.example:5173")])
-        ));
-        assert!(!ok(Method::POST, headers(std::slice::from_ref(&host))));
-        assert!(!ok(
-            Method::POST,
-            headers(&[host.clone(), (header::ORIGIN, "http://evil.example")])
-        ));
-        assert!(!ok(
-            Method::GET,
-            headers(&[host.clone(), (header::ORIGIN, "http://127.0.0.1:9321")])
-        ));
-        assert!(!ok(
-            Method::GET,
-            headers(&[(header::HOST, "evil.example:9321")])
-        ));
-        assert!(!ok(Method::GET, headers(&[])));
-    }
-}
+mod tests;

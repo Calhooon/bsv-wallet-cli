@@ -23,8 +23,8 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/commands/ui.rs",
-        3,
-        "the inspector's read-only statement check (SELECT, PRAGMA, EXPLAIN), not an error",
+        1,
+        "the inspector's courtesy statement check (SELECT, WITH, PRAGMA, EXPLAIN; the read-only pool is the guard, #440), not an error",
     ),
     (
         "src/gift/covenant.rs",
