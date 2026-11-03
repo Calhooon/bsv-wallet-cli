@@ -748,7 +748,8 @@ pub(crate) fn resolve(file: &str, req: &Req, served: &HashMap<String, J>) -> Req
 /// rollback journal and a held lock keeps every reader out.
 const DOTFILE: &str = "unix-dotfile";
 
-/// Busy at once, the same bytes: the lock is never released, so SQLite's 5,000 ms wait never succeeds.
+/// Busy at once, the same bytes: the lock is never released, so SQLite's
+/// 5,000 ms wait never succeeds.
 async fn answer_busy_at_once(storage: &StorageSqlx) {
     for pool in [storage.pool(), storage.writer()] {
         let options = pool.connect_options().as_ref().clone();
