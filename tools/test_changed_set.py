@@ -28,6 +28,8 @@ import unittest
 sys.dont_write_bytecode = True  # nothing in the tree
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), ".github", "nightly", "changed_set.py")
+sys.path.insert(0, os.path.dirname(SCRIPT))
+import changed_set  # noqa: E402  (the named limit and the six, #496)
 
 NIGHTLY = """jobs:
   mutants-score:
@@ -237,15 +239,21 @@ class Case(unittest.TestCase):
         self.assertEqual((p["files"], p["shards"]), (["src/a.rs"], 6))
 
     def test_a_complete_night_mutates_every_file(self):
-        # Twenty shards, all twenty at once (#460): the account's concurrent-job limit.
+        # Twenty shards (#460), the account's concurrent-job limit, fourteen at a
+        # time (#496): a PR run keeps its six runners.
         p, out = self.planned("README.md", mode="complete")
         self.assertEqual((p["files"], p["shards"], p["carried"]), (["src/a.rs", "src/b.rs", "src/c.rs"], 20, []))
-        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 20))
-        self.assertIn("in 20 shards, 20 at once.", out)
+        self.assertEqual((p["matrix"], p["parallel"]), (list(range(20)), 14))
+        self.assertIn("in 20 shards, 14 at once (2 waves: 14, then 6).", out)
+        self.assertEqual(changed_set.COMPLETE_PARALLEL, changed_set.ACCOUNT_RUNNERS - changed_set.PR_RUN_JOBS)
         # The count is the workflow's MUTANTS_SHARDS_COMPLETE, passed in; the
-        # incremental ceiling does not touch it.
+        # incremental ceiling does not touch it; a smaller plan runs its count.
         p, _ = self.planned(mode="complete", extra=("--complete-shards", "12", "--max-shards", "50"))
         self.assertEqual((p["shards"], p["parallel"]), (12, 12))
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "14"))
+        self.assertEqual((p["shards"], p["parallel"]), (14, 14))
+        p, _ = self.planned(mode="complete", extra=("--complete-shards", "30"))
+        self.assertEqual((p["shards"], p["parallel"]), (30, 14))
 
     def test_an_incremental_night_keeps_its_own_sizing_six_at_a_time(self):
         p, _ = self.planned("src/a.rs", extra=("--complete-shards", "20"))
