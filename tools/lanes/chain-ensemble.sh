@@ -16,6 +16,11 @@
 # Exit 0 on a merge consensus, 3 otherwise (a fix consensus, a split, a lane not done, a
 # malformed review). Never merges anything.
 #
+# The reads' scope (docs/lanes/ENSEMBLE.md, #452): one suite run per ensemble, the lane's, whose
+# tails and artifacts the reviewers read. Lens A (review-package) re-runs it only when <review-A>
+# names a run or the lane's artifacts do not carry it; lenses B and C (review-wire-reference,
+# review-adversarial) run no cargo and no suite. The stance prepended to each brief says so.
+#
 # $CCA is the runner (default cca) and $GH the GitHub client (default gh); a dry run stubs both
 # with tools/lanes/stub-runner.sh. zsh -f: the caller's startup files are not read (the
 # environment is inherited); a runner's stdin is /dev/null. $OUT_DIR keeps the outputs: each
