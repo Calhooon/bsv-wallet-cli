@@ -105,8 +105,9 @@ module.exports = {
 
       // ─── The origins view's API (#414) ───
       // The read creates the module's tables (its `ensure`); the row is then
-      // seeded beside the wallet's own writer, as the switch's gate (L5)
-      // will write it.
+      // seeded beside the wallet's own writer, as the switch's gate (L5b)
+      // will write it: one power, the basket `browser gate` asked by a
+      // listing (#414, the four kinds).
       const originsResp = await fetch(`http://localhost:${UI_PORT}/api/origins`);
       assert(originsResp.ok, `/api/origins should return 200, got ${originsResp.status}`);
       const originsBefore = await originsResp.json();
@@ -116,8 +117,8 @@ module.exports = {
       const sql = query => execFileSync('sqlite3', ['-batch', '-bail', '-cmd', '.timeout 5000', db, query],
         { encoding: 'utf8', timeout: 15000 }).trim();
       const pendingId = Number(sql(
-        "INSERT INTO origin_pending (originator, raw_originator, scope, call, renewal, first_seen) " +
-        "VALUES ('seeded.example', 'seeded.example:5173', 'wallet', '/listOutputs', 0, strftime('%s','now')); " +
+        "INSERT INTO origin_pending (originator, raw_originator, kind, key, usage, call, renewal, first_seen) " +
+        "VALUES ('seeded.example', 'seeded.example:5173', 'basket', '[\"browser gate\"]', 'listing', '/listOutputs', 0, strftime('%s','now')); " +
         'SELECT last_insert_rowid();'));
       assert(pendingId > 0, `the seeded pending row has an id, got ${pendingId}`);
 
@@ -198,8 +199,9 @@ module.exports = {
         const row = page.locator(`#originsPending tr[data-pending-id="${pendingId}"]`);
         await row.waitFor({ timeout: 5000 });
         const rowText = await row.textContent();
-        assert(rowText.includes('seeded.example:5173') && rowText.includes('/listOutputs'),
-          `the pending row shows its originator with its port and its call, got '${rowText}'`);
+        assert(rowText.includes('seeded.example:5173') && rowText.includes('/listOutputs') &&
+          rowText.includes('basket') && rowText.includes('list the basket "browser gate"'),
+          `the pending row shows its originator with its port, its kind, the power it asks and its call, got '${rowText}'`);
         await row.locator('button', { hasText: /^Grant$/ }).click();
         await page.locator('#originsGrants tr[data-originator="seeded.example"]').waitFor({ timeout: 5000 });
         browserChecks++;
@@ -210,8 +212,8 @@ module.exports = {
       // The row is answered in the store, and its grant written by the owner.
       const answered = sql(`SELECT answer FROM origin_pending WHERE pending_id = ${pendingId} AND answered_at IS NOT NULL`);
       assert(answered === 'grant', `the seeded row is answered grant in the store, got '${answered}'`);
-      const granted = sql("SELECT scope || ' ' || source || ' ' || expiry || ' ' || (revoked_at IS NULL) FROM origin_grants WHERE originator = 'seeded.example'");
-      assert(granted === 'wallet owner 0 1', `the grant row is wallet, owner, never expiring, live; got '${granted}'`);
+      const granted = sql("SELECT kind || ' ' || key || ' ' || expiry || ' ' || (revoked_at IS NULL) FROM origin_grants WHERE originator = 'seeded.example'");
+      assert(granted === 'basket ["browser gate"] 0 1', `the grant row is the basket power, never expiring, live; got '${granted}'`);
 
       return {
         txid: null,
