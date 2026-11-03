@@ -8,6 +8,7 @@
 - **`handlers.rs`**: one handler per endpoint. Translates between MetaNet Client JSON and SDK types, calls `wallet.<method>()`, maps errors via `AppError`. Defines `WalletState = Arc<Wallet<StorageSqlx, Services>>`.
 - **`error.rs`**: `Kind` (a status and a code per refusal) and `AppError`, every typed error mapped by its variant (#81).
 - **`handlers/json_body.rs`**: the doors' `Json` body, read as the MetaNet Client reads it: JSON under any content type, and `{}` when the request has none (its body is never parsed). Its rejections (a body that does not parse, a field missing or mistyped) are `AppError`s, 400 `VALIDATION_ERROR` `{code, message}` with axum's words, never axum's text (#122 item 3).
+- **`owner_door.rs`**: the owner's routes over the per-origin grant rows (#414, L3): `GET /origins`, `POST /origins/answer`, `POST /origins/grant`, `POST /origins/revoke`, each through `store::origin_grants`. Host routes, never BRC-100 and never a page's: the router serves them before the doors (the doors are its fallback), behind the owner's admission (no `Origin`, a loopback `Host`, never a preflight: 403 `ACCESS_DENIED` naming the rule) and then the bearer; the page gate, the CORS layer and the preflight's gate never see them.
 - **`types.rs`** (263 lines) — `Mc*` request/response structs for endpoints whose SDK arg types lack serde derives. Endpoints with SDK serde support (batches 4-6) deserialize directly in handlers without wrapper types.
 
 ## Endpoint Map
