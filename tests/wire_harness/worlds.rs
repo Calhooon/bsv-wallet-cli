@@ -755,18 +755,12 @@ const DOTFILE: &str = "unix-dotfile";
 /// 5,000 ms wait never succeeds.
 async fn answer_busy_at_once(storage: &StorageSqlx) {
     for pool in [storage.pool(), storage.writer()] {
-        let options = pool.connect_options().as_ref().clone();
-        pool.set_connect_options(options.busy_timeout(std::time::Duration::ZERO));
-        let mut idle = Vec::new();
-        while let Some(mut connection) = pool.try_acquire() {
-            sqlx::query("PRAGMA busy_timeout = 0")
-                .execute(&mut *connection)
-                .await
-                .unwrap();
-            idle.push(connection);
-        }
+        busy::no_busy_wait(pool).await;
     }
 }
+
+#[path = "../../src/test_support/busy.rs"]
+mod busy;
 
 /// Another connection to the store at `path`, holding its write lock
 /// (never closed: the lock is held for as long as it is kept); on the
