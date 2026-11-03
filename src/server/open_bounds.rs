@@ -232,6 +232,15 @@ mod tests {
         start + Duration::from_millis(ms)
     }
 
+    /// Counters for new hosts at `t` until [`PRUNE_AT`] are kept.
+    fn fill(bounds: &OpenBounds, t: Instant) {
+        for n in bounds.kept()..PRUNE_AT {
+            let host = format!("h{n}.example");
+            bounds.take(&host, "/getHeight", Class::Open, t).unwrap();
+        }
+        assert_eq!(bounds.kept(), PRUNE_AT);
+    }
+
     /// Bounds whose chain burst `HOST` spent at the instant returned.
     fn spent_burst() -> (OpenBounds, Instant) {
         let (bounds, t) = (OpenBounds::default(), Instant::now());
@@ -424,17 +433,42 @@ mod tests {
         );
     }
 
+    /// The prune's edges: under [`PRUNE_AT`] nothing is dropped, however
+    /// idle; at it, a call of a kept counter drops nothing, and a counter
+    /// whose arrival time is now exactly is idle (the same as none).
+    #[test]
+    fn the_prune_runs_only_for_a_new_counter_at_the_cap() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        bounds
+            .take("idle.example", "/getHeight", Class::Open, t)
+            .unwrap();
+        bounds
+            .take(HOST, "/getHeight", Class::Open, at(t, 5_000))
+            .unwrap();
+        assert_eq!(bounds.kept(), 2, "under the cap the idle counter stays");
+        fill(&bounds, t);
+        bounds
+            .take(HOST, "/getHeight", Class::Open, at(t, 5_000))
+            .unwrap();
+        assert_eq!(
+            bounds.kept(),
+            PRUNE_AT,
+            "a kept counter's call drops nothing"
+        );
+        // Every counter but HOST's is due at t + 1 s: at that instant they
+        // are idle, and a new counter drops them.
+        bounds
+            .take("new.example", "/getHeight", Class::Open, at(t, 1_000))
+            .unwrap();
+        assert_eq!(bounds.kept(), 2, "HOST's and the new one");
+    }
+
     /// The counters stay bounded: past [`PRUNE_AT`] the idle ones go, and
     /// a busy one stays.
     #[test]
     fn idle_counters_are_pruned() {
         let (bounds, t) = spent_burst();
-        for n in 1..PRUNE_AT {
-            bounds
-                .take(&format!("h{n}.example"), "/getHeight", Class::Open, t)
-                .unwrap();
-        }
-        assert_eq!(bounds.kept(), PRUNE_AT);
+        fill(&bounds, t);
         let later = at(t, 5_000);
         bounds
             .take("new.example", "/getHeight", Class::Open, later)
