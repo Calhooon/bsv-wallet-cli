@@ -9,8 +9,8 @@ Usage:
 The Nightly has two modes. A COMPLETE night mutates every floored file (the
 files of MUTANTS_FLOORS in .github/workflows/nightly.yml) in
 MUTANTS_SHARDS_COMPLETE shards (`--complete-shards`, twenty: the account's
-concurrent-job limit, #460), all of them at once, the night of record cut at
-each pin (docs/RELEASING.md). An
+concurrent-job limit, #460), fourteen at a time, then six (COMPLETE_PARALLEL,
+#496), the night of record cut at each pin (docs/RELEASING.md). An
 INCREMENTAL night, the default on the captain's dispatch, mutates only the
 floored files whose figure may have moved since the last complete run, and
 the score carries every other file's figure from that run with its run and
