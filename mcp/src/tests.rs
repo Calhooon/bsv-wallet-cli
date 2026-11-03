@@ -218,8 +218,33 @@ async fn owner_stub() -> String {
     let app = Router::new()
         .route("/origins", get(echo))
         .route("/origins/answer", post(echo))
-        .route("/origins/revoke", post(echo));
+        .route("/origins/revoke", post(echo))
+        .route("/chain-feed", get(echo))
+        .route("/tx/{txid}", get(echo));
     serve(app).await
+}
+
+/// From the switch (#414 L5b) the wallet's host routes answer the owner's
+/// admission or the seed, never a page's grant: the MCP's host tools send
+/// no `Origin`, and the wallet's bearer when set, as its owner's tools do.
+#[tokio::test]
+async fn the_wallets_host_tools_send_no_origin_and_the_wallet_bearer() {
+    let base = owner_stub().await;
+    let mcp = WalletMcp::new(base, "http://localhost".into())
+        .with_wallet_bearer(Some("owner-token".into()));
+    let bearer = Some("owner-token");
+    let feed = text(mcp.chain_feed_status().await.unwrap());
+    assert_eq!(feed, echoed("GET", "/chain-feed", bearer, &Value::Null));
+    let txid = "ab".repeat(32);
+    let word = text(
+        mcp.tx_word(Parameters(TxWordParams { txid: txid.clone() }))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        word,
+        echoed("GET", &format!("/tx/{txid}"), bearer, &Value::Null)
+    );
 }
 
 /// The call the owner's stub echoes: `method` and `path`, no `Origin`,
