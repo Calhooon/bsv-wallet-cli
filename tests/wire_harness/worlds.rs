@@ -748,15 +748,7 @@ pub(crate) fn resolve(file: &str, req: &Req, served: &HashMap<String, J>) -> Req
 /// rollback journal and a held lock keeps every reader out.
 const DOTFILE: &str = "unix-dotfile";
 
-/// Another connection to the store at `path`, holding its write lock
-/// (never closed: the lock is held for as long as it is kept); on the
-/// `dotfile` locking, its one lock.
-/// The store's connections, open and to come, with no busy wait: a call
-/// behind [`hold_write_lock`] answers SQLite's busy (code 5, `database is
-/// locked`) at once instead of after the store's 5,000 ms `busy_timeout`.
-/// The answer's bytes are the same; the wait was 27 of a replay's 30
-/// seconds, five fixtures at 5.4 s (#477). As `busy_read_wallet` in
-/// `src/test_support.rs`.
+/// Busy at once, the same bytes: the lock is never released, so SQLite's 5,000 ms wait never succeeds.
 async fn answer_busy_at_once(storage: &StorageSqlx) {
     for pool in [storage.pool(), storage.writer()] {
         let options = pool.connect_options().as_ref().clone();
@@ -772,6 +764,9 @@ async fn answer_busy_at_once(storage: &StorageSqlx) {
     }
 }
 
+/// Another connection to the store at `path`, holding its write lock
+/// (never closed: the lock is held for as long as it is kept); on the
+/// `dotfile` locking, its one lock.
 async fn hold_write_lock(path: &Path, dotfile: bool) -> sqlx::SqliteConnection {
     use sqlx::{ConnectOptions, Connection};
     let mut options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
