@@ -62,6 +62,16 @@ async fn a_spend_is_tallied_per_flow_under_its_hostname_and_month() {
     .unwrap_err();
     assert_eq!(e.downcast_ref::<Refused>(), Some(&Refused::Negative));
     assert_eq!(rows(&storage).await.len(), 2, "a refused spend writes none");
+    // Zero is satoshis too: tallied, the month unmoved.
+    let zero = "ef".repeat(32);
+    spent(&storage, "app.example", Flow::Signed(&zero), 0, NOW)
+        .await
+        .unwrap();
+    assert_eq!(rows(&storage).await.len(), 3);
+    assert_eq!(
+        month_tally(&storage, "app.example", NOW).await.unwrap(),
+        3000
+    );
 }
 
 #[tokio::test]
