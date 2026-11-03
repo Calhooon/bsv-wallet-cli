@@ -69,8 +69,9 @@ The plan names the selection the shards pass `cargo test` (`--lib --bins`, a
 `--test` for every target under tests/ and a `--bench` for every bench, less
 the left-out list's entries: the oracle complete per floored file, the owner's
 23.9 word), the shard count, the matrix and the matrix's max-parallel. A
-complete night: `--complete-shards` shards (#460), every one at once (its
-max-parallel is its count: one wave). An incremental night keeps its own
+complete night: `--complete-shards` shards (#460), COMPLETE_PARALLEL at once
+(#496: the account's concurrent-job limit less a PR run's six jobs, so twenty
+shards run in two waves, fourteen then six). An incremental night keeps its own
 sizing (#462): a whole set `--max-shards` (MUTANTS_SHARDS_INCREMENTAL);
 otherwise one shard per PER_SHARD of the changed files' mutants, by the
 record's counts, and at least PARALLEL while there are that many mutants, at
@@ -101,9 +102,18 @@ MODES = ("incremental", "complete")
 # complete night's of the record then (923 in fifty); a complete night is
 # --complete-shards since #460, twenty, 47 a shard.
 PER_SHARD = 19
-# A complete night's count (#460): the account's concurrent-job limit, so
-# every shard starts in the opening wave.
+# A complete night's count (#460): the account's concurrent-job limit.
 COMPLETE_SHARDS = 20
+# A complete night's max-parallel (#496; the keeper's fleet line of 06:2xZ
+# 11-03): the account's twenty runners are one pool across four repositories,
+# and a PR run's six jobs (lint, Build, Test, vectors, wire, e2e-hermetic;
+# `changes` is seconds) need six of them. Night 3 (run 41516017523) held all
+# twenty and the PR runs of 11-03 took 47 to 55 minutes for 5 minutes of work.
+# So twenty shards run fourteen, then six; 14 until a later row reads the
+# limit from the API.
+ACCOUNT_RUNNERS = 20
+PR_RUN_JOBS = 6
+COMPLETE_PARALLEL = ACCOUNT_RUNNERS - PR_RUN_JOBS
 # An incremental night's max-parallel (#144): a small set still fills the six runners a
 # night may hold, since a shard's wall clock is its baseline (about 11 minutes
 # in run 41516017523) and its mutants, not their count across shards.
@@ -471,8 +481,9 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
         shards = max_shards
     else:
         shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD), min(PARALLEL, mutants)))
-    # One wave on a complete night (#460); six at a time on an incremental one (#144).
-    parallel = max(1, shards if mode == "complete" else min(PARALLEL, shards))
+    # Fourteen at a time on a complete night, a PR run's six runners left (#496);
+    # six at a time on an incremental one (#144); never more than the count.
+    parallel = max(1, min(COMPLETE_PARALLEL if mode == "complete" else PARALLEL, shards))
     return {
         "mode": mode,
         "base": base,
@@ -494,13 +505,20 @@ def brings(files, floored):
     return "every floored file" if files == floored else ", ".join(f"`{f}`" for f in files)
 
 
+def waves(p):
+    n, k = p["shards"], p["parallel"]
+    full, rest = divmod(n, k)
+    sizes = [k] * full + ([rest] if rest else [])
+    return f"{len(sizes)} wave{'s' if len(sizes) != 1 else ''}: {', then '.join(map(str, sizes))}"
+
+
 def summary(p):
     lines = [f"## The night's plan ({p['mode']})", ""]
     lines.append(f"The last complete run: {p['base']['run']} at `{p['base']['commit']}`; the night's tree: `{p['head']}`.")
     lines.append("")
     if p["mode"] == "complete":
         lines.append(f"A complete night: every floored file, {p['mutants']} mutants by the record, in {p['shards']} shards, "
-                     f"{p['parallel']} at once.")
+                     f"{p['parallel']} at once ({waves(p)}).")
     elif not p["files"]:
         lines.append("No floored file changed and no test or dependency reaches one: the night mutates nothing "
                      "and carries every file's figure from the last complete run.")
