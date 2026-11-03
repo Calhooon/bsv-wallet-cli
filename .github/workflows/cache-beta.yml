@@ -1,34 +1,46 @@
 name: cache-beta
 
-# beta's test build, saved under main's scope (#486). GitHub scopes a run's
+# beta's builds, saved under main's scope (#486, #494). GitHub scopes a run's
 # cache reads to its own ref and the default branch (main), plus the base
 # branch for a pull_request run alone: a merge-queue group on beta
 # (refs/heads/gh-readonly-queue/beta/...) reads main's entries and none of
-# beta's, so every group built cold. This job checks out beta's head and
-# builds exactly what ci.yml's Test builds (wire and vectors build subsets of
-# it under the same key), keyed as Test keys it (#472): `shared-key: test`,
-# the same toolchain, the same CARGO* environment and the same workspaces,
-# so the key is the one a group run computes from beta's tree
-# (v0-rust-test-Linux-x64-<rustc and env>-<beta's manifests and lockfile>)
-# and the group restores it with "full match: true".
+# beta's, so every group built cold. Each job here checks out beta's head
+# and builds exactly what one of ci.yml's keys holds, keyed as ci.yml keys
+# it (#472): the same shared key (or job id), the same toolchains, the same
+# CARGO* environment and the same workspaces, so the key is the one a group
+# run computes from beta's tree and the group restores it with
+# "full match: true". The three keys cover ci.yml's six jobs:
+#   test     v0-rust-test-Linux-x64-...     Test (wire and vectors restore it)
+#   lint     v0-rust-lint-Linux-x64-...     lint (its job id; no shared-key)
+#   release  v0-rust-release-Linux-x64-...  Build (e2e-hermetic restores it)
 #
 # Only a run on main's ref saves (a run elsewhere would save under a scope no
 # group reads). The workflow runs from main, so this file must be on main:
 # GitHub dispatches a workflow only from the default branch's copy. The
 # captain dispatches it after a lockfile change (or a stable rustc) lands on
-# beta; a push to main (the HANDOFF rows) runs it too. An entry already saved
-# under main with this key is restored and not saved again ("Cache
-# up-to-date"). docs/lanes/README.md rule 17 is the rule.
+# beta; a push to main (the HANDOFF rows) runs it too, every key. One key
+# alone: `gh workflow run cache-beta.yml --ref main -f key=lint` (or test,
+# release; all is the default). An entry already saved under main with its
+# key is restored and not saved again ("Cache up-to-date").
+# docs/lanes/README.md rule 17 is the rule.
 on:
   workflow_dispatch:
+    inputs:
+      key:
+        description: the key to save (all, or one of test, lint, release)
+        type: choice
+        options: [all, test, lint, release]
+        default: all
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+# One run per key at a time; a dispatch of one key does not cancel a run of
+# all (a push carries no input: all).
 concurrency:
-  group: cache-beta
+  group: cache-beta-${{ inputs.key || 'all' }}
   cancel-in-progress: true
 
 # ci.yml's CARGO* environment, verbatim: rust-cache hashes every CARGO*,
@@ -44,6 +56,7 @@ env:
 jobs:
   test-key:
     name: beta's test build under main's scope
+    if: ${{ contains(fromJSON('["all", "test"]'), inputs.key || 'all') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -90,3 +103,247 @@ jobs:
       # filters build within it.
       - name: Build the workspace's tests
         run: cargo test --workspace --locked --no-run
+
+  # lint's key (#494): no shared-key in ci.yml, so rust-cache names it by the
+  # job id, `lint`; `shared-key: lint` here yields the same prefix,
+  # v0-rust-lint-Linux-x64. lint compiles two builds into it: Clippy on
+  # stable (the gate) and the ratchet's clippy and rustdoc on the pinned
+  # toolchain (tools/ratchet's own invocations, measured and not checked).
+  lint-key:
+    name: beta's lint build under main's scope
+    if: ${{ contains(fromJSON('["all", "lint"]'), inputs.key || 'all') }}
+    runs-on: ubuntu-latest
+    env:
+      KEY_CI_JOBS: lint
+      KEY_NAME: lint
+      KEY_PINNED: 1.98.1
+      KEY_WORKSPACES: . -> target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: beta
+
+      # The key's inputs in beta's ci.yml, for each job named in KEY_CI_JOBS,
+      # against this job's own: the key's name (the rust-cache step's
+      # shared-key, else the job id), the toolchains installed before the
+      # cache step in their order, the keyed variables (the workflow env and
+      # the job's) and the workspaces (whose manifests and lockfiles are the
+      # key's last hash). A drift fails by name before anything is built.
+      - name: The key's inputs are ci.yml's on beta
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          import os, re, sys
+          keyed = ("CARGO", "CC", "CFLAGS", "CXX", "CMAKE", "RUST")
+          lines = open(".github/workflows/ci.yml").read().split("\n")
+
+          def indent(line):
+              return len(line) - len(line.lstrip(" "))
+
+          def under(seq, i):
+              out = []
+              for line in seq[i + 1:]:
+                  if line.strip() and indent(line) <= indent(seq[i]):
+                      break
+                  out.append(line)
+              return out
+
+          def unquote(v):
+              return v.strip().strip(chr(39)).strip(chr(34))
+
+          def keyed_env(seq, at):
+              env = {}
+              for i, line in enumerate(seq):
+                  if line == " " * at + "env:":
+                      for var in under(seq, i):
+                          m = re.match(r"^ *([A-Z_][A-Z0-9_]*): *(.*?) *$", var)
+                          if m and indent(var) == at + 2 and m.group(1).startswith(keyed):
+                              env[m.group(1)] = unquote(m.group(2))
+              return env
+
+          def workspaces(text):
+              ws = [re.sub(r" *-> *", " -> ", w.strip()) for w in text.split("\n") if w.strip()] or ["."]
+              return [w if " -> " in w else w + " -> target" for w in ws]
+
+          def derive(job):
+              seq = under(lines, lines.index(f"  {job}:"))
+              j = next(k for k, line in enumerate(seq) if "uses: Swatinem/rust-cache@" in line)
+              toolchains = [unquote(m.group(1)) for line in seq[:j]
+                            if (m := re.match(r"^ +toolchain: *(\S+) *$", line))]
+              name, ws = job, ""
+              step = under(seq, j)
+              for k, line in enumerate(step):
+                  if m := re.match(r"^ +shared-key: *(\S+) *$", line):
+                      name = unquote(m.group(1))
+                  if re.match(r"^ +workspaces: *\| *$", line):
+                      ws = "\n".join(under(step, k))
+              env = keyed_env(lines, 0) | keyed_env(seq, 4)
+              return {"key": name, "toolchains": toolchains, "env": env, "workspaces": workspaces(ws)}
+
+          have = {
+              "key": os.environ["KEY_NAME"],
+              "toolchains": [os.environ["KEY_PINNED"], "stable"],
+              "env": {k: v for k, v in os.environ.items()
+                      if k.startswith(keyed) and k not in ("CARGO_HOME", "RUSTUP_HOME")},
+              "workspaces": workspaces(os.environ["KEY_WORKSPACES"]),
+          }
+          status = 0
+          for job in os.environ["KEY_CI_JOBS"].split():
+              want = derive(job)
+              for field in want:
+                  same = want[field] == have[field]
+                  print(f"{job}: {field}: beta's ci.yml {want[field]!r}; this job {have[field]!r}: {'same' if same else 'DIFFERS'}")
+                  if not same:
+                      print(f"::error::cache-beta.yml's {field} differs from beta's ci.yml {job} job; the key would differ from the group runs' (#494)")
+                      status = 1
+          sys.exit(status)
+          EOF
+
+      # The components are lint's; they do not enter the key (rust-cache
+      # hashes each installed toolchain's rustc -vV).
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.KEY_PINNED }}
+          components: clippy
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ env.KEY_NAME }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: ${{ env.KEY_WORKSPACES }}
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The ratchet's measurement alone: the same clippy and rustdoc runs as
+      # lint's step, its JSON kept off the tree.
+      - name: The ratchet's clippy and rustdoc (pinned toolchain)
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.KEY_PINNED }}
+        run: python3 tools/ratchet --out "$RUNNER_TEMP/ratchets.json" > /dev/null
+
+  # Build's key, `release` (#494), which e2e-hermetic restores: the same two
+  # toolchains in order and the two workspaces (`fuzz -> target` is
+  # fuzz/target). Build's three invocations fill it; e2e-hermetic's two
+  # release builds are within them.
+  release-key:
+    name: beta's release build under main's scope
+    if: ${{ contains(fromJSON('["all", "release"]'), inputs.key || 'all') }}
+    runs-on: ubuntu-latest
+    env:
+      KEY_CI_JOBS: build e2e-hermetic
+      KEY_NAME: release
+      KEY_PINNED: 1.98.1
+      KEY_WORKSPACES: |
+        . -> target
+        fuzz -> target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: beta
+
+      # The key's inputs in beta's ci.yml, for each job named in KEY_CI_JOBS,
+      # against this job's own: the key's name (the rust-cache step's
+      # shared-key, else the job id), the toolchains installed before the
+      # cache step in their order, the keyed variables (the workflow env and
+      # the job's) and the workspaces (whose manifests and lockfiles are the
+      # key's last hash). A drift fails by name before anything is built.
+      - name: The key's inputs are ci.yml's on beta
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          import os, re, sys
+          keyed = ("CARGO", "CC", "CFLAGS", "CXX", "CMAKE", "RUST")
+          lines = open(".github/workflows/ci.yml").read().split("\n")
+
+          def indent(line):
+              return len(line) - len(line.lstrip(" "))
+
+          def under(seq, i):
+              out = []
+              for line in seq[i + 1:]:
+                  if line.strip() and indent(line) <= indent(seq[i]):
+                      break
+                  out.append(line)
+              return out
+
+          def unquote(v):
+              return v.strip().strip(chr(39)).strip(chr(34))
+
+          def keyed_env(seq, at):
+              env = {}
+              for i, line in enumerate(seq):
+                  if line == " " * at + "env:":
+                      for var in under(seq, i):
+                          m = re.match(r"^ *([A-Z_][A-Z0-9_]*): *(.*?) *$", var)
+                          if m and indent(var) == at + 2 and m.group(1).startswith(keyed):
+                              env[m.group(1)] = unquote(m.group(2))
+              return env
+
+          def workspaces(text):
+              ws = [re.sub(r" *-> *", " -> ", w.strip()) for w in text.split("\n") if w.strip()] or ["."]
+              return [w if " -> " in w else w + " -> target" for w in ws]
+
+          def derive(job):
+              seq = under(lines, lines.index(f"  {job}:"))
+              j = next(k for k, line in enumerate(seq) if "uses: Swatinem/rust-cache@" in line)
+              toolchains = [unquote(m.group(1)) for line in seq[:j]
+                            if (m := re.match(r"^ +toolchain: *(\S+) *$", line))]
+              name, ws = job, ""
+              step = under(seq, j)
+              for k, line in enumerate(step):
+                  if m := re.match(r"^ +shared-key: *(\S+) *$", line):
+                      name = unquote(m.group(1))
+                  if re.match(r"^ +workspaces: *\| *$", line):
+                      ws = "\n".join(under(step, k))
+              env = keyed_env(lines, 0) | keyed_env(seq, 4)
+              return {"key": name, "toolchains": toolchains, "env": env, "workspaces": workspaces(ws)}
+
+          have = {
+              "key": os.environ["KEY_NAME"],
+              "toolchains": [os.environ["KEY_PINNED"], "stable"],
+              "env": {k: v for k, v in os.environ.items()
+                      if k.startswith(keyed) and k not in ("CARGO_HOME", "RUSTUP_HOME")},
+              "workspaces": workspaces(os.environ["KEY_WORKSPACES"]),
+          }
+          status = 0
+          for job in os.environ["KEY_CI_JOBS"].split():
+              want = derive(job)
+              for field in want:
+                  same = want[field] == have[field]
+                  print(f"{job}: {field}: beta's ci.yml {want[field]!r}; this job {have[field]!r}: {'same' if same else 'DIFFERS'}")
+                  if not same:
+                      print(f"::error::cache-beta.yml's {field} differs from beta's ci.yml {job} job; the key would differ from the group runs' (#494)")
+                      status = 1
+          sys.exit(status)
+          EOF
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.KEY_PINNED }}
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ env.KEY_NAME }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: ${{ env.KEY_WORKSPACES }}
+
+      - name: Build workspace (release)
+        run: cargo build --release --locked
+
+      - name: Build MCP subcrate (release)
+        run: cargo build --release --locked -p bsv-wallet-mcp
+
+      - name: Check the fuzz crate (every target)
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.KEY_PINNED }}
+        run: cargo check --manifest-path fuzz/Cargo.toml --locked --all-targets
