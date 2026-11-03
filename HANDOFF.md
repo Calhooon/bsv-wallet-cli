@@ -2576,8 +2576,10 @@ our own hardware.. we struggle as it is.. we gotta think god tier shit man
 3) okay 4) okay 5) okay". Then "be a field expert... balling on a budget";
 "even when that's all done, another round of optimizing"; "even the
 nightly... is all that necessary? or maybe a fraction"; and at 02:1xZ
-(#471's record) "do 3 or 4 loops even man... like huge chance for prodicut
-ity gains etc". They rule four things: no own hardware (#453, the
+of 11-03, the owner's words through the keeper (the keeper's message to the
+captain, whose record holds it in full; the day line's 02:2xZ entry quotes
+its opening clause), "do 3 or 4 loops even man... like huge chance for
+prodicut ity gains etc". They rule four things: no own hardware (#453, the
 self-hosted runner, closed at 23:13Z), no paid runners (#455, the hosted
 fast-runner label, closed at 23:19Z), the Nightly cut to a fraction (#462
 ahead of #460), and four loops per program, each row's record carrying five
@@ -2649,11 +2651,15 @@ The witness, group run 41586918016 at 05:57Z, restored the test key with
 "full match: true" on Test, vectors and wire; #486 closed at 06:06Z. Lint,
 Build and e2e-hermetic still read "No cache found": #494 (PR 495, merged
 06:29Z, beta 79df0b79; its carry PR 500 merged on main 06:43Z, main
-41160935) waits on the dispatch and the next group's six lines. #497
+41160935): the dispatch ran (run 41591723426, 06:44Z to 06:52Z, three jobs
+green) and saved the lint and release keys under main's scope beside the
+test key (the day line's 06:55Z entry); the witness is the next group run's
+six lines. #497
 (lint's `runs-on` named a self-hosted runner for a private repo) was PR
 498, merged 06:42Z, beta 05741c59, closed. #496 (a complete night leaves a
-PR run its six runners: fourteen shards, then six) is PR 499, open on its
-fix.
+PR run its six runners: fourteen shards, then six) is PR 499, re-read
+merge at 0.93 and enqueued at 06:49Z, then CONFLICTING after PR 501 landed
+and being ported.
 
 The (c) build (#414). L1, the `origin_grants` store, was PR 449 (22:40Z,
 beta 98e81a24, the day's entry). L2, the CLI's `origins`, `origin-grant`,
@@ -2696,10 +2702,17 @@ Night 3. Run 41516017523 (dispatched 20:05Z on f2976ef1) completed at
 by design on tracker_host 74.2 against 75, the union of the two passes
 judged (the hermetic six ran, the opening night since #435):
 broadcast_verify 86.0, explorers 100.0, handlers 100.0, spend_gate 90.8
-(the day line's figures). Its record is PR 501 (lane/p1-night3-record,
-open, its review next): the mutation record with the equivalents counted,
-the fuzz record by the tool, and the bench's opening run of the Intel Xeon
-6975P entry, night 1 of 5 for that entry. A finding from the night: PR runs
+(the day line's figures). Its record, PR 501 (lane/p1-night3-record,
+review merge at 0.9), merged at 06:54:19Z, beta cca58c91 (enqueued 06:45Z,
+the queue wait 9 minutes): the mutation record with the equivalents
+counted (tracker_host's judged 74.2, beta's equivalents reading 75.8), the
+fuzz record by the tool, and the bench's opening run of the Intel Xeon
+6975P entry, night 1 of 5 for that entry (#142 stays open). #393 closed on
+it at 06:54Z: the hermetic union judged, the opening night whose six
+hermetic shards ran to the end. The record lane's finding, the stale bench
+test (tools/test_bench_compare.py asserts no `needs:` on the night's bench
+job, which #460 gave `needs: [plan, mutants]`; the next bench night would
+go red), was filed as #503 at 06:53Z; its lane's PR 504 is open. A finding from the night: PR runs
 overlapping the fifty shards waited 40 to 50 minutes for runners (the
 account's twenty), filed as #496.
 
@@ -2724,18 +2737,22 @@ The lessons of the night, one line each:
   escaped the running-lanes guard).
 - The bounded form's RATIONALE is at most five lines and each RISKS line
   ends with its score.
-- The hygiene sweeps went by name (about 130 GiB on the box, the day line's
-  figure), four names not the captain's left for their owners (the day
-  line's figure).
+- The hygiene sweeps went by name, each with its figure in the day line:
+  37 GiB at 22:28Z, 22 GiB at 01:03Z, 15.6 GB at 02:40Z (7.0, 3.3 and 5.3
+  GB), 5.3 GB at 03:04Z and 0 GiB at 06:08Z; a target stays while its PR
+  lands or its review runs, and a name not the captain's is left for its
+  owner.
 
-Open after the night: #477 (PR 492 on its fix), #494's dispatch and
-witness, #496 (PR 499), #491 (main's ci.yml, after this entry lands on
+Open after the night: #477 (PR 492 on its fix), #494's witness (its
+dispatch done), #496 (PR 499, being ported after PR 501), #503 (PR 504),
+#142 and #175 (night 3's record), #491 (main's ci.yml, after this entry lands on
 main), #462 and #476 on their recorded figures, #478, #479 and #480, the
 remaining loops' rows; #465, #469, #483, #437, #441; L5 on the owner's W1
-and W4, then L6 and L7; night 3's record (PR 501); the opening incremental
+and W4, then L6 and L7; the opening incremental
 night, the captain's dispatch at the 03:00Z slot of 11-04; the next pin's
 intake on #386: bsv-rs #613, #620, #640, #639, #648, #651 and #658 (all
 merged), the toolbox's #554, #186, #142 and #576 (closed) and #585 (open),
 as GitHub shows them at 2026-11-03 morning; the certificate re-issue (#333)
-at the production upgrade. The lines: beta 05741c59; main at this entry's
+at the production upgrade. The lines, read with `git ls-remote origin` at
+07:01Z: beta cca58c91 (PR 501, night 3's record); main at this entry's
 parent, 41160935.
