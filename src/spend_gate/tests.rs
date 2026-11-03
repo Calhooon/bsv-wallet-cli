@@ -36,12 +36,37 @@ fn headers_with(txid: &str, height: u32, tip: u32) -> MockWalletServices {
     services
 }
 
+/// The tests' pause before the header re-read: a fault's re-read is
+/// counted by the service's calls, never waited out for the served two
+/// seconds (#506). A test that the pause is NOT taken reads it served.
+const TEST_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
 fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
     GateOptions {
         spend_depth,
         own_change,
         allow_pending: AllowPending::Off,
         tracker: crate::tracker_host::TickOptions::default(),
+        header_retry_pause: TEST_PAUSE,
+    }
+}
+
+/// Run `recover` once the tip has been asked `calls` times: the retry's
+/// re-read comes [`TEST_PAUSE`] after, so the service is back for it. The
+/// recovery waits on the service's own count, never a clock (#506: it
+/// slept 300 ms inside the served two seconds).
+async fn after_tip_calls(services: &MockWalletServices, calls: usize, recover: impl FnOnce()) {
+    while services.call_count("get_chain_tip_header") < calls {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    recover();
+}
+
+/// [`opts`] with the served pause, for a test that the pause is not taken.
+fn served_pause(spend_depth: u32, own_change: bool) -> GateOptions {
+    GateOptions {
+        header_retry_pause: HEADER_RETRY_PAUSE,
+        ..opts(spend_depth, own_change)
     }
 }
 
@@ -3351,7 +3376,7 @@ async fn a_header_service_fault_is_read_once_more_and_is_could_not_verify_now() 
     else {
         panic!("the coin was offered with no header");
     };
-    assert!(started.elapsed() >= HEADER_RETRY_PAUSE, "no pause");
+    assert!(started.elapsed() >= TEST_PAUSE, "no pause");
     assert_eq!(wallet.services().call_count("get_chain_tip_header"), 2);
     assert_eq!(refusal.code(), "HEADERS_UNAVAILABLE");
     assert!(refusal.is_headers_fault());
@@ -3578,12 +3603,11 @@ async fn the_re_read_offers_the_coin_when_the_service_answers_again() {
     assert!(once.held[0].headers_fault.is_some());
     assert_eq!(wallet.services().call_count("get_chain_tip_header"), 1);
 
-    let recover = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+    let recover = after_tip_calls(wallet.services(), 2, || {
         wallet
             .services()
             .set_tip_header(header_with_hash(900, &mined, 0));
-    };
+    });
     let (twice, ()) = tokio::join!(
         assess_retrying(
             UserCoins::from_wallet(&wallet).await.unwrap(),

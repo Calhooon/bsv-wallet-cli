@@ -4364,6 +4364,7 @@ pub(crate) mod tests {
             own_change,
             allow_pending: crate::spend_gate::AllowPending::Off,
             tracker: opts(),
+            ..crate::spend_gate::GateOptions::default()
         };
         crate::spend_gate::assess(
             crate::spend_gate::UserCoins::new(storage, user),
@@ -5193,6 +5194,7 @@ pub(crate) mod tests {
             own_change,
             allow_pending: crate::spend_gate::AllowPending::Off,
             tracker: opts(),
+            ..crate::spend_gate::GateOptions::default()
         };
         let hold = |own_change| {
             crate::spend_gate::hold_reason(
