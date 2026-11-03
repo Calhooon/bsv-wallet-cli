@@ -41,7 +41,12 @@ one a line. A path's effect:
   - test-only code (declared under `#[cfg(test)]` in every crate that
     compiles it): the lib's and the binaries' unit tests (`--lib --bins`);
   - a floored file (the reach record's `floored`): the unit tests and every
-    test target but those the record measures running no line of it;
+    test target but those the record measures running no line of it that
+    also name nothing of the crate (no `bsv_wallet_cli` path, no
+    `CARGO_BIN_EXE_`): a const a target reads is inlined where it is read
+    and runs no line of its own file, so a target that names the crate is
+    kept whatever its record (#489: `header_source` reads the floored
+    files' defaults through `Config`);
   - a file a source file reads by `include_str!`/`include_bytes!`: its
     readers' effect;
   - any other file under `src/`: the whole suite (the record measures no
@@ -80,6 +85,7 @@ MOD = re.compile(r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za
 PATH_ATTR = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
 READS_SRC = re.compile(r'"src(?:/[^"]*)?"')
 COMMENT = re.compile(r"//[^\n]*")
+RUNS_BIN = re.compile(r"\bCARGO_BIN_EXE_")
 
 
 def code(text):
@@ -134,11 +140,26 @@ def reads_src(root, files):
     return any(READS_SRC.search(code((root / f).read_text())) for f in files if f.endswith(".rs"))
 
 
+def crate_name(root):
+    """The package's library name, from the root manifest (`-` read as `_`)."""
+    m = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', (root / "Cargo.toml").read_text())
+    return (m.group(1) if m else "bsv-wallet-cli").replace("-", "_")
+
+
+def names_crate(root, files, crate):
+    """Whether a target's code names the crate (a `use`, a path, a const) or runs its binary."""
+    word = re.compile(r"\b" + re.escape(crate) + r"\b")
+    return any(word.search(t) or RUNS_BIN.search(t)
+               for t in (code((root / f).read_text()) for f in files if f.endswith(".rs")))
+
+
 class Oracle:
     def __init__(self, root):
         self.root = root
         self.targets = test_targets(root)
         self.text_readers = {t for t, files in self.targets.items() if reads_src(root, files)}
+        crate = crate_name(root)
+        self.crate_users = {t for t, files in self.targets.items() if names_crate(root, files, crate)}
         self.floored = set(no_floored.floored(root))
         record = changed_set.reach_map(root, sorted(self.floored))
         # The record's own floored files: a file it does not name has no reach record.
@@ -184,11 +205,11 @@ class Oracle:
         extra = self.text_readers | self.compilers(path)
         crates = self.crates
         if path in self.measured:
-            skip = self.measured[path] - extra
+            skip = self.measured[path] - extra - self.crate_users
             hit = set(self.targets) - skip
             return False, True, hit, ("a floored file: the unit tests and every target but "
                                       + (", ".join(sorted(n for _, n in skip)) or "none")
-                                      + " (the reach record, #401: no line of it run)")
+                                      + " (the reach record, #401: no line of it run, and nothing of the crate named)")
         if path in crates.places:
             if crates.is_test_only(path):
                 return False, True, extra, "test-only code: the unit tests, and the targets that read src/ as text"

@@ -2,7 +2,8 @@
 """The planted cases of CI's test selection (#473), .github/ci/affected.py,
 on captured diffs: a one-file source change (a floored file) runs the unit
 tests and every target but those the reach record measures running none of
-it, the targets that read src/ as text kept; a test-file change runs its
+it, the targets that read src/ as text and those that name the crate (a
+const read, the binary run) kept; a test-file change runs its
 target alone, a shared test module the targets that declare it; a lockfile,
 a manifest, a .github or a tools change, and a file without a reach record
 (code the lib compiles that no record measures, a fixture read at run time)
@@ -41,6 +42,9 @@ REACH = {"issue": 401, "commit": "a" * 40, "floored": ["src/a.rs", "src/b.rs"], 
     {"kind": "test", "name": "plain", "seconds": 1, "reach": NONE},
     {"kind": "test", "name": "scanner", "seconds": 1, "reach": NONE},
     {"kind": "test", "name": "measured_b", "seconds": 1, "reach": dict(NONE, **{"src/b.rs": [3]})},
+    # Zero lines recorded, yet it reads src/a.rs's const (inlined, so no line runs).
+    {"kind": "test", "name": "reads_const", "seconds": 1, "reach": NONE},
+    {"kind": "test", "name": "runs_bin", "seconds": 1, "reach": NONE},
     {"kind": "bench", "name": "bb", "seconds": 1, "reach": NONE},
 ]}
 TEST = "#[test]\nfn t() {}\n"
@@ -51,7 +55,7 @@ TREE = {
     "Cargo.lock": "",
     "src/lib.rs": "pub mod a;\npub mod b;\npub mod other;\n#[cfg(test)]\nmod support;\n",
     "src/main.rs": "fn main() {}\n",
-    "src/a.rs": "pub fn f() {}\n",
+    "src/a.rs": "pub const LIMIT: u32 = 3;\npub fn f() {}\n",
     "src/b.rs": "pub fn f() {}\n",
     "src/other.rs": "pub fn f() {}\n",
     "src/support.rs": "#[test]\nfn t() { crate::a::f(); }\n",
@@ -59,7 +63,10 @@ TREE = {
     "tests/plain.rs": TEST,
     # A doc comment naming src/ is not a read; the string is.
     "tests/scanner.rs": "//! reads \"src/a.rs\" as text\nconst ROOT: &str = \"src\";\n" + TEST,
-    "tests/measured_b.rs": TEST,
+    # A comment naming the crate is not a use.
+    "tests/measured_b.rs": "// bsv_wallet_cli::a::LIMIT, CARGO_BIN_EXE_bsv-wallet\n" + TEST,
+    "tests/reads_const.rs": "use bsv_wallet_cli::a::LIMIT;\n#[test]\nfn t() { assert_eq!(LIMIT, 3); }\n",
+    "tests/runs_bin.rs": "const BIN: &str = env!(\"CARGO_BIN_EXE_bsv-wallet\");\n" + TEST,
     "tests/uses_shared.rs": "mod shared;\n" + TEST,
     "tests/uses_shared2.rs": "mod shared;\n" + TEST,
     "tests/shared/mod.rs": "mod deeper;\npub fn h() {}\n",
@@ -71,7 +78,6 @@ TREE = {
     "tools/ratchet": "#!/bin/sh\n",
     "docs/ratchets.json": "{}\n",
 }
-EVERY_BUT = ["dir_target", "measured_b", "plain", "scanner", "uses_shared", "uses_shared2"]
 
 
 class Planted(unittest.TestCase):
@@ -115,14 +121,23 @@ class Planted(unittest.TestCase):
         got = self.run_it(["src/a.rs"])
         self.assertEqual(got["mode"], "affected")
         self.assertTrue(got["test_args"].startswith("--workspace --lib --bins "))
-        # plain and measured_b ran no line of src/a.rs; scanner reads src/ as text.
-        self.assertEqual(self.selected(got), ["dir_target", "scanner", "uses_shared", "uses_shared2"])
+        # plain and measured_b ran no line of src/a.rs and name nothing of the crate; scanner reads
+        # src/ as text; reads_const and runs_bin name the crate.
+        self.assertEqual(self.selected(got), ["dir_target", "reads_const", "runs_bin", "scanner", "uses_shared",
+                                              "uses_shared2"])
         self.assertEqual((got["test_run"], got["wire"], got["deny"]), ("true", "false", "false"))
-        self.assertIn("selection: affected (the unit tests, dir_target, scanner", got["line"])
+        self.assertIn("selection: affected (the unit tests, dir_target, reads_const", got["line"])
+
+    def test_a_zero_reach_target_that_reads_a_floored_const_stays_selected(self):
+        # #489: the record holds no line of src/a.rs for reads_const, but its LIMIT is inlined there.
+        got = self.run_it(["src/a.rs"])
+        self.assertIn("reads_const", self.selected(got))
+        self.assertIn("but measured_b, plain (", got["stdout"])
 
     def test_floored_file_a_target_reaches_runs_it(self):
         got = self.run_it(["src/b.rs"])
-        self.assertEqual(self.selected(got), ["dir_target", "measured_b", "scanner", "uses_shared", "uses_shared2"])
+        self.assertEqual(self.selected(got), ["dir_target", "measured_b", "reads_const", "runs_bin", "scanner",
+                                              "uses_shared", "uses_shared2"])
 
     # A test-file change.
     def test_test_file_runs_itself_alone(self):
@@ -223,9 +238,10 @@ class ThisRepository(unittest.TestCase):
     def test_a_floored_file(self):
         got = self.run_it("src/spend_gate.rs")
         words = got["test_args"].split()
-        for kept in ("arch_no_unwrap", "rule_28_sites", "e2e_hermetic", "wire", "integration"):
+        # header_source reads the floored files' defaults through Config: zero lines, kept (#489).
+        for kept in ("arch_no_unwrap", "rule_28_sites", "e2e_hermetic", "wire", "integration", "header_source"):
             self.assertIn(kept, words)
-        for left in ("brc100", "header_source", "signing_digest_vector"):
+        for left in ("brc100", "signing_digest_vector"):
             self.assertNotIn(left, words)
 
     def test_the_lockfile(self):
