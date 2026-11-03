@@ -32,6 +32,7 @@ import unittest
 sys.dont_write_bytecode = True
 TOOL = Path(__file__).resolve().with_name("changelog")
 sys.path.insert(0, str(TOOL.parent))
+import git_template  # noqa: E402
 import in_process as tools_in_process  # noqa: E402
 BODY = ("\n### Beta.1: the pins together (#140)\n\n"
         "A pin paragraph with **words** and a second line.  \n"
@@ -51,7 +52,7 @@ class Tree:
         if not BASE:
             BASE.append(Tree.build())
         template, self.base = BASE[0]
-        shutil.copytree(template, self.root, symlinks=True, dirs_exist_ok=True)
+        git_template.copy(template, self.root)  # #538: never git's transient files
 
     @staticmethod
     def build():
@@ -61,6 +62,7 @@ class Tree:
         tree.root = Path(tempfile.mkdtemp(prefix="changelog-base.", dir=os.environ.get("TMPDIR")))
         atexit.register(shutil.rmtree, tree.root, True)
         tree.git("init", "-q", "--template=", "-b", "base")  # no sample hooks to copy per case
+        git_template.quiet(tree.root)  # #538: no detached maintenance in the template
         tree.write("tools/changelog", TOOL.read_bytes())
         tree.write("changelog.d/README.md", "# Fragments\n")
         tree.write("CHANGELOG.md", CHANGELOG)
@@ -595,6 +597,13 @@ class TheScriptIsTheInProcessRun(Case):
         self.assertEqual(sorted(assembled[0]), ["CHANGELOG.md", "changelog.d/README.md"])
         self.assertEqual(codes, [0, 0, 1, 2, 2, 1])
         print(f"\n    agree: {len(codes) + 1} runs, exit codes {codes + [0]}", end=" ", file=sys.stderr)
+
+
+class TemplateCopies(git_template.PlantedCopies, Case):
+    """#538: a maintenance.lock in this file's template cannot fail a case's copy."""
+
+    def template_root(self):
+        return str(BASE[0][0])
 
 
 if __name__ == "__main__":

@@ -46,6 +46,8 @@ import unittest
 
 sys.dont_write_bytecode = True  # nothing in the tree
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import git_template  # noqa: E402
 
 OLD = ("rustc 1.98.1 (48a229cea 2026-09-01)", "clippy 0.1.98 (48a229ceae 2026-09-01)")
 NEW = ("rustc 1.95.0 (29483883e 2026-07-15)", "clippy 0.1.95 (29483883ee 2026-07-15)")
@@ -82,7 +84,7 @@ class Tree:
             base.bin = os.path.join(base.root, ".stub-bin")
             base.build()
             TEMPLATE.append(base.root)
-        shutil.copytree(TEMPLATE[0], self.root, symlinks=True, dirs_exist_ok=True)
+        git_template.copy(TEMPLATE[0], self.root)  # #538: never git's transient files
 
     def build(self):
         os.makedirs(os.path.join(self.root, "tools"))
@@ -103,6 +105,7 @@ class Tree:
         with open(os.path.join(self.root, ".gitignore"), "w") as f:
             f.write(".stub-bin/\n")
         self.git("init", "-q", "--template=")  # no sample hooks to copy per case
+        git_template.quiet(self.root)  # #538: no detached maintenance in the template
         self.commit("the tree")
 
     @property
@@ -1034,6 +1037,13 @@ class OneLocationCountsOnce(Case):
         n = self.pedantic("src/a.rs", "tests/../src/b.rs")
         self.assertEqual(n, 2)
         self.note(0, f"clippy_pedantic {n}")
+
+
+class TemplateCopies(git_template.PlantedCopies, Case):
+    """#538: a maintenance.lock in this file's template cannot fail a case's copy."""
+
+    def template_root(self):
+        return TEMPLATE[0]
 
 
 if __name__ == "__main__":
