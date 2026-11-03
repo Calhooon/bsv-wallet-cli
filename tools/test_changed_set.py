@@ -9,8 +9,8 @@ workspace manifest change brings in the whole set; no change plans no shard
 module tree (#464's review: a test module reaches the floored files its tests
 can run by name, other code the whole set), on a planted crate and on this
 repository's own; a complete night mutates every file in
-MUTANTS_SHARDS_COMPLETE shards (twenty, #460) all at once, where an
-incremental night keeps its own sizing six at a time; a record without a mode
+MUTANTS_SHARDS_COMPLETE shards (twenty, #460) fourteen at a time, then six
+(#496), where an incremental night keeps its own sizing six at a time; a record without a mode
 is refused; and the git diff
 against the record's last complete run, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
