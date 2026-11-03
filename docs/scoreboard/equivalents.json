@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "rule": "A declared-equivalent mutant (#482): no behaviour can tell it from the original, so the Nightly's score counts it as equivalent, neither caught nor missed and outside the denominator (.github/nightly/mutants_score.py --equivalents). An entry is written only by a lane whose cold review confirmed the equivalence, with the PR that declared it, its reason and the review's verdict. A night that catches an entry, or that mutates the entry's file and lists no mutant of its name (a stale entry), is refused by name.",
+  "equivalents": [
+    {
+      "name": "src/tracker_host.rs:561:9: replace <impl Headers for NoHeaders>::tip_height -> std::result::Result<Height, HeaderError> with Ok(Default::default())",
+      "file": "src/tracker_host.rs",
+      "line": 561,
+      "pr": 475,
+      "reason": "`Height` is `u32` (bsv-tracker =0.9.0-beta.6, `lib.rs:22`), so `Ok(Default::default())` is `Ok(0)`, which is the function's own body, and no behaviour can differ.",
+      "review": "VERDICT merge, confidence 0.92: \"14 of 15 caught by my own run; the one miss is identical code (`Height` is `u32`, so the mutant is `Ok(0)`).\""
+    },
+    {
+      "name": "src/tracker_host.rs:1428:26: replace > with >= in moved_since",
+      "file": "src/tracker_host.rs",
+      "line": 1428,
+      "pr": 434,
+      "reason": "The arm before it is `height == tip_height`, so equality never reaches `height > tip_height`; `>=` and `>` take the same branch for every height that arrives.",
+      "review": "VERDICT merge, confidence 0.9: \"22 caught, matching the PR's table test for test; 2 missed, and both equivalences are true when you read the code.\""
+    },
+    {
+      "name": "src/tracker_host.rs:1447:19: replace > with >= in moved_since",
+      "file": "src/tracker_host.rs",
+      "line": 1447,
+      "pr": 434,
+      "reason": "At `ring.len() == TIP_RING` the branch computes `extra = 0` and `drain(..0)` removes nothing; the ring is the same.",
+      "review": "VERDICT merge, confidence 0.9: \"22 caught, matching the PR's table test for test; 2 missed, and both equivalences are true when you read the code.\""
+    },
+    {
+      "name": "src/tracker_host.rs:2559:31: replace match guard offered with false in read_creators",
+      "file": "src/tracker_host.rs",
+      "line": 2559,
+      "pr": 467,
+      "reason": "The `Err(e) if offered` arm is unreachable: `deep_enough` errs only on the snapshot's `tip_height`, the row reaches it only with a `mined` word that comes only from the proof step through `OldBranch` on the same snapshot's tip, so the tip was readable and neither guard value is ever evaluated with an `Err`.",
+      "review": "VERDICT merge, confidence 0.86: \"The three misses are exactly the declared equivalents, and reading the code shows the guarded branch and the new branch's tip are never reached.\""
+    },
+    {
+      "name": "src/tracker_host.rs:2559:31: replace match guard offered with true in read_creators",
+      "file": "src/tracker_host.rs",
+      "line": 2559,
+      "pr": 467,
+      "reason": "The `Err(e) if offered` arm is unreachable: `deep_enough` errs only on the snapshot's `tip_height`, the row reaches it only with a `mined` word that comes only from the proof step through `OldBranch` on the same snapshot's tip, so the tip was readable and neither guard value is ever evaluated with an `Err`.",
+      "review": "VERDICT merge, confidence 0.86: \"The three misses are exactly the declared equivalents, and reading the code shows the guarded branch and the new branch's tip are never reached.\""
+    },
+    {
+      "name": "src/tracker_host.rs:2985:9: replace <impl Headers for NewBranch<'_, H>>::tip_height -> std::result::Result<Height, HeaderError> with Ok(Default::default())",
+      "file": "src/tracker_host.rs",
+      "line": 2985,
+      "pr": 467,
+      "reason": "Under bsv-tracker =0.9.0-beta.6 it is never called: the host steps the new branch only with Build, hints, chain events and verdicts, every proof goes through `OldBranch` or the snapshot, and the crate reads `tip_height` only in `Headers::check`; a crate that reads the new branch's tip would reopen this.",
+      "review": "VERDICT merge, confidence 0.86: \"The three misses are exactly the declared equivalents, and reading the code shows the guarded branch and the new branch's tip are never reached.\""
+    }
+  ]
+}
