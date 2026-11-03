@@ -194,8 +194,9 @@ fn the_tools_are_the_29_the_five_and_the_owners_three() {
     }
 }
 
-/// The owner's three routes, each answering the call as it came: its
-/// method, path, `Origin` (or null), `Authorization` (or null) and body.
+/// The owner's three routes and the wallet's two host routes, each
+/// answering the call as it came: its method, path, `Origin` (or null),
+/// `Authorization` (or null) and body.
 async fn owner_stub() -> String {
     async fn echo(request: axum::extract::Request) -> Json<Value> {
         let (parts, body) = request.into_parts();
@@ -224,29 +225,6 @@ async fn owner_stub() -> String {
     serve(app).await
 }
 
-/// From the switch (#414 L5b) the wallet's host routes answer the owner's
-/// admission or the seed, never a page's grant: the MCP's host tools send
-/// no `Origin`, and the wallet's bearer when set, as its owner's tools do.
-#[tokio::test]
-async fn the_wallets_host_tools_send_no_origin_and_the_wallet_bearer() {
-    let base = owner_stub().await;
-    let mcp = WalletMcp::new(base, "http://localhost".into())
-        .with_wallet_bearer(Some("owner-token".into()));
-    let bearer = Some("owner-token");
-    let feed = text(mcp.chain_feed_status().await.unwrap());
-    assert_eq!(feed, echoed("GET", "/chain-feed", bearer, &Value::Null));
-    let txid = "ab".repeat(32);
-    let word = text(
-        mcp.tx_word(Parameters(TxWordParams { txid: txid.clone() }))
-            .await
-            .unwrap(),
-    );
-    assert_eq!(
-        word,
-        echoed("GET", &format!("/tx/{txid}"), bearer, &Value::Null)
-    );
-}
-
 /// The call the owner's stub echoes: `method` and `path`, no `Origin`,
 /// `bearer` (or none) and `body`.
 fn echoed(method: &str, path: &str, bearer: Option<&str>, body: &Value) -> Value {
@@ -273,6 +251,17 @@ async fn the_owners_tools_send_no_origin_and_the_wallet_bearer() {
 
     let listed = text(mcp.list_origins().await.unwrap());
     assert_eq!(listed, echoed("GET", "/origins", bearer, &Value::Null));
+    // From the switch (#414 L5b) a host route answers the owner or the seed,
+    // never a page's grant: the wallet's host tools take the owner's path.
+    let feed = text(mcp.chain_feed_status().await.unwrap());
+    assert_eq!(feed, echoed("GET", "/chain-feed", bearer, &Value::Null));
+    let txid = "ab".repeat(32);
+    let word = Parameters(TxWordParams { txid: txid.clone() });
+    let word = text(mcp.tx_word(word).await.unwrap());
+    assert_eq!(
+        word,
+        echoed("GET", &format!("/tx/{txid}"), bearer, &Value::Null)
+    );
 
     let answering = Parameters(AnswerOriginParams {
         pending_id: 7,

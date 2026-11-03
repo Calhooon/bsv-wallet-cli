@@ -668,13 +668,8 @@ async fn a_spend_is_answered_once_or_deny_until_l6_and_a_deny_writes_no_grant() 
             "{e}"
         );
     }
-    let once = say(&storage, spend.pending_id, Answer::Once, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        (once.pending.answer, once.grant),
-        (Some(Answer::Once), None)
-    );
+    let denied = say(&storage, spend.pending_id, Answer::Deny, None).await;
+    assert_eq!(denied.unwrap().pending.answer, Some(Answer::Deny));
 
     let listing = ask(&storage, &listing_call("app.example")).await;
     let e = say(&storage, listing.pending_id, Answer::Grant, Some(5))

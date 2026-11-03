@@ -344,22 +344,15 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     let twice = refused(&dir, &["origin-deny", &ids[1].to_string()]);
     assert!(twice.contains("was already answered deny at"), "{twice}");
 
-    // The switch (#414 L5b): a spend is answered once or deny until the
-    // ceilings land (L6), so a grant of it is refused by name, with or
-    // without its ceiling.
-    let amountless = refused(&dir, &["origin-grant", &format!("#{}", ids[2])]);
-    assert!(
-        amountless.contains("answered once or deny, never grant"),
-        "{amountless}"
-    );
-    let ceilinged = refused(
-        &dir,
-        &["origin-grant", &format!("#{}", ids[2]), "--amount", "60000"],
-    );
-    assert!(
-        ceilinged.contains("answered once or deny, never grant"),
-        "{ceilinged}"
-    );
+    // The switch (#414 L5b): a spend is answered once or deny until L6.
+    let spend = format!("#{}", ids[2]);
+    for extra in [&[][..], &["--amount", "60000"]] {
+        let e = refused(
+            &dir,
+            &[&["origin-grant", spend.as_str()][..], extra].concat(),
+        );
+        assert!(e.contains("answered once or deny, never grant"), "{e}");
+    }
     let kinded = refused(
         &dir,
         &[

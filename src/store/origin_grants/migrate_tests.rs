@@ -3,8 +3,8 @@
 //! words, on the fixture of `super::tests`.
 
 use super::tests::{
-    a_second_ensure_writes_nothing, count, new_objects, own_objects, toolbox_dump, wallet_db,
-    NOV_FIRST, NOW, OCT_LAST,
+    a_second_ensure_writes_nothing, ask, call, count, new_objects, own_objects, toolbox_dump,
+    wallet_db, NOV_FIRST, NOW, OCT_LAST,
 };
 use super::*;
 use crate::test_support::Markers;
@@ -340,20 +340,8 @@ const L5A_PENDING: &str = "CREATE TABLE origin_pending (pending_id INTEGER PRIMA
 /// An open basket row of `originator` (any name of its host).
 async fn opened(storage: &StorageSqlx, originator: &str, basket: &str) -> i64 {
     let power = Power::basket(basket).unwrap();
-    let asking = Asking {
-        originator,
-        power: &power,
-        usage: Some("listing"),
-        call: "/listOutputs",
-        reason: None,
-        amount: None,
-        renewal: false,
-    };
-    open_or_join(storage, &asking, NOW)
-        .await
-        .unwrap()
-        .row
-        .pending_id
+    let row = ask(storage, &call(originator, &power, Some("listing"), "/x")).await;
+    row.pending_id
 }
 
 /// #414 L5b: a row whose caller left is deleted, and its id is never given

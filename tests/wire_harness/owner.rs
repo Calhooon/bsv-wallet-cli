@@ -22,7 +22,9 @@ use bsv_wallet_cli::store::origin_grants::{Reach, Reply};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
 
-use crate::wire_support::Req;
+use super::fixture::NORMALIZER;
+use super::worlds::World;
+use crate::wire_support::{Req, Resp, J};
 
 /// The owner's step of one fixture.
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -193,5 +195,24 @@ impl Owner {
         for call in calls {
             call.await.unwrap();
         }
+    }
+}
+
+impl World {
+    /// The world's `serve_raw` with the owner's step around the request:
+    /// the rows written before it, the calls held first, the owner's act
+    /// while it is held, then every call still held denied.
+    pub(crate) async fn serve_owned(&self, req: &Req, owner: Option<&Owner>) -> (Resp, Option<J>) {
+        let Some(owner) = owner else {
+            return self.serve_raw(req).await;
+        };
+        owner.before(&self.wallet).await;
+        let calls = owner.hold(&self.router, &self.held).await;
+        let (served, ()) = tokio::join!(
+            NORMALIZER.serve(&self.router, req),
+            owner.act(&self.wallet, &self.held)
+        );
+        owner.after(&self.wallet, &self.held, calls).await;
+        served
     }
 }
