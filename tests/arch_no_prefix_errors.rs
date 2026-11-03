@@ -43,10 +43,9 @@ const ALLOWED: &[(&str, usize, &str)] = &[
     ),
     (
         "src/store/origin_grants/power.rs",
-        7,
-        "a power's names (#414, the design's W17): the reference's admin-reserved names (`admin` and `p ` first, WalletPermissionsManager.ts 1509-1511, 1589, 1806-1808) and the label and linkage name forms of a key, never an error's text",
+        5,
+        "the reference's admin-reserved name rule and the protocol-name encodings' parse: names, never messages; the captain's word of 2026-11-03",
     ),
-
 ];
 
 const RULE: Rule = Rule {
