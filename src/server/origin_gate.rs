@@ -41,6 +41,7 @@ use axum::response::{IntoResponse, Response};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use super::error::{AppError, Kind};
+use super::probes::Probes;
 pub use crate::config::originator::OriginatorRule;
 
 /// The route the gate does not judge: Arcade's webhook, server to server,
@@ -367,7 +368,10 @@ pub(crate) async fn gate(
             }
             .answer()
         }
-        None if OPEN_DOORS.contains(&route.as_str()) => super::powers::open(&admitted, &route),
+        None if OPEN_DOORS.contains(&route.as_str()) => {
+            let probes = request.extensions().get::<Probes>().cloned();
+            super::powers::open(&admitted, &probes.unwrap_or_default(), &route, None);
+        }
         None => {}
     }
     request.extensions_mut().insert(admitted);

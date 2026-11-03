@@ -43,6 +43,11 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         1,
         "a held call's disconnect: its guard's drop cannot await, so the withdrawal of the originator's open rows runs as a task (#414, the design's Abandon, W4 (a))",
     ),
+    (
+        "src/server/probes.rs",
+        1,
+        "the probe record's writer, one per served router: the gate's answers with no row are counted off the call's path, so no call waits on the record (#539)",
+    ),
 ];
 
 const RULE: Rule = Rule {
