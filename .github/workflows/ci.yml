@@ -186,7 +186,7 @@ jobs:
   # The toolchains: 1.98.1 with clippy for the ratchet (pinned to the
   # record's, set per step), then stable with rustfmt and clippy, the
   # default, before the cache step so its key considers both. The runner is
-  # deny's paved-road switch (a private repository's self-hosted runner).
+  # GitHub-hosted ubuntu-latest (#497).
   # On a docs-only change (#476) the toolchains and the cache are skipped, so
   # every Rust gate and the ratchet skip with them; the docs set's guard, The
   # base ref, scoreboard, links and citations and the changelog fragment run:
@@ -197,7 +197,7 @@ jobs:
     # Never skipped (a skipped job's context passes the protection unread): a
     # failed `changes` leaves docs_only empty, and every gate runs.
     if: ${{ !cancelled() }}
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","studio"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
