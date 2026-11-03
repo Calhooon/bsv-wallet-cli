@@ -88,6 +88,28 @@ module.exports = {
       assert(asPage.status === 403 && pageBody.code === 'ACCESS_DENIED',
         `GET /origins with an Origin must be 403 ACCESS_DENIED, got ${asPage.status} ${JSON.stringify(pageBody)}`);
 
+      // ─── revoke_origin — one power by its kind and key (#414, the four kinds) ───
+      // An originator holding no row: the tool names the power the route
+      // refuses, as POST /origins/revoke answers it, and writes nothing.
+      const power = { originator: 'mcp-parity.example', kind: 'basket', key: '["browser gate"]' };
+      const httpRevoke = await fetch(`${ownersUrl}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(power),
+      });
+      const httpRevokeBody = await httpRevoke.json();
+      const nothing = 'mcp-parity.example holds no live grant row for basket ["browser gate"]: nothing to revoke';
+      assert(httpRevoke.status === 409 && httpRevokeBody.message === nothing,
+        `POST /origins/revoke of a power held by none must be 409 naming it, got ${httpRevoke.status} ${JSON.stringify(httpRevokeBody)}`);
+      let mcpRevokeError = null;
+      try {
+        await mcp.callTool('revoke_origin', power);
+      } catch (e) {
+        mcpRevokeError = e.message;
+      }
+      assert(mcpRevokeError && mcpRevokeError.includes('HTTP 409') && mcpRevokeError.includes('holds no live grant row for basket'),
+        `MCP revoke_origin must carry the route's refusal naming the power, got ${mcpRevokeError}`);
+
       // ─── is_authenticated — compare with HTTP ───
       const mcpAuth = await mcp.callTool('is_authenticated', {});
       const httpAuth = await walletA.client.isAuthenticated();
