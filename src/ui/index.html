@@ -912,9 +912,11 @@ function renderSqlView() {
 }
 
 // ═══════════════ RENDER: ORIGINS ═══════════════
-// The store's per-origin rows (#414): the open pending requests, answered
-// grant, grant once (a spending request alone) or deny; the grant rows,
-// revoked. The same rows `bsv-wallet origins` and the owner's door read.
+// The store's per-origin rows (#414): the open pending requests, each the
+// power it asks (its kind and the prompt's words, the page's reason quoted),
+// answered grant, grant once (a spending request alone) or deny; the grant
+// rows, one power each, revoked by originator, kind and key. The same rows
+// `bsv-wallet origins` and the owner's door read.
 function when(secs) {
   return secs ? new Date(secs * 1000).toISOString().replace('.000', '') : '';
 }
@@ -926,28 +928,29 @@ function renderOriginsView() {
   const pendingRows = open.map(p => `<tr data-pending-id="${p.pendingId}">
       <td class="number">#${p.pendingId}</td>
       <td>${esc(p.rawOriginator)}</td>
-      <td>${esc(p.scope)}</td>
+      <td>${esc(p.kind)}</td>
+      <td>${esc(p.asked)}${p.reason === null ? '' : ' ' + esc(JSON.stringify(p.reason))}</td>
       <td>${esc(p.call)}</td>
       <td class="number">${p.amount === null ? '' : esc(p.amount.toLocaleString()) + ' sat'}</td>
       <td>${esc(when(p.firstSeen))}</td>
       <td>${p.renewal ? 'renewal' : ''}</td>
-      <td>${p.scope === 'spending'
+      <td>${p.kind === 'spending'
         ? `<input class="origin-amount" id="amount-${p.pendingId}" type="number" min="0" value="${esc(p.amount ?? '')}" title="the month's ceiling in satoshis">`
-        : ''}<button class="origin-btn grant" onclick="answerOrigin(${p.pendingId}, 'grant')">Grant</button>${p.scope === 'spending'
+        : ''}<button class="origin-btn grant" onclick="answerOrigin(${p.pendingId}, 'grant')">Grant</button>${p.kind === 'spending'
         ? `<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'once')">Grant once</button>`
         : ''}<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'deny')">Deny</button></td>
     </tr>`).join('');
-  const grantRows = (o.grants || []).map(g => `<tr data-originator="${esc(g.originator)}" data-scope="${esc(g.scope)}">
+  const grantRows = (o.grants || []).map(g => `<tr data-originator="${esc(g.originator)}" data-kind="${esc(g.kind)}" data-key="${esc(g.key)}">
       <td>${esc(g.originator)}</td>
-      <td>${esc(g.scope)}</td>
-      <td class="number">${g.scope === 'spending'
+      <td>${esc(g.kind)}</td>
+      <td>${esc(g.key)}</td>
+      <td class="number">${g.kind === 'spending'
         ? (g.amount === null ? 'no ceiling' : esc(g.amount.toLocaleString()) + '/month') + ` (${esc((g.spentThisMonth ?? 0).toLocaleString())} spent)`
         : ''}</td>
       <td>${esc(when(g.grantedAt))}</td>
       <td>${g.expiry ? esc(when(g.expiry)) : 'never'}</td>
-      <td>${esc(g.source)}</td>
       <td>${g.revokedAt === null
-        ? `<button class="origin-btn" onclick="revokeOrigin(this.closest('tr').dataset.originator, this.closest('tr').dataset.scope)">Revoke</button>`
+        ? `<button class="origin-btn" onclick="revokeOrigin(this.closest('tr').dataset.originator, this.closest('tr').dataset.kind, this.closest('tr').dataset.key)">Revoke</button>`
         : 'revoked ' + esc(when(g.revokedAt))}</td>
     </tr>`).join('');
   main.innerHTML = `
@@ -963,14 +966,14 @@ function renderOriginsView() {
       ${open.length === 0
         ? '<div class="empty-state" style="padding:20px"><div class="msg">No pending requests</div></div>'
         : `<table class="data-table" id="originsPending">
-            <thead><tr><th>#</th><th>originator</th><th>scope</th><th>call</th><th>amount</th><th>seen at</th><th>renewal</th><th></th></tr></thead>
+            <thead><tr><th>#</th><th>originator</th><th>kind</th><th>asks</th><th>call</th><th>amount</th><th>seen at</th><th>renewal</th><th></th></tr></thead>
             <tbody>${pendingRows}</tbody>
           </table>`}
       <h3>Grants</h3>
       ${(o.grants || []).length === 0
         ? '<div class="empty-state" style="padding:20px"><div class="msg">No grant rows</div></div>'
         : `<table class="data-table" id="originsGrants">
-            <thead><tr><th>originator</th><th>scope</th><th>ceiling</th><th>granted at</th><th>expires</th><th>source</th><th></th></tr></thead>
+            <thead><tr><th>originator</th><th>kind</th><th>key</th><th>ceiling</th><th>granted at</th><th>expires</th><th></th></tr></thead>
             <tbody>${grantRows}</tbody>
           </table>`}
     </div>
@@ -1004,10 +1007,10 @@ async function answerOrigin(pendingId, answer) {
   await loadOrigins();
 }
 
-async function revokeOrigin(originator, scope) {
-  const r = await api.originsWrite('revoke', { originator, scope });
+async function revokeOrigin(originator, kind, key) {
+  const r = await api.originsWrite('revoke', { originator, kind, key });
   S.originsError = r.ok ? null : (r.json.error || 'the revoke was refused');
-  if (r.ok) toast(`${originator} ${scope} revoked`);
+  if (r.ok) toast(`${originator} ${kind} ${key} revoked`);
   await loadOrigins();
 }
 
