@@ -1,4 +1,4 @@
-//! The configuration of `bsv-wallet-mcp`: its five variables read once at
+//! The configuration of `bsv-wallet-mcp`: its six variables read once at
 //! start, typed and checked (#171), in the shape of the main crate's
 //! `src/config.rs` (#80).
 //!
@@ -10,9 +10,10 @@
 //! A malformed setting is a typed [`ConfigError`], and every one is
 //! refused together at start by name. `bsv-wallet-mcp --config` prints
 //! every setting with its value and its [`Source`] ([`Config::table`]),
-//! the refused rows marked, and exits 1 when one is refused. The relay's
-//! admin token is a [`Secret`]: it prints `<set>`, or `empty` when the
-//! variable is set to nothing; a URL's userinfo and query print `<set>`.
+//! the refused rows marked, and exits 1 when one is refused. The wallet's
+//! bearer and the relay's admin token are [`Secret`]s: each prints `<set>`,
+//! or `empty` when the variable is set to nothing; a URL's userinfo and
+//! query print `<set>`.
 
 use std::fmt;
 
@@ -24,7 +25,8 @@ use tracing_subscriber::EnvFilter;
 /// `WALLET_URL` when unset: the wallet's default port.
 pub const DEFAULT_WALLET_URL: &str = "http://localhost:3322";
 
-/// `WALLET_ORIGIN` when unset: the `Origin` header every request carries.
+/// `WALLET_ORIGIN` when unset: the `Origin` header every request but the
+/// owner's carries.
 pub const DEFAULT_WALLET_ORIGIN: &str = "http://localhost";
 
 #[path = "../../src/config/words.rs"]
@@ -41,6 +43,7 @@ pub const LOG_DIRECTIVE: &str = "bsv_wallet_mcp=info";
 pub const NAMES: &[&str] = &[
     "WALLET_URL",
     "WALLET_ORIGIN",
+    "WALLET_AUTH_TOKEN",
     "RELAY_URL",
     "RELAY_ADMIN_TOKEN",
     "RUST_LOG",
@@ -102,9 +105,12 @@ pub struct Config {
     /// `WALLET_URL`: the wallet's HTTP server, an http or https URL, as set
     /// (default `http://localhost:3322`).
     pub wallet_url: String,
-    /// `WALLET_ORIGIN`: the `Origin` header every request carries, not
-    /// blank (default `http://localhost`).
+    /// `WALLET_ORIGIN`: the `Origin` header every request but the owner's
+    /// carries, not blank (default `http://localhost`).
     pub wallet_origin: String,
+    /// `WALLET_AUTH_TOKEN`: the wallet's bearer (its `AUTH_TOKEN`), sent on
+    /// the owner's routes (`/origins`), when set and not empty.
+    pub wallet_auth_token: Option<Secret>,
     /// `RELAY_URL`: the callback relay (`bsv-wallet-relay`), an http or
     /// https URL; unset or empty is no relay.
     pub relay_url: Option<String>,
@@ -154,6 +160,9 @@ impl Config {
         let config = Self {
             wallet_url: wallet_url.unwrap_or_else(|| DEFAULT_WALLET_URL.to_string()),
             wallet_origin: wallet_origin.unwrap_or_else(|| DEFAULT_WALLET_ORIGIN.to_string()),
+            wallet_auth_token: get("WALLET_AUTH_TOKEN")
+                .filter(|v| !v.is_empty())
+                .map(Secret::new),
             relay_url,
             relay_admin_token: get("RELAY_ADMIN_TOKEN")
                 .filter(|v| !v.is_empty())
@@ -227,12 +236,11 @@ impl Config {
                     (None, "WALLET_URL") => shown_url(&self.wallet_url),
                     (None, "WALLET_ORIGIN") => self.wallet_origin.clone(),
                     (None, "RELAY_URL") => self.relay_url.as_deref().map_or_else(none, shown_url),
+                    (None, "WALLET_AUTH_TOKEN") => {
+                        self.shown_secret(name, self.wallet_auth_token.as_ref())
+                    }
                     (None, "RELAY_ADMIN_TOKEN") => {
-                        match (self.raw.get(name), &self.relay_admin_token) {
-                            (_, Some(token)) => token.to_string(),
-                            (Some(_), None) => "empty".to_string(),
-                            (None, None) => none(),
-                        }
+                        self.shown_secret(name, self.relay_admin_token.as_ref())
                     }
                     (None, _) => format!(
                         "{},{LOG_DIRECTIVE}",
@@ -247,6 +255,16 @@ impl Config {
                 )
             })
             .collect()
+    }
+
+    /// A secret's value as `--config` prints it: `<set>`, `empty` when
+    /// the variable is set to nothing, `-` when unset.
+    fn shown_secret(&self, name: &str, secret: Option<&Secret>) -> String {
+        match (self.raw.get(name), secret) {
+            (_, Some(token)) => token.to_string(),
+            (Some(_), None) => "empty".to_string(),
+            (None, None) => "-".to_string(),
+        }
     }
 
     /// The knobs as three aligned columns under a header, as

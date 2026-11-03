@@ -1,14 +1,21 @@
-//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints, and five tools
-//! over the host's own routes (0.3.0).
+//! MCP server wrapping all 28 BRC-100 wallet HTTP endpoints, five tools
+//! over the host's own routes (0.3.0), and three over the owner's (#414).
 //!
 //! Talks to bsv-wallet-cli at WALLET_URL (default http://localhost:3322).
-//! Every request includes the Origin header required by the wallet.
+//! Every request includes the Origin header required by the wallet, but
+//! the owner's: they refuse any call carrying one.
 //!
 //! The host routes: `chain_feed_status` (`GET /chain-feed`) and `tx_word`
 //! (`GET /tx/{txid}`) on the wallet; `health` (`GET /health`), `pull`
 //! (`GET /pull`) and `register` (`POST /register`, the relay's admin bearer
 //! `RELAY_ADMIN_TOKEN`) on the callback relay at RELAY_URL
-//! (`bsv-wallet-relay`). No route is added to either server.
+//! (`bsv-wallet-relay`).
+//!
+//! The owner's routes on the wallet (#414, `src/server/owner_door.rs`):
+//! `list_origins` (`GET /origins`), `answer_origin` (`POST
+//! /origins/answer`) and `revoke_origin` (`POST /origins/revoke`), sent
+//! with no `Origin` header and with the wallet's bearer
+//! `WALLET_AUTH_TOKEN` when it is set.
 //!
 //! The variables are read once at start into a typed [`Config`]
 //! (`config.rs`, #171); `bsv-wallet-mcp --config` prints each with its
@@ -34,6 +41,8 @@ pub struct WalletMcp {
     client: Client,
     url: String,
     origin: String,
+    /// The wallet's bearer (`WALLET_AUTH_TOKEN`), for the owner's routes.
+    wallet_auth_token: Option<String>,
     /// The callback relay (`bsv-wallet-relay`), when one is named.
     relay_url: Option<String>,
     /// The relay's admin bearer, for `register`.
@@ -70,8 +79,31 @@ impl WalletMcp {
         request: reqwest::RequestBuilder,
         route: &str,
     ) -> Result<CallToolResult, ErrorData> {
+        Self::answer(request.header("Origin", &self.origin), route).await
+    }
+
+    /// One of the owner's routes (`/origins`): never an `Origin` header,
+    /// which they refuse, and the wallet's bearer when one is named; its
+    /// answer as [`Self::host`]'s.
+    async fn owner(
+        &self,
+        request: reqwest::RequestBuilder,
+        route: &str,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = match &self.wallet_auth_token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        Self::answer(request, route).await
+    }
+
+    /// A host or owner's route's answer: its status and body (JSON when
+    /// it parses, else the text), an error for a failing status.
+    async fn answer(
+        request: reqwest::RequestBuilder,
+        route: &str,
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = request
-            .header("Origin", &self.origin)
             .send()
             .await
             .map_err(|e| Self::err(format!("HTTP error on {route}: {e}")))?;
@@ -529,6 +561,56 @@ pub struct RegisterParams {
     pub token: String,
 }
 
+/// The owner's answer to a pending origin request.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginAnswer {
+    /// Grant the request's scope (a spending request names `amount`)
+    Grant,
+    /// Admit the one spending call, writing no grant (refused on a wallet request)
+    Once,
+    /// Deny the call
+    Deny,
+}
+
+/// A grant's scope.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginScope {
+    /// Every served door
+    Wallet,
+    /// `createAction`'s spend, under a monthly ceiling
+    Spending,
+}
+
+/// `answer_origin`'s parameters, `POST /origins/answer`'s body.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AnswerOriginParams {
+    /// The pending request's id (`pendingId` in `list_origins`)
+    #[serde(rename = "pendingId")]
+    pub pending_id: i64,
+    /// grant, once (a spending request alone) or deny
+    pub answer: OriginAnswer,
+    /// A grant's expiry in unix seconds; 0 or absent never expires (a
+    /// spending grant never does)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry: Option<i64>,
+    /// A spending grant's monthly ceiling in satoshis (required to grant a
+    /// spending request)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<i64>,
+}
+
+/// `revoke_origin`'s parameters, `POST /origins/revoke`'s body.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RevokeOriginParams {
+    /// The originator: a host with an optional port, no scheme (app.example)
+    pub originator: String,
+    /// wallet or spending; absent revokes both
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<OriginScope>,
+}
+
 // ── Tool definitions ───────────────────────────────────────────
 
 #[tool_router]
@@ -538,6 +620,7 @@ impl WalletMcp {
             client: Client::new(),
             url,
             origin,
+            wallet_auth_token: None,
             relay_url: None,
             relay_admin_token: None,
         }
@@ -547,13 +630,21 @@ impl WalletMcp {
     /// relay with its admin bearer when one is named.
     #[must_use]
     pub fn from_config(config: &Config) -> Self {
-        Self::new(config.wallet_url.clone(), config.wallet_origin.clone()).with_relay(
-            config.relay_url.clone(),
-            config
-                .relay_admin_token
-                .as_ref()
-                .map(|t| t.expose().to_string()),
-        )
+        let exposed = |t: &config::Secret| t.expose().to_string();
+        Self::new(config.wallet_url.clone(), config.wallet_origin.clone())
+            .with_relay(
+                config.relay_url.clone(),
+                config.relay_admin_token.as_ref().map(exposed),
+            )
+            .with_wallet_bearer(config.wallet_auth_token.as_ref().map(exposed))
+    }
+
+    /// Name the wallet's bearer (`WALLET_AUTH_TOKEN`), sent on the owner's
+    /// routes.
+    #[must_use]
+    pub fn with_wallet_bearer(mut self, token: Option<String>) -> Self {
+        self.wallet_auth_token = token.filter(|t| !t.is_empty());
+        self
     }
 
     /// Name the callback relay (`RELAY_URL`) and its admin bearer
@@ -923,6 +1014,40 @@ impl WalletMcp {
         }
         self.host(request, "/register").await
     }
+
+    // ── The owner's routes (#414, not BRC-100) ────────────────
+
+    #[tool(
+        description = "The owner's per-origin grants and prompts (GET /origins): every grant row (originator, scope, a spending row's monthly ceiling and this month's spend, expiry, revoked) and the pending requests, the open ones and the last 50 answered. Sent without an Origin header, with WALLET_AUTH_TOKEN as the bearer when set."
+    )]
+    async fn list_origins(&self) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/origins", self.url);
+        self.owner(self.client.get(url), "/origins").await
+    }
+
+    #[tool(
+        description = "Answer a pending origin request as the owner (POST /origins/answer): grant (a spending request names amount, its monthly ceiling), once (a spending request alone, no grant written) or deny. A request is answered once: a second answer, from here, the CLI or anywhere, is refused naming the first."
+    )]
+    async fn answer_origin(
+        &self,
+        p: Parameters<AnswerOriginParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/origins/answer", self.url);
+        let request = self.client.post(url).json(&args(&p.0));
+        self.owner(request, "/origins/answer").await
+    }
+
+    #[tool(
+        description = "Revoke an originator's grant as the owner (POST /origins/revoke): the wallet scope, the spending scope, or both when scope is absent. The rows are stamped revoked, never deleted; an originator holding no live row is refused by name."
+    )]
+    async fn revoke_origin(
+        &self,
+        p: Parameters<RevokeOriginParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let url = format!("{}/origins/revoke", self.url);
+        let request = self.client.post(url).json(&args(&p.0));
+        self.owner(request, "/origins/revoke").await
+    }
 }
 
 // ── ServerHandler ──────────────────────────────────────────────
@@ -934,8 +1059,9 @@ impl ServerHandler for WalletMcp {
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_instructions(
                 "BSV wallet MCP server. All 28 BRC-100 wallet endpoints plus wallet_balance, \
-                 and five tools over the host's own routes: chain_feed_status, tx_word, health, \
-                 pull, register.",
+                 five tools over the host's own routes: chain_feed_status, tx_word, health, \
+                 pull, register, and three over the owner's: list_origins, answer_origin, \
+                 revoke_origin.",
             )
     }
 }

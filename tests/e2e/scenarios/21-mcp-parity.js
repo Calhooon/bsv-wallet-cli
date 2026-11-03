@@ -37,11 +37,11 @@ module.exports = {
       mcp.notify('notifications/initialized');
       await sleep(200);
 
-      // ─── tools/list — verify all 34 tools (29 wallet, five host-route) ───
+      // ─── tools/list — verify all 37 tools (29 wallet, five host-route, the owner's three) ───
       const toolsResult = await mcp.request('tools/list', {});
       const tools = toolsResult.tools || [];
-      assert(tools.length === 34,
-        `MCP should expose 34 tools, got ${tools.length}`);
+      assert(tools.length === 37,
+        `MCP should expose 37 tools, got ${tools.length}`);
 
       const toolNames = tools.map(t => t.name).sort();
       const expectedTools = [
@@ -56,12 +56,27 @@ module.exports = {
         'sign_action', 'verify_hmac', 'verify_signature',
         'wait_for_authentication', 'wallet_balance',
         'chain_feed_status', 'tx_word', 'health', 'pull', 'register',
+        'list_origins', 'answer_origin', 'revoke_origin',
       ].sort();
 
       for (const expected of expectedTools) {
         assert(toolNames.includes(expected),
           `MCP should have tool '${expected}', missing from: ${toolNames.join(', ')}`);
       }
+
+      // ─── list_origins — the owner's GET /origins, sent with no Origin (#414) ───
+      const ownersUrl = `http://localhost:${walletA.port}/origins`;
+      const mcpOrigins = await mcp.callTool('list_origins', {});
+      const httpOrigins = await (await fetch(ownersUrl)).json();
+      assert(Array.isArray(mcpOrigins.grants) && Array.isArray(mcpOrigins.pending),
+        `MCP list_origins must return {grants, pending}: ${JSON.stringify(mcpOrigins)}`);
+      assert(JSON.stringify(mcpOrigins) === JSON.stringify(httpOrigins),
+        `MCP list_origins must match GET /origins: ${JSON.stringify(mcpOrigins)} vs ${JSON.stringify(httpOrigins)}`);
+      // The harness's page origin is refused there: the owner's door is no page's.
+      const asPage = await fetch(ownersUrl, { headers: { Origin: walletA.client.origin } });
+      const pageBody = await asPage.json();
+      assert(asPage.status === 403 && pageBody.code === 'ACCESS_DENIED',
+        `GET /origins with an Origin must be 403 ACCESS_DENIED, got ${asPage.status} ${JSON.stringify(pageBody)}`);
 
       // ─── is_authenticated — compare with HTTP ───
       const mcpAuth = await mcp.callTool('is_authenticated', {});
@@ -190,7 +205,7 @@ module.exports = {
         sats: 0,
         wocConfirmed: 'n/a',
         tools: tools.length,
-        tests: 13,
+        tests: 14,
         balance: mcpBalance.satoshis,
       };
 
