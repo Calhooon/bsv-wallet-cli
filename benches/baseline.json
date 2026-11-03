@@ -65,6 +65,71 @@
         }
       ],
       "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores": {
+      "gate": true,
+      "machine": "Intel(R) Xeon(R) 6975P-C, 4 cores",
+      "profile": "ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores",
+      "runs": [
+        {
+          "benches": {
+            "create_action_signed/signed/1000": {
+              "calls": 400,
+              "p50_us": 16264.5,
+              "p99_us": 17960.0
+            },
+            "create_action_signed/signed/10000": {
+              "calls": 200,
+              "p50_us": 196954.0,
+              "p99_us": 208260.1
+            },
+            "gate_assess/all/1000": {
+              "calls": 700,
+              "p50_us": 38183.4,
+              "p99_us": 59075.7
+            },
+            "gate_assess/all/10000": {
+              "calls": 200,
+              "p50_us": 552285.8,
+              "p99_us": 572356.0
+            },
+            "gate_assess/need/1000": {
+              "calls": 1100,
+              "p50_us": 9455.8,
+              "p99_us": 11235.4
+            },
+            "gate_assess/need/10000": {
+              "calls": 200,
+              "p50_us": 163340.0,
+              "p99_us": 170668.3
+            },
+            "internalize_action/brc29/1000": {
+              "calls": 700,
+              "p50_us": 1086.4,
+              "p99_us": 1221.4
+            },
+            "internalize_action/brc29/10000": {
+              "calls": 100,
+              "p50_us": 2046.4,
+              "p99_us": 2762.6
+            },
+            "list_outputs/limit100/1000": {
+              "calls": 18700,
+              "p50_us": 523.6,
+              "p99_us": 635.4
+            },
+            "list_outputs/limit100/10000": {
+              "calls": 5300,
+              "p50_us": 2712.6,
+              "p99_us": 3579.0
+            }
+          },
+          "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48",
+          "recorded": "2026-11-02",
+          "run_id": "41516017523"
+        }
+      ],
+      "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)"
     }
   }
 }
