@@ -38,6 +38,11 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         1,
         "the served createAction's follow-up",
     ),
+    (
+        "src/server/powers.rs",
+        1,
+        "a held call's disconnect: its guard's drop cannot await, so the withdrawal of the originator's open rows runs as a task (#414, the design's Abandon, W4 (a))",
+    ),
 ];
 
 const RULE: Rule = Rule {
