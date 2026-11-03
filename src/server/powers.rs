@@ -46,6 +46,7 @@ use tokio::sync::{watch, Notify};
 
 use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::WalletState;
+use super::open_bounds::{Class, OpenBounds};
 use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
 use super::probes::Probes;
 use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
@@ -397,12 +398,13 @@ impl Ask {
 }
 
 /// A door's view of the gate: the wallet, the held calls, the probe
-/// record's queue and the admitted `Origin` (none on a route the gate does
-/// not judge).
+/// record's queue, the open doors' bound and the admitted `Origin` (none on
+/// a route the gate does not judge).
 pub struct Asker {
     wallet: WalletState,
     held: Held,
     probes: Probes,
+    bounds: OpenBounds,
     admitted: Option<Admitted>,
 }
 
@@ -421,6 +423,11 @@ impl FromRequestParts<WalletState> for Asker {
                 .get::<Probes>()
                 .cloned()
                 .unwrap_or_default(),
+            bounds: parts
+                .extensions
+                .get::<OpenBounds>()
+                .cloned()
+                .unwrap_or_default(),
             admitted: parts.extensions.get::<Admitted>().cloned(),
         })
     }
@@ -430,10 +437,20 @@ impl FromRequestParts<WalletState> for Asker {
 /// owner on 2026-11-03): a page with a parsed `Origin` and an agreeing
 /// originator, past the seed, is answered at `door` (an open door's path,
 /// or a door's level-0 protocol, `power` its key) with no grant read or
-/// written. The answer is counted in the probe record off the call's path
+/// written, within the bound of its `class` (#541): past it, 429
+/// `ERR_RATE_LIMITED` at once, and the call is neither answered nor
+/// counted. An answer is counted in the probe record off the call's path
 /// (#539, [`Probes::note`]): the call never waits on it.
-pub(crate) fn open(admitted: &Admitted, probes: &Probes, door: &str, power: Option<&str>) {
+pub(crate) fn open(
+    admitted: &Admitted,
+    probes: &Probes,
+    bounds: &OpenBounds,
+    door: &str,
+    class: Class,
+    power: Option<&str>,
+) -> Result<(), AppError> {
     // #541: the bound is checked here, after the allow-list and before the door
+    bounds.check(&admitted.originator, door, class)?;
     tracing::info!(
         origin = %admitted.origin,
         originator = %admitted.originator,
@@ -442,6 +459,7 @@ pub(crate) fn open(admitted: &Admitted, probes: &Probes, door: &str, power: Opti
         "browser gate: open, no row (W15)"
     );
     probes.note(&admitted.originator, door, power);
+    Ok(())
 }
 
 /// A row function's error at a door: the store busy by its type, a revoked
@@ -480,7 +498,15 @@ impl Asker {
             let power = match ask.power {
                 Ok(power) => power,
                 Err(Refused::LevelZero) => {
-                    open(admitted, &self.probes, call, ask.level_zero.as_deref());
+                    let power = ask.level_zero.as_deref();
+                    open(
+                        admitted,
+                        &self.probes,
+                        &self.bounds,
+                        call,
+                        Class::LevelZero,
+                        power,
+                    )?;
                     continue;
                 }
                 Err(Refused::AdminOnly(text)) => {

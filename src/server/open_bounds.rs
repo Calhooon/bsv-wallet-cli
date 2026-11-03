@@ -1,0 +1,392 @@
+//! The open doors' bound (#541, one of the three refinements of the
+//! owner's W15 (i) ruling of 2026-11-03; `docs/design/origin-grants.md`
+//! section "The open doors' bound"): a page the seed does not list, answered
+//! at an open door or under a level-0 protocol with no row, is answered
+//! within a bound per originator, so an admitted page cannot hammer them.
+//!
+//! The figures, the row's to change and never a page's:
+//!
+//! - **presence** (`isAuthenticated`, `waitForAuthentication`): one answer
+//!   per door per originator a minute. The served auth layer keeps no
+//!   session (the bearer is the owner's one token and never names a page),
+//!   so the minute stands in for the page's session;
+//! - **chain** (`getHeight`, `getHeaderForHeight`, `getNetwork`,
+//!   `getVersion`): 60 a minute per originator, 10 at once, the four doors
+//!   one bound;
+//! - **level 0** (a protocol power at security level 0, at any door): the
+//!   chain doors' figures, a bound of its own.
+//!
+//! Past a bound the call is answered at once, 429 `ERR_RATE_LIMITED`
+//! naming the door and the window, with `Retry-After` in whole seconds
+//! (the wait rounded up); nothing is written to the store. The counters
+//! live in this process's memory (a restart resets them), keyed by the
+//! originator's hostname (the grants' key: every port of a host one
+//! originator). Each bound is the generic cell rate algorithm: a call is
+//! admitted while its theoretical arrival time is at most the burst's
+//! tolerance ahead of now, and each admitted call moves it on by one
+//! emission interval.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use tokio::time::Instant;
+
+use super::error::{AppError, Kind};
+
+/// The presence doors: one answer per door per originator a minute.
+pub const PRESENCE_DOORS: [&str; 2] = ["/isAuthenticated", "/waitForAuthentication"];
+
+/// One bound's figures: one call admitted every `every`, `burst` at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Figure {
+    pub burst: u32,
+    pub every: Duration,
+}
+
+impl Figure {
+    /// How far ahead of now the arrival time may run: one interval for
+    /// each call of the burst beyond one.
+    fn tolerance(self) -> Duration {
+        self.every * self.burst.saturating_sub(1)
+    }
+}
+
+/// The presence doors' figure: one a minute.
+pub const PRESENCE: Figure = Figure {
+    burst: 1,
+    every: Duration::from_secs(60),
+};
+/// The chain doors' figure: 60 a minute, 10 at once.
+pub const CHAIN: Figure = Figure {
+    burst: 10,
+    every: Duration::from_secs(1),
+};
+/// The level-0 powers' figure: the chain doors'.
+pub const LEVEL_ZERO: Figure = CHAIN;
+
+/// Past this many originators' counters, the idle ones (whose arrival time
+/// has passed, the same as none) are dropped before a new one is kept.
+const PRUNE_AT: usize = 1024;
+
+/// What a call is bounded as: an open door by its path, or a level-0
+/// power at `door`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Class {
+    /// An open door, by its path: a presence door or a chain door.
+    Open,
+    /// A protocol power at security level 0.
+    LevelZero,
+}
+
+/// The bound of one call: its figure, the counter it shares, and the words
+/// of its refusal.
+struct Bound {
+    figure: Figure,
+    counter: &'static str,
+    window: &'static str,
+}
+
+fn bound_of(class: Class, door: &str) -> Bound {
+    match class {
+        Class::LevelZero => Bound {
+            figure: LEVEL_ZERO,
+            counter: "level 0",
+            window: "the level-0 protocol powers answer 60 a minute per site, 10 at once",
+        },
+        Class::Open => match PRESENCE_DOORS.iter().find(|d| **d == door) {
+            Some(presence) => Bound {
+                figure: PRESENCE,
+                counter: presence,
+                window: "a presence door answers once a minute per site",
+            },
+            None => Bound {
+                figure: CHAIN,
+                counter: "chain",
+                window: "the chain doors (getHeight, getHeaderForHeight, getNetwork, getVersion) \
+                         answer 60 a minute per site, 10 at once",
+            },
+        },
+    }
+}
+
+/// The server's counters, shared by every clone: per originator's
+/// hostname and counter, the theoretical arrival time of its next call.
+#[derive(Clone, Default)]
+pub struct OpenBounds(Arc<Mutex<HashMap<(String, &'static str), Instant>>>);
+
+/// A call past its bound: the wait until the next would be admitted.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Limited {
+    pub wait: Duration,
+    pub window: &'static str,
+}
+
+impl Limited {
+    /// `Retry-After` in whole seconds: the wait rounded up, at least 1.
+    #[must_use]
+    pub fn retry_after_secs(&self) -> u64 {
+        let secs = self.wait.as_secs() + u64::from(self.wait.subsec_nanos() > 0);
+        secs.max(1)
+    }
+}
+
+impl OpenBounds {
+    /// Admit one call of `host` at `door` as `class` at `now`, or refuse it
+    /// with the wait. A refusal moves no counter.
+    pub fn take(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
+        let bound = bound_of(class, door);
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = (host.to_string(), bound.counter);
+        let due = map.get(&key).copied().map_or(now, |t| t.max(now));
+        let ahead = due - now;
+        if ahead > bound.figure.tolerance() {
+            return Err(Limited {
+                wait: ahead - bound.figure.tolerance(),
+                window: bound.window,
+            });
+        }
+        if map.len() >= PRUNE_AT && !map.contains_key(&key) {
+            map.retain(|_, t| *t > now);
+        }
+        map.insert(key, due + bound.figure.every);
+        Ok(())
+    }
+
+    /// The counters kept now (the prune's test).
+    #[cfg(test)]
+    fn kept(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// The bound at the gate's seam (`powers::open`): admit `originator`'s
+    /// call at `door`, or the 429 the door serves, logged at warn by name.
+    pub(crate) fn check(&self, originator: &str, door: &str, class: Class) -> Result<(), AppError> {
+        let host = crate::store::origin_grants::key_of(originator)
+            .map_or_else(|_| originator.to_string(), |(host, _)| host);
+        self.take(&host, door, class, Instant::now())
+            .map_err(|limited| {
+                let secs = limited.retry_after_secs();
+                tracing::warn!(originator = %host, door, class = ?class, retry_after = secs, "browser gate: rate limited");
+                let what = match class {
+                    Class::Open => format!("calls to {door}"),
+                    Class::LevelZero => format!("level-0 calls to {door}"),
+                };
+                AppError::new(
+                    Kind::RateLimited,
+                    format!(
+                        "Too many {what} from this site: {}; retry after {secs} s.",
+                        limited.window
+                    ),
+                )
+                .with_retry_after(secs)
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOST: &str = "page.example";
+
+    fn at(start: Instant, ms: u64) -> Instant {
+        start + Duration::from_millis(ms)
+    }
+
+    /// The chain doors at the burst's edge: the tenth call at once is
+    /// admitted, the eleventh refused with a wait of one interval, and the
+    /// four doors share the one bound.
+    #[test]
+    fn the_bursts_last_call_is_admitted_and_the_next_refused() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        let doors = [
+            "/getHeight",
+            "/getHeaderForHeight",
+            "/getNetwork",
+            "/getVersion",
+        ];
+        for n in 0..10 {
+            assert_eq!(
+                bounds.take(HOST, doors[n % 4], Class::Open, t),
+                Ok(()),
+                "call {n}"
+            );
+        }
+        let refused = bounds.take(HOST, "/getHeight", Class::Open, t).unwrap_err();
+        assert_eq!(refused.wait, Duration::from_secs(1));
+        assert_eq!(refused.retry_after_secs(), 1);
+        assert!(refused.window.contains("60 a minute per site, 10 at once"));
+        // A refusal moves no counter: refused again at once, by the same wait.
+        let again = bounds
+            .take(HOST, "/getVersion", Class::Open, t)
+            .unwrap_err();
+        assert_eq!(again.wait, Duration::from_secs(1));
+    }
+
+    /// The window's reset: one interval after the burst one call is
+    /// admitted and the next refused; a minute of quiet refills the burst.
+    #[test]
+    fn the_window_resets() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        for _ in 0..10 {
+            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
+        }
+        assert!(bounds
+            .take(HOST, "/getHeight", Class::Open, at(t, 999))
+            .is_err());
+        assert_eq!(
+            bounds
+                .take(HOST, "/getHeight", Class::Open, at(t, 999))
+                .unwrap_err()
+                .wait,
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            bounds.take(HOST, "/getHeight", Class::Open, at(t, 1000)),
+            Ok(())
+        );
+        assert!(bounds
+            .take(HOST, "/getHeight", Class::Open, at(t, 1000))
+            .is_err());
+        // 60 a minute: one a second sustained is admitted, every one.
+        for s in 2..=61 {
+            assert_eq!(
+                bounds.take(HOST, "/getNetwork", Class::Open, at(t, s * 1000)),
+                Ok(()),
+                "second {s}"
+            );
+        }
+        let quiet = at(t, 61_000 + 10_000);
+        for n in 0..10 {
+            assert_eq!(
+                bounds.take(HOST, "/getVersion", Class::Open, quiet),
+                Ok(()),
+                "refilled {n}"
+            );
+        }
+        assert!(bounds
+            .take(HOST, "/getVersion", Class::Open, quiet)
+            .is_err());
+    }
+
+    /// A presence door answers once a minute per door: the second call is
+    /// refused with `Retry-After` the minute's rest rounded up, and the
+    /// other presence door has its own answer.
+    #[test]
+    fn a_presence_door_answers_once_a_minute() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        assert_eq!(
+            bounds.take(HOST, "/isAuthenticated", Class::Open, t),
+            Ok(())
+        );
+        let refused = bounds
+            .take(HOST, "/isAuthenticated", Class::Open, at(t, 250))
+            .unwrap_err();
+        assert_eq!(refused.wait, Duration::from_millis(59_750));
+        assert_eq!(refused.retry_after_secs(), 60);
+        assert_eq!(
+            refused.window,
+            "a presence door answers once a minute per site"
+        );
+        let late = bounds
+            .take(HOST, "/isAuthenticated", Class::Open, at(t, 59_000))
+            .unwrap_err();
+        assert_eq!(late.retry_after_secs(), 1);
+        assert_eq!(
+            bounds.take(HOST, "/waitForAuthentication", Class::Open, t),
+            Ok(())
+        );
+        assert_eq!(
+            bounds.take(HOST, "/isAuthenticated", Class::Open, at(t, 60_000)),
+            Ok(())
+        );
+    }
+
+    /// Per-origin isolation, and the classes apart: one originator past
+    /// its chain bound leaves another's untouched and its own level-0 and
+    /// presence bounds whole.
+    #[test]
+    fn each_originator_and_class_has_its_own_bound() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        for _ in 0..10 {
+            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
+        }
+        assert!(bounds.take(HOST, "/getHeight", Class::Open, t).is_err());
+        for n in 0..10 {
+            assert_eq!(
+                bounds.take("other.example", "/getHeight", Class::Open, t),
+                Ok(()),
+                "{n}"
+            );
+            assert_eq!(
+                bounds.take(HOST, "/createSignature", Class::LevelZero, t),
+                Ok(()),
+                "{n}"
+            );
+        }
+        let level_zero = bounds
+            .take(HOST, "/encrypt", Class::LevelZero, t)
+            .unwrap_err();
+        assert!(level_zero.window.starts_with("the level-0 protocol powers"));
+        assert_eq!(
+            bounds.take(HOST, "/isAuthenticated", Class::Open, t),
+            Ok(())
+        );
+    }
+
+    /// `Retry-After` against the wait: whole seconds rounded up, never 0.
+    #[test]
+    fn retry_after_is_the_wait_rounded_up() {
+        for (ms, secs) in [
+            (1, 1),
+            (999, 1),
+            (1000, 1),
+            (1001, 2),
+            (59_750, 60),
+            (60_000, 60),
+        ] {
+            let limited = Limited {
+                wait: Duration::from_millis(ms),
+                window: "",
+            };
+            assert_eq!(limited.retry_after_secs(), secs, "{ms} ms");
+        }
+        let none = Limited {
+            wait: Duration::ZERO,
+            window: "",
+        };
+        assert_eq!(none.retry_after_secs(), 1);
+    }
+
+    /// The counters stay bounded: past [`PRUNE_AT`] the idle ones go, and
+    /// a busy one stays.
+    #[test]
+    fn idle_counters_are_pruned() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        for _ in 0..10 {
+            bounds.take(HOST, "/getHeight", Class::Open, t).unwrap();
+        }
+        for n in 1..PRUNE_AT {
+            bounds
+                .take(&format!("h{n}.example"), "/getHeight", Class::Open, t)
+                .unwrap();
+        }
+        assert_eq!(bounds.kept(), PRUNE_AT);
+        let later = at(t, 5_000);
+        bounds
+            .take("new.example", "/getHeight", Class::Open, later)
+            .unwrap();
+        assert_eq!(bounds.kept(), 2, "the busy counter and the new one");
+        // The busy counter kept its place: five seconds on, five calls of
+        // the burst are back, not ten.
+        for n in 0..5 {
+            assert_eq!(
+                bounds.take(HOST, "/getHeight", Class::Open, later),
+                Ok(()),
+                "{n}"
+            );
+        }
+        assert!(bounds.take(HOST, "/getHeight", Class::Open, later).is_err());
+    }
+}
