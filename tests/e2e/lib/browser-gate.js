@@ -76,7 +76,12 @@ async function callNow(wallet, method, endpoint, { origin, originator, bearer, b
   done(resp.status, text);
   let json = {};
   try { json = text ? JSON.parse(text) : {}; } catch { json = { _raw: text }; }
-  return { status: resp.status, body: json, allowOrigin: resp.headers.get('access-control-allow-origin') };
+  return {
+    status: resp.status, body: json,
+    allowOrigin: resp.headers.get('access-control-allow-origin'),
+    retryAfter: resp.headers.get('retry-after'),
+    exposed: resp.headers.get('access-control-expose-headers'),
+  };
 }
 
 /**
