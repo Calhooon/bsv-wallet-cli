@@ -42,26 +42,31 @@ const ENDPOINTS: [&str; 28] = [
     "/revealSpecificKeyLinkage",
 ];
 
-/// The five host routes (not BRC-100).
-const HOST_ROUTES: [&str; 5] = [
+/// The nine host routes (not BRC-100): five, and the owner's four (#414).
+const HOST_ROUTES: [&str; 9] = [
     "/permission-audit",
     "/permission-audit/reset",
     "/chain-feed",
     "/tx/{txid}",
     "/arc-callback",
+    "/origins",
+    "/origins/answer",
+    "/origins/grant",
+    "/origins/revoke",
 ];
 
 /// `AppError`'s codes (`src/server/error.rs`) some world produces, by
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 12] = [
+pub(crate) const APP_CODES: [(u16, &str); 13] = [
     (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "ERROR"),
     (400, "ERR_PERMISSION_DENIED"),
     (402, "INSUFFICIENT_FUNDS"),
     (403, "INPUT_NOT_OFFERED"),
+    (403, "ACCESS_DENIED"),
     (409, "CONFLICT"),
     (500, "INTERNAL_ERROR"),
     (501, "PRIVILEGED_NOT_SUPPORTED"),
@@ -91,11 +96,8 @@ fn judged_codes() -> impl Iterator<Item = (u16, &'static str)> {
 
 /// `AppError` codes no in-process world produces, each named with why in
 /// docs/WIRE.md. A fixture that answers one moves it to [`APP_CODES`].
-pub(crate) const UNPRODUCED: [(u16, &str); 3] = [
-    (403, "ACCESS_DENIED"),
-    (501, "NOT_IMPLEMENTED"),
-    (502, "BROADCAST_REJECTED"),
-];
+pub(crate) const UNPRODUCED: [(u16, &str); 2] =
+    [(501, "NOT_IMPLEMENTED"), (502, "BROADCAST_REJECTED")];
 
 /// The `(status, code)` pairs `src/server/error.rs` writes: each
 /// `(StatusCode::NAME, "CODE")` of `Kind::answer`, the served layer's one

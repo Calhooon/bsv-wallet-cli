@@ -1,0 +1,35 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/origins/revoke",
+    "headers": {
+      "host": "127.0.0.1:3322"
+    },
+    "json": {
+      "originator": "owner.example"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "grants": [
+        {
+          "originator": "owner.example",
+          "rawOriginator": "owner.example:8443",
+          "scope": "wallet",
+          "amount": null,
+          "spentThisMonth": null,
+          "grantedAt": "<uint:10>",
+          "expiry": 0,
+          "revokedAt": "<uint:10>",
+          "source": "owner"
+        }
+      ],
+      "pending": []
+    }
+  }
+}

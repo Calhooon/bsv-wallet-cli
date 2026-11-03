@@ -1,0 +1,21 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "GET",
+    "path": "/origins",
+    "headers": {
+      "host": "127.0.0.1:3322",
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "ACCESS_DENIED",
+      "message": "the owner's routes answer no page: a call carrying an Origin header is refused (the owner calls them without one, from the command line or the MCP)"
+    }
+  }
+}

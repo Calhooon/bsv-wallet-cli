@@ -190,7 +190,16 @@
     "188-gate.encrypt.bodyOriginatorTwice.json",
     "189-gate.encrypt.hostnameScope.json",
     "190-gate.options.hostnameScope.json",
-    "191-gate.encrypt.bodyOriginatorHostname.json"
+    "191-gate.encrypt.bodyOriginatorHostname.json",
+    "192-owner.origins.empty.json",
+    "193-owner.grant.json",
+    "194-owner.origins.granted.json",
+    "195-owner.revoke.json",
+    "196-owner.answer.noSuchPending.json",
+    "197-owner.origins.page.json",
+    "198-owner.options.page.json",
+    "199-owner.origins.remoteHost.json",
+    "200-owner.origins.noBearer.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -262,6 +271,15 @@
     "188-gate.encrypt.bodyOriginatorTwice.json": "#411, the review of PR 419: a body naming its top-level originator twice is refused, the second occurrence a disagreement by itself (the first names the Origin's host, the second another): the walk that reads the originators fails closed, where serde's derive refused the duplicate and the check admitted the call. 400 VALIDATION_ERROR.",
     "189-gate.encrypt.hostnameScope.json": "#411, the key by the owner's word of 2026-11-02: an Origin is judged as its originator in the reference's form (the host lowercased, its port when named, no scheme: https://app.example:8443 is app.example:8443), and the entry app.example admits it, as the reference scopes a grant to the hostname, every port of a host one grant (ts-stack edf6e03 WalletPermissionsManager.ts:5702-5729, prepareOriginator's lookup values :5786-5794); the Originator header app.example:8443 agrees. Under the exact-origin key before, refused.",
     "190-gate.options.hostnameScope.json": "#411, the key by the owner's word of 2026-11-02: the preflight from another port of a listed host (http://app.example:5173, the entry app.example) is answered and echoed, the hostname scope of fixture 189.",
-    "191-gate.encrypt.bodyOriginatorHostname.json": "#448, PR 419's named residue: a body originator is compared with the Origin's originator in the lookup form, the lowercased hostname (ts-stack edf6e03 WalletPermissionsManager.ts:5776, prepareOriginator's normalized and lookup values :5786-5794), as the admission compares an entry: Origin https://app.example:8080 with the body's originator app.example is one originator under the hostname key, admitted, 200 with the call's answer. Compared by host and port before, refused as disagreeing (the stack's disagreeing-originator step 4). Recorded last, so no file before it moves."
+    "191-gate.encrypt.bodyOriginatorHostname.json": "#448, PR 419's named residue: a body originator is compared with the Origin's originator in the lookup form, the lowercased hostname (ts-stack edf6e03 WalletPermissionsManager.ts:5776, prepareOriginator's normalized and lookup values :5786-5794), as the admission compares an entry: Origin https://app.example:8080 with the body's originator app.example is one originator under the hostname key, admitted, 200 with the call's answer. Compared by host and port before, refused as disagreeing (the stack's disagreeing-originator step 4). Recorded last, so no file before it moves.",
+    "192-owner.origins.empty.json": "#414 (the design's L3, docs/design/origin-grants.md section (3)): GET /origins from the owner's side (no Origin, a loopback Host) on a wallet with no rows: {\"grants\": [], \"pending\": []}, section (4)'s --json shape, no CORS header. A host route, not BRC-100; recorded last, so no file before it moves.",
+    "193-owner.grant.json": "#414: POST /origins/grant {originator, scope}: the owner's direct grant written through store::origin_grants, its row in section (4)'s keys and order, keyed by the hostname (owner.example) with the name as given kept (owner.example:8443); grantedAt is the clock's (a volatile key).",
+    "194-owner.origins.granted.json": "#414: GET /origins lists the row 193 wrote.",
+    "195-owner.revoke.json": "#414: POST /origins/revoke {originator} with no scope stamps every live row of the host (its one wallet row here); revokedAt is the clock's, nothing is deleted.",
+    "196-owner.answer.noSuchPending.json": "#414: POST /origins/answer naming a pending row the store does not hold is the module's refusal in its words, 400 VALIDATION_ERROR. The answer-once race (409 CONFLICT, \"pending request #N was already answered ...\") needs a held call's row, which only L5's gate writes; the router tests drive it (src/server/owner_door_tests.rs).",
+    "197-owner.origins.page.json": "#414: a call to the owner's routes carrying an Origin, a listed one included, is 403 ACCESS_DENIED naming the rule (owner_door::PAGE), with no CORS header: a page that could reach them could grant itself. The first fixture answering ACCESS_DENIED: it moves from UNPRODUCED to APP_CODES.",
+    "198-owner.options.page.json": "#414: a preflight to the owner's routes is refused, 403 ACCESS_DENIED (owner_door::PREFLIGHT), outside the doors' preflight gate and CORS layer, which never see these paths.",
+    "199-owner.origins.remoteHost.json": "#414: a Host beyond loopback (a page rebinding its name to the port) is 403 ACCESS_DENIED naming the Host, the inspector's rule on the daemon.",
+    "200-owner.origins.noBearer.json": "#414: under AUTH_TOKEN the owner's call without the bearer is the bearer's 401 UNAUTHORIZED (auth_middleware, unchanged), after the owner's admission."
   }
 }
