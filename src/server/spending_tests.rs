@@ -39,6 +39,11 @@ struct World {
 
 impl World {
     async fn new(coins: u8) -> Self {
+        Self::seeded(coins, &[]).await
+    }
+
+    /// The same, `ALLOWED_ORIGINS` listing `seed`.
+    async fn seeded(coins: u8, seed: &[&str]) -> Self {
         let key = PrivateKey::from_hex(&"03".repeat(32)).unwrap();
         let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
         let mut roots = HashMap::new();
@@ -69,7 +74,7 @@ impl World {
                 .await
                 .unwrap(),
         );
-        let config = ServerConfig::default();
+        let config = ServerConfig::admitting(seed.iter().copied()).unwrap();
         let held = config.held.clone();
         let addr = serve_at(&wallet, config).await;
         Self {
@@ -223,6 +228,13 @@ fn header_service(roots: HashMap<u32, String>) -> Router {
 
 fn now() -> i64 {
     owner_door::now().unwrap()
+}
+
+/// A call answered within five seconds: never held for the owner.
+async fn at_once(call: impl std::future::Future<Output = Read>) -> Read {
+    tokio::time::timeout(Duration::from_secs(5), call)
+        .await
+        .expect("answered at once, never held")
 }
 
 fn denied(read: &Read) -> bool {
@@ -409,4 +421,43 @@ async fn an_abort_deletes_the_spend_and_a_spend_a_broadcaster_took_keeps_it() {
     let refused = abort(txid.clone()).await;
     assert_eq!(refused.0, 409, "{}", refused.3);
     assert_eq!(w.spends().await, vec![(Some(txid), None, 3000)]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spend_of_nothing_and_a_seed_listed_spend_ask_no_power_and_tally_nothing() {
+    // W6: outputs summing to 0 ask no spend; the page is answered at once.
+    let w = World::new(1).await;
+    let mut nothing = w.body(0, 0, false);
+    nothing["outputs"][0]["lockingScript"] = json!("6a");
+    let nothing = at_once(w.post("/createAction", nothing)).await;
+    assert_eq!(nothing.0, 200, "{}", nothing.3);
+    assert!(w.open(0).await.is_empty());
+    assert!(w.spends().await.is_empty());
+
+    // The seed admits its listed page before any power, with no ceiling and
+    // no tally (the design's question 6).
+    let w = World::seeded(1, &[SHOP]).await;
+    let seeded = at_once(w.call(0, 3000)).await;
+    assert_eq!(seeded.0, 200, "{}", seeded.3);
+    assert_eq!(w.grant_rows().await, 0);
+    assert!(w.spends().await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spend_naming_a_basket_is_asked_its_basket_before_its_spend() {
+    // The reference's order (WPM:4305-4321): each output's basket, each
+    // label, then the spend, which comes last, under the lock.
+    let w = World::new(1).await;
+    w.ceiling(50_000).await;
+    let mut body = w.body(0, 3000, false);
+    body["outputs"][0]["basket"] = json!("spend basket");
+    let addr = w.addr;
+    let call = tokio::spawn(async move { page_call(addr, PAGE, "/createAction", body).await });
+    let row = w.open(1).await.remove(0);
+    assert_eq!(
+        (row.kind.as_str(), row.key.as_str(), row.usage.as_deref()),
+        ("basket", r#"["spend basket"]"#, Some("insertion"))
+    );
+    w.deny(&row, call).await;
+    assert!(w.spends().await.is_empty());
 }
