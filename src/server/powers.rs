@@ -1,0 +1,583 @@
+//! The switch (#414, the design's L5b, `docs/design/origin-grants.md`
+//! sections (1) and (2), under the owner's rulings W1 (a), W4 (a) and W15
+//! (i) of 2026-11-03): a door admits a page for each power it asks by the
+//! owner's grant of that power to its origin, read from the store.
+//!
+//! Each handler names its powers after its arguments parse ([`Ask`], the
+//! design's door-to-kind map) and calls [`Asker::ask`] before its toolbox
+//! call and outside the `SpendingLock`. The powers are asked one at a time,
+//! in the reference's order (ts-stack `edf6e03` `WalletPermissionsManager.ts`
+//! 4305-4321): for each, the originator's rows are read
+//! (`store::origin_grants::lookup`):
+//!
+//! - **live**: admitted, the next power is asked;
+//! - **revoked**: 400 `ERR_PERMISSION_DENIED` `The user has denied the
+//!   request for permission.` at once, no pending row (W3);
+//! - **none, or expired**: the call opens or joins the power's pending row
+//!   and is **held** until the owner answers it (`grant` asks the next
+//!   power, `deny` is 400 `Permission denied.`), the row is deleted (a
+//!   disconnect's deny, the same 400), or the server shuts down (503
+//!   `WALLET_BRIDGE_UNAVAILABLE`, W13).
+//!
+//! A seed-listed originator (`ALLOWED_ORIGINS`, the design's question 6) is
+//! admitted before any power is asked, as (b) admits it; a protocol power
+//! at security level 0 is never asked (W15, BRC-100 line 65); an
+//! admin-reserved name is refused at once with the reference's words.
+//!
+//! A held call waits with no bound, reading its row every 250 ms (the CLI
+//! and the inspector answer from other processes) and waking at once on
+//! the server's own answers (a [`Notify`] per open row in [`Held`]). When
+//! its caller closes the connection, the call's future is dropped and its
+//! guard ([`Waiting`]) takes a snapshot of the originator's open rows under
+//! [`Held`]'s mutex and deletes them (`origin_grants::abandon`), answering
+//! every other call held on them 400 `Permission denied.` (W4 (a)). The
+//! held calls are capped (W14): at most [`PER_ORIGINATOR`] per originator
+//! and [`IN_ALL`] in all; past either, 429 `ERR_PERMISSION_PENDING_LIMIT`
+//! at once.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
+use tokio::sync::{watch, Notify};
+
+use super::error::{AppError, Kind as ErrorKind};
+use super::handlers::WalletState;
+use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
+use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
+
+/// At most this many held calls per originator (the key, the hostname).
+pub const PER_ORIGINATOR: usize = 2;
+/// At most this many held calls in all, so at least two of a browser's six
+/// connections to the wallet stay free for granted pages (W14).
+pub const IN_ALL: usize = 4;
+/// How often a held call reads its row.
+pub const READ_EVERY: Duration = Duration::from_millis(250);
+
+/// The reference's per-request denial (`denyPermission`,
+/// `WalletPermissionsManager.ts:1199`): the owner's deny, or the row gone.
+pub const PERMISSION_DENIED: &str = "Permission denied.";
+/// The cap's refusal.
+pub const PENDING_LIMIT: &str =
+    "Too many permission requests from this site are waiting for the owner's answer.";
+/// The shutdown's answer to a held call, the MetaNet Client's text
+/// (`electron/httpServer.ts:277-281` at bsv-desktop `b791cb2`).
+pub const SHUTTING_DOWN: &str = "WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down";
+
+/// The server's held calls: each open row a held call waits on (its
+/// originator's key, its [`Notify`], how many calls wait on it), the held
+/// calls per originator and in all, and the shutdown.
+#[derive(Clone)]
+pub struct Held(Arc<Inner>);
+
+struct Inner {
+    map: Mutex<Map>,
+    shut: watch::Sender<bool>,
+}
+
+#[derive(Default)]
+struct Map {
+    rows: HashMap<i64, Row>,
+    calls: HashMap<String, usize>,
+    all: usize,
+}
+
+struct Row {
+    originator: String,
+    notify: Arc<Notify>,
+    waiters: usize,
+}
+
+impl Default for Held {
+    fn default() -> Self {
+        Self(Arc::new(Inner {
+            map: Mutex::default(),
+            shut: watch::channel(false).0,
+        }))
+    }
+}
+
+impl Held {
+    fn map(&self) -> std::sync::MutexGuard<'_, Map> {
+        self.0.map.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The server's shutdown: every held call answers 503
+    /// `WALLET_BRIDGE_UNAVAILABLE` and deletes its row, and a call that
+    /// would be held is answered so at once.
+    pub fn shut_down(&self) {
+        self.0.shut.send_replace(true);
+    }
+
+    fn is_shut(&self) -> bool {
+        *self.0.shut.borrow()
+    }
+
+    /// Wake every call held on `pending_id` (an answer from this server's
+    /// owner's routes, a deletion): it reads its row at once.
+    pub fn wake(&self, pending_id: i64) {
+        if let Some(row) = self.map().rows.get(&pending_id) {
+            row.notify.notify_waiters();
+        }
+    }
+
+    /// The calls held now, of `originator`'s key and in all.
+    #[must_use]
+    pub fn counts(&self, originator: &str) -> (usize, usize) {
+        let map = self.map();
+        (map.calls.get(originator).copied().unwrap_or(0), map.all)
+    }
+
+    /// The open rows held calls wait on now, of `originator`'s key.
+    #[must_use]
+    pub fn rows_of(&self, originator: &str) -> Vec<i64> {
+        let mut ids: Vec<i64> = self
+            .map()
+            .rows
+            .iter()
+            .filter(|(_, row)| row.originator == originator)
+            .map(|(id, _)| *id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// A held call's place under the cap, or the limit it would pass.
+    fn place(&self, originator: &str) -> Result<Place, &'static str> {
+        let mut map = self.map();
+        if map.calls.get(originator).copied().unwrap_or(0) >= PER_ORIGINATOR {
+            return Err("2 held calls per originator");
+        }
+        if map.all >= IN_ALL {
+            return Err("4 held calls in all");
+        }
+        *map.calls.entry(originator.to_string()).or_default() += 1;
+        map.all += 1;
+        Ok(Place {
+            held: self.clone(),
+            originator: originator.to_string(),
+        })
+    }
+
+    /// A call waits on `pending_id`: its row's [`Notify`].
+    fn wait_on(&self, pending_id: i64, originator: &str) -> Arc<Notify> {
+        let mut map = self.map();
+        let row = map.rows.entry(pending_id).or_insert_with(|| Row {
+            originator: originator.to_string(),
+            notify: Arc::new(Notify::new()),
+            waiters: 0,
+        });
+        row.waiters += 1;
+        row.notify.clone()
+    }
+
+    /// A call stops waiting on `pending_id`; with `snapshot`, the
+    /// originator's open rows taken under the same lock first (the
+    /// disconnect's deny).
+    fn leave(&self, pending_id: i64, snapshot: Option<&str>) -> Vec<i64> {
+        let mut map = self.map();
+        let ids = snapshot.map_or_else(Vec::new, |originator| {
+            map.rows
+                .iter()
+                .filter(|(_, row)| row.originator == originator)
+                .map(|(id, _)| *id)
+                .collect()
+        });
+        if let Some(row) = map.rows.get_mut(&pending_id) {
+            row.waiters -= 1;
+            if row.waiters == 0 {
+                map.rows.remove(&pending_id);
+            }
+        }
+        ids
+    }
+}
+
+/// A held call's place under the cap, freed when the call ends.
+struct Place {
+    held: Held,
+    originator: String,
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        let mut map = self.held.map();
+        if let Some(n) = map.calls.get_mut(&self.originator) {
+            *n -= 1;
+            if *n == 0 {
+                map.calls.remove(&self.originator);
+            }
+        }
+        map.all -= 1;
+    }
+}
+
+/// A held call's guard (the design's `Abandon`): when the call ends with
+/// an answer it is disarmed and only stops waiting; when its future is
+/// dropped instead (the caller closed its connection), it takes the
+/// snapshot of the originator's open rows under [`Held`]'s mutex before it
+/// returns and deletes them in a task, waking every call held on one.
+struct Waiting {
+    held: Held,
+    wallet: WalletState,
+    originator: String,
+    pending_id: i64,
+    armed: bool,
+    _place: Place,
+}
+
+impl Waiting {
+    fn answered(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        let snapshot = self.armed.then_some(self.originator.as_str());
+        let ids = self.held.leave(self.pending_id, snapshot);
+        if !self.armed {
+            return;
+        }
+        let (held, wallet, originator) = (
+            self.held.clone(),
+            self.wallet.clone(),
+            self.originator.clone(),
+        );
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(originator = %originator, ids = ?ids, "browser gate: a disconnect outside the runtime; the rows wait for the restart's sweep");
+            return;
+        };
+        runtime.spawn(async move { withdraw(&held, &wallet, &originator, &ids).await });
+    }
+}
+
+/// Delete the open rows `ids` of `originator` and wake every call held on
+/// one: the disconnect's deny and the shutdown's.
+async fn withdraw(held: &Held, wallet: &WalletState, originator: &str, ids: &[i64]) {
+    match grants::abandon(wallet.storage(), originator, ids).await {
+        Ok(rows) => {
+            for row in rows {
+                held.wake(row.pending_id);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(originator = %originator, ids = ?ids, error = %e, "browser gate: the withdrawn rows were not deleted; the restart's sweep deletes them");
+        }
+    }
+}
+
+/// One power a door asks, as its handler names it from its arguments.
+pub(crate) struct Ask {
+    power: Result<Power, Refused>,
+    usage: Option<&'static str>,
+    amount: Option<i64>,
+}
+
+impl Ask {
+    fn of(power: Result<Power, Refused>, usage: &'static str) -> Self {
+        Self {
+            power,
+            usage: Some(usage),
+            amount: None,
+        }
+    }
+
+    /// A protocol at the call's level with its counterparty (`None` is
+    /// `self` at level 2), for `usage` (`signing`, `encrypting`, `hmac`,
+    /// `publicKey`).
+    pub(crate) fn protocol(
+        level: u8,
+        name: &str,
+        counterparty: Option<&str>,
+        usage: &'static str,
+    ) -> Self {
+        Self::of(Power::protocol(false, level, name, counterparty), usage)
+    }
+
+    /// A protocol the manager names at level 1 (`identity key retrieval`,
+    /// `certificate list`, `identity resolution`).
+    pub(crate) fn named(name: &str, usage: &'static str) -> Self {
+        Self::protocol(1, name, None, usage)
+    }
+
+    /// An action label, for `apply` or `list`.
+    pub(crate) fn label(label: &str, usage: &'static str) -> Self {
+        Self::of(Power::label(label), usage)
+    }
+
+    /// A basket, for `insertion`, `listing` or `removal`.
+    pub(crate) fn basket(basket: &str, usage: &'static str) -> Self {
+        Self::of(Power::basket(basket), usage)
+    }
+
+    /// `acquireCertificate`'s or `relinquishCertificate`'s protocol over
+    /// its type.
+    pub(crate) fn certificate_protocol(relinquish: bool, cert_type: &str) -> Self {
+        Self::of(
+            Power::certificate_protocol(relinquish, cert_type),
+            "generic",
+        )
+    }
+
+    /// `proveCertificate`'s disclosure.
+    pub(crate) fn certificate(
+        privileged: bool,
+        cert_type: &str,
+        verifier: &str,
+        fields: &[String],
+    ) -> Self {
+        Self::of(
+            Power::certificate(privileged, cert_type, verifier, fields),
+            "disclosure",
+        )
+    }
+
+    /// `revealCounterpartyKeyLinkage`'s protocol, level 2 always.
+    pub(crate) fn counterparty_linkage(counterparty: &str, verifier: &str) -> Self {
+        Self::of(
+            Power::counterparty_linkage(counterparty, verifier),
+            "linkageRevelation",
+        )
+    }
+
+    /// `revealSpecificKeyLinkage`'s protocol, level 2 always; `key_id` is
+    /// the call's when its protocol is at level 2, else `all`.
+    pub(crate) fn specific_linkage(name: &str, key_id: Option<&str>, verifier: &str) -> Self {
+        Self::of(
+            Power::specific_linkage(name, key_id, verifier),
+            "linkageRevelation",
+        )
+    }
+
+    /// `createAction`'s spend of `amount` satoshis (W6: its outputs' sum).
+    pub(crate) fn spending(amount: i64) -> Self {
+        Self {
+            power: Ok(Power::Spending),
+            usage: None,
+            amount: Some(amount),
+        }
+    }
+}
+
+/// A door's view of the gate: the wallet, the held calls and the admitted
+/// `Origin` (none on a route the gate does not judge).
+pub struct Asker {
+    wallet: WalletState,
+    held: Held,
+    admitted: Option<Admitted>,
+}
+
+impl FromRequestParts<WalletState> for Asker {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        wallet: &WalletState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self {
+            wallet: wallet.clone(),
+            held: parts.extensions.get::<Held>().cloned().unwrap_or_default(),
+            admitted: parts.extensions.get::<Admitted>().cloned(),
+        })
+    }
+}
+
+/// The open doors' and level 0's answer with no row (W15, ruled (i) by the
+/// owner on 2026-11-03): a page with a parsed `Origin` and an agreeing
+/// originator, past the seed, is answered at `what` (an open door's path,
+/// or a level-0 protocol) with no row read or written.
+pub(crate) fn open(admitted: &Admitted, what: &str) {
+    // #541: the bound is checked here, after the allow-list and before the door
+    // #539: the probe record is written here
+    tracing::info!(
+        origin = %admitted.origin,
+        originator = %admitted.originator,
+        what,
+        "browser gate: open, no row (W15)"
+    );
+}
+
+/// A row function's error at a door: the store busy by its type, a revoked
+/// power the client's denial, any other refusal of the module the caller's
+/// 400, else the store's fault.
+fn refused(e: &anyhow::Error) -> AppError {
+    if let Some(busy) = AppError::store_busy(e) {
+        return busy;
+    }
+    match e.downcast_ref::<Refused>() {
+        Some(Refused::Revoked { .. }) => AppError::new(ErrorKind::OriginDenied, DENIED),
+        Some(other) => AppError::new(ErrorKind::Validation, other.to_string()),
+        None => AppError::new(ErrorKind::Internal, format!("origin grants: {e}")),
+    }
+}
+
+impl Asker {
+    /// Ask `asks` of the owner for the call to `call`, one at a time:
+    /// `Ok` when every power is live or answered `grant` (a spend `once`),
+    /// else the refusal the door serves. `reason` is the call's own words
+    /// (its `description`), shown beside the prompt, never the owner's.
+    pub(crate) async fn ask(
+        &self,
+        call: &str,
+        reason: Option<&str>,
+        asks: Vec<Ask>,
+    ) -> Result<(), AppError> {
+        let Some(admitted) = self.admitted.as_ref() else {
+            return Err(AppError::new(ErrorKind::Validation, NO_ORIGIN));
+        };
+        if admitted.seed.is_some() {
+            // The seed admits every door before any power (question 6).
+            return Ok(());
+        }
+        for ask in asks {
+            let power = match ask.power {
+                Ok(power) => power,
+                Err(Refused::LevelZero) => {
+                    open(admitted, call);
+                    continue;
+                }
+                Err(Refused::AdminOnly(text)) => {
+                    tracing::info!(originator = %admitted.originator, call, refused = %text, "browser gate: admin-reserved");
+                    return Err(AppError::new(ErrorKind::OriginDenied, text));
+                }
+                Err(other) => return Err(AppError::new(ErrorKind::Validation, other.to_string())),
+            };
+            self.one(admitted, call, reason, &power, ask.usage, ask.amount)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// One power: live, revoked, or held for the owner. A spend is always
+    /// the owner's until the ceilings land (L6): no row admits it here.
+    async fn one(
+        &self,
+        admitted: &Admitted,
+        call: &str,
+        reason: Option<&str>,
+        power: &Power,
+        usage: Option<&'static str>,
+        amount: Option<i64>,
+    ) -> Result<(), AppError> {
+        let now = super::owner_door::now()
+            .map_err(|e| AppError::new(ErrorKind::Internal, e.to_string()))?;
+        let storage = self.wallet.storage();
+        let renewal = if amount.is_some() {
+            false
+        } else {
+            match grants::lookup(storage, &admitted.originator, power, now)
+                .await
+                .map_err(|e| refused(&e))?
+            {
+                Standing::Live(row) => {
+                    tracing::info!(
+                        origin = %admitted.origin,
+                        originator = %admitted.originator,
+                        grant_id = row.grant_id,
+                        kind = row.kind.as_str(),
+                        key = %row.key,
+                        call,
+                        "browser gate: admitted"
+                    );
+                    return Ok(());
+                }
+                Standing::Revoked(row) => {
+                    tracing::info!(
+                        originator = %admitted.originator,
+                        grant_id = row.grant_id,
+                        kind = row.kind.as_str(),
+                        key = %row.key,
+                        call,
+                        "browser gate: revoked, refused"
+                    );
+                    return Err(AppError::new(ErrorKind::OriginDenied, DENIED));
+                }
+                Standing::Expired(_) => true,
+                Standing::None => false,
+            }
+        };
+        let asking = Asking {
+            originator: &admitted.originator,
+            power,
+            usage,
+            call,
+            reason,
+            amount,
+            renewal,
+        };
+        self.hold(&asking, now).await
+    }
+
+    /// Hold the call on its power's open row until the owner answers it,
+    /// the row is deleted, or the server shuts down.
+    async fn hold(&self, asking: &Asking<'_>, now: i64) -> Result<(), AppError> {
+        let (originator, _) = grants::key_of(asking.originator).map_err(|e| refused(&e))?;
+        let place = self.held.place(&originator).map_err(|limit| {
+            tracing::warn!(originator = %originator, call = asking.call, limit, "browser gate: pending limit");
+            AppError::new(ErrorKind::PendingLimit, PENDING_LIMIT)
+        })?;
+        if self.held.is_shut() {
+            return Err(AppError::new(ErrorKind::BridgeUnavailable, SHUTTING_DOWN));
+        }
+        let storage = self.wallet.storage();
+        let pending = grants::open_or_join(storage, asking, now)
+            .await
+            .map_err(|e| refused(&e))?;
+        let id = pending.row.pending_id;
+        tracing::info!(
+            originator = %pending.row.originator,
+            kind = pending.row.kind.as_str(),
+            key = %pending.row.key,
+            usage = ?pending.row.usage,
+            call = asking.call,
+            pending_id = id,
+            joined = pending.joined,
+            "browser gate: pending"
+        );
+        let notify = self.held.wait_on(id, &originator);
+        let waiting = Waiting {
+            held: self.held.clone(),
+            wallet: self.wallet.clone(),
+            originator: originator.clone(),
+            pending_id: id,
+            armed: true,
+            _place: place,
+        };
+        let mut shut = self.held.0.shut.subscribe();
+        loop {
+            if *shut.borrow_and_update() {
+                waiting.answered();
+                withdraw(&self.held, &self.wallet, &originator, &[id]).await;
+                return Err(AppError::new(ErrorKind::BridgeUnavailable, SHUTTING_DOWN));
+            }
+            tokio::select! {
+                () = notify.notified() => {}
+                () = tokio::time::sleep(READ_EVERY) => {}
+                _ = shut.changed() => continue,
+            }
+            match grants::pending(storage, id).await {
+                Ok(Some(row)) => match row.answer {
+                    None => {}
+                    Some(Answer::Grant | Answer::Once) => {
+                        waiting.answered();
+                        return Ok(());
+                    }
+                    Some(Answer::Deny) => {
+                        waiting.answered();
+                        return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
+                    }
+                },
+                Ok(None) => {
+                    waiting.answered();
+                    return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
+                }
+                Err(e) => {
+                    tracing::warn!(pending_id = id, error = %e, "browser gate: a held call's read failed; it reads again");
+                }
+            }
+        }
+    }
+}

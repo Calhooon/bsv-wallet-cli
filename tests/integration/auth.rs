@@ -122,24 +122,28 @@ async fn test_auth_token_preflight_passes() {
     );
     assert_eq!(resp.text().await.unwrap(), "");
 
-    // #411: a preflight from an origin not listed, or with none, is the
-    // browser gate's refusal; no CORS header lets a page read it.
-    for (origin, code) in [
-        (Some("http://unlisted.test"), "ERR_PERMISSION_DENIED"),
-        (None, "VALIDATION_ERROR"),
-    ] {
-        let mut req = reqwest::Client::new()
-            .request(reqwest::Method::OPTIONS, &url)
-            .header("Access-Control-Request-Method", "POST");
-        if let Some(origin) = origin {
-            req = req.header("Origin", origin);
-        }
-        let resp = req.send().await.unwrap();
-        assert_eq!(resp.status(), 400, "{origin:?}");
-        assert_eq!(allowed_origin(&resp), None, "{origin:?}");
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["code"], code, "{origin:?}");
-    }
+    // #414 L5b: a preflight from an origin the seed does not list is
+    // answered and echoed (its page must pass it to reach its prompt); one
+    // with no Origin is the browser gate's refusal, with no CORS header.
+    let unlisted = reqwest::Client::new()
+        .request(reqwest::Method::OPTIONS, &url)
+        .header("Access-Control-Request-Method", "POST")
+        .header("Origin", "http://unlisted.test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unlisted.status(), 200);
+    assert_eq!(allowed_origin(&unlisted), Some("http://unlisted.test"));
+    let none = reqwest::Client::new()
+        .request(reqwest::Method::OPTIONS, &url)
+        .header("Access-Control-Request-Method", "POST")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(none.status(), 400);
+    assert_eq!(allowed_origin(&none), None);
+    let body: Value = none.json().await.unwrap();
+    assert_eq!(body["code"], "VALIDATION_ERROR");
 }
 
 /// The actual request under `AUTH_TOKEN` (#138): refused without the bearer

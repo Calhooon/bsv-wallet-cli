@@ -356,6 +356,18 @@ pub async fn revoke(ctx: &WalletContext, originator: &str, reach: &Reach) -> Res
     let rows = grants::revoke(storage, originator, reach, now).await?;
     if rows.is_empty() {
         let (key, _) = grants::key_of(originator)?;
+        // A seed-listed originator's admission is its ALLOWED_ORIGINS line,
+        // not a row (#414 question 6): the revoke names the line.
+        let seed = crate::server::AllowedOrigins::new(ctx.config.server.allowed_origins.clone())
+            .ok()
+            .and_then(|s| s.seeds(&key).map(str::to_string));
+        if let Some(entry) = seed {
+            bail!(
+                "{key} holds no grant row{}; its admission is the seed's: remove its \
+                 ALLOWED_ORIGINS line ({entry}) and restart",
+                reach.words()
+            );
+        }
         bail!(
             "{key} holds no live grant row{}: nothing to revoke",
             reach.words()

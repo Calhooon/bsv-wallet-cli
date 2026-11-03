@@ -72,6 +72,7 @@ use std::sync::Arc;
 pub use super::error::AppError;
 use super::error::Kind;
 use super::page_bounds::check_page_bounds;
+use super::powers::{Ask, Asker};
 use super::types::*;
 use json_body::Json;
 
@@ -101,6 +102,22 @@ fn level_num(l: SecurityLevel) -> u8 {
         SecurityLevel::App => 1,
         SecurityLevel::Counterparty => 2,
     }
+}
+
+/// A call's protocol power (#414 L5b): its level, its name and its
+/// counterparty (`self` when it names none, the key in hex), for `usage`.
+fn protocol_ask(p: &Protocol, counterparty: Option<&Counterparty>, usage: &'static str) -> Ask {
+    let named = counterparty.map(|c| match c {
+        Counterparty::Self_ => "self".to_string(),
+        Counterparty::Anyone => "anyone".to_string(),
+        Counterparty::Other(pk) => pk.to_hex(),
+    });
+    Ask::protocol(
+        level_num(p.security_level),
+        &p.protocol_name,
+        named.as_deref(),
+        usage,
+    )
 }
 
 /// BRC-100 gives HMAC and signature verification the same result shape.
@@ -160,6 +177,7 @@ pub async fn is_authenticated() -> Json<serde_json::Value> {
 pub async fn get_public_key(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McGetPublicKeyReq>,
 ) -> Result<Json<McGetPublicKeyRes>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -183,6 +201,21 @@ pub async fn get_public_key(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    // The identity key's protocol, else the call's (WPM:5142-5188).
+    let asked = if args.identity_key {
+        Some(Ask::named("identity key retrieval", "identityKey"))
+    } else {
+        args.protocol_id
+            .as_ref()
+            .map(|p| protocol_ask(p, args.counterparty.as_ref(), "publicKey"))
+    };
+    asker
+        .ask(
+            "/getPublicKey",
+            args.privileged_reason.as_deref(),
+            asked.into_iter().collect(),
+        )
+        .await?;
 
     if let Some(p) = args.protocol_id.as_ref() {
         audit::record(audit::protocol_entry(
@@ -208,6 +241,7 @@ pub async fn get_public_key(
 pub async fn create_signature(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McCreateSignatureReq>,
 ) -> Result<Json<McCreateSignatureRes>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -247,6 +281,17 @@ pub async fn create_signature(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/createSignature",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "signing",
+            )],
+        )
+        .await?;
 
     audit::record(audit::protocol_entry(
         "createSignature",
@@ -277,12 +322,22 @@ pub async fn create_action(
     axum::Extension(verifier): axum::Extension<crate::broadcast_verify::BroadcastVerifier>,
     axum::Extension(gate): axum::Extension<crate::spend_gate::GateOptions>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McCreateActionReq>,
 ) -> Result<Json<McCreateActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
     // The request to the toolbox's arguments and the door's `allowPending`
     // word (`create_action_args`; the fuzz target `served_json` calls it).
     let (args, allow_pending) = create_action_args(req)?;
+    // Its powers, before the lock (#414 L5b): each output's basket, each
+    // label, then the spend.
+    asker
+        .ask(
+            "/createAction",
+            Some(&args.description),
+            create_action_asks(&args),
+        )
+        .await?;
 
     // Whether this request performs an immediate broadcast (vs. no-send /
     // delayed / external-signing). Only immediate broadcasts are verified.
@@ -444,15 +499,57 @@ pub async fn create_action(
     }))
 }
 
+/// `createAction`'s powers in the reference's order (WPM:4305-4321): the
+/// basket of each output that names one (insertion), each label (apply),
+/// then the spend when its amount is above 0. The amount is W6's, the
+/// requested outputs' sum before the toolbox builds, so an action whose
+/// outputs sum to 0 asks no spend here, where the reference asks one for
+/// its fee.
+fn create_action_asks(args: &CreateActionArgs) -> Vec<Ask> {
+    let outputs = args.outputs.as_deref().unwrap_or_default();
+    let mut asks = baskets_asked(
+        outputs.iter().filter_map(|o| o.basket.as_deref()),
+        "insertion",
+    );
+    asks.extend(args.labels.iter().flatten().map(|l| Ask::label(l, "apply")));
+    let amount: u64 = outputs.iter().map(|o| o.satoshis).sum();
+    if amount > 0 {
+        asks.push(Ask::spending(i64::try_from(amount).unwrap_or(i64::MAX)));
+    }
+    asks
+}
+
+/// One basket power per basket named, in the order first named.
+fn baskets_asked<'a>(baskets: impl Iterator<Item = &'a str>, usage: &'static str) -> Vec<Ask> {
+    let mut seen: Vec<&str> = Vec::new();
+    for basket in baskets {
+        if !seen.contains(&basket) {
+            seen.push(basket);
+        }
+    }
+    seen.into_iter().map(|b| Ask::basket(b, usage)).collect()
+}
+
 /// POST /internalizeAction
 pub async fn internalize_action(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McInternalizeActionReq>,
 ) -> Result<Json<McInternalizeActionRes>, AppError> {
     let originator = extract_originator(&headers)?;
     validate_internalize_instructions(&req)?;
     let args = internalize_args(req);
+    // Each basket insertion's basket, then each label (WPM:4990-5078).
+    let baskets = args
+        .outputs
+        .iter()
+        .filter_map(|o| o.insertion_remittance.as_ref().map(|i| i.basket.as_str()));
+    let mut asks = baskets_asked(baskets, "insertion");
+    asks.extend(args.labels.iter().flatten().map(|l| Ask::label(l, "apply")));
+    asker
+        .ask("/internalizeAction", Some(&args.description), asks)
+        .await?;
 
     let output_count = args.outputs.len();
     let subject = super::post_word::atomic_subject(&args.tx);
@@ -792,6 +889,7 @@ pub async fn get_header_for_height(
 pub async fn verify_signature(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McVerifySignatureReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -816,6 +914,17 @@ pub async fn verify_signature(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/verifySignature",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "signing",
+            )],
+        )
+        .await?;
     let result = wallet
         .verify_signature(args, Some(&originator))
         .await
@@ -827,6 +936,7 @@ pub async fn verify_signature(
 pub async fn encrypt(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McEncryptReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -844,6 +954,17 @@ pub async fn encrypt(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/encrypt",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "encrypting",
+            )],
+        )
+        .await?;
     audit::record(audit::protocol_entry(
         "encrypt",
         level_num(args.protocol_id.security_level),
@@ -863,6 +984,7 @@ pub async fn encrypt(
 pub async fn decrypt(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McDecryptReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -880,6 +1002,17 @@ pub async fn decrypt(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/decrypt",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "encrypting",
+            )],
+        )
+        .await?;
     audit::record(audit::protocol_entry(
         "decrypt",
         level_num(args.protocol_id.security_level),
@@ -899,6 +1032,7 @@ pub async fn decrypt(
 pub async fn create_hmac(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McCreateHmacReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -920,6 +1054,17 @@ pub async fn create_hmac(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/createHmac",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "hmac",
+            )],
+        )
+        .await?;
     audit::record(audit::protocol_entry(
         "createHmac",
         level_num(args.protocol_id.security_level),
@@ -939,6 +1084,7 @@ pub async fn create_hmac(
 pub async fn verify_hmac(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McVerifyHmacReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -965,6 +1111,17 @@ pub async fn verify_hmac(
         privileged_reason: req.privileged_reason,
         seek_permission: None,
     };
+    asker
+        .ask(
+            "/verifyHmac",
+            None,
+            vec![protocol_ask(
+                &args.protocol_id,
+                args.counterparty.as_ref(),
+                "hmac",
+            )],
+        )
+        .await?;
     let result = wallet
         .verify_hmac(args, Some(&originator))
         .await
@@ -1053,10 +1210,18 @@ fn abort_pre_check_fault(e: anyhow::Error) -> AppError {
 pub async fn list_actions(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<ListActionsArgs>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
+    asker
+        .ask(
+            "/listActions",
+            None,
+            args.labels.iter().map(|l| Ask::label(l, "list")).collect(),
+        )
+        .await?;
     let result = wallet
         .list_actions(args, Some(&originator))
         .await
@@ -1113,10 +1278,18 @@ pub fn with_rules(
 pub async fn list_outputs(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<ListOutputsArgs>,
 ) -> Result<Json<ListOutputsResult>, AppError> {
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
+    asker
+        .ask(
+            "/listOutputs",
+            None,
+            vec![Ask::basket(&args.basket, "listing")],
+        )
+        .await?;
     let result = wallet
         .list_outputs(args, Some(&originator))
         .await
@@ -1132,9 +1305,17 @@ pub async fn relinquish_output(
     State(wallet): State<WalletState>,
     axum::Extension(spending_lock): axum::Extension<super::SpendingLock>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<RelinquishOutputArgs>,
 ) -> Result<Json<RelinquishOutputResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    asker
+        .ask(
+            "/relinquishOutput",
+            None,
+            vec![Ask::basket(&args.basket, "removal")],
+        )
+        .await?;
     let _guard = spending_lock.lock().await;
     let result = wallet
         .relinquish_output(args, Some(&originator))
@@ -1151,9 +1332,17 @@ pub async fn relinquish_output(
 pub async fn acquire_certificate(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<AcquireCertificateArgs>,
 ) -> Result<Json<WalletCertificate>, AppError> {
     let originator = extract_originator(&headers)?;
+    asker
+        .ask(
+            "/acquireCertificate",
+            None,
+            vec![Ask::certificate_protocol(false, &args.certificate_type)],
+        )
+        .await?;
     let result = wallet
         .acquire_certificate(args, Some(&originator))
         .await
@@ -1165,10 +1354,18 @@ pub async fn acquire_certificate(
 pub async fn list_certificates(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<ListCertificatesArgs>,
 ) -> Result<Json<ListCertificatesResult>, AppError> {
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
+    asker
+        .ask(
+            "/listCertificates",
+            None,
+            vec![Ask::named("certificate list", "generic")],
+        )
+        .await?;
     let result = wallet
         .list_certificates(args, Some(&originator))
         .await
@@ -1180,9 +1377,22 @@ pub async fn list_certificates(
 pub async fn prove_certificate(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<ProveCertificateArgs>,
 ) -> Result<Json<ProveCertificateResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    asker
+        .ask(
+            "/proveCertificate",
+            None,
+            vec![Ask::certificate(
+                args.privileged == Some(true),
+                &args.certificate.certificate_type,
+                &args.verifier,
+                &args.fields_to_reveal,
+            )],
+        )
+        .await?;
     let result = wallet
         .prove_certificate(args, Some(&originator))
         .await
@@ -1194,9 +1404,17 @@ pub async fn prove_certificate(
 pub async fn relinquish_certificate(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<RelinquishCertificateArgs>,
 ) -> Result<Json<RelinquishCertificateResult>, AppError> {
     let originator = extract_originator(&headers)?;
+    asker
+        .ask(
+            "/relinquishCertificate",
+            None,
+            vec![Ask::certificate_protocol(true, &args.certificate_type)],
+        )
+        .await?;
     let result = wallet
         .relinquish_certificate(args, Some(&originator))
         .await
@@ -1212,10 +1430,18 @@ pub async fn relinquish_certificate(
 pub async fn discover_by_identity_key(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<DiscoverByIdentityKeyArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
+    asker
+        .ask(
+            "/discoverByIdentityKey",
+            None,
+            vec![Ask::named("identity resolution", "generic")],
+        )
+        .await?;
     let result = wallet
         .discover_by_identity_key(args, Some(&originator))
         .await
@@ -1227,10 +1453,18 @@ pub async fn discover_by_identity_key(
 pub async fn discover_by_attributes(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(args): Json<DiscoverByAttributesArgs>,
 ) -> Result<Json<DiscoverCertificatesResult>, AppError> {
     let originator = extract_originator(&headers)?;
     check_page_bounds(args.limit)?;
+    asker
+        .ask(
+            "/discoverByAttributes",
+            None,
+            vec![Ask::named("identity resolution", "generic")],
+        )
+        .await?;
     let result = wallet
         .discover_by_attributes(args, Some(&originator))
         .await
@@ -1242,6 +1476,7 @@ pub async fn discover_by_attributes(
 pub async fn reveal_counterparty_key_linkage(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McRevealCounterpartyKeyLinkageReq>,
 ) -> Result<Json<RevealCounterpartyKeyLinkageResult>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -1256,6 +1491,18 @@ pub async fn reveal_counterparty_key_linkage(
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
     };
+    // The manager's protocol at level 2, the verifier its counterparty
+    // (WPM:5190-5201).
+    asker
+        .ask(
+            "/revealCounterpartyKeyLinkage",
+            args.privileged_reason.as_deref(),
+            vec![Ask::counterparty_linkage(
+                &args.counterparty.to_hex(),
+                &args.verifier.to_hex(),
+            )],
+        )
+        .await?;
     let result = wallet
         .reveal_counterparty_key_linkage(args, Some(&originator))
         .await
@@ -1267,6 +1514,7 @@ pub async fn reveal_counterparty_key_linkage(
 pub async fn reveal_specific_key_linkage(
     State(wallet): State<WalletState>,
     headers: HeaderMap,
+    asker: Asker,
     Json(req): Json<McRevealSpecificKeyLinkageReq>,
 ) -> Result<Json<RevealSpecificKeyLinkageResult>, AppError> {
     let originator = extract_originator(&headers)?;
@@ -1283,6 +1531,21 @@ pub async fn reveal_specific_key_linkage(
         privileged: req.privileged,
         privileged_reason: req.privileged_reason,
     };
+    // The manager's protocol at level 2 over the call's protocol name and
+    // its key id at level 2, else `all` (WPM:5203-5221).
+    let key_id = (args.protocol_id.security_level == SecurityLevel::Counterparty)
+        .then_some(args.key_id.as_str());
+    asker
+        .ask(
+            "/revealSpecificKeyLinkage",
+            args.privileged_reason.as_deref(),
+            vec![Ask::specific_linkage(
+                &args.protocol_id.protocol_name,
+                key_id,
+                &args.verifier.to_hex(),
+            )],
+        )
+        .await?;
     let result = wallet
         .reveal_specific_key_linkage(args, Some(&originator))
         .await

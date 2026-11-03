@@ -30,10 +30,18 @@ pub enum Kind {
     InputNotOffered,
     /// The toolbox's permission refusal.
     AccessDenied,
-    /// The browser gate's refusal of an origin `ALLOWED_ORIGINS` does not
-    /// name (#411): the desktop client's denial, 400 with the reference's
-    /// code (ts-stack edf6e03 `WalletPermissionsManager.ts:1348-1349`).
+    /// The browser gate's refusal of a power (#414): a revoked power, the
+    /// owner's deny of a held call, an admin-reserved name, a host route a
+    /// page asks: the desktop client's denial, 400 with the reference's code
+    /// (ts-stack edf6e03 `WalletPermissionsManager.ts:1189-1205`,
+    /// `:1348-1349`).
     OriginDenied,
+    /// A held call past the cap (#414, the design's W14): at most 2 held
+    /// calls per originator and 4 in all; answered at once, never held.
+    PendingLimit,
+    /// A held call at the server's shutdown (#414, W13): the MetaNet
+    /// Client's code and text in the port's carrier.
+    BridgeUnavailable,
     /// The wallet's state refuses a well-formed request.
     Conflict,
     /// Completed action results require review, with their typed evidence.
@@ -69,6 +77,13 @@ impl Kind {
             Kind::InputNotOffered => (StatusCode::FORBIDDEN, "INPUT_NOT_OFFERED"),
             Kind::AccessDenied => (StatusCode::FORBIDDEN, "ACCESS_DENIED"),
             Kind::OriginDenied => (StatusCode::BAD_REQUEST, "ERR_PERMISSION_DENIED"),
+            Kind::PendingLimit => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "ERR_PERMISSION_PENDING_LIMIT",
+            ),
+            Kind::BridgeUnavailable => {
+                (StatusCode::SERVICE_UNAVAILABLE, "WALLET_BRIDGE_UNAVAILABLE")
+            }
             Kind::Conflict => (StatusCode::CONFLICT, "CONFLICT"),
             Kind::ReviewActions => (StatusCode::BAD_REQUEST, "5"),
             Kind::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED"),
@@ -98,6 +113,7 @@ impl Kind {
     const fn retry_after_secs(self) -> Option<u64> {
         match self {
             Kind::StoreBusy => Some(1),
+            Kind::PendingLimit => Some(5),
             Kind::HeadersUnavailable => Some(crate::spend_gate::HEADERS_RETRY_AFTER_SECS),
             _ => None,
         }
