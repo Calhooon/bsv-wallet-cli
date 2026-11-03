@@ -1,0 +1,42 @@
+{
+  "world": "spending",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://page.test"
+    },
+    "json": {
+      "description": "wire spending power",
+      "options": {
+        "acceptDelayedBroadcast": false,
+        "randomizeOutputs": false
+      },
+      "outputs": [
+        {
+          "lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
+          "outputDescription": "an output",
+          "satoshis": 29980
+        }
+      ]
+    }
+  },
+  "owner": {
+    "after_ms": 200,
+    "answer": "deny"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://page.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "ERR_PERMISSION_DENIED",
+      "message": "Permission denied."
+    }
+  }
+}

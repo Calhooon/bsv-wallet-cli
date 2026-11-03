@@ -65,4 +65,17 @@ pub(crate) async fn record(r: &mut Recorder) {
         .body
         .as_ref()
         .is_some_and(|b| b.pointer("/txid").is_some()));
+    // Past the ceiling (89,960 spent of 100,000; this call 29,980): held
+    // on a spending row with renewal 1, denied: 400 Permission denied.
+    let denied = r
+        .case_owned(
+            "spending.createAction.pastCeilingDenied",
+            "spending",
+            spend(exact(2)),
+            answered("deny", None),
+        )
+        .await;
+    assert!(denied.body.as_ref().is_some_and(
+        |b| b.pointer("/message").and_then(|m| m.as_str()) == Some("Permission denied.")
+    ));
 }
