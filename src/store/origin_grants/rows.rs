@@ -273,10 +273,6 @@ pub enum Refused {
         /// Its unix seconds.
         at: i64,
     },
-    /// `grant` names a spending row: until the spending ceilings land
-    /// (#414 L6) a spend is answered `once` or `deny` alone (the design's
-    /// L5b row).
-    GrantOnSpending(i64),
     /// `once` names a row of another kind than spending.
     OnceOnKind {
         /// The row's id.
@@ -388,11 +384,6 @@ impl std::fmt::Display for Refused {
             Self::NoSuchPending(id) => write!(
                 f,
                 "no pending request #{id} (a request is withdrawn when its caller disconnects)"
-            ),
-            Self::GrantOnSpending(id) => write!(
-                f,
-                "pending request #{id} asks for a spend; until the spending ceilings land \
-                 (#414 L6) a spend is answered once or deny, never grant"
             ),
             Self::AlreadyAnswered {
                 pending_id,
