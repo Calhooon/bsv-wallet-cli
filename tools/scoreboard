@@ -86,7 +86,12 @@ the tool exits 1 naming the file, the stored score and the computed one: a score
 never read as given, since the ceiling holds a floor under it. A file whose caught,
 missed and timeout are all 0 is malformed. The table shows the score and the commit. A floored file the object does
 not name reads "unmeasured", as every floor does while the file is absent.
-Other fields (the night's tool, targets, note) are the captain's prose and are
+`equivalent` (#482) is optional per file: the count of the night's declared
+equivalents (docs/scoreboard/equivalents.json, .github/nightly/mutants_score.py
+--equivalents), neither caught nor missed and outside the score's
+denominator, so the formula above is unchanged. When present it is a count, or
+the tool exits 1 naming the file; above 0 the measured cell says it, "<score>
+at <commit> (N equivalent)". Other fields (the night's tool, targets, note) are the captain's prose and are
 not read.
 
 `mode` (#462) says which of the Nightly's two modes the record is: "complete"
@@ -538,7 +543,7 @@ def measured_scores():
         require_object(MUTANTS, f"files.{file}", entry)
         if not is_num(entry.get("score")) or not 0 <= entry["score"] <= 100:
             fail(MUTANTS, f"files.{file}.score", "must be a score from 0 to 100")
-        for n in ("caught", "missed", "timeout", "unviable"):
+        for n in ("caught", "missed", "timeout", "unviable") + (("equivalent",) if "equivalent" in entry else ()):
             if not is_int(entry.get(n)) or entry[n] < 0:
                 fail(MUTANTS, f"files.{file}.{n}", "must be a count (an integer at least 0)")
         judged = entry["caught"] + entry["missed"] + entry["timeout"]
@@ -551,6 +556,15 @@ def measured_scores():
                  f"(100 * caught / (caught + missed + timeout), to one place); the score is its counts'")
         scores[file] = entry["score"]
     return scores, commit[:7]
+
+
+def equivalent_counts():
+    """docs/scoreboard/mutants.json's `equivalent` count by file (#482), for the
+    files that name one; measured_scores() checks that each is a count."""
+    if not path(MUTANTS).exists():
+        return {}
+    files = require_object(MUTANTS, "(the file)", load_json(MUTANTS)).get("files", {})
+    return {f: e["equivalent"] for f, e in files.items() if isinstance(e, dict) and "equivalent" in e}
 
 
 def provenance():
@@ -649,6 +663,7 @@ def mutation_rows():
         return [Row("mutation floors", ABSENT, "", f"`{NIGHTLY}`")]
     scores, commit = measured_scores()
     origin = provenance()
+    equivalent = equivalent_counts()
     rows, named = [], sorted(floors().items())
     red = red_by_design(dict(named), scores)[0]
     for file, floor in named:
@@ -656,6 +671,8 @@ def mutation_rows():
         cell = "unmeasured" if score is None else f"{score:.1f} at {commit}"
         if score is not None and origin.get(file, ("night",))[0] == "carried":
             cell = f"{score:.1f} carried from run {origin[file][1]} at {origin[file][2]}"
+        if score is not None and equivalent.get(file, 0) > 0:
+            cell += f" ({equivalent[file]} equivalent)"
         if file in red:
             cell += f", below the floor (red by design, #{red[file]})"
         rows.append(Row(f"mutation floor `{file}`", f"{floor:g}", cell, f"`{NIGHTLY}`",

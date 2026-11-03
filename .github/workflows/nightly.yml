@@ -904,6 +904,10 @@ jobs:
       # outcome outside the plan. The night's record, every file with its
       # source, run and sha, is the artifact night-record, which the captain
       # commits over docs/scoreboard/mutants.json when the night is of record.
+      # A declared equivalent (#482): --equivalents reads
+      # docs/scoreboard/equivalents.json, scores each named mutant the night
+      # missed as equivalent (outside the denominator, its own column), and
+      # refuses the night naming an entry the night caught or a stale one.
       - name: Score per file against the floors
         env:
           MUTANTS_FLOORS: >-
@@ -918,7 +922,8 @@ jobs:
         run: |
           mkdir -p night
           args=(--plan plan/plan.json --record docs/scoreboard/mutants.json --run "$RUN"
-                --write night/mutants.json --sha "$GITHUB_SHA")
+                --write night/mutants.json --sha "$GITHUB_SHA"
+                --equivalents docs/scoreboard/equivalents.json)
           if [ "$EMPTY" != "true" ]; then
             args+=(--survivors survivors)
             [ "$HSHARDS" = "0" ] || args+=(--hermetic hermetic)

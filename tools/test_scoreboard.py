@@ -210,6 +210,20 @@ class PresentRecordsMatchTheirShape(Case):
         self.assertIn("| 80 | 86.6 at abcdef0 |", out)
         self.assertIn("| 69 | unmeasured |", out)
 
+    def test_mutants_renders_its_equivalent_count(self):
+        # #482: a declared equivalent is outside the denominator, so the score is
+        # still caught / (caught + missed + timeout), and the cell names the count.
+        record = json.loads(json.dumps(MUTANTS))
+        record["files"]["src/spend_gate.rs"]["equivalent"] = 6
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(record))
+        self.assertIn("| 80 | 86.6 at abcdef0 (6 equivalent) |", self.table())
+        record["files"]["src/spend_gate.rs"]["equivalent"] = 0
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(record))
+        self.assertIn("| 80 | 86.6 at abcdef0 |", self.table())
+        record["files"]["src/spend_gate.rs"]["equivalent"] = -1
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(record))
+        self.refused("files.src/spend_gate.rs.equivalent: must be a count")
+
     def test_ratchets_without_a_commit_is_refused(self):
         self.tree.write("docs/ratchets.json", json.dumps({"ratchets": {"x": 1}}))
         self.refused("docs/ratchets.json: commit: must be a full 40-hex sha")
