@@ -51,4 +51,18 @@ pub(crate) async fn record(r: &mut Recorder) {
         .body
         .as_ref()
         .is_some_and(|b| b.pointer("/txid").is_some()));
+    // Again: held, answered grant with a ceiling of 100,000; the door's
+    // 200. The once spend is tallied, so this month holds both.
+    let granted = r
+        .case_owned(
+            "spending.createAction.heldGranted",
+            "spending",
+            spend(exact(1)),
+            answered("grant", Some(100_000)),
+        )
+        .await;
+    assert!(granted
+        .body
+        .as_ref()
+        .is_some_and(|b| b.pointer("/txid").is_some()));
 }
