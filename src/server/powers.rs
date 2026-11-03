@@ -5,10 +5,11 @@
 //!
 //! Each handler names its powers after its arguments parse ([`Ask`], the
 //! design's door-to-kind map) and calls [`Asker::ask`] before its toolbox
-//! call and outside the `SpendingLock`; `createAction`'s spend is asked last,
-//! inside the lock ([`Asker::spend`], the design's L6). The powers are asked one at a time,
-//! in the reference's order (ts-stack `edf6e03` `WalletPermissionsManager.ts`
-//! 4305-4321): for each, the originator's rows are read
+//! call and outside the `SpendingLock`; `createAction`'s spend is asked
+//! last, inside the lock ([`Asker::spend`], the design's L6). The powers are
+//! asked one at a time, in the reference's order (ts-stack `edf6e03`
+//! `WalletPermissionsManager.ts` 4305-4321): for each, the originator's rows
+//! are read
 //! (`store::origin_grants::lookup`):
 //!
 //! - **live**: admitted, the next power is asked;
@@ -33,7 +34,7 @@
 //! of them fills; a held spend releases the lock while it waits, takes it
 //! again after the answer and checks again (`once` admits the one call, no
 //! row written). The door tallies the admitted spend before it lets the lock
-//! go ([`Tally`]).
+//! go (`spend::Tally`).
 //!
 //! A held call waits with no bound, reading its row every 250 ms (the CLI
 //! and the inspector answer from other processes) and waking at once on
@@ -52,17 +53,17 @@ use std::time::Duration;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use bsv_sdk::primitives::to_hex;
-use bsv_sdk::wallet::{Counterparty, CreateActionResult, Protocol, SecurityLevel};
-use tokio::sync::{watch, Notify, OwnedMutexGuard};
+use bsv_sdk::wallet::{Counterparty, Protocol, SecurityLevel};
+use tokio::sync::{watch, Notify};
 
 use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::WalletState;
 use super::open_bounds::{Class, OpenBounds};
 use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
 use super::probes::Probes;
-use super::SpendingLock;
-use crate::store::origin_grants::{self as grants, Answer, Asking, Flow, Power, Refused, Standing};
+use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
+
+mod spend;
 
 /// At most this many held calls per originator (the key, the hostname).
 pub const PER_ORIGINATOR: usize = 2;
@@ -568,101 +569,6 @@ impl Asker {
         self.hold(&asking, now).await.map(|_| ())
     }
 
-    /// `createAction`'s spend of `amount` satoshis (W6: its outputs' sum),
-    /// asked inside `lock` (section (1)): the lock's guard, held by the door
-    /// until its toolbox call returns and its spend is tallied, with the
-    /// [`Tally`] to write; none for an amount of 0 (no power asked here,
-    /// where the reference asks one for the fee) or a seed-listed caller.
-    ///
-    /// A live spending row admits the call when its ceiling is unset or the
-    /// month's tally plus `amount` is at most the ceiling; equal admits.
-    /// Past it, or with no row, the call is held (a renewal past a
-    /// ceiling) with the lock released; after the answer it takes the lock
-    /// again: `once` admits the one call, `grant` is checked again under
-    /// the new ceiling, `deny` is 400 `Permission denied.`. A revoked row
-    /// refuses at once.
-    pub(crate) async fn spend(
-        &self,
-        call: &str,
-        reason: Option<&str>,
-        amount: u64,
-        lock: &SpendingLock,
-    ) -> Result<(OwnedMutexGuard<()>, Option<Tally>), AppError> {
-        let Some(admitted) = self.admitted.as_ref() else {
-            return Err(AppError::new(ErrorKind::Validation, NO_ORIGIN));
-        };
-        if amount == 0 || admitted.seed.is_some() {
-            return Ok((lock.clone().lock_owned().await, None));
-        }
-        let amount = i64::try_from(amount).unwrap_or(i64::MAX);
-        let tally = Tally {
-            originator: admitted.originator.clone(),
-            amount,
-        };
-        loop {
-            let guard = lock.clone().lock_owned().await;
-            let now = clock()?;
-            let Some(renewal) = self.ceiling(admitted, call, amount, now).await? else {
-                return Ok((guard, Some(tally)));
-            };
-            drop(guard);
-            let asking = Asking {
-                originator: &admitted.originator,
-                power: &Power::Spending,
-                usage: None,
-                call,
-                reason,
-                amount: Some(amount),
-                renewal,
-            };
-            if self.hold(&asking, now).await? == Answer::Once {
-                return Ok((lock.clone().lock_owned().await, Some(tally)));
-            }
-        }
-    }
-
-    /// The spending row's word on `amount` at `now`, read under the lock:
-    /// `None` admits; `Some(renewal)` holds (a renewal past a ceiling); a
-    /// revoked row refuses.
-    async fn ceiling(
-        &self,
-        admitted: &Admitted,
-        call: &str,
-        amount: i64,
-        now: i64,
-    ) -> Result<Option<bool>, AppError> {
-        let storage = self.wallet.storage();
-        let row = match grants::lookup(storage, &admitted.originator, &Power::Spending, now)
-            .await
-            .map_err(|e| refused(&e))?
-        {
-            Standing::Live(row) => row,
-            Standing::Revoked(row) => return Err(revoked(admitted, &row, call)),
-            Standing::Expired(_) => return Ok(Some(true)),
-            Standing::None => return Ok(Some(false)),
-        };
-        let spent = grants::month_tally(storage, &admitted.originator, now)
-            .await
-            .map_err(|e| refused(&e))?;
-        if row
-            .amount
-            .is_none_or(|ceiling| spent.saturating_add(amount) <= ceiling)
-        {
-            admitted_by(admitted, &row, call);
-            return Ok(None);
-        }
-        tracing::info!(
-            originator = %admitted.originator,
-            grant_id = row.grant_id,
-            ceiling = row.amount,
-            spent,
-            amount,
-            call,
-            "browser gate: past the spending ceiling, held as a renewal"
-        );
-        Ok(Some(true))
-    }
-
     /// Hold the call on its power's open row until the owner answers it
     /// (`grant` or `once`, else 400 `Permission denied.`), the row is
     /// deleted, or the server shuts down.
@@ -739,45 +645,6 @@ impl Asker {
                     return Err(AppError::new(ErrorKind::OriginDenied, PERMISSION_DENIED));
                 }
             }
-        }
-    }
-}
-
-/// An admitted spend the door tallies once the toolbox returns its action
-/// (section (1), W7): one `origin_spends` row, the txid on the signed path,
-/// the reference on the deferred one; a failed call writes none.
-pub(crate) struct Tally {
-    originator: String,
-    amount: i64,
-}
-
-impl Tally {
-    /// Write the row, before the door lets the `SpendingLock` go. A write
-    /// the store refuses is logged at warn by name and the door's answer
-    /// stands: the action is already built, and a refusal would invite the
-    /// page to spend again.
-    pub(crate) async fn write(&self, wallet: &WalletState, action: &CreateActionResult) {
-        let txid = action.txid.as_ref().map(|t| to_hex(t));
-        let reference = action
-            .signable_transaction
-            .as_ref()
-            .map(|st| crate::spend_gate::reference_string(&st.reference));
-        let flow = match (&txid, &reference) {
-            (Some(txid), _) => Flow::Signed(txid),
-            (None, Some(reference)) => Flow::Deferred(reference),
-            (None, None) => {
-                tracing::warn!(originator = %self.originator, amount = self.amount, "browser gate: the spend names no txid and no reference; it is not tallied");
-                return;
-            }
-        };
-        let written = match super::owner_door::now() {
-            Ok(now) => {
-                grants::spent(wallet.storage(), &self.originator, flow, self.amount, now).await
-            }
-            Err(e) => Err(e),
-        };
-        if let Err(e) = written {
-            tracing::warn!(originator = %self.originator, amount = self.amount, flow = ?flow, error = %e, "browser gate: the spend was not tallied");
         }
     }
 }

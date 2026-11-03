@@ -1,7 +1,8 @@
 //! Rule A2 (#73): SQL lives behind the storage boundary. The boundary is
 //! `src/store.rs` and its module `src/store/origin_grants.rs` (the crate's
 //! own tables beside the toolbox's, #414) with its probe record
-//! `src/store/origin_grants/probes.rs` (#539) and the toolbox itself; every other file that holds an `sqlx` query call (by
+//! `src/store/origin_grants/probes.rs` (#539) and its month's tally
+//! `src/store/origin_grants/spends.rs` (#414 L6) and the toolbox itself; every other file that holds an `sqlx` query call (by
 //! path, `sqlx::query(`, or bare after a `use sqlx::query`, and that `use`
 //! itself) or an SQL statement in a string literal is listed with its
 //! count, and #89 moves them behind the boundary.
@@ -15,6 +16,7 @@ const BOUNDARY: &[&str] = &[
     "src/store.rs",
     "src/store/origin_grants.rs",
     "src/store/origin_grants/probes.rs",
+    "src/store/origin_grants/spends.rs",
 ];
 
 /// The words that open an SQL statement, as they appear in a literal.

@@ -465,12 +465,12 @@ pub async fn create_action(
             return Err(AppError::broadcast_rejected(&txid_hex));
         }
     }
-    let broadcast = match result.txid.as_ref() {
-        Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
-            super::post_word::post_word(wallet.storage(), &to_hex(t)).await
-        }
-        _ => None,
-    };
+    let broadcast = post_word_of(
+        &wallet,
+        result.txid.as_ref(),
+        result.send_with_results.as_deref(),
+    )
+    .await;
 
     Ok(Json(McCreateActionRes {
         txid: result.txid.map(|t| to_hex(&t)),
@@ -1135,12 +1135,12 @@ pub async fn sign_action(
             tracing::warn!(reference = %reference, error = %e, "browser gate: the signed spend's txid was not tallied");
         }
     }
-    let broadcast = match result.txid.as_ref() {
-        Some(t) if super::broadcast_follow_up::sending(&result.send_with_results, t) => {
-            super::post_word::post_word(wallet.storage(), &to_hex(t)).await
-        }
-        _ => None,
-    };
+    let broadcast = post_word_of(
+        &wallet,
+        result.txid.as_ref(),
+        result.send_with_results.as_deref(),
+    )
+    .await;
     // Same wire shape as create_action: txid as hex, tx (AtomicBEEF) as a
     // number array — see McSignActionRes for why the toolbox struct cannot be
     // serialized directly.
@@ -1152,6 +1152,21 @@ pub async fn sign_action(
             .and_then(|r| serde_json::to_value(r).ok()),
         broadcast,
     }))
+}
+
+/// The broadcast word an action's answer carries: the stored post's, when
+/// the immediate post drew no accepting word (`sending`); else none.
+async fn post_word_of(
+    wallet: &WalletState,
+    txid: Option<&[u8; 32]>,
+    sent: Option<&[bsv_sdk::wallet::SendWithResult]>,
+) -> Option<super::post_word::PostWord> {
+    match txid {
+        Some(t) if super::broadcast_follow_up::sending(sent, t) => {
+            super::post_word::post_word(wallet.storage(), &to_hex(t)).await
+        }
+        _ => None,
+    }
 }
 
 /// POST /abortAction

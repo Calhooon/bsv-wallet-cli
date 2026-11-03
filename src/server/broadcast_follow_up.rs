@@ -267,10 +267,10 @@ pub async fn apply_presence_report(
 /// Whether `send_with_results` reports `txid` `sending`: the immediate post
 /// drew no accepting word.
 pub fn sending(
-    send_with_results: &Option<Vec<bsv_sdk::wallet::SendWithResult>>,
+    send_with_results: Option<&[bsv_sdk::wallet::SendWithResult]>,
     txid: &[u8; 32],
 ) -> bool {
-    send_with_results.as_ref().is_some_and(|rs| {
+    send_with_results.is_some_and(|rs| {
         rs.iter()
             .any(|r| &r.txid == txid && matches!(r.status, SendWithResultStatus::Sending))
     })

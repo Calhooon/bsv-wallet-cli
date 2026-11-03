@@ -331,6 +331,31 @@ async fn three_pending(dir: &TempDir) -> Vec<i64> {
     seed(dir, &asks).await
 }
 
+/// A second spend of shop.example's, granted with `--amount`: the spending
+/// row with its ceiling and this month's spend, and the answered row.
+async fn a_spend_is_granted_its_ceiling(dir: &TempDir) {
+    let again = Asking {
+        originator: "shop.example",
+        power: &Power::Spending,
+        usage: None,
+        call: "/createAction",
+        reason: None,
+        amount: Some(2500),
+        renewal: false,
+    };
+    let spend = seed(dir, &[again]).await[0];
+    let granted = said(
+        dir,
+        &["origin-grant", &format!("#{spend}"), "--amount", "60000"],
+    );
+    let granted: Vec<&str> = granted.lines().collect();
+    assert!(
+        granted[0].starts_with("granted  shop.example  spending     []  60000/month (0 spent "),
+        "{granted:?}"
+    );
+    assert!(granted[1].contains("  grant at "), "{granted:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     let dir = made();
@@ -384,26 +409,7 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     assert!(once.starts_with(&format!("answered  #{}  shop.example", ids[2])));
     assert!(once.contains("  once at "), "{once}");
 
-    let again = Asking {
-        originator: "shop.example",
-        power: &Power::Spending,
-        usage: None,
-        call: "/createAction",
-        reason: None,
-        amount: Some(2500),
-        renewal: false,
-    };
-    let spend = seed(&dir, &[again]).await[0];
-    let granted = said(
-        &dir,
-        &["origin-grant", &format!("#{spend}"), "--amount", "60000"],
-    );
-    let granted: Vec<&str> = granted.lines().collect();
-    assert!(
-        granted[0].starts_with("granted  shop.example  spending     []  60000/month (0 spent "),
-        "{granted:?}"
-    );
-    assert!(granted[1].contains("  grant at "), "{granted:?}");
+    a_spend_is_granted_its_ceiling(&dir).await;
 
     let open = said(&dir, &["origins"]);
     assert_eq!(

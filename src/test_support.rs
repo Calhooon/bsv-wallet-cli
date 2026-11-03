@@ -30,6 +30,26 @@ pub async fn serve_router(app: axum::Router) -> (String, tokio::task::JoinHandle
     (url, task)
 }
 
+/// A header service's answer for a request to `uri`: the header at its
+/// `height=` (900 when it names none), whose merkle root is `roots`' entry
+/// for that height (a mined coin's one-leaf block), else `0c..`.
+pub fn header_answer(
+    roots: &std::collections::HashMap<u32, String>,
+    uri: &axum::http::Uri,
+) -> axum::Json<serde_json::Value> {
+    let height = uri
+        .query()
+        .and_then(|q| q.strip_prefix("height="))
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(900);
+    axum::Json(serde_json::json!({"status": "success", "value": {
+        "version": 536_870_912, "previousHash": "00".repeat(32),
+        "merkleRoot": roots.get(&height).cloned().unwrap_or_else(|| "0c".repeat(32)),
+        "time": 1_700_000_000, "bits": 402_917_821_u32, "nonce": 7,
+        "height": height, "hash": format!("{height:064x}")
+    }}))
+}
+
 /// A closed local port: the proxy of every request [`seal_network`] keeps
 /// off the network.
 pub const CLOSED: &str = "http://127.0.0.1:9";

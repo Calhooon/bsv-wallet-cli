@@ -76,17 +76,7 @@ async fn headers(
         let roots = roots.clone();
         async move {
             calls.lock().unwrap().push(uri.to_string());
-            let height = uri
-                .query()
-                .and_then(|q| q.strip_prefix("height="))
-                .and_then(|h| h.parse().ok())
-                .unwrap_or(900);
-            axum::Json(json!({"status": "success", "value": {
-                "version": 536_870_912, "previousHash": "00".repeat(32),
-                "merkleRoot": roots.get(&height).cloned().unwrap_or_else(|| "0c".repeat(32)),
-                "time": 1_700_000_000, "bits": 402_917_821_u32, "nonce": 7,
-                "height": height, "hash": format!("{height:064x}")
-            }}))
+            crate::test_support::header_answer(&roots, &uri)
         }
     });
     serve_router(app).await
