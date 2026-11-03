@@ -56,7 +56,7 @@ def plan(files, mode="incremental", base=None, shards=None):
     shards = (1 if files else 0) if shards is None else shards
     return {"mode": mode, "base": base or {"run": RUN_A, "commit": SHA_A}, "head": HEAD,
             "floored": sorted(FLOORS), "files": files, "shards": shards, "matrix": list(range(shards)),
-            "parallel": shards if mode == "complete" else min(6, shards)}
+            "parallel": min(14 if mode == "complete" else 6, shards)}
 
 
 def equivalent(file, i, pr=434):
@@ -254,8 +254,8 @@ class Case(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("| `src/a.rs` | 38 | 0 | 2 | 0 | 95.0 | 90 | ok |", out)
         self.assertIn("| `src/b.rs` | 32 | 0 | 8 | 0 | 80.0 | 75 | ok |", out)
-        self.assertEqual(self.night.written()["matrix"], {"shards": 20, "parallel": 20})
-        print("\n    exit 0: twenty shards of twenty, src/a.rs 95.0, src/b.rs 80.0, matrix 20 at once",
+        self.assertEqual(self.night.written()["matrix"], {"shards": 20, "parallel": 14})
+        print("\n    exit 0: twenty shards of twenty, src/a.rs 95.0, src/b.rs 80.0, matrix 20, 14 at once (2 waves: 14, then 6)",
               end=" ", file=sys.stderr)
 
     def test_a_complete_night_of_nineteen_shards_is_refused(self):
