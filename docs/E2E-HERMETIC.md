@@ -268,6 +268,15 @@ CI's artifacts). Dropped: `WOC_API_KEY`, `BITAILS_API_KEY`, `TAAL_API_KEY`,
 `BSV_WALLET_BIN` and `BSV_WALLET_MCP_BIN` name the binaries when they are not
 under the repository's `target/release`.
 
+The `e2e-hermetic` job builds its binaries in the release profile with the
+workspace's own crates (the lib, its two bins and `bsv-wallet-mcp`) at
+`opt-level` 0, by `--config` on its two build lines (#524): the dependencies
+keep every release setting and so restore from Build's `release` key, and
+only those crates compile, which a fresh checkout's mtimes rebuild on every
+run. Each build writes cargo's timings report, kept as the job's
+`e2e-hermetic-build-timings` artifact (each HTML with its units as JSON
+beside it). The shipped binary is Build's and `release.yml`'s.
+
 ## As a cargo test target (#393)
 
 `tests/e2e_hermetic.rs` runs this suite as one test of the package, so the

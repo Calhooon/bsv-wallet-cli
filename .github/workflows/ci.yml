@@ -960,14 +960,27 @@ jobs:
             . -> target
             fuzz -> target
 
-      # Each build writes cargo's timings report (#524): every unit's start,
-      # its frontend and codegen seconds and whether it was fresh, the record
-      # of where this step's seconds go on each run, kept as an artifact.
+      # The binaries the harness drives (#524): the release profile, with
+      # the workspace's own crates (the lib, its two bins and the MCP crate)
+      # at opt-level 0 by --config on these two lines alone. On a full-match
+      # restore every dependency is fresh and only those crates compile (a
+      # fresh checkout's mtimes rebuild them on every run), and at release's
+      # opt-level their codegen was most of the step: 102 s in run
+      # 41637359683, the lib 42.6 s (18.3 frontend, 24.3 codegen), the
+      # bsv-wallet bin 43.0 s, bsv-wallet-mcp 12.5 s. The dependencies keep
+      # release's every setting, so they are Build's cached artifacts and
+      # the key gains nothing; debug-assertions and overflow-checks stay off.
+      # The shipped binary is Build's and release.yml's, never this one.
+      # Each build writes cargo's timings report: every unit's start, its
+      # frontend and codegen seconds and whether it was fresh, the record of
+      # where this step's seconds go on each run, kept as an artifact.
       - name: Build the release binaries the harness drives
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
-          cargo build --release --locked --timings
-          cargo build --release --locked -p bsv-wallet-mcp --timings
+          ours=(--config 'profile.release.package.bsv-wallet-cli.opt-level=0'
+                --config 'profile.release.package.bsv-wallet-mcp.opt-level=0')
+          cargo build --release --locked --timings "${ours[@]}"
+          cargo build --release --locked -p bsv-wallet-mcp --timings "${ours[@]}"
 
       # The report's HTML carries its units as a JSON array (UNIT_DATA);
       # stable cargo writes no JSON file, so the array is copied out beside it.
