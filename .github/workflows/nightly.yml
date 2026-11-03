@@ -60,10 +60,11 @@ permissions:
 # fuzz targets at once, took every runner the account has for over an hour
 # and starved every PR check, so the matrix ran six at a time; at fifty
 # shards (#310) a complete night then took ten hours (run 41340299977) and
-# 8h12m (run 41413946663). A complete night now runs at the fleet's 03:00Z
-# slot (#456, docs/NIGHTLY.md), when the day's landings are off the
-# account, as twenty shards, the account's concurrent-job limit, fourteen at
-# a time, then six (the plan's max-parallel, #496: the account's twenty
+# 8h12m (run 41413946663). A complete night now runs at the fleet's 17:30Z
+# slot (#456, #514, docs/NIGHTLY.md: the keeper's read of the runner pool
+# put 16Z to 18Z among its lightest hours and 03:00Z in a busy one), as
+# twenty shards, the account's concurrent-job limit, fourteen at a time,
+# then six (the plan's max-parallel, #496: the account's twenty
 # runners are one pool across four repositories, and a PR run's six jobs keep
 # six of them; under night 3's fifty shards, which held all twenty, the PR
 # runs of 11-03 took 47 to 55 minutes for 5 minutes of work); the fuzz targets, the bench and
@@ -367,7 +368,7 @@ jobs:
     timeout-minutes: 340
     strategy:
       fail-fast: false
-      # The plan's: a complete night's twenty at the 03:00Z slot (#460),
+      # The plan's: a complete night's twenty at the 17:30Z slot (#460, #514),
       # fourteen at a time, leaving a PR run its six runners (#496); an
       # incremental night's six at a time, leaving runners for the PR checks
       # (#144).
