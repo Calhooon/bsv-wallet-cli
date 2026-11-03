@@ -77,6 +77,13 @@ impl World {
             .layer(Extension(Arc::new(tokio::sync::Mutex::new(()))))
             .layer(Extension(verifier))
             .layer(Extension(crate::spend_gate::GateOptions::default()))
+            // The gate's word on the caller, as `ALLOWED_ORIGINS` would seed
+            // it: these handlers are served without the gate (#414 L5b).
+            .layer(Extension(crate::server::origin_gate::Admitted {
+                origin: "http://handler.test".into(),
+                originator: "handler.test".into(),
+                seed: Some("handler.test".into()),
+            }))
             .with_state(wallet.clone());
         Self {
             wallet,

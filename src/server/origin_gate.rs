@@ -1,7 +1,8 @@
-//! The served doors' browser gate, #411's step (b) by the owner's word
-//! of 2026-11-01: every call carries an `Origin`, the originator a door
-//! judges is derived from it, and only the originators `ALLOWED_ORIGINS`
-//! names are admitted. The per-origin grant in the store is #414's.
+//! The served doors' browser gate: #411's step (b), a required `Origin`,
+//! and #414's switch (the design's L5b, `docs/design/origin-grants.md`
+//! sections (1), (2) and (6)): a door admits a page for each power it asks
+//! by the owner's grant of that power to its origin, read from the store
+//! (`super::powers`).
 //!
 //! The key, by the owner's word of 2026-11-02: the reference's originator
 //! and its hostname scope (ts-stack edf6e03 `WalletPermissionsManager.ts`,
@@ -10,14 +11,16 @@
 //! the lowercased hostname's, every port of a host sharing one
 //! (`WPM:5702-5729`).
 //!
-//! The desktop client's lines this follows (bsv-desktop bcb6003):
-//! `src/onWalletReady.ts:45-71` reads the originator from `Origin` (an
-//! unparseable one is none), and `:82-88` answers a call without one
-//! `400 {"message": "Origin header is required"}`; an origin its owner
-//! refuses is its permission manager's `The user has denied the request for
-//! permission.` (`WPM:1348-1349`, code `ERR_PERMISSION_DENIED`), served 400
-//! by the same handler. Here the list is the owner's word, so an originator
-//! it does not name is refused in that shape without a prompt.
+//! The gate's order, before the body is read: the `Origin` (none is the
+//! MetaNet Client's `400 {"message": "Origin header is required"}`,
+//! bsv-desktop `src/onWalletReady.ts`), the other fields' agreement, then
+//! the seed: an originator `ALLOWED_ORIGINS` lists is admitted at every
+//! door and host route during the seed window, as (b) admitted it, with no
+//! row (question 6). The host routes answer the owner (no `Origin`, a
+//! loopback `Host`, the bearer under `AUTH_TOKEN`) or the seed, never a
+//! page's grant; the open doors (W15, ruled (i)) answer any page with a
+//! parsed `Origin` and an agreeing originator with no row. Every other door
+//! asks its powers after its arguments parse (`powers::Asker::ask`).
 //!
 //! Where this is stricter than the client, by the ruling's rule 1 and the
 //! stack's charter section 13 (`lean/BrowserGate.lean` `gate`): the legacy
@@ -25,12 +28,13 @@
 //! falls back to it, `onWalletReady.ts:59-68`), and an `Originator` header
 //! or a body's `originator` naming another host than the `Origin`'s is
 //! refused, compared in the lookup form (the hostname, every port of a
-//! host one originator under the key, as the admission compares). The bearer (`AUTH_TOKEN`) is checked ahead of the gate and
-//! never admits an origin.
+//! host one originator under the key, as the admission compares). The
+//! bearer (`AUTH_TOKEN`) is checked ahead of the gate and never admits an
+//! origin.
 
 use std::sync::Arc;
 
-use axum::extract::Request;
+use axum::extract::{MatchedPath, Request};
 use axum::http::{HeaderMap, HeaderValue, Method};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -49,8 +53,35 @@ pub(crate) const NO_ORIGIN: &str = "Origin header is required";
 /// The client's text for an origin its owner refused.
 pub(crate) const DENIED: &str = "The user has denied the request for permission.";
 
-/// The originators the served doors admit (`ALLOWED_ORIGINS`): each a
-/// host with an optional port, lowercased, no scheme; empty admits none.
+/// The host routes (not BRC-100): no kind names them, so they answer the
+/// owner or the seed, never a page's grant (the design's door-to-kind map).
+const HOST_ROUTES: [&str; 4] = [
+    "/permission-audit",
+    "/permission-audit/reset",
+    "/chain-feed",
+    "/tx/{txid}",
+];
+
+/// The open doors (W15, ruled (i) by the owner on 2026-11-03): answered to
+/// a page with a parsed `Origin` and an agreeing originator, with no row,
+/// as the reference's manager gates none of them (`WPM:5492-5568`).
+const OPEN_DOORS: [&str; 6] = [
+    "/isAuthenticated",
+    "/waitForAuthentication",
+    "/getHeight",
+    "/getHeaderForHeight",
+    "/getNetwork",
+    "/getVersion",
+];
+
+/// The seed's notice, logged once at start beside each entry (question 6).
+pub const SEED_NOTICE: &str = "ALLOWED_ORIGINS is a seed: it admits its listed originators until \
+                               it is retired; the owner's grants are the rows, listed by \
+                               bsv-wallet origins";
+
+/// The seed (`ALLOWED_ORIGINS`): the originators admitted at every door
+/// and host route during the seed window, each a host with an optional
+/// port, lowercased, no scheme; empty seeds none.
 #[derive(Clone, Debug, Default)]
 pub struct AllowedOrigins(Arc<[String]>);
 
@@ -97,23 +128,52 @@ impl AllowedOrigins {
         originator_of(origin).is_some_and(|o| self.admits(&o).is_some())
     }
 
-    /// The CORS layer over the list: a preflight or an answer carries
-    /// `Access-Control-Allow-Origin` only for an `Origin` whose originator
-    /// the list admits, which it echoes; the methods and headers are
-    /// mirrored as before (#138).
-    pub(crate) fn cors(&self) -> CorsLayer {
-        let allowed = self.clone();
-        let admits = move |origin: &HeaderValue, _: &axum::http::request::Parts| {
-            origin.to_str().is_ok_and(|o| allowed.admits_origin(o))
-        };
-        // A listed page reads `Retry-After` on a 503 STORE_BUSY (#44).
-        CorsLayer::new()
-            .allow_credentials(true)
-            .allow_headers(AllowHeaders::mirror_request())
-            .allow_methods(AllowMethods::mirror_request())
-            .allow_origin(AllowOrigin::predicate(admits))
-            .expose_headers([axum::http::header::RETRY_AFTER])
+    /// The entry seeding `originator` (any name of its host), when one
+    /// does: `origin-revoke`'s word that its admission is the seed's.
+    pub fn seeds(&self, originator: &str) -> Option<&str> {
+        self.admits(originator)
     }
+
+    /// The seed's log at start (question 6): each entry by name with the
+    /// notice, or the word that nothing is seeded.
+    pub fn log_seed(&self) {
+        if self.0.is_empty() {
+            tracing::info!(
+                marker = "origin_grants_seed",
+                "origin grants: ALLOWED_ORIGINS is unset: no originator is seeded; every page is \
+                 asked per power"
+            );
+            return;
+        }
+        for entry in self.0.iter() {
+            tracing::info!(
+                marker = "origin_grants_seed",
+                entry = %entry,
+                "origin grants: ALLOWED_ORIGINS lists {entry}; during the seed window it is \
+                 admitted at every door as (b) admits it, with no grant row; its powers are \
+                 asked of the owner once the seed is retired (#414 L7)"
+            );
+        }
+        tracing::info!(marker = "origin_grants_seed", "{SEED_NOTICE}");
+    }
+}
+
+/// The CORS layer: every answer to an `Origin` that parses carries its
+/// echo, the held call's and the refusal's included, so a page reads its
+/// grant's answer and its denial, as the client's `*` lets it
+/// (`electron/httpServer.ts:40-46` at bsv-desktop `b791cb2`); never `*`.
+/// The methods and headers are mirrored as before (#138).
+pub(crate) fn cors() -> CorsLayer {
+    let parses = |origin: &HeaderValue, _: &axum::http::request::Parts| {
+        origin.to_str().ok().and_then(originator_of).is_some()
+    };
+    // A page reads `Retry-After` on a 503 STORE_BUSY (#44) and a 429.
+    CorsLayer::new()
+        .allow_credentials(true)
+        .allow_headers(AllowHeaders::mirror_request())
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_origin(AllowOrigin::predicate(parses))
+        .expose_headers([axum::http::header::RETRY_AFTER])
 }
 
 impl super::ServerConfig {
@@ -134,16 +194,21 @@ impl super::ServerConfig {
     }
 }
 
-/// The gate's refusals (`BrowserGate.Word` under (b): an originator not
-/// listed is refused, never pending); a call admitted is its `Origin`.
+/// The gate's refusals before any power is asked (`BrowserGate.Word`); a
+/// call admitted is its `Origin`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Refused {
     /// The call names no parseable `Origin`.
     NoOrigin,
     /// The `Originator` header names another originator than the `Origin`.
     Disagrees { origin: String, claimed: String },
-    /// The `Origin`'s originator is not in `ALLOWED_ORIGINS`.
-    NotListed { origin: String, originator: String },
+    /// A page that is not the seed's at a host route: no kind names one, so
+    /// no page's grant reaches it.
+    HostRoute {
+        origin: String,
+        originator: String,
+        path: String,
+    },
 }
 
 impl Refused {
@@ -158,8 +223,12 @@ impl Refused {
                      header's {origin}"
                 ),
             ),
-            Refused::NotListed { origin, originator } => {
-                tracing::info!(origin = %origin, originator = %originator, "browser gate: originator not in ALLOWED_ORIGINS, refused");
+            Refused::HostRoute {
+                origin,
+                originator,
+                path,
+            } => {
+                tracing::info!(origin = %origin, originator = %originator, path = %path, "browser gate: a host route answers the owner or the seed, never a page's grant; refused");
                 AppError::new(Kind::OriginDenied, DENIED)
             }
         }
@@ -219,7 +288,8 @@ fn origin_of(headers: &HeaderMap) -> Option<(&str, String)> {
 
 /// The gate on a call's headers: the admitted call, or the refusal. The
 /// order is `BrowserGate.gate`'s: the `Origin`, the other field's
-/// agreement (by hostname), then the list.
+/// agreement (by hostname), then the seed, which never refuses: a page it
+/// does not list is asked per power.
 pub(crate) fn judge(headers: &HeaderMap, allowed: &AllowedOrigins) -> Result<Admitted, Refused> {
     let (origin, originator) = origin_of(headers).ok_or(Refused::NoOrigin)?;
     if let Some(claimed) = headers.get("originator") {
@@ -231,74 +301,89 @@ pub(crate) fn judge(headers: &HeaderMap, allowed: &AllowedOrigins) -> Result<Adm
             });
         }
     }
-    match allowed.admits(&originator) {
-        Some(entry) => Ok(Admitted {
-            origin: origin.to_string(),
-            entry: entry.to_string(),
-            originator,
-        }),
-        None => Err(Refused::NotListed {
-            origin: origin.to_string(),
-            originator,
-        }),
-    }
+    Ok(Admitted {
+        origin: origin.to_string(),
+        seed: allowed.admits(&originator).map(str::to_string),
+        originator,
+    })
 }
 
-/// The admitted call: its `Origin` as sent, its originator, and the entry
-/// that admitted it, for the log and the body's check after it is read.
+/// The admitted call: its `Origin` as sent, its originator, and the seed's
+/// entry that admits it during the seed window (none: a page asked per
+/// power), for the log, the body's check and the doors' powers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Admitted {
     pub(crate) origin: String,
     pub(crate) originator: String,
-    pub(crate) entry: String,
+    pub(crate) seed: Option<String>,
 }
 
-/// The gate, after the bearer and before the body is read: a call is
-/// admitted, logged at info with its origin, its originator and the entry
-/// that admitted it, or refused in the client's shape. Inside the CORS
-/// layer, so a listed page reads its refusal.
+/// The path a call is routed by: the route's pattern (`/tx/{txid}`), or the
+/// path itself where no route matched.
+fn route_of(request: &Request) -> &str {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| request.uri().path(), MatchedPath::as_str)
+}
+
+/// The gate, after the bearer and before the body is read: the owner at a
+/// host route; the `Origin` and the agreement; then the seed (admitted at
+/// every door and host route, logged with its entry), a host route a page
+/// asks (refused), an open door (answered, W15), and every other door
+/// (its powers asked by its handler). Inside the CORS layer, so a page
+/// reads its refusal.
 pub(crate) async fn gate(
     axum::Extension(allowed): axum::Extension<AllowedOrigins>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    if request.uri().path() == EXEMPT {
+    let route = route_of(&request).to_string();
+    if route == EXEMPT {
         return next.run(request).await;
     }
-    match judge(request.headers(), &allowed) {
-        Ok(admitted) => {
-            tracing::info!(
-                origin = %admitted.origin,
-                originator = %admitted.originator,
-                entry = %admitted.entry,
-                path = %request.uri().path(),
-                "browser gate: admitted"
-            );
-            request.extensions_mut().insert(admitted);
-            next.run(request).await
-        }
-        Err(refused) => refused.answer(),
+    let host_route = HOST_ROUTES.contains(&route.as_str());
+    if host_route && super::owner_door::refusal(request.method(), request.headers()).is_none() {
+        tracing::info!(path = %route, "browser gate: the owner's admission at a host route");
+        return next.run(request).await;
     }
+    let admitted = match judge(request.headers(), &allowed) {
+        Ok(admitted) => admitted,
+        Err(refused) => return refused.answer(),
+    };
+    match &admitted.seed {
+        Some(entry) => tracing::info!(
+            origin = %admitted.origin,
+            originator = %admitted.originator,
+            entry = %entry,
+            path = %route,
+            "browser gate: admitted"
+        ),
+        None if host_route => {
+            return Refused::HostRoute {
+                origin: admitted.origin,
+                originator: admitted.originator,
+                path: route,
+            }
+            .answer()
+        }
+        None if OPEN_DOORS.contains(&route.as_str()) => super::powers::open(&admitted, &route),
+        None => {}
+    }
+    request.extensions_mut().insert(admitted);
+    next.run(request).await
 }
 
-/// The preflight's gate, outside the CORS layer: an `OPTIONS` from an
-/// originator not listed (or with no `Origin`) is refused before CORS
-/// answers it, so a preflight is answered only for a listed originator.
-pub(crate) async fn preflight(
-    axum::Extension(allowed): axum::Extension<AllowedOrigins>,
-    request: Request,
-    next: Next,
-) -> Response {
+/// The preflight's gate, outside the CORS layer: an `OPTIONS` with no
+/// `Origin` that parses is refused before CORS answers it; every other is
+/// answered (a page's opening `application/json` call must pass its
+/// preflight to reach its prompt).
+pub(crate) async fn preflight(request: Request, next: Next) -> Response {
     if request.method() != Method::OPTIONS || request.uri().path() == EXEMPT {
         return next.run(request).await;
     }
     match origin_of(request.headers()) {
-        Some((_, originator)) if allowed.admits(&originator).is_some() => next.run(request).await,
-        Some((origin, originator)) => Refused::NotListed {
-            origin: origin.to_string(),
-            originator,
-        }
-        .answer(),
+        Some(_) => next.run(request).await,
         None => Refused::NoOrigin.answer(),
     }
 }
@@ -439,11 +524,11 @@ mod tests {
         }
     }
 
-    /// The scenarios new-origin and revoked-origin under (b): an originator
-    /// whose hostname the list does not name (or no longer names) is
-    /// refused.
+    /// The switch (#414 L5b): an originator whose hostname the seed does not
+    /// name is no refusal at the gate: it is admitted with no seed, and
+    /// its door asks its powers of the owner. Unset seeds nothing.
     #[test]
-    fn an_originator_not_listed_is_refused() {
+    fn an_originator_the_seed_does_not_name_is_asked_per_power() {
         for (origin, originator) in [
             ("http://new.example", "new.example"),
             ("http://sub.app.example", "sub.app.example"),
@@ -452,17 +537,16 @@ mod tests {
         ] {
             assert_eq!(
                 judge(&headers(&[("origin", origin)]), &listed()),
-                Err(Refused::NotListed {
+                Ok(Admitted {
                     origin: origin.into(),
-                    originator: originator.into()
+                    originator: originator.into(),
+                    seed: None,
                 })
             );
         }
         let none = AllowedOrigins::default();
-        assert!(matches!(
-            judge(&headers(&[("origin", "http://app.example")]), &none),
-            Err(Refused::NotListed { .. })
-        ));
+        let admitted = judge(&headers(&[("origin", "http://app.example")]), &none);
+        assert_eq!(admitted.map(|a| a.seed), Ok(None));
     }
 
     /// The scenario granted-origin, by the reference's hostname scope: a
@@ -512,13 +596,16 @@ mod tests {
             let mut pairs = vec![("origin", origin)];
             pairs.extend(claimed.map(|c| ("originator", c)));
             let admitted = judge(&headers(&pairs), &listed()).expect(origin);
-            assert_eq!(admitted.entry, entry, "{origin}");
+            assert_eq!(admitted.seed.as_deref(), Some(entry), "{origin}");
             assert_eq!(admitted.origin, origin);
         }
         let both = AllowedOrigins::new(["localhost:5173", "localhost"]).expect("an originator");
-        let at = |origin| judge(&headers(&[("origin", origin)]), &both).unwrap().entry;
-        assert_eq!(at("http://localhost:5173"), "localhost:5173");
-        assert_eq!(at("http://localhost:3000"), "localhost");
+        let at = |origin| judge(&headers(&[("origin", origin)]), &both).unwrap().seed;
+        assert_eq!(
+            at("http://localhost:5173").as_deref(),
+            Some("localhost:5173")
+        );
+        assert_eq!(at("http://localhost:3000").as_deref(), Some("localhost"));
     }
 
     /// The scenario disagreeing-originator: another host in the
@@ -612,7 +699,7 @@ mod tests {
         let admitted = Admitted {
             origin: "https://app.example:8080".into(),
             originator: "app.example:8080".into(),
-            entry: "app.example".into(),
+            seed: Some("app.example".into()),
         };
         for body in [
             &br#"{"originator":"app.example"}"#[..],
@@ -639,7 +726,7 @@ mod tests {
         let admitted = Admitted {
             origin: "http://app.example".into(),
             originator: "app.example".into(),
-            entry: "app.example".into(),
+            seed: Some("app.example".into()),
         };
         for body in [
             &br#"{"keyID":"1"}"#[..],

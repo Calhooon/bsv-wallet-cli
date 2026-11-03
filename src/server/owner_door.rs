@@ -317,8 +317,12 @@ async fn list(State(wallet): State<WalletState>) -> Response {
 }
 
 /// `POST /origins/answer`: the answered row, and the grant row a `grant`
-/// wrote.
-async fn answer(State(wallet): State<WalletState>, Json(body): Json<Answering>) -> Response {
+/// wrote; a call this server holds on the row reads it at once (#414 L5b).
+async fn answer(
+    State(wallet): State<WalletState>,
+    held: Option<axum::Extension<super::powers::Held>>,
+    Json(body): Json<Answering>,
+) -> Response {
     let reply = body.reply();
     let written = async {
         let now = now()?;
@@ -327,6 +331,9 @@ async fn answer(State(wallet): State<WalletState>, Json(body): Json<Answering>) 
     };
     match written.await {
         Ok((answered, now)) => {
+            if let Some(axum::Extension(held)) = held {
+                held.wake(body.pending_id);
+            }
             tracing::info!(
                 pending_id = body.pending_id,
                 answer = reply.answer.as_str(),

@@ -9,6 +9,7 @@ pub mod origin_gate;
 pub mod owner_door;
 mod page_bounds;
 pub mod post_word;
+pub mod powers;
 pub mod types;
 
 use anyhow::Result;
@@ -56,9 +57,13 @@ pub struct ServerConfig {
     /// Optional bearer token. When set, every request but an `OPTIONS` (CORS
     /// answers it) needs `Authorization: Bearer <token>`. None: auth is off.
     pub auth_token: Option<String>,
-    /// The originators the browser gate admits (`ALLOWED_ORIGINS`, #411);
-    /// empty admits none, the bearer's callers included.
+    /// The seed (`ALLOWED_ORIGINS`, #411, #414 question 6): the originators
+    /// admitted at every door and host route during the seed window, with
+    /// no row; empty seeds none, and every page is asked per power.
     pub allowed_origins: AllowedOrigins,
+    /// The served doors' held calls (#414 L5b, `powers::Held`): their open
+    /// rows, the cap's count and the shutdown, shared by every clone.
+    pub held: powers::Held,
     /// Optional TLS config. Requires `--features tls` at build time.
     pub tls: Option<TlsConfig>,
     /// Network the served wallet is on. Drives post-broadcast verification
@@ -86,6 +91,7 @@ impl Default for ServerConfig {
         Self {
             auth_token: None,
             allowed_origins: AllowedOrigins::default(),
+            held: powers::Held::default(),
             tls: None,
             chain: Chain::Main,
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
@@ -118,6 +124,7 @@ impl ServerConfig {
         Ok(Self {
             auth_token: server.auth_token.as_ref().map(owned),
             allowed_origins: AllowedOrigins::new(server.allowed_origins.iter().cloned())?,
+            held: powers::Held::default(),
             tls: tls.map(|(cert_path, key_path)| TlsConfig {
                 cert_path,
                 key_path,
@@ -262,8 +269,9 @@ pub fn make_router(wallet: WalletState, config: ServerConfig) -> Router {
 
 /// [`make_router`], with the start-time heal owed when `owed` says so.
 pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOwed) -> Router {
-    let cors = config.allowed_origins.cors();
+    let cors = origin_gate::cors();
     let allowed = config.allowed_origins.clone();
+    let held = config.held.clone();
     let cfg = config.clone();
     let spending_lock: SpendingLock = Arc::new(tokio::sync::Mutex::new(()));
     // Post-broadcast verifier — lets `/createAction` fail loudly when ARC
@@ -367,11 +375,12 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         // wallet bearer auth — see auth_middleware).
         .route("/arc-callback", post(arc_callback))
         // The last layer added runs first: body limit, trace, extensions, the
-        // preflight's gate (an OPTIONS from an origin not listed is refused,
-        // #411), CORS (it answers a listed originator's OPTIONS, a preflight
-        // carries no bearer, and rides a 401 so a browser reads it: #138),
-        // auth, the browser gate (#411), both BEFORE the body is read (an
-        // uncapped BEEF door is open only to the wallet's own caller), the body.
+        // preflight's gate (an OPTIONS with no Origin is refused, #411), CORS
+        // (it answers every parsed Origin's OPTIONS and echoes it on every
+        // answer, #414 L5b; a preflight carries no bearer, and the echo rides
+        // a 401 so a browser reads it: #138), auth, the browser gate (#411,
+        // #414), both BEFORE the body is read, the body; each door then asks
+        // its powers (`powers`).
         .layer(middleware::from_fn_with_state(wallet.clone(), heal_owed))
         .layer(middleware::from_fn(lenient_json_body))
         .layer(middleware::from_fn(origin_gate::gate))
@@ -389,6 +398,7 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
         .with_state(wallet)
         .fallback_service(doors)
         .layer(axum::Extension(allowed))
+        .layer(axum::Extension(held))
         .layer(axum::Extension(cfg))
         .layer(axum::Extension(spending_lock))
         .layer(axum::Extension(verifier))
@@ -662,8 +672,16 @@ pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result
     } else {
         HealOwed::owed()
     };
+    // Once at start, before the server binds (#414 L5b): no caller survives
+    // a restart, so every open pending row is withdrawn; the seed is logged
+    // by name.
+    crate::store::origin_grants::sweep_open(wallet.storage())
+        .await
+        .map_err(|e| e.context("origin grants: the open requests of a previous run"))?;
+    config.allowed_origins.log_seed();
     let tls = config.tls.clone();
     let bind_addr = config.bind_addr;
+    let held = config.held.clone();
     let app = make_router_owing(wallet, config, owed);
     let addr = SocketAddr::from((bind_addr, port));
 
@@ -690,7 +708,7 @@ pub async fn run(wallet: WalletState, port: u16, config: ServerConfig) -> Result
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let (signal_fault, mut signal_fault_rx) = tokio::sync::oneshot::channel();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(signal_fault))
+        .with_graceful_shutdown(shutdown_signal(signal_fault, held))
         .await?;
     // A listener that could not be installed shuts the server down and is
     // the caller's error, never a panic.
@@ -717,12 +735,17 @@ pub fn make_wallet_state_from_arc(wallet: Arc<Wallet<StorageSqlx, Services>>) ->
     wallet
 }
 
-async fn shutdown_signal(fault: tokio::sync::oneshot::Sender<std::io::Error>) {
+/// Ctrl-c, then the held calls' shutdown: `with_graceful_shutdown` waits
+/// for in-flight requests, and a held call would hold it, so each answers
+/// 503 `WALLET_BRIDGE_UNAVAILABLE` and withdraws its row (#414 L5b, W13).
+async fn shutdown_signal(fault: tokio::sync::oneshot::Sender<std::io::Error>, held: powers::Held) {
     if let Err(e) = tokio::signal::ctrl_c().await {
         let _ = fault.send(e);
+        held.shut_down();
         return;
     }
     eprintln!("\nShutting down...");
+    held.shut_down();
 }
 
 /// GET /permission-audit — every permissioned request since start or reset.
@@ -797,3 +820,6 @@ mod owner_door_tests;
 
 #[cfg(test)]
 mod retry_pause_tests;
+
+#[cfg(test)]
+mod powers_tests;
