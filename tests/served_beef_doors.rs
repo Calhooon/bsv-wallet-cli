@@ -19,9 +19,12 @@ use bsv_wallet_toolbox::{
 };
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 const HEIGHT: u32 = 900_000;
 const WALLET_BEARER: &str = "wallet-bearer-secret";
@@ -134,6 +137,66 @@ async fn post(url: &str, body: Vec<u8>, bearer: Option<&str>) -> (u16, Value) {
     )
 }
 
+/// `post` for a door that refuses before it reads the body: the server
+/// answers and closes while the body is still being written, so the write
+/// meets the closed peer (`EPIPE` or `ECONNRESET`), and a client that reads
+/// only after its write (`reqwest`'s, by timing) can lose the refusal it was
+/// sent (#545). Here the body is written on a spawned task while the response
+/// is read; the write must end in the closed peer, never whole.
+async fn post_refused_unread(url: &str, body: Vec<u8>) -> (u16, Value) {
+    let rest = url.strip_prefix("http://").expect("an http url");
+    let (host, path) = rest.split_at(rest.find('/').expect("a path"));
+    let stream = TcpStream::connect(host).await.expect("connect");
+    let (mut rd, mut wr) = stream.into_split();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nOrigin: http://test.local\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    let writer = tokio::spawn(async move {
+        wr.write_all(head.as_bytes()).await?;
+        wr.write_all(&body).await
+    });
+
+    let mut got = Vec::new();
+    let mut buf = [0u8; 4096];
+    let (status, at, len) = loop {
+        if let Some(at) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&got[..at]).to_ascii_lowercase();
+            let status: u16 = head[9..12].parse().expect("a status");
+            let len: usize = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .expect("a content length")
+                .trim()
+                .parse()
+                .expect("a length");
+            if got.len() >= at + 4 + len {
+                break (status, at + 4, len);
+            }
+        }
+        match rd.read(&mut buf).await {
+            Ok(0) => panic!("closed before a whole response: {got:?}"),
+            Ok(n) => got.extend_from_slice(&buf[..n]),
+            Err(e) => panic!("read: {e}, after {got:?}"),
+        }
+    };
+
+    let wrote = writer.await.expect("the writer");
+    assert!(
+        matches!(
+            wrote.as_ref().map_err(|e| e.kind()),
+            Err(ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+        ),
+        "the body's write ended {wrote:?}, not in the closed peer"
+    );
+    let text = String::from_utf8_lossy(&got[at..at + len]).into_owned();
+    (
+        status,
+        serde_json::from_str(&text).unwrap_or(Value::String(text)),
+    )
+}
+
 /// A valid Atomic BEEF of 14,000,000 bytes and more, a JSON body over the old
 /// 50 MiB cap, is internalized, not refused for its size.
 #[tokio::test]
@@ -202,8 +265,10 @@ async fn an_unauthenticated_body_is_refused_before_it_is_read() {
     assert!(body.len() > OLD_CAP);
     let (base, _tmp) = setup(Some(txid), Some(WALLET_BEARER)).await;
 
-    let (status, got) = post(&format!("{base}/internalizeAction"), body.clone(), None).await;
+    let (status, got) =
+        post_refused_unread(&format!("{base}/internalizeAction"), body.clone()).await;
     assert_eq!(status, 401, "{got}");
+    assert_eq!(got["code"], "UNAUTHORIZED", "{got}");
 
     let (status, got) = post(
         &format!("{base}/internalizeAction"),
