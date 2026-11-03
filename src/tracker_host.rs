@@ -4362,7 +4362,6 @@ pub(crate) mod tests {
         let gate = crate::spend_gate::GateOptions {
             spend_depth: 1,
             own_change,
-            allow_pending: crate::spend_gate::AllowPending::Off,
             tracker: opts(),
             ..crate::spend_gate::GateOptions::default()
         };
@@ -5192,7 +5191,6 @@ pub(crate) mod tests {
         let gate = |own_change| crate::spend_gate::GateOptions {
             spend_depth: 1,
             own_change,
-            allow_pending: crate::spend_gate::AllowPending::Off,
             tracker: opts(),
             ..crate::spend_gate::GateOptions::default()
         };
