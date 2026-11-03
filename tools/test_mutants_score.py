@@ -17,9 +17,12 @@ artifact) change neither. A declared equivalent (#482, --equivalents) the night
 missed is scored equivalent, outside the denominator and in its own column
 and the written record; an entry the night caught, a stale entry (a name no
 mutant of a mutated file carries) and a malformed entry are refused by name,
-and an entry of a file the night carries is not judged. Each case writes its
-inputs under a directory of its own in $TMPDIR. Run by the CI job ratchet:
-python3 tools/test_mutants_score.py
+and an entry of a file the night carries is not judged. The committed record
+names the last complete run, by itself when complete or by its base when
+incremental, every figure the night's own or carried from that base; a
+planted record of each mode holds the rule whichever mode the tree's is in.
+Each case writes its inputs under a directory of its own in $TMPDIR. Run by
+the CI job ratchet: python3 tools/test_mutants_score.py
 """
 
 import json
@@ -382,13 +385,41 @@ class Case(unittest.TestCase):
         for name, e in entries.items():
             self.assertTrue(e["review"].startswith("VERDICT merge"), name)
 
-    def test_the_committed_record_is_a_complete_base(self):
-        # The tree's own record: the last complete run, every file the night's.
+    def test_the_committed_record_names_the_last_complete_run_by_itself_or_by_its_base(self):
+        # The tree's own record, in whichever mode the last night wrote it, then one planted
+        # record per side: the rule holds on both, so the tree's mode never decides the case.
         with open(os.path.join(os.path.dirname(HERE), "docs", "scoreboard", "mutants.json")) as f:
             record = json.load(f)
-        self.assertEqual(record["mode"], "complete")
-        for file, e in record["files"].items():
-            self.assertEqual((e["source"], e["run"], e["sha"]), ("night", record["run"], record["commit"]), file)
+        self.assertEqual(last_complete_faults(record), [])
+        carrying = dict(complete_record(), mode="incremental", commit=SHA_B, run=RUN_B,
+                        base={"run": RUN_A, "commit": SHA_A},
+                        files={"src/a.rs": entry(95, 5, run=RUN_B, sha=SHA_B),
+                               "src/b.rs": entry(74, 26, source="carried")})
+        self.assertEqual(last_complete_faults(carrying), [])
+        other = dict(carrying, files=dict(carrying["files"], **{
+            "src/b.rs": entry(74, 26, run=NIGHT, sha=HEAD, source="carried")}))
+        self.assertEqual(last_complete_faults(other), ["src/b.rs"])
+        stray = dict(complete_record(), files=dict(complete_record()["files"], **{
+            "src/b.rs": entry(74, 26, run=RUN_B, sha=SHA_B)}))
+        self.assertEqual(last_complete_faults(stray), ["src/b.rs"])
+
+
+def last_complete_faults(record):
+    """The files whose figure is not the last complete run's or the record's own night's, [] when
+    the record holds (#462, mutants_score.py's night_record): a complete record's every file is
+    its own night's (source night, the record's run and commit); an incremental record names its
+    base {"run", "commit"}, the last complete run, and each file is its own night's or carried
+    from that base (source carried, the base's run and commit) and from no other run."""
+    own = ("night", record["run"], record["commit"])
+    if record["mode"] == "complete":
+        allowed = {own}
+    else:
+        assert record["mode"] == "incremental", record["mode"]
+        base = record["base"]
+        assert sorted(base) == ["commit", "run"] and base["run"] and base["commit"], base
+        assert base["run"] != record["run"], base
+        allowed = {own, ("carried", base["run"], base["commit"])}
+    return sorted(f for f, e in record["files"].items() if (e["source"], e["run"], e["sha"]) not in allowed)
 
 
 if __name__ == "__main__":
