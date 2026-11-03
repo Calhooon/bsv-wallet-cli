@@ -320,6 +320,16 @@ impl Power {
         text.unwrap_or_default()
     }
 
+    /// A level-0 protocol's key in the protocol's canonical text, for the
+    /// probe record alone (#539): `[false,0,"name",""]`, the name as
+    /// `validate_protocol_name` returns it; never a row's key. `None` when
+    /// the name does not read.
+    #[must_use]
+    pub fn level_zero_key(name: &str) -> Option<String> {
+        let name = validate_protocol_name(name).ok()?;
+        serde_json::to_string(&(false, 0, name, "")).ok()
+    }
+
     /// The power `key` names, read as the owner writes it and refused
     /// unless it is the canonical text of the power its names read to
     /// (section (4)).
