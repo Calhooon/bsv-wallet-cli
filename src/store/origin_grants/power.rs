@@ -60,6 +60,13 @@ pub enum Power {
     Spending,
 }
 
+/// The reference's admin-reserved name rule, one for the three kinds that
+/// name: a protocol, a label or a basket starting `admin`
+/// (`WalletPermissionsManager.ts` 1509-1511, 1589, 1806-1808).
+fn admin_reserved(name: &str) -> bool {
+    name.starts_with("admin")
+}
+
 /// A validator's refusal as a key's.
 fn bad(kind: Kind, key: &str, why: impl std::fmt::Display) -> Refused {
     Refused::BadKey {
@@ -71,8 +78,10 @@ fn bad(kind: Kind, key: &str, why: impl std::fmt::Display) -> Refused {
 
 impl Power {
     /// A protocol power from a call's `protocolID` and counterparty: the
-    /// name through `validate_protocol_name`, level 0 refused, the
-    /// counterparty cleared at level 1 and `self` when unnamed at level 2.
+    /// name through `validate_protocol_name`, level 0 refused before any
+    /// name rule (the reference's order, `WalletPermissionsManager.ts`
+    /// 1503-1511: level 0 never asks), the counterparty cleared at level 1
+    /// and `self` when unnamed at level 2.
     ///
     /// # Errors
     ///
@@ -85,7 +94,10 @@ impl Power {
         counterparty: Option<&str>,
     ) -> Result<Self, Refused> {
         let name = validate_protocol_name(name).map_err(|e| bad(Kind::Protocol, name, e))?;
-        if name.starts_with("admin") {
+        if level == 0 {
+            return Err(Refused::LevelZero);
+        }
+        if admin_reserved(&name) {
             return Err(Refused::AdminOnly(format!(
                 "Protocol \u{201c}{name}\u{201d} is admin-only."
             )));
@@ -134,7 +146,7 @@ impl Power {
     /// `p ` first).
     pub fn label(label: &str) -> Result<Self, Refused> {
         let label = validate_label(label).map_err(|e| bad(Kind::Protocol, label, e))?;
-        if label.starts_with("admin") || label.starts_with("p ") {
+        if admin_reserved(&label) || label.starts_with("p ") {
             return Err(Refused::AdminOnly(format!(
                 "Label \u{201c}{label}\u{201d} is admin-only."
             )));
@@ -187,7 +199,7 @@ impl Power {
     /// (`default`, or `admin` first).
     pub fn basket(basket: &str) -> Result<Self, Refused> {
         let basket = validate_basket(basket).map_err(|e| bad(Kind::Basket, basket, e))?;
-        if basket == "default" || basket.starts_with("admin") {
+        if basket == "default" || admin_reserved(&basket) {
             return Err(Refused::AdminOnly(format!(
                 "Basket \u{201c}{basket}\u{201d} is admin-only."
             )));

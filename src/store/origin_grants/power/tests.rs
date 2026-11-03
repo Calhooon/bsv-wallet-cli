@@ -194,6 +194,31 @@ fn the_admin_reserved_names_are_refused_on_the_validated_form() {
 }
 
 #[test]
+fn level_zero_on_an_admin_named_protocol_is_no_row_and_no_refusal() {
+    // The reference's order (WalletPermissionsManager.ts 1503-1511):
+    // level 0 never asks, before any name rule.
+    assert_eq!(
+        refused(Power::protocol(false, 0, "admin x", None)),
+        Refused::LevelZero
+    );
+    assert_eq!(
+        refused(Power::parse(Kind::Protocol, r#"[false,0,"admin x",""]"#)),
+        Refused::LevelZero
+    );
+}
+
+#[test]
+fn an_admin_named_protocol_at_level_one_or_two_is_refused() {
+    for level in [1, 2] {
+        assert_eq!(
+            refused(Power::protocol(false, level, "admin x", Some(G))),
+            Refused::AdminOnly("Protocol \u{201c}admin x\u{201d} is admin-only.".to_string()),
+            "level {level}"
+        );
+    }
+}
+
+#[test]
 fn a_key_off_its_kinds_shape_is_refused_by_name() {
     for (kind, key) in [
         (Kind::Basket, "todo"),
