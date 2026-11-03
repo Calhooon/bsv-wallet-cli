@@ -590,17 +590,18 @@ async fn the_retry_re_reads_a_candidate_with_the_creators() {
     let gate = opts(1, true);
     let ((read, retried), ()) = tokio::join!(
         agreeing_with(&store, &services, &gate, (&p, &d), true),
-        recover_after_300_ms(&services)
+        recover_after_the_first_read(&services)
     );
     assert!(retried, "the header service was not read once more");
     assert_eq!(read, ((None, None), (None, None)));
 }
 
-/// The tip back 300 ms after the first read, before the retry's pause
-/// ends.
-async fn recover_after_300_ms(services: &MockWalletServices) {
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    services.set_tip_header(header_with_hash(900, &"0c".repeat(32), 0));
+/// The tip back after the first read, before the retry's pause ends.
+async fn recover_after_the_first_read(services: &MockWalletServices) {
+    after_tip_calls(services, 1, || {
+        services.set_tip_header(header_with_hash(900, &"0c".repeat(32), 0));
+    })
+    .await;
 }
 
 /// The tip silent on the read and on the re-read: P keeps its stored word
@@ -668,7 +669,7 @@ async fn a_candidate_is_read_no_more_than_a_creator() {
 /// A wallet over [`conflicted_with_proof`]'s plant with the tip silent,
 /// and a createAction naming D's coin alone, P only its lineage's
 /// candidate: the gate's answer, whether the toolbox was asked, P's txid,
-/// and the number of tip calls. The tip comes back 300 ms in when `recovers`.
+/// and the number of tip calls. The tip comes back after the first read when `recovers`.
 async fn named_through_create_action(
     recovers: bool,
 ) -> (
@@ -688,7 +689,7 @@ async fn named_through_create_action(
     let gate = opts(1, true);
     let door = at_the_door(create_action(&wallet, args, "gate.local", &gate));
     let (result, asked) = if recovers {
-        tokio::join!(door, recover_after_300_ms(wallet.services())).0
+        tokio::join!(door, recover_after_the_first_read(wallet.services())).0
     } else {
         door.await
     };

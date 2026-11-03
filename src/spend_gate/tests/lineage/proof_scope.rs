@@ -95,10 +95,21 @@ async fn allocation_read(
     need: Option<u64>,
     retry: bool,
 ) -> Assessment {
+    allocation_read_with(store, services, need, retry, &opts(1, true)).await
+}
+
+/// [`allocation_read`] under `gate`.
+async fn allocation_read_with(
+    store: &Store,
+    services: &MockWalletServices,
+    need: Option<u64>,
+    retry: bool,
+    gate: &GateOptions,
+) -> Assessment {
     assess_retrying(
         UserCoins::new(&store.0, store.1 .0),
         services,
-        &opts(1, true),
+        gate,
         need,
         retry,
     )
@@ -128,7 +139,7 @@ async fn an_unrelated_proven_candidate_does_not_pause_the_named_door() {
         let held = assess_named(
             UserCoins::new(&store.0, store.1 .0),
             &services,
-            &opts(1, true),
+            &served_pause(1, true),
             &[(live.clone(), 0).into()],
             &[],
             None,
@@ -156,7 +167,8 @@ async fn an_unrelated_proven_candidate_does_not_pause_allocation() {
             let (store, _, live) = probe_wallet(unrelated).await;
             let services = silent_tip();
             let start = std::time::Instant::now();
-            let a = allocation_read(&store, &services, need, true).await;
+            let a =
+                allocation_read_with(&store, &services, need, true, &served_pause(1, true)).await;
             let elapsed = start.elapsed();
             println!(
                 "allocation {need:?} unrelated={unrelated}: {elapsed:?}, {}",
@@ -221,7 +233,7 @@ async fn a_lazy_offer_keeps_later_ancestors_in_the_initial_read() {
             Some(1_000),
             true,
         ),
-        recover_after_300_ms(&services)
+        recover_after_the_first_read(&services)
     );
     let a = a.unwrap();
     assert!(a.headers_retried);
@@ -315,15 +327,15 @@ async fn later_batch_heir() -> (Store, String, String, Vec<(String, u32)>) {
 
 const LATER_HEIR_NEED: u64 = 400_001;
 
-/// A tip silent at the start that answers after 300 ms when `recover`.
+/// A tip silent at the start that answers after the first read when `recover`.
 async fn tip_after(services: &MockWalletServices, recover: bool) {
     if recover {
-        recover_after_300_ms(services).await;
+        recover_after_the_first_read(services).await;
     }
 }
 
 /// Both doors' answers under a tip silent at the start that recovers after
-/// 300 ms (`recover`) or stays silent: (the allocation, the named door,
+/// the first read (`recover`) or stays silent: (the allocation, the named door,
 /// the named door's tip reads).
 async fn later_heir_doors(
     store: &Store,

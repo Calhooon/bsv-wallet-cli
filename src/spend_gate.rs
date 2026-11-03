@@ -324,6 +324,10 @@ pub struct GateOptions {
     /// The tracker's parameters (`TRACKER_AGE_SECS`, `TRACKER_MAX_ASKS`)
     /// the gate's reads of the creators run under.
     pub tracker: TickOptions,
+    /// The pause before the one re-read of the creators the header service
+    /// did not answer for: [`HEADER_RETRY_PAUSE`], never configured; a test
+    /// sets it short (#506).
+    pub header_retry_pause: Duration,
 }
 
 impl Default for GateOptions {
@@ -333,6 +337,7 @@ impl Default for GateOptions {
             own_change: DEFAULT_SPEND_OWN_CHANGE,
             allow_pending: AllowPending::Off,
             tracker: TickOptions::default(),
+            header_retry_pause: HEADER_RETRY_PAUSE,
         }
     }
 }
@@ -504,6 +509,7 @@ impl GateOptions {
             own_change: config.host.spend_own_change,
             allow_pending: AllowPending::Off,
             tracker,
+            header_retry_pause: HEADER_RETRY_PAUSE,
         }
     }
 
@@ -1186,13 +1192,13 @@ async fn lineage_of(coins: UserCoins<'_>, any_made: bool) -> Result<Lineage> {
 
 /// Read `batch` into `readings` against one read of the headers. When
 /// `retry` and the assessment has not retried yet, the readings the header
-/// service did not answer for are read once more after
-/// [`HEADER_RETRY_PAUSE`] (#59), and the assessment says so.
+/// service did not answer for are read once more after `pause`
+/// ([`HEADER_RETRY_PAUSE`] served, #59), and the assessment says so.
 async fn read_batch<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
     tick: &TickOptions,
-    (batch, retry): (&[Pair], bool),
+    (batch, retry, pause): (&[Pair], bool, Duration),
     readings: &mut HashMap<String, CreatorReading>,
     out: &mut Assessment,
 ) -> Result<()> {
@@ -1215,11 +1221,11 @@ async fn read_batch<V: WalletServices + ?Sized>(
         .unwrap_or_default();
     tracing::warn!(
         creators = faulted.len(),
-        pause_ms = HEADER_RETRY_PAUSE.as_millis() as u64,
+        pause_ms = pause.as_millis() as u64,
         fault = %fault,
         "spend gate: the header service did not answer; reading it once more"
     );
-    tokio::time::sleep(HEADER_RETRY_PAUSE).await;
+    tokio::time::sleep(pause).await;
     let again = read_creators(storage, services, tick, &faulted).await?;
     let answered = again.values().filter(|r| !r.headers_fault).count();
     tracing::info!(
@@ -1406,7 +1412,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             storage,
             services,
             &tick,
-            (&first, retry),
+            (&first, retry, opts.header_retry_pause),
             &mut readings,
             &mut out,
         )
@@ -1444,7 +1450,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 storage,
                 services,
                 &tick,
-                (&batch, retry),
+                (&batch, retry, opts.header_retry_pause),
                 &mut readings,
                 &mut out,
             )
@@ -1620,7 +1626,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
             storage,
             services,
             &opts.tick(),
-            (&reads, retry),
+            (&reads, retry, opts.header_retry_pause),
             &mut readings,
             &mut Assessment::default(),
         )

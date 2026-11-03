@@ -589,6 +589,9 @@ impl World {
         }
         let mut config = ServerConfig {
             settings: crate::wire_support::quiet_config(),
+            // The gate's header re-read at once: `headers-down` (fixture
+            // 084) answers the same bytes without the served 2 s (#506).
+            header_retry_pause: std::time::Duration::ZERO,
             ..ServerConfig::admitting([super::recorder::ORIGINATOR, "app.example"])
                 .expect("an originator")
         };

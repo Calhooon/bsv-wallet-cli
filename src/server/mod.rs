@@ -75,6 +75,10 @@ pub struct ServerConfig {
     /// The configuration read at start: the spend gate's settings and the
     /// post-broadcast verifier are built from it once, in [`make_router`].
     pub settings: Arc<Config>,
+    /// The spend gate's pause before its one header re-read
+    /// ([`crate::spend_gate::HEADER_RETRY_PAUSE`], never configured); the
+    /// wire harness sets it short (#506).
+    pub header_retry_pause: std::time::Duration,
 }
 
 impl Default for ServerConfig {
@@ -87,6 +91,7 @@ impl Default for ServerConfig {
             bind_addr: std::net::IpAddr::from([127, 0, 0, 1]),
             callback_token: None,
             settings: Arc::new(Config::default()),
+            header_retry_pause: crate::spend_gate::HEADER_RETRY_PAUSE,
         }
     }
 }
@@ -121,6 +126,7 @@ impl ServerConfig {
             bind_addr: server.bind_addr,
             callback_token: arcade_token.or_else(|| services.callback_token.as_ref().map(owned)),
             settings: settings.clone(),
+            header_retry_pause: crate::spend_gate::HEADER_RETRY_PAUSE,
         })
     }
 }
@@ -257,7 +263,10 @@ pub fn make_router_owing(wallet: WalletState, config: ServerConfig, owed: HealOw
     let verifier = crate::broadcast_verify::BroadcastVerifier::new(config.chain, &config.settings);
     // The spend gate's settings, once: a request reads these, never the
     // environment.
-    let gate = crate::spend_gate::GateOptions::from_config(&config.settings);
+    let gate = crate::spend_gate::GateOptions {
+        header_retry_pause: config.header_retry_pause,
+        ..crate::spend_gate::GateOptions::from_config(&config.settings)
+    };
 
     let doors = Router::new()
         // Status endpoints accept BOTH GET and POST: @bsv/sdk's HTTPWalletJSON substrate
