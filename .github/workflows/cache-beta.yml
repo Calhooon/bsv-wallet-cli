@@ -1,0 +1,92 @@
+name: cache-beta
+
+# beta's test build, saved under main's scope (#486). GitHub scopes a run's
+# cache reads to its own ref and the default branch (main), plus the base
+# branch for a pull_request run alone: a merge-queue group on beta
+# (refs/heads/gh-readonly-queue/beta/...) reads main's entries and none of
+# beta's, so every group built cold. This job checks out beta's head and
+# builds exactly what ci.yml's Test builds (wire and vectors build subsets of
+# it under the same key), keyed as Test keys it (#472): `shared-key: test`,
+# the same toolchain, the same CARGO* environment and the same workspaces,
+# so the key is the one a group run computes from beta's tree
+# (v0-rust-test-Linux-x64-<rustc and env>-<beta's manifests and lockfile>)
+# and the group restores it with "full match: true".
+#
+# Only a run on main's ref saves (a run elsewhere would save under a scope no
+# group reads). The workflow runs from main, so this file must be on main:
+# GitHub dispatches a workflow only from the default branch's copy. The
+# captain dispatches it after a lockfile change (or a stable rustc) lands on
+# beta; a push to main (the HANDOFF rows) runs it too. An entry already saved
+# under main with this key is restored and not saved again ("Cache
+# up-to-date"). docs/lanes/README.md rule 17 is the rule.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cache-beta
+  cancel-in-progress: true
+
+# ci.yml's CARGO* environment, verbatim: rust-cache hashes every CARGO*,
+# CC*, CFLAGS*, CXX*, CMAKE* and RUST* variable into the key, so one more,
+# one fewer or another value here is another key that no group restores.
+# The first step refuses a drift from beta's ci.yml by name.
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+jobs:
+  test-key:
+    name: beta's test build under main's scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: beta
+
+      # The keyed variables of beta's ci.yml (its workflow env, where #472
+      # put them) against this job's own: the same names, the same values.
+      - name: The keyed environment is ci.yml's on beta
+        run: |
+          set -euo pipefail
+          want=$(python3 - <<'EOF'
+          import re
+          keyed = ("CARGO", "CC", "CFLAGS", "CXX", "CMAKE", "RUST")
+          lines = open(".github/workflows/ci.yml").read().split("\n")
+          start = lines.index("env:")
+          for line in lines[start + 1:]:
+              if line and not line.startswith(" "):
+                  break
+              m = re.match(r"^  ([A-Z_][A-Z0-9_]*): *(.*?) *$", line)
+              if m and m.group(1).startswith(keyed):
+                  print(f"{m.group(1)}={m.group(2).strip(chr(39)).strip(chr(34))}")
+          EOF
+          )
+          have=$(env | grep -E '^(CARGO|CC|CFLAGS|CXX|CMAKE|RUST)' | grep -v -E '^(CARGO_HOME|RUSTUP_HOME)=' | sort)
+          want=$(printf '%s\n' "$want" | sort)
+          echo "beta's ci.yml:"; printf '%s\n' "$want"
+          if [ "$want" != "$have" ]; then
+            echo "this job:"; printf '%s\n' "$have"
+            echo "::error::cache-beta.yml's env differs from beta's ci.yml env; the key would differ from the group runs' (#486)"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Test's compile, the superset: wire's `--test wire` and vectors'
+      # filters build within it.
+      - name: Build the workspace's tests
+        run: cargo test --workspace --locked --no-run
