@@ -235,6 +235,8 @@ pub struct Listing {
     pub grants: Vec<GrantRow>,
     /// The pending rows asked for: the open ones, or every one.
     pub pending: Vec<PendingRow>,
+    /// Every row of the probe record (#539), never a grant.
+    pub probes: Vec<super::ProbeRow>,
 }
 
 /// A row function's refusal, told apart by its type

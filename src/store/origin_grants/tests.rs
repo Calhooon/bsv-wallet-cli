@@ -237,7 +237,7 @@ pub(super) async fn answered_at(storage: &StorageSqlx, id: i64) -> Option<i64> {
 }
 
 #[tokio::test]
-async fn an_existing_wallet_db_gains_the_three_tables_and_nothing_else_moves() {
+async fn an_existing_wallet_db_gains_the_four_tables_and_nothing_else_moves() {
     let (_dir, storage) = wallet_db().await;
     let before = toolbox_dump(&storage).await;
     assert!(own_objects(&storage).await.is_empty());

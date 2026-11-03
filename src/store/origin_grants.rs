@@ -1,9 +1,10 @@
 //! The served doors' per-origin grants in the store (#414,
 //! `docs/design/origin-grants.md` section (1), revised under the owner's
-//! ruling W1 (a) of 2026-11-03): three tables the CLI owns beside the
-//! toolbox's, `origin_grants`, `origin_pending` and `origin_spends`, and
-//! the row functions over them. This module is the only writer of the
-//! three tables; it touches none of the toolbox's.
+//! ruling W1 (a) of 2026-11-03): four tables the CLI owns beside the
+//! toolbox's, `origin_grants`, `origin_pending`, `origin_spends` and the
+//! probe record `origin_probes` (#539, [`probes`]), and the row functions
+//! over them. This module is the only writer of the four tables; it
+//! touches none of the toolbox's.
 //!
 //! Every grant row is one power ([`Power`]): an originator, one of the
 //! reference's four kinds and the kind's instance key in its canonical
@@ -27,11 +28,13 @@ use sqlx::{Sqlite, SqliteConnection};
 
 mod migrate;
 mod power;
+pub mod probes;
 mod rows;
 mod shown;
 
 use migrate::{Case, Moved};
 pub use power::Power;
+pub use probes::{Probe, ProbeRow};
 pub use rows::{
     expired, key_of, month_of, when, Answer, Answered, Asking, GrantRow, Granting, Kind, Listing,
     Pending, PendingRow, Reach, Refused, Reply, Standing,
@@ -39,20 +42,22 @@ pub use rows::{
 use rows::{GrantTuple, PendingTuple};
 pub use shown::{Shown, ShownJson};
 
-/// The three tables and their three indexes, `(type, name)`, as
+/// The four tables and their four indexes, `(type, name)`, as
 /// [`ensure`] reads them from `sqlite_master`.
-const OBJECTS: [(&str, &str); 6] = [
+const OBJECTS: [(&str, &str); 8] = [
     ("table", "origin_grants"),
     ("index", "origin_grants_power"),
     ("table", "origin_pending"),
     ("index", "origin_pending_open"),
     ("table", "origin_spends"),
     ("index", "origin_spends_month"),
+    ("table", "origin_probes"),
+    ("index", "origin_probes_seen"),
 ];
 
 /// The block [`ensure`] runs in one transaction when any of [`OBJECTS`]
 /// is missing (`IF NOT EXISTS` throughout), the design's section (1).
-const DDL: [&str; 6] = [
+const DDL: [&str; 8] = [
     "CREATE TABLE IF NOT EXISTS origin_grants (\
         grant_id INTEGER PRIMARY KEY, \
         originator TEXT NOT NULL, \
@@ -95,6 +100,17 @@ const DDL: [&str; 6] = [
         at INTEGER NOT NULL, \
         CHECK (txid IS NOT NULL OR reference IS NOT NULL))",
     "CREATE INDEX IF NOT EXISTS origin_spends_month ON origin_spends (originator, month)",
+    "CREATE TABLE IF NOT EXISTS origin_probes (\
+        probe_id INTEGER PRIMARY KEY, \
+        originator TEXT NOT NULL, \
+        raw_originator TEXT NOT NULL, \
+        door TEXT NOT NULL, \
+        power TEXT NOT NULL DEFAULT '', \
+        count INTEGER NOT NULL CHECK (count > 0), \
+        first_seen INTEGER NOT NULL, \
+        last_seen INTEGER NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS origin_probes_seen \
+        ON origin_probes (originator, door, power)",
 ];
 
 /// The tables and indexes, in the shape of the four kinds. The shape is
@@ -146,7 +162,7 @@ pub async fn ensure(storage: &StorageSqlx) -> Result<bool> {
 async fn shape(conn: &mut SqliteConnection) -> Result<Case> {
     let present: Vec<(String, String)> = sqlx::query_as(
         "SELECT type, name FROM sqlite_master WHERE tbl_name IN \
-         ('origin_grants', 'origin_pending', 'origin_spends')",
+         ('origin_grants', 'origin_pending', 'origin_spends', 'origin_probes')",
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -666,8 +682,8 @@ pub async fn owners_listing(storage: &StorageSqlx, answered: i64) -> Result<List
     listed(storage, recent, answered).await
 }
 
-/// Every grant row, and the pending rows `pending_where` (one bound
-/// number) selects, by id.
+/// Every grant row, the pending rows `pending_where` (one bound number)
+/// selects, by id, and every probe row ([`probes::probes`]).
 async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Result<Listing> {
     ensure(storage).await?;
     let sql = format!("SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, kind, key");
@@ -688,6 +704,7 @@ async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Resul
             .into_iter()
             .map(PendingRow::from_tuple)
             .collect::<Result<_>>()?,
+        probes: probes::probes(storage).await?,
     })
 }
 
