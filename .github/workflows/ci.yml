@@ -296,9 +296,9 @@ jobs:
 
       # The paved road's deny gate, from bsv-stack-lean template/ci.yml:
       # deny.toml is the template byte for byte (its sha256 stamped in
-      # template/stack.toml), then cargo-deny 0.20.2 from a temporary root
-      # checks advisories, bans, licenses and sources against the committed
-      # lock. Its tree is the PR's head on a pull request and the event's
+      # template/stack.toml), then cargo-deny 0.20.2 (the pinned prebuilt
+      # release, #507) checks advisories, bans, licenses and sources against
+      # the committed lock. Its tree is the PR's head on a pull request and the event's
       # commit otherwise (a push, a merge-queue group), as its own job's
       # checkout was. On a PR it runs when a path it reads changed (#473:
       # the manifests, the lockfile, deny.toml, the template's stamp,
@@ -332,10 +332,31 @@ jobs:
           assert hashlib.sha256(pathlib.Path('deny.toml').read_bytes()).hexdigest() == stamp['sha256'], 'deny.toml differs from the adopted line'
           PY
 
+      # cargo-deny 0.20.2 as the pinned prebuilt release, never compiled here
+      # (#507: the `cargo install` took 119 s of every run). The version and
+      # the tarball's sha256 move together, by PR only: the sum was read once
+      # from the release's own `.sha256` asset beside the tarball, and any
+      # other sum fails the step. If the musl build ever cannot run the check
+      # below, the release's x86_64-unknown-linux-gnu tarball is the fallback
+      # (its own pinned sum). The binary goes to ~/.cargo/bin (on PATH) and is
+      # linked at the temporary root the check step names.
       - name: "deny: install cargo-deny 0.20.2"
         id: deny-install
         if: ${{ !cancelled() && steps.deny-tree.outcome == 'success' }}
-        run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
+        env:
+          DENY_VERSION: "0.20.2"
+          DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/$name.tar.gz"
+          echo "${DENY_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name/cargo-deny"
+          mkdir -p "$HOME/.cargo/bin" "$RUNNER_TEMP/paved-road-tools/bin"
+          install -m 0755 "$RUNNER_TEMP/$name/cargo-deny" "$HOME/.cargo/bin/cargo-deny"
+          ln -sf "$HOME/.cargo/bin/cargo-deny" "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny"
+          cargo deny --version
 
       - name: "deny: cargo-deny check"
         if: ${{ !cancelled() && steps.deny-install.outcome == 'success' }}
