@@ -7,8 +7,9 @@
       "host": "127.0.0.1:3322"
     },
     "json": {
-      "originator": "owner.example:8443",
-      "scope": "wallet"
+      "key": "[\"todo items\"]",
+      "kind": "basket",
+      "originator": "owner.example:8443"
     }
   },
   "response": {
@@ -21,13 +22,13 @@
         {
           "originator": "owner.example",
           "rawOriginator": "owner.example:8443",
-          "scope": "wallet",
+          "kind": "basket",
+          "key": "[\"todo items\"]",
           "amount": null,
           "spentThisMonth": null,
           "grantedAt": "<uint:10>",
           "expiry": 0,
-          "revokedAt": null,
-          "source": "owner"
+          "revokedAt": null
         }
       ],
       "pending": []
