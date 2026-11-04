@@ -3472,3 +3472,21 @@ logged. #564's citation corrected to BRC-116 at the BRCs' pin 5119a9b (the
 four permission tokens are a BRC's, not the reference's alone) and ruled
 (a) joined to (c) on the owner's word of first principles. The day's full
 line is the captain's `handoff-phase1-day2.md`.
+
+### The pause's addendum, 19:1xZ 11-04: the owner's word "i dont want any of that running when its pasued..."
+
+Two stops on that word, through the keeper: (1) the funder daemon (pid 46141,
+`e2e-funder/bin/bsv-wallet` 0.18.2) stopped by SIGTERM at 19:10:17Z, a clean
+exit, port 3320 free, the wallet's files closed; nothing drew on it (no client
+connected, LOW's harness names 3320 nowhere, no gate witness running, its
+last actions all completed). The restart, a resume step before any gate:
+`cd ~/bsv/bsv-wallet-cli/e2e-funder && ./bin/bsv-wallet daemon --port 3320 &`
+(its env read in place from the folder's .env, never copied; the basket read
+with the harness's dry run). (2) Night 5's re-run 41890559957 cancelled on
+GitHub (the API cancel 19:10:43Z, the force-cancel 19:11:04Z; completed cancelled with
+50 cancelled, 0 running, 1 done at 19:13Z); its re-dispatch is resume step 2 in place of
+the record from its artifacts. Nothing of the CLI's runs on this machine, the
+box or GitHub at the pause; the one named process, pid 87158
+`bsv-wallet-mcp`, is the captain session's own MCP tool server (Claude
+Code's, it ends with the session), not a wallet service; the registry's 3396
+daemon and the owner's production wallet on 3322 are untouched.
