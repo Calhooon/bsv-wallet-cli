@@ -6,22 +6,39 @@
 //! routes, the host routes' owner and the seed outside the bound.
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use serde_json::json;
 
+use super::{OpenBounds, CHAIN};
 use crate::server::owner_door_tests::wallet;
 use crate::server::powers_tests::{at, get_from, page_call, read, serve_at, signature};
 use crate::server::powers_tests::{Read, OTHER, PAGE};
 use crate::server::{probes, ServerConfig, WalletState};
 
 /// A wallet served with the seed `seeded`: its directory, the wallet, the
-/// router's address and its probe queue.
-async fn served(seeded: &[&str]) -> (tempfile::TempDir, WalletState, SocketAddr, probes::Probes) {
+/// router's address, its probe queue and its bound, whose clock stands
+/// still ([`OpenBounds::stopped`]) and moves only by
+/// [`OpenBounds::advance`]. On the time's clock a burst is the calls made
+/// within one interval of the first: eleven calls served one after another
+/// reach the eleventh's refusal only while they take under a second, and
+/// cargo-mutants' baseline (the lib's tests in one process, two at a time
+/// on a two-core runner) took longer, so the refill admitted it (#585).
+/// Stopped, the burst is the calls made, however long they take.
+async fn served(
+    seeded: &[&str],
+) -> (
+    tempfile::TempDir,
+    WalletState,
+    SocketAddr,
+    probes::Probes,
+    OpenBounds,
+) {
     let (dir, wallet) = wallet().await;
-    let config = ServerConfig::admitting(seeded.iter().copied()).unwrap();
-    let probes = config.probes.clone();
-    (dir, wallet.clone(), serve_at(&wallet, config).await, probes)
+    let mut config = ServerConfig::admitting(seeded.iter().copied()).unwrap();
+    config.bounds = OpenBounds::stopped();
+    let (probes, bounds) = (config.probes.clone(), config.bounds.clone());
+    let addr = serve_at(&wallet, config).await;
+    (dir, wallet.clone(), addr, probes, bounds)
 }
 
 /// The 429 a page reads: the code, the door and the window in the
@@ -63,7 +80,7 @@ async fn no_rows(wallet: &WalletState, probes: &probes::Probes, answered: &[(&st
 /// call is answered again; no row is written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_page_past_the_chain_burst_reads_429_then_200_after_the_window() {
-    let (_dir, wallet, addr, probes) = served(&[]).await;
+    let (_dir, wallet, addr, probes, bounds) = served(&[]).await;
     for n in 0..10 {
         let door = ["/getNetwork", "/getVersion"][n % 2];
         let answered = get_from(addr, Some(PAGE), door).await;
@@ -88,7 +105,7 @@ async fn a_page_past_the_chain_burst_reads_429_then_200_after_the_window() {
     assert_eq!(port.0, 429, "no fresh bound by port");
     let other = get_from(addr, Some(OTHER), "/getVersion").await;
     assert_eq!((other.0, other.1.as_deref()), (200, Some(OTHER)));
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    bounds.advance(CHAIN.every);
     assert_eq!(get_from(addr, Some(PAGE), "/getVersion").await.0, 200);
     let answered = [("page.example", 11), ("other.example", 1)];
     no_rows(&wallet, &probes, &answered).await;
@@ -99,7 +116,7 @@ async fn a_page_past_the_chain_burst_reads_429_then_200_after_the_window() {
 /// its own once; another origin is untouched.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_presence_door_answers_a_page_once() {
-    let (_dir, wallet, addr, probes) = served(&[]).await;
+    let (_dir, wallet, addr, probes, _) = served(&[]).await;
     let opening = get_from(addr, Some(PAGE), "/isAuthenticated").await;
     assert_eq!(
         (opening.0, opening.3["authenticated"].as_bool()),
@@ -124,7 +141,7 @@ async fn a_presence_door_answers_a_page_once() {
 /// are untouched by it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_level_zero_power_is_bounded_on_its_own() {
-    let (_dir, wallet, addr, probes) = served(&[]).await;
+    let (_dir, wallet, addr, probes, _) = served(&[]).await;
     for n in 0..10 {
         let signed = page_call(addr, PAGE, "/createSignature", signature("open gate", 0)).await;
         assert_eq!(signed.0, 200, "{n}: {}", signed.3);
@@ -146,7 +163,7 @@ async fn a_level_zero_power_is_bounded_on_its_own() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_owner_and_the_seed_are_outside_the_bound() {
     let seeded = "http://seeded.example";
-    let (_dir, _wallet, addr, _) = served(&["seeded.example"]).await;
+    let (_dir, _wallet, addr, _, _) = served(&["seeded.example"]).await;
     for n in 0..30 {
         assert_eq!(get_from(addr, None, "/origins").await.0, 200, "owner {n}");
         assert_eq!(
@@ -184,7 +201,7 @@ const METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "TR
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_open_doors_methods_are_the_routers() {
     let seeded = "http://seeded.example";
-    let (_dir, _wallet, addr, _) = served(&["seeded.example"]).await;
+    let (_dir, _wallet, addr, _, _) = served(&["seeded.example"]).await;
     for (door, methods) in super::OPEN_DOORS {
         for method in METHODS {
             let answered = by_method(addr, method, seeded, door).await;
@@ -207,7 +224,7 @@ async fn the_open_doors_methods_are_the_routers() {
 /// are answered within the burst, and only they are counted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_wrong_method_at_an_open_door_is_neither_counted_nor_charged() {
-    let (_dir, wallet, addr, probes) = served(&[]).await;
+    let (_dir, wallet, addr, probes, _) = served(&[]).await;
     for n in 0..12 {
         let wrong = by_method(addr, "GET", PAGE, "/getHeaderForHeight").await;
         assert_eq!((wrong.0, wrong.1.as_deref()), (405, Some(PAGE)), "{n}");
