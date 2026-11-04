@@ -12,14 +12,23 @@ MUTANTS_SHARDS_COMPLETE shards (`--complete-shards`, twenty: the account's
 concurrent-job limit, #460), six at a time in four waves (HEAVY_RUN_PARALLEL,
 #513), the night of record cut at each pin (docs/RELEASING.md). An
 INCREMENTAL night, the default on the captain's dispatch, mutates only the
-floored files whose figure may have moved since the last complete run, and
-the score carries every other file's figure from that run with its run and
-sha (.github/nightly/mutants_score.py).
+floored files whose figure may have moved since the base (the last
+base-setting run, below), and the score carries every other file's figure
+from that run with its run and sha (.github/nightly/mutants_score.py).
 
-The last complete run is read from the record (docs/scoreboard/mutants.json):
-the record itself when its `mode` is "complete", its `base` ({"run", "commit"})
-when its mode is "incremental". The record must name its mode. The changed
-paths are `git diff --name-only <base commit> <head>` (a tree diff, so the
+The base, the last base-setting run, is read from the record
+(docs/scoreboard/mutants.json): the record itself when its `mode` is
+"complete"; its `base` ({"run", "commit"}) when its mode is "incremental".
+An incremental night whose changed set was the whole set judged every mutant
+of every floored file at one sha, a complete night by another shard count, so
+it re-bases (#559): its record's `base` names its own run and commit with
+`"whole": true` (`base: this run, the changed set the whole set`), and the
+next night diffs against it. A night that judged a subset keeps the base it
+carried from. A `whole` base that names another run than the record's, or a
+base without it that names the record's own run, is refused. The plan names
+the base it diffed against and why (`base_why`). The record must name its
+mode. The changed paths are `git diff --name-only <base commit> <head>` (a
+tree diff, so the
 base need not be an ancestor), or the lines of `--paths` (the captured input
 the planted cases give). A path's effect on the set:
 
@@ -188,15 +197,42 @@ def stage(cap=HEAVY_RUN_PARALLEL, fuzz=FUZZ_PARALLEL, hermetic=HERMETIC_PARALLEL
     return {"cap": cap, "fuzz_parallel": fuzz, "hermetic_parallel": hermetic, "tail": tail}
 
 
-def last_complete(record):
-    """The last complete run, {"run", "commit"}, as the record names it."""
+def base_of(record):
+    """The last base-setting run, {"run", "commit"}, as the record names it, and why
+    it is the base: a complete record is its own base; an incremental record whose
+    changed set was the whole set names itself (`"whole": true`, #559); any other
+    incremental record names the base it carried from."""
     mode = record.get("mode")
     if mode not in MODES:
-        fault(f"{RECORD} names no mode (complete or incremental); the last complete run is unknown")
-    base = {"run": record.get("run"), "commit": record.get("commit")} if mode == "complete" else record.get("base")
+        fault(f"{RECORD} names no mode (complete or incremental); the base is unknown")
+    own = {"run": record.get("run"), "commit": record.get("commit")}
+    base = own if mode == "complete" else record.get("base")
     if not isinstance(base, dict) or not isinstance(base.get("run"), str) or not SHA.match(str(base.get("commit"))):
-        fault(f"{RECORD}: the last complete run is not named (a run URL and a 40-hex commit)")
-    return {"run": base["run"], "commit": base["commit"]}
+        fault(f"{RECORD}: the base is not named (a run URL and a 40-hex commit)")
+    named = {"run": base["run"], "commit": base["commit"]}
+    if mode == "complete":
+        return named, f"the record itself, a complete run ({run_id(named['run'])} at {named['commit'][:7]})"
+    if base.get("whole") is True:
+        if named != own:
+            fault(f"{RECORD}: a whole base names the record's own run (#559), and this one names run "
+                  f"{named['run']} at {named['commit']}, the record being run {own['run']} at {own['commit']}")
+        return named, (f"the record itself, an incremental night whose changed set was the whole set "
+                       f"({run_id(named['run'])} at {named['commit'][:7]}; base: this run, #559)")
+    if "whole" in base:
+        fault(f"{RECORD}: the base's `whole` is true or absent (#559), not {base['whole']!r}")
+    if named == own:
+        fault(f"{RECORD}: an incremental record names its own run as its base without `\"whole\": true` (#559)")
+    return named, (f"the record's base, run {run_id(named['run'])} at {named['commit'][:7]}, which the record's "
+                   f"night (run {run_id(str(own['run']))}) kept: a night that judged a subset keeps its base")
+
+
+def last_complete(record):
+    """The base {"run", "commit"} alone (base_of's first half)."""
+    return base_of(record)[0]
+
+
+def run_id(url):
+    return url.rsplit("/", 1)[-1]
 
 
 def targets(root):
@@ -502,7 +538,7 @@ def mutant_count(record, file):
 
 def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_SHARDS):
     floored = no_floored.floored(root)
-    base = last_complete(record)
+    base, base_why = base_of(record)
     if mode == "complete":
         found, files = [], set(floored)
     else:
@@ -525,6 +561,7 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
     return {
         "mode": mode,
         "base": base,
+        "base_why": base_why,
         "head": head,
         "floored": floored,
         "files": files,
@@ -553,18 +590,21 @@ def waves(p):
 
 def summary(p):
     lines = [f"## The night's plan ({p['mode']})", ""]
-    lines.append(f"The last complete run: {p['base']['run']} at `{p['base']['commit']}`; the night's tree: `{p['head']}`.")
+    lines.append(f"The base: {p['base']['run']} at `{p['base']['commit']}`, {p['base_why']}; the night's tree: `{p['head']}`.")
     lines.append("")
     if p["mode"] == "complete":
         lines.append(f"A complete night: every floored file, {p['mutants']} mutants by the record, in {p['shards']} shards, "
                      f"{p['parallel']} at once ({waves(p)}).")
     elif not p["files"]:
         lines.append("No floored file changed and no test or dependency reaches one: the night mutates nothing "
-                     "and carries every file's figure from the last complete run.")
+                     "and carries every file's figure from the base.")
     else:
         lines.append(f"Mutated: {', '.join(f'`{f}`' for f in p['files'])} ({p['mutants']} mutants by the record, "
                      f"{p['shards']} shards, {p['parallel']} at once){'; the whole set' if p['whole'] else ''}.")
-        lines.append(f"Carried from the last complete run: {', '.join(f'`{f}`' for f in p['carried']) or 'none'}.")
+        if p["whole"]:
+            lines.append("The changed set is the whole set: the night's record re-bases on this run "
+                         "(base: this run, the changed set the whole set; #559).")
+        lines.append(f"Carried from the base: {', '.join(f'`{f}`' for f in p['carried']) or 'none'}.")
     st = p["stage"]
     lines.append("")
     lines.append(f"After the matrix (#517): the fuzz targets {st['fuzz_parallel']} at once beside the hermetic "
