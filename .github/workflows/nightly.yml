@@ -91,7 +91,8 @@ permissions:
 # stage after the matrix runs under the same cap (#517): the fuzz targets
 # wait for the matrix (needs: mutants) so that no shard waits for them, then
 # run three at once beside the hermetic shards three at a time (the plan's
-# FUZZ_PARALLEL and HERMETIC_PARALLEL, three plus three, the captain's call on run 41516017523's figures: about two hours; the plan refuses
+# FUZZ_PARALLEL and HERMETIC_PARALLEL, three plus three, the captain's call on
+# run 41516017523's figures: about two hours; the plan refuses
 # figures whose sum passes the cap), and the reach job and the bench wait for
 # both and run last, two jobs. Before #517 the hermetic six, the five
 # targets, reach and bench could run together, thirteen jobs at once. An
