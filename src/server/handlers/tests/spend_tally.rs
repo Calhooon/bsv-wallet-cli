@@ -5,7 +5,7 @@
 use super::mutants::{Presence, World};
 use crate::store::origin_grants::{self as grants, Granting, Power};
 use axum::http::StatusCode;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 /// The page asked per power, its month's ceiling `amount`.
@@ -31,27 +31,39 @@ async fn spends(w: &World) -> Vec<(Option<String>, Option<String>, i64)> {
         .unwrap()
 }
 
+/// The page's spend of 3,000 (the world's two outputs), answered within
+/// 30 seconds: admitted, never held for an owner who never answers.
+async fn spend(w: &World) -> (StatusCode, Option<String>, Value) {
+    let (status, answer) = tokio::time::timeout(Duration::from_secs(30), w.create(json!({})))
+        .await
+        .expect("admitted within the ceiling, never held");
+    (status, answer["code"].as_str().map(String::from), answer)
+}
+
 #[tokio::test]
 async fn a_broadcast_refused_and_retired_leaves_no_row_and_the_next_spend_is_admitted() {
-    // The call's outputs sum to 3,000, the ceiling's whole month.
+    // The spend fills the ceiling's whole month.
     let w = page(Presence::Absent, 3000).await;
-    let (status, answer) = w.create(json!({})).await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY, "{answer}");
-    assert_eq!(answer["code"], "BROADCAST_REJECTED");
+    let retired = spend(&w).await;
+    assert_eq!(
+        (retired.0, retired.1.as_deref()),
+        (StatusCode::BAD_GATEWAY, Some("BROADCAST_REJECTED")),
+        "{}",
+        retired.2
+    );
     assert!(
         spends(&w).await.is_empty(),
         "the retired spend kept its row"
     );
-    // The same spend again: had the row stayed, 3,000 more would be past the
-    // ceiling and held for an owner who never answers. Admitted, it reaches
-    // the spend gate, which holds the coin its failed spender names.
-    let (status, answer) = tokio::time::timeout(Duration::from_secs(30), w.create(json!({})))
-        .await
-        .expect("admitted within the ceiling, never held");
+    // The same spend again: had the row stayed, it would be past the ceiling
+    // and held. Admitted, it reaches the spend gate, which holds the coin
+    // its failed spender names.
+    let again = spend(&w).await;
     assert_eq!(
-        (status, answer["code"].as_str()),
+        (again.0, again.1.as_deref()),
         (StatusCode::FORBIDDEN, Some("INPUT_NOT_OFFERED")),
-        "{answer}"
+        "{}",
+        again.2
     );
     assert!(spends(&w).await.is_empty());
 }
@@ -59,8 +71,8 @@ async fn a_broadcast_refused_and_retired_leaves_no_row_and_the_next_spend_is_adm
 #[tokio::test]
 async fn a_broadcast_spend_keeps_its_row_with_its_txid() {
     let w = page(Presence::Seen, 3000).await;
-    let (status, answer) = w.create(json!({})).await;
-    assert_eq!(status, StatusCode::OK, "{answer}");
+    let (status, code, answer) = spend(&w).await;
+    assert_eq!((status, code), (StatusCode::OK, None), "{answer}");
     let txid = answer["txid"].as_str().unwrap().to_string();
     assert_eq!(spends(&w).await, vec![(Some(txid), None, 3000)]);
 }
