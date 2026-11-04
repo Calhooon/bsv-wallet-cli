@@ -78,9 +78,9 @@ async fn a_later_refusal_leaves_the_level_zero_counter_where_it_stood() {
 }
 
 /// A call that passes two level-0 checks is charged once: with one call of
-/// the burst left, a call asking two level-0 powers is admitted (charged
-/// at its first check, its second was refused 429), and the next call is
-/// past the burst. Each of its powers is counted.
+/// the burst left, a call asking two level-0 powers is admitted (nothing
+/// is charged until both powers admit it, then the call is charged once),
+/// and the next call is past the burst. Each of its powers is counted.
 #[tokio::test]
 async fn a_call_passing_two_level_zero_checks_is_charged_once() {
     let (_dir, wallet) = wallet().await;
