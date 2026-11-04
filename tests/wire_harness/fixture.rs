@@ -128,13 +128,40 @@ pub(crate) fn normalize(v: J) -> J {
 
 /// Inside any string: the local stubs' ports (a fresh port each run), a
 /// held coin's age in a refusal's listing (`<n> min old`), the
-/// platform's errno in a refused connection's words (`os error <n>`), and
-/// this wallet's served version string (`package_version`).
+/// platform's errno in a refused connection's words (`os error <n>`),
+/// this wallet's served version string (`package_version`), and an
+/// abandoned row's withdrawal time (`withdrawn at <time>`, the clock's now
+/// plus the window, #534).
 pub(crate) fn normalize_text(s: &str) -> String {
     let s = replace_number(s, "127.0.0.1:", "<port>", true);
     let s = replace_number(&s, "os error ", "<errno>", true);
     let s = package_version(&s);
+    let s = withdrawn_at(&s);
     replace_number(&s, " min old", "<minutes>", false)
+}
+
+/// `withdrawn at <RFC 3339 time to the second>` as `withdrawn at <time>`.
+fn withdrawn_at(s: &str) -> String {
+    const MARKER: &str = "withdrawn at ";
+    const LEN: usize = "2026-11-04T19:31:07Z".len();
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find(MARKER) {
+        let (head, tail) = (&rest[..at + MARKER.len()], &rest[at + MARKER.len()..]);
+        out.push_str(head);
+        let time = tail
+            .get(..LEN)
+            .filter(|t| chrono::DateTime::parse_from_rfc3339(t).is_ok());
+        match time {
+            Some(_) => {
+                out.push_str("<time>");
+                rest = &tail[LEN..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A strict difference: the fixture's request and the line diff of the

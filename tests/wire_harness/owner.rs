@@ -5,7 +5,10 @@
 //!
 //! - `before`: grants and revokes written before the request (`{"grant":
 //!   {"originator", "kind", "key"?, "expiry"?}}`, `{"revoke":
-//!   {"originator", "kind"?, "key"?}}`; an `expiry` of 1 is long past);
+//!   {"originator", "kind"?, "key"?}}`; an `expiry` of 1 is long past),
+//!   and a row its caller left (`{"abandon": {"originator", "kind", "key",
+//!   "usage", "call"}}`, #534: the power's pending row opened as a held call
+//!   opens it, then marked as the disconnect marks it, its window open);
 //! - `holding`: calls sent first and held, their answers not recorded (the
 //!   cap's fixture); each is denied once the request is answered;
 //! - `spent`: a call sent `times` times first, each answered 200 and not
@@ -21,7 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use bsv_wallet_cli::server::handlers::WalletState;
 use bsv_wallet_cli::server::powers::Held;
-use bsv_wallet_cli::store::origin_grants::{self as grants, Answer, Granting, Kind, Power};
+use bsv_wallet_cli::store::origin_grants::{self as grants, Answer, Asking, Granting, Kind, Power};
 use bsv_wallet_cli::store::origin_grants::{Reach, Reply};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
@@ -74,6 +77,13 @@ pub(crate) enum Act {
         kind: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+    },
+    Abandon {
+        originator: String,
+        kind: String,
+        key: String,
+        usage: String,
+        call: String,
     },
 }
 
@@ -157,6 +167,37 @@ impl Owner {
                     grants::revoke(wallet.storage(), originator, &reach, now())
                         .await
                         .unwrap();
+                }
+                Act::Abandon {
+                    originator,
+                    kind,
+                    key,
+                    usage,
+                    call,
+                } => {
+                    let power = Power::named(Kind::named(kind).unwrap(), Some(key)).unwrap();
+                    let asking = Asking {
+                        originator,
+                        power: &power,
+                        usage: Some(usage),
+                        call,
+                        reason: None,
+                        amount: None,
+                        renewal: false,
+                    };
+                    let at = now();
+                    let opened = grants::open_or_join(wallet.storage(), &asking, at)
+                        .await
+                        .unwrap();
+                    let id = opened.row.pending_id;
+                    let done = grants::abandon(wallet.storage(), originator, &[id], at)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        done.marked.len(),
+                        1,
+                        "the owner's step: row #{id} not marked"
+                    );
                 }
             }
         }

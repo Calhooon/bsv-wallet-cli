@@ -1,0 +1,37 @@
+{
+  "world": "fresh",
+  "request": {
+    "method": "POST",
+    "path": "/origins/answer",
+    "headers": {
+      "host": "127.0.0.1:3322"
+    },
+    "json": {
+      "answer": "grant",
+      "pendingId": 1
+    }
+  },
+  "owner": {
+    "before": [
+      {
+        "abandon": {
+          "originator": "back.test",
+          "kind": "basket",
+          "key": "[\"wire basket\"]",
+          "usage": "listing",
+          "call": "/listOutputs"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "json": {
+      "code": "CONFLICT",
+      "message": "pending request #1 is waiting for its page to reconnect; answer it when the page asks again, or it is withdrawn at <time>"
+    }
+  }
+}

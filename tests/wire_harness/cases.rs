@@ -50,6 +50,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_probes::record(r).await;
     super::cases_bounds::record(r).await;
     super::cases_spending_power::record(r).await;
+    super::cases_window::record(r).await;
 }
 
 /// Status and public keys, signatures, crypto and key linkage.
