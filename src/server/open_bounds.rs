@@ -150,9 +150,9 @@ pub struct OpenBounds(Arc<Counters>);
 #[derive(Default)]
 struct Counters {
     map: Mutex<HashMap<(String, &'static str), Instant>>,
-    /// The clock stood still at this instant ([`OpenBounds::stopped`]);
-    /// none reads the time.
-    stopped: Option<Instant>,
+    /// The clock stood still at this instant ([`OpenBounds::stopped`]),
+    /// moved only by a test's [`OpenBounds::advance`]; none reads the time.
+    stopped: Option<Mutex<Instant>>,
 }
 
 /// A call past its bound: the wait until the next would be admitted.
@@ -182,7 +182,7 @@ impl OpenBounds {
     pub fn stopped() -> Self {
         Self(Arc::new(Counters {
             map: Mutex::default(),
-            stopped: Some(Instant::now()),
+            stopped: Some(Mutex::new(Instant::now())),
         }))
     }
 
@@ -229,6 +229,14 @@ impl OpenBounds {
         Ok(())
     }
 
+    /// Move a stopped clock on by `by`: a served test's window passes at
+    /// once, never by how long its calls took (#585).
+    #[cfg(test)]
+    fn advance(&self, by: Duration) {
+        let clock = self.0.stopped.as_ref().expect("a stopped clock");
+        *clock.lock().unwrap_or_else(PoisonError::into_inner) += by;
+    }
+
     /// The counters kept now (the prune's test).
     #[cfg(test)]
     fn kept(&self) -> usize {
@@ -267,7 +275,10 @@ impl OpenBounds {
     ) -> Result<(), AppError> {
         let host = crate::store::origin_grants::key_of(originator)
             .map_or_else(|_| originator.to_string(), |(host, _)| host);
-        let now = self.0.stopped.unwrap_or_else(Instant::now);
+        let now = match &self.0.stopped {
+            Some(clock) => *clock.lock().unwrap_or_else(PoisonError::into_inner),
+            None => Instant::now(),
+        };
         self.judge(&host, door, class, now, charge)
             .map_err(|limited| {
                 let secs = limited.retry_after_secs();
