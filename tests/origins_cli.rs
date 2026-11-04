@@ -421,6 +421,66 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
     assert_eq!(all.lines().count(), 6, "{all}");
 }
 
+/// #534: a row whose caller disconnected waits for its page inside the
+/// window: listed as such (the line and `abandonedAt`), and the owner's
+/// `origin-grant` and `origin-deny` refused naming the window's end, no
+/// grant row written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_abandoned_row_is_listed_and_its_answer_refused_from_the_cli() {
+    let dir = made();
+    let basket = Power::basket("todo items").expect("a basket");
+    let [id] = seed(
+        &dir,
+        &[Asking {
+            originator: "back.example",
+            power: &basket,
+            usage: Some("listing"),
+            call: "/listOutputs",
+            reason: None,
+            amount: None,
+            renewal: false,
+        }],
+    )
+    .await[..] else {
+        panic!("one row");
+    };
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock")
+            .as_secs(),
+    )
+    .expect("seconds");
+    let storage = opened(&dir).await;
+    let done = grants::abandon(&storage, "back.example", &[id], now)
+        .await
+        .expect("the mark");
+    assert_eq!(done.marked.len(), 1);
+    let end = grants::when_exact(now + bsv_wallet_cli::server::powers::ABANDON_WINDOW_SECS);
+
+    let listed = said(&dir, &["origins"]);
+    assert!(
+        listed.trim_end().ends_with(&format!(
+            "caller disconnected, withdrawn at {end} unless the page asks again"
+        )),
+        "{listed}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&said(&dir, &["--json", "origins"])).expect("json");
+    assert_eq!(json["pending"][0]["abandonedAt"], now);
+    let words = format!(
+        "pending request #{id} is waiting for its page to reconnect; answer it when the page \
+         asks again, or it is withdrawn at {end}"
+    );
+    for command in ["origin-grant", "origin-deny"] {
+        let e = refused(&dir, &[command, &format!("#{id}")]);
+        assert!(e.contains(&words), "{command}: {e}");
+    }
+    let rows = grants::listing(&storage, true, now).await.expect("rows");
+    assert!(rows.grants.is_empty(), "no grant row");
+    assert_eq!(rows.pending[0].answered_at, None);
+}
+
 #[test]
 fn the_refused_originator_forms_name_their_rule() {
     let dir = made();

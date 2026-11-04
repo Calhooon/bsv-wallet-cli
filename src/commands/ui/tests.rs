@@ -361,3 +361,14 @@ async fn a_query_only_pool_is_no_guard_against_a_query() {
     let rows = sqlx::query(sql).execute(&state.pool).await;
     assert!(rows.unwrap_err().to_string().contains("readonly"));
 }
+
+/// #534: the origins view reads the server's window, so the time it shows
+/// for an abandoned row's withdrawal is the one the owner's answer names.
+#[test]
+fn the_origins_view_holds_the_servers_window() {
+    let line = format!(
+        "const ABANDON_WINDOW = {};",
+        bsv_wallet_cli::server::powers::ABANDON_WINDOW_SECS
+    );
+    assert!(HTML.contains(&line), "the view's window is not {line}");
+}

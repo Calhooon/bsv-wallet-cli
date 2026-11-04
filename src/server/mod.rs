@@ -796,4 +796,7 @@ mod retry_pause_tests;
 mod powers_tests;
 
 #[cfg(test)]
+mod window_tests;
+
+#[cfg(test)]
 mod probes_tests;
