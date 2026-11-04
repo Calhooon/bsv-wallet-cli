@@ -230,11 +230,10 @@ pub(crate) type MarkedLines = Arc<std::sync::Mutex<Vec<(String, Option<String>)>
 
 /// The marker of every line logged while the guard lives on this thread.
 /// The binary's always-interested global goes in first, as
-/// test_support's capture does (#568), so a capture-less sibling never
+/// `test_support`'s capture does (#568), so a capture-less sibling never
 /// caches a callsite as never.
 pub(crate) fn capture_markers() -> (MarkedLines, tracing::subscriber::DefaultGuard) {
     use tracing_subscriber::layer::SubscriberExt;
-    crate::always_interested::init();
     struct Capture(MarkedLines);
     #[derive(Default)]
     struct Line(String, Option<String>);
@@ -264,6 +263,7 @@ pub(crate) fn capture_markers() -> (MarkedLines, tracing::subscriber::DefaultGua
             }
         }
     }
+    crate::always_interested::init();
     let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
     let subscriber = tracing_subscriber::registry().with(Capture(lines.clone()));
     (lines, tracing::subscriber::set_default(subscriber))
