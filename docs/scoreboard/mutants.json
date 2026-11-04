@@ -607,8 +607,10 @@
     }
   ],
   "base": {
-    "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41516017523",
-    "commit": "f2976ef122dea47a709bc746350366e1ca4fbb48"
+    "run": "https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793",
+    "commit": "be4906ad637cefc794cf547ea8ce0eacd038e3e5",
+    "whole": true,
+    "why": "this run, the changed set the whole set (#559): the plan diffed be4906a against run 41516017523 at f2976ef (plan.base) and its changed set was the whole set, so every mutant of every floored file was judged at be4906a and nothing was carried; under #559 such a night is its own base, and the next night diffs against be4906a and carries from this run. The mode_note's \"the base stays run 41516017523\" was the rule before #559"
   },
   "floors": {
     "src/spend_gate.rs": 90,
