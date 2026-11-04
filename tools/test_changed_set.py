@@ -156,7 +156,7 @@ class Case(unittest.TestCase):
         # ceil(40 / 19) is 3; the six runners a night holds come first.
         self.assertEqual((p["mutants"], p["shards"], p["matrix"]), (40, 6, [0, 1, 2, 3, 4, 5]))
         self.assertFalse(p["whole"])
-        self.assertIn("Carried from the last complete run: `src/b.rs`, `src/c.rs`.", out)
+        self.assertIn("Carried from the base: `src/b.rs`, `src/c.rs`.", out)
         self.show(p)
 
     def test_a_test_change_the_record_does_not_measure_reaches_every_file(self):
@@ -189,7 +189,7 @@ class Case(unittest.TestCase):
         p, out = self.planned("README.md", "benches/baseline.json", "fuzz/Cargo.lock", "src/NOTES.md")
         self.assertEqual((p["files"], p["shards"], p["matrix"]), ([], 0, []))
         self.assertEqual(p["carried"], ["src/a.rs", "src/b.rs", "src/c.rs"])
-        self.assertIn("carries every file's figure from the last complete run", out)
+        self.assertIn("carries every file's figure from the base", out)
         self.show(p)
 
     def test_a_test_module_in_a_floored_module_directory_reaches_that_file(self):
