@@ -195,3 +195,41 @@ async fn an_abort_deletes_the_row_its_reference_or_txid_names_for_its_originator
         900
     );
 }
+
+#[tokio::test]
+async fn an_open_spend_counts_at_once_and_is_settled_or_dropped_by_its_id() {
+    let (_dir, storage) = wallet_db().await;
+    let first = open_spend(&storage, "app.example", 2500, NOW)
+        .await
+        .unwrap();
+    let second = open_spend(&storage, "app.example", 500, NOW).await.unwrap();
+    assert_ne!(first, second);
+    assert_eq!(
+        month_tally(&storage, "app.example", NOW).await.unwrap(),
+        3000,
+        "an open row is counted before the toolbox answers"
+    );
+    let txid = "ab".repeat(32);
+    settle_spend(&storage, first, Flow::Signed(&txid))
+        .await
+        .unwrap();
+    assert_eq!(drop_spend(&storage, second).await.unwrap(), 1);
+    assert_eq!(drop_spend(&storage, second).await.unwrap(), 0);
+    assert_eq!(
+        rows(&storage).await,
+        vec![(
+            "app.example".into(),
+            "2026-11".into(),
+            Some(txid),
+            None,
+            2500
+        )]
+    );
+    let deferred = open_spend(&storage, "app.example", 100, NOW).await.unwrap();
+    assert_eq!(rows(&storage).await[1].3.as_deref(), Some(OPEN));
+    settle_spend(&storage, deferred, Flow::Deferred("cmVm"))
+        .await
+        .unwrap();
+    let settled = rows(&storage).await.remove(1);
+    assert_eq!((settled.2, settled.3), (None, Some("cmVm".into())));
+}

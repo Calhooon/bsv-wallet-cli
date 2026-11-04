@@ -1,7 +1,8 @@
 //! `createAction`'s spend (#414, the design's L6, section (1), W6 and W7):
 //! asked last, inside the `SpendingLock`, against the originator's spending
 //! row and the month's tally; held with the lock let go when the owner must
-//! answer; tallied by the door once the toolbox returns the action.
+//! answer; its row opened before the toolbox's call, settled on its
+//! action, dropped on its failure.
 
 use bsv_sdk::primitives::to_hex;
 use bsv_sdk::wallet::CreateActionResult;
@@ -16,8 +17,8 @@ use crate::store::origin_grants::{self as grants, Answer, Asking, Flow, Power, S
 impl Asker {
     /// `createAction`'s spend of `amount` satoshis (W6: its outputs' sum),
     /// asked inside `lock` (section (1)): the lock's guard, held by the door
-    /// until its toolbox call returns and its spend is tallied, with the
-    /// [`Tally`] to write; none for an amount of 0 (no power asked here,
+    /// until its toolbox call returns and its spend's row is settled, with
+    /// the [`Tally`] to open; none for an amount of 0 (no power asked here,
     /// where the reference asks one for the fee) or a seed-listed caller.
     ///
     /// A live spending row admits the call when its ceiling is unset or the
@@ -110,20 +111,45 @@ impl Asker {
     }
 }
 
-/// An admitted spend the door tallies once the toolbox returns its action
-/// (section (1), W7): one `origin_spends` row, the txid on the signed path,
-/// the reference on the deferred one; a failed call writes none.
+/// An admitted spend the door tallies (section (1), W7): one
+/// `origin_spends` row, opened before the toolbox's call so the ceiling
+/// holds whatever the store does next, then given the txid on the signed
+/// path or the reference on the deferred one; a failed call writes none.
 pub(crate) struct Tally {
     originator: String,
     amount: i64,
 }
 
 impl Tally {
-    /// Write the row, before the door lets the `SpendingLock` go. A write
-    /// the store refuses is logged at warn by name and the door's answer
-    /// stands: the action is already built, and a refusal would invite the
-    /// page to spend again.
-    pub(crate) async fn write(&self, wallet: &WalletState, action: &CreateActionResult) {
+    /// Open the row under the `SpendingLock`, before the toolbox's call: a
+    /// write the store refuses refuses the call by the store's class (the
+    /// store busy 503 with `Retry-After`, else the internal class), with
+    /// nothing built.
+    pub(crate) async fn open(self, wallet: &WalletState) -> Result<OpenSpend, AppError> {
+        let now = clock()?;
+        let spend_id = grants::open_spend(wallet.storage(), &self.originator, self.amount, now)
+            .await
+            .map_err(|e| refused(&e))?;
+        Ok(OpenSpend {
+            tally: self,
+            spend_id,
+        })
+    }
+}
+
+/// A spend's open row, settled when the toolbox returns the action and
+/// dropped when the call fails.
+pub(crate) struct OpenSpend {
+    tally: Tally,
+    spend_id: i64,
+}
+
+impl OpenSpend {
+    /// The toolbox returned `action`: the row takes its txid, else its
+    /// reference. A write the store refuses leaves the row open, still
+    /// counted, logged at warn by name.
+    pub(crate) async fn settle(&self, wallet: &WalletState, action: &CreateActionResult) {
+        let Tally { originator, amount } = &self.tally;
         let txid = action.txid.as_ref().map(|t| to_hex(t));
         let reference = action
             .signable_transaction
@@ -133,18 +159,22 @@ impl Tally {
             (Some(txid), _) => Flow::Signed(txid),
             (None, Some(reference)) => Flow::Deferred(reference),
             (None, None) => {
-                tracing::warn!(originator = %self.originator, amount = self.amount, "browser gate: the spend names no txid and no reference; it is not tallied");
+                tracing::warn!(originator = %originator, amount, "browser gate: the spend names no txid and no reference; its row stays open");
                 return;
             }
         };
-        let written = match super::super::owner_door::now() {
-            Ok(now) => {
-                grants::spent(wallet.storage(), &self.originator, flow, self.amount, now).await
-            }
-            Err(e) => Err(e),
-        };
-        if let Err(e) = written {
-            tracing::warn!(originator = %self.originator, amount = self.amount, flow = ?flow, error = %e, "browser gate: the spend was not tallied");
+        if let Err(e) = grants::settle_spend(wallet.storage(), self.spend_id, flow).await {
+            tracing::warn!(originator = %originator, amount, flow = ?flow, error = %e, "browser gate: the spend's row stays open");
+        }
+    }
+
+    /// The call failed (the toolbox's refusal of any kind, or a broadcast
+    /// refused and retired): the row deleted. A delete the store refuses
+    /// leaves the row counted, logged at warn by name.
+    pub(crate) async fn drop_row(&self, wallet: &WalletState) {
+        if let Err(e) = grants::drop_spend(wallet.storage(), self.spend_id).await {
+            let Tally { originator, amount } = &self.tally;
+            tracing::warn!(originator = %originator, amount, error = %e, "browser gate: the failed spend was not taken from the tally");
         }
     }
 }

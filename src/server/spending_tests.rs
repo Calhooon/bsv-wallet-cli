@@ -461,3 +461,61 @@ async fn a_spend_naming_a_basket_is_asked_its_basket_before_its_spend() {
     w.deny(&row, call).await;
     assert!(w.spends().await.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spend_the_toolbox_refuses_leaves_no_row_and_the_next_spend_is_admitted() {
+    // The row opens before the toolbox's call and goes with its failure:
+    // 55,000 on a 50,000 coin, with no change to fund it, is the 402.
+    let w = World::new(2).await;
+    w.ceiling(60_000).await;
+    let short = at_once(w.call(0, 55_000)).await;
+    assert_eq!(
+        (short.0, short.3["code"].as_str()),
+        (402, Some("INSUFFICIENT_FUNDS")),
+        "{}",
+        short.3
+    );
+    assert!(w.spends().await.is_empty(), "a refused build left its row");
+    // Had the 55,000 stayed, 10,000 more would be past 60,000 and held.
+    let next = at_once(w.call(1, 10_000)).await;
+    assert_eq!(next.0, 200, "{}", next.3);
+    assert_eq!(w.tally().await, 10_000);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tally_write_the_store_refuses_refuses_the_call_by_its_class_with_nothing_built() {
+    let w = World::new(1).await;
+    w.ceiling(10_000).await;
+    let storage = w.wallet.storage();
+    sqlx::query(
+        "CREATE TRIGGER refuse_spend BEFORE INSERT ON origin_spends \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .execute(storage.writer())
+    .await
+    .unwrap();
+    let actions = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap()
+    };
+    let before = actions().await;
+    let refused = at_once(w.call(0, 3000)).await;
+    assert_eq!(
+        (refused.0, refused.2.as_deref(), refused.3["code"].as_str()),
+        (500, None, Some("INTERNAL_ERROR")),
+        "{}",
+        refused.3
+    );
+    assert_eq!(actions().await, before, "nothing built");
+    assert!(w.spends().await.is_empty());
+
+    sqlx::query("DROP TRIGGER refuse_spend")
+        .execute(storage.writer())
+        .await
+        .unwrap();
+    let admitted = at_once(w.call(0, 3000)).await;
+    assert_eq!(admitted.0, 200, "the coin was never taken: {}", admitted.3);
+    assert_eq!(w.tally().await, 3000);
+}
