@@ -234,9 +234,41 @@ async fn an_open_spend_counts_at_once_and_is_settled_or_dropped_by_its_id() {
     assert_eq!((settled.2, settled.3), (None, Some("cmVm".into())));
 }
 
-#[tokio::test]
-async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
-    let (_dir, storage) = wallet_db().await;
+/// A grant row's reading in the listing's JSON: originator, kind, state,
+/// the month's tally and whether it has reached the ceiling.
+type Read = (String, String, String, Option<i64>, Option<bool>);
+
+fn read_as(o: &str, k: &str, s: &str, spent: Option<i64>, reached: Option<bool>) -> Read {
+    (o.to_string(), k.to_string(), s.to_string(), spent, reached)
+}
+
+/// The listing at `now`, and each grant row of its JSON as [`Read`].
+async fn read_at(storage: &StorageSqlx, now: i64) -> (Shown, Vec<Read>) {
+    let rows = listing(storage, true).await.unwrap();
+    let shown = Shown::listed(storage, rows, now).await.unwrap();
+    let json = serde_json::to_value(shown.json()).unwrap();
+    let text = |g: &serde_json::Value, k: &str| g[k].as_str().unwrap().to_string();
+    let read = json["grants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| {
+            let (spent, reached) = (g["spentThisMonth"].as_i64(), g["ceilingReached"].as_bool());
+            (
+                text(g, "originator"),
+                text(g, "kind"),
+                text(g, "state"),
+                spent,
+                reached,
+            )
+        })
+        .collect();
+    (shown, read)
+}
+
+/// A basket row expiring 2 s after `NOW`, a spending row of 1,500 with
+/// 1,000 spent, and a revoked basket row of another originator.
+async fn three_rows(storage: &StorageSqlx) {
     let basket = Power::basket("todo items").unwrap();
     let granting = |originator, power, amount, expiry| Granting {
         originator,
@@ -244,28 +276,18 @@ async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
         amount,
         expiry,
     };
-    grant(
-        &storage,
-        &granting("app.example", &basket, None, NOW + 2),
-        NOW,
-    )
-    .await
-    .unwrap();
-    let ceiling = granting("app.example", &Power::Spending, Some(1_500), 0);
-    grant(&storage, &ceiling, NOW).await.unwrap();
-    grant(&storage, &granting("old.example", &basket, None, 0), NOW)
-        .await
-        .unwrap();
-    revoke(
-        &storage,
-        "old.example",
-        &Reach::named(None, None).unwrap(),
-        NOW,
-    )
-    .await
-    .unwrap();
+    let rows = [
+        granting("app.example", &basket, None, NOW + 2),
+        granting("app.example", &Power::Spending, Some(1_500), 0),
+        granting("old.example", &basket, None, 0),
+    ];
+    for g in &rows {
+        grant(storage, g, NOW).await.unwrap();
+    }
+    let every = Reach::named(None, None).unwrap();
+    revoke(storage, "old.example", &every, NOW).await.unwrap();
     spent(
-        &storage,
+        storage,
         "app.example",
         Flow::Signed(&"ab".repeat(32)),
         1_000,
@@ -273,45 +295,26 @@ async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
     )
     .await
     .unwrap();
-    let read = |now| {
-        let storage = &storage;
-        async move {
-            let rows = listing(storage, true).await.unwrap();
-            let shown = Shown::listed(storage, rows, now).await.unwrap();
-            let json = serde_json::to_value(shown.json()).unwrap();
-            let rows: Vec<_> = json["grants"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|g| {
-                    (
-                        g["originator"].as_str().unwrap().to_string(),
-                        g["kind"].as_str().unwrap().to_string(),
-                        g["state"].as_str().unwrap().to_string(),
-                        g["spentThisMonth"].as_i64(),
-                        g["ceilingReached"].as_bool(),
-                    )
-                })
-                .collect();
-            (shown, rows)
-        }
-    };
-    let row = |o: &str, k: &str, s: &str, spent, reached| {
-        (o.to_string(), k.to_string(), s.to_string(), spent, reached)
-    };
-    let (shown, live) = read(NOW + 2).await;
+}
+
+#[tokio::test]
+async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
+    let (_dir, storage) = wallet_db().await;
+    three_rows(&storage).await;
+    let (shown, live) = read_at(&storage, NOW + 2).await;
+    let revoked = read_as("old.example", "basket", "revoked", None, None);
     assert_eq!(
         live,
         vec![
-            row("app.example", "basket", "granted", None, None),
-            row(
+            read_as("app.example", "basket", "granted", None, None),
+            read_as(
                 "app.example",
                 "spending",
                 "granted",
                 Some(1_000),
                 Some(false)
             ),
-            row("old.example", "basket", "revoked", None, None),
+            revoked.clone(),
         ]
     );
     assert_eq!(shown.grants[1].month.as_deref(), Some("2026-11"));
@@ -324,19 +327,19 @@ async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
     )
     .await
     .unwrap();
-    let (_, later) = read(NOW + 3).await;
+    let (_, later) = read_at(&storage, NOW + 3).await;
     assert_eq!(
         later,
         vec![
-            row("app.example", "basket", "expired", None, None),
-            row(
+            read_as("app.example", "basket", "expired", None, None),
+            read_as(
                 "app.example",
                 "spending",
                 "granted",
                 Some(1_500),
                 Some(true)
             ),
-            row("old.example", "basket", "revoked", None, None),
+            revoked,
         ]
     );
 }
