@@ -1,5 +1,5 @@
 /**
- * E2E.34: the browser gate's grants read alike in every place (#533), on
+ * E2E.35: the browser gate's grants read alike in every place (#533), on
  * wallet D with its seed unset. The four places read one reading of each
  * grant row (`GrantShown`, src/store/origin_grants/shown.rs): the CLI
  * (`bsv-wallet origins`, text and `--json`), the owner's route
@@ -141,16 +141,16 @@ module.exports = {
         const toA = buildP2PKH(aKey.publicKey);
         const dKey = parsed(g.cli(wallet, ['--json', 'address'])).pubkey;
         const funding = await walletA.client.createAction([{
-          lockingScript: buildP2PKH(dKey), satoshis: 3000, outputDescription: 'E2E.34 fund D', tags: ['e2e-test'],
-        }], 'E2E.34 fund D');
+          lockingScript: buildP2PKH(dKey), satoshis: 3000, outputDescription: 'E2E.35 fund D', tags: ['e2e-test'],
+        }], 'E2E.35 fund D');
         const funded = parsed(g.cli(wallet, ['--json', 'fund', Buffer.from(funding.tx).toString('hex'), '--vout', '0']));
         assert(funded.accepted === true, `3: D takes A's 3,000 (got ${JSON.stringify(funded)})`);
         const pageSpend = async (satoshis, step) => {
           const r = await g.call(wallet, 'POST', 'createAction', {
             origin: g.APP,
             body: {
-              description: `E2E.34 a page spend ${step}`,
-              outputs: [{ lockingScript: toA, satoshis, outputDescription: 'E2E.34 to A' }],
+              description: `E2E.35 a page spend ${step}`,
+              outputs: [{ lockingScript: toA, satoshis, outputDescription: 'E2E.35 to A' }],
               allowPending: 'received',
               options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
             },
@@ -158,7 +158,7 @@ module.exports = {
           assert(r.status === 200 && r.body.txid && Array.isArray(r.body.tx) && r.allowOrigin === g.APP,
             `${step}: the page's ${satoshis} admitted and sent (got ${r.status} ${JSON.stringify(r.body).slice(0, 300)})`);
           await walletA.client.internalizeAction(r.body.tx,
-            [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: REMITTANCE }], `E2E.34 from D ${step}`);
+            [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: REMITTANCE }], `E2E.35 from D ${step}`);
           return r.body.txid;
         };
         const firstTxid = await pageSpend(1000, '3');
@@ -179,8 +179,8 @@ module.exports = {
         const past = g.begin(wallet, 'POST', 'createAction', {
           origin: g.APP,
           body: {
-            description: 'E2E.34 a page spend at the ceiling',
-            outputs: [{ lockingScript: toA, satoshis: 1, outputDescription: 'E2E.34 to A' }],
+            description: 'E2E.35 a page spend at the ceiling',
+            outputs: [{ lockingScript: toA, satoshis: 1, outputDescription: 'E2E.35 to A' }],
             allowPending: 'received',
           },
         });
@@ -207,10 +207,10 @@ module.exports = {
         g.cli(wallet, ['origin-grant', E2E_ORIGINATOR, '--kind', 'spending', '--amount', '100000']);
         const rest = parsed(g.cli(wallet, ['--json', 'balance'])).satoshis;
         assert(rest > 600, `6: D holds its change (${rest})`);
-        const back = await wallet.client.createAction([{ lockingScript: toA, satoshis: rest - 300, outputDescription: 'E2E.34 back to A' }],
-          'E2E.34 back to A', { allowPending: 'received' });
+        const back = await wallet.client.createAction([{ lockingScript: toA, satoshis: rest - 300, outputDescription: 'E2E.35 back to A' }],
+          'E2E.35 back to A', { allowPending: 'received' });
         await walletA.client.internalizeAction(back.tx,
-          [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: REMITTANCE }], 'E2E.34 the rest from D');
+          [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: REMITTANCE }], 'E2E.35 the rest from D');
         return { txid: firstTxid, returnTxid: back.txid };
       } finally {
         mcp.stop();

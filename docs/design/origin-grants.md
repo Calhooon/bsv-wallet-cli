@@ -332,7 +332,7 @@ The call's `reason` (the page's own `description` or `privilegedReason`) follows
 
 They open the store as every command does and write through the module; a running daemon's held calls see an answer at their next read.
 
-**Rules.** #411 rule 3 (listed and revocable); W1 (a). The keeper's [#533](https://github.com/Calhooon/bsv-wallet-cli/issues/533) (expiry and spending ceilings per origin, read alike by every surface) adds the state word and `ceilingReached` above and moves no rule of the gate; scene 34 reads the four places alike. **Cost of a divergence.** None against the reference (it has no command line); per-kind flags for each field (`--protocol`, `--counterparty`, `--fields`) would be friendlier to type, at the cost of a second spelling of every key the module must keep equal to the canonical one.
+**Rules.** #411 rule 3 (listed and revocable); W1 (a). The keeper's [#533](https://github.com/Calhooon/bsv-wallet-cli/issues/533) (expiry and spending ceilings per origin, read alike by every surface) adds the state word and `ceilingReached` above and moves no rule of the gate; scene 35 reads the four places alike. **Cost of a divergence.** None against the reference (it has no command line); per-kind flags for each field (`--protocol`, `--counterparty`, `--fields`) would be friendlier to type, at the cost of a second spelling of every key the module must keep equal to the canonical one.
 
 ## (5) The expiry's default
 
