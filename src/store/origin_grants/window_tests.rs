@@ -29,6 +29,13 @@ async fn marked_at(storage: &StorageSqlx, originator: &str, id: i64, at: i64) {
     );
 }
 
+/// back.example's listing row opened at [`NOW`] and left at [`A`].
+async fn left_at(storage: &StorageSqlx) -> PendingRow {
+    let row = opened_at(storage, "back.example", NOW).await.row;
+    marked_at(storage, "back.example", row.pending_id, A).await;
+    row
+}
+
 /// The row `id` as stored, whatever its window.
 async fn stored(storage: &StorageSqlx, id: i64) -> Option<PendingRow> {
     pending(storage, id, i64::MIN / 2).await.unwrap()
@@ -37,8 +44,7 @@ async fn stored(storage: &StorageSqlx, id: i64) -> Option<PendingRow> {
 #[tokio::test]
 async fn a_call_one_second_inside_the_window_resumes_the_same_row_and_clears_its_mark() {
     let (_dir, storage) = wallet_db().await;
-    let first = opened_at(&storage, "back.example", NOW).await.row;
-    marked_at(&storage, "back.example", first.pending_id, A).await;
+    let first = left_at(&storage).await;
 
     let back = opened_at(&storage, "back.example", A + WINDOW - 1).await;
 
@@ -52,8 +58,7 @@ async fn a_call_one_second_inside_the_window_resumes_the_same_row_and_clears_its
 #[tokio::test]
 async fn a_call_at_the_windows_end_finds_the_row_gone_and_writes_a_new_one() {
     let (_dir, storage) = wallet_db().await;
-    let first = opened_at(&storage, "back.example", NOW).await.row;
-    marked_at(&storage, "back.example", first.pending_id, A).await;
+    let first = left_at(&storage).await;
 
     let late = opened_at(&storage, "back.example", A + WINDOW).await;
 
@@ -67,8 +72,7 @@ async fn a_call_at_the_windows_end_finds_the_row_gone_and_writes_a_new_one() {
 #[tokio::test]
 async fn a_call_from_another_port_of_the_host_rejoins_the_row() {
     let (_dir, storage) = wallet_db().await;
-    let first = opened_at(&storage, "back.example", NOW).await.row;
-    marked_at(&storage, "back.example", first.pending_id, A).await;
+    let first = left_at(&storage).await;
 
     let back = opened_at(&storage, "back.example:8080", A + 4).await;
 
@@ -83,8 +87,7 @@ async fn a_call_from_another_port_of_the_host_rejoins_the_row() {
 #[tokio::test]
 async fn another_origin_asking_the_same_power_gets_its_own_row_and_the_first_stays_abandoned() {
     let (_dir, storage) = wallet_db().await;
-    let first = opened_at(&storage, "back.example", NOW).await.row;
-    marked_at(&storage, "back.example", first.pending_id, A).await;
+    let first = left_at(&storage).await;
 
     let other = opened_at(&storage, "other.example", A + 2).await;
 
@@ -101,9 +104,7 @@ async fn another_origin_asking_the_same_power_gets_its_own_row_and_the_first_sta
 #[tokio::test]
 async fn the_windows_end_deletes_only_a_row_still_abandoned_with_its_mark() {
     let (_dir, storage) = wallet_db().await;
-    let row = opened_at(&storage, "back.example", NOW).await.row;
-    let id = row.pending_id;
-    marked_at(&storage, "back.example", id, A).await;
+    let id = left_at(&storage).await.pending_id;
     // Rejoined: the mark cleared, so its timer deletes nothing.
     opened_at(&storage, "back.example", A + 1).await;
     assert!(expire(&storage, "back.example", &[id], A)
@@ -181,9 +182,7 @@ async fn an_answered_row_is_never_marked() {
 #[tokio::test]
 async fn the_owners_answer_is_refused_while_abandoned_and_answers_after_the_rejoin() {
     let (_dir, storage) = wallet_db().await;
-    let row = opened_at(&storage, "back.example", NOW).await.row;
-    let id = row.pending_id;
-    marked_at(&storage, "back.example", id, A).await;
+    let id = left_at(&storage).await.pending_id;
 
     for said in [Answer::Grant, Answer::Deny] {
         let e = answer(&storage, id, &reply(said, None), A + 1)
@@ -272,8 +271,7 @@ async fn the_readers_hide_a_row_past_its_window_when_no_timer_ran() {
 #[tokio::test]
 async fn a_row_of_another_power_is_its_own_prompt_inside_the_window() {
     let (_dir, storage) = wallet_db().await;
-    let row = opened_at(&storage, "back.example", NOW).await.row;
-    marked_at(&storage, "back.example", row.pending_id, A).await;
+    let row = left_at(&storage).await;
     let power = basket("another basket");
 
     let other = open_or_join(

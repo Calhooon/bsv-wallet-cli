@@ -102,13 +102,7 @@ async fn a_call_with_any_origin_is_refused_on_every_route() {
             );
         }
     }
-    let rows = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let rows = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert!(rows.grants.is_empty(), "a refused call wrote a grant");
 }
 
@@ -399,13 +393,7 @@ async fn two_answers_race_to_one_winner_and_the_loser_is_told() {
     let told = format!("pending request #{id} was already answered {word} at ");
     assert!(message.starts_with(&told), "{message}");
     // One answer stands, and one grant at most.
-    let rows = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let rows = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert_eq!(
         rows.pending[0].answer.map(grants::Answer::as_str),
         Some(word.as_str())

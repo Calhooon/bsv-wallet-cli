@@ -115,15 +115,30 @@ pub(super) fn signature(protocol: &str, level: u8) -> serde_json::Value {
            "data": [1, 2, 3]})
 }
 
+/// Every row of the store now, the answered pending rows with `all`.
+pub(super) async fn listed(
+    storage: &bsv_wallet_toolbox::StorageSqlx,
+    all: bool,
+) -> grants::Listing {
+    grants::listing(storage, all, owner_door::now().unwrap())
+        .await
+        .unwrap()
+}
+
+/// A page's `listOutputs` of the basket `name` on a connection of its own,
+/// sent at once and held: its answer.
+pub(super) fn held_listing(
+    addr: SocketAddr,
+    origin: &'static str,
+    name: &'static str,
+) -> tokio::task::JoinHandle<Read> {
+    tokio::spawn(page_call(addr, origin, "/listOutputs", basket(name)))
+}
+
 pub(super) async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
-    grants::listing(
-        wallet.storage(),
-        false,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap()
-    .pending
+    crate::server::powers_tests::listed(wallet.storage(), false)
+        .await
+        .pending
 }
 
 /// Wait until `rows` open rows exist (the held calls have written them).
@@ -162,6 +177,29 @@ pub(super) async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
         .unwrap();
 }
 
+/// page.example's listOutputs of the basket `name` on a raw connection,
+/// held once its row is the store's only open row: the stream, which the
+/// test closes, and the row's id.
+pub(super) async fn page_leaving(
+    wallet: &WalletState,
+    addr: SocketAddr,
+    name: &str,
+) -> (tokio::net::TcpStream, i64) {
+    let stream = raw_listing(addr, PAGE, name).await;
+    let id = row_of(&until_open(wallet, 1).await, "page.example");
+    (stream, id)
+}
+
+/// A wallet served with the window's timer shortened to `window` (#534):
+/// its directory, the wallet, the address and the held calls.
+pub(super) async fn window_served(
+    window: Duration,
+) -> (tempfile::TempDir, WalletState, SocketAddr, powers::Held) {
+    let (dir, wallet) = wallet().await;
+    let (addr, held) = served_with(&wallet, &[], window).await;
+    (dir, wallet, addr, held)
+}
+
 /// A page's listOutputs written whole on a raw HTTP/1.1 connection, which
 /// the test closes.
 pub(super) async fn raw_listing(
@@ -189,11 +227,9 @@ pub(super) async fn raw_listing(
 /// window opens a new row, held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
-    let (_dir, wallet) = wallet().await;
     let window = Duration::from_millis(1500);
-    let (addr, held) = served_with(&wallet, &[], window).await;
-    let mut leaving = raw_listing(addr, PAGE, "one").await;
-    let left_id = row_of(&until_open(&wallet, 1).await, "page.example");
+    let (_dir, wallet, addr, held) = window_served(window).await;
+    let (mut leaving, left_id) = page_leaving(&wallet, addr, "one").await;
     let staying = tokio::spawn(page_call(
         addr,
         PAGE,
@@ -201,7 +237,7 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
         signature("two two", 2),
     ));
     until_open(&wallet, 2).await;
-    let other = tokio::spawn(page_call(addr, OTHER, "/listOutputs", basket("one")));
+    let other = held_listing(addr, OTHER, "one");
     let other_id = row_of(&until_open(&wallet, 3).await, "other.example");
     assert_eq!(held.rows_of("page.example").len(), 2);
 
@@ -235,9 +271,7 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
         [other_id],
         "page.example's rows deleted, other.example's kept"
     );
-    let all = grants::listing(wallet.storage(), true, owner_door::now().unwrap())
-        .await
-        .unwrap();
+    let all = listed(wallet.storage(), true).await;
     assert!(
         all.pending.iter().all(|r| r.originator != "page.example"),
         "no row kept"
@@ -247,7 +281,7 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
 
     // A call of the same page after the window opens a new prompt and is
     // held: the snapshot bounded the withdrawal.
-    let again = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
+    let again = held_listing(addr, PAGE, "one");
     let again_id = row_of(&until_open(&wallet, 2).await, "page.example");
     assert_ne!(again_id, left_id, "a new prompt");
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -288,10 +322,10 @@ pub(super) async fn until_marked(wallet: &WalletState, rows: usize) -> Vec<Pendi
 async fn the_cap_refuses_an_originators_third_held_call_and_the_fifth_in_all() {
     let (_dir, wallet) = wallet().await;
     let (addr, held) = served(&wallet, &[]).await;
-    let first = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
+    let first = held_listing(addr, PAGE, "one");
     until_open(&wallet, 1).await;
     // A joined call holds a connection: it counts.
-    let joined = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
+    let joined = held_listing(addr, PAGE, "one");
     for _ in 0..500 {
         if held.counts("page.example").0 == 2 {
             break;
@@ -330,12 +364,7 @@ async fn the_cap_refuses_an_originators_third_held_call_and_the_fifth_in_all() {
         (first.await.unwrap().0, joined.await.unwrap().0),
         (400, 400)
     );
-    let fifth = tokio::spawn(page_call(
-        addr,
-        "http://fifth.example",
-        "/listOutputs",
-        basket("one"),
-    ));
+    let fifth = held_listing(addr, "http://fifth.example", "one");
     for row in until_open(&wallet, 3).await {
         answer(&wallet, row.pending_id, Answer::Deny).await;
     }
@@ -391,7 +420,7 @@ async fn a_power_granted_listed_revoked_and_refused_after() {
         "a revoked power writes no row"
     );
     // Another power of the page is asked as before.
-    let other = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("other")));
+    let other = held_listing(addr, PAGE, "other");
     answer(
         &wallet,
         until_open(&wallet, 1).await[0].pending_id,
@@ -438,7 +467,7 @@ async fn an_expired_grant_is_held_as_a_renewal_and_another_process_answers_it() 
 async fn a_held_call_answers_the_shutdown_and_withdraws_its_row() {
     let (_dir, wallet) = wallet().await;
     let (addr, held) = served(&wallet, &[]).await;
-    let call = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
+    let call = held_listing(addr, PAGE, "one");
     until_open(&wallet, 1).await;
     held.shut_down();
     let answered = call.await.unwrap();
@@ -449,13 +478,7 @@ async fn a_held_call_answers_the_shutdown_and_withdraws_its_row() {
     );
     assert_eq!(refusal(&answered), shut);
     assert_eq!(answered.1.as_deref(), Some(PAGE));
-    let all = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let all = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert!(all.pending.is_empty(), "the held call's row is withdrawn");
     assert_eq!(
         page_call(addr, PAGE, "/listOutputs", basket("two")).await.0,
@@ -543,15 +566,14 @@ async fn the_open_doors_and_level_zero_answer_a_page_with_no_row() {
         .header("originator", "page.example")
         .json(&basket("one"));
     assert_eq!(read(disagreeing.send().await.unwrap()).await.0, 400);
-    let all = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let all = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert!(
         all.pending.is_empty(),
         "no row: open doors, level 0, admin names, disagreements"
     );
 }
+
+/// #534's window over the served router, on these helpers.
+#[cfg(test)]
+#[path = "window_tests.rs"]
+mod window_tests;

@@ -14,7 +14,6 @@ use crate::server::owner_door_tests::wallet;
 use crate::server::powers_tests::{at, get_from, page_call, read, serve_at, signature};
 use crate::server::powers_tests::{Read, OTHER, PAGE};
 use crate::server::{probes, ServerConfig, WalletState};
-use crate::store::origin_grants as grants;
 
 /// A wallet served with the seed `seeded`: its directory, the wallet, the
 /// router's address and its probe queue.
@@ -45,13 +44,7 @@ fn assert_limited(read: &Read, door: &str, window: &str, retry: &str) {
 /// calls alone: `answered` per originator's hostname.
 async fn no_rows(wallet: &WalletState, probes: &probes::Probes, answered: &[(&str, i64)]) {
     probes.settled().await;
-    let all = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let all = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert!(
         all.pending.is_empty() && all.grants.is_empty(),
         "a bounded call writes no row"

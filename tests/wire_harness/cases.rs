@@ -44,6 +44,13 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_beta4::record(r).await;
     super::cases_divergences::record(r).await;
     super::cases_beta6::record(r).await;
+    record_gate(r).await;
+}
+
+/// The browser gate's rows, in their recorded order: the gate, the owner's
+/// door, the switch, the probe record, the open doors' bound, the spending
+/// power and the brief reconnect's window (#411, #414, #539, #541, #534).
+async fn record_gate(r: &mut Recorder) {
     super::cases_origin_gate::record(r).await;
     super::cases_owner_door::record(r).await;
     super::cases_switch::record(r).await;

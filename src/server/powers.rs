@@ -38,9 +38,9 @@
 //!
 //! A held call waits with no bound, reading its row every 250 ms (the CLI
 //! and the inspector answer from other processes) and waking at once on
-//! the server's own answers (a [`Notify`] per open row in [`Held`]). When
+//! the server's own answers (a [`Notify`](tokio::sync::Notify) per open row in [`Held`]). When
 //! its caller closes the connection, the call's future is dropped and its
-//! guard ([`Waiting`]) takes a snapshot of the originator's open rows under
+//! guard (`Waiting`) takes a snapshot of the originator's open rows under
 //! [`Held`]'s mutex; its task (`origin_grants::abandon`) deletes the
 //! snapshot's spending rows at once, answering every call held on them 400
 //! `Permission denied.` (W4 (a)), and marks the others abandoned for the
@@ -57,14 +57,11 @@
 //! call resuming the row takes it over); past either, 429
 //! `ERR_PERMISSION_PENDING_LIMIT` at once.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use bsv_sdk::wallet::{Counterparty, Protocol, SecurityLevel};
-use tokio::sync::{watch, Notify};
 
 use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::WalletState;
@@ -73,7 +70,11 @@ use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
 use super::probes::Probes;
 use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
 
+mod held;
 mod spend;
+
+pub use held::Held;
+use held::{withdraw, Waiting};
 
 /// At most this many held calls per originator (the key, the hostname).
 pub const PER_ORIGINATOR: usize = 2;
@@ -98,348 +99,6 @@ pub const PENDING_LIMIT: &str =
 /// The shutdown's answer to a held call, the MetaNet Client's text
 /// (`electron/httpServer.ts:277-281` at bsv-desktop `b791cb2`).
 pub const SHUTTING_DOWN: &str = "WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down";
-
-/// The server's held calls: each open row a held call waits on (its
-/// originator's key, its [`Notify`], how many calls wait on it), the places
-/// under the cap per originator and in all (a held call, or an abandoned
-/// row its last call passed its place to, #534), the brief reconnect's
-/// window and the shutdown.
-#[derive(Clone)]
-pub struct Held(Arc<Inner>);
-
-struct Inner {
-    map: Mutex<Map>,
-    shut: watch::Sender<bool>,
-    window: Duration,
-}
-
-#[derive(Default)]
-struct Map {
-    rows: HashMap<i64, Row>,
-    calls: HashMap<String, usize>,
-    all: usize,
-    /// The abandoned rows holding a place, by id, with their originator's
-    /// key: the place their last call passed them when it left by
-    /// disconnect (#534).
-    kept: HashMap<i64, String>,
-}
-
-impl Map {
-    /// One place of `originator` freed.
-    fn free(&mut self, originator: &str) {
-        if let Some(n) = self.calls.get_mut(originator) {
-            *n -= 1;
-            if *n == 0 {
-                self.calls.remove(originator);
-            }
-        }
-        self.all -= 1;
-    }
-}
-
-struct Row {
-    originator: String,
-    notify: Arc<Notify>,
-    waiters: usize,
-}
-
-impl Default for Held {
-    fn default() -> Self {
-        Self::windowed(ABANDON_WINDOW)
-    }
-}
-
-impl Held {
-    fn windowed(window: Duration) -> Self {
-        Self(Arc::new(Inner {
-            map: Mutex::default(),
-            shut: watch::channel(false).0,
-            window,
-        }))
-    }
-
-    /// The held calls with the window's timer shortened to `window`, for
-    /// the socket tests (#534): the rows' own reading of the window is
-    /// [`ABANDON_WINDOW`]'s, which a shortened timer always ends first.
-    #[cfg(test)]
-    pub(crate) fn with_window(window: Duration) -> Self {
-        Self::windowed(window)
-    }
-
-    fn map(&self) -> std::sync::MutexGuard<'_, Map> {
-        self.0.map.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The server's shutdown: every held call answers 503
-    /// `WALLET_BRIDGE_UNAVAILABLE` and deletes its row, and a call that
-    /// would be held is answered so at once.
-    pub fn shut_down(&self) {
-        self.0.shut.send_replace(true);
-    }
-
-    fn is_shut(&self) -> bool {
-        *self.0.shut.borrow()
-    }
-
-    /// Wake every call held on `pending_id` (an answer from this server's
-    /// owner's routes, a deletion): it reads its row at once.
-    pub fn wake(&self, pending_id: i64) {
-        if let Some(row) = self.map().rows.get(&pending_id) {
-            row.notify.notify_waiters();
-        }
-    }
-
-    /// The places held now under the cap, of `originator`'s key and in
-    /// all: the held calls and the abandoned rows holding a place.
-    #[must_use]
-    pub fn counts(&self, originator: &str) -> (usize, usize) {
-        let map = self.map();
-        (map.calls.get(originator).copied().unwrap_or(0), map.all)
-    }
-
-    /// The open rows held calls wait on now, of `originator`'s key.
-    #[must_use]
-    pub fn rows_of(&self, originator: &str) -> Vec<i64> {
-        let mut ids: Vec<i64> = self
-            .map()
-            .rows
-            .iter()
-            .filter(|(_, row)| row.originator == originator)
-            .map(|(id, _)| *id)
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    /// The abandoned rows holding a place now (#534), by id.
-    #[must_use]
-    pub fn kept(&self) -> Vec<i64> {
-        let mut ids: Vec<i64> = self.map().kept.keys().copied().collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    /// A held call's place under the cap, or the limit it would pass.
-    fn place(&self, originator: &str) -> Result<Place, &'static str> {
-        let mut map = self.map();
-        if map.calls.get(originator).copied().unwrap_or(0) >= PER_ORIGINATOR {
-            return Err("2 held calls per originator");
-        }
-        if map.all >= IN_ALL {
-            return Err("4 held calls in all");
-        }
-        *map.calls.entry(originator.to_string()).or_default() += 1;
-        map.all += 1;
-        Ok(Place {
-            held: self.clone(),
-            originator: originator.to_string(),
-            passed: false,
-        })
-    }
-
-    /// The place the abandoned row `pending_id` holds, taken over by the
-    /// call that rejoins it (#534): no new place is asked.
-    fn adopt(&self, pending_id: i64) -> Option<Place> {
-        let originator = self.map().kept.remove(&pending_id)?;
-        Some(Place {
-            held: self.clone(),
-            originator,
-            passed: false,
-        })
-    }
-
-    /// The place the row `pending_id` holds freed, if it holds one: the
-    /// row deleted, or a call holding a place of its own held on it.
-    fn release(&self, pending_id: i64) {
-        let mut map = self.map();
-        if let Some(originator) = map.kept.remove(&pending_id) {
-            map.free(&originator);
-        }
-    }
-
-    /// A call waits on `pending_id`: its row's [`Notify`].
-    fn wait_on(&self, pending_id: i64, originator: &str) -> Arc<Notify> {
-        let mut map = self.map();
-        let row = map.rows.entry(pending_id).or_insert_with(|| Row {
-            originator: originator.to_string(),
-            notify: Arc::new(Notify::new()),
-            waiters: 0,
-        });
-        row.waiters += 1;
-        row.notify.clone()
-    }
-
-    /// A call stops waiting on `pending_id`; with `snapshot`, the
-    /// originator's open rows taken under the same lock first (the
-    /// disconnect). When `keep` and the call was the row's last, its place
-    /// passes to the row (#534), and the answer is `true`.
-    fn leave(&self, pending_id: i64, snapshot: Option<&str>, keep: bool) -> (Vec<i64>, bool) {
-        let mut map = self.map();
-        let ids = snapshot.map_or_else(Vec::new, |originator| {
-            map.rows
-                .iter()
-                .filter(|(_, row)| row.originator == originator)
-                .map(|(id, _)| *id)
-                .collect()
-        });
-        let mut passed = false;
-        if let Some(row) = map.rows.get_mut(&pending_id) {
-            row.waiters -= 1;
-            if row.waiters == 0 {
-                let row = map.rows.remove(&pending_id);
-                if keep && !map.kept.contains_key(&pending_id) {
-                    if let Some(row) = row {
-                        map.kept.insert(pending_id, row.originator);
-                        passed = true;
-                    }
-                }
-            }
-        }
-        (ids, passed)
-    }
-}
-
-/// A held call's place under the cap, freed when the call ends, unless it
-/// passed to its abandoned row.
-struct Place {
-    held: Held,
-    originator: String,
-    passed: bool,
-}
-
-impl Drop for Place {
-    fn drop(&mut self) {
-        if !self.passed {
-            self.held.map().free(&self.originator);
-        }
-    }
-}
-
-/// A held call's guard (the design's `Abandon`): when the call ends with
-/// an answer it is disarmed and only stops waiting; when its future is
-/// dropped instead (the caller closed its connection), it takes the
-/// snapshot of the originator's open rows under [`Held`]'s mutex before it
-/// returns, passes its place to its row when it was the row's last call
-/// (a spending row excepted), and runs the disconnect in a task
-/// ([`disconnected`]).
-struct Waiting {
-    held: Held,
-    wallet: WalletState,
-    originator: String,
-    pending_id: i64,
-    /// The row is not a spending row: it waits out a window (#534).
-    windowed: bool,
-    armed: bool,
-    place: Place,
-}
-
-impl Waiting {
-    fn answered(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for Waiting {
-    fn drop(&mut self) {
-        let snapshot = self.armed.then_some(self.originator.as_str());
-        let keep = self.armed && self.windowed;
-        let (ids, passed) = self.held.leave(self.pending_id, snapshot, keep);
-        self.place.passed = passed;
-        if !self.armed {
-            return;
-        }
-        let (held, wallet, originator, own) = (
-            self.held.clone(),
-            self.wallet.clone(),
-            self.originator.clone(),
-            self.pending_id,
-        );
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::warn!(originator = %originator, ids = ?ids, "browser gate: a disconnect outside the runtime; the rows wait for the restart's sweep");
-            held.release(own);
-            return;
-        };
-        runtime.spawn(async move { disconnected(&held, &wallet, &originator, &ids, own).await });
-    }
-}
-
-/// The disconnect (W4 (a) and #534's window): the snapshot's spending rows
-/// deleted and their calls woken (400 `Permission denied.`), its other open
-/// rows marked; after the window the rows still abandoned with that mark
-/// deleted, their calls woken and their places freed. `own` is the leaving
-/// call's row: a place it passed to a row the disconnect did not mark (the
-/// row answered or gone meanwhile) is freed at once.
-async fn disconnected(held: &Held, wallet: &WalletState, originator: &str, ids: &[i64], own: i64) {
-    let storage = wallet.storage();
-    let marked = async {
-        let now = super::owner_door::now()?;
-        let done = grants::abandon(storage, originator, ids, now).await?;
-        anyhow::Ok((done, now))
-    };
-    let (done, at) = match marked.await {
-        Ok(done) => done,
-        Err(e) => {
-            tracing::warn!(originator = %originator, ids = ?ids, error = %e, "browser gate: the disconnect's rows were not marked; the restart's sweep deletes them");
-            held.release(own);
-            return;
-        }
-    };
-    for row in &done.deleted {
-        held.wake(row.pending_id);
-    }
-    let marked: Vec<i64> = done.marked.iter().map(|r| r.pending_id).collect();
-    if !marked.contains(&own) {
-        free_if_gone(held, wallet, own).await;
-    }
-    if marked.is_empty() {
-        return;
-    }
-    tokio::time::sleep(held.0.window).await;
-    match grants::expire(storage, originator, &marked, at).await {
-        Ok(rows) => {
-            for row in rows {
-                held.release(row.pending_id);
-                held.wake(row.pending_id);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(originator = %originator, ids = ?marked, error = %e, "browser gate: the window's end did not delete its rows; the readers hide them and the restart's sweep deletes them");
-        }
-    }
-    for id in marked {
-        free_if_gone(held, wallet, id).await;
-    }
-}
-
-/// Free the place row `id` holds when the row is no longer open nor
-/// abandoned inside its window (answered, or deleted by a reader past its
-/// window).
-async fn free_if_gone(held: &Held, wallet: &WalletState, id: i64) {
-    let Ok(now) = super::owner_door::now() else {
-        return;
-    };
-    if let Ok(row) = grants::pending(wallet.storage(), id, now).await {
-        if row.is_none_or(|r| r.answered_at.is_some()) {
-            held.release(id);
-        }
-    }
-}
-
-/// Delete the open rows `ids` of `originator`, abandoned or not, and wake
-/// every call held on one: the shutdown's withdrawal.
-async fn withdraw(held: &Held, wallet: &WalletState, originator: &str, ids: &[i64]) {
-    match grants::withdraw(wallet.storage(), originator, ids).await {
-        Ok(rows) => {
-            for row in rows {
-                held.release(row.pending_id);
-                held.wake(row.pending_id);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(originator = %originator, ids = ?ids, error = %e, "browser gate: the withdrawn rows were not deleted; the restart's sweep deletes them");
-        }
-    }
-}
 
 /// One power a door asks, as its handler names it from its arguments.
 pub(crate) struct Ask {
@@ -795,7 +454,7 @@ impl Asker {
     async fn wait(&self, waiting: Waiting) -> Result<Answer, AppError> {
         let id = waiting.pending_id;
         let notify = self.held.wait_on(id, &waiting.originator);
-        let mut shut = self.held.0.shut.subscribe();
+        let mut shut = self.held.subscribe();
         loop {
             if *shut.borrow_and_update() {
                 let originator = waiting.originator.clone();
