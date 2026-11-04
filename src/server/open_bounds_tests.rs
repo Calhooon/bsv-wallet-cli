@@ -166,3 +166,68 @@ async fn the_owner_and_the_seed_are_outside_the_bound() {
         assert_eq!(signed.0, 200, "seed level 0 {n}");
     }
 }
+
+/// A call by `method` from `origin` at `path`, no body: as a page reads it.
+async fn by_method(addr: SocketAddr, method: &str, origin: &str, path: &str) -> Read {
+    let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
+    let request = reqwest::Client::new().request(method, at(addr, path));
+    read(request.header("origin", origin).send().await.unwrap()).await
+}
+
+/// The methods a page might call an open door by, `OPTIONS` aside (the CORS
+/// layer answers it as a preflight before the gate).
+const METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "TRACE"];
+
+/// The gate's map of the open doors' methods is the router's (#556): from
+/// a seed-listed originator (admitted before the bound, so the router
+/// answers every call), each open door answers `405` by exactly the
+/// methods the gate's map leaves out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_open_doors_methods_are_the_routers() {
+    let seeded = "http://seeded.example";
+    let (_dir, _wallet, addr, _) = served(&["seeded.example"]).await;
+    for (door, methods) in crate::server::origin_gate::OPEN_DOORS {
+        for method in METHODS {
+            let answered = by_method(addr, method, seeded, door).await;
+            let gate_says = methods.iter().any(|m| m.as_str() == method);
+            assert_eq!(
+                answered.0 != 405,
+                gate_says,
+                "{method} {door}: the router answered {}",
+                answered.0
+            );
+        }
+    }
+}
+
+/// A wrong method at an open door is the router's `405`, neither counted
+/// nor charged (#556): a `GET` at the POST door `getHeaderForHeight` past
+/// the burst, and a `PUT`, `DELETE` and `PATCH` at the GET-and-POST doors
+/// (no open door answers `GET` alone), leave the chain and presence
+/// counters and the probe record where they stood; the calls after them
+/// are answered within the burst, and only they are counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wrong_method_at_an_open_door_is_neither_counted_nor_charged() {
+    let (_dir, wallet, addr, probes) = served(&[]).await;
+    for n in 0..12 {
+        let wrong = by_method(addr, "GET", PAGE, "/getHeaderForHeight").await;
+        assert_eq!((wrong.0, wrong.1.as_deref()), (405, Some(PAGE)), "{n}");
+    }
+    for door in ["/getHeight", "/isAuthenticated", "/waitForAuthentication"] {
+        for method in ["PUT", "DELETE", "PATCH"] {
+            let wrong = by_method(addr, method, PAGE, door).await;
+            assert_eq!(wrong.0, 405, "{method} {door}");
+        }
+    }
+    no_rows(&wallet, &probes, &[("page.example", 0)]).await;
+    let present = by_method(addr, "POST", PAGE, "/isAuthenticated").await;
+    assert_eq!(present.0, 200, "the presence door's minute is whole");
+    for n in 0..10 {
+        let door = ["/getVersion", "/getNetwork"][n % 2];
+        let answered = by_method(addr, "POST", PAGE, door).await;
+        assert_eq!(answered.0, 200, "{n}: the chain burst is whole");
+    }
+    let past = by_method(addr, "POST", PAGE, "/getHeight").await;
+    assert_eq!(past.0, 429, "the eleventh is past the burst");
+    no_rows(&wallet, &probes, &[("page.example", 11)]).await;
+}
