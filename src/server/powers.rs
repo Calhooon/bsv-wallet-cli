@@ -442,7 +442,8 @@ impl FromRequestParts<WalletState> for Asker {
 /// written, within the bound of its `class` (#541): past it, 429
 /// `ERR_RATE_LIMITED` at once, and the call is neither answered nor
 /// counted. An answer is counted in the probe record off the call's path
-/// (#539, [`Probes::note`]): the call never waits on it.
+/// (#539, [`Probes::note`]): the call never waits on it. A door's level-0
+/// powers take this bound once per call, in [`Asker::ask`] (#556).
 pub(crate) fn open(
     admitted: &Admitted,
     probes: &Probes,
@@ -453,6 +454,12 @@ pub(crate) fn open(
 ) -> Result<(), AppError> {
     // #541: the bound is checked here, after the allow-list and before the door
     bounds.check(&admitted.originator, door, class)?;
+    answered_open(admitted, probes, door, power);
+    Ok(())
+}
+
+/// An answer with no row: logged, and counted in the probe record.
+fn answered_open(admitted: &Admitted, probes: &Probes, door: &str, power: Option<&str>) {
     tracing::info!(
         origin = %admitted.origin,
         originator = %admitted.originator,
@@ -461,7 +468,6 @@ pub(crate) fn open(
         "browser gate: open, no row (W15)"
     );
     probes.note(&admitted.originator, door, power);
-    Ok(())
 }
 
 /// A row function's error at a door: the store busy by its type, a revoked
@@ -483,6 +489,11 @@ impl Asker {
     /// `Ok` when every power is live or answered `grant`,
     /// else the refusal the door serves. `reason` is the call's own words
     /// (its `description`), shown beside the prompt, never the owner's.
+    ///
+    /// A level-0 power reads the bound in its place (past it, the 429 at
+    /// once); the call is charged once, and its level-0 powers counted,
+    /// only when every power has admitted it (#556): a later refusal
+    /// leaves the counter where it stood.
     pub(crate) async fn ask(
         &self,
         call: &str,
@@ -496,19 +507,14 @@ impl Asker {
             // The seed admits every door before any power (question 6).
             return Ok(());
         }
+        let mut level_zero = Vec::new();
         for ask in asks {
             let power = match ask.power {
                 Ok(power) => power,
                 Err(Refused::LevelZero) => {
-                    let power = ask.level_zero.as_deref();
-                    open(
-                        admitted,
-                        &self.probes,
-                        &self.bounds,
-                        call,
-                        Class::LevelZero,
-                        power,
-                    )?;
+                    let originator = &admitted.originator;
+                    self.bounds.admits(originator, call, Class::LevelZero)?;
+                    level_zero.push(ask.level_zero);
                     continue;
                 }
                 Err(Refused::AdminOnly(text)) => {
@@ -518,6 +524,14 @@ impl Asker {
                 Err(other) => return Err(AppError::new(ErrorKind::Validation, other.to_string())),
             };
             self.one(admitted, call, reason, &power, ask.usage).await?;
+        }
+        if !level_zero.is_empty() {
+            // #556: the one charge, every power admitted.
+            let originator = &admitted.originator;
+            self.bounds.check(originator, call, Class::LevelZero)?;
+            for power in &level_zero {
+                answered_open(admitted, &self.probes, call, power.as_deref());
+            }
         }
         Ok(())
     }
@@ -683,3 +697,7 @@ fn revoked(admitted: &Admitted, row: &grants::GrantRow, call: &str) -> AppError 
 #[cfg(test)]
 #[path = "spending_tests.rs"]
 mod spending_tests;
+
+#[cfg(test)]
+#[path = "level_zero_tests.rs"]
+mod level_zero_tests;
