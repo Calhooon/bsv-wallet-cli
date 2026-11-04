@@ -170,6 +170,10 @@ pub struct PendingRow {
     pub answered_at: Option<i64>,
     /// The owner's answer, once given.
     pub answer: Option<Answer>,
+    /// Unix seconds of the caller's disconnect while the row waits for
+    /// its page to reconnect (#534); `None` while a call is held on it or
+    /// once it is answered.
+    pub abandoned_at: Option<i64>,
 }
 
 pub(super) type PendingTuple = (
@@ -186,6 +190,7 @@ pub(super) type PendingTuple = (
     i64,
     Option<i64>,
     Option<String>,
+    Option<i64>,
 );
 
 impl PendingRow {
@@ -204,7 +209,15 @@ impl PendingRow {
             first_seen: t.10,
             answered_at: t.11,
             answer: t.12.as_deref().map(Answer::parse).transpose()?,
+            abandoned_at: t.13,
         })
+    }
+
+    /// The end of the row's window while it is abandoned (#534): unix
+    /// seconds, `abandoned_at` + [`super::WINDOW`].
+    #[must_use]
+    pub fn withdrawn_at(&self) -> Option<i64> {
+        self.abandoned_at.map(|at| at.saturating_add(super::WINDOW))
     }
 
     /// The prompt's text: the power asked, in the words every surface
@@ -272,6 +285,14 @@ pub enum Refused {
         answer: Option<Answer>,
         /// Its unix seconds.
         at: i64,
+    },
+    /// The row's caller disconnected and its window is open (#534): the
+    /// owner's answer waits for the page to ask again.
+    Abandoned {
+        /// The row's id.
+        pending_id: i64,
+        /// The window's end, unix seconds.
+        withdrawn_at: i64,
     },
     /// `once` names a row of another kind than spending.
     OnceOnKind {
@@ -395,6 +416,15 @@ impl std::fmt::Display for Refused {
                 answer.map_or("", Answer::as_str),
                 when(*at)
             ),
+            Self::Abandoned {
+                pending_id,
+                withdrawn_at,
+            } => write!(
+                f,
+                "pending request #{pending_id} is waiting for its page to reconnect; answer it \
+                 when the page asks again, or it is withdrawn at {}",
+                when_exact(*withdrawn_at)
+            ),
             Self::OnceOnKind { pending_id, kind } => write!(
                 f,
                 "pending request #{pending_id} asks for a {} power; once answers a spending \
@@ -415,6 +445,17 @@ pub fn when(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0).map_or_else(
         || at.to_string(),
         |t| t.format("%Y-%m-%dT%H:%MZ").to_string(),
+    )
+}
+
+/// Unix seconds to the second (`2026-11-04T19:31:07Z`, UTC), for a time a
+/// few seconds ahead (#534's window); a time outside chrono's range prints
+/// as its number.
+#[must_use]
+pub fn when_exact(at: i64) -> String {
+    chrono::DateTime::from_timestamp(at, 0).map_or_else(
+        || at.to_string(),
+        |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     )
 }
 
@@ -552,6 +593,19 @@ pub struct Pending {
     pub row: PendingRow,
     /// The call joined an open row and wrote nothing.
     pub joined: bool,
+    /// The row was abandoned and the call, inside its window, cleared the
+    /// mark (#534): the page's prompt resumed.
+    pub resumed: bool,
+}
+
+/// A disconnect's rows (#534): the spending rows deleted at once, the
+/// others marked to wait for their page's reconnect.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Abandoned {
+    /// The spending rows deleted, by id.
+    pub deleted: Vec<PendingRow>,
+    /// The rows marked `abandoned_at`, by id.
+    pub marked: Vec<PendingRow>,
 }
 
 /// The owner's reply to a pending row.

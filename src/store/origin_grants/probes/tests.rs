@@ -173,7 +173,7 @@ async fn ensure_makes_the_table_and_the_grants_never_touch_it() {
     revoke(&storage, "page.example", &Reach::Every, NOW + 1)
         .await
         .unwrap();
-    let listed = listing(&storage, true).await.unwrap();
+    let listed = listing(&storage, true, NOW).await.unwrap();
     assert_eq!(listed.grants.len(), 1);
     assert_eq!(
         listed.probes,

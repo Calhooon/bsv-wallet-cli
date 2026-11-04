@@ -89,7 +89,7 @@ fn now() -> i64 {
 
 /// The store's open rows now.
 async fn open(wallet: &WalletState) -> Vec<i64> {
-    grants::listing(wallet.storage(), false)
+    grants::listing(wallet.storage(), false, now())
         .await
         .unwrap()
         .pending
