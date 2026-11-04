@@ -423,3 +423,40 @@ async fn a_place_passed_to_a_row_marked_earlier_ends_with_that_rows_window() {
     );
     assert!(held.kept().is_empty());
 }
+
+/// M16, the race of a resume `abandoned`'s read missed: a second call of
+/// the page on the same power reads no abandoned row (the first call is
+/// still held on it) and takes a place of its own; a planted pause holds it
+/// there while the first call leaves, its place passing to the row as it is
+/// marked; then the second call's open resumes the row, and the row's kept
+/// place is released as the call enters (one place counted, none kept),
+/// never two places held for one prompt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resume_the_read_missed_releases_the_rows_kept_place_as_it_enters() {
+    let (_dir, wallet, addr, held) = window_served(Duration::from_secs(3600)).await;
+    let mut first = raw_listing(addr, PAGE, "one").await;
+    let id = row_of(&until_open(&wallet, 1).await, "page.example");
+    let pause = held.pause_after_read();
+    let second = held_listing(addr, PAGE, "one");
+    pause.reached.notified().await;
+    assert_eq!(held.counts("page.example"), (2, 2), "two calls, two places");
+
+    first.shutdown().await.unwrap();
+    drop(first);
+    until_marked(&wallet, 1).await;
+    assert_eq!(
+        held.kept(),
+        [id],
+        "the first call's place passed to the row"
+    );
+    assert_eq!(held.counts("page.example"), (2, 2));
+    pause.release.notify_one();
+    until_marked(&wallet, 0).await;
+    until_counted(&held, "page.example", (1, 1)).await;
+    assert!(held.kept().is_empty(), "kept {:?}", held.kept());
+    assert_eq!(row_of(&open_rows(&wallet).await, "page.example"), id);
+
+    super::powers_tests::answer(&wallet, id, grants::Answer::Deny).await;
+    assert_eq!(second.await.unwrap().0, 400);
+    settled(&wallet, &held, "page.example").await;
+}

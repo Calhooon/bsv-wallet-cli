@@ -77,7 +77,7 @@ mod spend;
 
 pub use held::Held;
 use held::{detach, withdraw, Waiting};
-use opening::Opening;
+use opening::{At, Opening};
 
 /// At most this many held calls per originator (the key, the hostname).
 pub const PER_ORIGINATOR: usize = 2;
@@ -419,6 +419,7 @@ impl Asker {
                 AppError::new(ErrorKind::PendingLimit, PENDING_LIMIT)
             })?,
         };
+        opening::paused(&self.held, At::Read).await;
         if self.held.is_shut() {
             return Err(AppError::new(ErrorKind::BridgeUnavailable, SHUTTING_DOWN));
         }
@@ -431,7 +432,7 @@ impl Asker {
         let (hand, taken) = oneshot::channel();
         let open = async move {
             let opened = grants::open_or_join(wallet.storage(), &opening.asking(), now).await;
-            opening::paused(&held).await;
+            opening::paused(&held, At::Open).await;
             let entered = opened.map(|pending| {
                 tracing::info!(
                     originator = %pending.row.originator,
