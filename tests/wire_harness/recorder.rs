@@ -233,7 +233,17 @@ fn owner_notes() -> Vec<(String, String)> {
     .chain(probe_notes())
     .chain(surface_notes())
     .chain(bound_notes())
+    .chain(window_notes())
     .collect()
+}
+
+/// The brief reconnect's window's fixture (#534), with its reason.
+fn window_notes() -> Vec<(String, String)> {
+    [
+        ("221-owner.answer.abandoned.json", "#534 (the design's L8, the captain's word of 2026-11-04): POST /origins/answer naming a pending row whose caller disconnected inside its window (the owner step's abandon: the basket [\"wire basket\"] row of back.test opened as a held call opens it, then marked as the disconnect marks it) is refused 409 CONFLICT in the module's words (Refused::Abandoned), naming the window's end; no grant row is written, and the row waits for its page to ask again or for the window's end. The time is the clock's now plus ABANDON_WINDOW, normalized as `withdrawn at <time>`. New; recorded last, so no file before it moves."),
+    ]
+    .map(|(f, n)| (f.to_string(), n.to_string()))
+    .to_vec()
 }
 
 /// The probe record's fixtures (#539), with their reasons.
