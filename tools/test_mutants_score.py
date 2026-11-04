@@ -167,7 +167,7 @@ class Case(unittest.TestCase):
         record = complete_record()
         record["files"]["src/b.rs"] = entry(74, 26, run=RUN_B, sha=SHA_B)
         self.a_night_on_a()
-        self.refused("A carried figure's base is not the last complete run (#462)**: `src/b.rs` names run "
+        self.refused("A carried figure's base is not the last base-setting run (#462)**: `src/b.rs` names run "
                      f"{RUN_B}", plan(["src/a.rs"]), record)
 
     def test_an_incremental_nights_figure_is_never_carried(self):
@@ -187,7 +187,7 @@ class Case(unittest.TestCase):
 
     def test_a_floor_moved_on_an_incremental_night_is_refused(self):
         self.a_night_on_a()
-        self.refused("A floor moves only on a complete run (#462)**: on this incremental night `src/b.rs` is 70 against the last complete run's 75",
+        self.refused("A floor moves only on a complete run (#462)**: on this incremental night `src/b.rs` is 70 against the record's 75",
                      plan(["src/a.rs"]), complete_record(), floors={"src/a.rs": 90, "src/b.rs": 70})
 
     def test_a_floor_moved_on_a_complete_night_is_scored(self):
@@ -215,7 +215,7 @@ class Case(unittest.TestCase):
         record = complete_record()
         del record["mode"]
         self.a_night_on_a()
-        self.refused("No last complete run (#462)", plan(["src/a.rs"]), record)
+        self.refused("No base (#462)", plan(["src/a.rs"]), record)
 
     def test_a_carried_file_keeps_its_verdict_clause(self):
         # #464's review: the written record lacked `verdict`, so committing it
