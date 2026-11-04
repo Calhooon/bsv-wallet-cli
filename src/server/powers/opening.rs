@@ -49,7 +49,7 @@ pub(super) struct Planted(());
 /// The served build's pause: none.
 #[cfg(not(test))]
 pub(super) fn paused(held: &super::Held) -> std::future::Ready<()> {
-    let Planted(()) = held.0.planted;
+    let Planted(()) = held.planted();
     std::future::ready(())
 }
 
@@ -72,8 +72,7 @@ pub(crate) struct Pause {
 #[cfg(test)]
 pub(super) async fn paused(held: &super::Held) {
     let taken = held
-        .0
-        .planted
+        .planted()
         .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -90,8 +89,7 @@ impl super::Held {
     pub(crate) fn pause_after_open(&self) -> Pause {
         let pause = Pause::default();
         *self
-            .0
-            .planted
+            .planted()
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(pause.clone());

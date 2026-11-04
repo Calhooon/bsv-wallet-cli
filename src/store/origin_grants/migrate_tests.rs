@@ -175,18 +175,24 @@ async fn an_l1_store_keeps_its_ceilinged_spending_row_alone_and_logs_the_rest_by
     );
 }
 
+/// Two ensures started together, on `first` and on a second handle on the
+/// file in `dir`, as a second process holds it: what each answered,
+/// sorted, and the second handle.
+async fn together(first: &StorageSqlx, dir: &std::path::Path) -> ([bool; 2], StorageSqlx) {
+    let path = dir.join("wallet.db");
+    let second = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    let (a, b) = tokio::join!(ensure(first), ensure(&second));
+    let mut wrote = [a.unwrap(), b.unwrap()];
+    wrote.sort_unstable();
+    (wrote, second)
+}
+
 #[tokio::test]
 async fn two_ensures_on_one_l1_store_both_answer_and_move_it_once() {
     let l1 = l1_captured(&L1_ROWS).await;
     let first = l1.storage;
-    // A second handle on the file, as a second process holds it.
-    let path = l1.dir.path().join("wallet.db");
-    let second = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    let (wrote, second) = together(&first, l1.dir.path()).await;
 
-    let (a, b) = tokio::join!(ensure(&first), ensure(&second));
-
-    let mut wrote = [a.unwrap(), b.unwrap()];
-    wrote.sort_unstable();
     assert_eq!(wrote, [false, true], "one moved, the other found it moved");
     assert_eq!(l1.markers.named("origin_grants_moved").len(), 1);
     assert_eq!(own_objects(&first).await, new_objects());
@@ -383,19 +389,7 @@ async fn a_withdrawn_requests_id_is_never_given_again() {
 async fn an_l5a_store_gains_ids_never_reused_with_its_rows_carried() {
     let (_dir, storage) = wallet_db().await;
     let (markers, _guard) = Markers::capture();
-    ensure(&storage).await.unwrap();
-    for sql in [
-        "DROP TABLE origin_pending",
-        L5A_PENDING,
-        "CREATE UNIQUE INDEX origin_pending_open ON origin_pending (originator, kind, key) \
-         WHERE answered_at IS NULL AND kind <> 'spending'",
-        "INSERT INTO origin_pending (pending_id, originator, raw_originator, kind, key, usage, \
-         call, first_seen, answered_at, answer) VALUES \
-         (7, 'app.example', 'app.example', 'basket', '[\"todo items\"]', 'listing', \
-          '/listOutputs', 1793697120, 1793697130, 'deny')",
-    ] {
-        sqlx::query(sql).execute(storage.writer()).await.unwrap();
-    }
+    planted(&storage, L5A_PENDING, &[ANSWERED_7]).await;
     assert!(ensure(&storage).await.unwrap(), "the rebuild wrote");
     assert_eq!(own_objects(&storage).await, new_objects());
     let kept = listing(&storage, true, NOW).await.unwrap().pending;
@@ -410,40 +404,51 @@ async fn an_l5a_store_gains_ids_never_reused_with_its_rows_carried() {
     a_second_ensure_writes_nothing(&storage).await;
 }
 
-/// L5b's `origin_pending` as it landed on beta (before #534):
-/// `AUTOINCREMENT`, no `abandoned_at` and no second table `CHECK`.
-const L5B_PENDING: &str = "CREATE TABLE origin_pending (\
-     pending_id INTEGER PRIMARY KEY AUTOINCREMENT, \
-     originator TEXT NOT NULL, raw_originator TEXT NOT NULL, \
-     kind TEXT NOT NULL CHECK (kind IN ('protocol', 'basket', 'certificate', 'spending')), \
-     key TEXT NOT NULL, usage TEXT, call TEXT NOT NULL, reason TEXT, amount INTEGER, \
-     renewal INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL, answered_at INTEGER, \
-     answer TEXT CHECK (answer IN ('grant', 'once', 'deny')), \
-     CHECK ((kind = 'spending') = (amount IS NOT NULL)))";
+/// The pending table's block written in place of the current one, with
+/// its index, and `rows` run after it.
+async fn planted(storage: &StorageSqlx, block: &str, rows: &[&str]) {
+    ensure(storage).await.unwrap();
+    let index = "CREATE UNIQUE INDEX origin_pending_open ON origin_pending (originator, kind, \
+                 key) WHERE answered_at IS NULL AND kind <> 'spending'";
+    for sql in ["DROP TABLE origin_pending", block, index]
+        .into_iter()
+        .chain(rows.iter().copied())
+    {
+        sqlx::query(sql).execute(storage.writer()).await.unwrap();
+    }
+}
+
+/// An answered row of id 7.
+const ANSWERED_7: &str = "INSERT INTO origin_pending (pending_id, originator, raw_originator, \
+     kind, key, usage, call, first_seen, answered_at, answer) VALUES \
+     (7, 'app.example', 'app.example', 'basket', '[\"todo items\"]', 'listing', \
+      '/listOutputs', 1793697120, 1793697130, 'deny')";
 
 /// A store of L5b's shape: every object, `origin_pending` with its ids
 /// never reused but without `abandoned_at`; an answered row (id 7), an open
 /// row (id 8) and a top row deleted (id 9, the sequence past it).
 async fn l5b_store() -> (tempfile::TempDir, StorageSqlx) {
     let (dir, storage) = wallet_db().await;
-    ensure(&storage).await.unwrap();
-    for sql in [
-        "DROP TABLE origin_pending",
-        L5B_PENDING,
-        "CREATE UNIQUE INDEX origin_pending_open ON origin_pending (originator, kind, key) \
-         WHERE answered_at IS NULL AND kind <> 'spending'",
-        "INSERT INTO origin_pending (pending_id, originator, raw_originator, kind, key, usage, \
-         call, first_seen, answered_at, answer) VALUES \
-         (7, 'app.example', 'app.example', 'basket', '[\"todo items\"]', 'listing', \
-          '/listOutputs', 1793697120, 1793697130, 'deny'), \
+    // L5b's block as it landed on beta (before #534): L5a's with
+    // `AUTOINCREMENT`, no `abandoned_at` and no second table `CHECK`.
+    let l5b = L5A_PENDING.replacen(
+        "pending_id INTEGER PRIMARY KEY,",
+        "pending_id INTEGER PRIMARY KEY AUTOINCREMENT,",
+        1,
+    );
+    let open = "INSERT INTO origin_pending (pending_id, originator, raw_originator, kind, key, \
+         usage, call, first_seen) VALUES \
          (8, 'new.example', 'new.example:5173', 'basket', '[\"todo items\"]', 'listing', \
-          '/listOutputs', 1793697140, NULL, NULL), \
+          '/listOutputs', 1793697140), \
          (9, 'gone.example', 'gone.example', 'basket', '[\"todo items\"]', 'listing', \
-          '/listOutputs', 1793697150, NULL, NULL)",
+          '/listOutputs', 1793697150)";
+    let rows = [
+        ANSWERED_7,
+        open,
         "DELETE FROM origin_pending WHERE pending_id = 9",
-    ] {
-        sqlx::query(sql).execute(storage.writer()).await.unwrap();
-    }
+    ];
+    planted(&storage, &l5b, &rows).await;
+    assert!(pending_sql(&storage).await.contains("AUTOINCREMENT"));
     (dir, storage)
 }
 
@@ -474,14 +479,15 @@ async fn an_l5b_store_gains_the_window_once_with_its_rows_and_its_sequence_carri
         pending_sql(&fresh).await,
         "a migrated store holds a fresh store's table and CHECK"
     );
-    assert_eq!(own_objects(&storage).await, new_objects());
-    let kept = listing(&storage, true, NOW).await.unwrap().pending;
-    assert_eq!(
-        kept.iter()
-            .map(|r| (r.pending_id, r.answer, r.abandoned_at))
-            .collect::<Vec<_>>(),
-        [(7, Some(Answer::Deny), None), (8, None, None)]
-    );
+    let carried: Vec<_> = listing(&storage, true, NOW)
+        .await
+        .unwrap()
+        .pending
+        .into_iter()
+        .map(|r| (r.pending_id, r.answer, r.abandoned_at))
+        .collect();
+    assert_eq!(carried, [(7, Some(Answer::Deny), None), (8, None, None)]);
+    assert_eq!(own_objects(&storage).await, new_objects(), "the index too");
     assert!(
         opened(&storage, "evil.example", "browser gate").await > 9,
         "the deleted top id 9 is given again"
@@ -504,18 +510,9 @@ async fn an_l5b_store_gains_the_window_once_with_its_rows_and_its_sequence_carri
 async fn two_ensures_on_one_l5b_store_rebuild_it_once() {
     let (dir, first) = l5b_store().await;
     let (markers, _guard) = Markers::capture();
-    let path = dir.path().join("wallet.db");
-    let second = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
+    let (wrote, second) = together(&first, dir.path()).await;
 
-    let (a, b) = tokio::join!(ensure(&first), ensure(&second));
-
-    let mut wrote = [a.unwrap(), b.unwrap()];
-    wrote.sort_unstable();
-    assert_eq!(
-        wrote,
-        [false, true],
-        "one rebuilt, the other found it rebuilt"
-    );
+    assert_eq!(wrote, [false, true], "one rebuilt, the other found it");
     assert_eq!(markers.named("origin_grants_windowed").len(), 1);
     assert_eq!(count(&first, "origin_pending").await, 2, "carried once");
     assert!(pending_sql(&first).await.contains("abandoned_at"));
@@ -560,15 +557,7 @@ async fn the_l5b_rebuild_leaves_everything_else_byte_identical() {
 #[tokio::test]
 async fn an_l5a_store_reaches_the_window_in_one_rebuild() {
     let (_dir, storage) = wallet_db().await;
-    ensure(&storage).await.unwrap();
-    for sql in [
-        "DROP TABLE origin_pending",
-        L5A_PENDING,
-        "CREATE UNIQUE INDEX origin_pending_open ON origin_pending (originator, kind, key) \
-         WHERE answered_at IS NULL AND kind <> 'spending'",
-    ] {
-        sqlx::query(sql).execute(storage.writer()).await.unwrap();
-    }
+    planted(&storage, L5A_PENDING, &[]).await;
     assert!(ensure(&storage).await.unwrap());
     assert!(pending_sql(&storage).await.contains("abandoned_at"));
     a_second_ensure_writes_nothing(&storage).await;

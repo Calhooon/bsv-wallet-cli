@@ -81,13 +81,7 @@ async fn a_pages_open_doors_and_level_zero_are_counted_never_granted() {
             page("getVersion", None, 2)
         ]
     );
-    let listed = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let listed = crate::server::powers_tests::listed(wallet.storage(), true).await;
     assert!(listed.grants.is_empty() && listed.pending.is_empty());
     // The record is never read as a grant: a level-1 power stands unasked.
     let power = Power::protocol(false, 1, "wire probe", None).unwrap();

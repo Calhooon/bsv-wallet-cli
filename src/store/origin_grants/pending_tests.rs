@@ -84,6 +84,24 @@ async fn the_owners_listing_holds_the_open_rows_and_the_last_answered() {
     assert_eq!(none.pending, std::slice::from_ref(&open));
 }
 
+/// The disconnect's two lines by name: the deleted spending row's
+/// `abandoned` and the marked rows' `disconnected` with the window's end.
+fn logged_by_name(markers: &Markers, at: i64) {
+    let lines = markers.named("origin_grants_abandoned");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].message.as_deref(), Some("browser gate: abandoned"));
+    assert_eq!(lines[0].fields["originator"], "gone.example");
+    assert!(lines[0].fields["rows"].contains("spending []"));
+    let lines = markers.named("origin_grants_disconnected");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0].message.as_deref(),
+        Some("browser gate: disconnected")
+    );
+    assert!(lines[0].fields["rows"].contains(r#"basket ["todo items"]"#));
+    assert_eq!(lines[0].fields["until"], (at + WINDOW).to_string());
+}
+
 /// The disconnect (W4 (a), #534): among its snapshot, the open spending
 /// rows deleted at once, every other open row marked at the disconnect's
 /// time; an answered row, a row the snapshot does not name and another
@@ -142,19 +160,7 @@ async fn abandon_deletes_its_listed_spending_rows_marks_the_others_and_keeps_the
         0,
         "no grant written"
     );
-    let lines = markers.named("origin_grants_abandoned");
-    assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0].message.as_deref(), Some("browser gate: abandoned"));
-    assert_eq!(lines[0].fields["originator"], "gone.example");
-    assert!(lines[0].fields["rows"].contains("spending []"));
-    let lines = markers.named("origin_grants_disconnected");
-    assert_eq!(lines.len(), 1);
-    assert_eq!(
-        lines[0].message.as_deref(),
-        Some("browser gate: disconnected")
-    );
-    assert!(lines[0].fields["rows"].contains(r#"basket ["todo items"]"#));
-    assert_eq!(lines[0].fields["until"], (NOW + 5 + WINDOW).to_string());
+    logged_by_name(&markers, NOW + 5);
     // A second disconnect keeps the earlier mark and marks nothing.
     let again = abandon(&storage, "gone.example", &ids, NOW + 7)
         .await

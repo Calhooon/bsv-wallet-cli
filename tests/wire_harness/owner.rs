@@ -135,6 +135,40 @@ async fn answer_open(wallet: &WalletState, held: &Held, answer: Answer, amount: 
     }
 }
 
+/// A row its caller left (#534): the power's pending row opened as a held
+/// call opens it, then marked as the disconnect marks it.
+async fn abandon(
+    wallet: &WalletState,
+    originator: &str,
+    power: (&str, &str),
+    usage: &str,
+    call: &str,
+) {
+    let power = Power::named(Kind::named(power.0).unwrap(), Some(power.1)).unwrap();
+    let asking = Asking {
+        originator,
+        power: &power,
+        usage: Some(usage),
+        call,
+        reason: None,
+        amount: None,
+        renewal: false,
+    };
+    let at = now();
+    let opened = grants::open_or_join(wallet.storage(), &asking, at)
+        .await
+        .unwrap();
+    let id = opened.row.pending_id;
+    let done = grants::abandon(wallet.storage(), originator, &[id], at)
+        .await
+        .unwrap();
+    assert_eq!(
+        done.marked.len(),
+        1,
+        "the owner's step: row #{id} not marked"
+    );
+}
+
 impl Owner {
     /// The rows written before the request.
     pub(crate) async fn before(&self, wallet: &WalletState) {
@@ -174,31 +208,7 @@ impl Owner {
                     key,
                     usage,
                     call,
-                } => {
-                    let power = Power::named(Kind::named(kind).unwrap(), Some(key)).unwrap();
-                    let asking = Asking {
-                        originator,
-                        power: &power,
-                        usage: Some(usage),
-                        call,
-                        reason: None,
-                        amount: None,
-                        renewal: false,
-                    };
-                    let at = now();
-                    let opened = grants::open_or_join(wallet.storage(), &asking, at)
-                        .await
-                        .unwrap();
-                    let id = opened.row.pending_id;
-                    let done = grants::abandon(wallet.storage(), originator, &[id], at)
-                        .await
-                        .unwrap();
-                    assert_eq!(
-                        done.marked.len(),
-                        1,
-                        "the owner's step: row #{id} not marked"
-                    );
-                }
+                } => abandon(wallet, originator, (kind, key), usage, call).await,
             }
         }
     }
