@@ -165,6 +165,19 @@ fn the_pending_lines_are_section_fours_with_their_seen_time() {
     let line = pending_line(&denied, "x");
     assert!(line.starts_with("answered  #7"), "{line}");
     assert!(line.ends_with("  deny at 2026-11-03T09:13Z"), "{line}");
+    // #534: a row waiting for its page to reconnect says so, to the second.
+    let abandoned = PendingRow {
+        abandoned_at: Some(DAY + 86_400 + 33_180),
+        ..asked(9, "back.example", &power, Some("listing"), "/listOutputs")
+    };
+    let line = pending_line(&abandoned, "x");
+    assert!(line.starts_with("pending  #9"), "{line}");
+    assert!(
+        line.ends_with(
+            "  caller disconnected, withdrawn at 2026-11-03T09:13:10Z unless the page asks again"
+        ),
+        "{line}"
+    );
 }
 
 #[test]
