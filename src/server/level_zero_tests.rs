@@ -48,13 +48,7 @@ async fn nine_spent(asker: &Asker) {
 /// The level-0 answers counted in the probe record for the page.
 async fn counted(asker: &Asker) -> i64 {
     asker.probes.settled().await;
-    let all = grants::listing(
-        asker.wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let all = crate::server::powers_tests::listed(asker.wallet.storage(), true).await;
     all.probes
         .iter()
         .filter(|r| r.originator == "page.example")
