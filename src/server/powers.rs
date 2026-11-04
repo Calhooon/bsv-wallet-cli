@@ -43,6 +43,10 @@
 //! guard ([`Waiting`]) takes a snapshot of the originator's open rows under
 //! [`Held`]'s mutex and deletes them (`origin_grants::abandon`), answering
 //! every other call held on them 400 `Permission denied.` (W4 (a)). The
+//! row's open and the guard's entry run in a task of their own, which
+//! hands the armed guard to the call (#552): a caller gone during the
+//! open's commit drops the guard there, so no committed row is left
+//! without one. The
 //! held calls are capped (W14): at most [`PER_ORIGINATOR`] per originator
 //! and [`IN_ALL`] in all; past either, 429 `ERR_PERMISSION_PENDING_LIMIT`
 //! at once.
@@ -54,7 +58,8 @@ use std::time::Duration;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use bsv_sdk::wallet::{Counterparty, Protocol, SecurityLevel};
-use tokio::sync::{watch, Notify};
+use tokio::sync::{oneshot, watch, Notify};
+use tracing::Instrument;
 
 use super::error::{AppError, Kind as ErrorKind};
 use super::handlers::WalletState;
@@ -279,11 +284,33 @@ struct Waiting {
     wallet: WalletState,
     originator: String,
     pending_id: i64,
+    notify: Arc<Notify>,
     armed: bool,
     _place: Place,
 }
 
 impl Waiting {
+    /// The armed guard of a call on `pending_id`, the row entered in
+    /// [`Held`]'s map as it is made: from here a drop finds its id there.
+    fn enter(
+        held: Held,
+        wallet: WalletState,
+        originator: String,
+        pending_id: i64,
+        place: Place,
+    ) -> Self {
+        let notify = held.wait_on(pending_id, &originator);
+        Self {
+            held,
+            wallet,
+            originator,
+            pending_id,
+            notify,
+            armed: true,
+            _place: place,
+        }
+    }
+
     fn answered(mut self) {
         self.armed = false;
     }
@@ -320,6 +347,43 @@ async fn withdraw(held: &Held, wallet: &WalletState, originator: &str, ids: &[i6
         }
         Err(e) => {
             tracing::warn!(originator = %originator, ids = ?ids, error = %e, "browser gate: the withdrawn rows were not deleted; the restart's sweep deletes them");
+        }
+    }
+}
+
+/// A call's [`Asking`], owned by the task that opens its row (#552).
+struct Opening {
+    originator: String,
+    power: Power,
+    usage: Option<String>,
+    call: String,
+    reason: Option<String>,
+    amount: Option<i64>,
+    renewal: bool,
+}
+
+impl Opening {
+    fn of(asking: &Asking<'_>) -> Self {
+        Self {
+            originator: asking.originator.to_string(),
+            power: asking.power.clone(),
+            usage: asking.usage.map(str::to_string),
+            call: asking.call.to_string(),
+            reason: asking.reason.map(str::to_string),
+            amount: asking.amount,
+            renewal: asking.renewal,
+        }
+    }
+
+    fn asking(&self) -> Asking<'_> {
+        Asking {
+            originator: &self.originator,
+            power: &self.power,
+            usage: self.usage.as_deref(),
+            call: &self.call,
+            reason: self.reason.as_deref(),
+            amount: self.amount,
+            renewal: self.renewal,
         }
     }
 }
@@ -633,31 +697,38 @@ impl Asker {
         if self.held.is_shut() {
             return Err(AppError::new(ErrorKind::BridgeUnavailable, SHUTTING_DOWN));
         }
-        let storage = self.wallet.storage();
-        let pending = grants::open_or_join(storage, asking, now)
-            .await
-            .map_err(|e| refused(&e))?;
-        #[cfg(test)]
-        self.held.paused().await;
-        let id = pending.row.pending_id;
-        tracing::info!(
-            originator = %pending.row.originator,
-            kind = pending.row.kind.as_str(),
-            key = %pending.row.key,
-            usage = ?pending.row.usage,
-            call = asking.call,
-            pending_id = id,
-            joined = pending.joined,
-            "browser gate: pending"
-        );
-        let waiting = Waiting {
-            held: self.held.clone(),
-            wallet: self.wallet.clone(),
-            originator,
-            pending_id: id,
-            armed: true,
-            _place: place,
+        // #552: the open's commit and the guard's entry run in one task the
+        // caller's drop does not cut; the armed guard is handed over the
+        // channel, and a caller gone drops it there (the disconnect's deny).
+        let opening = Opening::of(asking);
+        let (held, wallet) = (self.held.clone(), self.wallet.clone());
+        let (hand, taken) = oneshot::channel();
+        let open = async move {
+            let opened = grants::open_or_join(wallet.storage(), &opening.asking(), now).await;
+            #[cfg(test)]
+            held.paused().await;
+            let entered = opened.map(|pending| {
+                tracing::info!(
+                    originator = %pending.row.originator,
+                    kind = pending.row.kind.as_str(),
+                    key = %pending.row.key,
+                    usage = ?pending.row.usage,
+                    call = opening.call,
+                    pending_id = pending.row.pending_id,
+                    joined = pending.joined,
+                    "browser gate: pending"
+                );
+                Waiting::enter(held, wallet, originator, pending.row.pending_id, place)
+            });
+            drop(hand.send(entered));
         };
+        tokio::spawn(open.in_current_span());
+        let waiting = taken
+            .await
+            .map_err(|_| {
+                AppError::new(ErrorKind::Internal, "origin grants: the open's task ended")
+            })?
+            .map_err(|e| refused(&e))?;
         self.wait(waiting).await
     }
 
@@ -666,7 +737,7 @@ impl Asker {
     /// [`Notify`].
     async fn wait(&self, waiting: Waiting) -> Result<Answer, AppError> {
         let id = waiting.pending_id;
-        let notify = self.held.wait_on(id, &waiting.originator);
+        let notify = waiting.notify.clone();
         let mut shut = self.held.0.shut.subscribe();
         loop {
             if *shut.borrow_and_update() {
