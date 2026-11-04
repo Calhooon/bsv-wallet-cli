@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use bsv_wallet_cli::store::origin_grants::{
-    self as grants, expired, month_of, probes, when, Answer, GrantRow, Granting, Kind, PendingRow,
-    Power, ProbeRow, Reach, Refused, Reply, Shown,
+    self as grants, probes, when, Answer, GrantShown, Granting, Kind, PendingRow, Power, ProbeRow,
+    Reach, Refused, Reply, Shown,
 };
 
 use crate::context::WalletContext;
@@ -166,40 +166,44 @@ fn now() -> Result<i64> {
     )?)
 }
 
-/// One grant row's line (section (4)): `granted`, `expired` or
-/// `revoked`, the kind and the key; a spending row with its ceiling and
-/// the month's tally.
-fn grant_line(g: &GrantRow, spent: Option<i64>, now: i64) -> String {
-    let state = if g.revoked_at.is_some() {
-        "revoked"
-    } else if expired(g.expiry, now) {
-        "expired"
-    } else {
-        "granted"
-    };
-    let head = format!(
-        "{state}  {}  {:<11}  {}",
-        g.originator,
-        g.kind.as_str(),
-        g.key
+/// One grant row's line (section (4)), from its one reading (#533): the
+/// state (`granted`, `expired` or `revoked`), the kind and the key; a
+/// spending row's ceiling and the month's tally, `at the ceiling` once
+/// the tally has reached it; the grant's time and its expiry; the revoke's
+/// time on a revoked row.
+fn grant_line(g: &GrantShown) -> String {
+    let r = &g.row;
+    let mut line = format!(
+        "{}  {}  {:<11}  {}",
+        g.state.as_str(),
+        r.originator,
+        r.kind.as_str(),
+        r.key
     );
-    if let Some(at) = g.revoked_at {
-        return format!("{head}  at {}", when(at));
+    if let (Some(month), Some(spent)) = (&g.month, g.spent_this_month) {
+        let ceiling = r
+            .amount
+            .map_or_else(|| "no ceiling".to_string(), |a| format!("{a}/month"));
+        let reached = if g.ceiling_reached == Some(true) {
+            ", at the ceiling"
+        } else {
+            ""
+        };
+        line.push_str(&format!("  {ceiling} ({spent} spent {month}{reached})"));
     }
-    if g.kind == Kind::Spending {
-        let month = month_of(now).unwrap_or_default();
-        return format!(
-            "{head}  {}/month ({} spent {month})",
-            g.amount.unwrap_or(0),
-            spent.unwrap_or(0)
-        );
-    }
-    let expires = if g.expiry == 0 {
+    let expires = if r.expiry == 0 {
         "never".to_string()
     } else {
-        when(g.expiry)
+        when(r.expiry)
     };
-    format!("{head}  since {}  expires {expires}", when(g.granted_at))
+    line.push_str(&format!(
+        "  since {}  expires {expires}",
+        when(r.granted_at)
+    ));
+    if let Some(at) = r.revoked_at {
+        line.push_str(&format!("  revoked at {}", when(at)));
+    }
+    line
 }
 
 /// One pending row's line (section (4)): `pending` while open, `answered`
@@ -238,13 +242,13 @@ fn pending_line(p: &PendingRow, asked: &str) -> String {
 }
 
 /// Print `shown`: its JSON, or one line a row.
-fn print(shown: &Shown, json: bool, now: i64) -> Result<()> {
+fn print(shown: &Shown, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&shown.json())?);
         return Ok(());
     }
-    for (g, spent) in &shown.grants {
-        println!("{}", grant_line(g, *spent, now));
+    for g in &shown.grants {
+        println!("{}", grant_line(g));
     }
     for (p, asked) in &shown.pending {
         println!("{}", pending_line(p, asked));
@@ -287,7 +291,7 @@ pub async fn list(ctx: &WalletContext, all: bool) -> Result<()> {
     let now = now()?;
     let rows = grants::listing(storage, all).await?;
     let shown = Shown::listed(storage, rows, now).await?;
-    print(&shown, ctx.json_output, now)
+    print(&shown, ctx.json_output)
 }
 
 /// `bsv-wallet origin-grant`: a direct grant of one power, or the answer
@@ -335,7 +339,7 @@ pub async fn grant(ctx: &WalletContext, asked: &Grant) -> Result<()> {
         }
     };
     let shown = Shown::of(storage, rows, pending, now).await?;
-    print(&shown, ctx.json_output, now)
+    print(&shown, ctx.json_output)
 }
 
 /// The module's refusal of a spending grant without its amount, in the
@@ -363,7 +367,7 @@ pub async fn deny(ctx: &WalletContext, pending_id: i64) -> Result<()> {
     };
     let answered = grants::answer(storage, pending_id, &reply, now).await?;
     let shown = Shown::of(storage, vec![], vec![answered.pending], now).await?;
-    print(&shown, ctx.json_output, now)
+    print(&shown, ctx.json_output)
 }
 
 /// `bsv-wallet origin-revoke <originator> [--kind KIND [--key KEY]]`:
@@ -398,7 +402,7 @@ pub async fn revoke(ctx: &WalletContext, originator: &str, reach: &Reach) -> Res
         );
     }
     let shown = Shown::of(storage, rows, vec![], now).await?;
-    print(&shown, ctx.json_output, now)
+    print(&shown, ctx.json_output)
 }
 
 #[cfg(test)]

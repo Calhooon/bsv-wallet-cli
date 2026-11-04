@@ -1,9 +1,12 @@
-//! The rows as the owner reads them (section (4)): each grant row with the
-//! month's tally of a spending row, the pending rows with their prompt's
-//! text, and their JSON in the section's keys and order, times in unix
-//! seconds as the rows hold them. `bsv-wallet origins --json` prints it
-//! and the owner's door (`GET /origins`) answers it, so the two places
-//! read one shape. A listing carries the probe record too (#539,
+//! The rows as the owner reads them (section (4)): each grant row read once
+//! at `now` ([`GrantShown`]: its state, and a spending row's ceiling, the
+//! month's tally and whether the tally has reached the ceiling), the
+//! pending rows with their prompt's text, and their JSON in the section's
+//! keys and order, times in unix seconds as the rows hold them.
+//! `bsv-wallet origins` prints it (text and `--json`), the owner's door
+//! (`GET /origins`, and the MCP's `list_origins` through it) and the
+//! inspector (`GET /api/origins`) answer it, so every place reads one
+//! reading (#533). A listing carries the probe record too (#539,
 //! `probes`); the answer to a grant, a deny or a revoke does not.
 
 use anyhow::Result;
@@ -11,16 +14,100 @@ use bsv_wallet_toolbox::StorageSqlx;
 use serde::Serialize;
 
 use super::{
-    lookup, month_tally, Answer, GrantRow, Kind, Listing, PendingRow, Power, ProbeRow, Standing,
+    expired, lookup, month_of, month_tally, Answer, GrantRow, Kind, Listing, PendingRow, Power,
+    ProbeRow, Standing,
 };
 
-/// Rows to show: grant rows, each spending row with the month's tally,
-/// and pending rows, each with its prompt's text.
+/// A grant row's state at a time, the word every place prints (#533):
+/// `revoked` once stamped, else `expired` past its expiry ([`expired`]),
+/// else `granted`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantState {
+    /// Live: the row admits its power.
+    Granted,
+    /// Past its expiry and not revoked: a call is held as a renewal.
+    Expired,
+    /// Stamped revoked: a call is refused.
+    Revoked,
+}
+
+impl GrantState {
+    /// The state of `row` at `now`.
+    #[must_use]
+    pub fn of(row: &GrantRow, now: i64) -> Self {
+        if row.revoked_at.is_some() {
+            Self::Revoked
+        } else if expired(row.expiry, now) {
+            Self::Expired
+        } else {
+            Self::Granted
+        }
+    }
+
+    /// The word: `granted`, `expired` or `revoked`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Granted => "granted",
+            Self::Expired => "expired",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+/// A grant row as every place reads it (#533), computed once from the row
+/// and `now`: its state, and for a `spending` row the month, the
+/// satoshis its originator spent in it and whether that tally has reached
+/// the row's ceiling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantShown {
+    /// The row as the store holds it.
+    pub row: GrantRow,
+    /// [`GrantState::of`] the row at `now`.
+    pub state: GrantState,
+    /// `spending` alone: the UTC month of `now`, `YYYY-MM` ([`month_of`]).
+    pub month: Option<String>,
+    /// `spending` alone: the month's tally ([`month_tally`]).
+    pub spent_this_month: Option<i64>,
+    /// `spending` alone: the tally is at or past the ceiling, so the gate
+    /// admits no further spend of a satoshi this month (it admits a call
+    /// when the tally plus its amount is at most the ceiling); `false`
+    /// for a row with no ceiling.
+    pub ceiling_reached: Option<bool>,
+}
+
+impl GrantShown {
+    /// `row` read at `now`, with `spent`, the month's tally of a spending
+    /// row (ignored for another kind).
+    ///
+    /// # Errors
+    ///
+    /// A `now` outside chrono's range.
+    pub fn read(row: GrantRow, spent: Option<i64>, now: i64) -> Result<Self> {
+        let state = GrantState::of(&row, now);
+        let (month, spent_this_month, ceiling_reached) = if row.kind == Kind::Spending {
+            let spent = spent.unwrap_or(0);
+            let reached = row.amount.is_some_and(|ceiling| spent >= ceiling);
+            (Some(month_of(now)?), Some(spent), Some(reached))
+        } else {
+            (None, None, None)
+        };
+        Ok(Self {
+            row,
+            state,
+            month,
+            spent_this_month,
+            ceiling_reached,
+        })
+    }
+}
+
+/// Rows to show: grant rows, each read at a time ([`GrantShown`]), and
+/// pending rows, each with its prompt's text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Shown {
-    /// Each grant row, with the satoshis its originator spent this UTC
-    /// month when the row is a `spending` row (`None` for another kind).
-    pub grants: Vec<(GrantRow, Option<i64>)>,
+    /// Each grant row, read once at the listing's `now`.
+    pub grants: Vec<GrantShown>,
     /// The pending rows, each with [`PendingRow::asked`]'s text.
     pub pending: Vec<(PendingRow, String)>,
     /// The probe record's rows, on a listing alone (#539).
@@ -28,8 +115,8 @@ pub struct Shown {
 }
 
 impl Shown {
-    /// `rows` with the month of `now`'s tally read for each spending row,
-    /// and `pending` with its prompt's text (a spending renewal's with the
+    /// `rows` each read at `now` ([`GrantShown::read`], the month of
+    /// `now`'s tally read for each spending row), and `pending` with its prompt's text (a spending renewal's with the
     /// originator's ceiling and tally).
     ///
     /// # Errors
@@ -47,7 +134,7 @@ impl Shown {
                 Kind::Spending => Some(month_tally(storage, &g.originator, now).await?),
                 _ => None,
             };
-            grants.push((g, spent));
+            grants.push(GrantShown::read(g, spent, now)?);
         }
         let mut asked = Vec::with_capacity(pending.len());
         for p in pending {
@@ -83,16 +170,21 @@ impl Shown {
     /// `"probes": [...]` on a listing.
     #[must_use]
     pub fn json(&self) -> ShownJson<'_> {
-        let grants = self.grants.iter().map(|(g, spent)| GrantJson {
-            originator: &g.originator,
-            raw_originator: &g.raw_originator,
-            kind: g.kind.as_str(),
-            key: &g.key,
-            amount: g.amount,
-            spent_this_month: *spent,
-            granted_at: g.granted_at,
-            expiry: g.expiry,
-            revoked_at: g.revoked_at,
+        let grants = self.grants.iter().map(|shown| {
+            let g = &shown.row;
+            GrantJson {
+                originator: &g.originator,
+                raw_originator: &g.raw_originator,
+                kind: g.kind.as_str(),
+                key: &g.key,
+                state: shown.state.as_str(),
+                amount: g.amount,
+                spent_this_month: shown.spent_this_month,
+                ceiling_reached: shown.ceiling_reached,
+                granted_at: g.granted_at,
+                expiry: g.expiry,
+                revoked_at: g.revoked_at,
+            }
         });
         let pending = self.pending.iter().map(|(p, asked)| PendingJson {
             pending_id: p.pending_id,
@@ -155,8 +247,10 @@ struct GrantJson<'a> {
     raw_originator: &'a str,
     kind: &'a str,
     key: &'a str,
+    state: &'a str,
     amount: Option<i64>,
     spent_this_month: Option<i64>,
+    ceiling_reached: Option<bool>,
     granted_at: i64,
     expiry: i64,
     revoked_at: Option<i64>,

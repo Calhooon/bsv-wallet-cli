@@ -941,18 +941,23 @@ function renderOriginsView() {
         ? `<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'once')">Grant once</button>`
         : ''}<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'deny')">Deny</button></td>
     </tr>`).join('');
-  const grantRows = (o.grants || []).map(g => `<tr data-originator="${esc(g.originator)}" data-kind="${esc(g.kind)}" data-key="${esc(g.key)}">
+  // Each grant row as the store's one reading gives it (#533): the state
+  // word, the ceiling, this month's spend and whether it has reached the
+  // ceiling are the JSON's fields, never computed here.
+  const grantRows = (o.grants || []).map(g => `<tr data-originator="${esc(g.originator)}" data-kind="${esc(g.kind)}" data-key="${esc(g.key)}" data-state="${esc(g.state)}">
       <td>${esc(g.originator)}</td>
       <td>${esc(g.kind)}</td>
       <td>${esc(g.key)}</td>
-      <td class="number">${g.kind === 'spending'
-        ? (g.amount === null ? 'no ceiling' : esc(g.amount.toLocaleString()) + '/month') + ` (${esc((g.spentThisMonth ?? 0).toLocaleString())} spent)`
-        : ''}</td>
+      <td class="origin-state">${esc(g.state)}</td>
+      <td class="number">${g.spentThisMonth === null
+        ? ''
+        : (g.amount === null ? 'no ceiling' : esc(g.amount.toLocaleString()) + '/month')
+          + ` (${esc(g.spentThisMonth.toLocaleString())} spent this month${g.ceilingReached ? ', at the ceiling' : ''})`}</td>
       <td>${esc(when(g.grantedAt))}</td>
-      <td>${g.expiry ? esc(when(g.expiry)) : 'never'}</td>
-      <td>${g.revokedAt === null
-        ? `<button class="origin-btn" onclick="revokeOrigin(this.closest('tr').dataset.originator, this.closest('tr').dataset.kind, this.closest('tr').dataset.key)">Revoke</button>`
-        : 'revoked ' + esc(when(g.revokedAt))}</td>
+      <td>${g.expiry === 0 ? 'never' : esc(when(g.expiry))}</td>
+      <td>${g.state === 'revoked'
+        ? 'revoked ' + esc(when(g.revokedAt))
+        : `<button class="origin-btn" onclick="revokeOrigin(this.closest('tr').dataset.originator, this.closest('tr').dataset.kind, this.closest('tr').dataset.key)">Revoke</button>`}</td>
     </tr>`).join('');
   // The probe record (#539): the answers given with no row, never a grant.
   const probeRows = probes.map(p => `<tr data-originator="${esc(p.originator)}" data-door="${esc(p.door)}">
@@ -983,7 +988,7 @@ function renderOriginsView() {
       ${(o.grants || []).length === 0
         ? '<div class="empty-state" style="padding:20px"><div class="msg">No grant rows</div></div>'
         : `<table class="data-table" id="originsGrants">
-            <thead><tr><th>originator</th><th>kind</th><th>key</th><th>ceiling</th><th>granted at</th><th>expires</th><th></th></tr></thead>
+            <thead><tr><th>originator</th><th>kind</th><th>key</th><th>state</th><th>ceiling</th><th>granted at</th><th>expires</th><th></th></tr></thead>
             <tbody>${grantRows}</tbody>
           </table>`}
       <h3>Probes</h3>
