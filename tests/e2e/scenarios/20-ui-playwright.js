@@ -203,7 +203,12 @@ module.exports = {
           rowText.includes('basket') && rowText.includes('list the basket "browser gate"'),
           `the pending row shows its originator with its port, its kind, the power it asks and its call, got '${rowText}'`);
         await row.locator('button', { hasText: /^Grant$/ }).click();
-        await page.locator('#originsGrants tr[data-originator="seeded.example"]').waitFor({ timeout: 5000 });
+        const grantRow = page.locator('#originsGrants tr[data-originator="seeded.example"]');
+        await grantRow.waitFor({ timeout: 5000 });
+        // #533: the table prints the state word the JSON carries, never its own.
+        const state = await grantRow.locator('td.origin-state').textContent();
+        assert(state === 'granted' && (await grantRow.getAttribute('data-state')) === 'granted',
+          `the grant row reads its state from /api/origins, got '${state}'`);
         browserChecks++;
       } finally {
         await browser.close();
