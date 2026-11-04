@@ -72,6 +72,12 @@ pub const PER_ORIGINATOR: usize = 2;
 pub const IN_ALL: usize = 4;
 /// How often a held call reads its row.
 pub const READ_EVERY: Duration = Duration::from_millis(250);
+/// The brief reconnect's window in seconds (#534, the design's W19): a
+/// disconnected page's prompt waits this long for the page to ask again.
+/// The module's constant, never a page's or a setting's.
+pub const ABANDON_WINDOW_SECS: i64 = 10;
+/// [`ABANDON_WINDOW_SECS`] as a duration.
+pub const ABANDON_WINDOW: Duration = Duration::from_secs(ABANDON_WINDOW_SECS.unsigned_abs());
 
 /// The reference's per-request denial (`denyPermission`,
 /// `WalletPermissionsManager.ts:1199`): the owner's deny, or the row gone.
@@ -274,7 +280,16 @@ impl Drop for Waiting {
 /// Delete the open rows `ids` of `originator` and wake every call held on
 /// one: the disconnect's deny and the shutdown's.
 async fn withdraw(held: &Held, wallet: &WalletState, originator: &str, ids: &[i64]) {
-    match grants::abandon(wallet.storage(), originator, ids).await {
+    let storage = wallet.storage();
+    let deleted = async {
+        let now = super::owner_door::now()?;
+        let done = grants::abandon(storage, originator, ids, now).await?;
+        // The marked rows end at once until the window's timer runs.
+        let marked: Vec<i64> = done.marked.iter().map(|r| r.pending_id).collect();
+        let expired = grants::expire(storage, originator, &marked, now).await?;
+        anyhow::Ok(done.deleted.into_iter().chain(expired).collect::<Vec<_>>())
+    };
+    match deleted.await {
         Ok(rows) => {
             for row in rows {
                 held.wake(row.pending_id);
@@ -640,7 +655,8 @@ impl Asker {
                 () = tokio::time::sleep(READ_EVERY) => {}
                 _ = shut.changed() => continue,
             }
-            let answer = match grants::pending(self.wallet.storage(), id).await {
+            let now = clock()?;
+            let answer = match grants::pending(self.wallet.storage(), id, now).await {
                 Ok(Some(row)) => row.answer,
                 Ok(None) => Some(Answer::Deny),
                 Err(e) => {

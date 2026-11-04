@@ -45,7 +45,13 @@ fn assert_limited(read: &Read, door: &str, window: &str, retry: &str) {
 /// calls alone: `answered` per originator's hostname.
 async fn no_rows(wallet: &WalletState, probes: &probes::Probes, answered: &[(&str, i64)]) {
     probes.settled().await;
-    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    let all = grants::listing(
+        wallet.storage(),
+        true,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(
         all.pending.is_empty() && all.grants.is_empty(),
         "a bounded call writes no row"

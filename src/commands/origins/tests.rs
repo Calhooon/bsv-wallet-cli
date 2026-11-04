@@ -36,6 +36,7 @@ fn asked(id: i64, raw: &str, power: &Power, usage: Option<&str>, call: &str) -> 
         first_seen: DAY + 86_400 + 33_120,
         answered_at: None,
         answer: None,
+        abandoned_at: None,
     }
 }
 

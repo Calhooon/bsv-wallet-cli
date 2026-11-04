@@ -307,8 +307,9 @@ async fn shown(
 /// `GET /origins`: the grants, the pending rows and the probe record.
 async fn list(State(wallet): State<WalletState>) -> Response {
     let read = async {
-        let rows = grants::owners_listing(wallet.storage(), ANSWERED_SHOWN).await?;
-        Shown::listed(wallet.storage(), rows, now()?).await
+        let now = now()?;
+        let rows = grants::owners_listing(wallet.storage(), ANSWERED_SHOWN, now).await?;
+        Shown::listed(wallet.storage(), rows, now).await
     };
     match read.await {
         Ok(shown) => Json(shown.json()).into_response(),

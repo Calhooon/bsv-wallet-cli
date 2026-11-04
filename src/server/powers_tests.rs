@@ -104,10 +104,14 @@ pub(super) fn signature(protocol: &str, level: u8) -> serde_json::Value {
 }
 
 async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
-    grants::listing(wallet.storage(), false)
-        .await
-        .unwrap()
-        .pending
+    grants::listing(
+        wallet.storage(),
+        false,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap()
+    .pending
 }
 
 /// Wait until `rows` open rows exist (the held calls have written them).
@@ -208,7 +212,13 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
         [other_id],
         "page.example's rows deleted, other.example's kept"
     );
-    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    let all = grants::listing(
+        wallet.storage(),
+        true,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(
         all.pending.iter().all(|r| r.originator != "page.example"),
         "no row kept"
@@ -399,7 +409,13 @@ async fn a_held_call_answers_the_shutdown_and_withdraws_its_row() {
     );
     assert_eq!(refusal(&answered), shut);
     assert_eq!(answered.1.as_deref(), Some(PAGE));
-    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    let all = grants::listing(
+        wallet.storage(),
+        true,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(all.pending.is_empty(), "the held call's row is withdrawn");
     assert_eq!(
         page_call(addr, PAGE, "/listOutputs", basket("two")).await.0,
@@ -487,7 +503,13 @@ async fn the_open_doors_and_level_zero_answer_a_page_with_no_row() {
         .header("originator", "page.example")
         .json(&basket("one"));
     assert_eq!(read(disagreeing.send().await.unwrap()).await.0, 400);
-    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    let all = grants::listing(
+        wallet.storage(),
+        true,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(
         all.pending.is_empty(),
         "no row: open doors, level 0, admin names, disagreements"

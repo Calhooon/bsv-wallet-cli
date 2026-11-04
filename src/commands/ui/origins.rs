@@ -118,8 +118,9 @@ async fn shown(state: &AppState, rows: Vec<GrantRow>, pending: Vec<PendingRow>) 
 /// `GET /api/origins`: the grants, the pending rows and the probe record.
 async fn list(State(state): State<Arc<AppState>>) -> Response {
     let read = async {
-        let rows = grants::owners_listing(&state.store, ANSWERED_SHOWN).await?;
-        Shown::listed(&state.store, rows, now()?).await
+        let now = now()?;
+        let rows = grants::owners_listing(&state.store, ANSWERED_SHOWN, now).await?;
+        Shown::listed(&state.store, rows, now).await
     };
     json_of(read.await)
 }

@@ -25,7 +25,7 @@ async fn the_listing_holds_every_grant_by_kind_and_key_and_the_open_rows_unless_
         .await
         .unwrap();
 
-    let rows = listing(&storage, false).await.unwrap();
+    let rows = listing(&storage, false, NOW).await.unwrap();
     let keys: Vec<_> = rows
         .grants
         .iter()
@@ -53,7 +53,7 @@ async fn the_listing_holds_every_grant_by_kind_and_key_and_the_open_rows_unless_
         ]
     );
     assert_eq!(rows.pending, std::slice::from_ref(&open));
-    let every = listing(&storage, true).await.unwrap();
+    let every = listing(&storage, true, NOW).await.unwrap();
     let ids: Vec<_> = every.pending.iter().map(|p| p.pending_id).collect();
     assert_eq!(ids, [open.pending_id, shut.pending_id]);
 }
@@ -75,17 +75,21 @@ async fn the_owners_listing_holds_the_open_rows_and_the_last_answered() {
     }
     let open = ask(&storage, &listing_call("c.example")).await;
 
-    let rows = owners_listing(&storage, 2).await.unwrap();
+    let rows = owners_listing(&storage, 2, NOW).await.unwrap();
     assert_eq!(rows.grants.len(), 1);
     let ids: Vec<_> = rows.pending.iter().map(|p| p.pending_id).collect();
     // The two answered last (the first and the third), and the open row.
     assert_eq!(ids, [shut[0], shut[2], open.pending_id]);
-    let none = owners_listing(&storage, 0).await.unwrap();
+    let none = owners_listing(&storage, 0, NOW).await.unwrap();
     assert_eq!(none.pending, std::slice::from_ref(&open));
 }
 
+/// The disconnect (W4 (a), #534): among its snapshot, the open spending
+/// rows deleted at once, every other open row marked at the disconnect's
+/// time; an answered row, a row the snapshot does not name and another
+/// originator's row kept; no grant written.
 #[tokio::test]
-async fn abandon_deletes_its_listed_open_rows_of_every_kind_and_keeps_the_rest() {
+async fn abandon_deletes_its_listed_spending_rows_marks_the_others_and_keeps_the_rest() {
     let (_dir, storage) = wallet_db().await;
     let (markers, _guard) = Markers::capture();
     let mut listed = Vec::new();
@@ -108,22 +112,31 @@ async fn abandon_deletes_its_listed_open_rows_of_every_kind_and_keeps_the_rest()
     let mut ids: Vec<i64> = listed.iter().map(|r| r.pending_id).collect();
     ids.extend([answered.pending_id, other.pending_id]);
 
-    let deleted = abandon(&storage, "gone.example:9999", &ids).await.unwrap();
-
-    let gone: Vec<i64> = deleted.iter().map(|r| r.pending_id).collect();
-    let want: Vec<i64> = listed.iter().map(|r| r.pending_id).collect();
-    assert_eq!(gone, want, "every kind, spending included");
-    let left: Vec<i64> = listing(&storage, true)
+    let done = abandon(&storage, "gone.example:9999", &ids, NOW + 5)
         .await
-        .unwrap()
-        .pending
-        .iter()
-        .map(|p| p.pending_id)
-        .collect();
+        .unwrap();
+
+    let ids_of = |rows: &[PendingRow]| rows.iter().map(|r| r.pending_id).collect::<Vec<_>>();
+    let (spending, others): (Vec<PendingRow>, Vec<PendingRow>) =
+        listed.into_iter().partition(|r| r.kind == Kind::Spending);
+    assert_eq!(ids_of(&done.deleted), ids_of(&spending), "spending deleted");
     assert_eq!(
-        left,
-        [answered.pending_id, later.pending_id, other.pending_id]
+        ids_of(&done.marked),
+        ids_of(&others),
+        "every other kind marked"
     );
+    assert!(done.marked.iter().all(|r| r.abandoned_at == Some(NOW + 5)));
+    let left = listing(&storage, true, NOW + 5).await.unwrap().pending;
+    let mut want = ids_of(&others);
+    want.extend([answered.pending_id, later.pending_id, other.pending_id]);
+    want.sort_unstable();
+    assert_eq!(ids_of(&left), want);
+    let marked: Vec<i64> = left
+        .iter()
+        .filter(|r| r.abandoned_at.is_some())
+        .map(|r| r.pending_id)
+        .collect();
+    assert_eq!(marked, ids_of(&others), "the rest unmarked");
     assert_eq!(
         count(&storage, "origin_grants").await,
         0,
@@ -133,16 +146,28 @@ async fn abandon_deletes_its_listed_open_rows_of_every_kind_and_keeps_the_rest()
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].message.as_deref(), Some("browser gate: abandoned"));
     assert_eq!(lines[0].fields["originator"], "gone.example");
+    assert!(lines[0].fields["rows"].contains("spending []"));
+    let lines = markers.named("origin_grants_disconnected");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0].message.as_deref(),
+        Some("browser gate: disconnected")
+    );
     assert!(lines[0].fields["rows"].contains(r#"basket ["todo items"]"#));
-    // A second abandon of the same list deletes nothing.
-    assert!(abandon(&storage, "gone.example", &ids)
+    assert_eq!(lines[0].fields["until"], (NOW + 5 + WINDOW).to_string());
+    // A second disconnect keeps the earlier mark and marks nothing.
+    let again = abandon(&storage, "gone.example", &ids, NOW + 7)
         .await
-        .unwrap()
-        .is_empty());
-    assert!(abandon(&storage, "gone.example", &[])
+        .unwrap();
+    assert_eq!(again, Abandoned::default());
+    let kept = pending(&storage, others[0].pending_id, NOW + 7)
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert_eq!(kept.unwrap().abandoned_at, Some(NOW + 5));
+    assert_eq!(
+        abandon(&storage, "gone.example", &[], NOW).await.unwrap(),
+        Abandoned::default()
+    );
 }
 
 #[tokio::test]
@@ -160,7 +185,7 @@ async fn sweep_open_deletes_every_open_row_and_keeps_the_answered() {
 
     assert_eq!(sweep_open(&storage).await.unwrap(), 6);
 
-    let left = listing(&storage, true).await.unwrap().pending;
+    let left = listing(&storage, true, NOW).await.unwrap().pending;
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].pending_id, answered.pending_id);
     let lines = markers.named("origin_grants_swept");

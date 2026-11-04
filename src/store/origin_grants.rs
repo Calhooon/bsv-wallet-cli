@@ -37,8 +37,8 @@ use migrate::{Case, Moved};
 pub use power::Power;
 pub use probes::{Probe, ProbeRow};
 pub use rows::{
-    expired, key_of, month_of, when, Answer, Answered, Asking, GrantRow, Granting, Kind, Listing,
-    Pending, PendingRow, Reach, Refused, Reply, Standing,
+    expired, key_of, month_of, when, when_exact, Abandoned, Answer, Answered, Asking, GrantRow,
+    Granting, Kind, Listing, Pending, PendingRow, Reach, Refused, Reply, Standing,
 };
 use rows::{GrantTuple, PendingTuple};
 pub use shown::{Shown, ShownJson};
@@ -58,6 +58,15 @@ const OBJECTS: [(&str, &str); 8] = [
     ("table", "origin_probes"),
     ("index", "origin_probes_seen"),
 ];
+
+/// The brief reconnect's window in seconds (#534, the design's W19): the
+/// server's `ABANDON_WINDOW`. A row abandoned at `a` is inside its window
+/// while `now < a + WINDOW` and gone to every reader from then on, whether
+/// or not the server's timer ran.
+const WINDOW: i64 = crate::server::powers::ABANDON_WINDOW_SECS;
+
+/// A row past its window is gone: the readers' filter, `now` bound once.
+const INSIDE: &str = "(abandoned_at IS NULL OR abandoned_at > ? - ?)";
 
 /// The block [`ensure`] runs in one transaction when any of [`OBJECTS`]
 /// is missing (`IF NOT EXISTS` throughout), the design's section (1).
@@ -90,7 +99,9 @@ const DDL: [&str; 8] = [
         first_seen INTEGER NOT NULL, \
         answered_at INTEGER, \
         answer TEXT CHECK (answer IN ('grant', 'once', 'deny')), \
-        CHECK ((kind = 'spending') = (amount IS NOT NULL)))",
+        abandoned_at INTEGER, \
+        CHECK ((kind = 'spending') = (amount IS NOT NULL)), \
+        CHECK (abandoned_at IS NULL OR (answered_at IS NULL AND kind <> 'spending')))",
     "CREATE UNIQUE INDEX IF NOT EXISTS origin_pending_open \
         ON origin_pending (originator, kind, key) \
         WHERE answered_at IS NULL AND kind <> 'spending'",
@@ -148,6 +159,10 @@ pub async fn ensure(storage: &StorageSqlx) -> Result<bool> {
             sequence_pending(&mut tx).await?;
             None
         }
+        Case::Unwindowed => {
+            window_pending(&mut tx).await?;
+            None
+        }
         Case::Missing => {
             create(&mut tx).await?;
             None
@@ -181,7 +196,12 @@ async fn shape(conn: &mut SqliteConnection) -> Result<Case> {
     )
     .fetch_one(&mut *conn)
     .await?;
-    Ok(Case::of(&present, kinded > 0, sequenced > 0))
+    let windowed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('origin_pending') WHERE name = 'abandoned_at'",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Case::of(&present, kinded > 0, sequenced > 0, windowed > 0))
 }
 
 /// Move L1's shape inside the caller's transaction ([`migrate`]): rename
@@ -228,30 +248,13 @@ async fn move_l1(conn: &mut SqliteConnection, pending: bool) -> Result<Moved> {
 }
 
 /// Rebuild L5a's `origin_pending` as the block writes it, its ids never
-/// reused (`AUTOINCREMENT`), inside the caller's transaction: rename it
-/// aside, drop its index, run the block, carry every row with its id, drop
-/// the old table. From the switch (L5b) a row whose caller left is
+/// reused (`AUTOINCREMENT`), inside the caller's transaction
+/// ([`rebuild_pending`]). From the switch (L5b) a row whose caller left is
 /// deleted; without the sequence SQLite would give its id to the next
 /// request, and an owner answering `#N` from a listing read before the
 /// deletion would answer another page's request.
 async fn sequence_pending(conn: &mut SqliteConnection) -> Result<()> {
-    for sql in [
-        "ALTER TABLE origin_pending RENAME TO origin_pending_unsequenced".to_string(),
-        "DROP INDEX IF EXISTS origin_pending_open".to_string(),
-    ] {
-        sqlx::query(&sql).execute(&mut *conn).await?;
-    }
-    create(conn).await?;
-    let carried = sqlx::query(&format!(
-        "INSERT INTO origin_pending ({PENDING_COLUMNS}) \
-         SELECT {PENDING_COLUMNS} FROM origin_pending_unsequenced ORDER BY pending_id"
-    ))
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    sqlx::query("DROP TABLE origin_pending_unsequenced")
-        .execute(&mut *conn)
-        .await?;
+    let carried = rebuild_pending(conn, "origin_pending_unsequenced").await?;
     tracing::info!(
         marker = "origin_grants_sequenced",
         carried,
@@ -259,6 +262,68 @@ async fn sequence_pending(conn: &mut SqliteConnection) -> Result<()> {
          carried)"
     );
     Ok(())
+}
+
+/// Rebuild L5b's `origin_pending` with the column `abandoned_at` and its
+/// table `CHECK` (#534, the design's L8), inside the caller's transaction
+/// ([`rebuild_pending`]): SQLite's `ADD COLUMN` cannot add a table
+/// `CHECK`, so a moved store and a fresh one hold the same constraint in
+/// the same place. Every row is carried with `abandoned_at` NULL, and the
+/// table's sequence with it, so no deleted id is given again.
+async fn window_pending(conn: &mut SqliteConnection) -> Result<()> {
+    let carried = rebuild_pending(conn, "origin_pending_l5b").await?;
+    tracing::info!(
+        marker = "origin_grants_windowed",
+        carried,
+        "origin grants: a pending request waits for its page's brief reconnect from now on \
+         ({carried} rows carried)"
+    );
+    Ok(())
+}
+
+/// Rename `origin_pending` to `aside`, drop its index, run the block, carry
+/// every row with its id (`abandoned_at` NULL), carry `aside`'s sequence
+/// when it had one, and drop `aside`. Answers the rows carried.
+async fn rebuild_pending(conn: &mut SqliteConnection, aside: &str) -> Result<u64> {
+    for sql in [
+        format!("ALTER TABLE origin_pending RENAME TO {aside}"),
+        "DROP INDEX IF EXISTS origin_pending_open".to_string(),
+    ] {
+        sqlx::query(&sql).execute(&mut *conn).await?;
+    }
+    create(conn).await?;
+    let carried = sqlx::query(&format!(
+        "INSERT INTO origin_pending ({CARRIED_COLUMNS}) \
+         SELECT {CARRIED_COLUMNS} FROM {aside} ORDER BY pending_id"
+    ))
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    // The old table's sequence passes the ids it deleted at the top; the
+    // carried rows alone would set the new one to the highest kept.
+    let seq: Option<i64> = sqlx::query_scalar("SELECT seq FROM sqlite_sequence WHERE name = ?")
+        .bind(aside)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if let Some(seq) = seq {
+        let raised = sqlx::query(
+            "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'origin_pending'",
+        )
+        .bind(seq)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if raised == 0 {
+            sqlx::query("INSERT INTO sqlite_sequence (name, seq) VALUES ('origin_pending', ?)")
+                .bind(seq)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    sqlx::query(&format!("DROP TABLE {aside}"))
+        .execute(&mut *conn)
+        .await?;
+    Ok(carried)
 }
 
 /// The block, on the transaction's connection.
@@ -273,6 +338,11 @@ const GRANT_COLUMNS: &str = "grant_id, originator, raw_originator, kind, key, am
                              granted_at, expiry, revoked_at";
 
 const PENDING_COLUMNS: &str = "pending_id, originator, raw_originator, kind, key, usage, call, \
+                               reason, amount, renewal, first_seen, answered_at, answer, \
+                               abandoned_at";
+
+/// The pending columns every earlier shape holds, which a rebuild carries.
+const CARRIED_COLUMNS: &str = "pending_id, originator, raw_originator, kind, key, usage, call, \
                                reason, amount, renewal, first_seen, answered_at, answer";
 
 /// The originator's rows that cover `power`: its one (kind, key) row; for
@@ -319,16 +389,29 @@ async fn pending_row(conn: &mut SqliteConnection, pending_id: i64) -> Result<Opt
     row.map(PendingRow::from_tuple).transpose()
 }
 
-/// The pending row `pending_id`, open or answered, or none (a row a
-/// disconnect or a restart deleted): what a held call reads at each wake.
+/// Whether `row` is past its window at `now` (#534): gone to every
+/// reader.
+fn past_window(row: &PendingRow, now: i64) -> bool {
+    row.withdrawn_at().is_some_and(|end| now >= end)
+}
+
+/// The pending row `pending_id` at `now`, open, abandoned inside its
+/// window, or answered; none when a disconnect, a window's end or a
+/// restart deleted it, or its window has passed (#534): what a held call
+/// reads at each wake.
 ///
 /// # Errors
 ///
 /// The store's error.
-pub async fn pending(storage: &StorageSqlx, pending_id: i64) -> Result<Option<PendingRow>> {
+pub async fn pending(
+    storage: &StorageSqlx,
+    pending_id: i64,
+    now: i64,
+) -> Result<Option<PendingRow>> {
     ensure(storage).await?;
     let mut reader = storage.pool().acquire().await?;
-    pending_row(&mut reader, pending_id).await
+    let row = pending_row(&mut reader, pending_id).await?;
+    Ok(row.filter(|r| !past_window(r, now)))
 }
 
 /// How `originator` (any name of its host) stands for `power` at `now`
@@ -455,7 +538,10 @@ fn amount_placed(asking: &Asking<'_>) -> Result<(), Refused> {
 /// (one per power, never duplicated; a call of another usage joins it,
 /// the design's W16), else writes one; a spending call writes its own row
 /// (the reference's per-request spending key). A revoked row covering the
-/// power refuses at once and writes nothing.
+/// power refuses at once and writes nothing. An abandoned row of the power
+/// (#534) is resumed inside its window, its mark cleared in the same
+/// transaction (`resumed`), and deleted past it before a new row is
+/// written.
 ///
 /// # Errors
 ///
@@ -477,11 +563,11 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
         }
         .into());
     }
-    let open: Option<i64> = if kind == Kind::Spending {
+    let open: Option<(i64, Option<i64>)> = if kind == Kind::Spending {
         None
     } else {
-        sqlx::query_scalar(
-            "SELECT pending_id FROM origin_pending \
+        sqlx::query_as(
+            "SELECT pending_id, abandoned_at FROM origin_pending \
              WHERE originator = ? AND kind = ? AND key = ? AND answered_at IS NULL",
         )
         .bind(&key)
@@ -489,6 +575,25 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
         .bind(&power_key)
         .fetch_optional(&mut *tx)
         .await?
+    };
+    let (open, resumed) = match open {
+        Some((id, None)) => (Some(id), false),
+        Some((id, Some(at))) if now < at.saturating_add(WINDOW) => {
+            sqlx::query("UPDATE origin_pending SET abandoned_at = NULL WHERE pending_id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            (Some(id), true)
+        }
+        Some((id, Some(_))) => {
+            // Past its window: gone, though no timer deleted it.
+            sqlx::query("DELETE FROM origin_pending WHERE pending_id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            (None, false)
+        }
+        None => (None, false),
     };
     let joined = open.is_some();
     let id = match open {
@@ -515,18 +620,26 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
     let row = pending_row(&mut tx, id).await?;
     tx.commit().await?;
     let row = row.ok_or(Refused::NoSuchPending(id))?;
-    Ok(Pending { row, joined })
+    Ok(Pending {
+        row,
+        joined,
+        resumed,
+    })
 }
 
 /// Answer once: stamp `answered_at` and `answer` on an open row
-/// (`UPDATE .. WHERE answered_at IS NULL`, so two places answering race to
-/// one winner), and on `grant` write the row's power ([`grant`]'s upsert)
-/// in the same transaction. The row is kept: the table is the history of
-/// the owner's answers.
+/// (`UPDATE .. WHERE answered_at IS NULL AND abandoned_at IS NULL`, so two
+/// places answering race to one winner, and the answer and a disconnect's
+/// mark), and on `grant` write the row's power ([`grant`]'s upsert) in the
+/// same transaction. The row is kept: the table is the history of the
+/// owner's answers. A row abandoned inside its window is refused (#534, the
+/// captain's word of 2026-11-04): no answer reaches a page that has left;
+/// one past its window is no row.
 ///
 /// # Errors
 ///
 /// [`Refused`]: no such row, the row already answered (the second answer),
+/// the row waiting for its page to reconnect ([`Refused::Abandoned`]),
 /// `once` on a row of another kind than spending, a grant's amount or
 /// expiry out of place (a spending `grant` names its ceiling and no
 /// expiry), a stored key that does not read back; or the
@@ -541,7 +654,15 @@ pub async fn answer(
     let mut tx = storage.write_tx().await?;
     let row = pending_row(&mut tx, pending_id)
         .await?
+        .filter(|r| !past_window(r, now))
         .ok_or(Refused::NoSuchPending(pending_id))?;
+    if let Some(withdrawn_at) = row.withdrawn_at() {
+        return Err(Refused::Abandoned {
+            pending_id,
+            withdrawn_at,
+        }
+        .into());
+    }
     if let Some(at) = row.answered_at {
         return Err(Refused::AlreadyAnswered {
             pending_id,
@@ -571,7 +692,7 @@ pub async fn answer(
     };
     sqlx::query(
         "UPDATE origin_pending SET answered_at = ?, answer = ? \
-         WHERE pending_id = ? AND answered_at IS NULL",
+         WHERE pending_id = ? AND answered_at IS NULL AND abandoned_at IS NULL",
     )
     .bind(now)
     .bind(reply.answer.as_str())
@@ -585,11 +706,15 @@ pub async fn answer(
     Ok(Answered { pending, grant })
 }
 
-/// The disconnect's deny (section (2), W4 (a)): delete the open rows of
-/// `originator` (any name of its host) among `ids`, the snapshot its
-/// held call took, of every kind, spending rows included; an answered
-/// row, or an open row the list does not name, is kept. Logged at info by
-/// name (`browser gate: abandoned`). Answers the rows deleted.
+/// The disconnect (section (2), W4 (a), and #534's window): among `ids`,
+/// the snapshot its held call took, the open rows of `originator` (any
+/// name of its host) are, in one write transaction, deleted when they are
+/// spending rows (a spending row is one call's, so no retry can join it)
+/// and marked `abandoned_at = now` otherwise. A row already abandoned keeps
+/// its earlier mark (a second disconnect never lengthens a window), and an
+/// answered row, or an open row the list does not name, is kept. Logged at
+/// info by name: `browser gate: abandoned` for the deleted rows,
+/// `browser gate: disconnected` for the marked ones with the window's end.
 ///
 /// # Errors
 ///
@@ -598,6 +723,71 @@ pub async fn abandon(
     storage: &StorageSqlx,
     originator: &str,
     ids: &[i64],
+    now: i64,
+) -> Result<Abandoned> {
+    ensure(storage).await?;
+    let (key, _) = key_of(originator)?;
+    if ids.is_empty() {
+        return Ok(Abandoned::default());
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    let delete = format!(
+        "DELETE FROM origin_pending \
+         WHERE originator = ? AND pending_id IN ({marks}) AND answered_at IS NULL \
+           AND kind = 'spending' \
+         RETURNING {PENDING_COLUMNS}"
+    );
+    let mark = format!(
+        "UPDATE origin_pending SET abandoned_at = ? \
+         WHERE originator = ? AND pending_id IN ({marks}) AND answered_at IS NULL \
+           AND abandoned_at IS NULL AND kind <> 'spending' \
+         RETURNING {PENDING_COLUMNS}"
+    );
+    let mut deleting = sqlx::query_as::<_, PendingTuple>(&delete).bind(&key);
+    let mut marking = sqlx::query_as::<_, PendingTuple>(&mark)
+        .bind(now)
+        .bind(&key);
+    for id in ids {
+        deleting = deleting.bind(id);
+        marking = marking.bind(id);
+    }
+    let mut tx = storage.write_tx().await?;
+    let deleted = deleting.fetch_all(&mut *tx).await?;
+    let marked = marking.fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    let done = Abandoned {
+        deleted: sorted(deleted)?,
+        marked: sorted(marked)?,
+    };
+    if !done.deleted.is_empty() {
+        withdrawn(&key, &done.deleted);
+    }
+    if !done.marked.is_empty() {
+        tracing::info!(
+            marker = "origin_grants_disconnected",
+            originator = %key,
+            rows = %named(&done.marked),
+            until = now.saturating_add(WINDOW),
+            "browser gate: disconnected"
+        );
+    }
+    Ok(done)
+}
+
+/// The window's end (#534): delete, in one write transaction, the rows of
+/// `originator` among `ids` still abandoned with the mark `abandoned_at`
+/// (a row a call rejoined, its mark cleared, or a row marked again later is
+/// left to its own timer). Logged at info by name (`browser gate:
+/// abandoned`). Answers the rows deleted.
+///
+/// # Errors
+///
+/// [`Refused::NotAnOriginator`], or the store's error.
+pub async fn expire(
+    storage: &StorageSqlx,
+    originator: &str,
+    ids: &[i64],
+    abandoned_at: i64,
 ) -> Result<Vec<PendingRow>> {
     ensure(storage).await?;
     let (key, _) = key_of(originator)?;
@@ -608,6 +798,7 @@ pub async fn abandon(
     let sql = format!(
         "DELETE FROM origin_pending \
          WHERE originator = ? AND pending_id IN ({marks}) AND answered_at IS NULL \
+           AND abandoned_at = ? \
          RETURNING {PENDING_COLUMNS}"
     );
     let mut query = sqlx::query_as::<_, PendingTuple>(&sql).bind(&key);
@@ -615,29 +806,47 @@ pub async fn abandon(
         query = query.bind(id);
     }
     let mut tx = storage.write_tx().await?;
-    let rows = query.fetch_all(&mut *tx).await?;
+    let rows = query.bind(abandoned_at).fetch_all(&mut *tx).await?;
     tx.commit().await?;
+    let rows = sorted(rows)?;
+    if !rows.is_empty() {
+        withdrawn(&key, &rows);
+    }
+    Ok(rows)
+}
+
+/// Rows read back, by id.
+fn sorted(rows: Vec<PendingTuple>) -> Result<Vec<PendingRow>> {
     let mut rows: Vec<PendingRow> = rows
         .into_iter()
         .map(PendingRow::from_tuple)
         .collect::<Result<_>>()?;
     rows.sort_by_key(|r| r.pending_id);
+    Ok(rows)
+}
+
+/// The rows by id, kind and key, for a log line.
+fn named(rows: &[PendingRow]) -> String {
     let named: Vec<String> = rows
         .iter()
         .map(|r| format!("#{} {} {}", r.pending_id, r.kind.as_str(), r.key))
         .collect();
+    named.join(", ")
+}
+
+/// The deleted rows of a disconnect or a window's end, by name.
+fn withdrawn(key: &str, rows: &[PendingRow]) {
     tracing::info!(
         marker = "origin_grants_abandoned",
         originator = %key,
-        rows = %named.join(", "),
+        rows = %named(rows),
         "browser gate: abandoned"
     );
-    Ok(rows)
 }
 
-/// The restart's sweep (section (2)): delete every open pending row, since
-/// no caller survives a restart; logged by name with the count. Answers
-/// the count.
+/// The restart's sweep (section (2)): delete every open pending row, an
+/// abandoned one too (#534), since no caller survives a restart; logged by
+/// name with the count. Answers the count.
 ///
 /// # Errors
 ///
@@ -660,40 +869,52 @@ pub async fn sweep_open(storage: &StorageSqlx) -> Result<u64> {
 
 /// The listing `bsv-wallet origins` prints (section (4)): every grant row,
 /// by originator, kind and key, and the pending rows by id, the open ones
-/// alone unless `all` asks for the answered ones too. Read on the reader.
+/// (an abandoned one inside its window among them, #534) alone unless
+/// `all` asks for the answered ones too; a row past its window at `now` is
+/// never listed. Read on the reader.
 ///
 /// # Errors
 ///
 /// The store's error.
-pub async fn listing(storage: &StorageSqlx, all: bool) -> Result<Listing> {
-    listed(storage, "? OR answered_at IS NULL", i64::from(all)).await
+pub async fn listing(storage: &StorageSqlx, all: bool, now: i64) -> Result<Listing> {
+    listed(storage, "? OR answered_at IS NULL", i64::from(all), now).await
 }
 
 /// The listing the owner's door answers (`GET /origins`, section (3)):
 /// every grant row as [`listing`] reads them, and the open pending rows
 /// with the last `answered` answered ones (by their answer's time, then
-/// id), by id. Read on the reader.
+/// id), by id; a row past its window at `now` is never listed. Read on the
+/// reader.
 ///
 /// # Errors
 ///
 /// The store's error.
-pub async fn owners_listing(storage: &StorageSqlx, answered: i64) -> Result<Listing> {
+pub async fn owners_listing(storage: &StorageSqlx, answered: i64, now: i64) -> Result<Listing> {
     let recent = "answered_at IS NULL OR pending_id IN (SELECT pending_id FROM origin_pending \
                   WHERE answered_at IS NOT NULL ORDER BY answered_at DESC, pending_id DESC LIMIT ?)";
-    listed(storage, recent, answered).await
+    listed(storage, recent, answered, now).await
 }
 
 /// Every grant row, the pending rows `pending_where` (one bound number)
-/// selects, by id, and every probe row ([`probes::probes`]).
-async fn listed(storage: &StorageSqlx, pending_where: &str, bound: i64) -> Result<Listing> {
+/// selects inside their window at `now`, by id, and every probe row
+/// ([`probes::probes`]).
+async fn listed(
+    storage: &StorageSqlx,
+    pending_where: &str,
+    bound: i64,
+    now: i64,
+) -> Result<Listing> {
     ensure(storage).await?;
     let sql = format!("SELECT {GRANT_COLUMNS} FROM origin_grants ORDER BY originator, kind, key");
     let grants: Vec<GrantTuple> = sqlx::query_as(&sql).fetch_all(storage.pool()).await?;
     let sql = format!(
-        "SELECT {PENDING_COLUMNS} FROM origin_pending WHERE {pending_where} ORDER BY pending_id"
+        "SELECT {PENDING_COLUMNS} FROM origin_pending \
+         WHERE ({pending_where}) AND {INSIDE} ORDER BY pending_id"
     );
     let pending: Vec<PendingTuple> = sqlx::query_as(&sql)
         .bind(bound)
+        .bind(now)
+        .bind(WINDOW)
         .fetch_all(storage.pool())
         .await?;
     Ok(Listing {
@@ -717,3 +938,5 @@ mod pending_tests;
 mod spends_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod window_tests;
