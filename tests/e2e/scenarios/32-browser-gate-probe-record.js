@@ -19,7 +19,11 @@
  *      (door `*`, count 9), every answer counted. The level-0 powers answer
  *      a site 60 a minute with a burst of 10 (#541): a call past it is
  *      answered 429 with Retry-After and sent again after the wait, and a
- *      refused call is never counted.
+ *      refused call is never counted;
+ *   6. probe.example's GET at the POST door getHeaderForHeight is the
+ *      router's 405 and is not counted (#556): the record read before it,
+ *      then after a getVersion sent behind it (the writer keeps the order),
+ *      moved by that getVersion alone, with no getHeaderForHeight row.
  * Cost: 0 sats.
  */
 const g = require('../lib/browser-gate');
@@ -115,6 +119,18 @@ module.exports = {
         && remainder.count === calls - (CAP - 1),
         `5: ${CAP} rows, the remainder last with ${calls - (CAP - 1)} (got ${busy.length} rows, ${JSON.stringify(remainder)})`);
       assert(of(g.origins(wallet, true), 'probe.example').length === 2, "5: another origin's rows are its own");
+      // 6.
+      const before = of(g.origins(wallet, true), 'probe.example');
+      const wrong = await g.call(wallet, 'GET', 'getHeaderForHeight', { origin: PROBE });
+      assert(wrong.status === 405, `6: a GET at a POST door is 405 (got ${wrong.status})`);
+      const fence = await g.call(wallet, 'GET', 'getVersion', { origin: PROBE });
+      assert(fence.status === 200, `6: the getVersion behind it answered (got ${fence.status})`);
+      const after = await untilCounted(wallet, 'probe.example', 4);
+      const moved = before.map(p => (p.door === 'getVersion' ? { ...p, count: p.count + 1 } : p));
+      const shape = rows => rows.map(p => [p.door, p.power, p.count]).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+      assert(JSON.stringify(shape(after)) === JSON.stringify(shape(moved))
+        && !after.some(p => p.door === 'getHeaderForHeight'),
+        `6: the 405 is not counted (before ${JSON.stringify(before)}, after ${JSON.stringify(after)})`);
       return {};
     });
   },
