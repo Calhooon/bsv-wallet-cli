@@ -579,6 +579,15 @@ def night_record(plan, record, floors, night, carried, commit, run, eq=False):
         out["base"] = base
     out["floors"] = {f: int(v) if float(v).is_integer() else v for f, v in floors.items()}
     out["matrix"] = {"shards": plan.get("shards"), "parallel": plan.get("parallel")}
+    # The dispatch's cap and the plan's projection (#584), as the plan names them;
+    # the night's wall clock beside it, and GitHub's own waits, are the captain's row.
+    if "cap" in plan:
+        out["matrix"]["cap"] = plan["cap"]
+        out["cap"] = {k: plan.get(k) for k in ("requested_cap", "window_end", "cap_why")}
+    if "projection" in plan:
+        out["projection"] = plan["projection"]
+        if "refused" in plan:
+            out["projection_refused"] = plan["refused"]
     said = verdict(record, carried)
     if said:
         out["verdict"] = said
