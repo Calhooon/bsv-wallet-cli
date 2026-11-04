@@ -620,7 +620,7 @@ def minutes(start, end):
 
 
 def measured(record):
-    """The record's measured times (#584): the first night of the record and its
+    """The record's measured times (#584): the newest night of the record and its
     earlier_nights whose every cargo shard names its start, end and mutants, as
     {"run", "rate" (runner minutes a mutant), "hermetic" (mean minutes a hermetic
     shard, or None), "hermetic_shards" (that night's count)}; None when no night
@@ -646,7 +646,7 @@ def hhmm(t):
 
 
 def window_end_after(now, end):
-    """The first instant at `end` (HH:MMZ) after `now`."""
+    """The next instant at `end` (HH:MMZ) after `now`."""
     m = WINDOW_END.match(end)
     if not m:
         fault(f"window_end {end!r} is not HH:MMZ (00:00Z to 23:59Z), or empty for no window check")
