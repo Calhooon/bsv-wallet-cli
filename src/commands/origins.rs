@@ -286,7 +286,7 @@ fn probe_line(p: &ProbeRow) -> String {
 pub async fn list(ctx: &WalletContext, all: bool) -> Result<()> {
     let storage = ctx.wallet.storage();
     let now = now()?;
-    let rows = grants::listing(storage, all).await?;
+    let rows = grants::listing(storage, all, now).await?;
     let shown = Shown::listed(storage, rows, now).await?;
     print(&shown, ctx.json_output)
 }

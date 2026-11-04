@@ -15,12 +15,17 @@ use super::{when, OBJECTS};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Case {
     /// Every object present, the grants with `kind`, the pending ids
-    /// never reused: nothing to write.
+    /// never reused, the pending rows with `abandoned_at`: nothing to
+    /// write.
     Current,
     /// L5a's shape: every object present but `origin_pending` without
     /// `AUTOINCREMENT`, so a deleted row's id could be given again
     /// (`super::sequence_pending` rebuilds it, its rows carried).
     Unsequenced,
+    /// L5b's shape: every object present, the ids never reused, but
+    /// `origin_pending` without `abandoned_at` (#534; `super::window_pending`
+    /// rebuilds it, its rows and its sequence carried).
+    Unwindowed,
     /// No grants table, or the new shape missing an object: the block.
     Missing,
     /// L1's shape: a grants table without `kind`; `pending` when L1's
@@ -34,18 +39,24 @@ pub(super) enum Case {
 impl Case {
     /// The case of a store holding the objects `present`, `(type, name)`,
     /// whose grants table has the column `kind` when `kinded` and whose
-    /// pending table is written with `AUTOINCREMENT` when `sequenced`.
-    pub(super) fn of(present: &[(String, String)], kinded: bool, sequenced: bool) -> Self {
+    /// pending table is written with `AUTOINCREMENT` when `sequenced` and
+    /// holds `abandoned_at` when `windowed`.
+    pub(super) fn of(
+        present: &[(String, String)],
+        kinded: bool,
+        sequenced: bool,
+        windowed: bool,
+    ) -> Self {
         let has = |t: &str, n: &str| present.iter().any(|(pt, pn)| pt == t && pn == n);
         if has("table", "origin_grants") && !kinded {
             Self::L1 {
                 pending: has("table", "origin_pending"),
             }
         } else if OBJECTS.iter().all(|(t, n)| has(t, n)) {
-            if sequenced {
-                Self::Current
-            } else {
-                Self::Unsequenced
+            match (sequenced, windowed) {
+                (false, _) => Self::Unsequenced,
+                (true, false) => Self::Unwindowed,
+                (true, true) => Self::Current,
             }
         } else {
             Self::Missing

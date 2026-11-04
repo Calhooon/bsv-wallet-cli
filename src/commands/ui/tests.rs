@@ -128,7 +128,12 @@ async fn answered(app: &Router, request: Request) -> (StatusCode, serde_json::Va
 
 /// The store's origin rows, as the module lists them.
 async fn rows(state: &AppState) -> String {
-    format!("{:?}", grants::listing(&state.store, true).await.unwrap())
+    format!(
+        "{:?}",
+        grants::listing(&state.store, true, i64::MAX / 2)
+            .await
+            .unwrap()
+    )
 }
 
 /// The L4 exit test: an origin `ALLOWED_ORIGINS` lists, and an origin

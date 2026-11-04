@@ -169,16 +169,26 @@ impl World {
     /// The open rows once there are `n`.
     async fn open(&self, n: usize) -> Vec<PendingRow> {
         for _ in 0..500 {
-            let open = grants::listing(self.wallet.storage(), false)
-                .await
-                .unwrap()
-                .pending;
+            let open = grants::listing(
+                self.wallet.storage(),
+                false,
+                crate::server::owner_door::now().unwrap(),
+            )
+            .await
+            .unwrap()
+            .pending;
             if open.len() == n {
                 return open;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let all = grants::listing(self.wallet.storage(), true).await.unwrap();
+        let all = grants::listing(
+            self.wallet.storage(),
+            true,
+            crate::server::owner_door::now().unwrap(),
+        )
+        .await
+        .unwrap();
         panic!("{n} open rows never appeared: {:?}", all.pending);
     }
 
@@ -210,11 +220,15 @@ impl World {
     }
 
     async fn grant_rows(&self) -> usize {
-        grants::listing(self.wallet.storage(), true)
-            .await
-            .unwrap()
-            .grants
-            .len()
+        grants::listing(
+            self.wallet.storage(),
+            true,
+            crate::server::owner_door::now().unwrap(),
+        )
+        .await
+        .unwrap()
+        .grants
+        .len()
     }
 }
 
@@ -324,7 +338,13 @@ async fn a_grant_below_the_call_is_checked_again_and_a_grant_with_room_admits() 
         .await;
     let granted = call.await.unwrap();
     assert_eq!(granted.0, 200, "{}", granted.3);
-    let rows = grants::listing(w.wallet.storage(), true).await.unwrap();
+    let rows = grants::listing(
+        w.wallet.storage(),
+        true,
+        crate::server::owner_door::now().unwrap(),
+    )
+    .await
+    .unwrap();
     let only = (rows.grants.len(), rows.grants[0].kind.as_str());
     assert_eq!(
         (only, rows.grants[0].amount),

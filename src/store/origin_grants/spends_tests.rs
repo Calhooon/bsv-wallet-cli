@@ -244,7 +244,7 @@ fn read_as(o: &str, k: &str, s: &str, spent: Option<i64>, reached: Option<bool>)
 
 /// The listing at `now`, and each grant row of its JSON as [`Read`].
 async fn read_at(storage: &StorageSqlx, now: i64) -> (Shown, Vec<Read>) {
-    let rows = listing(storage, true).await.unwrap();
+    let rows = listing(storage, true, now).await.unwrap();
     let shown = Shown::listed(storage, rows, now).await.unwrap();
     let json = serde_json::to_value(shown.json()).unwrap();
     let text = |g: &serde_json::Value, k: &str| g[k].as_str().unwrap().to_string();
