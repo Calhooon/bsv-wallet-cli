@@ -42,18 +42,25 @@ The counts per file are then the unique mutants'.
 With `--plan <plan.json> --record <mutants.json>` (#462) the night is one of
 the Nightly's two modes, as .github/nightly/changed_set.py planned it. The
 mutated files (the plan's `files`) are scored from the outcomes; every other
-floored file's figure is CARRIED from the record, which holds the last
-complete run, and its row names that run and sha. A carried figure is never
-judged against its floor again (its run judged it); the night's files are.
-Before any figure is judged, exit 1 naming the fault when:
+floored file's figure is CARRIED from the record's base, the last
+base-setting run, and its row names that run and sha. The base is the record
+itself when its mode is complete, and its `base` when incremental; an
+incremental night whose changed set was the whole set (the plan's `whole`)
+judged every file at one sha and re-bases (#559): its written record's `base`
+names its own run and commit with `"whole": true` and `"why"` (`base: this
+run, the changed set the whole set`), so the next night diffs against it and
+carries from it, while a night that judged a subset writes the base it
+carried from. A carried figure is never judged against its floor again (its
+run judged it); the night's files are. Before any figure is judged, exit 1
+naming the fault when:
 
-- the plan's base (the last complete run it diffed against) is not the
-  record's (the record itself when its mode is complete, its `base` when
-  incremental);
-- a carried file's entry in the record does not name that run and sha (a
-  carried figure whose base is not the last complete run: a file the record
-  holds as an incremental night's figure, or as an older run's, is never
-  carried again);
+- the record names no base, or a `whole` base names another run than the
+  record's own (a whole record re-bases on itself and carries nothing);
+- the plan's base (the base it diffed against) is not the record's;
+- a carried file's entry in the record does not name the base's run and sha
+  (a carried figure whose base is not the last base-setting run: a file a
+  subset record holds as its own night's figure, or as an older run's, is
+  never carried again);
 - on an incremental night, a floor of `MUTANTS_FLOORS` differs from the
   record's `floors` (a floor moves only on a complete run);
 - an outcome names a file the plan did not mutate, or a complete plan does
@@ -169,13 +176,32 @@ def one_tree(dispatch, shards):
     return lines
 
 
+# The written base of a whole incremental night (#559): the record names itself.
+REBASE_WHY = "this run, the changed set the whole set (#559)"
+
+
 def last_complete(record):
-    """The last complete run a record names, {"run", "commit"}, or None."""
+    """The last base-setting run a record names, {"run", "commit"}, or None: the
+    record itself when complete, its `base` when incremental (a whole record's
+    `base` names the record's own run, #559)."""
     if record.get("mode") == "complete":
         return {"run": record.get("run"), "commit": record.get("commit")}
     if record.get("mode") == "incremental" and isinstance(record.get("base"), dict):
         return {"run": record["base"].get("run"), "commit": record["base"].get("commit")}
     return None
+
+
+def whole_base(record):
+    """True when the record is an incremental night that re-based on itself (#559)."""
+    return record.get("mode") == "incremental" and isinstance(record.get("base"), dict) \
+        and record["base"].get("whole") is True
+
+
+def base_named(record):
+    """How the night's table names the record's base."""
+    base = last_complete(record)
+    whose = "the record itself" if record.get("mode") == "complete" or whole_base(record) else "the record's base"
+    return f"{base['run']} at `{base['commit']}` ({whose})"
 
 
 def num(v):
@@ -187,9 +213,19 @@ def refuse_plan(plan, record, floors, outcome_files):
     lines = []
     base = last_complete(record)
     if base is None:
-        return [f"**No last complete run (#462)**: the record names no mode, or an incremental record no base; nothing is carried or scored."]
+        return [f"**No base (#462)**: the record names no mode, or an incremental record no base; nothing is carried or scored."]
+    own = {"run": record.get("run"), "commit": record.get("commit")}
+    if whole_base(record) and base != own:
+        return [f"**A whole base names its own run (#559)**: the record's base is marked whole and names run "
+                f"{base['run']} at `{base['commit']}`, the record being run {own['run']} at `{own['commit']}`; "
+                "nothing is carried or scored."]
+    if whole_base(record):
+        shared = sorted(f for f, e in record.get("files", {}).items() if e.get("source") == "carried")
+        if shared:
+            return [f"**A whole record carries nothing (#559)**: its base is itself, and "
+                    + ", ".join(f"`{f}`" for f in shared) + " is carried; nothing is carried or scored."]
     if plan.get("base") != base:
-        lines.append(f"**A stale base (#462)**: the plan diffed against {plan.get('base')}, the record's last complete run is {base}; nothing is scored.")
+        lines.append(f"**A stale base (#462)**: the plan diffed against {plan.get('base')}, the record's base (the last base-setting run) is {base}; nothing is scored.")
     floored = sorted(floors)
     planned = set(plan.get("files", []))
     if plan.get("mode") == "complete" and planned != set(floored):
@@ -199,7 +235,7 @@ def refuse_plan(plan, record, floors, outcome_files):
         moved = sorted(f for f in set(floors) | set(said or {}) if (said or {}).get(f) != floors.get(f))
         if moved:
             lines.append("**A floor moves only on a complete run (#462)**: on this incremental night "
-                         + ", ".join(f"`{f}` is {num(floors.get(f))} against the last complete run's {num((said or {}).get(f))}" for f in moved)
+                         + ", ".join(f"`{f}` is {num(floors.get(f))} against the record's {num((said or {}).get(f))}" for f in moved)
                          + "; nothing is scored.")
     for f in floored:
         if f in planned:
@@ -210,8 +246,8 @@ def refuse_plan(plan, record, floors, outcome_files):
             continue
         named = {"run": entry.get("run", record.get("run")), "commit": entry.get("sha", record.get("commit"))}
         if named != base or entry.get("source", "night") == "carried" and record.get("mode") == "complete":
-            lines.append(f"**A carried figure's base is not the last complete run (#462)**: `{f}` names run "
-                         f"{named['run']} at `{named['commit']}`, the last complete run is {base['run']} at `{base['commit']}`; nothing is scored.")
+            lines.append(f"**A carried figure's base is not the last base-setting run (#462)**: `{f}` names run "
+                         f"{named['run']} at `{named['commit']}`, the record's base is {base['run']} at `{base['commit']}`; nothing is scored.")
     unplanned = sorted(outcome_files - planned)
     if unplanned:
         lines.append(f"**An outcome outside the plan (#462)**: {', '.join(f'`{f}`' for f in unplanned)} mutated, not in the plan's files; nothing is scored.")
@@ -344,6 +380,10 @@ def main(args):
     if ("plan" in opts) != ("record" in opts) or ("write" in opts and "plan" not in opts):
         print("--plan and --record go together, and --write needs them", file=sys.stderr)
         return 1
+    if "write" in opts and rebases(json.loads(Path(opts["plan"]).read_text())) and not (dispatch and opts.get("run")):
+        print("--write on a whole incremental night needs --sha and --run: its record re-bases on them (#559)",
+              file=sys.stderr)
+        return 1
     floors = {f: float(v) for f, v in json.loads(os.environ.get("MUTANTS_FLOORS", "{}")).items()}
     equivalents = None
     if "equivalents" in opts:
@@ -420,7 +460,10 @@ def main(args):
     if plan is not None:
         base = last_complete(record)
         carried = {f: record["files"][f] for f in sorted(floors) if f not in set(plan.get("files", []))}
-        lines += [f"A {plan['mode']} night (#462); the last complete run: {base['run']} at `{base['commit']}`."]
+        lines += [f"A {plan['mode']} night (#462); the base: {base_named(record)}."]
+        if rebases(plan):
+            lines += ["The changed set is the whole set: the night's record re-bases on this run (base: this run, "
+                      "the changed set the whole set; #559)."]
         if not plan.get("files"):
             lines += ["No floored file changed since it and no test or dependency reaches one: the night "
                       "mutated nothing and carries every file's figure."]
@@ -496,6 +539,11 @@ def main(args):
     return 1 if failed else 0
 
 
+def rebases(plan):
+    """An incremental plan whose changed set is the whole set: its record re-bases (#559)."""
+    return plan.get("mode") == "incremental" and plan.get("whole") is True and bool(plan.get("files"))
+
+
 def night_record(plan, record, floors, night, carried, commit, run, eq=False):
     """The night's record, docs/scoreboard/mutants.json's shape, with each file's provenance
     (and, with eq, each night file's `equivalent` count, #482; a carried entry keeps its own)."""
@@ -517,7 +565,11 @@ def night_record(plan, record, floors, night, carried, commit, run, eq=False):
         files[f].update(unviable=c.get("Unviable", 0), source="night", run=run, sha=commit)
     out = {"schema": 1, "mode": plan["mode"], "commit": commit, "run": run,
            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")}
-    if plan["mode"] == "incremental":
+    if rebases(plan):
+        # A whole night re-bases (#559): the next night diffs against this run and carries from it.
+        out["base"] = {"run": run, "commit": commit, "whole": True, "why": REBASE_WHY}
+    elif plan["mode"] == "incremental":
+        # A night that judged a subset keeps the base it carried from.
         out["base"] = base
     out["floors"] = {f: int(v) if float(v).is_integer() else v for f, v in floors.items()}
     out["matrix"] = {"shards": plan.get("shards"), "parallel": plan.get("parallel")}
