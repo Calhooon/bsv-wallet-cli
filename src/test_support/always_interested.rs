@@ -1,7 +1,7 @@
 //! The test binary's always-interested global default (#568). The respend
 //! witness binary mounts this file too (`#[path]` in
 //! `tests/respend_witness/main.rs`), since its capture lives outside
-//! test_support: one copy for both crates.
+//! `test_support`: one copy for both crates.
 
 /// Install [`AlwaysInterested`] as this test binary's global default, once
 /// (#568). Every capture calls it before its own subscriber registers, and
