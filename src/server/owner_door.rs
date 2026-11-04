@@ -17,7 +17,9 @@
 //! Each writes through `store::origin_grants` once; an answer is
 //! `UPDATE .. WHERE pending_id = ? AND answered_at IS NULL`, so of two
 //! places answering one row the loser is told it was already answered
-//! (409 `CONFLICT`, the module's [`Refused::AlreadyAnswered`] text). An
+//! (409 `CONFLICT`, the module's [`Refused::AlreadyAnswered`] text), and a
+//! row whose page disconnected inside its window is refused until the page
+//! asks again (409 `CONFLICT`, [`Refused::Abandoned`], #534). An
 //! `expiry` is unix seconds as the rows hold it, `0` or absent never.
 //!
 //! The admission ([`refusal`]), outside the page gate, the CORS layer and
@@ -276,7 +278,8 @@ pub fn now() -> Result<i64> {
 }
 
 /// A row function's error as the door answers it: the store busy by its
-/// type, a row already answered (or nothing to revoke) 409 `CONFLICT`, any
+/// type, a row already answered or waiting for its page to reconnect (or
+/// nothing to revoke) 409 `CONFLICT`, any
 /// other refusal of the module 400 `VALIDATION_ERROR` in its words, else
 /// 500.
 fn refused(e: &anyhow::Error) -> Response {
@@ -284,7 +287,7 @@ fn refused(e: &anyhow::Error) -> Response {
         return busy.into_response();
     }
     let kind = match e.downcast_ref::<Refused>() {
-        Some(Refused::AlreadyAnswered { .. }) => ErrorKind::Conflict,
+        Some(Refused::AlreadyAnswered { .. } | Refused::Abandoned { .. }) => ErrorKind::Conflict,
         Some(_) => ErrorKind::Validation,
         None => ErrorKind::Internal,
     };

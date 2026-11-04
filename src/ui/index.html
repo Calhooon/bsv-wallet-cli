@@ -921,6 +921,9 @@ function when(secs) {
   return secs ? new Date(secs * 1000).toISOString().replace('.000', '') : '';
 }
 
+/** The brief reconnect's window in seconds (#534, `ABANDON_WINDOW` in src/server/powers.rs). */
+const ABANDON_WINDOW = 10;
+
 function renderOriginsView() {
   const main = document.getElementById('mainContent');
   const o = S.origins || { grants: [], pending: [], probes: [] };
@@ -934,12 +937,13 @@ function renderOriginsView() {
       <td>${esc(p.call)}</td>
       <td class="number">${p.amount === null ? '' : esc(p.amount.toLocaleString()) + ' sat'}</td>
       <td>${esc(when(p.firstSeen))}</td>
-      <td>${p.renewal ? 'renewal' : ''}</td>
+      <td>${p.renewal ? 'renewal' : ''}${p.abandonedAt === undefined ? ''
+        : `${p.renewal ? ', ' : ''}caller disconnected, withdrawn at ${esc(when(p.abandonedAt + ABANDON_WINDOW))} unless the page asks again`}</td>
       <td>${p.kind === 'spending'
         ? `<input class="origin-amount" id="amount-${p.pendingId}" type="number" min="0" value="${esc(p.amount ?? '')}" title="the month's ceiling in satoshis">`
-        : ''}<button class="origin-btn grant" onclick="answerOrigin(${p.pendingId}, 'grant')">Grant</button>${p.kind === 'spending'
+        : ''}<button class="origin-btn grant" onclick="answerOrigin(${p.pendingId}, 'grant')"${p.abandonedAt === undefined ? '' : ' disabled'}>Grant</button>${p.kind === 'spending'
         ? `<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'once')">Grant once</button>`
-        : ''}<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'deny')">Deny</button></td>
+        : ''}<button class="origin-btn" onclick="answerOrigin(${p.pendingId}, 'deny')"${p.abandonedAt === undefined ? '' : ' disabled'}>Deny</button></td>
     </tr>`).join('');
   // Each grant row as the store's one reading gives it (#533): the state
   // word, the ceiling, this month's spend and whether it has reached the

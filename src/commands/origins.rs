@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use bsv_wallet_cli::store::origin_grants::{
-    self as grants, probes, when, Answer, GrantShown, Granting, Kind, PendingRow, Power, ProbeRow,
-    Reach, Refused, Reply, Shown,
+    self as grants, probes, when, when_exact, Answer, GrantShown, Granting, Kind, PendingRow, Power,
+    ProbeRow, Reach, Refused, Reply, Shown,
 };
 
 use crate::context::WalletContext;
@@ -234,6 +234,12 @@ fn pending_line(p: &PendingRow, asked: &str) -> String {
     parts.push(format!("seen {}", when(p.first_seen)));
     if let (Some(at), Some(answer)) = (p.answered_at, p.answer) {
         parts.push(format!("{} at {}", answer.as_str(), when(at)));
+    }
+    if let Some(end) = p.withdrawn_at() {
+        parts.push(format!(
+            "caller disconnected, withdrawn at {} unless the page asks again",
+            when_exact(end)
+        ));
     }
     parts.join("  ")
 }
