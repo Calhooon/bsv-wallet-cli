@@ -342,7 +342,11 @@ async fn a_disconnect_during_the_opens_commit_leaves_no_grantable_row() {
     pause.release.notify_one();
     let mut marked = false;
     for _ in 0..50 {
-        if open_rows(&wallet).await.iter().any(|r| r.abandoned_at.is_some()) {
+        if open_rows(&wallet)
+            .await
+            .iter()
+            .any(|r| r.abandoned_at.is_some())
+        {
             marked = true;
             break;
         }
@@ -352,7 +356,11 @@ async fn a_disconnect_during_the_opens_commit_leaves_no_grantable_row() {
     let granting = json!({"pendingId": id, "answer": "grant"});
     let status = owner_post(addr, "/origins/answer", granting.clone()).await;
     assert_eq!(status, 409, "the owner's grant inside the window");
-    assert_eq!(held.counts("page.example"), (1, 1), "the row keeps its place");
+    assert_eq!(
+        held.counts("page.example"),
+        (1, 1),
+        "the row keeps its place"
+    );
 
     for _ in 0..250 {
         if open_rows(&wallet).await.is_empty() {

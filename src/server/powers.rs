@@ -445,7 +445,14 @@ impl Asker {
                     "browser gate: pending"
                 );
                 let windowed = pending.row.kind != grants::Kind::Spending;
-                Waiting::enter(held, wallet, originator, pending.row.pending_id, windowed, place)
+                Waiting::enter(
+                    held,
+                    wallet,
+                    originator,
+                    pending.row.pending_id,
+                    windowed,
+                    place,
+                )
             });
             drop(hand.send(entered));
         };

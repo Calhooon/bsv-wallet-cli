@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use bsv_wallet_cli::store::origin_grants::{
-    self as grants, probes, when, when_exact, Answer, GrantShown, Granting, Kind, PendingRow, Power,
-    ProbeRow, Reach, Refused, Reply, Shown,
+    self as grants, probes, when, when_exact, Answer, GrantShown, Granting, Kind, PendingRow,
+    Power, ProbeRow, Reach, Refused, Reply, Shown,
 };
 
 use crate::context::WalletContext;
