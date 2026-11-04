@@ -44,8 +44,10 @@
           "rawOriginator": "page.test",
           "kind": "spending",
           "key": "[]",
+          "state": "granted",
           "amount": 100000,
           "spentThisMonth": 89960,
+          "ceilingReached": false,
           "grantedAt": "<uint:10>",
           "expiry": 0,
           "revokedAt": null
