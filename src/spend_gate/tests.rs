@@ -253,7 +253,18 @@ async fn the_refusal_lists_every_coin_held_back_with_its_reason() {
         60,
     )
     .await;
-    coin(&storage, (user, basket), &received, false, None, 6_000, 4).await;
+    let received_row = coin(&storage, (user, basket), &received, false, None, 6_000, 4).await;
+    // The refusal's age is `CAST((julianday('now') - julianday(created_at))
+    // * 1440 AS INTEGER)`: a floor over milliseconds, where an exact four
+    // minutes reads 3.9999997 and a read inside the seed's millisecond
+    // reads under four (#578). Half a minute past four reads 4 for any
+    // gap under 30 s between this seed and the refusal.
+    sqlx::query("UPDATE outputs SET created_at = ? WHERE output_id = ?")
+        .bind(Utc::now() - chrono::Duration::seconds(4 * 60 + 30))
+        .bind(received_row)
+        .execute(storage.writer())
+        .await
+        .unwrap();
     coin(&storage, (user, basket), &made, true, None, 6_000, 2).await;
     let services = headers_with(&shallow, 900, 900);
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
