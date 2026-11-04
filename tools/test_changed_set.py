@@ -17,7 +17,12 @@ is refused; the base (#559): a whole incremental record is its own base and
 the plan says why, a subset one keeps its base, a whole base naming another
 run, a `whole` other than true and an unmarked base naming the record's own
 run are refused; and the git diff against the record's base, a complete
-run's or a whole night's, on a repository of its own. Each case
+run's or a whole night's, on a repository of its own; and the cap (#584):
+the default plans at six as before, fourteen runs min(14, shards) with seven
+fuzz beside seven hermetic, fourteen whose projected end falls past the
+window's end (or that the record cannot project) falls back to six with the
+line, inside the window it stands, and the projection reads the record's
+shard times. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_changed_set.py
 """
@@ -324,6 +329,129 @@ class Case(unittest.TestCase):
         for key in ("fuzz_parallel", "hermetic_parallel"):
             self.assertIn(f"      {key}: ${{{{ steps.plan.outputs.{key} }}}}\n", job("plan"), key)
 
+    def timed(self):
+        # A record whose twenty shards ran 10 mutants in 30 minutes each (a rate
+        # of 3 runner minutes a mutant) and whose six hermetic shards 30 each.
+        shards = [{"shard": k, "mutants": 10, "started": "2026-11-03T17:00:00Z",
+                   "completed": "2026-11-03T17:30:00Z"} for k in range(20)]
+        hermetic = [{"shard": k, "started": "2026-11-03T18:00:00Z", "completed": "2026-11-03T18:30:00Z"}
+                    for k in range(6)]
+        self.tree.write("docs/scoreboard/mutants.json",
+                        json.dumps(dict(RECORD, shards=shards, hermetic_shards=hermetic)))
+
+    def capped(self, *extra, mode="complete"):
+        # The workflow's plan step: a complete night at 3,600 s a fuzz target,
+        # the dispatch minute 17:00Z; the outputs as GITHUB_OUTPUT has them.
+        gh = os.path.join(self.tree.root, "gh-output")
+        if os.path.exists(gh):
+            os.remove(gh)
+        code, out, p = self.tree.plan("src/a.rs", mode=mode, extra=(
+            "--now", "2026-11-05T17:00:00Z", "--fuzz-seconds", "3600", "--github-output", gh, *extra))
+        self.assertEqual(code, 0, out)
+        with open(gh) as f:
+            outputs = dict(line.split("=", 1) for line in f.read().splitlines())
+        return p, out, outputs
+
+    def test_the_default_cap_plans_at_six_as_before(self):
+        # #584: a dispatch that names no cap plans exactly as before the input.
+        self.timed()
+        p, out, o = self.capped()
+        self.assertEqual((p["cap"], p["parallel"], p["stage"]),
+                         (6, 6, {"cap": 6, "fuzz_parallel": 3, "hermetic_parallel": 3, "tail": 2}))
+        self.assertEqual({k: o[k] for k in ("parallel", "cap", "fuzz_parallel", "hermetic_parallel")},
+                         {"parallel": "6", "cap": "6", "fuzz_parallel": "3", "hermetic_parallel": "3"})
+        self.assertIn("The cap (#584): 6 at once; cap 6 as dispatched; no window named, so no window check.", out)
+        # 360 mutants in 20 shards, 18 a shard at 3 minutes: 54 minutes, four waves
+        # (216); the fuzz targets' two rounds of 67 beside the hermetic shards' two of
+        # 30, then reach's 8 (142): 5h58m, the end 22:58Z.
+        self.assertEqual({k: p["projection"][k] for k in ("shard_minutes", "waves", "matrix_minutes",
+                                                          "stage_minutes", "end")},
+                         {"shard_minutes": 54.0, "waves": 4, "matrix_minutes": 216, "stage_minutes": 142,
+                          "end": "2026-11-05T22:58:00Z"})
+        self.assertIn("5h58m from 17:00Z, the projected end 22:58Z (2026-11-05)", out)
+        self.assertEqual(p["projection"]["github_waits"], "not projected: GitHub's, named in the record")
+        print(f"\n    {[l for l in out.splitlines() if l.startswith('The projection')][0]}", end=" ", file=sys.stderr)
+
+    def test_cap_fourteen_runs_fourteen_and_seven_plus_seven(self):
+        self.timed()
+        p, out, o = self.capped("--cap", "14")
+        self.assertEqual((p["cap"], p["parallel"], p["stage"]["fuzz_parallel"], p["stage"]["hermetic_parallel"]),
+                         (14, 14, 7, 7))
+        self.assertEqual({k: o[k] for k in ("parallel", "cap", "fuzz_parallel", "hermetic_parallel")},
+                         {"parallel": "14", "cap": "14", "fuzz_parallel": "7", "hermetic_parallel": "7"})
+        self.assertIn("in 20 shards, 14 at once (2 waves: 14, then 6).", out)
+        # Two waves of 54 (108), one fuzz round of 67 beside one hermetic round, reach 8 (75): 3h03m.
+        self.assertEqual((p["projection"]["matrix_minutes"], p["projection"]["stage_minutes"],
+                          p["projection"]["end"]), (108, 75, "2026-11-05T20:03:00Z"))
+        self.assertIn("no window named, so no window check", out)
+        # min(cap, shards): an incremental night of six shards runs six.
+        p, _, o = self.capped("--cap", "14", mode="incremental")
+        self.assertEqual((p["shards"], p["parallel"], o["parallel"]), (6, 6, "6"))
+        print(f"\n    {[l for l in out.splitlines() if l.startswith('The projection')][0]}", end=" ", file=sys.stderr)
+
+    def test_fourteen_past_the_windows_end_falls_back_to_six(self):
+        self.timed()
+        p, out, o = self.capped("--cap", "14", "--window-end", "20:00Z")
+        self.assertEqual((p["cap"], p["parallel"], p["requested_cap"], p["window_end"]), (6, 6, 14, "20:00Z"))
+        self.assertEqual((o["parallel"], o["cap"], o["fuzz_parallel"], o["hermetic_parallel"]), ("6", "6", "3", "3"))
+        self.assertIn("The cap (#584): 6 at once; cap 14 refused: its projected end 20:03Z falls past the window's "
+                      "end 20:00Z (#584); the night falls back to six, the table's word for a run that would "
+                      "overrun its window.", out)
+        self.assertEqual((p["refused"]["cap"], p["refused"]["end"]), (14, "2026-11-05T20:03:00Z"))
+        self.assertEqual((p["projection"]["cap"], p["projection"]["end"]), (6, "2026-11-05T22:58:00Z"))
+        self.assertIn("the projected end 20:03Z (2026-11-05); GitHub's own waits not projected, GitHub's. Refused.", out)
+        refusal = [l for l in out.splitlines() if l.startswith("The cap")][0]
+        # Inside a later window's end it stands; the window's end is the next one after the minute.
+        p, out, o = self.capped("--cap", "14", "--window-end", "20:05Z")
+        self.assertEqual((p["cap"], o["parallel"]), (14, "14"))
+        self.assertIn("cap 14: the projected end falls inside the window, ending 20:05Z.", out)
+        p, _, _ = self.capped("--cap", "14", "--window-end", "01:00Z")
+        self.assertEqual(p["cap"], 14)
+        # Six past its window runs: six is the table's floor.
+        p, out, _ = self.capped("--window-end", "20:00Z")
+        self.assertEqual((p["cap"], p["parallel"]), (6, 6))
+        self.assertIn("cap 6; the projected end falls past the window's end 20:00Z or is not projected: "
+                      "six is the table's floor, so it runs.", out)
+        print(f"\n    {refusal}", end=" ", file=sys.stderr)
+
+    def test_fourteen_the_record_cannot_project_falls_back_to_six(self):
+        # The planted record carries no shard times: no end is projected, so a
+        # window refuses fourteen; without a window, fourteen runs unchecked.
+        p, out, _ = self.capped("--cap", "14", "--window-end", "20:00Z")
+        self.assertEqual((p["cap"], p["parallel"], p["projection"]["end"]), (6, 6, None))
+        self.assertIn("cap 14 refused: the record carries no measured shard time to project it (#584)", out)
+        self.assertIn("no measured shard time in the record; no end projected.", out)
+        p, _, _ = self.capped("--cap", "14")
+        self.assertEqual(p["cap"], 14)
+
+    def test_a_cap_or_window_outside_the_input_is_refused(self):
+        for extra, said in ((("--cap", "20"), "cap 20 is not one of 6, 14 (#584)"),
+                            (("--cap", "14", "--window-end", "20:00"), "window_end '20:00' is not HH:MMZ"),
+                            (("--window-end", "24:00Z"), "window_end '24:00Z' is not HH:MMZ")):
+            code, out, _ = self.tree.plan("src/a.rs", extra=extra)
+            self.assertEqual(code, 1, out)
+            self.assertIn(said, out)
+
+    def test_the_workflow_passes_the_cap(self):
+        # #584: the dispatch's inputs, the plan step's flags, the cap output,
+        # and the projection's target count the fuzz job's matrix.
+        with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", "nightly.yml")) as f:
+            text = f.read()
+        inputs = text.split("    inputs:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("      cap:\n", inputs)
+        self.assertIn("        type: choice\n        options: ['6', '14']\n        default: '6'\n", inputs)
+        self.assertIn("      window_end:\n", inputs)
+        self.assertIn("        type: string\n        default: ''\n", inputs)
+        plan_job = text.split("\n  plan:\n", 1)[1].split("\n  # ", 1)[0]
+        self.assertIn("          CAP: ${{ inputs.cap || '6' }}\n", plan_job)
+        self.assertIn("          WINDOW_END: ${{ inputs.window_end }}\n", plan_job)
+        self.assertIn('--cap "$CAP" --window-end "$WINDOW_END" --fuzz-seconds "$FUZZ_SECONDS"', plan_job)
+        self.assertIn("      cap: ${{ steps.plan.outputs.cap }}\n", plan_job)
+        targets = text.split("        target: [", 1)[1].split("]", 1)[0].split(",")
+        self.assertEqual(len(targets), changed_set.FUZZ_TARGETS)
+        self.assertEqual(changed_set.STAGE_SPLIT, {6: (3, 3), 14: (7, 7)})
+        self.assertEqual(changed_set.CAPS, (6, 14))
+
     def test_a_shard_count_below_one_is_refused(self):
         code, out, _ = self.tree.plan(mode="complete", extra=("--complete-shards", "0"))
         self.assertEqual(code, 1, out)
@@ -482,7 +610,9 @@ class TheScriptIsTheInProcessRun(unittest.TestCase):
 
     def test_each_way_the_plan_ends_is_the_scripts(self):
         root, out = self.tree.root, os.path.join(self.tree.root, "plan.json")
-        common = ["--root", root, "--out", out, "--head", "f" * 40]
+        # The plan's minute pinned (#584): the projection names it, so two runs
+        # a second apart would otherwise differ.
+        common = ["--root", root, "--out", out, "--head", "f" * 40, "--now", "2026-11-05T17:00:00Z"]
         codes = [self.same(*common, "--mode", "incremental", "--paths", os.path.join(root, "changed.txt")),
                  self.same(*common, "--mode", "complete", "--github-output", os.path.join(root, "github-output")),
                  self.same(*common, "--mode", "nightly"),

@@ -379,6 +379,34 @@ class Case(unittest.TestCase):
         print("\n    exit 0: twenty shards of twenty, src/a.rs 95.0, src/b.rs 80.0, matrix 20, 6 at once (4 waves: 6, then 6, then 6, then 2)",
               end=" ", file=sys.stderr)
 
+    def test_the_record_names_the_cap_and_the_projection(self):
+        # #584: a plan at fourteen whose window refused nothing, and one whose
+        # fourteen the window refused (six run, both projections), each named
+        # in the night's record; a plan without the cap (above) writes neither.
+        self.twenty_shards()
+        projection = {"cap": 14, "shards": 20, "parallel": 14, "end": "2026-11-05T19:40:00Z"}
+        the_plan = dict(plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20), parallel=14, cap=14,
+                        requested_cap=14, window_end="20:00Z", cap_why="cap 14: inside the window",
+                        projection=projection)
+        code, out = self.night.score(the_plan, complete_record())
+        self.assertEqual(code, 0, out)
+        written = self.night.written()
+        self.assertEqual(written["matrix"], {"shards": 20, "parallel": 14, "cap": 14})
+        self.assertEqual(written["cap"], {"requested_cap": 14, "window_end": "20:00Z",
+                                          "cap_why": "cap 14: inside the window"})
+        self.assertEqual(written["projection"], projection)
+        self.assertNotIn("projection_refused", written)
+        refused = dict(projection, end="2026-11-05T20:50:00Z")
+        the_plan = dict(the_plan, parallel=6, cap=6, cap_why="cap 14 refused", projection=dict(projection, cap=6),
+                        refused=refused)
+        code, out = self.night.score(the_plan, complete_record())
+        self.assertEqual(code, 0, out)
+        written = self.night.written()
+        self.assertEqual((written["matrix"]["cap"], written["cap"]["requested_cap"]), (6, 14))
+        self.assertEqual(written["projection_refused"], refused)
+        print("\n    exit 0: the record names matrix.cap 14 and the projection; refused, cap 6 asked 14 with both",
+              end=" ", file=sys.stderr)
+
     def test_the_shards_logs_are_never_read_as_outcomes(self):
         # Each shard's artifact carries cargo-mutants' log/ (#510): the
         # baseline's, one a mutant, and a stray file; the gate and the score
