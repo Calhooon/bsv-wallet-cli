@@ -21,6 +21,15 @@
 //! The served doors read these rows per power from the switch on (the
 //! design's L5b, `src/server/powers.rs`); `ALLOWED_ORIGINS` is a seed beside
 //! them and writes no row.
+//!
+//! A pending row is open (a call held on it), abandoned (`abandoned_at`,
+//! #534: its caller disconnected and the row waits for the page to ask
+//! again, never a spending row) or answered (the history). A row is inside
+//! its window while `now < abandoned_at + ABANDON_WINDOW` and gone to every
+//! reader from then on, whether or not the server's timer deleted it:
+//! [`listing`], [`owners_listing`] and [`pending`] hide it, [`open_or_join`]
+//! deletes it before it writes a new row, and [`answer`] finds no row. Inside
+//! the window [`open_or_join`] resumes it and [`answer`] refuses it.
 
 use anyhow::Result;
 use bsv_wallet_toolbox::StorageSqlx;
