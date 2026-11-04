@@ -202,6 +202,7 @@ impl Shown {
             answered_at: p.answered_at,
             answer: p.answer.map(Answer::as_str),
             abandoned_at: p.abandoned_at,
+            abandoned_until: p.withdrawn_at(),
         });
         let probes = self.probes.as_ref().map(|rows| {
             rows.iter()
@@ -279,6 +280,12 @@ struct PendingJson<'a> {
     /// so an open row's JSON is as before.
     #[serde(skip_serializing_if = "Option::is_none")]
     abandoned_at: Option<i64>,
+    /// #534: the abandoned row's window's end in unix seconds
+    /// ([`PendingRow::withdrawn_at`], the store's one reading of the
+    /// window), present with `abandonedAt` alone; the surfaces show it and
+    /// compute nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    abandoned_until: Option<i64>,
 }
 
 /// A probe row in JSON (#539), times in unix seconds.

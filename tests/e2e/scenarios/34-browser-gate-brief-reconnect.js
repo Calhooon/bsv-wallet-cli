@@ -92,6 +92,8 @@ module.exports = {
         assert(marked[0].pendingId === N && marked[0].answeredAt === null,
           `2: row N shown abandoned, still one row for back.example (got ${JSON.stringify(marked)})`);
         const A = marked[0].abandonedAt;
+        assert(marked[0].abandonedUntil === A + W / 1000,
+          `2: abandonedUntil is the window's end, abandonedAt + W (got ${JSON.stringify(marked[0])})`);
         assert(g.log(wallet).includes('browser gate: disconnected'), '2: serve.log names browser gate: disconnected');
         const words = `pending request #${N} is waiting for its page to reconnect; answer it when the page asks again, or it is withdrawn at ${g.exact(A + W / 1000)}`;
         let refused = null;
@@ -118,8 +120,8 @@ module.exports = {
         const rejoined = g.begin(wallet, 'POST', 'listOutputs', { origin: BACK_8080, ...listing });
         const resumed = await untilRows(wallet, 'back.example', rs => rs.length === 1 && rs[0].abandonedAt === undefined,
           'row N resumed');
-        assert(resumed[0].pendingId === N && resumed[0].answeredAt === null,
-          `4: held on N, no new row, abandonedAt gone (got ${JSON.stringify(resumed)})`);
+        assert(resumed[0].pendingId === N && resumed[0].answeredAt === null && resumed[0].abandonedUntil === undefined,
+          `4: held on N, no new row, abandonedAt and abandonedUntil gone (got ${JSON.stringify(resumed)})`);
         assert(new RegExp(`browser gate: pending.*pending_id=${N} joined=true resumed=true`).test(plainLog(wallet)),
           '4: serve.log names browser gate: pending with joined and resumed');
 

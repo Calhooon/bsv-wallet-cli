@@ -426,7 +426,8 @@ async fn pending_rows_of_each_kind_are_answered_from_the_cli() {
 }
 
 /// #534: a row whose caller disconnected waits for its page inside the
-/// window: listed as such (the line and `abandonedAt`), and the owner's
+/// window: listed as such (the line, `abandonedAt` and `abandonedUntil`,
+/// the line's time), and the owner's
 /// `origin-grant` and `origin-deny` refused naming the window's end, no
 /// grant row written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -472,6 +473,8 @@ async fn an_abandoned_row_is_listed_and_its_answer_refused_from_the_cli() {
     let json: serde_json::Value =
         serde_json::from_str(&said(&dir, &["--json", "origins"])).expect("json");
     assert_eq!(json["pending"][0]["abandonedAt"], now);
+    let until = now + bsv_wallet_cli::server::powers::ABANDON_WINDOW_SECS;
+    assert_eq!(json["pending"][0]["abandonedUntil"], until);
     let words = format!(
         "pending request #{id} is waiting for its page to reconnect; answer it when the page \
          asks again, or it is withdrawn at {end}"
