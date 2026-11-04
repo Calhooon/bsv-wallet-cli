@@ -1625,6 +1625,17 @@ class TheRecordNamesEachFiguresProvenance(Case):
         self.assertIn("| mutation floor `src/spend_gate.rs` | 80 | 86.6 at abcdef0 |", out)
         print("\n    exit 0: 82.6 carried from run 40500000007 at 9999999", end=" ", file=sys.stderr)
 
+    def test_a_whole_incremental_record_is_its_own_base(self):
+        # #559: a whole night names itself as its base, every file its own night's.
+        mutants = self.incremental(**{"src/explorers.rs": {"source": "night", "run": RUN, "sha": SHA}})
+        mutants["base"] = {"run": RUN, "commit": SHA, "whole": True,
+                           "why": "this run, the changed set the whole set (#559)"}
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(mutants))
+        out = self.table()
+        self.assertIn("| mutation floor `src/explorers.rs` | 69 | 82.6 at abcdef0 |", out)
+        self.assertNotIn("carried from", out)
+        print("\n    exit 0: a whole record's rows are its own", end=" ", file=sys.stderr)
+
     def test_a_carried_figure_from_another_run_than_the_base_is_refused(self):
         self.incremental(**{"src/explorers.rs": {"run": RUN.replace("01", "05")}})
         self.refused("docs/scoreboard/mutants.json: files.src/explorers.rs: carried names run "

@@ -7,7 +7,14 @@ it writes; it refuses a carried figure whose base is not the last complete
 run (an older run's, or an incremental night's), a plan diffed against
 another base, a floor moved on an incremental night (a complete night may
 move one), an outcome outside the plan and a complete plan short of a floored
-file; an empty plan carries everything and says so. The count is the
+file; an empty plan carries everything and says so. A whole incremental
+night re-bases (#559): its written record's base names itself (whole, with
+its why), a night that judged a subset keeps the base it carried from, a
+carry after a whole night reads the whole night's figures and names its run,
+a carry after a subset night names that night's base; a whole base naming
+another run, a whole record holding a carried figure, a plan diffed against
+the base a whole record replaced and a whole write without --run are
+refused. The count is the
 dispatched matrix's (#460): a twenty-shard complete night is scored and its
 record names its matrix, nineteen artifacts of twenty are refused naming the
 absent shard, as are a shard without its success marker (cut at the job's
@@ -18,9 +25,10 @@ missed is scored equivalent, outside the denominator and in its own column
 and the written record; an entry the night caught, a stale entry (a name no
 mutant of a mutated file carries) and a malformed entry are refused by name,
 and an entry of a file the night carries is not judged. The committed record
-names the last complete run, by itself when complete or by its base when
-incremental, every figure the night's own or carried from that base; a
-planted record of each mode holds the rule whichever mode the tree's is in.
+names its base, by itself when complete or whole incremental (#559) or by
+its base when a subset incremental, every figure the night's own or carried
+from that base (a whole record carries nothing); a planted record of each
+shape holds the rule whichever shape the tree's is in.
 Each case writes its inputs under a directory of its own in $TMPDIR. Run by
 the CI job ratchet: python3 tools/test_mutants_score.py
 """
@@ -59,8 +67,25 @@ def complete_record():
 def plan(files, mode="incremental", base=None, shards=None):
     shards = (1 if files else 0) if shards is None else shards
     return {"mode": mode, "base": base or {"run": RUN_A, "commit": SHA_A}, "head": HEAD,
-            "floored": sorted(FLOORS), "files": files, "shards": shards, "matrix": list(range(shards)),
-            "parallel": min(6, shards)}
+            "floored": sorted(FLOORS), "files": files, "whole": sorted(files) == sorted(FLOORS),
+            "shards": shards, "matrix": list(range(shards)), "parallel": min(6, shards)}
+
+
+WHY = "this run, the changed set the whole set (#559)"
+
+
+def whole_record():
+    """A whole incremental night's record (#559): run B at SHA_B judged both files, its base itself."""
+    return {"schema": 1, "mode": "incremental", "commit": SHA_B, "run": RUN_B, "date": "2026-11-03",
+            "base": {"run": RUN_B, "commit": SHA_B, "whole": True, "why": WHY}, "floors": dict(FLOORS),
+            "files": {"src/a.rs": entry(96, 4, run=RUN_B, sha=SHA_B), "src/b.rs": entry(97, 3, run=RUN_B, sha=SHA_B)}}
+
+
+def subset_record():
+    """A subset incremental night's record: run B at SHA_B judged src/a.rs and carried src/b.rs from A."""
+    return {"schema": 1, "mode": "incremental", "commit": SHA_B, "run": RUN_B, "date": "2026-11-03",
+            "base": {"run": RUN_A, "commit": SHA_A}, "floors": dict(FLOORS),
+            "files": {"src/a.rs": entry(96, 4, run=RUN_B, sha=SHA_B), "src/b.rs": entry(74, 26, source="carried")}}
 
 
 def equivalent(file, i, pr=434):
@@ -250,6 +275,89 @@ class Case(unittest.TestCase):
                                  outcome("src/b.rs", k, "CaughtMutant"),
                                  outcome("src/b.rs", 20 + k, "MissedMutant" if k < 8 else "CaughtMutant")])
 
+    def a_whole_night(self):
+        self.a_night_on_a()
+        self.night.shard(1, [outcome("src/b.rs", i, "CaughtMutant") for i in range(9)]
+                         + [outcome("src/b.rs", 50, "MissedMutant")])
+
+    def test_a_whole_incremental_night_rebases_on_itself(self):
+        # The changed set is the whole set: every file judged at HEAD in the
+        # night's own shards, so the record names this run as its base.
+        self.a_whole_night()
+        the_plan = plan(["src/a.rs", "src/b.rs"], shards=2)
+        self.assertTrue(the_plan["whole"])
+        code, out = self.night.score(the_plan, complete_record())
+        self.assertEqual(code, 0, out)
+        self.assertIn("the night's record re-bases on this run (base: this run, the changed set the whole set; #559)", out)
+        self.assertNotIn("carried from", out)
+        rec = self.night.written()
+        self.assertEqual(rec["base"], {"run": NIGHT, "commit": HEAD, "whole": True, "why": WHY})
+        self.assertEqual({f: (e["source"], e["run"], e["sha"]) for f, e in rec["files"].items()},
+                         {f: ("night", NIGHT, HEAD) for f in FLOORS})
+        self.assertEqual(last_complete_faults(rec), [])
+        print("\n    exit 0: base {run 3000, ccccccc, whole}, every file the night's own", end=" ", file=sys.stderr)
+
+    def test_a_subset_night_keeps_the_base_it_carried_from(self):
+        # After a complete record and after a whole one: the written base is the record's, never this run.
+        for record, base in ((complete_record(), {"run": RUN_A, "commit": SHA_A}),
+                             (whole_record(), {"run": RUN_B, "commit": SHA_B})):
+            self.a_night_on_a()
+            code, out = self.night.score(plan(["src/a.rs"], base=base), record)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("re-bases", out)
+            rec = self.night.written()
+            self.assertEqual(rec["base"], base)
+            self.assertEqual(last_complete_faults(rec), [])
+        print("\n    exit 0: the base stays run 1000, then run 2000", end=" ", file=sys.stderr)
+
+    def test_a_carry_after_a_whole_night_reads_its_figures_and_names_it(self):
+        self.a_night_on_a()
+        code, out = self.night.score(plan(["src/a.rs"], base={"run": RUN_B, "commit": SHA_B}), whole_record())
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"the base: {RUN_B} at `{SHA_B}` (the record itself)", out)
+        self.assertIn("| `src/b.rs` | 97 | 0 | 3 | 1 | 97.0 | 75 | carried from run 2000 at `bbbbbbb` |", out)
+        rec = self.night.written()
+        self.assertEqual({k: rec["files"]["src/b.rs"][k] for k in ("source", "run", "sha", "score", "caught")},
+                         {"source": "carried", "run": RUN_B, "sha": SHA_B, "score": 97.0, "caught": 97})
+        print("\n    exit 0: src/b.rs carried 97.0 from run 2000 at bbbbbbb, the whole night's", end=" ", file=sys.stderr)
+
+    def test_a_carry_after_a_subset_night_names_that_nights_base(self):
+        self.a_night_on_a()
+        code, out = self.night.score(plan(["src/a.rs"]), subset_record())
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"the base: {RUN_A} at `{SHA_A}` (the record's base)", out)
+        self.assertIn("| `src/b.rs` | 74 | 0 | 26 | 1 | 74.0 | 75 | carried from run 1000 at `aaaaaaa` |", out)
+        self.assertEqual(self.night.written()["base"], {"run": RUN_A, "commit": SHA_A})
+        print("\n    exit 0: src/b.rs carried 74.0 from run 1000, the subset night's base", end=" ", file=sys.stderr)
+
+    def test_a_plan_against_the_base_a_whole_record_replaced_is_refused(self):
+        self.a_night_on_a()
+        self.refused("A stale base (#462)", plan(["src/a.rs"]), whole_record())
+
+    def test_a_whole_base_naming_another_run_is_refused(self):
+        record = whole_record()
+        record["base"].update(run=RUN_A, commit=SHA_A)
+        self.a_night_on_a()
+        self.refused("A whole base names its own run (#559)", plan(["src/a.rs"]), record)
+
+    def test_a_whole_record_holding_a_carried_figure_is_refused(self):
+        record = whole_record()
+        record["files"]["src/b.rs"] = entry(97, 3, run=RUN_B, sha=SHA_B, source="carried")
+        self.a_night_on_a()
+        self.refused("A whole record carries nothing (#559)**: its base is itself, and `src/b.rs` is carried",
+                     plan(["src/a.rs"], base={"run": RUN_B, "commit": SHA_B}), record)
+
+    def test_a_whole_write_without_its_run_is_refused(self):
+        self.a_whole_night()
+        r = subprocess.run([sys.executable, "-B", SCRIPT, "--sha", HEAD,
+                            "--plan", self.night.put("plan.json", plan(["src/a.rs", "src/b.rs"], shards=2)),
+                            "--record", self.night.put("record.json", complete_record()),
+                            "--write", os.path.join(self.night.root, "night.json"),
+                            os.path.join(self.night.root, "outcomes")],
+                           capture_output=True, text=True, env=dict(os.environ, MUTANTS_FLOORS=json.dumps(FLOORS)))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("--write on a whole incremental night needs --sha and --run", r.stderr)
+
     def test_a_twenty_shard_complete_night_is_scored(self):
         self.twenty_shards()
         the_plan = plan(["src/a.rs", "src/b.rs"], mode="complete", shards=20)
@@ -385,7 +493,7 @@ class Case(unittest.TestCase):
         for name, e in entries.items():
             self.assertTrue(e["review"].startswith("VERDICT merge"), name)
 
-    def test_the_committed_record_names_the_last_complete_run_by_itself_or_by_its_base(self):
+    def test_the_committed_record_names_its_base_by_itself_or_by_its_base(self):
         # The tree's own record, in whichever mode the last night wrote it, then one planted
         # record per side: the rule holds on both, so the tree's mode never decides the case.
         with open(os.path.join(os.path.dirname(HERE), "docs", "scoreboard", "mutants.json")) as f:
@@ -402,23 +510,43 @@ class Case(unittest.TestCase):
         stray = dict(complete_record(), files=dict(complete_record()["files"], **{
             "src/b.rs": entry(74, 26, run=RUN_B, sha=SHA_B)}))
         self.assertEqual(last_complete_faults(stray), ["src/b.rs"])
+        # A whole incremental record (#559) names itself as its base and carries nothing.
+        self.assertEqual(last_complete_faults(whole_record()), [])
+        self.assertEqual(last_complete_faults(subset_record()), [])
+        whole_carrying = whole_record()
+        whole_carrying["files"]["src/b.rs"] = entry(97, 3, run=RUN_B, sha=SHA_B, source="carried")
+        self.assertEqual(last_complete_faults(whole_carrying), ["src/b.rs"])
+        elsewhere = whole_record()
+        elsewhere["base"].update(run=RUN_A, commit=SHA_A)
+        with self.assertRaises(AssertionError):
+            last_complete_faults(elsewhere)
+        unmarked = dict(whole_record(), base={"run": RUN_B, "commit": SHA_B})
+        with self.assertRaises(AssertionError):
+            last_complete_faults(unmarked)
 
 
 def last_complete_faults(record):
-    """The files whose figure is not the last complete run's or the record's own night's, [] when
-    the record holds (#462, mutants_score.py's night_record): a complete record's every file is
-    its own night's (source night, the record's run and commit); an incremental record names its
-    base {"run", "commit"}, the last complete run, and each file is its own night's or carried
-    from that base (source carried, the base's run and commit) and from no other run."""
+    """The files whose figure is not the base's or the record's own night's, [] when the record
+    holds (#462, #559, mutants_score.py's night_record): a complete record's every file is its own
+    night's (source night, the record's run and commit); a whole incremental record names itself
+    as its base ({"run", "commit", "whole": true, "why"}, its own run and commit) and every file
+    is its own night's, carrying nothing; a subset incremental record names its base
+    {"run", "commit"}, another run, and each file is its own night's or carried from that base
+    (source carried, the base's run and commit) and from no other run."""
     own = ("night", record["run"], record["commit"])
     if record["mode"] == "complete":
         allowed = {own}
     else:
         assert record["mode"] == "incremental", record["mode"]
         base = record["base"]
-        assert sorted(base) == ["commit", "run"] and base["run"] and base["commit"], base
-        assert base["run"] != record["run"], base
-        allowed = {own, ("carried", base["run"], base["commit"])}
+        if base.get("whole") is True:
+            assert sorted(base) == ["commit", "run", "whole", "why"] and base["why"], base
+            assert (base["run"], base["commit"]) == (record["run"], record["commit"]), base
+            allowed = {own}
+        else:
+            assert sorted(base) == ["commit", "run"] and base["run"] and base["commit"], base
+            assert base["run"] != record["run"], base
+            allowed = {own, ("carried", base["run"], base["commit"])}
     return sorted(f for f, e in record["files"].items() if (e["source"], e["run"], e["sha"]) not in allowed)
 
 

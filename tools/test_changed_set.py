@@ -13,8 +13,11 @@ MUTANTS_SHARDS_COMPLETE shards (twenty, #460) six at a time in four waves
 (#513), where an incremental night keeps its own sizing six at a time; the
 stage after the matrix, three fuzz targets beside three hermetic shards, then
 reach and bench, refused over the cap and wired so in nightly.yml (#517); a record without a mode
-is refused; and the git diff
-against the record's last complete run, on a repository of its own. Each case
+is refused; the base (#559): a whole incremental record is its own base and
+the plan says why, a subset one keeps its base, a whole base naming another
+run, a `whole` other than true and an unmarked base naming the record's own
+run are refused; and the git diff against the record's base, a complete
+run's or a whole night's, on a repository of its own. Each case
 writes a tree under $TMPDIR. Run by the CI job ratchet:
 python3 tools/test_changed_set.py
 """
@@ -342,6 +345,70 @@ class Case(unittest.TestCase):
             base={"run": RUN, "commit": SHA})))
         p, _ = self.planned("src/b.rs")
         self.assertEqual(p["base"], {"run": RUN, "commit": SHA})
+
+    WHOLE = dict(RECORD, mode="incremental", commit="b" * 40, run=RUN.replace("1000", "2000"),
+                 base={"run": RUN.replace("1000", "2000"), "commit": "b" * 40, "whole": True,
+                       "why": "this run, the changed set the whole set (#559)"})
+
+    def test_a_whole_incremental_record_is_its_own_base(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(self.WHOLE))
+        p, out = self.planned("src/b.rs")
+        self.assertEqual(p["base"], {"run": RUN.replace("1000", "2000"), "commit": "b" * 40})
+        self.assertIn("the record itself, an incremental night whose changed set was the whole set", p["base_why"])
+        self.assertIn("The base: " + RUN.replace("1000", "2000"), out)
+        self.assertEqual((p["files"], p["carried"]), (["src/b.rs"], ["src/a.rs", "src/c.rs"]))
+        print(f"\n    base {p['base_why']}", end=" ", file=sys.stderr)
+
+    def test_a_subset_incremental_record_keeps_its_base(self):
+        self.tree.write("docs/scoreboard/mutants.json", json.dumps(dict(
+            RECORD, mode="incremental", commit="b" * 40, run=RUN.replace("1000", "2000"),
+            base={"run": RUN, "commit": SHA})))
+        p, _ = self.planned("src/b.rs")
+        self.assertEqual(p["base"], {"run": RUN, "commit": SHA})
+        self.assertIn("a night that judged a subset keeps its base", p["base_why"])
+
+    def test_a_complete_record_is_its_own_base_and_says_so(self):
+        p, _ = self.planned("src/b.rs")
+        self.assertEqual(p["base"], {"run": RUN, "commit": SHA})
+        self.assertIn("the record itself, a complete run", p["base_why"])
+
+    def test_a_whole_plan_says_its_record_rebases(self):
+        p, out = self.planned("Cargo.lock")
+        self.assertTrue(p["whole"])
+        self.assertIn("the night's record re-bases on this run", out)
+        p, out = self.planned("src/b.rs")
+        self.assertNotIn("re-bases", out)
+
+    def test_a_base_that_contradicts_its_marker_is_refused(self):
+        other = dict(self.WHOLE, base=dict(self.WHOLE["base"], run=RUN, commit=SHA))
+        unmarked = dict(self.WHOLE, base={"run": self.WHOLE["run"], "commit": self.WHOLE["commit"]})
+        loose = dict(self.WHOLE, base=dict(self.WHOLE["base"], whole="yes"))
+        for record, needle in ((other, "a whole base names the record's own run (#559)"),
+                               (unmarked, "names its own run as its base without"),
+                               (loose, "the base's `whole` is true or absent")):
+            self.tree.write("docs/scoreboard/mutants.json", json.dumps(record))
+            code, out, _ = self.tree.plan("src/b.rs")
+            self.assertEqual(code, 1, out)
+            self.assertIn(needle, out)
+
+    def test_the_git_diff_against_a_whole_nights_commit(self):
+        t = self.tree
+        t.git("init", "-q")
+        t.git("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        t.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "the last complete run")
+        # A lockfile change before the whole night: it brought in the whole set
+        # then, and the next night's diff, which starts at the whole night, never sees it.
+        t.write("Cargo.lock", "# changed before the whole night\n")
+        t.git("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        t.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "the whole night's tree")
+        whole = t.git("rev-parse", "HEAD")
+        t.write("docs/scoreboard/mutants.json", json.dumps(dict(
+            self.WHOLE, commit=whole, base=dict(self.WHOLE["base"], commit=whole))))
+        t.write("src/b.rs", "// changed\n")
+        t.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "head")
+        p, _ = self.planned(git=True)
+        self.assertEqual((p["base"]["commit"], p["files"], p["whole"]), (whole, ["src/b.rs"], False))
+        self.show(p)
 
     def test_the_git_diff_against_the_last_complete_run(self):
         t = self.tree
