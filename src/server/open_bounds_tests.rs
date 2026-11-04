@@ -186,7 +186,7 @@ const METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "TR
 async fn the_open_doors_methods_are_the_routers() {
     let seeded = "http://seeded.example";
     let (_dir, _wallet, addr, _) = served(&["seeded.example"]).await;
-    for (door, methods) in crate::server::origin_gate::OPEN_DOORS {
+    for (door, methods) in super::OPEN_DOORS {
         for method in METHODS {
             let answered = by_method(addr, method, seeded, door).await;
             let gate_says = methods.iter().any(|m| m.as_str() == method);

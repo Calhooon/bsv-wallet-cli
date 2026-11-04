@@ -32,9 +32,37 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use axum::http::Method;
 use tokio::time::Instant;
 
 use super::error::{AppError, Kind};
+
+/// The open doors (W15, ruled (i) by the owner on 2026-11-03): answered to
+/// a page with a parsed `Origin` and an agreeing originator, with no row,
+/// as the reference's manager gates none of them (`WPM:5492-5568`). Each
+/// with the methods its route answers (the router's map in `make_router`;
+/// `HEAD` rides `GET`): a call by another method is the router's `405`,
+/// neither counted nor charged (#556). The test
+/// `the_open_doors_methods_are_the_routers` pins the two maps together.
+pub(crate) const OPEN_DOORS: [(&str, &[Method]); 6] = [
+    ("/isAuthenticated", GET_OR_POST),
+    ("/waitForAuthentication", GET_OR_POST),
+    ("/getHeight", GET_OR_POST),
+    ("/getHeaderForHeight", &[Method::POST]),
+    ("/getNetwork", GET_OR_POST),
+    ("/getVersion", GET_OR_POST),
+];
+
+/// The status doors' methods: `GET` (with its `HEAD`) and `POST`.
+const GET_OR_POST: &[Method] = &[Method::GET, Method::HEAD, Method::POST];
+
+/// Whether `route` is an open door answering `method`: the call the bound
+/// charges and the probe record counts (the gate's question).
+pub(crate) fn answers(route: &str, method: &Method) -> bool {
+    OPEN_DOORS
+        .iter()
+        .any(|(door, methods)| *door == route && methods.contains(method))
+}
 
 /// The presence doors: one answer per door per originator a minute.
 pub const PRESENCE_DOORS: [&str; 2] = ["/isAuthenticated", "/waitForAuthentication"];
@@ -168,19 +196,9 @@ impl OpenBounds {
         self.judge(host, door, class, now, true)
     }
 
-    /// Whether [`take`](Self::take) would admit the call now, its counter
-    /// unmoved: a level-0 check read before the call's other checks, the
-    /// charge taken once when they all admit (#556).
-    ///
-    /// # Errors
-    ///
-    /// The call past its bound: [`Limited`], the wait and the window.
-    pub fn peek(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
-        self.judge(host, door, class, now, false)
-    }
-
     /// The bound's answer at `now`; with `charge`, an admission moves the
-    /// counter.
+    /// counter, and without it the counter is only read (a level-0 check
+    /// before the call's one charge, #556).
     fn judge(
         &self,
         host: &str,
@@ -227,8 +245,8 @@ impl OpenBounds {
         self.served(originator, door, class, true)
     }
 
-    /// [`check`](Self::check) with the counter unmoved (`peek`): a
-    /// level-0 check read in the call's order, before the one charge.
+    /// [`check`](Self::check) with the counter unmoved: a level-0 check
+    /// read in the call's order, before the one charge (#556).
     pub(crate) fn admits(
         &self,
         originator: &str,
@@ -441,26 +459,24 @@ mod tests {
         );
     }
 
-    /// A peek reads the bound and moves no counter (#556): with one call
-    /// of the burst left, any number of peeks admit, the take after them is
-    /// the burst's last, and a peek past it refuses with the take's wait.
+    /// A read without the charge moves no counter (#556): with one call of
+    /// the burst left, any number of reads admit, the take after them is
+    /// the burst's last, and a read past it refuses with the take's wait.
     #[test]
-    fn a_peek_moves_no_counter() {
+    fn a_read_without_the_charge_moves_no_counter() {
+        let read =
+            |bounds: &OpenBounds, t| bounds.judge(HOST, "/encrypt", Class::LevelZero, t, false);
         let (bounds, t) = (OpenBounds::default(), Instant::now());
         for n in 0..9 {
             bounds.take(HOST, "/encrypt", Class::LevelZero, t).unwrap();
-            assert_eq!(
-                bounds.peek(HOST, "/encrypt", Class::LevelZero, t),
-                Ok(()),
-                "{n}"
-            );
+            assert_eq!(read(&bounds, t), Ok(()), "{n}");
         }
         for _ in 0..5 {
-            assert_eq!(bounds.peek(HOST, "/encrypt", Class::LevelZero, t), Ok(()));
+            assert_eq!(read(&bounds, t), Ok(()));
         }
         assert_eq!(bounds.take(HOST, "/encrypt", Class::LevelZero, t), Ok(()));
-        let peeked = bounds.peek(HOST, "/encrypt", Class::LevelZero, t);
-        assert_eq!(peeked.map_err(|l| l.wait), Err(Duration::from_secs(1)));
+        let past = read(&bounds, t).map_err(|l| l.wait);
+        assert_eq!(past, Err(Duration::from_secs(1)));
         assert!(bounds.take(HOST, "/encrypt", Class::LevelZero, t).is_err());
     }
 

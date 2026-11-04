@@ -43,7 +43,7 @@ use axum::response::{IntoResponse, Response};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use super::error::{AppError, Kind};
-use super::open_bounds::{Class, OpenBounds};
+use super::open_bounds::{self, Class, OpenBounds};
 use super::probes::Probes;
 pub use crate::config::originator::OriginatorRule;
 
@@ -65,33 +65,6 @@ const HOST_ROUTES: [&str; 4] = [
     "/chain-feed",
     "/tx/{txid}",
 ];
-
-/// The open doors (W15, ruled (i) by the owner on 2026-11-03): answered to
-/// a page with a parsed `Origin` and an agreeing originator, with no row,
-/// as the reference's manager gates none of them (`WPM:5492-5568`). Each
-/// with the methods its route answers (the router's map in `make_router`;
-/// `HEAD` rides `GET`): a call by another method is the router's `405`,
-/// neither counted nor charged (#556). The test
-/// `the_open_doors_methods_are_the_routers` pins the two maps together.
-pub(crate) const OPEN_DOORS: [(&str, &[Method]); 6] = [
-    ("/isAuthenticated", GET_OR_POST),
-    ("/waitForAuthentication", GET_OR_POST),
-    ("/getHeight", GET_OR_POST),
-    ("/getHeaderForHeight", &[Method::POST]),
-    ("/getNetwork", GET_OR_POST),
-    ("/getVersion", GET_OR_POST),
-];
-
-/// The status doors' methods: `GET` (with its `HEAD`) and `POST`.
-const GET_OR_POST: &[Method] = &[Method::GET, Method::HEAD, Method::POST];
-
-/// Whether `route` is an open door answering `method`: the call the bound
-/// charges and the probe record counts.
-fn open_door_answers(route: &str, method: &Method) -> bool {
-    OPEN_DOORS
-        .iter()
-        .any(|(door, methods)| *door == route && methods.contains(method))
-}
 
 /// The seed's notice, logged once at start beside each entry (question 6).
 pub const SEED_NOTICE: &str = "ALLOWED_ORIGINS is a seed: it admits its listed originators until \
@@ -388,7 +361,7 @@ pub(crate) async fn gate(
             }
             .answer()
         }
-        None if open_door_answers(&route, request.method()) => {
+        None if open_bounds::answers(&route, request.method()) => {
             let probes = request.extensions().get::<Probes>().cloned();
             let bounds = request.extensions().get::<OpenBounds>().cloned();
             let open = super::powers::open(
