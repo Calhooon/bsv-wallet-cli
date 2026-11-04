@@ -52,6 +52,7 @@
 //! at once.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -332,8 +333,16 @@ impl Drop for Waiting {
             tracing::warn!(originator = %originator, ids = ?ids, "browser gate: a disconnect outside the runtime; the rows wait for the restart's sweep");
             return;
         };
-        runtime.spawn(async move { withdraw(&held, &wallet, &originator, &ids).await });
+        detach(&runtime, async move {
+            withdraw(&held, &wallet, &originator, &ids).await;
+        });
     }
+}
+
+/// Run `task` on `runtime` off the caller's future: the gate's one spawn
+/// door (rule A6), for the disconnect's withdrawal and the open (#552).
+fn detach(runtime: &tokio::runtime::Handle, task: impl Future<Output = ()> + Send + 'static) {
+    drop(runtime.spawn(task.in_current_span()));
 }
 
 /// Delete the open rows `ids` of `originator` and wake every call held on
@@ -708,7 +717,7 @@ impl Asker {
             });
             drop(hand.send(entered));
         };
-        tokio::spawn(open.in_current_span());
+        detach(&tokio::runtime::Handle::current(), open);
         let waiting = taken
             .await
             .map_err(|_| {
