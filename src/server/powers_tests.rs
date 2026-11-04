@@ -231,6 +231,47 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     assert_eq!(held.counts("page.example"), (0, 0));
 }
 
+/// The window of #552: a page's connection closed after its row's commit
+/// and before its guard is entered (a planted pause there) leaves no row
+/// the owner can grant: the row is withdrawn, the owner's grant at its id
+/// refused, no grant written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_disconnect_during_the_opens_commit_leaves_no_grantable_row() {
+    let (_dir, wallet) = wallet().await;
+    let (addr, held) = served(&wallet, &[]).await;
+    let pause = held.pause_after_open();
+    let mut leaving = raw_listing(addr, PAGE, "one").await;
+    pause.reached.notified().await;
+    let id = row_of(&until_open(&wallet, 1).await, "page.example");
+    assert!(
+        held.rows_of("page.example").is_empty(),
+        "the window: the row committed, no guard entered"
+    );
+
+    leaving.shutdown().await.unwrap();
+    drop(leaving);
+    // The server drops the call's future on the close; then the pause ends.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    pause.release.notify_one();
+    for _ in 0..100 {
+        if open_rows(&wallet).await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let granting = json!({"pendingId": id, "answer": "grant"});
+    let status = owner_post(addr, "/origins/answer", granting).await;
+    assert_eq!(
+        status, 400,
+        "the owner's grant of the left page's row #{id}"
+    );
+    let all = grants::listing(wallet.storage(), true).await.unwrap();
+    assert!(all.pending.is_empty(), "no row kept: {:?}", all.pending);
+    assert!(all.grants.is_empty(), "no grant written: {:?}", all.grants);
+    assert_eq!(held.counts("page.example"), (0, 0));
+}
+
 /// The cap (W14) at its edges: an originator's third held call and the
 /// wallet's fifth are answered 429 at once with `Retry-After: 5` and the
 /// echo, writing no row; an answer frees its place.

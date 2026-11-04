@@ -92,6 +92,19 @@ pub struct Held(Arc<Inner>);
 struct Inner {
     map: Mutex<Map>,
     shut: watch::Sender<bool>,
+    /// The test's pause between the open's commit and the guard's entry
+    /// (#552), taken by the next call that opens a row.
+    #[cfg(test)]
+    pause: Mutex<Option<Pause>>,
+}
+
+/// A planted pause (#552): the call signals `reached` once its row is
+/// committed and waits on `release` before its guard is entered.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct Pause {
+    pub(crate) reached: Arc<Notify>,
+    pub(crate) release: Arc<Notify>,
 }
 
 #[derive(Default)]
@@ -112,6 +125,8 @@ impl Default for Held {
         Self(Arc::new(Inner {
             map: Mutex::default(),
             shut: watch::channel(false).0,
+            #[cfg(test)]
+            pause: Mutex::default(),
         }))
     }
 }
@@ -130,6 +145,29 @@ impl Held {
 
     fn is_shut(&self) -> bool {
         *self.0.shut.borrow()
+    }
+
+    /// Plant a pause for the next call that opens a row (#552).
+    #[cfg(test)]
+    pub(crate) fn pause_after_open(&self) -> Pause {
+        let pause = Pause::default();
+        *self.0.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some(pause.clone());
+        pause
+    }
+
+    /// The planted pause, if any: signalled, then waited out.
+    #[cfg(test)]
+    async fn paused(&self) {
+        let pause = self
+            .0
+            .pause
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(pause) = pause {
+            pause.reached.notify_one();
+            pause.release.notified().await;
+        }
     }
 
     /// Wake every call held on `pending_id` (an answer from this server's
@@ -585,6 +623,8 @@ impl Asker {
         let pending = grants::open_or_join(storage, asking, now)
             .await
             .map_err(|e| refused(&e))?;
+        #[cfg(test)]
+        self.held.paused().await;
         let id = pending.row.pending_id;
         tracing::info!(
             originator = %pending.row.originator,
