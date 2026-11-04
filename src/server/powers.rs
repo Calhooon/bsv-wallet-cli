@@ -69,7 +69,10 @@ use super::origin_gate::{Admitted, DENIED, NO_ORIGIN};
 use super::probes::Probes;
 use crate::store::origin_grants::{self as grants, Answer, Asking, Power, Refused, Standing};
 
+mod opening;
 mod spend;
+
+use opening::{Opening, Planted};
 
 /// At most this many held calls per originator (the key, the hostname).
 pub const PER_ORIGINATOR: usize = 2;
@@ -98,19 +101,7 @@ pub struct Held(Arc<Inner>);
 struct Inner {
     map: Mutex<Map>,
     shut: watch::Sender<bool>,
-    /// The test's pause between the open's commit and the guard's entry
-    /// (#552), taken by the next call that opens a row.
-    #[cfg(test)]
-    pause: Mutex<Option<Pause>>,
-}
-
-/// A planted pause (#552): the call signals `reached` once its row is
-/// committed and waits on `release` before its guard is entered.
-#[cfg(test)]
-#[derive(Clone, Default)]
-pub(crate) struct Pause {
-    pub(crate) reached: Arc<Notify>,
-    pub(crate) release: Arc<Notify>,
+    planted: Planted,
 }
 
 #[derive(Default)]
@@ -131,8 +122,7 @@ impl Default for Held {
         Self(Arc::new(Inner {
             map: Mutex::default(),
             shut: watch::channel(false).0,
-            #[cfg(test)]
-            pause: Mutex::default(),
+            planted: Planted::default(),
         }))
     }
 }
@@ -151,29 +141,6 @@ impl Held {
 
     fn is_shut(&self) -> bool {
         *self.0.shut.borrow()
-    }
-
-    /// Plant a pause for the next call that opens a row (#552).
-    #[cfg(test)]
-    pub(crate) fn pause_after_open(&self) -> Pause {
-        let pause = Pause::default();
-        *self.0.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some(pause.clone());
-        pause
-    }
-
-    /// The planted pause, if any: signalled, then waited out.
-    #[cfg(test)]
-    async fn paused(&self) {
-        let pause = self
-            .0
-            .pause
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(pause) = pause {
-            pause.reached.notify_one();
-            pause.release.notified().await;
-        }
     }
 
     /// Wake every call held on `pending_id` (an answer from this server's
@@ -356,43 +323,6 @@ async fn withdraw(held: &Held, wallet: &WalletState, originator: &str, ids: &[i6
         }
         Err(e) => {
             tracing::warn!(originator = %originator, ids = ?ids, error = %e, "browser gate: the withdrawn rows were not deleted; the restart's sweep deletes them");
-        }
-    }
-}
-
-/// A call's [`Asking`], owned by the task that opens its row (#552).
-struct Opening {
-    originator: String,
-    power: Power,
-    usage: Option<String>,
-    call: String,
-    reason: Option<String>,
-    amount: Option<i64>,
-    renewal: bool,
-}
-
-impl Opening {
-    fn of(asking: &Asking<'_>) -> Self {
-        Self {
-            originator: asking.originator.to_string(),
-            power: asking.power.clone(),
-            usage: asking.usage.map(str::to_string),
-            call: asking.call.to_string(),
-            reason: asking.reason.map(str::to_string),
-            amount: asking.amount,
-            renewal: asking.renewal,
-        }
-    }
-
-    fn asking(&self) -> Asking<'_> {
-        Asking {
-            originator: &self.originator,
-            power: &self.power,
-            usage: self.usage.as_deref(),
-            call: &self.call,
-            reason: self.reason.as_deref(),
-            amount: self.amount,
-            renewal: self.renewal,
         }
     }
 }
@@ -714,8 +644,7 @@ impl Asker {
         let (hand, taken) = oneshot::channel();
         let open = async move {
             let opened = grants::open_or_join(wallet.storage(), &opening.asking(), now).await;
-            #[cfg(test)]
-            held.paused().await;
+            opening::paused(&held).await;
             let entered = opened.map(|pending| {
                 tracing::info!(
                     originator = %pending.row.originator,
