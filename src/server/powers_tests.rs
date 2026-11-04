@@ -24,8 +24,20 @@ pub(super) type Read = (u16, Option<String>, Option<String>, serde_json::Value);
 /// The router served by `axum::serve` on a bound `TcpListener` at
 /// 127.0.0.1:0 (`serve_router`), as `run` serves it: its address and the
 /// config's held calls. The seed lists `seeded`.
-async fn served(wallet: &WalletState, seeded: &[&str]) -> (SocketAddr, powers::Held) {
-    let config = ServerConfig::admitting(seeded.iter().copied()).unwrap();
+pub(super) async fn served(wallet: &WalletState, seeded: &[&str]) -> (SocketAddr, powers::Held) {
+    served_with(wallet, seeded, powers::ABANDON_WINDOW).await
+}
+
+/// [`served`] with the window's timer shortened to `window` (#534).
+pub(super) async fn served_with(
+    wallet: &WalletState,
+    seeded: &[&str],
+    window: Duration,
+) -> (SocketAddr, powers::Held) {
+    let config = ServerConfig {
+        held: powers::Held::with_window(window),
+        ..ServerConfig::admitting(seeded.iter().copied()).unwrap()
+    };
     let held = config.held.clone();
     (serve_at(wallet, config).await, held)
 }
@@ -84,17 +96,17 @@ pub(super) async fn get_from(addr: SocketAddr, origin: Option<&str>, path: &str)
 }
 
 /// One of the owner's routes, from the owner's side: its status.
-async fn owner_post(addr: SocketAddr, path: &str, body: serde_json::Value) -> u16 {
+pub(super) async fn owner_post(addr: SocketAddr, path: &str, body: serde_json::Value) -> u16 {
     let request = reqwest::Client::new().post(at(addr, path)).json(&body);
     read(request.send().await.unwrap()).await.0
 }
 
 /// The status, code and message of a refusal.
-fn refusal(read: &Read) -> (u16, Option<&str>, Option<&str>) {
+pub(super) fn refusal(read: &Read) -> (u16, Option<&str>, Option<&str>) {
     (read.0, read.3["code"].as_str(), read.3["message"].as_str())
 }
 
-fn basket(name: &str) -> serde_json::Value {
+pub(super) fn basket(name: &str) -> serde_json::Value {
     json!({"basket": name})
 }
 
@@ -103,7 +115,7 @@ pub(super) fn signature(protocol: &str, level: u8) -> serde_json::Value {
            "data": [1, 2, 3]})
 }
 
-async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
+pub(super) async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
     grants::listing(
         wallet.storage(),
         false,
@@ -115,7 +127,7 @@ async fn open_rows(wallet: &WalletState) -> Vec<PendingRow> {
 }
 
 /// Wait until `rows` open rows exist (the held calls have written them).
-async fn until_open(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
+pub(super) async fn until_open(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
     for _ in 0..500 {
         let open = open_rows(wallet).await;
         if open.len() == rows {
@@ -130,7 +142,7 @@ async fn until_open(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
 }
 
 /// The open row of `originator`'s key among `rows`.
-fn row_of(rows: &[PendingRow], originator: &str) -> i64 {
+pub(super) fn row_of(rows: &[PendingRow], originator: &str) -> i64 {
     rows.iter()
         .find(|r| r.originator == originator)
         .unwrap()
@@ -138,7 +150,7 @@ fn row_of(rows: &[PendingRow], originator: &str) -> i64 {
 }
 
 /// The owner's answer through the store, as the CLI writes it.
-async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
+pub(super) async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
     let reply = Reply {
         answer,
         expiry: 0,
@@ -152,7 +164,11 @@ async fn answer(wallet: &WalletState, id: i64, answer: Answer) {
 
 /// A page's listOutputs written whole on a raw HTTP/1.1 connection, which
 /// the test closes.
-async fn raw_listing(addr: SocketAddr, origin: &str, name: &str) -> tokio::net::TcpStream {
+pub(super) async fn raw_listing(
+    addr: SocketAddr,
+    origin: &str,
+    name: &str,
+) -> tokio::net::TcpStream {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let body = basket(name).to_string();
     let request = format!(
@@ -164,17 +180,20 @@ async fn raw_listing(addr: SocketAddr, origin: &str, name: &str) -> tokio::net::
     stream
 }
 
-/// The design's L5b exit test (W4 (a)): two held calls of one originator
-/// on two powers, each on its own connection; one connection closed by the
-/// client; both rows gone and the other call answered 400 `Permission
-/// denied.`; a held call of another originator untouched; a call of the
-/// same originator opened after the close keeps its new row, held.
+/// The design's L5b exit test (W4 (a)), past #534's window: two held calls
+/// of one originator on two powers, each on its own connection; one
+/// connection closed by the client; both rows marked and the other call
+/// still held inside the window, then both rows gone and the other call
+/// answered 400 `Permission denied.` at the window's end; a held call of
+/// another originator untouched; a call of the same originator after the
+/// window opens a new row, held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     let (_dir, wallet) = wallet().await;
-    let (addr, held) = served(&wallet, &[]).await;
+    let window = Duration::from_millis(1500);
+    let (addr, held) = served_with(&wallet, &[], window).await;
     let mut leaving = raw_listing(addr, PAGE, "one").await;
-    until_open(&wallet, 1).await;
+    let left_id = row_of(&until_open(&wallet, 1).await, "page.example");
     let staying = tokio::spawn(page_call(
         addr,
         PAGE,
@@ -190,6 +209,10 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     leaving.shutdown().await.unwrap();
     drop(leaving);
 
+    // Inside the window: both rows marked, the other call still held.
+    until_marked(&wallet, 2).await;
+    tokio::time::sleep(window / 3).await;
+    assert!(!staying.is_finished(), "denied before the window's end");
     let staying = staying.await.unwrap();
     let denied = (
         400,
@@ -212,13 +235,9 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
         [other_id],
         "page.example's rows deleted, other.example's kept"
     );
-    let all = grants::listing(
-        wallet.storage(),
-        true,
-        crate::server::owner_door::now().unwrap(),
-    )
-    .await
-    .unwrap();
+    let all = grants::listing(wallet.storage(), true, owner_door::now().unwrap())
+        .await
+        .unwrap();
     assert!(
         all.pending.iter().all(|r| r.originator != "page.example"),
         "no row kept"
@@ -226,10 +245,11 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     assert!(all.grants.is_empty(), "a disconnect writes no grant");
     assert!(!other.is_finished(), "other.example's call is still held");
 
-    // A call of the same page after the close opens a new prompt and is
+    // A call of the same page after the window opens a new prompt and is
     // held: the snapshot bounded the withdrawal.
     let again = tokio::spawn(page_call(addr, PAGE, "/listOutputs", basket("one")));
     let again_id = row_of(&until_open(&wallet, 2).await, "page.example");
+    assert_ne!(again_id, left_id, "a new prompt");
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(open_rows(&wallet).await.len(), 2, "the new row stays open");
     assert!(!again.is_finished());
@@ -239,6 +259,26 @@ async fn a_disconnect_denies_its_originators_held_calls_over_a_real_socket() {
     assert_eq!(other.await.unwrap().0, 400);
     assert_eq!(again.await.unwrap().0, 200);
     assert_eq!(held.counts("page.example"), (0, 0));
+    assert!(held.kept().is_empty());
+}
+
+/// Wait until `rows` open rows are abandoned (marked by a disconnect).
+pub(super) async fn until_marked(wallet: &WalletState, rows: usize) -> Vec<PendingRow> {
+    for _ in 0..500 {
+        let marked: Vec<PendingRow> = open_rows(wallet)
+            .await
+            .into_iter()
+            .filter(|r| r.abandoned_at.is_some())
+            .collect();
+        if marked.len() == rows {
+            return marked;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "{rows} abandoned rows never appeared: {:?}",
+        open_rows(wallet).await
+    );
 }
 
 /// The cap (W14) at its edges: an originator's third held call and the

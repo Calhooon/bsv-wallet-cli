@@ -815,6 +815,76 @@ pub async fn expire(
     Ok(rows)
 }
 
+/// The shutdown's withdrawal (section (2)): delete the open rows of
+/// `originator` among `ids`, abandoned or not, of every kind; an answered
+/// row is kept. Logged at info by name (`browser gate: abandoned`).
+/// Answers the rows deleted.
+///
+/// # Errors
+///
+/// [`Refused::NotAnOriginator`], or the store's error.
+pub async fn withdraw(
+    storage: &StorageSqlx,
+    originator: &str,
+    ids: &[i64],
+) -> Result<Vec<PendingRow>> {
+    ensure(storage).await?;
+    let (key, _) = key_of(originator)?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    let sql = format!(
+        "DELETE FROM origin_pending \
+         WHERE originator = ? AND pending_id IN ({marks}) AND answered_at IS NULL \
+         RETURNING {PENDING_COLUMNS}"
+    );
+    let mut query = sqlx::query_as::<_, PendingTuple>(&sql).bind(&key);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let mut tx = storage.write_tx().await?;
+    let rows = query.fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    let rows = sorted(rows)?;
+    if !rows.is_empty() {
+        withdrawn(&key, &rows);
+    }
+    Ok(rows)
+}
+
+/// The abandoned row of `power` that `originator` (any name of its host)
+/// would resume at `now` (#534): its id inside its window, else none. Read
+/// on the reader, before the call asks a place under the cap.
+///
+/// # Errors
+///
+/// [`Refused::NotAnOriginator`], or the store's error.
+pub async fn abandoned(
+    storage: &StorageSqlx,
+    originator: &str,
+    power: &Power,
+    now: i64,
+) -> Result<Option<i64>> {
+    ensure(storage).await?;
+    let (key, _) = key_of(originator)?;
+    if power.kind() == Kind::Spending {
+        return Ok(None);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT pending_id FROM origin_pending \
+         WHERE originator = ? AND kind = ? AND key = ? AND answered_at IS NULL \
+           AND abandoned_at IS NOT NULL AND abandoned_at > ? - ?",
+    )
+    .bind(&key)
+    .bind(power.kind().as_str())
+    .bind(power.key())
+    .bind(now)
+    .bind(WINDOW)
+    .fetch_optional(storage.pool())
+    .await?)
+}
+
 /// Rows read back, by id.
 fn sorted(rows: Vec<PendingTuple>) -> Result<Vec<PendingRow>> {
     let mut rows: Vec<PendingRow> = rows

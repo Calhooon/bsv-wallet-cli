@@ -93,11 +93,11 @@ fn refusal(status: StatusCode, why: &str) -> Response {
 }
 
 /// A row function's error as the inspector answers it: a row already
-/// answered 409, any other refusal of the module 400 in its words, the
+/// answered or waiting for its page to reconnect (#534) 409, any other refusal of the module 400 in its words, the
 /// store busy 503, else 500.
 fn refused(e: &anyhow::Error) -> Response {
     let status = match e.downcast_ref::<Refused>() {
-        Some(Refused::AlreadyAnswered { .. }) => StatusCode::CONFLICT,
+        Some(Refused::AlreadyAnswered { .. } | Refused::Abandoned { .. }) => StatusCode::CONFLICT,
         Some(_) => StatusCode::BAD_REQUEST,
         None if bsv_wallet_cli::store::is_store_busy(e) => StatusCode::SERVICE_UNAVAILABLE,
         None => StatusCode::INTERNAL_SERVER_ERROR,
