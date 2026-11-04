@@ -596,6 +596,10 @@ pub struct Pending {
     /// The row was abandoned and the call, inside its window, cleared the
     /// mark (#534): the page's prompt resumed.
     pub resumed: bool,
+    /// The abandoned row of the power past its window this call deleted
+    /// before it wrote its own (#534), by id: its place, if one is kept, is
+    /// freed.
+    pub gone: Option<i64>,
 }
 
 /// A disconnect's rows (#534): the spending rows deleted at once, the
