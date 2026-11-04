@@ -201,6 +201,7 @@ impl Shown {
             first_seen: p.first_seen,
             answered_at: p.answered_at,
             answer: p.answer.map(Answer::as_str),
+            abandoned_at: p.abandoned_at,
         });
         let probes = self.probes.as_ref().map(|rows| {
             rows.iter()
@@ -274,6 +275,10 @@ struct PendingJson<'a> {
     first_seen: i64,
     answered_at: Option<i64>,
     answer: Option<&'a str>,
+    /// #534: present only while the row waits for its page to reconnect,
+    /// so an open row's JSON is as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    abandoned_at: Option<i64>,
 }
 
 /// A probe row in JSON (#539), times in unix seconds.
