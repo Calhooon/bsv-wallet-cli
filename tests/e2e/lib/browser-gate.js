@@ -57,6 +57,31 @@ const HARNESS_GRANTS = [[E2E_ORIGINATOR, '--kind', 'protocol', '--key', '[false,
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/**
+ * The brief reconnect's window (#534) in milliseconds: `ABANDON_WINDOW_SECS`,
+ * read from the module's constant in the tree the binary is built from
+ * (src/server/powers.rs; the hermetic run refuses a binary older than its
+ * sources), so no scene holds the window as a literal.
+ */
+function abandonWindowMs() {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'src', 'server', 'powers.rs'), 'utf-8');
+  const found = source.match(/^pub const ABANDON_WINDOW_SECS: i64 = (\d+);$/m);
+  if (!found) throw new Error('src/server/powers.rs names no `pub const ABANDON_WINDOW_SECS: i64 = <n>;`');
+  return parseInt(found[1], 10) * 1000;
+}
+const W = abandonWindowMs();
+
+/** Unix seconds as the wallet prints a withdrawal time, to the second (`when_exact`). */
+function exact(secs) {
+  return new Date(secs * 1000).toISOString().replace('.000', '');
+}
+
+/** Sleep until the wall clock reads `at` (milliseconds since the epoch). */
+async function until(at) {
+  const left = at - Date.now();
+  if (left > 0) await sleep(left);
+}
+
 /** One raw call: the scene names every header itself; recorded as the client's are. */
 async function call(wallet, method, endpoint, opts = {}) {
   return record.serial(() => callNow(wallet, method, endpoint, opts));
@@ -241,7 +266,7 @@ async function scene(name, body) {
 
 module.exports = {
   APP, NEW, DENY, GONE, EVIL, SEEDED, TOKEN, NO_ORIGIN, DENIED, PERMISSION_DENIED, POWER, ARGS,
-  D_PORT, D_UI_PORT,
+  D_PORT, D_UI_PORT, W,
   call, begin, owner, listing, cli, cliRefused, origins, untilPending, log, restartGated, audited,
-  inspector, scene, sleep,
+  inspector, scene, sleep, until, exact,
 };
