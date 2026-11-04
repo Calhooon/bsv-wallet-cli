@@ -41,11 +41,21 @@
 //! the server's own answers (a [`Notify`] per open row in [`Held`]). When
 //! its caller closes the connection, the call's future is dropped and its
 //! guard ([`Waiting`]) takes a snapshot of the originator's open rows under
-//! [`Held`]'s mutex and deletes them (`origin_grants::abandon`), answering
-//! every other call held on them 400 `Permission denied.` (W4 (a)). The
-//! held calls are capped (W14): at most [`PER_ORIGINATOR`] per originator
-//! and [`IN_ALL`] in all; past either, 429 `ERR_PERMISSION_PENDING_LIMIT`
-//! at once.
+//! [`Held`]'s mutex; its task (`origin_grants::abandon`) deletes the
+//! snapshot's spending rows at once, answering every call held on them 400
+//! `Permission denied.` (W4 (a)), and marks the others abandoned for the
+//! brief reconnect's window, [`ABANDON_WINDOW`] (#534, W19). A call of the
+//! same originator (any port of its host) asking the same power inside the
+//! window resumes the row, the same `pending_id`, the mark cleared; at the
+//! window's end the rows still abandoned with that mark are deleted
+//! (`origin_grants::expire`) and every call still held on one is answered
+//! 400 `Permission denied.`, W4 (a)'s deny 10 s later. The owner's answer to
+//! an abandoned row is refused 409 `CONFLICT` (the store's
+//! `Refused::Abandoned`). The places are capped (W14): at most
+//! [`PER_ORIGINATOR`] per originator and [`IN_ALL`] in all, a place being a
+//! held call or an abandoned row its last call passed its place to (the
+//! call resuming the row takes it over); past either, 429
+//! `ERR_PERMISSION_PENDING_LIMIT` at once.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
