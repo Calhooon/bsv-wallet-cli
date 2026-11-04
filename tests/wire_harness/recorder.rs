@@ -217,9 +217,9 @@ fn gate_notes() -> Vec<(String, String)> {
 fn owner_notes() -> Vec<(String, String)> {
     [
         ("192-owner.origins.empty.json", "#414 (the design's L3, docs/design/origin-grants.md section (3)): GET /origins from the owner's side (no Origin, a loopback Host) on a wallet with no rows: {\"grants\": [], \"pending\": []}, section (4)'s --json shape, no CORS header. A host route, not BRC-100; recorded last, so no file before it moves. #539: the listing carries the probe record, `probes`, empty on a wallet with no rows: {\"grants\": [], \"pending\": [], \"probes\": []}."),
-        ("193-owner.grant.json", "#414: POST /origins/grant {originator, kind, key}: the owner's direct grant of one power (the basket todo items, its canonical key [\"todo items\"]; the design's L5a under the owner's ruling W1 (a) of 2026-11-03) written through store::origin_grants, its row in section (4)'s keys and order (kind and key in place of L1's scope, source withdrawn), keyed by the hostname (owner.example) with the name as given kept (owner.example:8443); grantedAt is the clock's (a volatile key)."),
-        ("194-owner.origins.granted.json", "#414: GET /origins lists the row 193 wrote, its kind and key (L5a). #539: the listing carries the probe record, `probes`, empty here (no page was answered with no row in this world before it)."),
-        ("195-owner.revoke.json", "#414: POST /origins/revoke {originator} with no kind and no key stamps every live row of the host (its one basket row here, the reference's revokeAllForOriginator); revokedAt is the clock's, nothing is deleted."),
+        ("193-owner.grant.json", "#414: POST /origins/grant {originator, kind, key}: the owner's direct grant of one power (the basket todo items, its canonical key [\"todo items\"]; the design's L5a under the owner's ruling W1 (a) of 2026-11-03) written through store::origin_grants, its row in section (4)'s keys and order (kind and key in place of L1's scope, source withdrawn), keyed by the hostname (owner.example) with the name as given kept (owner.example:8443); grantedAt is the clock's (a volatile key). #533: the row carries its state, read once by the store with its expiry (`granted`), and `ceilingReached`, null for a kind other than spending, beside `amount` and `spentThisMonth`."),
+        ("194-owner.origins.granted.json", "#414: GET /origins lists the row 193 wrote, its kind and key (L5a). #539: the listing carries the probe record, `probes`, empty here (no page was answered with no row in this world before it). #533: the row's `state` `granted` and `ceilingReached` null (a basket row)."),
+        ("195-owner.revoke.json", "#414: POST /origins/revoke {originator} with no kind and no key stamps every live row of the host (its one basket row here, the reference's revokeAllForOriginator); revokedAt is the clock's, nothing is deleted. #533: the stamped row reads `state` `revoked` and `ceilingReached` null."),
         ("196-owner.answer.noSuchPending.json", "#414: POST /origins/answer naming a pending row the store does not hold is the module's refusal in its words, 400 VALIDATION_ERROR. From L5b a row whose caller disconnected is deleted, not answered (W4 (a)), and leaves no trace to tell it from an id never written, so the words widen: `no pending request #1 (a request is withdrawn when its caller disconnects)` (the design's racing-the-owner bullet). The answer-once race (409 CONFLICT) is the router tests' (src/server/owner_door_tests.rs)."),
         ("197-owner.origins.page.json", "#414: a call to the owner's routes carrying an Origin, a listed one included, is 403 ACCESS_DENIED naming the rule (owner_door::PAGE), with no CORS header: a page that could reach them could grant itself. The first fixture answering ACCESS_DENIED: it moves from UNPRODUCED to APP_CODES."),
         ("198-owner.options.page.json", "#414: a preflight to the owner's routes is refused, 403 ACCESS_DENIED (owner_door::PREFLIGHT), outside the doors' preflight gate and CORS layer, which never see these paths."),
@@ -231,6 +231,7 @@ fn owner_notes() -> Vec<(String, String)> {
     .into_iter()
     .chain(switch_notes())
     .chain(probe_notes())
+    .chain(surface_notes())
     .chain(bound_notes())
     .collect()
 }
@@ -241,7 +242,16 @@ fn probe_notes() -> Vec<(String, String)> {
         ("210-probe.getVersion.once.json", "#539: a page the seed does not list (http://probe.test:8080), holding no row, at an open door: 200 with the echo, as 204; its answer is counted in the probe record off the call's path, never a grant or a pending row. Served from the `fresh` world after the owner's door's fixtures."),
         ("211-probe.getVersion.again.json", "#539: the same call again: the same answer; its row's count is 2 (fixture 213)."),
         ("212-probe.createSignature.levelZero.json", "#539: the page's createSignature under the level-0 protocol [0, \"wire probe\"]: 200 with the signature (RFC 6979 under the fixed key) and the echo, as 205; counted under the power [false,0,\"wire probe\",\"\"]."),
-        ("213-owner.origins.probes.json", "#539: GET /origins from the owner's side lists the probe record beside the grants and the pending rows: two rows of probe.test, createSignature with its level-0 power (count 1) and getVersion (count 2), keyed by the hostname with the name as given kept; firstSeen and lastSeen are the clock's (volatile keys). The world's one revoked row (195) and no pending row: a probe is never a grant."),
+        ("213-owner.origins.probes.json", "#539: GET /origins from the owner's side lists the probe record beside the grants and the pending rows: two rows of probe.test, createSignature with its level-0 power (count 1) and getVersion (count 2), keyed by the hostname with the name as given kept; firstSeen and lastSeen are the clock's (volatile keys). The world's one revoked row (195) and no pending row: a probe is never a grant. #533: the revoked row reads `state` `revoked` and `ceilingReached` null."),
+    ]
+    .map(|(f, n)| (f.to_string(), n.to_string()))
+    .to_vec()
+}
+
+/// The grant surfaces' moved fixture (#533), with its reason.
+fn surface_notes() -> Vec<(String, String)> {
+    [
+        ("220-spending.owner.origins.renewal.json", "#533: the spending row read once by the store: `state` `granted`, `spentThisMonth` 89,960 under its `amount` 100,000 and `ceilingReached` false (the tally is below the ceiling, so the held call is a renewal by its own amount, not because the month is full)."),
     ]
     .map(|(f, n)| (f.to_string(), n.to_string()))
     .to_vec()
