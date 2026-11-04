@@ -9,6 +9,7 @@ use bsv_sdk::primitives::PublicKey;
 mod faults;
 mod mutants;
 mod review;
+mod spend_tally;
 mod version;
 
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {

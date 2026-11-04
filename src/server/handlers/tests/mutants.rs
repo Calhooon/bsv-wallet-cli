@@ -23,14 +23,14 @@ struct Calls {
 }
 
 #[derive(Clone, Copy)]
-enum Presence {
+pub(super) enum Presence {
     Seen,
     Absent,
     Unknown,
 }
 
-struct World {
-    wallet: WalletState,
+pub(super) struct World {
+    pub(super) wallet: WalletState,
     router: Router,
     funding: String,
     calls: Arc<Calls>,
@@ -45,6 +45,11 @@ impl Drop for World {
 
 impl World {
     async fn new(presence: Presence, keep: bool) -> Self {
+        Self::serving(presence, keep, Some("handler.test".into())).await
+    }
+
+    /// The same world, its caller `seed`-listed or (none) asked per power.
+    pub(super) async fn serving(presence: Presence, keep: bool, seed: Option<String>) -> Self {
         let key = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
         let (storage, user, basket) = storage_for(&key.public_key().to_hex()).await;
         let (funding, _) =
@@ -82,7 +87,7 @@ impl World {
             .layer(Extension(crate::server::origin_gate::Admitted {
                 origin: "http://handler.test".into(),
                 originator: "handler.test".into(),
-                seed: Some("handler.test".into()),
+                seed,
             }))
             .with_state(wallet.clone());
         Self {
@@ -113,7 +118,7 @@ impl World {
         (status, answer)
     }
 
-    async fn create(&self, options: Value) -> (StatusCode, Value) {
+    pub(super) async fn create(&self, options: Value) -> (StatusCode, Value) {
         self.serve("/createAction", self.request(&options)).await
     }
 

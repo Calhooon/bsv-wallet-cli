@@ -373,16 +373,30 @@ pub async fn create_action(
     // SPEND_OWN_CHANGE, or a received pending coin under this action's
     // `allowPending: received`; a named input passes the same judgment; a
     // refusal lists every coin held back.
-    let result = crate::spend_gate::create_action(
+    // The spend's row opens first (#414 L6): a write the store refuses
+    // refuses the call by the store's class, with nothing built.
+    let open = match tally {
+        Some(tally) => Some(tally.open(&wallet).await?),
+        None => None,
+    };
+    let built = crate::spend_gate::create_action(
         &wallet,
         args,
         &originator,
         &gate.with_allow_pending(allow_pending),
     )
-    .await
-    .map_err(AppError::from_gate_error)?;
-    if let Some(tally) = tally {
-        tally.write(&wallet, &result).await;
+    .await;
+    let result = match built {
+        Ok(result) => result,
+        Err(e) => {
+            if let Some(open) = &open {
+                open.drop_row(&wallet).await;
+            }
+            return Err(AppError::from_gate_error(e));
+        }
+    };
+    if let Some(open) = &open {
+        open.settle(&wallet, &result).await;
     }
     drop(_guard);
 
@@ -462,6 +476,10 @@ pub async fn create_action(
             && super::broadcast_follow_up::tx_status(wallet.storage(), &txid_hex).await
                 == Some("failed".to_string())
         {
+            // Retired, its inputs released: the spend leaves the tally.
+            if let Some(open) = &open {
+                open.drop_row(&wallet).await;
+            }
             return Err(AppError::broadcast_rejected(&txid_hex));
         }
     }

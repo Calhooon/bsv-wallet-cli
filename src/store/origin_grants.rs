@@ -42,7 +42,9 @@ pub use rows::{
 };
 use rows::{GrantTuple, PendingTuple};
 pub use shown::{Shown, ShownJson};
-pub use spends::{month_tally, signed, spent, unspent, Flow};
+pub use spends::{
+    drop_spend, month_tally, open_spend, settle_spend, signed, spent, unspent, Flow, OPEN,
+};
 
 /// The four tables and their four indexes, `(type, name)`, as
 /// [`ensure`] reads them from `sqlite_master`.
