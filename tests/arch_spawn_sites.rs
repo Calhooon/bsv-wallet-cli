@@ -39,9 +39,9 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         "the served createAction's follow-up",
     ),
     (
-        "src/server/powers.rs",
+        "src/server/powers/held.rs",
         1,
-        "the gate's one spawn door (`detach`): a held call's disconnect, whose guard's drop cannot await, so the withdrawal of the originator's open rows runs as a task (#414, the design's Abandon, W4 (a)); and the row's open with the guard's entry, which the caller's drop must not cut (#552)",
+        "the gate's one spawn door (`detach`): a held call's disconnect, whose guard's drop cannot await, so the marking of the originator's open rows and the window's end run as a task (#414, the design's Abandon, W4 (a); #534's window); and the row's open with the guard's entry, which the caller's drop must not cut (#552)",
     ),
     (
         "src/server/probes.rs",
