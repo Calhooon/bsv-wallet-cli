@@ -12,7 +12,8 @@ night re-bases (#559): its written record's base names itself (whole, with
 its why), a night that judged a subset keeps the base it carried from, a
 carry after a whole night reads the whole night's figures and names its run,
 a carry after a subset night names that night's base; a whole base naming
-another run, a whole record holding a carried figure, a plan diffed against
+another run, an incremental base naming the record's own run without
+"whole", a whole record holding a carried figure, a plan diffed against
 the base a whole record replaced and a whole write without --run are
 refused. The count is the
 dispatched matrix's (#460): a twenty-shard complete night is scored and its
@@ -339,6 +340,14 @@ class Case(unittest.TestCase):
         record["base"].update(run=RUN_A, commit=SHA_A)
         self.a_night_on_a()
         self.refused("A whole base names its own run (#559)", plan(["src/a.rs"]), record)
+
+    def test_an_unmarked_base_naming_its_own_run_is_refused(self):
+        # changed_set.py refuses it in the plan job; the score refuses it by name too (#559's symmetry).
+        record = whole_record()
+        del record["base"]["whole"], record["base"]["why"]
+        self.a_night_on_a()
+        self.refused("An unmarked base names its own run (#559)",
+                     plan(["src/a.rs"], base={"run": RUN_B, "commit": SHA_B}), record)
 
     def test_a_whole_record_holding_a_carried_figure_is_refused(self):
         record = whole_record()

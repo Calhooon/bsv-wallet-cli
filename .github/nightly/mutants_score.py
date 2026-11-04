@@ -55,7 +55,9 @@ run judged it); the night's files are. Before any figure is judged, exit 1
 naming the fault when:
 
 - the record names no base, or a `whole` base names another run than the
-  record's own (a whole record re-bases on itself and carries nothing);
+  record's own (a whole record re-bases on itself and carries nothing), or
+  an incremental base without `whole` names the record's own run (the
+  plan's changed_set.py refuses it too, #559);
 - the plan's base (the base it diffed against) is not the record's;
 - a carried file's entry in the record does not name the base's run and sha
   (a carried figure whose base is not the last base-setting run: a file a
@@ -219,6 +221,10 @@ def refuse_plan(plan, record, floors, outcome_files):
         return [f"**A whole base names its own run (#559)**: the record's base is marked whole and names run "
                 f"{base['run']} at `{base['commit']}`, the record being run {own['run']} at `{own['commit']}`; "
                 "nothing is carried or scored."]
+    if record.get("mode") == "incremental" and not whole_base(record) and base == own:
+        return [f"**An unmarked base names its own run (#559)**: the incremental record's base names run "
+                f"{own['run']} at `{own['commit']}`, the record's own, without `\"whole\": true` "
+                "(changed_set.py refuses it too); nothing is carried or scored."]
     if whole_base(record):
         shared = sorted(f for f, e in record.get("files", {}).items() if e.get("source") == "carried")
         if shared:
