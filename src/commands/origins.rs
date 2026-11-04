@@ -173,13 +173,12 @@ fn now() -> Result<i64> {
 /// time on a revoked row.
 fn grant_line(g: &GrantShown) -> String {
     let r = &g.row;
-    let mut line = format!(
-        "{}  {}  {:<11}  {}",
-        g.state.as_str(),
-        r.originator,
-        r.kind.as_str(),
-        r.key
-    );
+    let mut parts = vec![
+        g.state.as_str().to_string(),
+        r.originator.clone(),
+        format!("{:<11}", r.kind.as_str()),
+        r.key.clone(),
+    ];
     if let (Some(month), Some(spent)) = (&g.month, g.spent_this_month) {
         let ceiling = r
             .amount
@@ -189,21 +188,19 @@ fn grant_line(g: &GrantShown) -> String {
         } else {
             ""
         };
-        line.push_str(&format!("  {ceiling} ({spent} spent {month}{reached})"));
+        parts.push(format!("{ceiling} ({spent} spent {month}{reached})"));
     }
     let expires = if r.expiry == 0 {
         "never".to_string()
     } else {
         when(r.expiry)
     };
-    line.push_str(&format!(
-        "  since {}  expires {expires}",
-        when(r.granted_at)
-    ));
+    parts.push(format!("since {}", when(r.granted_at)));
+    parts.push(format!("expires {expires}"));
     if let Some(at) = r.revoked_at {
-        line.push_str(&format!("  revoked at {}", when(at)));
+        parts.push(format!("revoked at {}", when(at)));
     }
-    line
+    parts.join("  ")
 }
 
 /// One pending row's line (section (4)): `pending` while open, `answered`
