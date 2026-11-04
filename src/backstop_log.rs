@@ -183,6 +183,8 @@ mod tests {
     /// path names the status answer.
     #[test]
     fn the_backstop_hit_names_the_provider_that_served_its_path() {
+        // A capture of its own: the binary's always-interested global first (#568).
+        crate::test_support::init();
         let hits: Arc<Mutex<Vec<BackstopProof>>> = Arc::default();
         let sink = hits.clone();
         let layer = BackstopLayer::new(move |hit| sink.lock().unwrap().push(hit));
