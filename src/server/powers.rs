@@ -444,6 +444,9 @@ impl Asker {
                     resumed = pending.resumed,
                     "browser gate: pending"
                 );
+                if let Some(gone) = pending.gone {
+                    held.release(gone);
+                }
                 let windowed = pending.row.kind != grants::Kind::Spending;
                 Waiting::enter(
                     held,

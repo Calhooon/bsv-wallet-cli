@@ -50,6 +50,7 @@ async fn a_call_one_second_inside_the_window_resumes_the_same_row_and_clears_its
 
     assert_eq!(back.row.pending_id, first.pending_id, "the same pending_id");
     assert!(back.joined && back.resumed);
+    assert_eq!(back.gone, None, "nothing deleted");
     assert_eq!(back.row.abandoned_at, None, "the mark cleared");
     assert_eq!(back.row.first_seen, NOW, "the same prompt");
     assert_eq!(count(&storage, "origin_pending").await, 1);
@@ -64,6 +65,7 @@ async fn a_call_at_the_windows_end_finds_the_row_gone_and_writes_a_new_one() {
 
     assert_ne!(late.row.pending_id, first.pending_id, "a new id");
     assert!(!late.joined && !late.resumed);
+    assert_eq!(late.gone, Some(first.pending_id), "the deleted row named");
     assert_eq!(late.row.first_seen, A + WINDOW);
     assert_eq!(stored(&storage, first.pending_id).await, None, "deleted");
     assert_eq!(count(&storage, "origin_pending").await, 1);

@@ -347,3 +347,79 @@ async fn the_cap_counts_an_abandoned_rows_place_and_the_joining_call_takes_it_ov
     let rows = open_rows(&wallet).await;
     assert!(rows.is_empty(), "the abandoned rows deleted: {rows:?}");
 }
+
+/// A kept place is tied to its row's window: under a dead timer (the
+/// window's task never ends), once `now >= abandoned_at + W` the row is gone
+/// to every reader and its place is too, so the page's next call holds one
+/// place and a second is held beside it, never refused 429.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kept_place_ends_with_its_rows_window_when_the_timer_never_runs() {
+    let (_dir, wallet, addr, held) = window_served(Duration::from_secs(3600)).await;
+    let id = left(&wallet, addr, PAGE, "one").await;
+    let [row] = until_marked(&wallet, 1).await.try_into().unwrap();
+    assert_eq!(held.kept(), [id]);
+    let end = row.abandoned_at.unwrap() + powers::ABANDON_WINDOW_SECS;
+    while owner_door::now().unwrap() < end {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let two = held_listing(addr, PAGE, "two");
+    until_open(&wallet, 1).await;
+    assert_eq!(
+        held.counts("page.example"),
+        (1, 1),
+        "kept {:?}",
+        held.kept()
+    );
+    let three = held_listing(addr, PAGE, "three");
+    until_counted(&held, "page.example", (2, 2)).await;
+    assert!(held.kept().is_empty(), "kept {:?}", held.kept());
+    let rows = until_open(&wallet, 2).await;
+    for row in rows {
+        super::powers_tests::answer(&wallet, row.pending_id, grants::Answer::Deny).await;
+    }
+    assert_eq!(two.await.unwrap().0, 400);
+    assert_eq!(three.await.unwrap().0, 400);
+    settled(&wallet, &held, "page.example").await;
+}
+
+/// A place passed to a row marked before its last call left ends with the
+/// row's earlier window, not the later disconnect's: under a dead timer,
+/// page.example's call on "one" leaves and its snapshot marks "two" with
+/// it while "two"'s call is still held; that call leaves 3 s later, and
+/// once `now >= abandoned_at + W` of the first mark no place is counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_place_passed_to_a_row_marked_earlier_ends_with_that_rows_window() {
+    let (_dir, wallet, addr, held) = window_served(Duration::from_secs(3600)).await;
+    let mut two = raw_listing(addr, PAGE, "two").await;
+    until_open(&wallet, 1).await;
+    left(&wallet, addr, PAGE, "one").await;
+    let marked = until_marked(&wallet, 2).await;
+    let end = marked[0].abandoned_at.unwrap() + powers::ABANDON_WINDOW_SECS;
+    assert!(marked
+        .iter()
+        .all(|r| r.abandoned_at == marked[0].abandoned_at));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    two.shutdown().await.unwrap();
+    drop(two);
+    until_counted(&held, "page.example", (2, 2)).await;
+    while held.kept().len() < 2 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    while owner_door::now().unwrap() < end {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        owner_door::now().unwrap() < end + 2,
+        "measured inside the later disconnect's window"
+    );
+    assert_eq!(
+        held.counts("page.example"),
+        (0, 0),
+        "kept {:?}",
+        held.kept()
+    );
+    assert!(held.kept().is_empty());
+}

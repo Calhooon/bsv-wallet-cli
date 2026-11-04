@@ -4,6 +4,7 @@
 //! disconnect's task over the brief reconnect's window ([`disconnected`]),
 //! started from the gate's one spawn door ([`detach`]).
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,7 +14,7 @@ use tokio::sync::{watch, Notify};
 use tracing::Instrument;
 
 use super::opening::Planted;
-use super::{ABANDON_WINDOW, IN_ALL, PER_ORIGINATOR};
+use super::{ABANDON_WINDOW, ABANDON_WINDOW_SECS, IN_ALL, PER_ORIGINATOR};
 use crate::server::handlers::WalletState;
 use crate::server::owner_door;
 use crate::store::origin_grants::{self as grants, PendingRow};
@@ -38,10 +39,19 @@ struct Map {
     rows: HashMap<i64, Row>,
     calls: HashMap<String, usize>,
     all: usize,
-    /// The abandoned rows holding a place, by id, with their originator's
-    /// key: the place their last call passed them when it left by
-    /// disconnect (#534).
-    kept: HashMap<i64, String>,
+    /// The abandoned rows holding a place, by id: the place their last
+    /// call passed them when it left by disconnect (#534), held until
+    /// their window's end at the latest.
+    kept: HashMap<i64, Kept>,
+}
+
+/// An abandoned row's place: its originator's key and its window's end
+/// in unix seconds (the row's `abandoned_at` + [`ABANDON_WINDOW_SECS`],
+/// the store's reading), from which the place is no one's, whether or not
+/// the window's task ran.
+struct Kept {
+    originator: String,
+    until: i64,
 }
 
 impl Map {
@@ -52,6 +62,22 @@ impl Map {
             .filter(|(_, row)| row.originator == originator)
             .map(|(id, _)| *id)
             .collect()
+    }
+
+    /// The kept places whose window has ended at `now` freed (#534): the
+    /// row is gone to every reader from then on, and so is its place.
+    fn prune(&mut self, now: i64) {
+        let ended: Vec<i64> = self
+            .kept
+            .iter()
+            .filter(|(_, kept)| now >= kept.until)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ended {
+            if let Some(kept) = self.kept.remove(&id) {
+                self.free(&kept.originator);
+            }
+        }
     }
 
     /// One place of `originator` freed.
@@ -100,6 +126,17 @@ impl Held {
         self.0.map.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The map with the kept places past their window freed: the cap's
+    /// reading (`place`, `counts`, `adopt`, `kept`). A clock before the
+    /// epoch frees nothing; the window's task still ends the place.
+    fn live(&self) -> std::sync::MutexGuard<'_, Map> {
+        let mut map = self.map();
+        if let Ok(now) = owner_door::now() {
+            map.prune(now);
+        }
+        map
+    }
+
     /// The test build's planted pause in the open (#552); none served.
     pub(super) fn planted(&self) -> &Planted {
         &self.0.planted
@@ -133,7 +170,7 @@ impl Held {
     /// all: the held calls and the abandoned rows holding a place.
     #[must_use]
     pub fn counts(&self, originator: &str) -> (usize, usize) {
-        let map = self.map();
+        let map = self.live();
         (map.calls.get(originator).copied().unwrap_or(0), map.all)
     }
 
@@ -148,14 +185,14 @@ impl Held {
     /// The abandoned rows holding a place now (#534), by id.
     #[must_use]
     pub fn kept(&self) -> Vec<i64> {
-        let mut ids: Vec<i64> = self.map().kept.keys().copied().collect();
+        let mut ids: Vec<i64> = self.live().kept.keys().copied().collect();
         ids.sort_unstable();
         ids
     }
 
     /// A held call's place under the cap, or the limit it would pass.
     pub(super) fn place(&self, originator: &str) -> Result<Place, &'static str> {
-        let mut map = self.map();
+        let mut map = self.live();
         if map.calls.get(originator).copied().unwrap_or(0) >= PER_ORIGINATOR {
             return Err("2 held calls per originator");
         }
@@ -174,7 +211,7 @@ impl Held {
     /// The place the abandoned row `pending_id` holds, taken over by the
     /// call that rejoins it (#534): no new place is asked.
     pub(super) fn adopt(&self, pending_id: i64) -> Option<Place> {
-        let originator = self.map().kept.remove(&pending_id)?;
+        let originator = self.live().kept.remove(&pending_id)?.originator;
         Some(Place {
             held: self.clone(),
             originator,
@@ -186,8 +223,19 @@ impl Held {
     /// row deleted, or a call holding a place of its own held on it.
     pub(super) fn release(&self, pending_id: i64) {
         let mut map = self.map();
-        if let Some(originator) = map.kept.remove(&pending_id) {
-            map.free(&originator);
+        if let Some(kept) = map.kept.remove(&pending_id) {
+            map.free(&kept.originator);
+        }
+    }
+
+    /// The window's end of the row `pending_id`'s kept place set from the
+    /// row as read (the store's `withdrawn_at`): a row marked before its
+    /// last call left keeps its earlier time, and so does its place.
+    fn ends(&self, row: &PendingRow) {
+        if let (Some(kept), Some(until)) =
+            (self.map().kept.get_mut(&row.pending_id), row.withdrawn_at())
+        {
+            kept.until = kept.until.min(until);
         }
     }
 
@@ -205,7 +253,7 @@ impl Held {
         // #534: a place the row still holds is this call's now, freed
         // under the same lock as the call's entry.
         if let Some(kept) = map.kept.remove(&pending_id) {
-            map.free(&kept);
+            map.free(&kept.originator);
         }
         let row = map.rows.entry(pending_id).or_insert_with(|| Row {
             originator: originator.to_string(),
@@ -218,9 +266,15 @@ impl Held {
 
     /// A call stops waiting on `pending_id`; with `snapshot`, the
     /// originator's open rows taken under the same lock first (the
-    /// disconnect). When `keep` and the call was the row's last, its place
-    /// passes to the row (#534), and the answer is `true`.
-    fn leave(&self, pending_id: i64, snapshot: Option<&str>, keep: bool) -> (Vec<i64>, bool) {
+    /// disconnect). When `keep` names a window's end and the call was the
+    /// row's last, its place passes to the row until then (#534), and the
+    /// answer is `true`.
+    fn leave(
+        &self,
+        pending_id: i64,
+        snapshot: Option<&str>,
+        keep: Option<i64>,
+    ) -> (Vec<i64>, bool) {
         let mut map = self.map();
         let ids = snapshot.map_or_else(Vec::new, |originator| map.of(originator));
         let mut passed = false;
@@ -228,9 +282,10 @@ impl Held {
             row.waiters -= 1;
             if row.waiters == 0 {
                 let row = map.rows.remove(&pending_id);
-                if keep && !map.kept.contains_key(&pending_id) {
-                    if let Some(row) = row {
-                        map.kept.insert(pending_id, row.originator);
+                if let (Some(until), Some(row)) = (keep, row) {
+                    if let Entry::Vacant(slot) = map.kept.entry(pending_id) {
+                        let originator = row.originator;
+                        slot.insert(Kept { originator, until });
                         passed = true;
                     }
                 }
@@ -313,7 +368,13 @@ impl Waiting {
 impl Drop for Waiting {
     fn drop(&mut self) {
         let snapshot = self.armed.then_some(self.originator.as_str());
-        let keep = self.armed && self.windowed;
+        // The mark's time, taken here so a passed place ends with the row's
+        // window (#534); a clock before the epoch passes no place.
+        let mark = owner_door::now();
+        let keep = match &mark {
+            Ok(now) if self.armed && self.windowed => Some(now.saturating_add(ABANDON_WINDOW_SECS)),
+            _ => None,
+        };
         let (ids, passed) = self.held.leave(self.pending_id, snapshot, keep);
         self.place.passed = passed;
         if !self.armed {
@@ -331,7 +392,7 @@ impl Drop for Waiting {
             return;
         };
         detach(&runtime, async move {
-            disconnected(&held, &wallet, &originator, &ids, own).await;
+            disconnected(&held, &wallet, &originator, &ids, own, mark).await;
         });
     }
 }
@@ -351,11 +412,19 @@ pub(super) fn detach(
 /// rows marked; after the window the rows still abandoned with that mark
 /// deleted, their calls woken and their places freed. `own` is the leaving
 /// call's row: a place it passed to a row the disconnect did not mark (the
-/// row answered or gone meanwhile) is freed at once.
-async fn disconnected(held: &Held, wallet: &WalletState, originator: &str, ids: &[i64], own: i64) {
+/// row answered or gone meanwhile) is freed at once. `mark` is the time
+/// the guard's drop read, the row's `abandoned_at`.
+async fn disconnected(
+    held: &Held,
+    wallet: &WalletState,
+    originator: &str,
+    ids: &[i64],
+    own: i64,
+    mark: anyhow::Result<i64>,
+) {
     let storage = wallet.storage();
     let marked = async {
-        let now = owner_door::now()?;
+        let now = mark?;
         let done = grants::abandon(storage, originator, ids, now).await?;
         anyhow::Ok((done, now))
     };
@@ -391,15 +460,17 @@ async fn disconnected(held: &Held, wallet: &WalletState, originator: &str, ids: 
 
 /// Free the place row `id` holds when the row is no longer open nor
 /// abandoned inside its window (answered, or deleted by a reader past its
-/// window).
+/// window); a row still abandoned ties the place to its own window's end,
+/// marked earlier perhaps than this disconnect.
 async fn free_if_gone(held: &Held, wallet: &WalletState, id: i64) {
-    let Ok(now) = owner_door::now() else {
-        return;
+    let read = async {
+        let now = owner_door::now()?;
+        grants::pending(wallet.storage(), id, now).await
     };
-    if let Ok(row) = grants::pending(wallet.storage(), id, now).await {
-        if row.is_none_or(|r| r.answered_at.is_some()) {
-            held.release(id);
-        }
+    match read.await {
+        Ok(Some(row)) if row.answered_at.is_none() => held.ends(&row),
+        Ok(_) => held.release(id),
+        Err(_) => {}
     }
 }
 

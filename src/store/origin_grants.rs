@@ -497,8 +497,8 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
         }
         .into());
     }
-    let (open, resumed) = if kind == Kind::Spending {
-        (None, false)
+    let (open, resumed, gone) = if kind == Kind::Spending {
+        (None, false, None)
     } else {
         resumed_or_gone(&mut tx, &key, kind, &power_key, now).await?
     };
@@ -531,19 +531,21 @@ pub async fn open_or_join(storage: &StorageSqlx, asking: &Asking<'_>, now: i64) 
         row,
         joined,
         resumed,
+        gone,
     })
 }
 
 /// The open row of the power (originator, kind, key), if any, and whether
 /// the call resumes it (#534): an abandoned row inside its window has its
-/// mark cleared; one past it is deleted, as though no row were open.
+/// mark cleared; one past it is deleted, as though no row were open, and
+/// named third.
 async fn resumed_or_gone(
     conn: &mut SqliteConnection,
     key: &str,
     kind: Kind,
     power_key: &str,
     now: i64,
-) -> Result<(Option<i64>, bool)> {
+) -> Result<(Option<i64>, bool, Option<i64>)> {
     let open: Option<(i64, Option<i64>)> = sqlx::query_as(
         "SELECT pending_id, abandoned_at FROM origin_pending \
          WHERE originator = ? AND kind = ? AND key = ? AND answered_at IS NULL",
@@ -554,7 +556,7 @@ async fn resumed_or_gone(
     .fetch_optional(&mut *conn)
     .await?;
     let Some((id, Some(at))) = open else {
-        return Ok((open.map(|(id, _)| id), false));
+        return Ok((open.map(|(id, _)| id), false, None));
     };
     let inside = now < at.saturating_add(WINDOW);
     let sql = if inside {
@@ -564,7 +566,7 @@ async fn resumed_or_gone(
         "DELETE FROM origin_pending WHERE pending_id = ?"
     };
     sqlx::query(sql).bind(id).execute(&mut *conn).await?;
-    Ok((inside.then_some(id), inside))
+    Ok((inside.then_some(id), inside, (!inside).then_some(id)))
 }
 
 /// Answer once: stamp `answered_at` and `answer` on an open row
