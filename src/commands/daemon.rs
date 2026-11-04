@@ -282,8 +282,15 @@ mod tests {
         assert!(error.contains("signal registration refused"), "{error}");
     }
 
+    /// Under a capture, as every test that reaches a `daemon_fault` line:
+    /// a callsite first reached on a thread with no subscriber, while one
+    /// other thread's capture is the only one alive, caches its interest as
+    /// never (tracing-core's one-dispatcher path asks the registering
+    /// thread's default), and the other tests' captures then see nothing
+    /// (#553).
     #[tokio::test]
     async fn a_monitor_that_hangs_does_not_hold_the_daemon_past_the_grace() {
+        let (markers, _guard) = crate::test_support::Markers::capture();
         let grace = Duration::from_millis(50);
         let server = tokio::spawn(async { Err(anyhow::anyhow!("listener fault")) });
         let e = tokio::time::timeout(
@@ -294,6 +301,18 @@ mod tests {
         .expect("the daemon ends past a hung monitor")
         .expect_err("the server's error is returned after the grace");
         assert!(format!("{e:#}").contains("listener fault"));
+        let lines: Vec<_> = markers
+            .named("daemon_fault")
+            .into_iter()
+            .map(|m| m.message.unwrap_or_default())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "daemon: the HTTP server stopped; stopping the monitor",
+                "daemon: the monitor did not stop within the grace",
+            ]
+        );
     }
 
     #[tokio::test]
