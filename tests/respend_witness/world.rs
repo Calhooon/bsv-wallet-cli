@@ -229,8 +229,12 @@ pub(crate) fn proof(txid: &str) -> Vec<u8> {
 pub(crate) type MarkedLines = Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
 
 /// The marker of every line logged while the guard lives on this thread.
+/// The binary's always-interested global goes in first, as
+/// test_support's capture does (#568), so a capture-less sibling never
+/// caches a callsite as never.
 pub(crate) fn capture_markers() -> (MarkedLines, tracing::subscriber::DefaultGuard) {
     use tracing_subscriber::layer::SubscriberExt;
+    crate::always_interested::init();
     struct Capture(MarkedLines);
     #[derive(Default)]
     struct Line(String, Option<String>);
@@ -263,4 +267,24 @@ pub(crate) fn capture_markers() -> (MarkedLines, tracing::subscriber::DefaultGua
     let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
     let subscriber = tracing_subscriber::registry().with(Capture(lines.clone()));
     (lines, tracing::subscriber::set_default(subscriber))
+}
+
+/// #568 in this binary: a capture-less thread reaches a fresh callsite
+/// first, while this thread's capture is alive, and the capture still sees
+/// its own line there. Red without the global `capture_markers` installs
+/// when the capture is the only live dispatcher (run alone).
+#[test]
+fn a_capture_less_sibling_first_at_a_callsite_leaves_the_capture_its_line() {
+    fn log_once() {
+        tracing::info!(marker = "respend_callsite_568", "the fresh callsite");
+    }
+    let (lines, _guard) = capture_markers();
+    std::thread::spawn(log_once).join().unwrap();
+    log_once();
+    let lines = lines.lock().unwrap();
+    let named = lines
+        .iter()
+        .filter(|(marker, _)| marker == "respend_callsite_568")
+        .count();
+    assert_eq!(named, 1, "{lines:?}");
 }
