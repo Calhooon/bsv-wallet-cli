@@ -17,11 +17,15 @@
  *   5. deny.example calls; the owner denies with `bsv-wallet origin-deny`:
  *      400 ERR_PERMISSION_DENIED "Permission denied." with the echo, no
  *      grant row;
- *   6. gone.example calls and closes its connection once its row appears
- *      (W4 (a)): no row of gone.example is kept, open or answered, no grant
- *      row, serve.log names `browser gate: abandoned`; its next call opens a
- *      new prompt (a new pending id) and is held; the owner grants it from
- *      the inspector, and it answers 200.
+ *   6. gone.example calls and closes its connection once its row appears;
+ *      at its close plus the window W and a tenth of it (#534, W read from
+ *      the module's constant through the harness) no row of gone.example is
+ *      kept, open, abandoned or answered (W4 (a) past the window), no grant
+ *      row, serve.log names `browser gate: disconnected` and then `browser
+ *      gate: abandoned`; its next call opens a new prompt (a new pending id)
+ *      and is held; the owner grants it from the inspector, and it answers
+ *      200. The step waits out the window: a call inside it would resume the
+ *      same row (scene 34).
  * Cost: 0 sats.
  */
 const g = require('../lib/browser-gate');
@@ -93,15 +97,15 @@ module.exports = {
         const gone = g.begin(wallet, 'POST', 'listOutputs', { origin: g.GONE, body: g.ARGS.listOutputs });
         const [left] = await g.untilPending(wallet, 'gone.example', 1);
         gone.abort();
-        let kept = [];
-        for (let i = 0; i < 100; i++) {
-          kept = (await g.listing(wallet)).pending.filter(p => p.originator === 'gone.example');
-          if (kept.length === 0) break;
-          await g.sleep(50);
-        }
-        assert(kept.length === 0, `6: no row of gone.example after its disconnect, open or answered (got ${JSON.stringify(kept)})`);
+        const closed = Date.now();
+        await g.until(closed + g.W + g.W / 10);
+        const kept = g.origins(wallet, true).pending.filter(p => p.originator === 'gone.example');
+        assert(kept.length === 0, `6: past the window no row of gone.example, open, abandoned or answered (got ${JSON.stringify(kept)})`);
         assert(!g.origins(wallet, true).grants.some(r => r.originator === 'gone.example'), '6: no grant row');
-        assert(g.log(wallet).includes('browser gate: abandoned'), '6: serve.log names browser gate: abandoned');
+        const said = g.log(wallet);
+        const marked = said.indexOf('browser gate: disconnected');
+        assert(marked >= 0 && said.indexOf('browser gate: abandoned', marked) > marked,
+          '6: serve.log names browser gate: disconnected and then browser gate: abandoned');
         const again = g.begin(wallet, 'POST', 'listOutputs', { origin: g.GONE, body: g.ARGS.listOutputs });
         const [renewed] = await g.untilPending(wallet, 'gone.example', 1);
         assert(renewed.pendingId !== left.pendingId, '6: the later call opens a new prompt, held');
