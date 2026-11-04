@@ -84,6 +84,10 @@ const HTTP_CLIENTS: &[(&str, &str)] = &[
         "the switch's router tests (#414 L5b): a page's and the owner's calls to the wallet's own router on a loopback listener, not an explorer",
     ),
     (
+        "src/server/window_tests.rs",
+        "the brief reconnect's window over the served router (#534): a page's and the owner's calls to the wallet's own router on a loopback listener, not an explorer",
+    ),
+    (
         "src/server/open_bounds_tests.rs",
         "the open doors' bound over the served router (#541): a page's and the owner's calls to the wallet's own router on a loopback listener, not an explorer",
     ),
