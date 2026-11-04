@@ -4,10 +4,10 @@
 mod proof_presence;
 mod world;
 
-#[path = "../../src/test_support/chain_tracker.rs"]
-mod chain_tracker;
 #[path = "../../src/test_support/always_interested.rs"]
 mod always_interested;
+#[path = "../../src/test_support/chain_tracker.rs"]
+mod chain_tracker;
 
 use std::sync::Arc;
 
