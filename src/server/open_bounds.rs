@@ -14,7 +14,9 @@
 //!   `getVersion`): 60 a minute per originator, 10 at once, the four doors
 //!   one bound;
 //! - **level 0** (a protocol power at security level 0, at any door): the
-//!   chain doors' figures, a bound of its own.
+//!   chain doors' figures, a bound of its own, charged once per call: each
+//!   level-0 check reads the bound in the call's order, and the call moves
+//!   it once when every check has admitted it (#556).
 //!
 //! Past a bound the call is answered at once, 429 `ERR_RATE_LIMITED`
 //! naming the door and the window, with `Retry-After` in whole seconds
@@ -163,6 +165,30 @@ impl OpenBounds {
     ///
     /// The call past its bound: [`Limited`], the wait and the window.
     pub fn take(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
+        self.judge(host, door, class, now, true)
+    }
+
+    /// Whether [`take`](Self::take) would admit the call now, its counter
+    /// unmoved: a level-0 check read before the call's other checks, the
+    /// charge taken once when they all admit (#556).
+    ///
+    /// # Errors
+    ///
+    /// The call past its bound: [`Limited`], the wait and the window.
+    pub fn peek(&self, host: &str, door: &str, class: Class, now: Instant) -> Result<(), Limited> {
+        self.judge(host, door, class, now, false)
+    }
+
+    /// The bound's answer at `now`; with `charge`, an admission moves the
+    /// counter.
+    fn judge(
+        &self,
+        host: &str,
+        door: &str,
+        class: Class,
+        now: Instant,
+        charge: bool,
+    ) -> Result<(), Limited> {
         let bound = bound_of(class, door);
         let mut map = self.0.map.lock().unwrap_or_else(PoisonError::into_inner);
         let key = (host.to_string(), bound.counter);
@@ -174,6 +200,9 @@ impl OpenBounds {
                 wait,
                 window: bound.window,
             });
+        }
+        if !charge {
+            return Ok(());
         }
         if map.len() >= PRUNE_AT && !map.contains_key(&key) {
             map.retain(|_, t| *t > now);
@@ -195,10 +224,33 @@ impl OpenBounds {
     /// The bound at the gate's seam (`powers::open`): admit `originator`'s
     /// call at `door`, or the 429 the door serves, logged at warn by name.
     pub(crate) fn check(&self, originator: &str, door: &str, class: Class) -> Result<(), AppError> {
+        self.served(originator, door, class, true)
+    }
+
+    /// [`check`](Self::check) with the counter unmoved (`peek`): a
+    /// level-0 check read in the call's order, before the one charge.
+    pub(crate) fn admits(
+        &self,
+        originator: &str,
+        door: &str,
+        class: Class,
+    ) -> Result<(), AppError> {
+        self.served(originator, door, class, false)
+    }
+
+    /// The bound's answer as the door serves it; with `charge`, an
+    /// admission moves the counter.
+    fn served(
+        &self,
+        originator: &str,
+        door: &str,
+        class: Class,
+        charge: bool,
+    ) -> Result<(), AppError> {
         let host = crate::store::origin_grants::key_of(originator)
             .map_or_else(|_| originator.to_string(), |(host, _)| host);
         let now = self.0.stopped.unwrap_or_else(Instant::now);
-        self.take(&host, door, class, now)
+        self.judge(&host, door, class, now, charge)
             .map_err(|limited| {
                 let secs = limited.retry_after_secs();
                 tracing::warn!(originator = %host, door, class = ?class, retry_after = secs, "browser gate: rate limited");
@@ -387,6 +439,29 @@ mod tests {
             bounds.take(HOST, "/isAuthenticated", Class::Open, t),
             Ok(())
         );
+    }
+
+    /// A peek reads the bound and moves no counter (#556): with one call
+    /// of the burst left, any number of peeks admit, the take after them is
+    /// the burst's last, and a peek past it refuses with the take's wait.
+    #[test]
+    fn a_peek_moves_no_counter() {
+        let (bounds, t) = (OpenBounds::default(), Instant::now());
+        for n in 0..9 {
+            bounds.take(HOST, "/encrypt", Class::LevelZero, t).unwrap();
+            assert_eq!(
+                bounds.peek(HOST, "/encrypt", Class::LevelZero, t),
+                Ok(()),
+                "{n}"
+            );
+        }
+        for _ in 0..5 {
+            assert_eq!(bounds.peek(HOST, "/encrypt", Class::LevelZero, t), Ok(()));
+        }
+        assert_eq!(bounds.take(HOST, "/encrypt", Class::LevelZero, t), Ok(()));
+        let peeked = bounds.peek(HOST, "/encrypt", Class::LevelZero, t);
+        assert_eq!(peeked.map_err(|l| l.wait), Err(Duration::from_secs(1)));
+        assert!(bounds.take(HOST, "/encrypt", Class::LevelZero, t).is_err());
     }
 
     /// `Retry-After` against the wait: whole seconds rounded up, never 0.
