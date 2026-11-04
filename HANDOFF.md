@@ -3356,3 +3356,119 @@ and then the owner's word; #565, the intake (with #386 pointing at it);
 complete night. No PR open and no lane running at 09:20Z. The lines, read
 with `git ls-remote origin beta main` at 09:23Z: beta 3be14013 (PR 580);
 main 7535a9a2 (PR 566).
+
+## 2026-11-04, the pause: the owner's checkpoint word at 19:0xZ, states as of 19:01Z 11-04
+
+**The owner's word, verbatim through the keeper (19:0xZ), four messages:**
+"We need to come to a clean checkpoint pause on all of htis everyehrwe........." /
+"besdies bsv-low" / "and bsv-dd" / "wrap up whats in progress... so we can
+cleanly pause everywher and reusme later....". The keeper's pause protocol,
+ruled: what is in flight wraps (#585's fix through its read); nothing else
+starts (no lane, read or dispatch; the pin launcher stopped; night 5 not
+re-dispatched by hand; night 6's dispatch disarmed); this record in the
+repository, one channel line, then the cadence stops; nothing deleted, moved
+or re-pinned at the pause.
+
+**The lines.** beta `6dc14ef5` (PR 589, #585's fix, merged 18:47Z);
+main `b7ffdb87` (PR 588, #586, merged 17:50Z). Open PRs: none. The
+checkout on the Studio is clean on main; every lane branch of the day is
+pushed and landed (p1-582-rule19 PR 583, p1-584-night-cap PR 587,
+p1-585-night5-red PR 589, p1-586-runner PR 588); the worktrees on both hosts
+hold nothing uncommitted of mine. Open rows: 76.
+
+**The wrap.** PR 589 landed through the queue at 18:47Z and #585 closed by
+hand on its record: the open-doors bound is GCRA (a burst of ten, then one a
+second) on the real clock; CI's Test job runs each test in its own process
+while cargo-mutants' baseline runs all 616 lib tests in one, so the eleventh
+of eleven calls lands past the second there and the bound rightly allows it;
+the served tests now judge the bound on a stopped clock (test builds only);
+reproduced by pausing the test process, no load. Night 5's first run
+41873138569 was cancelled on the keeper's stop at 17:42Z (red at the
+baseline, measuring nothing more); its re-run 41890559957 on beta 6dc14ef5
+(incremental, six slots) was dispatched at 18:47:16Z by the armed shell on
+the fix's landing, eleven minutes before the pause word reached the captain:
+it runs unattended on the hosted runners (queued: 1 done, 6 running, 44 queued, 0 red at this writing) and
+needs no captain; its record lane is a resume step; a cancel is the keeper's
+to ask.
+
+**Stopped by name at 18:59Z to 19:0xZ** (every launcher, shell, record chain
+and timer of this captain): the beta.8 pin launcher
+`pin-launch-beta8.sh 0.9.0-beta.7 0.14.0-beta.7 0.9.0-beta.7` (no lane had
+started: the toolbox's version was not on the index); night 5's re-dispatch
+shell `night5b-dispatch.sh` (after its dispatch, while holding for the run;
+the record chain inside it did not run); night 6's dispatch
+`night6-dispatch.sh` (the 2026-11-05 17:00Z dispatch is DISARMED: it does not
+fire at the pause) and its record chain `night6-chain.sh`; the hourly
+keeper-note clock; the landing queue runner `land-queue2.sh` (stopped after
+this record lands; its queue file empty). The box hold file
+(`/Volumes/Lanes/out/bsv-wallet-cli/work/box-hold`, LOW's L61 since
+16:01:19Z) stays until LOW's FREE line through the keeper; nothing of this
+captain's launches on either host.
+
+**The funder daemon** (port 3320, its own copy `e2e-funder/bin/bsv-wallet`
+0.18.2, pid 46141, up 16:59:45): left running at the pause; the default
+basket 192956 sats; the standing refill rule unchanged (basket at or above
+150,000; the refill of 100,000 under 110,000). The production wallet on
+3322 and the registry's ports untouched.
+
+**The blocking set of 25** (the keeper's triage rule of 2026-11-04: the
+0.19.0 milestone is the blocking set alone; the full classification of the
+open rows in the captain's `triage-1104.txt`): #565 the beta.8 pin; #564 the
+one rule engine (ruled (a) joined to (c): the browser gate on the toolbox's
+permissions manager, the on-chain tokens the source, the per-origin rows the
+record); #414 the gate's W rows (L7 two releases out); #557 the header fault
+as the gate's 503 (on the toolbox's typed fault); #430 --reverify stops at the
+first failure; #333 the re-issue step's detector; #491 main's ci.yml at the
+cut; #311 and #175 the nightly's floors; #379 and #194 parity gaps (the
+toolbox's); #149, #148, #147 and #146 BRC-100 parity gaps; #117 the @bsv/sdk
+client's refusal shape; #441 the originator binding of signAction and
+abortAction; #118 the MCP's scoped allowPending; #327 the actions and outputs
+paging; #321 the MCP's blank-URL reading; #187 and #186 the fleet's and the
+daemon's exit defects; #437 the empty AUTH_TOKEN read two ways; #483 the
+inspector's VACUUM INTO; and #585 closed today. Four rows closable on a
+witness or a read, not blind: #193 and #350 (the class #568 cured), #191
+(#545 landed), #386 (the beta.6 intake; #565 carries the intake).
+
+**The first three steps on resume.**
+1. The beta.8 pin (#565): bsv-rs 0.9.0-beta.7 is on the index (18:28:50Z;
+   the tag 7b0254d9 on 22f03d84), bsv-tracker 0.9.0-beta.7 is on the index
+   (18:32:56Z; the tag on 3cfba16, its bsv-rs pin =0.9.0-beta.7); the
+   toolbox's 0.14.0-beta.7 was expected about 21:00Z 11-04 (its content: the
+   keeper's freeze at 545aa38b plus the pin and release commits; #751's step
+   2 rides the toolbox's beta.8). Run
+   `zsh pin-launch-beta8.sh 0.9.0-beta.7 0.14.0-beta.7 0.9.0-beta.7` in
+   the background (it waits on the index for all three with the bsv-rs pins
+   equal, fills the briefs, runs the lane with two reads on two hosts, the
+   host by the hold file); on the merge consensus: the landing through the
+   queue by hand, the release PR 0.19.0-beta.8 in PR 563's shape, the mainnet
+   gate once (gate-beta7.sh's shape with a new target name; the owner's
+   standing word for a prerelease cut), the tag (tag-beta7.sh's shape).
+2. Night 5's record: run 41890559957's artifacts (kept ninety days) through
+   the record lane (`brief-night5-record.txt` with RUN_ID filled, one read
+   on the box, the enqueue on merge), or a re-dispatch if the keeper says;
+   then #514, #510, #513, #517, #175, #142 and #560 fed or closed per the
+   record.
+3. #564's read lane after the pin (`launch-564-read.sh 0.14.0-beta.7`: the
+   function map against beta.7's manager, the parity class per rule with
+   BRC-116 at 5119a9b, the rows that start on this pin and those that wait
+   for the toolbox's beta.8 with step 2), its rows filed by hand; then night
+   6 as the pin's complete night at the next 17:00Z slot the keeper gives
+   (re-arm `night6-dispatch.sh`; `night6-cap.txt` reads `cap=14` on the
+   keeper's word, the overrun into the toolbox's window accepted for that
+   night alone); then #590 (the two-matrix plan from night 7, copied from
+   bsv-rs's #794 fold) and the triage bucket #591's fold.
+
+**The day's landings before the pause** (all on beta unless named): PR 583
+(#582, rule 19 the load of a witness), PR 587 (#584, the night's cap as a
+dispatch input with the keeper's windows table: the CLI's night 17:00Z to
+20:00Z at fourteen, the toolbox's 20:00Z to 01:00Z, bsv-rs's and the pin
+chain's 01:00Z to 09:00Z, the day at six), PR 588 on main (#586, the deny
+job's dormant conditional self-hosted runner line from the stack's template,
+never live on this public repository, now ubuntu-latest: the owner's word,
+no CI runner of any program on our hardware), PR 589 (#585). The SSD clean
+of the owner's word: 125 GB freed on the Studio's Lanes volume and 155 GB
+on the box's, by exact name, ownership proven per folder, every removal
+logged. #564's citation corrected to BRC-116 at the BRCs' pin 5119a9b (the
+four permission tokens are a BRC's, not the reference's alone) and ruled
+(a) joined to (c) on the owner's word of first principles. The day's full
+line is the captain's `handoff-phase1-day2.md`.
