@@ -461,7 +461,10 @@ async fn disconnected(
 /// Free the place row `id` holds when the row is no longer open nor
 /// abandoned inside its window (answered, or deleted by a reader past its
 /// window); a row still abandoned ties the place to its own window's end,
-/// marked earlier perhaps than this disconnect.
+/// marked earlier perhaps than this disconnect. A read that fails is logged
+/// by name and the place kept: it is freed at its window's end regardless
+/// (`Held::live`), the window being the bound, so no place outlives its
+/// row's `abandoned_at` + [`ABANDON_WINDOW_SECS`] until a restart.
 async fn free_if_gone(held: &Held, wallet: &WalletState, id: i64) {
     let read = async {
         let now = owner_door::now()?;
@@ -470,7 +473,9 @@ async fn free_if_gone(held: &Held, wallet: &WalletState, id: i64) {
     match read.await {
         Ok(Some(row)) if row.answered_at.is_none() => held.ends(&row),
         Ok(_) => held.release(id),
-        Err(_) => {}
+        Err(e) => {
+            tracing::warn!(pending_id = id, error = %e, "browser gate: the row's read failed; its place is freed at its window's end");
+        }
     }
 }
 
@@ -484,3 +489,7 @@ pub(super) async fn withdraw(held: &Held, wallet: &WalletState, originator: &str
         }
     }
 }
+
+#[cfg(test)]
+#[path = "held_tests.rs"]
+mod tests;
