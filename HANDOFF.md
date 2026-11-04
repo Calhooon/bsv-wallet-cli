@@ -2998,15 +2998,17 @@ view`, `gh release view`, the lines and the tag by `git ls-remote`); a state
 that moves after that time is the next entry's. Every time below is the
 verified clock of the captain's day line
 (/Volumes/Lanes/out/bsv-wallet-cli/day-line-2026-11-03.md, from its 23:5xZ
-entry to its end); GitHub's stamps agree with it to the minute. The verdicts
+entry to its end), save #564's filing, which is GitHub's; every GitHub stamp
+named below agrees with it to the minute. The verdicts
 and scores of the reads are the day line's figures. This night holds no new
 owner quote: the words quoted below are the keeper's, under the owner's
 standing rulings 19.7 and 19.10.
 
 The duplicate-lane fault (23:5xZ) and its cure. PR 558 (night 4's record)
 landed through the queue at 23:49:43Z, beta 974bc6df, and the captain's
-chain launched the day's HANDOFF lane with the re-read day2 brief. The old
-night chain had not stopped at its "the captain reads it" verdict: its inner
+chain launched the day's HANDOFF lane with the re-read day2 brief. The
+captain's old night chain (the fault the captain's) had not stopped at its
+"the captain reads it" verdict: its inner
 chain's exit was piped through `tail -5` and lost, so it kept polling PR 558
 and at the merge launched a second HANDOFF lane with the stale morning brief
 on the same branch and worktree. Two entries landed on one branch: 387bb32
@@ -3096,7 +3098,8 @@ stays held: toolbox PR 773 (merged 00:35Z) is no behaviour change, the three
 ChainTracker causes witnessed with the CLI's mapping and the unknown-height
 hold their divergence AD1 pending the owner's ruling.
 
-The north-star finding, #564 (02:4xZ). The pinned toolbox carries a port of
+The north-star finding, #564 (filed at 02:23Z; the day line's 02:4xZ entry
+records it). The pinned toolbox carries a port of
 the reference's WalletPermissionsManager (src/managers/permissions_manager.rs,
 1,978 lines at 0.14.0-beta.6), fixed against the reference by the toolbox's
 parity chain, beside the CLI's (c) gate, which implements the same reference
