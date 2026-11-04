@@ -56,7 +56,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at 31f17bb |
 | ratchet `duplicated_tokens` | 31766 |  | `docs/ratchets.json` at 31f17bb |
 | ratchet `missing_docs` | 126 |  | `docs/ratchets.json` at 31f17bb |
-| wire fixtures | 220 |  | `tests/wire/MANIFEST.json` |
+| wire fixtures | 221 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
 | arch rule A1 allowlist | 0 files, 0 sites |  | `tests/arch_env_reads.rs` ALLOWED |
@@ -79,7 +79,7 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 | fuzz hours `allow_pending` | 0.2 | 21315611 executions, 2755 corpus, 0 crashes at be4906a | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41684822793 |
 | bench baseline `ubuntu-latest-amd-epyc-9v74-80-core-processor-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
 | bench baseline `ubuntu-latest-intel-r-xeon-r-6975p-c-4-cores` | 10 benches, 1 runs |  | `benches/baseline.json` |
-| e2e scenarios | 33 |  | `tests/e2e/scenarios/` |
+| e2e scenarios | 34 |  | `tests/e2e/scenarios/` |
 | hermetic flag `E2E_HERMETIC` | present |  | `tests/e2e/lib/browsers.js` |
 | differential `45fecea` against `e5bf424` | 0 | 375 calls, 37 commands; the same-build floor 0; complete | https://github.com/Calhooon/bsv-wallet-cli/actions/runs/41253245406 |
 <!-- scoreboard:end -->
