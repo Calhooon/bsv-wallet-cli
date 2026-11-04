@@ -362,13 +362,17 @@ async fn a_query_only_pool_is_no_guard_against_a_query() {
     assert!(rows.unwrap_err().to_string().contains("readonly"));
 }
 
-/// #534: the origins view reads the server's window, so the time it shows
-/// for an abandoned row's withdrawal is the one the owner's answer names.
+/// #534: the origins view computes no window: the time it shows for an
+/// abandoned row's withdrawal is the JSON's `abandonedUntil`, the store's
+/// one reading, which the owner's answer and the CLI's line name too.
 #[test]
-fn the_origins_view_holds_the_servers_window() {
-    let line = format!(
-        "const ABANDON_WINDOW = {};",
-        bsv_wallet_cli::server::powers::ABANDON_WINDOW_SECS
+fn the_origins_view_shows_the_jsons_window_end_and_holds_no_window() {
+    assert!(
+        !HTML.contains("ABANDON_WINDOW"),
+        "the view holds a window of its own"
     );
-    assert!(HTML.contains(&line), "the view's window is not {line}");
+    assert!(
+        HTML.contains("withdrawn at ${esc(when(p.abandonedUntil))}"),
+        "the view does not show abandonedUntil"
+    );
 }
