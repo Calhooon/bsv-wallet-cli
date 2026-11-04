@@ -39,6 +39,11 @@ name: Nightly
 # dispatched at each pin (docs/RELEASING.md), and the only night that may move
 # a floor. `gh workflow run nightly.yml --ref beta` is an incremental night;
 # `-f mode=complete` the complete one; `-f bench=true` the week's bench.
+# The cap (#584, the owner's word of 2026-11-04 and the keeper's windows
+# table, docs/NIGHTLY.md): `-f cap=14 -f window_end=20:00Z` runs fourteen at
+# once when the table gives the CLI's 17:00Z to 20:00Z window to this night;
+# the plan refuses fourteen whose projected end falls past `window_end` and
+# the night falls back to six. A dispatch that names no cap runs at six.
 on:
   workflow_dispatch:
     inputs:
@@ -51,6 +56,15 @@ on:
         description: 'run the bench job (the captain sets it once a week; a complete night runs it regardless)'
         type: boolean
         default: false
+      cap:
+        description: 'jobs at once (#584): 6, the default, or 14 on the keeper''s windows table''s word for the window named by window_end'
+        type: choice
+        options: ['6', '14']
+        default: '6'
+      window_end:
+        description: 'the end of the night''s window, HH:MMZ (the table''s: 20:00Z for the CLI''s night); 14 projected past it falls back to 6; empty = no window check'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -72,11 +86,12 @@ permissions:
 # peak in 22 of 24 hours, a job beside a heavy run waiting a median 0:38 and
 # a worst 88:53 against 0:02 and 3:16 beside none, and the non-heavy p95 at
 # 14 slots; every heavy run caps at six until a read shows that p95 under
-# 10). The stage after the matrix runs under the same cap (#517): the fuzz
-# targets wait for the matrix (needs: mutants) so that no shard waits for
-# them, then run three at once beside the hermetic shards three at a time (the
-# plan's FUZZ_PARALLEL and HERMETIC_PARALLEL, three plus three, the captain's
-# call on run 41516017523's figures: about two hours; the plan refuses
+# 10; #584: or fourteen, seven plus seven after the matrix, by the dispatch's
+# `cap` on the keeper's windows table, inside the window it names). The
+# stage after the matrix runs under the same cap (#517): the fuzz targets
+# wait for the matrix (needs: mutants) so that no shard waits for them, then
+# run three at once beside the hermetic shards three at a time (the plan's
+# FUZZ_PARALLEL and HERMETIC_PARALLEL, three plus three, the captain's call on run 41516017523's figures: about two hours; the plan refuses
 # figures whose sum passes the cap), and the reach job and the bench wait for
 # both and run last, two jobs. Before #517 the hermetic six, the five
 # targets, reach and bench could run together, thirteen jobs at once. An
@@ -157,6 +172,7 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       matrix: ${{ steps.plan.outputs.matrix }}
       parallel: ${{ steps.plan.outputs.parallel }}
+      cap: ${{ steps.plan.outputs.cap }}
       fuzz_parallel: ${{ steps.plan.outputs.fuzz_parallel }}
       hermetic_parallel: ${{ steps.plan.outputs.hermetic_parallel }}
       empty: ${{ steps.plan.outputs.empty }}
@@ -174,9 +190,14 @@ jobs:
         id: plan
         env:
           MODE: ${{ inputs.mode || 'incremental' }}
+          # The dispatch's cap and window (#584); none named is six, no window check.
+          CAP: ${{ inputs.cap || '6' }}
+          WINDOW_END: ${{ inputs.window_end }}
+          FUZZ_SECONDS: ${{ inputs.mode == 'complete' && env.FUZZ_SECONDS_COMPLETE || env.FUZZ_SECONDS_INCREMENTAL }}
         run: |
           python3 -B .github/nightly/changed_set.py --mode "$MODE" \
             --complete-shards "$MUTANTS_SHARDS_COMPLETE" --max-shards "$MUTANTS_SHARDS_INCREMENTAL" \
+            --cap "$CAP" --window-end "$WINDOW_END" --fuzz-seconds "$FUZZ_SECONDS" \
             --out plan.json --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

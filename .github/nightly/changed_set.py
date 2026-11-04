@@ -5,6 +5,7 @@ Usage:
   changed_set.py --mode incremental|complete [--record <mutants.json>]
                  [--head <sha>] [--paths <file>] [--out <plan.json>]
                  [--github-output <file>] [--complete-shards <n>] [--max-shards <n>]
+                 [--cap 6|14] [--window-end HH:MMZ] [--now <ISO time>] [--fuzz-seconds <n>]
 
 The Nightly has two modes. A COMPLETE night mutates every floored file (the
 files of MUTANTS_FLOORS in .github/workflows/nightly.yml) in
@@ -91,11 +92,30 @@ hermetic shards HERMETIC_PARALLEL (three) at a time, then reach and bench, the
 figures the plan's outputs `fuzz_parallel` and `hermetic_parallel`, refused
 when their sum passes HEAVY_RUN_PARALLEL.
 
+The cap (#584, the owner's word of 2026-11-04 and the keeper's windows table,
+docs/NIGHTLY.md): `--cap`, the dispatch's input `cap`, is 6 (the default, the
+figures above exactly) or 14. The matrix runs min(cap, shards) at once and the
+stage after it splits the cap between the fuzz targets and the hermetic shards
+(STAGE_SPLIT: three plus three under six, seven plus seven under fourteen).
+The plan projects the night: the shard count, the measured shard time (the
+record's runner minutes a mutant, from its shards' start on a runner to their
+end, times the plan's mutants a shard), the waves, the stage after the matrix
+(the fuzz rounds at `--fuzz-seconds` and the hermetic rounds at the record's
+hermetic shard time) and reach, and the projected end from the plan's minute
+(`--now`, else the clock). GitHub's own waits (a job queued behind the hosted
+runners) are not projected: they are GitHub's, named as such in the record's
+wall-clock row. With `--window-end` (the dispatch's `window_end`, the end of
+the window the keeper's table gives the night), fourteen whose projected end
+falls past the window's end, or that the record cannot project, is refused
+with a line and the night falls back to six; the cap never exceeds the
+table's word. Without a window there is no window check.
+
 Exit 1, naming the fault, on a record without a mode or a base, a mode other
 than the two, or a git diff that fails.
 """
 
 import argparse
+import datetime
 import json
 import math
 import re
@@ -151,6 +171,22 @@ FUZZ_PARALLEL = 3
 HERMETIC_PARALLEL = 3
 # The last two jobs of the night (#517): reach and bench, after both.
 TAIL_JOBS = 2
+# The dispatch's cap (#584): six, the default and every figure above; or
+# fourteen, the keeper's table's word for the CLI's 17:00Z to 20:00Z window
+# (fourteen of the account's twenty slots), refused past the window's end.
+CAPS = (HEAVY_RUN_PARALLEL, 14)
+# The stage after the matrix per cap (#517, #584): fuzz plus hermetic = cap.
+STAGE_SPLIT = {6: (FUZZ_PARALLEL, HERMETIC_PARALLEL), 14: (7, 7)}
+# The projection's figures the record does not carry (#584), from night 4
+# (run 41684822793, docs/NIGHTLY.md's wall clock): a fuzz target is its
+# budget plus up to seven minutes (12 to 17 minutes at 600 s), the reach job
+# eight minutes (the bench beside it, about seven), the five targets of the
+# fuzz job's matrix, and at most MUTANTS_HERMETIC_SHARDS (six) hermetic shards.
+FUZZ_TARGETS = 5
+FUZZ_SETUP_MINUTES = 7
+REACH_MINUTES = 8
+HERMETIC_SHARDS = 6
+WINDOW_END = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)Z$")
 WHOLE = {
     "Cargo.lock": "the lockfile changed: a dependency counts as changing every file that uses it",
     "Cargo.toml": "a workspace manifest changed: a dependency counts as changing every file that uses it",
@@ -536,7 +572,7 @@ def mutant_count(record, file):
     return sum(entry.get(k, 0) for k in ("caught", "missed", "timeout", "unviable"))
 
 
-def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_SHARDS):
+def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_SHARDS, cap=HEAVY_RUN_PARALLEL):
     floored = no_floored.floored(root)
     base, base_why = base_of(record)
     if mode == "complete":
@@ -555,9 +591,9 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
         shards = max_shards
     else:
         shards = min(max_shards, max(1, math.ceil(mutants / PER_SHARD), min(PARALLEL, mutants)))
-    # Six at a time on a complete night, the fleet's heavy-run cap (#513); six
-    # at a time on an incremental one (#144); never more than the count.
-    parallel = max(1, min(HEAVY_RUN_PARALLEL if mode == "complete" else PARALLEL, shards))
+    # The dispatch's cap at a time (#584; six by default, the fleet's heavy-run
+    # cap of #513 and an incremental night's six of #144); never more than the count.
+    parallel = max(1, min(cap, shards))
     return {
         "mode": mode,
         "base": base,
@@ -571,10 +607,128 @@ def plan(mode, record, paths, root, head, max_shards, complete_shards=COMPLETE_S
         "shards": shards,
         "matrix": list(range(shards)),
         "parallel": parallel,
-        "stage": stage(),
+        "cap": cap,
+        "stage": stage(cap, *STAGE_SPLIT[cap]),
         "selection": selection(root),
         "paths": [{"path": p, "files": sorted(f), "why": why} for p, f, why in found],
     }
+
+
+def minutes(start, end):
+    t = [datetime.datetime.fromisoformat(x.replace("Z", "+00:00")) for x in (start, end)]
+    return (t[1] - t[0]).total_seconds() / 60
+
+
+def measured(record):
+    """The record's measured times (#584): the first night of the record and its
+    earlier_nights whose every cargo shard names its start, end and mutants, as
+    {"run", "rate" (runner minutes a mutant), "hermetic" (mean minutes a hermetic
+    shard, or None), "hermetic_shards" (that night's count)}; None when no night
+    carries them."""
+    for night in [record] + list(record.get("earlier_nights", [])):
+        shards = night.get("shards") or []
+        if not shards or not all(isinstance(s, dict) and s.get("started") and s.get("completed")
+                                 and isinstance(s.get("mutants"), int) for s in shards):
+            continue
+        total = sum(s["mutants"] for s in shards)
+        if total < 1:
+            continue
+        rate = sum(minutes(s["started"], s["completed"]) for s in shards) / total
+        hs = [minutes(s["started"], s["completed"]) for s in night.get("hermetic_shards") or []
+              if isinstance(s, dict) and s.get("started") and s.get("completed")]
+        return {"run": night.get("run"), "rate": rate, "hermetic": sum(hs) / len(hs) if hs else None,
+                "hermetic_shards": len(hs)}
+    return None
+
+
+def hhmm(t):
+    return t.strftime("%H:%MZ")
+
+
+def window_end_after(now, end):
+    """The first instant at `end` (HH:MMZ) after `now`."""
+    m = WINDOW_END.match(end)
+    if not m:
+        fault(f"window_end {end!r} is not HH:MMZ (00:00Z to 23:59Z), or empty for no window check")
+    t = now.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+    return t if t > now else t + datetime.timedelta(days=1)
+
+
+def project(p, rec, now, fuzz_seconds):
+    """The night's projection at the plan's cap (#584): the matrix's waves of the
+    measured shard time, then the stage after it, then reach; the end from `now`.
+    Runner minutes alone: GitHub's own waits are GitHub's, never projected."""
+    n, k, st = p["shards"], p["parallel"], p["stage"]
+    out = {"cap": p["cap"], "shards": n, "parallel": k, "measured_run": rec["run"] if rec else None,
+           "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "github_waits": "not projected: GitHub's, named in the record"}
+    if rec is None or (n and not p["mutants"]):
+        out.update(shard_minutes=None, waves=None, matrix_minutes=None, stage_minutes=None, end=None)
+        return out
+    # The mean shard (round-robin deals the mutants evenly; the waves roll, a
+    # slot refilled as a shard ends), so the matrix is its waves of the mean.
+    per_shard = p["mutants"] / n if n else 0
+    shard = rec["rate"] * per_shard
+    waves_n = math.ceil(n / k) if n else 0
+    matrix = waves_n * shard
+    fuzz = math.ceil(FUZZ_TARGETS / st["fuzz_parallel"]) * (fuzz_seconds / 60 + FUZZ_SETUP_MINUTES)
+    # A complete night's hermetic shards are six; an incremental night's, one per
+    # twenty survivors, are projected at the measured night's count.
+    h = HERMETIC_SHARDS if p["mode"] == "complete" or not rec["hermetic_shards"] else rec["hermetic_shards"]
+    hermetic = (math.ceil(h / st["hermetic_parallel"]) * (rec["hermetic"] or 0)) if n else 0
+    stage_m = max(fuzz, hermetic) + REACH_MINUTES
+    end = now + datetime.timedelta(minutes=matrix + stage_m)
+    out.update(mutants_per_shard=round(per_shard, 1), shard_minutes=round(shard, 1), waves=waves_n,
+               hermetic_shards=h if n else 0,
+               matrix_minutes=round(matrix), stage_minutes=round(stage_m),
+               end=end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return out
+
+
+def projection_line(pr):
+    if pr["end"] is None:
+        return (f"The projection at cap {pr['cap']}: {pr['shards']} shards, no measured shard time in the record; "
+                f"no end projected.")
+    m, s = divmod(pr["matrix_minutes"] + pr["stage_minutes"], 60)
+    return (f"The projection at cap {pr['cap']}: {pr['shards']} shards, {pr['parallel']} at once, "
+            f"{pr['mutants_per_shard']} mutants a shard at {pr['shard_minutes']} minutes "
+            f"(the measured shard time of run {run_id(str(pr['measured_run']))}), {pr['waves']} wave(s), "
+            f"the matrix {pr['matrix_minutes']} minutes, then the stage and reach {pr['stage_minutes']} minutes; "
+            f"{m}h{s:02d}m from {pr['now'][11:16]}Z, the projected end {pr['end'][11:16]}Z "
+            f"({pr['end'][:10]}); GitHub's own waits not projected, GitHub's.")
+
+
+def capped(args, mode, record, paths, root, head):
+    """The plan at the dispatch's cap (#584), its projection, and the window's word:
+    fourteen whose projected end falls past the window's end, or that the record
+    cannot project, falls back to six, saying so."""
+    if args.cap not in CAPS:
+        fault(f"cap {args.cap} is not one of {', '.join(map(str, CAPS))} (#584)")
+    now = (datetime.datetime.fromisoformat(args.now.replace("Z", "+00:00")) if args.now
+           else datetime.datetime.now(datetime.timezone.utc))
+    end = window_end_after(now, args.window_end) if args.window_end else None
+    rec = measured(record)
+    p = plan(mode, record, paths, root, head, args.max_shards, args.complete_shards, args.cap)
+    p["projection"] = project(p, rec, now, args.fuzz_seconds)
+    p["requested_cap"], p["window_end"], p["cap_why"] = args.cap, args.window_end or None, None
+    if end is None:
+        p["cap_why"] = f"cap {args.cap} as dispatched; no window named, so no window check"
+    elif p["projection"]["end"] is None or p["projection"]["end"] > end.strftime("%Y-%m-%dT%H:%M:%SZ"):
+        if args.cap != HEAVY_RUN_PARALLEL:
+            said = ("the record carries no measured shard time to project it" if p["projection"]["end"] is None
+                    else f"its projected end {p['projection']['end'][11:16]}Z falls past the window's end {args.window_end}")
+            refused = p["projection"]
+            p = plan(mode, record, paths, root, head, args.max_shards, args.complete_shards, HEAVY_RUN_PARALLEL)
+            p["projection"] = project(p, rec, now, args.fuzz_seconds)
+            p["refused"] = refused
+            p["requested_cap"], p["window_end"] = args.cap, args.window_end
+            p["cap_why"] = (f"cap {args.cap} refused: {said} (#584); the night falls back to six, "
+                            f"the table's word for a run that would overrun its window")
+        else:
+            p["cap_why"] = (f"cap 6; the projected end falls past the window's end {args.window_end} "
+                            f"or is not projected: six is the table's floor, so it runs")
+    else:
+        p["cap_why"] = f"cap {args.cap}: the projected end falls inside the window, ending {args.window_end}"
+    return p
 
 
 def brings(files, floored):
@@ -611,6 +765,11 @@ def summary(p):
                  f"shards {st['hermetic_parallel']} at a time ({st['fuzz_parallel'] + st['hermetic_parallel']} "
                  f"of the cap's {st['cap']}), then the reach job and the bench (on a complete night or with `bench`), "
                  f"{st['tail']} at most, last.")
+    if "projection" in p:
+        lines += ["", f"The cap (#584): {p['cap']} at once; {p['cap_why']}."]
+        if "refused" in p:
+            lines.append(projection_line(p["refused"]) + " Refused.")
+        lines.append(projection_line(p["projection"]))
     reaching = [e for e in p["paths"] if e["files"]]
     if reaching:
         lines += ["", "| changed path | brings in | why |", "|---|---|---|"]
@@ -632,6 +791,10 @@ def main(argv):
     ap.add_argument("--root", default=None)
     ap.add_argument("--max-shards", type=int, default=50, help="an incremental night's ceiling")
     ap.add_argument("--complete-shards", type=int, default=COMPLETE_SHARDS, help="a complete night's count")
+    ap.add_argument("--cap", type=int, default=HEAVY_RUN_PARALLEL, help="the dispatch's cap, 6 or 14 (#584)")
+    ap.add_argument("--window-end", default="", help="the window's end, HH:MMZ; empty for no window check")
+    ap.add_argument("--now", default=None, help="the plan's minute, ISO (else the clock)")
+    ap.add_argument("--fuzz-seconds", type=int, default=600, help="the night's fuzz budget a target")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve() if args.root else ROOT
     if args.mode not in MODES:
@@ -651,7 +814,7 @@ def main(argv):
         paths = [l for l in diff.stdout.splitlines() if l]
     if args.complete_shards < 1 or args.max_shards < 1:
         fault(f"a shard count is at least 1 (--complete-shards {args.complete_shards}, --max-shards {args.max_shards})")
-    p = plan(args.mode, record, paths, root, head, args.max_shards, args.complete_shards)
+    p = capped(args, args.mode, record, paths, root, head)
     text = summary(p)
     sys.stdout.write(text)
     if args.out:
@@ -663,6 +826,7 @@ def main(argv):
             out.write(f"shards={p['shards']}\n")
             out.write(f"matrix={json.dumps(p['matrix'])}\n")
             out.write(f"parallel={p['parallel']}\n")
+            out.write(f"cap={p['cap']}\n")
             out.write(f"fuzz_parallel={p['stage']['fuzz_parallel']}\n")
             out.write(f"hermetic_parallel={p['stage']['hermetic_parallel']}\n")
             out.write(f"empty={'true' if not p['files'] else 'false'}\n")
