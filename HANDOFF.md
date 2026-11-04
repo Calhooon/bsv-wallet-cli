@@ -2988,3 +2988,176 @@ and our pin; #549 held; #533, #534, #552, #553, #556, #557; #559 and #560;
 the next pin's intake on #386. The lines, read with `git ls-remote origin
 beta main` at 23:51Z: beta 974bc6df (PR 558); main at this entry's parent,
 1de2d7ad.
+
+## 2026-11-03 (the night) to 2026-11-04 (the early morning): the duplicate-lane fault and its cure, L6 the spending power on beta, the L7 correction, v0.19.0-beta.7 cut on the keeper's word with the mainnet gate 33 of 33, the 12:00Z pin chain, the north-star finding #564, and night 5 armed (states as of 03:32Z 11-04)
+
+The day's entry ends at beta 974bc6df and main 1de2d7ad (states as of
+23:51Z 11-03). The states of issues, PRs, runs and the tag below are as
+GitHub read them at 03:32Z 11-04 (`gh issue view`, `gh pr view`, `gh run
+view`, `gh release view`, the lines and the tag by `git ls-remote`); a state
+that moves after that time is the next entry's. Every time below is the
+verified clock of the captain's day line
+(/Volumes/Lanes/out/bsv-wallet-cli/day-line-2026-11-03.md, from its 23:5xZ
+entry to its end); GitHub's stamps agree with it to the minute. The verdicts
+and scores of the reads are the day line's figures. This night holds no new
+owner quote: the words quoted below are the keeper's, under the owner's
+standing rulings 19.7 and 19.10.
+
+The duplicate-lane fault (23:5xZ) and its cure. PR 558 (night 4's record)
+landed through the queue at 23:49:43Z, beta 974bc6df, and the captain's
+chain launched the day's HANDOFF lane with the re-read day2 brief. The old
+night chain had not stopped at its "the captain reads it" verdict: its inner
+chain's exit was piped through `tail -5` and lost, so it kept polling PR 558
+and at the merge launched a second HANDOFF lane with the stale morning brief
+on the same branch and worktree. Two entries landed on one branch: 387bb32
+(the day2 brief's, states as of 23:51Z) and 1a2b4e2 on top (the duplicate,
+states as of 23:52Z). The captain's lane stopped blocked by name; the old
+chain was killed, and its lane's wrapper on the box by hand. The cure: keep
+387bb32 and revert 1a2b4e2 in a lane, never a force-push (2870a1f, the diff
+against main byte-identical to 387bb32's); PR 562's cold read merge 0.9
+(RISK 0.3: the pair rides into main's history under a rebase landing); the
+captain's call to land by the standing rule with the pair in history as the
+truthful record of the fault. PR 562 merged at 00:12:03Z, main 33649b0f (on
+main the three are 44b34bc, ba403eb and 33649b0f).
+
+L6, the spending power (#414). The lane on the box (22:09Z to 23:57Z) opened
+PR 561 with eleven commits: the store's spend rows per flow, the spending
+power in createAction under the SpendingLock, fixtures 217 to 220, scene 31
+on wallet D, the fragment and docs, the ratchet held and re-recorded, the
+kill tests. The ensemble read (A the package, B the wire) was fix 2/2 at a
+mean 0.72: A, a broadcast refused and retired (502 BROADCAST_REJECTED) left
+its spend in the month's tally against the design's "a failed call writes
+none"; B, two divergences a page can see were unnamed (a grant below the
+held spend held again as a renewal, and a ceiling of 0 held as a renewal,
+where the reference admits the held call and reads 0 as no token). The
+captain's ask C: the tally row is the call's precondition under the
+SpendingLock, a refused write refuses the call by the store's class, any
+failure of the toolbox's deletes the row. The fix pass on the box (00:15Z to
+01:0xZ): 93a95b3 (the row opens under the lock before the toolbox's call; a
+refused write answers 503 STORE_BUSY with Retry-After, else 500, nothing
+built; any failure deletes the row), 37555c5 (W18, the held spend after the
+owner's answer, with the fragment), 49807d9 (the broadcast witnesses on one
+helper, the ratchet held); 941 tests, no fixture moved, the vectors 490 at
+0, the suite once 33/33. The re-read (24 min, with a planted mutant on the
+delete path) was merge 0.86. PR 561 merged at 01:15:14Z, beta d725f040; the
+L6 record is on #414 (issuecomment-6619840382). The switch and the spending
+power are on beta; of the (c) gate only L7 remains.
+
+The correction on L7 (01:2xZ). The design's L4 table at d725f040
+(docs/design/origin-grants.md, row L7) reads "a release after L5b's and the
+next, on the owner's word". The captain's notes' "L7 after the release" read
+too early; the 02:20Z note carries the correction, and it stands: L7 waits
+two releases and the owner's word.
+
+The keeper's word of the hour (01:2xZ, as the day line's 01:3xZ entry
+records it, the keeper's line under the owner's rulings 19.7 and 19.10):
+"cut the release carrying L5b and L6 NOW on the CLI's own changes, as 19.10:
+the version PR on beta (v0.19.0-beta.7), the mainnet gate once on it with
+the funder at 195,179 sats, your tag on the version commit, the index; no
+toolbox pin in it (the toolbox's next prerelease is not at hand)".
+
+- The release lane on the Studio (01:24Z): PR 563 on d725f04, f6a12ec (the
+  release commit: the version in Cargo.toml and Cargo.lock, the fifteen
+  fragments assembled into CHANGELOG.md), 20cbd69 (the DEPENDENTS.md
+  announcement with the consumers' fixture diff since v0.19.0-beta.6, the
+  pins unchanged), 01652c3 (fuzz/Cargo.lock's own line, which Build's locked
+  fuzz check requires, as beta.6's 1b6cd81 did). The cold read merge 0.9.
+  Merged at 01:56:21Z, beta d0d8d7ee.
+- The mainnet gate once on d0d8d7ee, by the captain's hand (gate-beta7.sh):
+  the release binaries in a private target at jobs 2; the funder on 3320
+  was down and the script started it on its own 0.18.2 copy; Node 20.19.5
+  and the Studio's Chromium. 33 of 33 PASS from 02:02Z to 02:04Z, net cost
+  2,223 sats; the funder's default basket 192,956 sats after (195,179
+  before). The record: /Volumes/Lanes/out/bsv-wallet-cli/gate-beta7/gate-20261104T020425Z.log
+  on the Studio.
+- The tag v0.19.0-beta.7 (annotated, object 35dcbcd) on d0d8d7ee at 02:04Z;
+  the tag ruleset's creation restriction was bypassed by the admin role, as
+  the keeper's tags were (release.yml's own checks hold the line). Release
+  run 41758355687 all green, 02:04:51Z to 02:14:29Z (the tag against the
+  manifest, CI's seven jobs, the three binaries, the publish, the GitHub
+  Release); crates.io carries 0.19.0-beta.7 at 02:10:57Z; the GitHub
+  prerelease at 02:14:23Z with the three tarballs. The cut end to end in 50
+  min (the lane at 01:24Z to the prerelease; 46 min to the index, the 02:20Z
+  note).
+- What it carries: L5a, L5b, #539, #540, #541, L6, #546, the speed line's
+  cuts and night 4's record; no pin moves (bsv-rs =0.9.0-beta.6, the toolbox
+  =0.14.0-beta.6, bsv-tracker =0.9.0-beta.6). The records are on #414; the
+  consumers' captains learn it through the keeper's brief and DEPENDENTS.md.
+
+The 12:00Z chain, as the keeper set it (the day line's 01:3xZ entry):
+bsv-rs's prerelease on its content with its complete run's record (run
+41753882105, dispatched 01:24:50Z on six of the pool's twenty slots; at
+03:32Z one job completed, six in progress, seventeen queued), the toolbox's
+0.14.0-beta.7 about two and a half hours after (its content frozen on beta
+at 10:00Z), then this crate's beta.8 with both pins and the mainnet gate
+once. The beta.8 pin brief is drafted on the versions; the intake is #565
+(milestone 0.19.0-beta.8, opened 03:30Z). #526 moves after the pin. #557
+stays held: toolbox PR 773 (merged 00:35Z) is no behaviour change, the three
+ChainTracker causes witnessed with the CLI's mapping and the unknown-height
+hold their divergence AD1 pending the owner's ruling.
+
+The north-star finding, #564 (02:4xZ). The pinned toolbox carries a port of
+the reference's WalletPermissionsManager (src/managers/permissions_manager.rs,
+1,978 lines at 0.14.0-beta.6), fixed against the reference by the toolbox's
+parity chain, beside the CLI's (c) gate, which implements the same reference
+rules a second time by hand; the design never mentions the manager. The
+three shapes: (a) the gate on the manager with the CLI's store as its token
+source and the surfaces as its handler; (b) the two apart with the parity
+re-read at each pin; (c) the reference's on-chain tokens. The captain's
+recommendation: a docs-only read lane after beta.8's pin lands, then the
+owner's word through the keeper's brief; the lean (a). The keeper's line of
+03:2xZ (the day line's 03:2xZ entry, taken as written): "#564 taken and on
+the owner's brief as of this minute: the three shapes, your recommendation
+of a docs-only read lane after beta.8's pin lands (no word needed for a
+read; launch it on the pin's landing), then his word; the keeper's lean the
+same as yours, (a) the gate on the manager under the sixth test (one rule
+engine, fewer trusted words) with your store, surfaces, bound, probe record
+and seed window kept, and (a) joined to (c) if the stored grants' step 2 on
+the same brief is a yes, since (c) is that step at the toolbox layer (the
+manager's tokens the grant source, your store the record). Nothing of the
+gate moves before his word." The CLI constructs no WalletPermissionsManager
+at d0d8d7ee, so the manager's chain has no reach at the pin.
+
+The keeper's class question (22:3xZ 11-03), answered in the 23:20Z note
+(the day line's 23:2xZ entry): every prerelease since v0.19.0-beta.1 answers
+the header fault 502 SERVICE_ERROR by type; the stable 0.18.2 seat answers
+400. #557 is held.
+
+Night 5 is armed: the dispatch at this repository's 17:00Z slot on 11-04,
+incremental by the rule; #522 closes on the dispatch record. The record
+chain behind it runs the record lane on the box with one read, reads the
+verdict from the captured output, enqueues on merge and stops on fix; no
+HANDOFF step inside.
+
+The five figures of the night, as the notes record them (a PR's CI wall
+clock, the queue wait, the nightly, a cold read's length, the landing
+latency). 00:20Z: PR 561's CI 3m26s, PR 562's 1m56s; queue waits 4 and 1
+min (the group run 3m23s); reads 16, 6, 12, 12 and 8 min; latencies 41 and
+21 min. 01:20Z: PR 561's queue wait 5 min (the group run 3m07s); the re-read
+24 min; the latency 78 min from the lane's done at 23:57Z. 02:20Z: PR 563's
+CI 17m53s, its vectors job's 17m40s runner wait beside bsv-rs's complete
+run; the Release run 9m38s; the queue wait 4 min (the group run 2m46s); the
+read 8 min; the latency 12 min. 03:20Z: none (the 02:20Z row stands). No
+nightly ran in the window. Each note's memory line reads the Studio and the
+box (free plus inactive, swap, and the third figure) and names the
+captain's one builder: none of the captain's from 01:20Z.
+
+The lessons of the night, one line each:
+
+- An outer chain reads the inner chain's verdict from its captured output,
+  never through `tail` (23:5xZ).
+- A hand takeover stops the chain before anything else (23:5xZ).
+- A box lane cannot read the Studio's work folder (`/Volumes/Lanes` is per
+  host): every brief is self-contained (23:3xZ, 23:5xZ).
+- The funder's floor is the default basket as the harness reads it (22:3xZ;
+  192,956 sats after the gate).
+- A correction stands where it is made and the record says so (01:2xZ, L7).
+
+Open at 03:32Z 11-04: L7, two releases out on the owner's word; #414; #491
+at the 0.19.0 cut; #526 after the beta.8 pin; #549 held; #533, #534, #552,
+#553, #556 (ready after L6); #557 held; #559, #560; #564 on the owner's
+brief; #496 for a complete night's figures; #522 closing at 17:00Z; #175,
+#142 and the certificate re-issue (#333) at the production upgrade; #370;
+the beta.8 intake on #565. The lines, read with `git ls-remote origin beta
+main` at 03:32Z: beta d0d8d7ee (PR 563, the tag v0.19.0-beta.7); main
+33649b0f (PR 562).
