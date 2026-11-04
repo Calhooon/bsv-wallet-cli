@@ -519,3 +519,16 @@ async fn a_tally_write_the_store_refuses_refuses_the_call_by_its_class_with_noth
     assert_eq!(admitted.0, 200, "the coin was never taken: {}", admitted.3);
     assert_eq!(w.tally().await, 3000);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ceiling_of_0_is_a_live_row_and_a_spend_is_held_as_a_renewal() {
+    // W18: the reference reads `authorizedAmount` 0 as no token (WPM:1747),
+    // its prompt `renewal: false`; the port keeps the owner's 0 as written.
+    let w = World::new(1).await;
+    w.ceiling(0).await;
+    let call = w.begin(0, 1);
+    let row = w.held(1, true).await;
+    w.deny(&row, call).await;
+    assert_eq!(w.grant_rows().await, 1);
+    assert!(w.spends().await.is_empty());
+}
