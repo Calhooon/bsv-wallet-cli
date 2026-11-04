@@ -3164,3 +3164,195 @@ brief; #496 for a complete night's figures; #522 closing at 17:00Z; #175,
 the beta.8 intake on #565. The lines, read with `git ls-remote origin beta
 main` at 03:32Z: beta d0d8d7ee (PR 563, the tag v0.19.0-beta.7); main
 33649b0f (PR 562).
+
+## 2026-11-04 (the early morning): the idle hours before the beta.8 pin: the intake #565, #564 on the owner's brief, night 5's mode at the pin, twelve landings and eight rows closed, the keeper's host line and the captain's fault, and the hours' lessons (states as of 09:23Z 11-04)
+
+The night's entry ends at beta d0d8d7ee and main 33649b0f (states as of
+03:32Z 11-04). The states of issues, PRs and the lines below are as GitHub
+read them at 09:23Z 11-04 (`gh issue view`, `gh pr view`, the lines by
+`git ls-remote`); a state that moves after that time is the next entry's.
+Every time below is the verified clock of the captain's day line
+(/Volumes/Lanes/out/bsv-wallet-cli/day-line-2026-11-03.md, from its 03:2xZ
+entry to its end), and every merge and close stamp named below is
+GitHub's. The verdicts and scores of the reads are the day line's figures.
+These hours hold no new owner word: the words quoted below are the
+keeper's, under the owner's standing rulings 19.7 and 19.10.
+
+The beta.8 intake, #565 (03:3xZ). Milestone 18 "0.19.0-beta.8" (created
+03:29:32Z) and #565 (opened 03:30:15Z) in #386's shape: the 12:00Z chain as
+the keeper set it, the standing checks, bsv-rs's 81 commits past
+v0.9.0-beta.6 and the toolbox's 506 past v0.14.0-beta.6 each grouped with
+its CLI check, the tracker unchanged. #386 points at #565
+(issuecomment-6621790434, 03:31:47Z) and stays open: the libraries' host
+notes name it by number. The reads for the pin, on the CLI tree at
+d0d8d7ee: this crate constructs no WalletPermissionsManager (the eight hits
+are citations of the reference's file), so the toolbox's manager chain has
+no reach at the pin; the toolbox's list doors (#678 the limit refusal,
+#687/#696 the totals) are the pin's named wire checks, against
+tests/wire_harness/cases_page_bounds.rs and every recorded total; toolbox
+PR 773 is no behaviour change, and #557 stays held on their divergence AD1;
+our sqlx line keeps its default features, so the Cargo trims leave the
+build unchanged. The pin's briefs (the lane's and the two review stances)
+and `pin-launch-beta8.sh` are complete but for the versions (@RS@, @TB@,
+@TR@): the script waits on the index for exactly those versions, then runs
+the lane and its two reads and stops for the captain's hand. The keeper's
+projection of 04:1xZ (the day line's 04:0xZ entry, taken as written):
+"bsv-rs's complete run's first shard ended at 168 minutes (2 of 24 jobs
+done, six running, sixteen queued), so by that rate the run ends about
+12:1xZ and its record with the docs pass about 13:00Z; the chain's start
+moves from 12:00Z to about 13:00Z unless the later shards run shorter, the
+toolbox's 0.14.0-beta.7 about two and a half hours after bsv-rs's index
+time (nearer 15:30Z), and your beta.8 with both pins after its tag."
+
+#564 on the owner's brief. The keeper's line of 03:2xZ (the day line's
+03:2xZ entry, taken as written): "#564 taken and on the owner's brief as of
+this minute: the three shapes, your recommendation of a docs-only read lane
+after beta.8's pin lands (no word needed for a read; launch it on the pin's
+landing), then his word; the keeper's lean the same as yours, (a) the gate
+on the manager under the sixth test (one rule engine, fewer trusted words)
+with your store, surfaces, bound, probe record and seed window kept, and
+(a) joined to (c) if the stored grants' step 2 on the same brief is a yes,
+since (c) is that step at the toolbox layer (the manager's tokens the grant
+source, your store the record). Nothing of the gate moves before his
+word." So the read lane launches on the pin's landing without a word, and
+the shape waits for the owner's.
+
+Night 5 and the pin. The nightly's rule (docs/NIGHTLY.md): the complete
+night is "the night of record, dispatched at each pin at the 17:00Z slot".
+With beta.8 projected near that slot, the armed incremental dispatch was
+stopped and re-armed mode-aware (`night5-dispatch.sh`, 04:2xZ): at 17:00Z
+it reads beta's tip; the toolbox pin moved off =0.14.0-beta.6 →
+`-f mode=complete`, else incremental; #522 closes on the dispatch record
+naming the mode. The complete night's record briefs are written, and a
+swapper puts them over the record chain's briefs if the mode is complete.
+The keeper's word of 04:2xZ (the day line's 04:2xZ entry, taken as
+written): "hold to your recommendation. No complete run off-slot beside the
+toolbox's 18:00Z start (twelve of twenty slots at once starves the others
+and LOW's overlay, the pool rule the occupancy read wrote); the mode-aware
+dispatch reads beta's tip at 17:00Z: the pin on beta by then, complete (the
+pin's night of record); else incremental on the pre-pin tip, and the pin's
+complete night takes the first 17:00Z slot after its landing (11-05) even
+if beta.8 lands at 17:0xZ, with no cancel of the incremental once
+dispatched. #522 closes on the dispatch either way."
+
+The idle hours' lanes (the owner's standing green light within the rules),
+each by a lane with one Opus read (the ensemble rule's single cold read for
+a one-concern change) and the enqueue on merge, in order:
+
+- The night's HANDOFF, PR 566 → main 7535a9a2 at 03:52:47Z: the read fix
+  0.8 on two wordings, one fix pass (cb2d924), the re-read merge 0.9.
+- #553, PR 567 → beta 43af31d1 at 04:08:09Z. THE FINDING: not the shutdown
+  timing; tracing-core 0.1.36's callsite cache (with one registered
+  dispatcher a callsite's interest is computed on the registering thread's
+  default), so a capture-less sibling test reaching the `daemon_fault`
+  callsite before the capturing test caches it as never and the line is
+  dropped. The cut: the hung-monitor test logs under a capture. The read
+  0.9 (base 13/300 failed, tip 0/300 twice); lint red only for the missing
+  `no-changelog` label, added by the captain's hand. #568 filed for the
+  structural cure. A later entry corrects the lane's host: the lane and its
+  read ran on the box, not "the 18-core Studio".
+- #556, PR 569 → 799c4cff at 04:32:57Z: the router's 405 neither counted
+  nor charged, the level-0 call charged once when every power admits. The
+  read merge 0.9, with the reviewer's own probe: 636 wrong-method calls,
+  all 405, the probe record at 0.
+- #534's design, PR 570 → e0cadd4b at 04:52:35Z: Shape A, the row's own
+  (originator, kind, key) with a 10 s ABANDON_WINDOW. The captain's word on
+  the lane's question: the owner's answer is refused by name while a row is
+  abandoned. The read fix 0.85 on four text defects, one fix pass
+  (05761af), the re-read merge 0.88.
+- #552, PR 571 → b483dc66 at 05:03:54Z: the open_or_join commit window
+  closed by one spawned task handing the armed guard back over a oneshot.
+  The read 0.88.
+- #533, PR 572 → 71635fd5 at 05:45:32Z: one reading of a grant row
+  (`GrantShown::read`) for the four surfaces (the CLI, GET /origins, the
+  MCP, the inspector); the JSON gains `state` and `ceilingReached`; five
+  wire fixtures re-recorded (193, 194, 195, 213, 220). The read 0.86 with
+  one ask, a scene-number clash with the design's 34; the PR was already in
+  the queue's group and landed as read. Its renumbering, PR 573 → a156787d
+  at 06:11:25Z (the read 0.93): #533's scene is 35, the design's 34 kept for
+  #534.
+- #568, PR 575 → 1729c7b1 at 06:58:44Z: test_support's global
+  always-interested subscriber per test binary; the class proven under
+  load (the cure's absence 2 of 100 red, the reviewer's 8 of 300). The read
+  0.9.
+- #559, PR 576 → 20d526c0 at 07:16:18Z: a whole incremental night
+  re-bases the record; night 4's committed record changed in `base` alone;
+  landed before the 17:00Z dispatch. The read 0.9.
+- L8 (#534's build), PR 574: the read fix 0.85 (a kept cap place outlives
+  its row's window, a 429 reproduced 3 of 3) and the branch behind beta
+  with conflicts. PORTED by the rule as PR 577 → 10770f04 at 07:48:02Z, the
+  eleven commits cherry-picked onto beta's tip, then the read's fixes; the
+  port's read merge 0.86; PR 574 closed as superseded at 07:14:17Z; #534
+  closed at 07:48:06Z: the window built as designed and measured on a real
+  reload (warm 2.5 to 4.0 ms, the six-connection shuffle 3.1 to 4.2 ms,
+  loopback, debug), nothing near 10 s.
+- The residues fold, PR 579 → 0e39f17c at 08:12:19Z: five residues of four
+  reads (#559's, #568's, #556's and PR 570's); the read 0.92. The day line
+  counts six commits; GitHub shows eight, the last two setting the respend
+  witness's mounts and init in rustfmt's order, all before the PR opened.
+- #578, PR 580 → 3be14013 at 08:35:06Z: the spend gate's refusal-text
+  test seeded its coin exactly four minutes old, and the served query's
+  integer floor read any millisecond of delay as 3; the seed at 4 min 30 s.
+  The read 0.93. Filed (07:44:05Z) and closed (08:35:49Z) in these hours.
+
+The rows closed: #553, #556, #552, #533, #534, #568, #559, #578.
+
+The five figures of each hour, as the notes record them (a PR's CI wall
+clock, the queue wait, the nightly, a cold read's length, the landing
+latency). 03:20Z: none. 04:20Z: CI 2m31s and 2m14s (PR 566), 15m42s (PR
+567 to its lint re-run); the queue 1 and 3 min; reads 4, 5, 3 and 11 min;
+latencies 15 and 18 min. 05:20Z: CI 3m33s, 33 s and 34 s, 3m32s; the queue
+5, 2 and 5 min; reads 17, 3+5+2 and 10 min; latencies 22, 12 and 14 min.
+06:20Z: CI 3m18s and 3m30s; the queue 5 and 6 min; reads 22 and 7 min;
+latencies 27 and 13 min. 07:20Z: CI 2m55s and 3m16s; the queue 4 and 5
+min; reads 20, 15 and 3 min; latencies 19 and 8 min. 08:20Z: CI 3m19s and
+3m37s; the queue 6 and 4 min; reads 26 and 8 min; latencies 32 (88 from PR
+574's lane-done) and 12 min. 09:20Z: CI 3m40s; the queue 5 min; the read 13
+min; the latency 19 min. No nightly ran in the window.
+
+The keeper's host line (07:5xZ, the day line's 08:0xZ entry, taken as
+written): "my lane p1-578-spend-gate-minute (cca run 22355c604d99, launched
+07:44Z on the Studio) ran TWENTY-FOUR `yes` processes at about half a core
+each (pids 30486 to 30509 under its shell 30138) for fourteen minutes; the
+Studio's one-minute load 44 against 2 to 9 before, shared with the
+toolbox's #330 read, LOW's lanes and the memory line; a load plant is mine
+to run but must be bounded to my own builder's share (one builder per
+captain at two jobs while the swap sits above half) and stopped at the
+plant's end, never left burning a host's cores for the other captains;
+stop or bound it now by the lane's pid tree; say in the lane's brief how a
+flake-under-load witness loads only its own test binary." The fault is the
+captain's: #578's brief copied PR 567's method (24 burners, "bounded in
+time") from a night lane on the box's 18 cores onto the shared 10-core
+Studio by day. The burners were killed at 08:00Z by the pid tree (an
+unquoted `kill $kids` did nothing, since zsh does not word-split it, the
+lesson of 11-03 again; `pgrep | xargs kill` did); the lane stopped before
+any PR or branch existed; the relaunch was refused by cca on the stale
+worktree, which was then removed, and the lane relaunched under THE RULE: a
+flake-under-load witness loads only its own test binary (at most two extra
+instances of it), never host-wide burners, never above the builder's two
+jobs, stopped before the tally is read; a minute-boundary flake needs no
+load. The lesson is in memory; the relaunched lane and its read ran under
+the rule, and the Studio's load fell back to 2.9.
+
+The lessons of these hours, one line each:
+
+- The port rule exercised: a conflicting PR is ported on a new branch with
+  a cold read, never rebased in place (06:4xZ, L8).
+- A lane labels its own tests-only PR `no-changelog` at its opening
+  (04:0xZ, 07:4xZ).
+- The harness numbers scenes by their position in the file list (05:5xZ,
+  PR 573).
+- A load plant is bounded to the lane's own share and stopped before the
+  tally (08:0xZ).
+- A whole incremental night re-bases the record; a subset night keeps its
+  base (07:1xZ, #559).
+
+Open at 09:23Z 11-04: L7, two releases out on the owner's word; #414; #491
+at the 0.19.0 cut; #526 after the beta.8 pin; #549 after #526; #557 held on
+the toolbox's AD1 ruling; #560 after L7; #564, the read lane after the pin
+and then the owner's word; #565, the intake (with #386 pointing at it);
+#522 closing on the 17:00Z dispatch; #496 for a complete night's figures;
+#175, #142 and #333 at the production upgrade; #370; the next pin's
+complete night. No PR open and no lane running at 09:20Z. The lines, read
+with `git ls-remote origin beta main` at 09:23Z: beta 3be14013 (PR 580);
+main 7535a9a2 (PR 566).
