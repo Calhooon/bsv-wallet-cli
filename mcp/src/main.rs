@@ -1035,7 +1035,7 @@ impl WalletMcp {
     // ── The owner's routes (#414, not BRC-100) ────────────────
 
     #[tool(
-        description = "The owner's per-origin grants and prompts (GET /origins): every grant row, one power each (originator, kind, key, a spending row's monthly ceiling and this month's spend, expiry, revoked), and the pending requests with the power each asks (kind, key, usage, the prompt's words, the call and its reason), the open ones and the last 50 answered; and the probe record, the answers given with no grant (the open doors and level-0 protocols: originator, door, the level-0 power's key, count, first and last seen), never a grant. Sent without an Origin header, with WALLET_AUTH_TOKEN as the bearer when set."
+        description = "The owner's per-origin grants and prompts (GET /origins): every grant row, one power each (originator, kind, key, state granted|expired|revoked, a spending row's monthly ceiling as amount, this month's spend as spentThisMonth and ceilingReached once that spend has reached the ceiling, grantedAt, expiry in unix seconds (0 never), revokedAt), and the pending requests with the power each asks (kind, key, usage, the prompt's words, the call and its reason), the open ones and the last 50 answered; and the probe record, the answers given with no grant (the open doors and level-0 protocols: originator, door, the level-0 power's key, count, first and last seen), never a grant. Sent without an Origin header, with WALLET_AUTH_TOKEN as the bearer when set."
     )]
     async fn list_origins(&self) -> Result<CallToolResult, ErrorData> {
         let url = format!("{}/origins", self.url);

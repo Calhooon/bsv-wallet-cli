@@ -3,6 +3,7 @@
 //! wallet opens.
 
 use super::*;
+use bsv_wallet_cli::store::origin_grants::GrantRow;
 
 /// 2026-11-02T00:00:00Z.
 const DAY: i64 = 1_793_577_600;
@@ -47,14 +48,19 @@ fn todo_items() -> Power {
     Power::basket("todo items").unwrap()
 }
 
+/// `row`'s line read at `now`, with `spent` the month's tally.
+fn line(row: GrantRow, spent: Option<i64>, now: i64) -> String {
+    grant_line(&GrantShown::read(row, spent, now).unwrap())
+}
+
 #[test]
 fn the_grant_lines_are_section_fours() {
     assert_eq!(
-        grant_line(&row("app.example", &todo_list()), None, DAY),
+        line(row("app.example", &todo_list()), None, DAY),
         r#"granted  app.example  protocol     [false,2,"todo list","self"]  since 2026-11-02T19:31Z  expires never"#
     );
     assert_eq!(
-        grant_line(&row("app.example", &todo_items()), None, DAY),
+        line(row("app.example", &todo_items()), None, DAY),
         r#"granted  app.example  basket       ["todo items"]  since 2026-11-02T19:31Z  expires never"#
     );
     let spending = GrantRow {
@@ -62,8 +68,9 @@ fn the_grant_lines_are_section_fours() {
         ..row("app.example", &Power::Spending)
     };
     assert_eq!(
-        grant_line(&spending, Some(12_000), DAY),
-        "granted  app.example  spending     []  60000/month (12000 spent 2026-11)"
+        line(spending, Some(12_000), DAY),
+        "granted  app.example  spending     []  60000/month (12000 spent 2026-11)  since \
+         2026-11-02T19:31Z  expires never"
     );
     let g = "03".to_string() + &"ab".repeat(32);
     let revoked = GrantRow {
@@ -73,9 +80,9 @@ fn the_grant_lines_are_section_fours() {
         ..row("old.example", &todo_items())
     };
     assert_eq!(
-        grant_line(&revoked, None, DAY),
+        line(revoked, None, DAY),
         format!(
-            r#"revoked  old.example  certificate  [false,"AGfk","{g}",["email"]]  at 2026-11-03T08:00Z"#
+            r#"revoked  old.example  certificate  [false,"AGfk","{g}",["email"]]  since 2026-11-02T19:31Z  expires never  revoked at 2026-11-03T08:00Z"#
         )
     );
 }
@@ -86,8 +93,38 @@ fn an_expired_row_says_so() {
         expiry: DAY + 60,
         ..row("app.example", &todo_items())
     };
-    assert!(grant_line(&dated, None, DAY).ends_with("expires 2026-11-02T00:01Z"));
-    assert!(grant_line(&dated, None, DAY + 61).starts_with("expired  app.example"));
+    assert!(line(dated.clone(), None, DAY).starts_with("granted  app.example"));
+    assert!(line(dated.clone(), None, DAY).ends_with("expires 2026-11-02T00:01Z"));
+    assert!(line(dated.clone(), None, DAY + 60).starts_with("granted  app.example"));
+    assert!(line(dated.clone(), None, DAY + 61).starts_with("expired  app.example"));
+    let gone = GrantRow {
+        revoked_at: Some(DAY + 30),
+        ..dated
+    };
+    assert!(line(gone, None, DAY + 61).starts_with("revoked  app.example"));
+}
+
+#[test]
+fn a_ceiling_the_month_has_reached_says_so() {
+    let spending = |amount| GrantRow {
+        amount,
+        ..row("app.example", &Power::Spending)
+    };
+    let under = line(spending(Some(1_500)), Some(1_499), DAY);
+    assert!(
+        under.contains("  1500/month (1499 spent 2026-11)  "),
+        "{under}"
+    );
+    let at = line(spending(Some(1_500)), Some(1_500), DAY);
+    assert!(
+        at.contains("  1500/month (1500 spent 2026-11, at the ceiling)  "),
+        "{at}"
+    );
+    let none = line(spending(None), Some(9_000), DAY);
+    assert!(
+        none.contains("  no ceiling (9000 spent 2026-11)  "),
+        "{none}"
+    );
 }
 
 #[test]

@@ -240,6 +240,8 @@ async fn the_admitted_grant_and_listing_answer_the_shape() {
     );
     let spent = (&row["spentThisMonth"], &row["kind"], &row["key"]);
     assert_eq!(spent, (&json!(0), &json!("spending"), &json!("[]")));
+    let read = (&row["state"], &row["ceilingReached"]);
+    assert_eq!(read, (&json!("granted"), &json!(false)));
 
     let id = pending(&wallet, "new.example:5173", unix_now()).await;
     let text = raw(&app, listing()).await;
@@ -504,13 +506,15 @@ async fn the_doors_keep_their_gate_beside_the_owners_routes() {
 }
 
 /// Section (4)'s keys of a grant row, in its order.
-const GRANT_KEYS: [&str; 9] = [
+const GRANT_KEYS: [&str; 11] = [
     "\"originator\"",
     "\"rawOriginator\"",
     "\"kind\"",
     "\"key\"",
+    "\"state\"",
     "\"amount\"",
     "\"spentThisMonth\"",
+    "\"ceilingReached\"",
     "\"grantedAt\"",
     "\"expiry\"",
     "\"revokedAt\"",

@@ -214,8 +214,12 @@ fn a_revoke_reaches_one_power_a_kind_or_every_row() {
         todo,
     ];
     let revoked = said(&dir, &one);
-    let head = format!("revoked  app.example  basket       {todo}  at ");
+    let head = format!("revoked  app.example  basket       {todo}  since ");
     assert!(revoked.starts_with(&head), "{revoked}");
+    assert!(
+        revoked.contains("  expires never  revoked at "),
+        "{revoked}"
+    );
     assert_eq!(revoked.lines().count(), 1, "{revoked}");
     let none = refused(&dir, &one);
     let why = format!("app.example holds no live grant row for basket {todo}: nothing to revoke");
@@ -470,8 +474,10 @@ fn section_four_keys() -> Vec<String> {
         "rawOriginator",
         "kind",
         "key",
+        "state",
         "amount",
         "spentThisMonth",
+        "ceilingReached",
         "grantedAt",
         "expiry",
         "revokedAt",
@@ -522,8 +528,10 @@ fn section_four_row(granted_at: i64, id: i64) -> serde_json::Value {
             "rawOriginator": "app.example:8443",
             "kind": "basket",
             "key": todo,
+            "state": "granted",
             "amount": null,
             "spentThisMonth": null,
+            "ceilingReached": null,
             "grantedAt": granted_at,
             "expiry": 0,
             "revokedAt": null
@@ -586,6 +594,7 @@ async fn the_json_shape_is_section_fours() {
     let revoked = said(&dir, &["--json", "origin-revoke", "app.example"]);
     let v: serde_json::Value = serde_json::from_str(&revoked).expect("JSON");
     assert!(v["grants"][0]["revokedAt"].is_i64(), "{revoked}");
+    assert_eq!(v["grants"][0]["state"], "revoked", "{revoked}");
     assert_eq!(v["pending"], serde_json::json!([]));
     assert!(v.get("probes").is_none(), "an answer carries no record");
     let probe = "probe  new.example  getVersion  2 times  first 2026-11-02T00:00Z  last \

@@ -233,3 +233,110 @@ async fn an_open_spend_counts_at_once_and_is_settled_or_dropped_by_its_id() {
     let settled = rows(&storage).await.remove(1);
     assert_eq!((settled.2, settled.3), (None, Some("cmVm".into())));
 }
+
+#[tokio::test]
+async fn every_grant_row_reads_its_state_ceiling_and_tally_once() {
+    let (_dir, storage) = wallet_db().await;
+    let basket = Power::basket("todo items").unwrap();
+    let granting = |originator, power, amount, expiry| Granting {
+        originator,
+        power,
+        amount,
+        expiry,
+    };
+    grant(
+        &storage,
+        &granting("app.example", &basket, None, NOW + 2),
+        NOW,
+    )
+    .await
+    .unwrap();
+    let ceiling = granting("app.example", &Power::Spending, Some(1_500), 0);
+    grant(&storage, &ceiling, NOW).await.unwrap();
+    grant(&storage, &granting("old.example", &basket, None, 0), NOW)
+        .await
+        .unwrap();
+    revoke(
+        &storage,
+        "old.example",
+        &Reach::named(None, None).unwrap(),
+        NOW,
+    )
+    .await
+    .unwrap();
+    spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&"ab".repeat(32)),
+        1_000,
+        NOW,
+    )
+    .await
+    .unwrap();
+    let read = |now| {
+        let storage = &storage;
+        async move {
+            let rows = listing(storage, true).await.unwrap();
+            let shown = Shown::listed(storage, rows, now).await.unwrap();
+            let json = serde_json::to_value(shown.json()).unwrap();
+            let rows: Vec<_> = json["grants"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| {
+                    (
+                        g["originator"].as_str().unwrap().to_string(),
+                        g["kind"].as_str().unwrap().to_string(),
+                        g["state"].as_str().unwrap().to_string(),
+                        g["spentThisMonth"].as_i64(),
+                        g["ceilingReached"].as_bool(),
+                    )
+                })
+                .collect();
+            (shown, rows)
+        }
+    };
+    let row = |o: &str, k: &str, s: &str, spent, reached| {
+        (o.to_string(), k.to_string(), s.to_string(), spent, reached)
+    };
+    let (shown, live) = read(NOW + 2).await;
+    assert_eq!(
+        live,
+        vec![
+            row("app.example", "basket", "granted", None, None),
+            row(
+                "app.example",
+                "spending",
+                "granted",
+                Some(1_000),
+                Some(false)
+            ),
+            row("old.example", "basket", "revoked", None, None),
+        ]
+    );
+    assert_eq!(shown.grants[1].month.as_deref(), Some("2026-11"));
+    spent(
+        &storage,
+        "app.example",
+        Flow::Signed(&"cd".repeat(32)),
+        500,
+        NOW,
+    )
+    .await
+    .unwrap();
+    let (_, later) = read(NOW + 3).await;
+    assert_eq!(
+        later,
+        vec![
+            row("app.example", "basket", "expired", None, None),
+            row(
+                "app.example",
+                "spending",
+                "granted",
+                Some(1_500),
+                Some(true)
+            ),
+            row("old.example", "basket", "revoked", None, None),
+        ]
+    );
+}

@@ -41,7 +41,7 @@ pub use rows::{
     Pending, PendingRow, Reach, Refused, Reply, Standing,
 };
 use rows::{GrantTuple, PendingTuple};
-pub use shown::{Shown, ShownJson};
+pub use shown::{GrantShown, GrantState, Shown, ShownJson};
 pub use spends::{
     drop_spend, month_tally, open_spend, settle_spend, signed, spent, unspent, Flow, OPEN,
 };
