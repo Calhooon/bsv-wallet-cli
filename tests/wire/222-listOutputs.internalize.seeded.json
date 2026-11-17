@@ -1,0 +1,58 @@
+{
+  "world": "internalize",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "default"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalOutputs": 6,
+      "outputs": [
+        {
+          "satoshis": 50000,
+          "spendable": true,
+          "outpoint": "5fa6158addc40b183cb01203278bb19a2253c1c99b81b1b21829dbccd4c6ff8f.0"
+        },
+        {
+          "satoshis": 40000,
+          "spendable": true,
+          "outpoint": "e2995d9693e97bed5c4b440b81b5ba2aa8c2d898419b40e1eb19d6824d1c5cd8.0"
+        },
+        {
+          "satoshis": 30000,
+          "spendable": true,
+          "outpoint": "704d4f296eaf181d24a6572d1c50f98f69f3d381de4251eb8a788e2385b8793a.0"
+        },
+        {
+          "satoshis": 20000,
+          "spendable": true,
+          "outpoint": "b70d8c07806b8eb62c8b36b9fd377b032fed8b15bf725ca887084efeaebae2a4.0"
+        },
+        {
+          "satoshis": 7000,
+          "spendable": true,
+          "outpoint": "8df64212f185779e0c68700841eb9ea537febfb60a58b1e80a928ae1b174459c.0"
+        },
+        {
+          "satoshis": 7000,
+          "spendable": true,
+          "outpoint": "eb58b7e53fad2470012f4bf366043b75257d67f641a358beec460d92397748f5.0"
+        }
+      ]
+    }
+  }
+}
