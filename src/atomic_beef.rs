@@ -76,8 +76,8 @@ mod tests {
     fn proven_beef(raw: Vec<u8>, txid: &str) -> Vec<u8> {
         let mut beef = Beef::new();
         let bump = beef.merge_bump(MerklePath::from_coinbase_txid(txid, 900_000));
-        beef.merge_raw_tx(raw, Some(bump));
-        beef.to_binary()
+        beef.merge_raw_tx(raw, Some(bump)).unwrap();
+        beef.to_binary().unwrap()
     }
 
     fn offset_of(haystack: &[u8], needle: &[u8]) -> usize {

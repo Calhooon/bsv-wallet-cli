@@ -32,7 +32,7 @@ fn payment(root: &PrivateKey, sender: &PrivateKey, n: u64) -> InternalizeActionA
     let txid = tx.id();
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 850_000));
-    beef.merge_raw_tx(tx.to_binary(), Some(bump));
+    beef.merge_raw_tx(tx.to_binary(), Some(bump)).unwrap();
     InternalizeActionArgs {
         tx: beef.to_binary_atomic(&txid).unwrap(),
         outputs: vec![InternalizeOutput {

@@ -26,9 +26,9 @@ pub fn check(data: &[u8]) {
                 );
                 if beef.verify_valid(true).valid {
                     if let Some(tx) = beef.find_txid(&txid).and_then(|b| b.tx()) {
-                        let _ = tx.outputs.len();
+                        let _ = tx.outputs().len();
                         let _ = tx.to_binary();
-                        for input in &tx.inputs {
+                        for input in tx.inputs() {
                             let _ = input.get_source_txid();
                         }
                     }

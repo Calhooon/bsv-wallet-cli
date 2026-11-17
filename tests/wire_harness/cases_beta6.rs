@@ -29,7 +29,12 @@ pub(crate) async fn record(r: &mut Recorder) {
             "funded",
             post(
                 "/createAction",
-                caller_input_template("wire refused graph", &beef.to_binary(), &child, "an orphan"),
+                caller_input_template(
+                    "wire refused graph",
+                    &beef.to_binary().unwrap(),
+                    &child,
+                    "an orphan",
+                ),
             ),
         )
         .await;

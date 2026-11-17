@@ -126,8 +126,8 @@ async fn the_announced_beef_is_the_stored_transaction_with_its_inputs() {
     let parent = raw_tx(&[(&"11".repeat(32), 0)], &[(2_000, p2pkh([1; 20]))]);
     let child = raw_tx(&[(&txid_of(&parent), 0)], &[(1_500, p2pkh([2; 20]))]);
     let mut inputs = Beef::new();
-    inputs.merge_raw_tx(parent.clone(), None);
-    own_tx(&storage, user, &child, &inputs.to_binary()).await;
+    inputs.merge_raw_tx(parent.clone(), None).unwrap();
+    own_tx(&storage, user, &child, &inputs.to_binary().unwrap()).await;
 
     let beef = stored_beef(&storage, &txid_of(&child))
         .await

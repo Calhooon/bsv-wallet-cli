@@ -193,7 +193,9 @@ async fn proven_height(pool: &sqlx::SqlitePool, txid: &str) -> Option<i64> {
 }
 
 fn coinbase_bump_hex(txid: &str, height: u32) -> String {
-    MerklePath::from_coinbase_txid(txid, height).to_hex()
+    MerklePath::from_coinbase_txid(txid, height)
+        .to_hex()
+        .unwrap()
 }
 
 fn action_of(answer: &Value) -> &str {

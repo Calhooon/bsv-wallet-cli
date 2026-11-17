@@ -40,8 +40,9 @@ pub fn proven_beef(raw: Vec<u8>, height: u32) -> Vec<u8> {
     let txid = txid_of(&raw);
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, height));
-    beef.merge_raw_tx(raw, Some(bump));
-    beef.to_binary()
+    beef.merge_raw_tx(raw, Some(bump))
+        .expect("one transaction under its own path merges");
+    beef.to_binary().expect("a one-entry BEEF writes")
 }
 
 /// `child` spending a proven `parent`, as `AtomicBEEF` bytes on `child`.
@@ -50,8 +51,9 @@ pub fn atomic_payment(parent: Vec<u8>, child: Vec<u8>) -> Vec<u8> {
     let child_id = txid_of(&child);
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_id, 900_000));
-    beef.merge_raw_tx(parent, Some(bump));
-    beef.merge_raw_tx(child, None);
+    beef.merge_raw_tx(parent, Some(bump))
+        .expect("the parent under its own path merges");
+    beef.merge_raw_tx(child, None).expect("the child merges");
     beef.to_binary_atomic(&child_id)
         .expect("the child is in the BEEF")
 }
@@ -98,10 +100,10 @@ pub fn internalize_precheck(args: &InternalizeActionArgs, root: &PrivateKey) -> 
         for output in &args.outputs {
             if let Some(ref payment) = output.payment_remittance {
                 let vout = output.output_index as usize;
-                if vout >= tx.outputs.len() {
+                if vout >= tx.outputs().len() {
                     return Err("output_index past the outputs".to_string());
                 }
-                let script = tx.outputs[vout].locking_script.as_script().to_binary();
+                let script = tx.outputs()[vout].locking_script.as_script().to_binary();
                 if script.len() == 25
                     && script[0] == 0x76
                     && script[1] == 0xa9

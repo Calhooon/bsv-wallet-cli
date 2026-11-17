@@ -242,7 +242,7 @@ async fn insert_proof(
     .bind(i64::from(height))
     .bind("bb".repeat(32))
     .bind(txid)
-    .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
+    .bind(MerklePath::from_coinbase_txid(txid, height).to_binary().unwrap())
     .bind(raw)
     .bind(when)
     .bind(when)

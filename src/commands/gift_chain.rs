@@ -83,14 +83,14 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
     match proof {
         Some(path) => {
             let index = beef.merge_bump(path);
-            beef.merge_raw_tx(deposit_raw.to_vec(), Some(index));
+            beef.merge_raw_tx(deposit_raw.to_vec(), Some(index))?;
         }
         None => {
-            beef.merge_raw_tx(deposit_raw.to_vec(), None);
+            beef.merge_raw_tx(deposit_raw.to_vec(), None)?;
         }
     }
-    beef.merge_raw_tx(claim_raw.to_vec(), None);
-    let beef = beef.to_binary();
+    beef.merge_raw_tx(claim_raw.to_vec(), None)?;
+    let beef = beef.to_binary()?;
 
     let results = services
         .post_beef(&beef, std::slice::from_ref(&claim_txid))
@@ -118,7 +118,7 @@ pub(crate) fn claim_record(
     let (_, anyone_pubkey) = bsv_sdk::wallet::KeyDeriver::anyone_key();
     let sender_identity_key = anyone_pubkey.to_hex();
     let outputs: Vec<InternalizeOutput> = claim
-        .outputs
+        .outputs()
         .iter()
         .enumerate()
         .filter(|(_, output)| output.locking_script.to_binary() == pay_script)
@@ -378,7 +378,9 @@ mod tests {
     #[tokio::test]
     async fn a_mined_deposit_carries_its_checked_proof() {
         let (deposit, claim) = deposit_and_claim();
-        let path = MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000).to_hex();
+        let path = MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000)
+            .to_hex()
+            .unwrap();
         let services = MockWalletServices::builder()
             .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
                 name: Some("Services".to_string()),
@@ -614,7 +616,9 @@ mod tests {
             .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
                 name: Some("Services".to_string()),
                 merkle_path: Some(
-                    MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000).to_hex(),
+                    MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000)
+                        .to_hex()
+                        .unwrap(),
                 ),
                 header: None,
                 error: None,
@@ -705,7 +709,9 @@ mod tests {
                 GetMerklePathResult {
                     name: Some("Services".to_string()),
                     merkle_path: Some(
-                        MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000).to_hex(),
+                        MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000)
+                            .to_hex()
+                            .unwrap(),
                     ),
                     header: None,
                     error: None,

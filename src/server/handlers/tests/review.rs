@@ -13,13 +13,13 @@ fn review() -> ReviewActionsRefusal {
     let parent = raw_tx(&[(&"11".repeat(32), 0)], &[(2000, p2pkh([7; 20]))]);
     let raw = raw_tx(&[(&txid_of(&parent), 0)], &[(1000, p2pkh([7; 20]))]);
     let id = txid_of(&raw);
-    beef.merge_raw_tx(parent, None);
-    beef.merge_raw_tx(raw, None);
+    beef.merge_raw_tx(parent, None).unwrap();
+    beef.merge_raw_tx(raw, None).unwrap();
     let txid = hex::decode(&id).unwrap().try_into().unwrap();
     let mut competing = bsv_sdk::transaction::Beef::new();
     let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(900, p2pkh([7; 20]))]);
     let competing_id = txid_of(&raw);
-    competing.merge_raw_tx(raw, None);
+    competing.merge_raw_tx(raw, None).unwrap();
     ReviewActionsRefusal::with_members(
         vec![ReviewActionResult {
             txid,
@@ -28,7 +28,7 @@ fn review() -> ReviewActionsRefusal {
                 .unwrap()
                 .try_into()
                 .unwrap()]),
-            competing_beef: Some(competing.to_binary()),
+            competing_beef: Some(competing.to_binary().unwrap()),
         }],
         vec![SendWithResult {
             txid,

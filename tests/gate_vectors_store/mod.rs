@@ -265,7 +265,7 @@ pub(crate) async fn hint(built: &Built, status: HintStatus) {
 /// the fork stored from the feed.
 pub(crate) async fn mined(row: &Value, built: &mut Built, made: bool) {
     let path = proof_path(row, built);
-    built.proof = Some(path.to_binary());
+    built.proof = Some(path.to_binary().unwrap());
     insert_proven(built, &path).await;
     if b(row, "creator_suspect") == Some(true) {
         let h = built.live_at_proof.clone().unwrap();
@@ -278,7 +278,7 @@ pub(crate) async fn mined(row: &Value, built: &mut Built, made: bool) {
             depth: 1,
         };
         let chain = [envelope(fork)];
-        insert_tracked(built, made, Some(&path.to_hex()), &chain, None).await;
+        insert_tracked(built, made, Some(&path.to_hex().unwrap()), &chain, None).await;
     }
 }
 
@@ -294,7 +294,7 @@ pub(crate) async fn stale(row: &Value, built: &Built, made: bool) {
         new_tip: event_header(&header(tip, &hash_of(&format!("tip {tip}")))),
     };
     let chain = [envelope(reorg)];
-    insert_tracked(built, made, Some(&path.to_hex()), &chain, None).await;
+    insert_tracked(built, made, Some(&path.to_hex().unwrap()), &chain, None).await;
 }
 
 /// The toolbox's record of a checked proof (`proven_txs`).
@@ -307,7 +307,7 @@ pub(crate) async fn insert_proven(built: &Built, path: &MerklePath) {
     .bind(i64::from(path.block_height))
     .bind(built.live_at_proof.as_ref().map(|h| h.hash.clone()))
     .bind(&built.txid)
-    .bind(path.to_binary())
+    .bind(path.to_binary().unwrap())
     .execute(built.storage.writer())
     .await
     .unwrap();

@@ -448,7 +448,9 @@ mod tests {
 
     /// `builder` with a merkle path for `txid` (as [`proved`]).
     fn proved_by(builder: MockWalletServicesBuilder, txid: &str) -> MockWalletServicesBuilder {
-        let path = bsv_sdk::transaction::MerklePath::from_coinbase_txid(txid, 900_000).to_hex();
+        let path = bsv_sdk::transaction::MerklePath::from_coinbase_txid(txid, 900_000)
+            .to_hex()
+            .unwrap();
         builder.get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
             name: Some("Services".to_string()),
             merkle_path: Some(path),
@@ -846,11 +848,11 @@ mod tests {
         let txid = txid_of(&raw);
         let mut beef = bsv_sdk::transaction::Beef::new();
         let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
-        beef.merge_raw_tx(raw, Some(bump));
-        crate::commands::fund::internalize_beef(&ctx, &beef.to_binary(), 0)
+        beef.merge_raw_tx(raw, Some(bump)).unwrap();
+        crate::commands::fund::internalize_beef(&ctx, &beef.to_binary().unwrap(), 0)
             .await
             .unwrap();
-        crate::commands::fund::internalize_beef(&ctx, &beef.to_binary(), 1)
+        crate::commands::fund::internalize_beef(&ctx, &beef.to_binary().unwrap(), 1)
             .await
             .unwrap();
         let known = known_outpoints(&ctx).await.unwrap();

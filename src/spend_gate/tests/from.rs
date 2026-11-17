@@ -104,8 +104,11 @@ async fn named_receipt_requires_the_rule_then_is_signed_with_proven_coin_untouch
         .await
         .unwrap();
     let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).unwrap();
-    assert_eq!(tx.inputs.len(), 1);
-    assert_eq!(tx.inputs[0].source_txid.as_deref(), Some(receipt.as_str()));
+    assert_eq!(tx.inputs().len(), 1);
+    assert_eq!(
+        tx.inputs()[0].source_txid.as_deref(),
+        Some(receipt.as_str())
+    );
     let spent: Option<i64> = sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
         .bind(proven_id)
         .fetch_one(wallet.storage().pool())

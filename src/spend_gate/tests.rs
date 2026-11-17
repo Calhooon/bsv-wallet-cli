@@ -1269,11 +1269,11 @@ async fn a_named_input_the_callers_beef_carries_is_left_to_the_toolbox() {
         .unwrap();
     let mut beef = bsv_sdk::transaction::Beef::new();
     let carried_txid = beef.merge_transaction(puzzle).txid();
-    let carried = carried_txids(Some(&beef.to_binary()));
+    let carried = carried_txids(Some(&beef.to_binary().unwrap()));
     assert_eq!(carried, vec![carried_txid.clone()]);
     let mut only_txid = bsv_sdk::transaction::Beef::new();
     only_txid.merge_txid_only(carried_txid.clone());
-    assert!(carried_txids(Some(&only_txid.to_binary())).is_empty());
+    assert!(carried_txids(Some(&only_txid.to_binary().unwrap())).is_empty());
     assert!(carried_txids(Some(&[0, 1, 2])).is_empty());
     let held = assess_named(
         UserCoins::from_wallet(&wallet).await.unwrap(),

@@ -76,7 +76,7 @@ async fn the_respends_template_signs_the_nodes_spend() {
         ))
         .unwrap();
     let key = PrivateKey::from_hex(KEY).unwrap();
-    let input = &mut tx.inputs[0];
+    let input = &mut tx.inputs_mut()[0];
     assert_eq!(input.source_output_index, 1);
     input.source_transaction = Some(Box::new(source));
     input.set_unlocking_script_template(P2PKH::unlock(&key, SignOutputs::All, false));

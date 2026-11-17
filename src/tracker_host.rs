@@ -1667,7 +1667,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         let fetched = courier.fetch(txid, &reask);
         let proven = match fetched {
             Ok(Some(proof)) => {
-                let hex = proof.path().to_hex();
+                let hex = proof.path().to_hex()?;
                 match state.step(&params, &snapshot, Input::Evidence(Evidence::Proof(proof))) {
                     Ok(()) => {
                         row.bump = Some(hex);
@@ -1710,7 +1710,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             let outcome = storage
                 .ingest_merkle_proof(
                     &row.txid,
-                    &checked.proof().path().to_binary(),
+                    &checked.proof().path().to_binary()?,
                     checked.height(),
                     &checked.header().hash,
                     Some(checked.root()),
@@ -1947,8 +1947,8 @@ async fn stored_beef(storage: &StorageSqlx, txid: &str) -> Result<Option<Vec<u8>
             .map_err(|e| anyhow::anyhow!("the stored input BEEF does not parse: {e}"))?,
         None => Beef::new(),
     };
-    beef.merge_raw_tx(raw_tx, None);
-    Ok(Some(beef.to_binary()))
+    beef.merge_raw_tx(raw_tx, None)?;
+    Ok(Some(beef.to_binary()?))
 }
 
 /// Proven creators adopted or revived per pass at most (`adopt_proven`).
@@ -2176,7 +2176,7 @@ async fn proven_row(
     row.bump = path
         .as_deref()
         .and_then(|bytes| MerklePath::from_binary(bytes).ok())
-        .map(|path| path.to_hex());
+        .and_then(|path| path.to_hex().ok());
     Ok(Some(row))
 }
 
@@ -2531,7 +2531,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
             row.bump = stored_path
                 .as_deref()
                 .and_then(|bytes| MerklePath::from_binary(bytes).ok())
-                .map(|path| path.to_hex());
+                .and_then(|path| path.to_hex().ok());
         }
         rows.push(row);
     }
@@ -3306,7 +3306,7 @@ pub(crate) mod tests {
         .bind(height as i64)
         .bind("bb".repeat(32))
         .bind(txid)
-        .bind(MerklePath::from_coinbase_txid(txid, height).to_binary())
+        .bind(MerklePath::from_coinbase_txid(txid, height).to_binary().unwrap())
         .bind(Utc::now())
         .bind(Utc::now())
         .execute(storage.writer())
@@ -3361,7 +3361,9 @@ pub(crate) mod tests {
     /// A path proving `txid` alone in a block at `height`: its root is the
     /// txid.
     pub(crate) fn path_of(txid: &str, height: u32) -> String {
-        MerklePath::from_coinbase_txid(txid, height).to_hex()
+        MerklePath::from_coinbase_txid(txid, height)
+            .to_hex()
+            .unwrap()
     }
 
     pub(crate) fn proof_answer(path: Option<String>) -> MockResponse<GetMerklePathResult> {

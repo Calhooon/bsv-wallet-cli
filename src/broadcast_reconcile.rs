@@ -1478,7 +1478,7 @@ mod tests {
         let services = MockWalletServices::builder()
             .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
                 name: Some("Services".to_string()),
-                merkle_path: Some(MerklePath::from_coinbase_txid(&txid, 900).to_hex()),
+                merkle_path: Some(MerklePath::from_coinbase_txid(&txid, 900).to_hex().unwrap()),
                 header: None,
                 error: None,
                 notes: vec![],

@@ -378,8 +378,8 @@ async fn delete_randomize_outputs_option_mutant() {
     let tx = beef
         .find_atomic_transaction(answer["txid"].as_str().unwrap())
         .unwrap();
-    assert_eq!(tx.outputs[0].locking_script.to_hex(), "51");
-    assert_eq!(tx.outputs[1].locking_script.to_hex(), "52");
+    assert_eq!(tx.outputs()[0].locking_script.to_hex(), "51");
+    assert_eq!(tx.outputs()[1].locking_script.to_hex(), "52");
 }
 
 #[tokio::test]

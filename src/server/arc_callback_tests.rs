@@ -282,7 +282,10 @@ fn assert_retried_rows(
         assert_eq!(rows["request"][2], rows["proof"][0]);
         assert_eq!(rows["transaction"][2], rows["proof"][0]);
         assert_eq!(rows["proof"][1], height);
-        assert_eq!(rows["proof"][4], hex::encode_upper(bump.to_binary()));
+        assert_eq!(
+            rows["proof"][4],
+            hex::encode_upper(bump.to_binary().unwrap())
+        );
         assert_eq!(rows["proof"][5], hex::encode_upper(raw));
     }
 }
@@ -339,7 +342,7 @@ async fn seeded_callback(status: &str, root_delay: Option<Duration>) -> Callback
         .await
         .unwrap();
     let payload = json!({"txid": txid, "txStatus": status, "blockHeight": height,
-            "blockHash": "bb".repeat(32), "merklePath": hex::encode(bump.to_binary())});
+            "blockHash": "bb".repeat(32), "merklePath": hex::encode(bump.to_binary().unwrap())});
     CallbackCase {
         _dir: dir,
         wallet,

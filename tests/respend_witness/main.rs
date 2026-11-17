@@ -90,7 +90,7 @@ async fn store_child_first_beef(storage: &StorageSqlx, txid: &str) {
     // Like the 0.8.3 writer, the writer sorts only when needs_sort is set.
     // Reordering the public vector after sorting keeps that flag clear.
     beef.txs.reverse();
-    let child_first = beef.to_binary();
+    let child_first = beef.to_binary().unwrap();
     // Bsv-rs #240 accepts valid BEEF regardless of transaction order.
     assert!(Beef::from_binary(&child_first)
         .unwrap()
@@ -181,8 +181,9 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
             .unwrap(),
     )
     .unwrap();
-    input_beef.merge_raw_tx(raw.clone(), None);
-    let verified = Transaction::from_beef(&input_beef.to_binary(), Some(&replacement)).unwrap();
+    input_beef.merge_raw_tx(raw.clone(), None).unwrap();
+    let verified =
+        Transaction::from_beef(&input_beef.to_binary().unwrap(), Some(&replacement)).unwrap();
     // Parity-mode replay of signatures and ancestry at synthetic funding height 870,800 (past mainnet Genesis, 620,538, under the mock services' tip, 880,000: bsv-rs 0.9.0-beta.4 refuses a pre-Genesis spend height, #452).
     // A node-word check needs spend-era flags plus coin-era UTXO bits per input;
     // see docs/ARCHITECTURE.md for the combined-word rule.
@@ -199,13 +200,13 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
         .await
         .unwrap();
     let original = Transaction::from_binary(&original_raw).unwrap();
-    assert_eq!(t.inputs.len(), original.inputs.len());
-    for (a, b) in t.inputs.iter().zip(&original.inputs) {
+    assert_eq!(t.inputs().len(), original.inputs().len());
+    for (a, b) in t.inputs().iter().zip(original.inputs()) {
         assert_eq!(a.get_source_txid().unwrap(), b.get_source_txid().unwrap());
         assert_eq!(a.source_output_index, b.source_output_index);
     }
-    assert_eq!(t.outputs.len(), 1);
-    assert!(t.outputs[0].satoshis.unwrap() < 100_000);
+    assert_eq!(t.outputs().len(), 1);
+    assert!(t.outputs()[0].satoshis.unwrap() < 100_000);
     let proof_services = Arc::new(
         MockWalletServices::builder()
             .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
@@ -305,11 +306,11 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
         .unwrap();
     let spent = Transaction::from_binary(&spend.tx.unwrap()).unwrap();
     assert!(spent
-        .inputs
+        .inputs()
         .iter()
         .any(|i| i.get_source_txid().unwrap() == replacement));
     assert!(spent
-        .inputs
+        .inputs()
         .iter()
         .all(|i| i.get_source_txid().unwrap() != f.phantom));
 }
