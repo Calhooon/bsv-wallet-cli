@@ -11,7 +11,15 @@ use crate::commands::receive;
 use crate::context::WalletContext;
 use crate::explorers::{log_call, Explorers};
 
-pub async fn run(ctx: &WalletContext, reconcile_spent: bool) -> Result<()> {
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+    reconcile_spent: bool,
+) -> Result<()> {
+    // With no chain tracker every lead would be refused at the toolbox's
+    // door (#509), and `--reconcile-spent` relinquishes only on a spend
+    // proven against the header service: refuse by name before any
+    // explorer is asked.
+    ctx.require_chain_tracker_to_receive("sync").await?;
     let explorers = Explorers::for_settings(ctx.chain, &ctx.config.services);
     run_from(ctx, reconcile_spent, &explorers, ctx.wallet.services()).await
 }
@@ -98,8 +106,8 @@ fn faults_of(leads: &UtxoLeads) -> String {
         .join("; ")
 }
 
-async fn run_from<V: WalletServices>(
-    ctx: &WalletContext,
+async fn run_from<C: WalletServices + Send + Sync + 'static, V: WalletServices>(
+    ctx: &WalletContext<C>,
     reconcile_spent: bool,
     explorers: &Explorers,
     services: &V,
@@ -129,8 +137,8 @@ async fn run_from<V: WalletServices>(
 
 /// The scan's leads, each received after `receive`'s checks, then
 /// `--reconcile-spent` over what the leads do not name.
-async fn sync_leads<V: WalletServices>(
-    ctx: &WalletContext,
+async fn sync_leads<C: WalletServices + Send + Sync + 'static, V: WalletServices>(
+    ctx: &WalletContext<C>,
     reconcile_spent: bool,
     explorers: &Explorers,
     services: &V,
@@ -368,7 +376,9 @@ fn reconcile_step(answer: &InputSpend) -> ReconcileStep {
     }
 }
 
-async fn known_outpoints(ctx: &WalletContext) -> Result<HashSet<String>> {
+async fn known_outpoints<C: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<C>,
+) -> Result<HashSet<String>> {
     let mut known = HashSet::new();
     let mut offset: i32 = 0;
     let limit: u32 = 1000;

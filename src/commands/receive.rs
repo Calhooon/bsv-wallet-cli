@@ -9,7 +9,14 @@ use crate::commands::fund;
 use crate::context::WalletContext;
 use crate::explorers::{Explorers, PROVIDER_BANANABLOCKS, PROVIDER_WHATSONCHAIN};
 
-pub async fn run(ctx: &WalletContext, txid: &str, vout: Option<u32>) -> Result<()> {
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+    txid: &str,
+    vout: Option<u32>,
+) -> Result<()> {
+    // With no chain tracker every internalizeAction is refused at the
+    // toolbox's door (#509): refuse by name before any courier is asked.
+    ctx.require_chain_tracker_to_receive("receive").await?;
     let (resolved_vout, accepted) = receive_txid(ctx, txid, vout).await?;
 
     if ctx.json_output {
@@ -30,8 +37,8 @@ pub async fn run(ctx: &WalletContext, txid: &str, vout: Option<u32>) -> Result<(
     Ok(())
 }
 
-pub(crate) async fn receive_txid(
-    ctx: &WalletContext,
+pub(crate) async fn receive_txid<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     txid: &str,
     vout: Option<u32>,
 ) -> Result<(u32, bool)> {
@@ -42,13 +49,17 @@ pub(crate) async fn receive_txid(
 /// Receive `txid` through the courier ladder at `explorers`, with
 /// `services` the toolbox's ladders (the proof for BananaBlocks' bytes, and
 /// the second courier).
-pub(crate) async fn receive_txid_from<V: WalletServices>(
-    ctx: &WalletContext,
+pub(crate) async fn receive_txid_from<S, V>(
+    ctx: &WalletContext<S>,
     explorers: &Explorers,
     services: &V,
     txid: &str,
     vout: Option<u32>,
-) -> Result<(u32, bool)> {
+) -> Result<(u32, bool)>
+where
+    S: WalletServices + Send + Sync + 'static,
+    V: WalletServices,
+{
     let deposit_script = brc29::deposit_script(&ctx.root_key)?;
 
     let (beef_bytes, resolved_vout, courier) =

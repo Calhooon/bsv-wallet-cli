@@ -22,7 +22,16 @@ use crate::commands::gift_chain;
 use crate::context::WalletContext;
 use crate::tracker_host::{SystemClock, TickOptions};
 
-pub async fn run(ctx: &WalletContext, txid: &str, force: bool) -> Result<()> {
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+    txid: &str,
+    force: bool,
+) -> Result<()> {
+    // 0. The wallet records its claim by internalizeAction after the
+    // broadcast; with no chain tracker every internalizeAction is refused
+    // at the toolbox's door (#509), so the claim would be posted and never
+    // recorded. Refuse by name before the deposit is fetched.
+    ctx.require_chain_tracker_to_receive("gift-claim").await?;
     // 1. fetch the deposit transaction
     let deposit_raw = gift_chain::deposit_bytes(ctx.wallet.services(), txid).await?;
 
