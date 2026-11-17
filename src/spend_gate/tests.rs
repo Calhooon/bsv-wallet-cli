@@ -2846,3 +2846,101 @@ async fn a_served_listing_shows_the_received_rule_label_under_the_word() {
         vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
 }
+
+/// The tracker's own pass over the received payment `txid`: its proof at
+/// `height` is asked for once its age is due and checks against the
+/// header service's header; the wallet's storage is handed the proof and,
+/// its proof gate never raised (no monitor ran, as under `serve`), defers
+/// it. The tracker's row then holds a checked proof while the toolbox's
+/// transaction stays `unproven`: the state the gate reads as mined.
+async fn tracker_proves_received(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    txid: &str,
+    height: u32,
+) {
+    use crate::tracker_host::tests::{opts as tick_opts, path_of, proof_answer, FixedClock};
+    let services = MockWalletServices::builder()
+        .get_merkle_path_response(proof_answer(Some(path_of(txid, height))))
+        .build();
+    services.set_header_for_height(header(height, txid, 0));
+    services.set_tip_header(header_with_hash(900, &"0e".repeat(32), 0));
+    wallet
+        .services()
+        .set_header_for_height(header(height, txid, 0));
+    // The broadcaster's acceptance of the payment, as the toolbox's
+    // broadcast memory records it when `internalizeAction` posts it.
+    wallet
+        .storage()
+        .record_broadcast_status(
+            txid,
+            "arcade",
+            bsv_wallet_toolbox::BROADCAST_STATUS_ACCEPTED,
+        )
+        .await
+        .unwrap();
+    let now = Utc::now().timestamp() as u64;
+    let mut mined = Vec::new();
+    let mut stored = Vec::new();
+    for at in [now, now + 601, now + 1_300] {
+        let report =
+            crate::tracker_host::tick(wallet.storage(), &services, &FixedClock(at), &tick_opts())
+                .await
+                .unwrap();
+        mined.extend(report.mined);
+        stored.extend(report.stored);
+    }
+    assert_eq!(
+        mined,
+        vec![txid.to_string()],
+        "the tracker checked the proof"
+    );
+    assert_eq!(stored.len(), 1, "{stored:?}");
+    assert!(
+        stored[0].contains("DeferredAboveProcessedHeight"),
+        "{stored:?}"
+    );
+    let (status, proven): (String, Option<i64>) =
+        sqlx::query_as("SELECT status, proven_tx_id FROM transactions WHERE txid = ?")
+            .bind(txid)
+            .fetch_one(wallet.storage().pool())
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), proven), ("unproven", None));
+}
+
+/// The road the cold read named: a received coin the gate admits WITHOUT
+/// the caller's word, because the tracker's row holds a checked proof at
+/// depth (the tracker's own pass, its proof handed to the storage and
+/// deferred), while the toolbox's own record of the transaction is not yet
+/// `completed`. A plain spend with no `allowPending`: the gate offers the
+/// coin, and at 2bac87e the toolbox's selection passes it over (no label),
+/// so the answer is the gate's 402 with 9,000 offered and nothing held.
+#[tokio::test]
+async fn a_received_coin_the_gate_reads_as_mined_with_no_word() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    let received = &txids[0];
+    tracker_proves_received(&wallet, received, 899).await;
+
+    let gate = opts(1, true);
+    let read = assess(wallet.storage(), wallet.services(), &gate, None)
+        .await
+        .unwrap();
+    assert_eq!(read.offered.len(), 1, "the gate offers it with no word");
+    assert!(read.held.is_empty());
+
+    let err = create_action(&wallet, pay_signed(1_000, None), "gate.local", &gate)
+        .await
+        .expect_err("at 2bac87e the toolbox passes the offered coin over");
+    let GateError::Refused(refusal) = &err else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    assert_eq!(
+        err.to_string(),
+        "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 9000 sats offered, 0 coin(s) held back)"
+    );
+    assert_eq!(refusal.offered_satoshis, 9_000);
+    assert!(refusal.held.is_empty());
+    assert_eq!(spender_of(&wallet, received).await, None);
+}
