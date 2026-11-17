@@ -453,9 +453,13 @@ pub(crate) async fn stranger_payment(
     // Parity-mode replay checks the planted good/bad payment specimens.
     // A node-word check needs spend-era flags plus coin-era UTXO bits per input;
     // see docs/ARCHITECTURE.md for the combined-word rule.
+    // The tracker's tip is 100 blocks above the parent's proof: bsv-rs
+    // 0.9.0-beta.8 refuses an offset-0 proof under 100 blocks deep at
+    // `Transaction::verify` (#734: "set a mock's height 100 above its
+    // proofs"); the parent's path is a one-leaf coinbase-offset path.
     let verified = child
         .verify(
-            &bsv_sdk::transaction::AlwaysValidChainTracker::new(at),
+            &bsv_sdk::transaction::AlwaysValidChainTracker::new(at + 100),
             None,
             None,
         )
