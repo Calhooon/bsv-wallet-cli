@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "commit": "31f17bb1e27c9ca259fb9ad4b8e7b7e71885a708",
+  "commit": "e74a48d9703a9c3234b16f061b1dd90c38dbf8cc",
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "clippy": "clippy 0.1.98 (48a229ceae 2026-09-01)"
@@ -16,7 +16,7 @@
     "tests_files_over_800_lines": 3,
     "functions_over_60_lines": 85,
     "cognitive_complexity_over_25": 19,
-    "duplicated_tokens": 31766,
+    "duplicated_tokens": 31748,
     "missing_docs": 126
   },
   "detail": {
@@ -27,26 +27,26 @@
       },
       "fuzz": {
         "files": 13,
-        "lines": 1016
+        "lines": 1018
       },
       "mcp/src": {
         "files": 3,
         "lines": 2056
       },
       "src": {
-        "files": 147,
-        "lines": 62107
+        "files": 157,
+        "lines": 65294
       },
       "tests": {
-        "files": 81,
-        "lines": 18200
+        "files": 83,
+        "lines": 18549
       }
     },
-    "test_files": 152,
+    "test_files": 160,
     "files_over_800_lines": [
       {
         "path": "src/tracker_host.rs",
-        "lines": 5441
+        "lines": 5443
       },
       {
         "path": "src/broadcast_verify.rs",
@@ -66,7 +66,7 @@
       },
       {
         "path": "src/server/handlers.rs",
-        "lines": 1568
+        "lines": 1586
       },
       {
         "path": "mcp/src/main.rs",
@@ -74,7 +74,7 @@
       },
       {
         "path": "src/commands/sync.rs",
-        "lines": 966
+        "lines": 968
       },
       {
         "path": "src/server/broadcast_follow_up.rs",
@@ -88,7 +88,7 @@
     "tests_files_over_800_lines": [
       {
         "path": "src/spend_gate/tests.rs",
-        "lines": 3872
+        "lines": 3883
       },
       {
         "path": "src/tracker_words_witnesses.rs",
@@ -96,7 +96,7 @@
       },
       {
         "path": "src/chain_feed_tests.rs",
-        "lines": 970
+        "lines": 989
       }
     ],
     "unwrap_expect_by_file": {
@@ -105,7 +105,7 @@
       "src/gift/covenant.rs": 1,
       "src/respend.rs": 1
     },
-    "duplicated_blocks": 500,
+    "duplicated_blocks": 499,
     "clippy_pedantic_by_lint": {
       "clippy::doc_markdown": 233,
       "clippy::uninlined_format_args": 155,
