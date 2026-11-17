@@ -94,10 +94,14 @@ async fn compact_with_chaintracks_off_writes_no_unchecked_proof_into_a_stored_be
     // Dead weight no input of C reaches, so the stored BEEF is large.
     let filler = tx_spending(&"33".repeat(32), 60_000);
 
-    // The stored input BEEF (Atomic, for C): the block's path already
-    // holds P as a sibling hash (it proves S), and P rides as a raw leg.
+    // The stored input BEEF (Atomic, for C): the block's path proves S
+    // beside a hash that is not P, and P rides as a raw leg. A path holding
+    // P's txid at level 0, even as a sibling hash, proves P at bsv-rs
+    // 0.9.0-beta.7 and later (#765: a BEEF entry takes the last BUMP holding
+    // its txid as any level-0 leaf), so P would not ride unproven.
+    let other = "44".repeat(32);
     let mut stored = Beef::with_version(BEEF_V1);
-    stored.merge_bump(two_leaf_path(500, (&p, false), (&s, true)));
+    stored.merge_bump(two_leaf_path(500, (&other, false), (&s, true)));
     stored.merge_raw_tx(parent.clone(), None).unwrap();
     stored.merge_raw_tx(filler, None).unwrap();
     stored.merge_raw_tx(child.clone(), None).unwrap();
