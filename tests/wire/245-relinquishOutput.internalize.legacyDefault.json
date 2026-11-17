@@ -1,0 +1,27 @@
+{
+  "world": "internalize",
+  "request": {
+    "method": "POST",
+    "path": "/relinquishOutput",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "default",
+      "output": "eb58b7e53fad2470012f4bf366043b75257d67f641a358beec460d92397748f5.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "relinquished": true
+    }
+  }
+}
