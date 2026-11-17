@@ -241,6 +241,14 @@ async fn a_pushed_double_spend_word_is_a_hint_that_writes_no_word() {
     );
 }
 
+/// A one-transaction block's path for `txid` at `height` (its root is the
+/// txid) and its bytes in hex, as the webhook carries them.
+fn coinbase_bump(txid: &str, height: u32) -> (MerklePath, String) {
+    let bump = MerklePath::from_coinbase_txid(txid, height);
+    let hex = hex::encode(bump.to_binary().expect("a one-leaf path writes"));
+    (bump, hex)
+}
+
 #[tokio::test]
 async fn mined_webhook_with_merkle_path_ingests_proof() {
     let txid = "a".repeat(64);
@@ -248,8 +256,7 @@ async fn mined_webhook_with_merkle_path_ingests_proof() {
 
     // Synthetic BUMP that validates: coinbase-style single-tx block, so the
     // computed root equals the txid; TestChainTracker knows that root.
-    let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary().unwrap());
+    let (bump, bump_hex) = coinbase_bump(&txid, height);
     let root = bump.compute_root(Some(&txid)).unwrap();
     let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, root);
@@ -296,8 +303,7 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
     let height = 850_000u32;
 
     // Tracker knows a DIFFERENT root — proof must be rejected.
-    let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary().unwrap());
+    let (_, bump_hex) = coinbase_bump(&txid, height);
     let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, "ff".repeat(32));
 
@@ -348,8 +354,7 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
 async fn mined_webhook_without_a_chain_tracker_is_refused_and_not_stored() {
     let txid = "d".repeat(64);
     let height = 850_000u32;
-    let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary().unwrap());
+    let (_, bump_hex) = coinbase_bump(&txid, height);
 
     let (base, client, pool, _tmp) =
         setup_with_callback(None, Some((&txid, "unmined", "unproven"))).await;
@@ -419,7 +424,7 @@ async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
     .await
     .expect("seed req");
 
-    let bump = MerklePath::from_coinbase_txid(&txid, 850_000);
+    let (_, bump_hex) = coinbase_bump(&txid, 850_000);
     let action = ingest_arc_payload(
         &storage,
         &json!({
@@ -427,7 +432,7 @@ async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
             "txStatus": "MINED",
             "blockHeight": 850_000,
             "blockHash": "f".repeat(64),
-            "merklePath": hex::encode(bump.to_binary().unwrap()),
+            "merklePath": bump_hex,
         }),
     )
     .await
