@@ -109,6 +109,26 @@ pub(crate) fn proven_beef(script: &[u8]) -> (Vec<u8>, String) {
 /// The served router over a fresh wallet of `root`, whose storage checks
 /// roots against a tracker that carries `proven` at `HEIGHT`.
 pub(crate) async fn served(root: &PrivateKey, proven: Option<&str>) -> (WalletState, axum::Router) {
+    let mut tracker = TestChainTracker::new(HEIGHT + 1);
+    if let Some(txid) = proven {
+        tracker.add_root(HEIGHT, txid.to_string());
+    }
+    served_with(root, Some(tracker)).await
+}
+
+/// The served router over a fresh wallet of `root` built as
+/// `CHAINTRACKS_URL=off` builds it: no tracker on its storage, and
+/// `Services` with no `chaintracks_url`. From bsv-wallet-toolbox-rs 0.13.4
+/// the door reads the tracker of the storage's services when the storage
+/// has none; a test sets those services.
+pub(crate) async fn served_untracked(root: &PrivateKey) -> (WalletState, axum::Router) {
+    served_with(root, None).await
+}
+
+async fn served_with(
+    root: &PrivateKey,
+    tracker: Option<TestChainTracker>,
+) -> (WalletState, axum::Router) {
     let storage = StorageSqlx::in_memory().await.expect("in-memory storage");
     storage
         .migrate("served-internalize-payment", &root.public_key().to_hex())
@@ -118,11 +138,9 @@ pub(crate) async fn served(root: &PrivateKey, proven: Option<&str>) -> (WalletSt
     bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
         .await
         .expect("open the proof gate");
-    let mut tracker = TestChainTracker::new(HEIGHT + 1);
-    if let Some(txid) = proven {
-        tracker.add_root(HEIGHT, txid.to_string());
+    if let Some(tracker) = tracker {
+        storage.set_chain_tracker(Arc::new(tracker)).await;
     }
-    storage.set_chain_tracker(Arc::new(tracker)).await;
     let services =
         Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
     let wallet = Wallet::new(Some(root.clone()), storage, services)
