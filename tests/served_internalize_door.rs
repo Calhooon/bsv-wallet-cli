@@ -921,3 +921,97 @@ async fn a_row_holding_an_empty_sender_signs() {
     let signed = spend(&wallet, None).await.expect("signed");
     assert!(verify_spend(&signed, &txid, 0, 1_000, &lock));
 }
+
+// ---------------------------------------------------------------------------
+// bsv-wallet-toolbox-rs 0.13.5: every ancestor whole
+// ---------------------------------------------------------------------------
+
+/// The refusal of an entry carried by txid alone that a BUMP proves
+/// (0.13.5's Hosts, "An entry carried by txid alone"), `<txid>` the
+/// parent's.
+fn carried_by_txid_alone(parent: &str) -> String {
+    format!(
+        "wallet error: Validation error: The tx parameter must be valid AtomicBEEF: transaction {parent} is carried by txid alone"
+    )
+}
+
+/// An entry no BUMP proves: "was and is refused earlier, as an invalid
+/// BEEF" (0.13.5's Hosts).
+const STRUCTURE_INVALID: &str = "wallet error: Validation error: BEEF structure is invalid";
+
+/// `unproven_beef`'s payment with its parent carried by txid alone, beside
+/// the BUMP proving it (`bumped`) or with no BUMP: the BEEF 0.18.6's
+/// served tests built (8a3c7b0). Its txid and the parent's.
+fn txid_only_beef(script: &[u8], bumped: bool) -> (Vec<u8>, String, String) {
+    let mut parent = Transaction::new();
+    parent.version = 1;
+    parent.inputs.push(input(&"22".repeat(32), 0));
+    parent.outputs.push(output(10_000, &other_p2pkh()));
+    let parent_txid = parent.id();
+    let mut child = Transaction::new();
+    child.version = 1;
+    child.inputs.push(input(&parent_txid, 0));
+    child.outputs.push(output(1_000, script));
+    let txid = child.id();
+    let mut beef = Beef::new();
+    if bumped {
+        beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, HEIGHT));
+    }
+    beef.merge_txid_only(parent_txid.clone());
+    beef.merge_raw_tx(child.to_binary(), None);
+    (beef.to_binary_atomic(&txid).unwrap(), txid, parent_txid)
+}
+
+/// The answer that moves at 0.13.5: a payment whose BEEF carries its
+/// parent by txid alone beside a BUMP proving it, admitted through 0.18.7,
+/// is refused, 400 `VALIDATION_ERROR` with the toolbox's whole message,
+/// nothing written, nothing posted and the balance unmoved. The control:
+/// the same payment with the parent whole (`unproven_beef`) is stored and
+/// posted once.
+#[tokio::test]
+async fn a_parent_carried_by_txid_alone_beside_its_bump_is_refused() {
+    let who = parties();
+    let lock = p2pkh(&who.derived.hash160());
+    let (tx, txid, parent) = txid_only_beef(&lock, true);
+    let (whole, whole_txid, whole_parent) = unproven_beef(&lock);
+    assert_eq!(
+        (&txid, &parent),
+        (&whole_txid, &whole_parent),
+        "the same payment"
+    );
+    let (wallet, app) = served(&who.root, Some(&parent)).await;
+    let services = storage_services(&wallet, accepting(&txid));
+    let before = stored(&wallet).await;
+
+    let (status, body) = post(app.clone(), &tx, payment(&who.sender)).await;
+    assert_answer(
+        status,
+        &body,
+        "VALIDATION_ERROR",
+        &carried_by_txid_alone(&parent),
+    );
+    assert_eq!(stored(&wallet).await, before, "nothing written");
+    assert_eq!(balance(&wallet).await, 0, "the balance unmoved");
+    assert_eq!(services.call_count("post_beef"), 0, "nothing posted");
+
+    let (status, body) = post(app, &whole, payment(&who.sender)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(balance(&wallet).await, 1_000, "stored");
+    assert_eq!(services.call_count("post_beef"), 1, "the control posts");
+}
+
+/// An entry carried by txid alone that no BUMP proves keeps the answer it
+/// had: refused as an invalid BEEF, 400 `VALIDATION_ERROR`, nothing written
+/// and nothing posted.
+#[tokio::test]
+async fn a_parent_carried_by_txid_alone_with_no_bump_keeps_its_answer() {
+    let who = parties();
+    let (tx, txid, parent) = txid_only_beef(&p2pkh(&who.derived.hash160()), false);
+    let (wallet, app) = served(&who.root, Some(&parent)).await;
+    let services = storage_services(&wallet, accepting(&txid));
+    let before = stored(&wallet).await;
+    let (status, body) = post(app, &tx, payment(&who.sender)).await;
+    assert_answer(status, &body, "VALIDATION_ERROR", STRUCTURE_INVALID);
+    assert_eq!(stored(&wallet).await, before, "nothing written");
+    assert_eq!(services.call_count("post_beef"), 0, "nothing posted");
+}
