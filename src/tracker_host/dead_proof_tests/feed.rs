@@ -80,7 +80,9 @@ async fn a_marked_row_under_the_feed_clears_at_the_next_tip_not_after_its_pause(
     let (storage, services) = marked_at_the_cap(&txid).await;
     // The toolbox repairs its path. Inside the pause, with no tip, the
     // row is not selected.
-    let repaired = MerklePath::from_coinbase_txid(&txid, 900).to_binary();
+    let repaired = MerklePath::from_coinbase_txid(&txid, 900)
+        .to_binary()
+        .unwrap();
     toolbox_path(&storage, &txid, &repaired).await;
     assert_idle(&feed_pass(&storage, &services, 101).await);
 

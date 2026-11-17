@@ -98,9 +98,9 @@ async fn compact_with_chaintracks_off_writes_no_unchecked_proof_into_a_stored_be
     // holds P as a sibling hash (it proves S), and P rides as a raw leg.
     let mut stored = Beef::with_version(BEEF_V1);
     stored.merge_bump(two_leaf_path(500, (&p, false), (&s, true)));
-    stored.merge_raw_tx(parent.clone(), None);
-    stored.merge_raw_tx(filler, None);
-    stored.merge_raw_tx(child.clone(), None);
+    stored.merge_raw_tx(parent.clone(), None).unwrap();
+    stored.merge_raw_tx(filler, None).unwrap();
+    stored.merge_raw_tx(child.clone(), None).unwrap();
     let stored_bytes = stored.to_binary_atomic(&c).expect("atomic BEEF");
     assert!(
         Beef::from_binary(&stored_bytes)
@@ -126,7 +126,7 @@ async fn compact_with_chaintracks_off_writes_no_unchecked_proof_into_a_stored_be
     .bind(&p)
     .bind("ab".repeat(32))
     .bind(&root)
-    .bind(proof.to_binary())
+    .bind(proof.to_binary().unwrap())
     .bind(&parent)
     .bind(now)
     .bind(now)

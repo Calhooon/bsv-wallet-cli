@@ -222,7 +222,7 @@ async fn keep_own_payment(
         .and_then(|beef| beef.find_atomic_transaction(txid_hex))
         .ok_or_else(|| anyhow!("send {txid_hex}: the BEEF does not hold the transaction"))?;
     let vout = tx
-        .outputs
+        .outputs()
         .iter()
         .position(|o| {
             o.locking_script.to_binary() == to.locking_script && o.satoshis == Some(satoshis)

@@ -16,7 +16,7 @@ async fn custom_instructions_wallet() -> (WalletState, axum::Router, Vec<u8>) {
     let txid = txid_of(&raw);
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, height));
-    beef.merge_raw_tx(raw, Some(bump));
+    beef.merge_raw_tx(raw, Some(bump)).unwrap();
     let bytes = beef.to_binary_atomic(&txid).unwrap();
 
     let storage = StorageSqlx::in_memory().await.unwrap();

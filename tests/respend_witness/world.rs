@@ -138,7 +138,8 @@ pub(crate) async fn fixture() -> Fixture {
             duplicate: false,
         }]],
     }
-    .to_binary();
+    .to_binary()
+    .unwrap();
     let proven_id: i64 = sqlx::query_scalar("INSERT INTO proven_txs (txid,height,idx,block_hash,merkle_root,merkle_path,raw_tx,created_at,updated_at) VALUES (?,870800,0,?,?,?,?,?,?) RETURNING proven_tx_id")
         .bind(funding.id()).bind("bb".repeat(32)).bind(funding.id()).bind(funding_proof).bind(funding.to_binary()).bind(now).bind(now).fetch_one(storage.writer()).await.unwrap();
     sqlx::query("UPDATE transactions SET proven_tx_id=? WHERE transaction_id=?")
@@ -223,6 +224,7 @@ pub(crate) fn proof(txid: &str) -> Vec<u8> {
         }]],
     }
     .to_binary()
+    .unwrap()
 }
 
 /// Every marked line: (marker, txid).

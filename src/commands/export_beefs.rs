@@ -119,17 +119,17 @@ fn beef_of(stored: &Beef, txid: &str) -> Result<Vec<u8>> {
         match held.bump_index().and_then(|i| stored.bumps.get(i)) {
             Some(bump) => {
                 let index = beef.merge_bump(bump.clone());
-                beef.merge_raw_tx(raw, Some(index));
+                beef.merge_raw_tx(raw, Some(index))?;
             }
             None => {
                 let tx = Transaction::from_binary(&raw)
                     .with_context(|| format!("stored transaction {next} does not parse"))?;
-                for input in &tx.inputs {
+                for input in tx.inputs() {
                     if let Some(source) = &input.source_txid {
                         pending.push(source.clone());
                     }
                 }
-                beef.merge_raw_tx(raw, None);
+                beef.merge_raw_tx(raw, None)?;
             }
         }
     }
@@ -141,7 +141,7 @@ fn beef_of(stored: &Beef, txid: &str) -> Result<Vec<u8>> {
             "the stored transactions do not chain back to stored proofs"
         ));
     }
-    Ok(beef.to_binary())
+    Ok(beef.to_binary()?)
 }
 
 /// Every txid holding an unspent output in the default basket, and one BEEF
@@ -183,7 +183,7 @@ async fn unspent_txids_with_their_beef<W: WalletInterface>(
         }
         if let Some(bytes) = &res.beef {
             let page = Beef::from_binary(bytes).context("the BEEF storage built does not parse")?;
-            stored.merge_beef(&page);
+            stored.merge_beef(&page)?;
         }
         if n < limit {
             break;
@@ -225,7 +225,9 @@ mod tests {
         let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, lock.clone())]);
         let txid = txid_of(&raw);
         // A block of one transaction: the path is the txid, the root is the txid.
-        let path = MerklePath::from_coinbase_txid(&txid, 900_000).to_binary();
+        let path = MerklePath::from_coinbase_txid(&txid, 900_000)
+            .to_binary()
+            .unwrap();
         let now = chrono::Utc::now();
 
         let proven_tx_id: i64 = sqlx::query_scalar(
@@ -339,10 +341,10 @@ mod tests {
         let mut stored = Beef::new();
         let bump = stored.merge_bump(MerklePath::from_coinbase_txid(&parent_id, 900_000));
         // Store order is deliberately child before parent.
-        stored.merge_raw_tx(child, None);
-        stored.merge_raw_tx(parent, Some(bump));
+        stored.merge_raw_tx(child, None).unwrap();
+        stored.merge_raw_tx(parent, Some(bump)).unwrap();
         let other = stored.merge_bump(MerklePath::from_coinbase_txid(&stranger_id, 900_001));
-        stored.merge_raw_tx(stranger, Some(other));
+        stored.merge_raw_tx(stranger, Some(other)).unwrap();
 
         let mut beef = Beef::from_binary(&beef_of(&stored, &child_id).unwrap()).unwrap();
         assert!(

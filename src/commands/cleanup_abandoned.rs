@@ -235,7 +235,7 @@ pub(crate) async fn stored_locking_script(
     }
     let raw = row.try_get::<Option<Vec<u8>>, _>("raw").ok()??;
     let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).ok()?;
-    tx.outputs
+    tx.outputs()
         .get(vout as usize)
         .map(|o| o.locking_script.to_binary())
 }

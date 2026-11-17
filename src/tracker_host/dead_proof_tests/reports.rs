@@ -30,7 +30,9 @@ async fn a_failing_row_is_reported_once_and_again_on_a_change_of_its_fault() {
 
     // The row offered again (the toolbox wrote another path that still
     // fails): reported a third time.
-    let other = MerklePath::from_coinbase_txid(&txid, 901).to_binary();
+    let other = MerklePath::from_coinbase_txid(&txid, 901)
+        .to_binary()
+        .unwrap();
     toolbox_path(&storage, &txid, &other).await;
     let offered = pass(&storage, &services, 9_100 + 9_600).await;
     assert_eq!(offered.faults, stands);

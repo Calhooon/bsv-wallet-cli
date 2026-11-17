@@ -161,8 +161,10 @@ async fn bananablocks_courier<V: WalletServices>(
         .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the proof does not parse: {e}"))?;
     let mut beef = Beef::new();
     let bump = beef.merge_bump(path);
-    beef.merge_raw_tx(raw, Some(bump));
-    Ok(beef.to_binary())
+    beef.merge_raw_tx(raw, Some(bump))
+        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the transaction does not merge: {e}"))?;
+    beef.to_binary()
+        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the BEEF does not write: {e}"))
 }
 
 /// The second courier: the toolbox's `get_beef`, which carries the bytes
@@ -203,7 +205,7 @@ fn vout_paying(beef_bytes: &[u8], txid: &str, deposit_script: &[u8]) -> Result<u
             .with_context(|| format!("transaction {} in the BEEF does not parse", txid))?,
         (None, None) => return Err(anyhow!("the BEEF carries only the txid of {}", txid)),
     };
-    tx.outputs
+    tx.outputs()
         .iter()
         .position(|o| o.locking_script.to_binary() == deposit_script)
         .map(|n| n as u32)
@@ -247,7 +249,9 @@ pub(crate) mod tests {
     fn mined_payment(ours: &[u8]) -> (String, Vec<u8>, String) {
         let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(1000, ours.to_vec())]);
         let txid = txid_of(&raw);
-        let path = MerklePath::from_coinbase_txid(&txid, 900_000).to_hex();
+        let path = MerklePath::from_coinbase_txid(&txid, 900_000)
+            .to_hex()
+            .unwrap();
         (txid, raw, path)
     }
 
@@ -288,8 +292,8 @@ pub(crate) mod tests {
         );
         let txid = txid_of(&raw);
         let mut beef = Beef::new();
-        beef.merge_raw_tx(raw, None);
-        (txid, beef.to_hex())
+        beef.merge_raw_tx(raw, None).unwrap();
+        (txid, beef.to_hex().unwrap())
     }
 
     /// The courier's bytes (a transaction with one input whose parent the
@@ -356,10 +360,10 @@ pub(crate) mod tests {
         let txid = txid_of(&raw);
         let mut beef = Beef::new();
         let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
-        beef.merge_raw_tx(raw, Some(bump));
+        beef.merge_raw_tx(raw, Some(bump)).unwrap();
         let beef_route = format!("/tx/{txid}/beef");
         let tx_route = format!("/tx/{txid}");
-        let explorer = Fixture::start(&[(&beef_route, 200, &beef.to_hex())], 500).await;
+        let explorer = Fixture::start(&[(&beef_route, 200, &beef.to_hex().unwrap())], 500).await;
 
         let got = fetch_beef_and_vout(
             &woc_only(&explorer.base),
@@ -390,12 +394,12 @@ pub(crate) mod tests {
         assert_eq!(vout, 0);
 
         // A transaction that pays us nothing is an error, not output 0.
-        let err = vout_paying(&beef.to_binary(), &txid, &p2pkh([0x77; 20])).unwrap_err();
+        let err = vout_paying(&beef.to_binary().unwrap(), &txid, &p2pkh([0x77; 20])).unwrap_err();
         assert!(
             err.to_string().contains("no output to our deposit script"),
             "{err}"
         );
-        let err = vout_paying(&beef.to_binary(), &"cd".repeat(32), &ours).unwrap_err();
+        let err = vout_paying(&beef.to_binary().unwrap(), &"cd".repeat(32), &ours).unwrap_err();
         assert!(
             err.to_string().contains("does not carry transaction"),
             "{err}"
@@ -598,8 +602,8 @@ pub(crate) mod tests {
         let txid = hex::encode(h);
         let mut beef = Beef::new();
         let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
-        beef.merge_raw_tx(raw.clone(), Some(bump));
-        let bytes = beef.to_binary();
+        beef.merge_raw_tx(raw.clone(), Some(bump)).unwrap();
+        let bytes = beef.to_binary().unwrap();
         let at = bytes.windows(raw.len()).position(|w| w == raw).unwrap();
 
         let text = vout_paying(&bytes, &txid, &ours)

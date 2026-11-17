@@ -358,7 +358,7 @@ mod tests {
         let tx = bsv_sdk::transaction::Transaction::from_binary(&raw).unwrap();
         let mut beef = Beef::new();
         beef.merge_transaction(tx);
-        let beef_bytes = beef.to_binary();
+        let beef_bytes = beef.to_binary().unwrap();
         let anyone = KeyDeriver::anyone_key().1.to_hex();
 
         for beef in [Some(beef_bytes.as_slice()), Some(&[1u8, 2, 3][..]), None] {

@@ -52,7 +52,7 @@ async fn world() -> CarriedWorld {
     let (url, mock) = headers(roots, calls.clone()).await;
     let services = mock_services(&url);
     let wallet = Arc::new(Wallet::new(Some(key), storage, services).await.unwrap());
-    let body = json!({"description": "carried signer", "inputBEEF": beef.to_binary(),
+    let body = json!({"description": "carried signer", "inputBEEF": beef.to_binary().unwrap(),
         "inputs": [{"outpoint": format!("{}.0", puzzle.id()), "inputDescription": "the puzzle"}],
         "outputs": [{"lockingScript": "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac",
             "satoshis": 4991, "outputDescription": "an output"}],

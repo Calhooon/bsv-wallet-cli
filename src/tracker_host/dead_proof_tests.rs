@@ -658,7 +658,9 @@ async fn a_new_creator_tracked_without_its_path_is_adopted_after_the_toolbox_rep
     assert_eq!(served_word(&storage, &txid).await["word"], "unknown");
 
     // The toolbox's JSON-to-BUMP repair rewrites the path in place.
-    let repaired = MerklePath::from_coinbase_txid(&txid, 900).to_binary();
+    let repaired = MerklePath::from_coinbase_txid(&txid, 900)
+        .to_binary()
+        .unwrap();
     toolbox_path(&storage, &txid, &repaired).await;
     // Inside the pause the row is not selected: tracked, never adopted.
     let inside = pass(&storage, &services, 101).await;
@@ -770,7 +772,11 @@ async fn a_marked_row_is_checked_again_after_its_pause_and_reads_a_new_toolbox_p
 
     // The toolbox rewrote its path (a re-anchor at 901): the next check reads it.
     sqlx::query("UPDATE proven_txs SET height = 901, merkle_path = ? WHERE txid = ?")
-        .bind(MerklePath::from_coinbase_txid(&txid, 901).to_binary())
+        .bind(
+            MerklePath::from_coinbase_txid(&txid, 901)
+                .to_binary()
+                .unwrap(),
+        )
         .bind(&txid)
         .execute(storage.writer())
         .await

@@ -182,7 +182,7 @@ async fn seed_funded(
                 &txid,
                 height,
                 &txid,
-                one_leaf.to_binary(),
+                one_leaf.to_binary().unwrap(),
                 parent.to_binary(),
             )
             .await;
@@ -218,7 +218,9 @@ async fn seed_puzzle(storage: &StorageSqlx, identity: &str) {
             &txid,
             PUZZLE.1,
             &txid,
-            bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, PUZZLE.1).to_binary(),
+            bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, PUZZLE.1)
+                .to_binary()
+                .unwrap(),
             puzzle.to_binary(),
         )
         .await;
@@ -483,7 +485,7 @@ pub(crate) fn puzzle_parent() -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
         at,
     ));
     beef.merge_transaction(parent.clone());
-    (parent, beef.to_binary())
+    (parent, beef.to_binary().unwrap())
 }
 
 /// The world's rows, written into the store as the tracker and the toolbox
@@ -522,7 +524,7 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
             RECEIVED,
             MINED_AT,
             RECEIVED,
-            one_leaf.to_binary(),
+            one_leaf.to_binary().unwrap(),
             stub.clone(),
         )
         .await;

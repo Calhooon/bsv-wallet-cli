@@ -155,7 +155,7 @@ pub async fn build_and_post(
         .context("respend refused: phantom bytes unavailable")?;
     let phantom = Transaction::from_binary(&raw)?;
     ensure!(
-        phantom.id() == txid && !phantom.inputs.is_empty(),
+        phantom.id() == txid && !phantom.inputs().is_empty(),
         "respend refused: invalid phantom bytes"
     );
     let input_beef: Vec<u8> = row
@@ -166,7 +166,7 @@ pub async fn build_and_post(
     // outputs must never ride in the replacement's ancestry.
     let mut keep = HashSet::new();
     let mut pending: Vec<String> = phantom
-        .inputs
+        .inputs()
         .iter()
         .map(|i| i.get_source_txid())
         .collect::<bsv_sdk::Result<_>>()?;
@@ -183,7 +183,7 @@ pub async fn build_and_post(
                 .find_txid(&id)
                 .is_some_and(|t| t.bump_index().is_none())
         {
-            for input in &tx.inputs {
+            for input in tx.inputs() {
                 pending.push(input.get_source_txid()?);
             }
         }
@@ -214,7 +214,7 @@ pub async fn build_and_post(
         .clone()
         .with_allow_received(under_rule.as_deref() == Some(crate::spend_gate::RECEIVED_PENDING));
     let named: Vec<crate::spend_gate::NamedInput<'_>> = phantom
-        .inputs
+        .inputs()
         .iter()
         .map(|i| Ok((i.get_source_txid()?, i.source_output_index).into()))
         .collect::<bsv_sdk::Result<_>>()?;
@@ -254,7 +254,7 @@ pub async fn build_and_post(
     let mut total = 0u64;
     let mut coin_ids = Vec::new();
     let mut outpoints = HashSet::new();
-    for input in &phantom.inputs {
+    for input in phantom.inputs() {
         let source = input.get_source_txid()?;
         ensure!(
             outpoints.insert((source.clone(), input.source_output_index)),
@@ -296,7 +296,7 @@ pub async fn build_and_post(
             "respend refused: source bytes mismatch"
         );
         let output = parent
-            .outputs
+            .outputs()
             .get(input.source_output_index as usize)
             .context("respend refused: source output unavailable")?;
         let sats = u64::try_from(coin.get::<i64, _>("satoshis"))?;
@@ -328,7 +328,7 @@ pub async fn build_and_post(
         .checked_sub(fee)
         .filter(|s| *s > 0)
         .context("respend refused: inputs cannot cover wallet fee")?;
-    replacement.outputs[0].satoshis = Some(amount);
+    replacement.outputs_mut()[0].satoshis = Some(amount);
     replacement.sign().await?;
     let replacement_id = replacement.id();
     ensure!(
@@ -336,7 +336,7 @@ pub async fn build_and_post(
         "respend refused: replacement must differ from phantom"
     );
     require_silence(storage, services, &txid, expected_sources).await?;
-    let input_beef = beef.to_binary();
+    let input_beef = beef.to_binary()?;
     let reference = format!("respend-{replacement_id}");
     let now = Utc::now();
 
@@ -423,9 +423,9 @@ pub async fn build_and_post(
             },
         )
         .await?;
-    beef.merge_raw_tx(replacement.to_binary(), None);
+    beef.merge_raw_tx(replacement.to_binary(), None)?;
     let outcome = match services
-        .post_beef(&beef.to_binary(), std::slice::from_ref(&replacement_id))
+        .post_beef(&beef.to_binary()?, std::slice::from_ref(&replacement_id))
         .await
     {
         Ok(results) => classify_broadcast_results(&results),
@@ -505,7 +505,7 @@ pub async fn reserve_inputs(storage: &StorageSqlx) -> Result<()> {
             .context("respend reservation bytes unavailable")?;
         let inputs: Vec<(String, u32)> = {
             let tx = Transaction::from_binary(&raw)?;
-            tx.inputs
+            tx.inputs()
                 .iter()
                 .map(|i| Ok((i.get_source_txid()?, i.source_output_index)))
                 .collect::<bsv_sdk::Result<_>>()?
@@ -572,7 +572,7 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
             .context("respend reservation bytes unavailable")?;
         let inputs: Vec<(String, u32)> = {
             let tx = Transaction::from_binary(&raw)?;
-            tx.inputs
+            tx.inputs()
                 .iter()
                 .map(|input| Ok((input.get_source_txid()?, input.source_output_index)))
                 .collect::<bsv_sdk::Result<_>>()?

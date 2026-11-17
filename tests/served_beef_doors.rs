@@ -103,7 +103,7 @@ fn atomic_beef(raw: Vec<u8>) -> (Vec<u8>, String) {
     let txid = Transaction::from_binary(&raw).expect("a transaction").id();
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, HEIGHT));
-    beef.merge_raw_tx(raw, Some(bump));
+    beef.merge_raw_tx(raw, Some(bump)).unwrap();
     (beef.to_binary_atomic(&txid).expect("atomic"), txid)
 }
 

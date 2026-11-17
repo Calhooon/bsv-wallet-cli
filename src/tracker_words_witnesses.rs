@@ -882,7 +882,7 @@ async fn prove_funding(storage: &StorageSqlx, tx: &Transaction) {
     .bind(height as i64)
     .bind("bb".repeat(32))
     .bind(&txid)
-    .bind(MerklePath::from_coinbase_txid(&txid, height).to_binary())
+    .bind(MerklePath::from_coinbase_txid(&txid, height).to_binary().unwrap())
     .bind(tx.to_binary())
     .bind(now)
     .bind(now)

@@ -40,7 +40,7 @@ mod tests {
         let txid = txid_of(&raw);
         let mut beef = Beef::new();
         let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
-        beef.merge_raw_tx(raw, Some(bump));
+        beef.merge_raw_tx(raw, Some(bump)).unwrap();
         let bytes = beef.to_binary_atomic(&txid).unwrap();
         let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
         let storage = StorageSqlx::in_memory().await.unwrap();

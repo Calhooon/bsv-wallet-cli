@@ -249,7 +249,7 @@ async fn mined_webhook_with_merkle_path_ingests_proof() {
     // Synthetic BUMP that validates: coinbase-style single-tx block, so the
     // computed root equals the txid; TestChainTracker knows that root.
     let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary());
+    let bump_hex = hex::encode(bump.to_binary().unwrap());
     let root = bump.compute_root(Some(&txid)).unwrap();
     let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, root);
@@ -297,7 +297,7 @@ async fn mined_webhook_with_bad_proof_is_rejected_not_stored() {
 
     // Tracker knows a DIFFERENT root — proof must be rejected.
     let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary());
+    let bump_hex = hex::encode(bump.to_binary().unwrap());
     let mut tracker = TestChainTracker::new(height + 1);
     tracker.add_root(height, "ff".repeat(32));
 
@@ -349,7 +349,7 @@ async fn mined_webhook_without_a_chain_tracker_is_refused_and_not_stored() {
     let txid = "d".repeat(64);
     let height = 850_000u32;
     let bump = MerklePath::from_coinbase_txid(&txid, height);
-    let bump_hex = hex::encode(bump.to_binary());
+    let bump_hex = hex::encode(bump.to_binary().unwrap());
 
     let (base, client, pool, _tmp) =
         setup_with_callback(None, Some((&txid, "unmined", "unproven"))).await;
@@ -427,7 +427,7 @@ async fn relay_ingest_without_a_chain_tracker_returns_the_refusal() {
             "txStatus": "MINED",
             "blockHeight": 850_000,
             "blockHash": "f".repeat(64),
-            "merklePath": hex::encode(bump.to_binary()),
+            "merklePath": hex::encode(bump.to_binary().unwrap()),
         }),
     )
     .await

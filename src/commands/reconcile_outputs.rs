@@ -116,7 +116,7 @@ where
         let Ok(tx) = Transaction::from_binary(&raw) else {
             continue; // unparseable bytes name no inputs — leave the row alone
         };
-        for input in &tx.inputs {
+        for input in tx.inputs() {
             let Ok(src) = input.get_source_txid() else {
                 continue;
             };
@@ -407,11 +407,11 @@ mod tests {
             .unwrap();
         // A real child tx spending parent:0.
         let mut child = Transaction::new();
-        child.version = 1;
+        child.set_version(1);
         let mut cin = TransactionInput::new(parent_txid.clone(), 0);
         cin.unlocking_script = Some(UnlockingScript::from_hex("00").unwrap());
-        child.inputs.push(cin);
-        child.outputs.push(TransactionOutput {
+        child.inputs_mut().push(cin);
+        child.outputs_mut().push(TransactionOutput {
             satoshis: Some(4_000),
             locking_script: LockingScript::from_hex(
                 "76a914000000000000000000000000000000000000000088ac",
