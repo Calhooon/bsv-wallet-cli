@@ -851,14 +851,77 @@ pub(crate) async fn ensure_tables(storage: &StorageSqlx) -> Result<()> {
 const ROW_COLUMNS: &str = "txid, built, word, hints, bump, header_hash, asks, next_ask_at, \
      reannounce_beef, reannounce_at, on_accept, chain, verdict, follow_up";
 
-fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
+/// What a pass, a load and a delivery say of a row they hold: its stored
+/// hints do not read, so it is not replayed and not written.
+pub const HINTS_UNREADABLE: &str =
+    "a stored hint does not read; the row is held as stored, not replayed and not written";
+
+/// A stored row whose `hints` column does not read by the crate's stored
+/// form of a status (a word this build's tracker does not know, a kind
+/// whose payload is missing, a column that is not JSON). The row is the
+/// inputs to replay, so a row with a hint it cannot read is another state:
+/// it is kept exactly as stored, never replayed, never written back, and
+/// named among the faults (#612). Its `word`, `height` and `reask` columns
+/// stay what the last build that could read it wrote, and `/tx/:txid`
+/// serves them as before.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeldRow {
+    txid: TxId,
+    /// The last word stored for it.
+    stored_word: Option<String>,
+    /// The hints column's parse error.
+    fault: String,
+}
+
+impl HeldRow {
+    /// The fault line: `txid: what`, as every other fault of a pass.
+    fn fault_line(&self) -> String {
+        format!("{}: {HINTS_UNREADABLE}: {}", self.txid, self.fault)
+    }
+
+    /// The fault surfaced where no report is kept (a load, a delivery).
+    fn warn(&self) {
+        tracing::warn!(
+            marker = "tracker_row_held",
+            txid = %self.txid,
+            fault = %self.fault,
+            "{HINTS_UNREADABLE}"
+        );
+    }
+}
+
+/// Split loaded rows into the rows to replay and the rows held as stored.
+fn readable(
+    rows: impl IntoIterator<Item = std::result::Result<TrackedRow, HeldRow>>,
+) -> (Vec<TrackedRow>, Vec<HeldRow>) {
+    let (mut read, mut held) = (Vec::new(), Vec::new());
+    for row in rows {
+        match row {
+            Ok(row) => read.push(row),
+            Err(row) => held.push(row),
+        }
+    }
+    (read, held)
+}
+
+fn row_of(row: &sqlx::sqlite::SqliteRow) -> std::result::Result<TrackedRow, HeldRow> {
     let hints: String = row.get("hints");
     let chain: String = row.get("chain");
-    TrackedRow {
+    let hints = match serde_json::from_str(&hints) {
+        Ok(hints) => hints,
+        Err(e) => {
+            return Err(HeldRow {
+                txid: row.get("txid"),
+                stored_word: row.get("word"),
+                fault: format!("the hints column does not parse: {e}"),
+            })
+        }
+    };
+    Ok(TrackedRow {
         txid: row.get("txid"),
         built: row.get::<i64, _>("built") != 0,
         stored_word: row.get("word"),
-        hints: serde_json::from_str(&hints).unwrap_or_default(),
+        hints,
         bump: row.get("bump"),
         header_hash: row.get("header_hash"),
         asks: row.get::<i64, _>("asks").max(0) as u32,
@@ -875,10 +938,15 @@ fn row_of(row: &sqlx::sqlite::SqliteRow) -> TrackedRow {
             .get::<Option<String>, _>("verdict")
             .and_then(|v| serde_json::from_str(&v).ok()),
         follow_up: row.get("follow_up"),
-    }
+    })
 }
 
-async fn load_row(storage: &StorageSqlx, txid: &str) -> Result<Option<TrackedRow>> {
+/// The stored row of `txid`, or the row held as stored when its hints do
+/// not read ([`HeldRow`]).
+async fn load_stored(
+    storage: &StorageSqlx,
+    txid: &str,
+) -> Result<Option<std::result::Result<TrackedRow, HeldRow>>> {
     let row = sqlx::query(&format!(
         "SELECT {ROW_COLUMNS} FROM tracker_states WHERE txid = ?"
     ))
@@ -886,6 +954,17 @@ async fn load_row(storage: &StorageSqlx, txid: &str) -> Result<Option<TrackedRow
     .fetch_optional(storage.pool())
     .await?;
     Ok(row.as_ref().map(row_of))
+}
+
+/// The stored row of `txid`; a row held as stored ([`HeldRow`]) is an
+/// error naming it, so a caller with no answer of its own for one never
+/// replays it or writes it back.
+async fn load_row(storage: &StorageSqlx, txid: &str) -> Result<Option<TrackedRow>> {
+    match load_stored(storage, txid).await? {
+        Some(Ok(row)) => Ok(Some(row)),
+        Some(Err(held)) => Err(anyhow::anyhow!(held.fault_line())),
+        None => Ok(None),
+    }
 }
 
 async fn store_row(
@@ -1047,7 +1126,17 @@ pub async fn stored_tier(storage: &StorageSqlx, txid: &str) -> Result<Option<&'s
     if word.as_deref() != Some("stale") {
         return Ok(None);
     }
-    Ok(load_row(storage, txid).await?.map(|row| row.tier()))
+    match load_stored(storage, txid).await? {
+        Some(Ok(row)) => Ok(Some(row.tier())),
+        // The tier is the hints' replay, which a held row has none of
+        // (#612): no tier is served, and the hold is surfaced; the word and
+        // the re-ask the row last stored are served as they are.
+        Some(Err(held)) => {
+            held.warn();
+            Ok(None)
+        }
+        None => Ok(None),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1142,14 +1231,22 @@ pub async fn heard<C: Clock>(
     reannounce: Option<Reannounce>,
 ) -> Result<(String, Option<String>)> {
     ensure_tables(storage).await?;
-    let mut row = match load_row(storage, txid).await? {
+    let mut row = match load_stored(storage, txid).await? {
         // A row with a stored path is past this: its word is read, never
         // rewritten from a hint.
-        Some(row) if row.bump.is_some() => {
+        Some(Ok(row)) if row.bump.is_some() => {
             let stored = stored_word(storage, txid).await?.unwrap_or_default();
             return Ok((stored.0, stored.2));
         }
-        Some(row) => row,
+        // A row whose stored hints do not read is held as stored (#612):
+        // the hint is not added and nothing is written; its last word and
+        // re-ask are read, and the hold is surfaced here and on each pass.
+        Some(Err(held)) => {
+            held.warn();
+            let stored = stored_word(storage, txid).await?.unwrap_or_default();
+            return Ok((stored.0, stored.2));
+        }
+        Some(Ok(row)) => row,
         None => TrackedRow::new(txid),
     };
     let params = opts.params();
@@ -1463,20 +1560,29 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     };
     report.moved_from = moved_from;
 
-    let mut rows: Vec<TrackedRow> = sqlx::query(&format!(
-        "SELECT {ROW_COLUMNS} FROM tracker_states \
-         WHERE word IN ('unknown', 'built', 'announced', 'seen', 'stale') \
-            OR (word = 'mined' AND ? IS NOT NULL AND height >= ?) \
-         ORDER BY txid"
-    ))
-    .bind(moved_from.map(|h| h as i64))
-    .bind(moved_from.map(|h| h as i64))
-    .fetch_all(storage.pool())
-    .await?
-    .iter()
-    .map(row_of)
-    .collect();
-    report.tracked = rows.len();
+    let (mut rows, held_as_stored) = readable(
+        sqlx::query(&format!(
+            "SELECT {ROW_COLUMNS} FROM tracker_states \
+             WHERE word IN ('unknown', 'built', 'announced', 'seen', 'stale') \
+                OR (word = 'mined' AND ? IS NOT NULL AND height >= ?) \
+             ORDER BY txid"
+        ))
+        .bind(moved_from.map(|h| h as i64))
+        .bind(moved_from.map(|h| h as i64))
+        .fetch_all(storage.pool())
+        .await?
+        .iter()
+        .map(row_of),
+    );
+    report.tracked = rows.len() + held_as_stored.len();
+    // A row whose stored hints do not read is held as stored: it leaves
+    // the pass before anything is read for it, is never replayed and never
+    // written, and is named among the faults on every pass that selects it
+    // (#612). Its word, height and re-ask columns stay as last written.
+    for held in &held_as_stored {
+        held.warn();
+        report.faults.push(held.fault_line());
+    }
 
     // Read: the headers the stored paths name, and the new hints.
     snapshot
@@ -2066,8 +2172,16 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
     .await?;
     let mut rows = Vec::with_capacity(found.len());
     for r in &found {
-        if let Some(row) = proven_row(storage, r).await? {
-            rows.push((row, CheckRecord::of(r)));
+        match proven_row(storage, r).await? {
+            Some(Ok(row)) => rows.push((row, CheckRecord::of(r))),
+            // Held as stored (#612): not checked, not written, named.
+            Some(Err(held)) => {
+                held.warn();
+                if !report.faults.contains(&held.fault_line()) {
+                    report.faults.push(held.fault_line());
+                }
+            }
+            None => {}
         }
     }
     let heights: Vec<Height> = rows
@@ -2163,13 +2277,14 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
 async fn proven_row(
     storage: &StorageSqlx,
     found: &sqlx::sqlite::SqliteRow,
-) -> Result<Option<TrackedRow>> {
+) -> Result<Option<std::result::Result<TrackedRow, HeldRow>>> {
     let txid: String = found.get("txid");
     let mut row = if found.get::<Option<String>, _>("word").is_some() {
-        let Some(row) = load_row(storage, &txid).await? else {
-            return Ok(None);
-        };
-        row
+        match load_stored(storage, &txid).await? {
+            Some(Ok(row)) => row,
+            Some(Err(held)) => return Ok(Some(Err(held))),
+            None => return Ok(None),
+        }
     } else {
         TrackedRow {
             built: found.get::<i64, _>("made") != 0,
@@ -2181,7 +2296,7 @@ async fn proven_row(
         .as_deref()
         .and_then(|bytes| MerklePath::from_binary(bytes).ok())
         .and_then(|path| path.to_hex().ok());
-    Ok(Some(row))
+    Ok(Some(Ok(row)))
 }
 
 /// What the adoption pass last reported of a creator whose check fails
@@ -2523,9 +2638,33 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
     ensure_tables(storage).await?;
     let params = opts.params();
     let mut rows = Vec::with_capacity(creators.len());
+    let mut readings = HashMap::with_capacity(creators.len());
     for (txid, stored_path) in creators {
-        let mut row = match load_row(storage, txid).await? {
-            Some(row) => row,
+        let mut row = match load_stored(storage, txid).await? {
+            Some(Ok(row)) => row,
+            // A row whose stored hints do not read is held as stored
+            // (#612): no replay, nothing offered on it, the hold as its
+            // fault, the word the row last stored.
+            Some(Err(held)) => {
+                held.warn();
+                let word = held
+                    .stored_word
+                    .as_deref()
+                    .and_then(|stored| WORD_LABELS.into_iter().find(|label| *label == stored))
+                    .unwrap_or("unknown");
+                readings.insert(
+                    held.txid.clone(),
+                    CreatorReading {
+                        word,
+                        depth: 0,
+                        suspect: false,
+                        door: false,
+                        fault: Some(format!("{HINTS_UNREADABLE}: {}", held.fault)),
+                        headers_fault: false,
+                    },
+                );
+                continue;
+            }
             None => TrackedRow {
                 built: false,
                 ..TrackedRow::new(txid)
@@ -2542,7 +2681,6 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
     let snapshot =
         HeaderSnapshot::take(services, rows.iter().filter_map(TrackedRow::proof_height)).await;
     let split_floor = open_split_floor(storage).await?;
-    let mut readings = HashMap::with_capacity(rows.len());
     for row in rows {
         let (mut state, fault) = row.replay(&params, &snapshot);
         let fault = match fault {
@@ -3069,7 +3207,12 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
         ),
         ChainEvent::Frozen { .. } | ChainEvent::TipAge { .. } => None,
     };
-    let mut rows: Vec<TrackedRow> = query.iter().flatten().map(row_of).collect();
+    // A named row whose stored hints do not read is held as stored: not
+    // rechecked, not written, surfaced (#612). The cursor still advances.
+    let (mut rows, held_as_stored) = readable(query.iter().flatten().map(row_of));
+    for held in &held_as_stored {
+        held.warn();
+    }
 
     let now = clock.now();
     let mut moved = Vec::new();
