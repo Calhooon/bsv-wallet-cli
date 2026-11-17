@@ -86,8 +86,7 @@ async fn with_no_chain_tracker_every_internalize_is_refused() {
 #[tokio::test]
 async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     let paid = Paid::new();
-    let (wallet, app, posts) = paid.served().await;
-    admitted(&app, &paid.tx, paid.payment()).await;
+    let (wallet, app, posts) = paid.stored().await;
     assert_eq!(posts.call_count("post_beef"), 1, "stored and posted");
     admitted(&app, &paid.tx, paid.payment()).await;
     assert_eq!(spent(&wallet, &paid.txid).await, (true, None));
@@ -151,8 +150,7 @@ async fn the_storage_door_rows_are_refused_by_the_argument_validator() {
 #[tokio::test]
 async fn a_spent_row_an_earlier_merge_made_spendable_is_found_and_relinquished() {
     let paid = Paid::new();
-    let (wallet, app, _) = paid.served().await;
-    admitted(&app, &paid.tx, paid.payment()).await;
+    let (wallet, app, _) = paid.stored().await;
     write(
         &wallet,
         "UPDATE outputs SET spent_by = transaction_id WHERE txid = ? AND vout = 0",
@@ -255,10 +253,7 @@ async fn signs(wallet: &WalletState, txid: &str, vout: u32) {
 #[tokio::test]
 async fn a_reclassified_received_payment_restored_with_its_sender_signs() {
     let paid = Paid::new();
-    let (wallet, app, posts) = paid.served().await;
-    admitted(&app, &paid.tx, paid.payment()).await;
-    reclassify(&wallet, &paid.txid, 0).await;
-    assert_eq!(balance(&wallet).await, 0);
+    let (wallet, app, posts) = paid.reclassified().await;
     let before = stored(&wallet).await;
 
     let me = paid.root.public_key();
@@ -273,13 +268,19 @@ async fn a_reclassified_received_payment_restored_with_its_sender_signs() {
     assert_eq!(row(&wallet, &paid.txid, 0).await.1, "custom");
     assert_eq!(posts.call_count("post_beef"), 1, "the opening's post alone");
 
-    admitted(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(
-        row(&wallet, &paid.txid, 0).await.5,
-        Some(paid.sender.to_hex())
-    );
-    assert_eq!(balance(&wallet).await, 4_500);
-    signs(&wallet, &paid.txid, 0).await;
+    restored_and_signs(&paid, &wallet, &app).await;
+}
+
+/// `paid`'s row restored with the payment as its sender made it: change of
+/// `default` again, its sender the one the row held, counted, and a spend
+/// that selects it signs.
+async fn restored_and_signs(paid: &Paid, wallet: &WalletState, app: &axum::Router) {
+    admitted(app, &paid.tx, paid.payment()).await;
+    let restored = row(wallet, &paid.txid, 0).await;
+    assert_eq!(restored.0.as_deref(), Some("default"));
+    assert_eq!(restored.5, Some(paid.sender.to_hex()), "the stored sender");
+    assert_eq!(balance(wallet).await, 4_500);
+    signs(wallet, &paid.txid, 0).await;
 }
 
 /// A received payment written by this CLI's own flows (`fund`, `receive`,
@@ -293,20 +294,11 @@ async fn a_reclassified_received_payment_restored_with_its_sender_signs() {
 async fn a_reclassified_payment_this_cli_wrote_restored_with_the_anyone_key_signs() {
     let (_, anyone) = KeyDeriver::anyone_key();
     let paid = Paid::from(&PrivateKey::random(), anyone, CLI_PREFIX, CLI_SUFFIX);
-    let (wallet, app, _) = paid.served().await;
-    admitted(&app, &paid.tx, paid.payment()).await;
-    reclassify(&wallet, &paid.txid, 0).await;
-    assert_eq!(balance(&wallet).await, 0);
-
+    let (wallet, app, _) = paid.reclassified().await;
     refused(&app, &paid.tx, paid.payment_naming(""), EMPTY_SENDER).await;
     assert_eq!(row(&wallet, &paid.txid, 0).await.1, "custom");
 
-    admitted(&app, &paid.tx, paid.payment()).await;
-    let restored = row(&wallet, &paid.txid, 0).await;
-    assert_eq!(restored.0.as_deref(), Some("default"));
-    assert_eq!(restored.5, Some(paid.sender.to_hex()), "the anyone key");
-    assert_eq!(balance(&wallet).await, 4_500);
-    signs(&wallet, &paid.txid, 0).await;
+    restored_and_signs(&paid, &wallet, &app).await;
 }
 
 /// A change row whose stored sender is an empty string (the stable line's

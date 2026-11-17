@@ -3563,6 +3563,39 @@ pub(crate) mod tests {
         );
     }
 
+    /// `txid` called not final by a broadcaster an hour before `lock`, held
+    /// with a BEEF to be announced again at `lock` and no record owed: the
+    /// stored word.
+    async fn held_not_final(
+        storage: &StorageSqlx,
+        txid: &str,
+        lock: u64,
+    ) -> (String, Option<String>) {
+        let hint = Hint::new(
+            "Arcade|rejected",
+            HintStatus::Rejected {
+                reason: "476 non-final".to_string(),
+            },
+            lock - 3600,
+        );
+        let again = Reannounce {
+            beef: vec![1, 2, 3],
+            at: lock,
+            on_accept: None,
+        };
+        heard(
+            storage,
+            &FixedClock(lock - 3600),
+            &opts(),
+            txid,
+            hint,
+            Some(lock),
+            Some(again),
+        )
+        .await
+        .unwrap()
+    }
+
     /// E2 (the rulings of 2026-10-09). A transaction a broadcaster called
     /// not final is held with its BEEF: nothing is asked or announced
     /// before its lock time; at the lock time it is announced again; "not
@@ -3584,29 +3617,7 @@ pub(crate) mod tests {
             .get_merkle_path_response(proof_answer(None))
             .build();
 
-        let hint = Hint::new(
-            "Arcade|rejected",
-            HintStatus::Rejected {
-                reason: "476 non-final".to_string(),
-            },
-            lock - 3600,
-        );
-        let again = Reannounce {
-            beef: vec![1, 2, 3],
-            at: lock,
-            on_accept: None,
-        };
-        let word = heard(
-            &storage,
-            &FixedClock(lock - 3600),
-            &opts(),
-            &txid,
-            hint,
-            Some(lock),
-            Some(again),
-        )
-        .await
-        .unwrap();
+        let word = held_not_final(&storage, &txid, lock).await;
         assert_eq!(
             word,
             (
@@ -3674,29 +3685,7 @@ pub(crate) mod tests {
                 .get_merkle_path_response(proof_answer(None))
                 .build(),
         );
-        let hint = Hint::new(
-            "Arcade|rejected",
-            HintStatus::Rejected {
-                reason: "476 non-final".to_string(),
-            },
-            lock - 3600,
-        );
-        let again = Reannounce {
-            beef: vec![1, 2, 3],
-            at: lock,
-            on_accept: None,
-        };
-        heard(
-            &storage,
-            &FixedClock(lock - 3600),
-            &opts(),
-            &txid,
-            hint,
-            Some(lock),
-            Some(again),
-        )
-        .await
-        .unwrap();
+        held_not_final(&storage, &txid, lock).await;
 
         let report = tick(&storage, &services, &FixedClock(lock), &opts())
             .await

@@ -85,7 +85,7 @@ async fn internalize_in(
 }
 
 /// A [`Payment`]'s `AtomicBEEF`.
-async fn beef(payment: Payment) -> Vec<u8> {
+pub(crate) async fn beef(payment: Payment) -> Vec<u8> {
     let key = bsv_sdk::primitives::PrivateKey::from_hex(ROOT_KEY).unwrap();
     stranger_payment(payment, &key).await.1
 }
