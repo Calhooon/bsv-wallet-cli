@@ -7,6 +7,8 @@ use bsv_sdk::wallet::{
     InternalizeOutput, WalletInterface, WalletPayment,
 };
 
+use bsv_wallet_toolbox::WalletServices;
+
 use crate::brc29;
 use crate::context::WalletContext;
 
@@ -64,33 +66,32 @@ pub(crate) fn payment_output(to: &Destination, satoshis: u64) -> CreateActionOut
 }
 
 /// The destination and the address printed for it. A self-payment's second
-/// step is an internalize, whose BEEF proofs need headers: with no header
-/// service it is refused before anything is built, so no output is broadcast
-/// that the wallet could not keep.
-fn resolve(ctx: &WalletContext, address: &str) -> Result<(Destination, String)> {
+/// step is an internalize, which the toolbox's door refuses with no chain
+/// tracker (#509): with none, the send is refused by name
+/// ([`crate::services_env::NoChainTracker`]) before anything is selected,
+/// built or broadcast, so no output is broadcast that the wallet could not
+/// keep.
+async fn resolve<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+    address: &str,
+) -> Result<(Destination, String)> {
     let to = destination(&ctx.root_key, address)?;
     if !to.own {
         return Ok((to, address.to_string()));
     }
-    if ctx.wallet.services().chaintracks.is_none() {
-        bail!(
-            "a send to this wallet's own address keeps its sats by internalizing the \
-             payment, which needs the header service (CHAINTRACKS_URL); none is \
-             configured, so nothing was sent"
-        );
-    }
+    ctx.require_chain_tracker_to_receive("send").await?;
     let own = brc29::deposit_address(&ctx.root_key, ctx.chain)?;
     Ok((to, own))
 }
 
-pub async fn run(
-    ctx: &WalletContext,
+pub async fn run<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     address: &str,
     satoshis: u64,
     allow_pending: crate::spend_gate::AllowPending,
     from: &[(String, u32)],
 ) -> Result<()> {
-    let (to, address) = resolve(ctx, address)?;
+    let (to, address) = resolve(ctx, address).await?;
     let address = address.as_str();
 
     let description = format!("Send {} sats to {}", satoshis, &address[..8]);
@@ -206,8 +207,8 @@ pub async fn run(
 /// Internalize `txid`'s output paying `script` as a wallet payment to the
 /// deposit key; returns its vout. A failure names the transaction (it is on
 /// the network) and the `fund` command that keeps it later.
-async fn keep_own_payment(
-    ctx: &WalletContext,
+async fn keep_own_payment<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     beef_hex: Option<&str>,
     txid_hex: &str,
     to: &Destination,

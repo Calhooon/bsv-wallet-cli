@@ -1,7 +1,8 @@
 //! The commands that end in `internalizeAction`, with no chain tracker (a
 //! wallet built with `CHAINTRACKS_URL=off`). The toolbox's door holds every
 //! `internalizeAction` of such a wallet (#509), so each of `fund`,
-//! `receive`, `sync`, `split` and `gift-claim` refuses by name, a typed
+//! `receive`, `sync`, `split`, `gift-claim` and a `send` to the wallet's
+//! own address refuses by name, a typed
 //! [`NoChainTracker`], before it fetches, builds, signs or broadcasts
 //! anything: the services were asked nothing (no post, no fetch, no lead)
 //! and nothing was stored. The control: the same `fund` with a tracker is
@@ -12,7 +13,7 @@ use bsv_sdk::transaction::{Beef, MerklePath};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::{Chain, StorageSqlx, Wallet, WalletServices, WalletStorageWriter};
 
-use crate::commands::{fund, gift_claim, receive, split, sync};
+use crate::commands::{fund, gift_claim, receive, send, split, sync};
 use crate::context::WalletContext;
 use crate::services_env::NoChainTracker;
 use crate::spend_gate::AllowPending;
@@ -148,24 +149,42 @@ async fn sync_with_chaintracks_off_refuses_before_any_explorer_is_asked() {
 }
 
 /// A wallet holding a coin (received while it had a tracker) and then run
-/// with `CHAINTRACKS_URL=off`: `split` refuses before a coin is selected,
-/// and the broadcaster is never asked. The coin is offered (`--allow-pending
-/// received`), so without the refusal the split is built, signed and
-/// posted, and only then refused at the door: outputs on chain the wallet
-/// never records.
+/// with `CHAINTRACKS_URL=off`: the services hand the storage no tracker.
+async fn funded_then_off(root: &PrivateKey) -> WalletContext<NoTracker> {
+    let store = storage(root).await;
+    let funded = context(root, store.clone(), MockWalletServices::new()).await;
+    let (beef_hex, _) = deposit(root);
+    fund::run(&funded, &beef_hex, 0).await.expect("the coin");
+    assert_eq!(rows(&funded).await, (1, 1));
+    // `Wallet::new` hands the storage these services: no tracker anywhere.
+    context(root, store, NoTracker::new()).await
+}
+
+/// `split` refuses before a coin is selected, and the broadcaster is never
+/// asked. The coin is offered (`--allow-pending received`), so without the
+/// refusal the split is built, signed and posted, and only then refused at
+/// the door: outputs on chain the wallet never records.
 #[tokio::test]
 async fn split_with_chaintracks_off_refuses_before_any_coin_is_posted() {
     let root = PrivateKey::random();
-    let store = storage(&root).await;
-    let funded = context(&root, store.clone(), MockWalletServices::new()).await;
-    let (beef_hex, _) = deposit(&root);
-    fund::run(&funded, &beef_hex, 0).await.expect("the coin");
-    assert_eq!(rows(&funded).await, (1, 1));
-
-    // `Wallet::new` hands the storage these services: no tracker anywhere.
-    let ctx = context(&root, store, NoTracker::new()).await;
+    let ctx = funded_then_off(&root).await;
     let split = split::run(&ctx, 2, AllowPending::Received, &[]).await;
     assert_refused(split, "split");
+    nothing_asked(&ctx, (1, 1)).await;
+}
+
+/// A `send` to the wallet's own address (the self-payment, #38, whose
+/// second step is an `internalizeAction`) refuses before a coin is
+/// selected, the coin offered as `split`'s is: nothing built, nothing
+/// posted, the rows as they were.
+#[tokio::test]
+async fn a_send_to_the_wallets_own_address_with_chaintracks_off_refuses_before_any_coin_is_posted()
+{
+    let root = PrivateKey::random();
+    let ctx = funded_then_off(&root).await;
+    let own = crate::brc29::deposit_address(&root, Chain::Main).unwrap();
+    let sent = send::run(&ctx, &own, 500, AllowPending::Received, &[]).await;
+    assert_refused(sent, "send");
     nothing_asked(&ctx, (1, 1)).await;
 }
 
