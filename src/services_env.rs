@@ -141,7 +141,11 @@ impl std::fmt::Display for NoChainTracker {
 impl std::error::Error for NoChainTracker {}
 
 /// Refuse `command`, which ends in `internalizeAction`, when the wallet has
-/// no chain tracker ([`NoChainTracker`]).
+/// no chain tracker.
+///
+/// # Errors
+///
+/// [`NoChainTracker`] naming `command` when `has_tracker` is false.
 pub fn require_chain_tracker_to_receive(
     command: &str,
     has_tracker: bool,
