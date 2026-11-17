@@ -95,7 +95,8 @@ fn assert_refused<T: std::fmt::Debug>(result: anyhow::Result<T>, command: &str) 
 }
 
 /// Nothing was asked of the services (no post, no fetch, no lead: every
-/// call is counted, `get_chain_tracker` included) and the store holds
+/// call the mock counts, which is every call but `get_chain_tracker`:
+/// [`NoTracker`] answers that one itself, uncounted) and the store holds
 /// `rows`.
 async fn nothing_asked(ctx: &WalletContext<NoTracker>, rows_held: (i64, i64)) {
     assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
