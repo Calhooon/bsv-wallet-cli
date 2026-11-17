@@ -3600,8 +3600,8 @@ main merges into beta after the pin (RELEASING.md 1a), not before.
   own, never between.
 
 **Open, in order.** (1) The beta.8 pin when the packages arrive (armed).
-(2) The next stable patch: bsv-rs 0.8.12 (expected within a day of
-2026-11-17, its note on #386) and the toolbox's 0.13.2 once its captain names
+(2) The next stable patch: a newer bsv-rs 0.8 patch (its note on #386)
+and the toolbox's 0.13.2 once its captain names
 it on #386, taken together if they arrive together. (3) The resume steps the
 pause left: night 5's re-dispatch, #564's read lane after the pin, night 6,
 #590 and the bucket #591. (4) #596's entry leaves when `sqlx` moves.
@@ -3712,7 +3712,7 @@ beta is green.
 **Open, in order.** (1) PR 599 on beta (the split and #600), then the pin
 when the toolbox's prerelease arrives, the release PR 0.19.0-beta.8, the gate
 once, the tag, and the comment on Calhooon/bsv-rs #101. (2) The next stable
-patch: bsv-rs 0.8.12 and any toolbox stable its captain names on #386.
+patch: a newer bsv-rs 0.8 patch and any toolbox stable its captain names on #386.
 (3) Rows to file: a command that finds default-basket outputs whose script is
 not the P2PKH of their stored derivation; the `tls` feature in CI with
 `axum-server` 0.8 or later; the move from chrono to `time` on the 0.19.0
