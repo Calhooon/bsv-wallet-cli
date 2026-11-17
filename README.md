@@ -7,11 +7,11 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.18.5**, and crates.io carries the same version, **0.18.5**,
-which pins **bsv-wallet-toolbox-rs =0.13.3**, **bsv-rs =0.8.11** and
+is the tag **v0.18.6**, and crates.io carries the same version, **0.18.6**,
+which pins **bsv-wallet-toolbox-rs =0.13.4**, **bsv-rs =0.8.11** and
 **bsv-tracker =0.8.0**; the repository's Releases page holds a Release per
 tag. **0.18.1 was never published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.8**, **bsv-rs =0.9.0-beta.8** and **bsv-tracker =0.9.0-beta.8**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.8.1**, **bsv-rs =0.9.0-beta.8** and **bsv-tracker =0.9.0-beta.8**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
 The [beta.8 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/565) uses the
@@ -42,7 +42,7 @@ this pin does not migrate their old keyrings.
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.18.5 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.18.6 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
