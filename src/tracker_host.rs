@@ -160,6 +160,12 @@ const MAX_BACKOFF_DOUBLINGS: u32 = 6;
 /// A transaction asked this many times in a row with no proof is not asked
 /// again until a new hint names it (about five days at the default age).
 const MAX_ASKS_PER_TX: u32 = 16;
+
+/// The fault a pass reports for a claim it holds unannounced because the
+/// wallet could not record it (see `tick`).
+pub const CLAIM_HELD_WITHOUT_A_TRACKER: &str = "claim held, not announced: no chain tracker \
+     is configured (CHAINTRACKS_URL=off), so the wallet could not record it; it is announced \
+     and recorded once CHAINTRACKS_URL names your header service";
 /// Recent tips kept to see a moved header (without the feed).
 const TIP_RING: usize = 12;
 /// Words whose root moved (`Reask::Reorg`) asked for a proof, and
@@ -1558,6 +1564,19 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     // (the node reads the median time past, about an hour behind; the rule
     // is the sibling's, bsv-script-lean `docs/BLOCK-CONSENSUS.md` section
     // 2.2), so "not final" again is expected and waits one more pause.
+    //
+    // A row that carries `on_accept` (the wallet's record of a claim, owed
+    // once a broadcaster takes it) is held while this host has no chain
+    // tracker: the toolbox's door holds every `internalizeAction` of such a
+    // wallet (#509), so an announce would put the claim's outputs on chain
+    // with no record of them. The test is the one the receiving commands
+    // use (the services' `get_chain_tracker`, which reads configuration and
+    // asks nothing), read once a pass and only when such a row is due. A
+    // held row is not posted and not written: it keeps its BEEF, its time,
+    // its record, its asks and its word, it leaves the rest of the pass,
+    // and the report names it in `faults`.
+    let mut tracker_present: Option<bool> = None;
+    let mut held: Vec<TxId> = Vec::new();
     for row in rows.iter_mut() {
         let (Some(beef), Some(at)) = (row.reannounce_beef.clone(), row.reannounce_at) else {
             continue;
@@ -1567,6 +1586,23 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         };
         if at > now || matches!(state.word(), Word::Mined(_)) {
             continue;
+        }
+        if row.on_accept.is_some() {
+            let present = match tracker_present {
+                Some(present) => present,
+                None => {
+                    let present = services.get_chain_tracker().await.is_ok();
+                    tracker_present = Some(present);
+                    present
+                }
+            };
+            if !present {
+                report
+                    .faults
+                    .push(format!("{}: {CLAIM_HELD_WITHOUT_A_TRACKER}", row.txid));
+                held.push(row.txid.clone());
+                continue;
+            }
         }
         let pause = Some(now.saturating_add(opts.age_threshold));
         let answer = services
@@ -1617,6 +1653,10 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                     .push(format!("{}: could not announce again: {e}", row.txid));
             }
         }
+    }
+    rows.retain(|row| !held.contains(&row.txid));
+    for txid in &held {
+        states.remove(txid);
     }
     follow_up_stale(
         storage,
@@ -3617,6 +3657,64 @@ pub(crate) mod tests {
         assert_eq!(report.asked, 1);
         assert_eq!(services.call_count("post_beef"), 2);
         assert_eq!(services.call_count("get_merkle_path"), 1);
+    }
+
+    /// The stable line's 0.18.6, ported: the hold of a claim with no chain tracker is for a row the
+    /// wallet is owed a record of. A row with no `on_accept` (nothing to
+    /// record) is announced again at its time as before, with no tracker.
+    #[tokio::test]
+    async fn a_row_with_no_record_owed_is_announced_again_with_no_chain_tracker() {
+        use crate::test_support::NoTracker;
+        use bsv_wallet_toolbox::services::mock::success_post_beef_result;
+        let (storage, _user) = wallet_storage().await;
+        let txid = "c8".repeat(32);
+        let lock = 2_000_000_000u64;
+        let services = NoTracker(
+            MockWalletServices::builder()
+                .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
+                    "Arcade",
+                    &[&txid],
+                )]))
+                .get_merkle_path_response(proof_answer(None))
+                .build(),
+        );
+        let hint = Hint::new(
+            "Arcade|rejected",
+            HintStatus::Rejected {
+                reason: "476 non-final".to_string(),
+            },
+            lock - 3600,
+        );
+        let again = Reannounce {
+            beef: vec![1, 2, 3],
+            at: lock,
+            on_accept: None,
+        };
+        heard(
+            &storage,
+            &FixedClock(lock - 3600),
+            &opts(),
+            &txid,
+            hint,
+            Some(lock),
+            Some(again),
+        )
+        .await
+        .unwrap();
+
+        let report = tick(&storage, &services, &FixedClock(lock), &opts())
+            .await
+            .unwrap();
+        assert_eq!(services.call_count("post_beef"), 1);
+        assert_eq!(report.reannounced, vec![txid.clone()]);
+        assert!(report.on_accept.is_empty());
+        assert!(report.faults.is_empty(), "{report:?}");
+        assert_eq!(
+            stored_word(&storage, &txid).await.unwrap().unwrap().0,
+            "announced"
+        );
+        let row = load_row(&storage, &txid).await.unwrap().unwrap();
+        assert_eq!((row.reannounce_beef, row.reannounce_at), (None, None));
     }
 
     /// A courier's mempool presence (tracker 0.5.0) survives the stored row,
