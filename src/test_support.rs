@@ -19,6 +19,10 @@ pub use busy::no_busy_wait;
 
 mod chain_tracker;
 pub use chain_tracker::TestChainTracker;
+mod no_tracker;
+// The binary's tests read it; the library's do not.
+#[allow(unused_imports)]
+pub use no_tracker::NoTracker;
 
 /// Serve a test router on an ephemeral loopback port, with an abortable task.
 pub async fn serve_router(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {

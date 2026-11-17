@@ -3,6 +3,8 @@ pub mod address;
 pub mod backup;
 pub mod balance;
 pub mod certificates;
+#[cfg(test)]
+mod chaintracks_off_tests;
 pub mod cleanup_abandoned;
 pub mod compact;
 pub mod config;

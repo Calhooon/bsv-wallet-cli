@@ -89,3 +89,96 @@ fn an_unset_header_source_stops_the_command_and_names_the_setting() {
         assert!(!stderr.contains("babbage"), "{command}: {stderr}");
     }
 }
+
+/// With no chain tracker the toolbox's door refuses every
+/// `internalizeAction` (#509), so each command that ends in one refuses by
+/// name, through the binary, before any network act (the unit tests in
+/// `src/commands/chaintracks_off_tests.rs` read that the services were
+/// asked nothing). The stable line's 0.18.6, ported.
+#[test]
+fn the_receiving_commands_with_chaintracks_off_refuse_by_name() {
+    let dir = TempDir::new().expect("temp dir");
+    let init = wallet(&dir)
+        .args(["--db", "wallet.db", "init"])
+        .output()
+        .expect("run init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let txid = "22".repeat(32);
+    let cases: [(&str, Vec<&str>); 5] = [
+        ("fund", vec!["fund", "0100beef", "--vout", "0"]),
+        ("receive", vec!["receive", &txid]),
+        ("sync", vec!["sync"]),
+        ("split", vec!["split", "--count", "2"]),
+        ("gift-claim", vec!["gift-claim", &txid]),
+    ];
+    for (name, args) in cases {
+        let out = wallet(&dir)
+            .env("CHAINTRACKS_URL", "off")
+            .args(["--db", "wallet.db"])
+            .args(&args)
+            .output()
+            .expect("run the command");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{name} must fail: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "{name} refused: no chain tracker is configured (CHAINTRACKS_URL=off); with no \
+                 chain tracker no payment is accepted (every internalizeAction is refused). Set \
+                 CHAINTRACKS_URL to your header service."
+            )),
+            "{name}: {stderr}"
+        );
+        assert!(
+            stderr.contains("no payment is accepted (every internalizeAction is refused)"),
+            "the startup warning says so: {stderr}"
+        );
+    }
+}
+
+/// `send` to this wallet's own address ends in `internalizeAction` (the
+/// self-payment, #38). Beta already refused it with no header service,
+/// before anything is built (`src/commands/send.rs`'s `resolve`); this
+/// reads that refusal through the binary, and that nothing was sent.
+#[test]
+fn a_send_to_the_wallets_own_address_with_chaintracks_off_is_refused_before_anything_is_built() {
+    let dir = TempDir::new().expect("temp dir");
+    let init = wallet(&dir)
+        .args(["--db", "wallet.db", "init"])
+        .output()
+        .expect("run init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let address = wallet(&dir)
+        .env("CHAINTRACKS_URL", "off")
+        .args(["--db", "wallet.db", "--json", "address"])
+        .output()
+        .expect("run address");
+    let shown: serde_json::Value =
+        serde_json::from_slice(&address.stdout).expect("the address as JSON");
+    let own = shown["address"].as_str().expect("an address").to_string();
+
+    let out = wallet(&dir)
+        .env("CHAINTRACKS_URL", "off")
+        .args(["--db", "wallet.db", "send", &own, "1000"])
+        .output()
+        .expect("run send");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "send must fail: {stdout}{stderr}");
+    assert!(
+        stderr.contains(
+            "a send to this wallet's own address keeps its sats by internalizing the payment, \
+             which needs the header service (CHAINTRACKS_URL); none is configured, so nothing \
+             was sent"
+        ),
+        "{stderr}"
+    );
+    assert!(stdout.trim().is_empty(), "nothing was sent: {stdout}");
+}

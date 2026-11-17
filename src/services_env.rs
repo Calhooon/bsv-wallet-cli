@@ -10,7 +10,7 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service: every proof is refused and nothing is marked proven; the wallet's own spends of its proven coins still reach allocation, judged at the latest era; an incoming or caller-supplied BEEF with proofs is refused with the toolbox's text (`the merkle proofs of a BEEF the wallet did not sign need headers, and no header service is configured`); discovery answers no overlay certificate, the local and configured records still answering (toolbox 0.14.0-beta.5, #372) |
+//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service: every proof is refused and nothing is marked proven; the wallet's own spends of its proven coins still reach allocation, judged at the latest era; an incoming or caller-supplied BEEF with proofs is refused with the toolbox's text (`the merkle proofs of a BEEF the wallet did not sign need headers, and no header service is configured`); discovery answers no overlay certificate, the local and configured records still answering (toolbox 0.14.0-beta.5, #372); and no payment is accepted (every `internalizeAction` is refused): `fund`, `receive`, `sync`, `split` and `gift-claim` refuse by name ([`NoChainTracker`]) |
 //! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
 //! | `ARC_MODE` | The broadcaster mode: unset, blank or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; any other value is refused by name |
 //! | `ARCADE` | The older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic; any other value is refused by name |
@@ -50,9 +50,8 @@ use crate::config::{
 pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it to the header \
      service that checks merkle roots (your chaintracks-cloudflare or rust-chaintracks \
      deployment), or to `off` to run with none (every merkle proof, and every BEEF with proofs \
-     the wallet did not sign, is then refused; its own spends of its proven coins proceed). \
-     There is \
-     no default header service.";
+     the wallet did not sign, is then refused, and no payment is accepted; its own spends of \
+     its proven coins proceed). There is no default header service.";
 
 /// The CLI's explicit classic endpoints (#322). Toolbox beta.2 defaults to
 /// Arcade, so a classic caller must never inherit its `arc_url` default.
@@ -97,7 +96,8 @@ pub const CHAINTRACKS_OFF_WARNING: &str = "CHAINTRACKS_URL=off: no chain tracker
      proof will be refused and nothing marked proven until CHAINTRACKS_URL is set; the wallet's \
      own spends of its proven coins still proceed, a BEEF with proofs the wallet did not sign \
      (an incoming payment, a caller's inputBEEF) is refused because its proofs need headers, and \
-     discovery answers no overlay certificate";
+     discovery answers no overlay certificate; and no payment is accepted (every \
+     internalizeAction is refused), so the commands that receive, split or claim refuse";
 
 /// Refuse a command whose job is to prove when no chain tracker is
 /// configured: it could only refuse every proof it met, so it exits
@@ -110,6 +110,49 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
         );
     }
     Ok(())
+}
+
+/// A command that ends in `internalizeAction`, refused because the wallet
+/// has no chain tracker (`CHAINTRACKS_URL=off`). The toolbox's door holds
+/// every `internalizeAction` of a wallet with no tracker on its storage and
+/// none on its services (#509), and this host sets the storage's tracker
+/// only from the services' one, so in that mode no payment is accepted.
+/// The command is refused before it fetches, builds, signs or broadcasts
+/// anything: a split or a claim posted and then refused at the door would
+/// leave outputs on chain the wallet never records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoChainTracker {
+    /// The command refused, as the user types it (`gift-claim`).
+    pub command: String,
+}
+
+impl std::fmt::Display for NoChainTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} refused: no chain tracker is configured (CHAINTRACKS_URL=off); with no chain \
+             tracker no payment is accepted (every internalizeAction is refused). Set \
+             CHAINTRACKS_URL to your header service.",
+            self.command
+        )
+    }
+}
+
+impl std::error::Error for NoChainTracker {}
+
+/// Refuse `command`, which ends in `internalizeAction`, when the wallet has
+/// no chain tracker ([`NoChainTracker`]).
+pub fn require_chain_tracker_to_receive(
+    command: &str,
+    has_tracker: bool,
+) -> std::result::Result<(), NoChainTracker> {
+    if has_tracker {
+        Ok(())
+    } else {
+        Err(NoChainTracker {
+            command: command.to_string(),
+        })
+    }
 }
 
 /// The bases of the explorers and the third-party store the CLI's own
@@ -533,6 +576,35 @@ mod tests {
             chaintracks_url_for(Some(&HeaderService::Off)).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn the_off_warning_says_no_payment_is_accepted() {
+        assert!(CHAINTRACKS_OFF_WARNING
+            .contains("no payment is accepted (every internalizeAction is refused)"));
+        assert!(CHAINTRACKS_OFF_WARNING.contains("receive, split or claim refuse"));
+    }
+
+    #[test]
+    fn a_receiving_command_needs_a_chain_tracker() {
+        for command in ["fund", "receive", "sync", "split", "gift-claim"] {
+            let refusal = require_chain_tracker_to_receive(command, false).unwrap_err();
+            assert_eq!(
+                refusal,
+                NoChainTracker {
+                    command: command.to_string()
+                }
+            );
+            assert_eq!(
+                refusal.to_string(),
+                format!(
+                    "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
+                     with no chain tracker no payment is accepted (every internalizeAction is \
+                     refused). Set CHAINTRACKS_URL to your header service."
+                )
+            );
+            assert!(require_chain_tracker_to_receive(command, true).is_ok());
+        }
     }
 
     #[test]

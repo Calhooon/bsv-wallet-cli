@@ -7,13 +7,17 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bsv_sdk::primitives::PrivateKey;
-use bsv_wallet_toolbox::{Chain, Services, StorageSqlx, Wallet, WalletStorageWriter};
+use bsv_wallet_toolbox::{
+    Chain, Services, StorageSqlx, Wallet, WalletServices, WalletStorageWriter,
+};
 
 use crate::config::Config;
 use crate::services_env;
 
-pub struct WalletContext {
-    pub wallet: Wallet<StorageSqlx, Services>,
+/// `S` is the services: the toolbox's `Services` in every command (the
+/// default); a test hands a mock.
+pub struct WalletContext<S: WalletServices + Send + Sync = Services> {
+    pub wallet: Wallet<StorageSqlx, S>,
     pub identity_key: String,
     pub root_key: PrivateKey,
     pub chain: Chain,
@@ -64,6 +68,25 @@ impl WalletContext {
             db_path: db.to_string(),
             config: config.clone(),
         })
+    }
+}
+
+impl<S: WalletServices + Send + Sync + 'static> WalletContext<S> {
+    /// Refuse `command`, which ends in `internalizeAction`, when the wallet
+    /// has no chain tracker, before it fetches, builds, signs or
+    /// broadcasts anything: the toolbox's door holds every
+    /// `internalizeAction` of such a wallet (#509)
+    /// ([`services_env::NoChainTracker`]). The services' tracker is the one
+    /// read (`get_chain_tracker` reads configuration and asks nothing):
+    /// `open_store` sets the storage's tracker only from it, so with
+    /// `CHAINTRACKS_URL=off` the wallet has neither, and with a header
+    /// service it has both.
+    pub async fn require_chain_tracker_to_receive(
+        &self,
+        command: &str,
+    ) -> std::result::Result<(), services_env::NoChainTracker> {
+        let has_tracker = self.wallet.services().get_chain_tracker().await.is_ok();
+        services_env::require_chain_tracker_to_receive(command, has_tracker)
     }
 
     /// The spend gate's settings, from the configuration.
