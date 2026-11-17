@@ -533,3 +533,34 @@ fn the_basket_insertion_refusals_are_classed_by_their_opening_words() {
         );
     }
 }
+
+/// Toolbox 0.13.4's new `internalizeAction` refusals: the empty `outputs`
+/// text opens with no `Validation error: ` at the wallet door, and one arm
+/// gives it 400 `VALIDATION_ERROR` (the caller's parameter); the storage
+/// door's spelling, the repeated index, the uncompressed sender and the
+/// no-tracker texts open with `Validation error: ` and keep that arm.
+#[test]
+fn the_internalize_door_refusals_of_0_13_4_are_classed_by_their_opening_words() {
+    const NO_OUTPUTS: &str =
+        "The outputs parameter must be at least one output to internalize from the transaction";
+    let bad = StatusCode::BAD_REQUEST;
+    for prefix in ["", "wallet error: "] {
+        let class = |m: &str| AppError::classify(&format!("{prefix}{m}"));
+        assert_eq!(class(NO_OUTPUTS), (bad, "VALIDATION_ERROR"), "{prefix}");
+        for text in [
+            format!("Validation error: {NO_OUTPUTS}"),
+            "Validation error: The outputs parameter must be unique outputIndex values".to_string(),
+            "Validation error: Wallet payment outputs require a sender_identity_key that is empty or a compressed public key".to_string(),
+            "Validation error: No chain tracker is available to verify the BEEF: install one on the storage or configure the services' chain tracker".to_string(),
+            "Validation error: Invalid merkle root ab at height 900000".to_string(),
+        ] {
+            assert_eq!(class(&text), (bad, "VALIDATION_ERROR"), "{prefix}{text}");
+        }
+        // Near misses: the words later in the text, or another case.
+        assert_eq!(class(&format!("Refused: {NO_OUTPUTS}")), (bad, "ERROR"));
+        assert_eq!(
+            class("the outputs parameter must be at least one output to internalize from the transaction"),
+            (bad, "ERROR")
+        );
+    }
+}
