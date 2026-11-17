@@ -248,14 +248,18 @@ jobs:
       # The paved road's deny gate, from bsv-stack-lean template/ci.yml:
       # deny.toml is the template byte for byte (its sha256 stamped in
       # template/stack.toml), then cargo-deny 0.20.2 (the pinned prebuilt
-      # release, #507) checks advisories, bans, licenses and sources against
-      # the committed lock. Its tree is the PR's head on a pull request and the event's
+      # release, #507) checks bans, licenses and sources against the
+      # committed lock, and all four checks (advisories too) on a tag. Its
+      # tree is the PR's head on a pull request and the event's
       # commit otherwise (a push, a merge-queue group), as its own job's
       # checkout was. On a PR it runs when a path it reads changed (#473:
       # the manifests, the lockfile, deny.toml, the template's stamp,
-      # ci.yml); a merge-queue group, a push and a tag always run it, so an
-      # advisory published since the lock last moved reds the queue, never a
-      # PR that did not touch the lock.
+      # ci.yml); a merge-queue group, a push and a tag always run it.
+      # The owner's ruling of 2026-11-17 (#596; the stack's decisions 27.5):
+      # advisories follow the RustSec database, an outside clock, not the
+      # tree, so no PR or group reads them; the stack's advisories.yml reads
+      # them daily per line from main and files an issue, and a tag's run
+      # (release.yml calls this workflow) reads all four before it publishes.
       - name: "deny: the paths it reads"
         if: ${{ !cancelled() && steps.cache.outcome == 'success' && needs.changes.outputs.deny == 'false' }}
         run: 'echo "deny: no path cargo-deny reads changed: skipped by #473 (the queue runs it)"'
@@ -312,7 +316,12 @@ jobs:
       - name: "deny: cargo-deny check"
         if: ${{ !cancelled() && steps.deny-install.outcome == 'success' }}
         working-directory: ${{ steps.deny-tree.outputs.dir }}
-        run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check
+          else
+            "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check bans licenses sources
+          fi
 
       - name: Clippy
         if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
