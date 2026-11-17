@@ -12,5 +12,6 @@
   - The readers of stored and fetched transactions refuse trailing bytes and amounts of 2^53 or more (GHSA-j8hr, #844).
   - `certificates --reverify` fails a certificate whose signature is not exact DER (GHSA-9c8r).
   - `/internalizeAction` refuses a BEEF with a raw entry that is not a transaction (GHSA-j8hr), and a spend its coin's era refuses (GHSA-h4m7, GHSA-fr33).
+  - `/internalizeAction` (and the MCP `internalize_action` tool, which calls it) carries the toolbox's two rules. The wallet payment rule (toolbox #819): an output that carries a payment remittance is admitted only when it is locked by the P2PKH of the key the remittance derives. The basket insertion rules (toolbox #823): no insertion into the default basket, wallet-managed change never reclassified, and no move between application baskets.
   - `/acquireCertificate` by issuance refuses a certifier's response with trailing bytes (GHSA-cgp9).
   - GHSA-82g9 has no patched version; no Rust code here, in the toolbox or in the tracker reads Extended Format.
