@@ -24,6 +24,7 @@ pub(crate) mod cases_switch;
 pub(crate) mod cases_window;
 pub(crate) mod certificate_material;
 pub(crate) mod fixture;
+pub(crate) mod held_world;
 pub(crate) mod judge;
 pub(crate) mod manifest;
 pub(crate) mod owner;
