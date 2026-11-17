@@ -10,11 +10,11 @@ storage, signing, broadcasting and transaction tracking. The release of record
 is the tag **v0.18.2**, and crates.io carries the same version, **0.18.2**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.6**, **bsv-rs =0.9.0-beta.6** and **bsv-tracker =0.9.0-beta.6**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.8**, **bsv-rs =0.9.0-beta.8** and **bsv-tracker =0.9.0-beta.8**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
 
-The [#386 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/386) uses the
-published beta.6 packages and maps ordinary refusals by their reference class
+The [beta.8 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/565) uses the
+published beta.8 packages and maps ordinary refusals by their reference class
 ([#330](https://github.com/Calhooon/bsv-wallet-cli/issues/330)) and the
 toolbox's typed faults by their family
 ([#342](https://github.com/Calhooon/bsv-wallet-cli/issues/342)); certificate
