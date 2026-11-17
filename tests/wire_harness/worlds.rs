@@ -266,7 +266,12 @@ pub(crate) fn held_coin(key: &PrivateKey, i: usize) -> bsv_sdk::transaction::Tra
     let lock = if i == 0 {
         funded_lock(key, suffix)
     } else {
-        [&[0x21][..], &funded_key(key, suffix).to_compressed(), &[0xac][..]].concat()
+        [
+            &[0x21][..],
+            &funded_key(key, suffix).to_compressed(),
+            &[0xac][..],
+        ]
+        .concat()
     };
     parent_tx(seed, satoshis, &lock)
 }
@@ -289,7 +294,12 @@ async fn seed_internalize_held(
     let mut roots = HashMap::new();
     for (i, (_, height, _, suffix)) in HELD_COINS.into_iter().enumerate() {
         let txid = rows
-            .mined_coin(&held_coin(key, i), height, "a held change row", Some(suffix))
+            .mined_coin(
+                &held_coin(key, i),
+                height,
+                "a held change row",
+                Some(suffix),
+            )
             .await;
         roots.insert(height, txid.clone());
         let (provided_by, purpose) = if i == 0 {
