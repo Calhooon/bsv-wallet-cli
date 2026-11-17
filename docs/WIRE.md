@@ -49,6 +49,7 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
   | `pages` | `fresh`, where a page the seed does not list is asked per power (#414 L5b): its held calls and the owner's answers, kept apart so no owner's-door fixture's rows move |
   | `shutdown` | `fresh`, whose server shuts down while a page's call is held (#414 L5b); it stays shut |
   | `spending` | `funded`'s four coins and its local ARC, where a page the seed does not list spends under the spending power (#414 L6): held, answered `once`, granted with a ceiling, past the ceiling held as a renewal; kept apart so no funded fixture's coins move |
+  | `internalize` | `funded`'s four coins and its local ARC, and two outputs as an earlier release's basket insertion into `default` left them (`custom`, not change; written with an SQL update, as the toolbox's own test reproduces them), where the toolbox's two `internalizeAction` rules are served (rows 222 to 247); kept apart so its listings show only what those rows stored |
 
 - **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
 - **`request.json`** is sent as its compact bytes with `content-type: application/json`; **`request.raw`** is sent byte for byte (a malformed body); **`request.fill`** is a body of that many spaces (an oversized one; the file carries the count, not the megabyte).
@@ -452,6 +453,35 @@ consumers corpora (110 wallet calls: 82 wire and 28 consumers, the
 normalized values read as values of their recorded shape) passes bsv-rs
 0.9.0-beta.8's result rows, none refused; the fifteen host-route 200 rows are
 not wallet calls.
+
+## The stable line's 0.18.4 and 0.18.5, served on beta
+
+The stable line's 0.18.4 and 0.18.5 pin the toolbox's two `internalizeAction` rules (0.13.2: the wallet payment rule; 0.13.3: the basket insertion rules). This line carries both through its own pin, the toolbox 0.14.0-beta.8 (#565, its #819 and #823), whose `### Hosts` lines state each answer as a `WalletRefusal` of class `InvalidParameter`. Each answer the stable line's served tests read (`tests/served_internalize_payment.rs` and `tests/served_internalize_insertion.rs` on `main`) is pinned here by a row of this corpus, rows 222 to 247 recorded last from the `internalize` world, or by `tests/served_internalize_sweep.rs` where a fixture would not fit (a sweep of 800 inputs, about 120 KB of transaction, is past 120,000 lines in a fixture, which writes `tx` one byte per line). Each refusal row is followed by a listing that shows nothing was stored: 232 (no transaction written after 223 to 231), 236 and 237 (after 235), 246 (after 239 to 241). Rows 001 to 221 replay byte-identical, and the consumers' corpus is unchanged.
+
+The two lines side by side: the stable line's status and code from its tests, this line's from its rows. The messages differ by the stable line's `wallet error: ` prefix throughout; beta's refusals carry the toolbox's words alone.
+
+| answer | stable (0.18.5) | beta (this corpus) | difference and its reason |
+|---|---|---|---|
+| a wallet payment in bytes that are not a BEEF (#819) | 400 `INVALID_BEEF` | 400 `VALIDATION_ERROR` (043) | beta serves a refusal by its class (#330): invalid BEEF is `InvalidParameter`, and this line has no `INVALID_BEEF` code; the stable line's text arm kept the code 0.18.3 served |
+| an AtomicBEEF naming a subject it does not carry (#819) | 400 `VALIDATION_ERROR` | 400 `VALIDATION_ERROR` (223) | none |
+| a wallet payment locked to the P2PKH of another key (#819) | 400 `ERROR` | 400 `VALIDATION_ERROR` (224) | beta serves the toolbox's `InvalidParameter` by class; the stable line's `Derivation mismatch` text has no arm and keeps `ERROR` |
+| the same, in a sweep past bsv-rs's link budget (#819) | 400 `ERROR` | 400 `VALIDATION_ERROR` (`served_internalize_sweep`) | as the row above |
+| control: the sweep paying the derived key (#819) | 200, stored | 200, stored (`served_internalize_sweep`) | none |
+| a wallet payment not locked by the derived key's P2PKH, the toolbox's four shapes (#819) | 400 `VALIDATION_ERROR` | 400 `VALIDATION_ERROR` (225 to 228) | none |
+| a basket insertion that carries a payment remittance (#819) | 400 `VALIDATION_ERROR` (BRC-29 sentence) or `ERROR` (derivation mismatch) | 400 `VALIDATION_ERROR` (154), `The output remittance parameter must be only insertionRemittance for basket insertion` | the toolbox on this line refuses it at the argument validator, before the rule reads the output (its 0.14.0-beta.8 Fixed: "refused by the argument validator, as before") |
+| control: a wallet payment locked by the derived key's P2PKH (#819) | 200, stored | 200 (104, 238), stored as change in `default` (246) | none |
+| control: a basket insertion with no payment remittance (#819) | 200, stored | 200 (102, 233), stored in its basket (236) | none in the answer; the stable test's script is a P2PK, these rows' a P2PKH of another key, neither held to the rule |
+| a basket insertion naming the default basket (#823) | 400 `VALIDATION_ERROR`, six spellings | 400 `VALIDATION_ERROR` (229 to 231: `default`, `DEFAULT`, ` Default `) | the rows take the spellings the toolbox's 0.14.0-beta.8 names; the stable line needed a text arm for the 0.13.3 text, beta serves the class |
+| a basket insertion over a received payment (#823) | 400 `VALIDATION_ERROR` | 400 `VALIDATION_ERROR` (239) | none |
+| a basket insertion over the wallet's own change (#823) | 400 `VALIDATION_ERROR` | 400 `VALIDATION_ERROR` (240) | none in the answer; the stable test makes the change with `Wallet::create_action`, this row names a seeded change coin (`P2PKH`, change, `storage`, `change`, its derivation), since this corpus records no action with a change output (its derivation is drawn at random, above) |
+| a basket insertion over an output in another application basket (#823) | 400 `VALIDATION_ERROR` | 400 `VALIDATION_ERROR` (235; 236 the output kept, 237 the basket not created) | none |
+| control: a wallet payment carrying a stray insertion remittance naming `default` (#823) | 200, stored as change | 400 `VALIDATION_ERROR` (241), `The output remittance parameter must be only paymentRemittance for wallet payment`, nothing stored (246) | the toolbox on this line refuses an output carrying the other protocol's remittance at its argument validator, as 154 refuses the converse; the stable line's toolbox reads only the protocol's own remittance and stores it |
+| control: a basket insertion into a named basket (#823) | 200 | 200 (102, 233) | none |
+| control: the same basket named again (#823) | 200 | 200 (234) | none |
+| control: an output in no basket, or in `default` and not change, swept into a named basket (#823) | 200 each | 200 (243: an output of the wallet's own action; 244: an earlier insertion into `default`), listed there (247) | none |
+| control: a row an earlier release left in `default`, listed and relinquished | 200 | 200 (222 lists it, 245 relinquishes it, 246 no longer lists it) | none |
+
+No row of this line answers a 500, an `ERROR` where the stable line serves a named class, or a refusal after anything was stored.
 
 ## The browser gate (#411) and the switch (#414)
 
