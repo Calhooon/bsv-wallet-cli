@@ -128,9 +128,10 @@ fn the_receiving_commands_with_chaintracks_off_refuse_by_name() {
 }
 
 /// `send` to this wallet's own address ends in `internalizeAction` (the
-/// self-payment, #38). Beta already refused it with no header service,
-/// before anything is built (`src/commands/send.rs`'s `resolve`); this
-/// reads that refusal through the binary, and that nothing was sent.
+/// self-payment, #38): with no header service it is refused by name, the
+/// typed `NoChainTracker` the receiving commands answer, before anything is
+/// built (`src/commands/send.rs`'s `resolve`); this reads that refusal
+/// through the binary, and that nothing was sent.
 #[test]
 fn a_send_to_the_wallets_own_address_with_chaintracks_off_is_refused_before_anything_is_built() {
     let dir = initialized();
@@ -153,9 +154,9 @@ fn a_send_to_the_wallets_own_address_with_chaintracks_off_is_refused_before_anyt
     assert!(!out.status.success(), "send must fail: {stdout}{stderr}");
     assert!(
         stderr.contains(
-            "a send to this wallet's own address keeps its sats by internalizing the payment, \
-             which needs the header service (CHAINTRACKS_URL); none is configured, so nothing \
-             was sent"
+            "send refused: no chain tracker is configured (CHAINTRACKS_URL=off); with no \
+             chain tracker no payment is accepted (every internalizeAction is refused). Set \
+             CHAINTRACKS_URL to your header service."
         ),
         "{stderr}"
     );
