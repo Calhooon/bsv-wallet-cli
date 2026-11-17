@@ -590,6 +590,45 @@ async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     assert_eq!(posts.call_count("post_beef"), 1, "no merge posts");
 }
 
+/// The storage door's rows on the stable line (a payment with an empty
+/// derivation prefix or suffix, a sender that is 66 hex digits and not a
+/// point), through this host's wallet door: refused by the argument
+/// validator, nothing written or posted. The control: the payment made well
+/// is stored.
+#[tokio::test]
+async fn the_storage_door_rows_are_refused_by_the_argument_validator() {
+    let root = PrivateKey::random();
+    let sender = PrivateKey::random().public_key();
+    let lock = p2pkh(&derived(&root, &sender, PREFIX, SUFFIX));
+    let (tx, _, parent) = beef_paying(&lock);
+    let (wallet, app, posts) = served(&root, Some(&parent)).await;
+    let before = stored(&wallet).await;
+    let me = sender.to_hex();
+    let not_a_point = format!("02{}", "ff".repeat(32));
+    for (output, message) in [
+        (
+            payment_of(0, "", SUFFIX, &me),
+            "Validation error: The derivationPrefix parameter must be valid base64 string",
+        ),
+        (
+            payment_of(0, PREFIX, "", &me),
+            "Validation error: The derivationSuffix parameter must be valid base64 string",
+        ),
+        (
+            payment_of(0, PREFIX, SUFFIX, &not_a_point),
+            "Validation error: The senderIdentityKey parameter must be a valid compressed \
+             secp256k1 public key",
+        ),
+    ] {
+        let (status, body) = internalize(&app, &tx, vec![output]).await;
+        assert_refused(status, &body, "VALIDATION_ERROR", message);
+    }
+    assert_eq!(stored(&wallet).await, before, "nothing written");
+    assert_eq!(posts.call_count("post_beef"), 0, "nothing posted");
+    let (status, body) = internalize(&app, &tx, vec![payment_of(0, PREFIX, SUFFIX, &me)]).await;
+    assert_eq!(status, StatusCode::OK, "the control: {body}");
+}
+
 // ---------------------------------------------------------------------------
 // The rows written before
 // ---------------------------------------------------------------------------
