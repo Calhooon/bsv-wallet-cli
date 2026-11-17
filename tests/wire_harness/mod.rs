@@ -12,6 +12,7 @@ pub(crate) mod cases_beta6;
 pub(crate) mod cases_bounds;
 pub(crate) mod cases_certificate_privacy;
 pub(crate) mod cases_divergences;
+pub(crate) mod cases_internalize_door;
 pub(crate) mod cases_internalize_rules;
 pub(crate) mod cases_origin_gate;
 pub(crate) mod cases_owner_door;
