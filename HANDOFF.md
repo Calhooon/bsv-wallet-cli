@@ -3490,3 +3490,120 @@ box or GitHub at the pause; the one named process, pid 87158
 `bsv-wallet-mcp`, is the captain session's own MCP tool server (Claude
 Code's, it ends with the session), not a wallet service; the registry's 3396
 daemon and the owner's production wallet on 3322 are untouched.
+
+## 2026-11-16 to 2026-11-17: the resume on the owner's brief, 0.18.3 (the bsv-rs security patch) landed, gated and published, the lock's other advisories and the one deny entry, the beta.8 intake and the armed pin, states as of 03:55Z 11-17
+
+**The owner's brief (2026-11-16, in the captain's session; the resume after the
+pause of 2026-11-04).** Seven items, done before the paused programme: (1) the
+stable line most urgent: main pinned bsv-rs `=0.8.3`, bsv-rs published 19
+security advisories since 2026-11-10, 0.8.11 patches 18: move the pin, run the
+whole suite, release a patch; a test that changes its answer is read against
+the release note before it is touched; say whether GHSA-82g9-h6jw-r99f (no
+patched version) reaches the CLI; (2) where to read: #386, #594, bsv-rs's
+CHANGELOG and its Security tab, which alone carries the advisories published
+after 2026-11-13; (3) beta follows the toolbox onto bsv-rs 0.9.0-beta.8, both
+pins together; (4) nothing is prepared for bsv-rs 0.9.0-beta.9 before it is
+published; (5) when beta is green on beta.8, one comment on Calhooon/bsv-rs
+#101 with what broke and how long; (6) builders on the box, two at most;
+(7) what the CLI needs from bsv-rs is an issue there, and a security defect is
+never an issue: a private advisory on the repository it belongs to.
+
+**0.18.3, landed, gated and published.** PR 595 landed on main as `694a63b8`
+at 03:32Z 11-17, seven commits: `dbd5c7ea` the pin `bsv-rs` `=0.8.11` and the
+lock, `a4dbe34e` README's version and pin lines, `19da6c47` the version and
+CHANGELOG.md's 0.18.3 section (the three fragments 355, 362 and 366
+assembled), `c3e630c2` and `2802a06b` the lock's other advisories (#596) and
+their changelog bullet, `d0478fe9` the deny entry (below), `694a63b8` the fold
+of the security read. No CLI code moved; 544 of 544 tests, no answer changed.
+Three cold reads: the package (merge, 0.9), the security read (fix, 0.82, on
+three changelog corrections: `/acquireCertificate` by issuance missing from
+"What now refuses", the deny entry unnamed, and a sentence on `from_ef` that
+was false for the toolbox's tests; each checked in the published sources and
+folded), and a read of the deny entry's claims and the lock's three hand-set
+lines (merge, 0.9). GHSA-82g9-h6jw-r99f does not reach this CLI: nothing in
+it, in the toolbox 0.13.1 outside its tests, or in the tracker 0.8.0 parses
+Extended Format bytes (the lane's, the security read's and the captain's
+greps agree). The mainnet gate ran once on `694a63b8`: 23 of 23, net cost
+2,170 sats, the funder 192,956 before and 190,786 after (the record
+`gate-20261117T034010Z.log` in the captain's gate folder; the test wallets on
+binaries built on the box at the commit and copied to the Studio, sha256 read
+on both hosts). The tag `v0.18.3` on `694a63b8`; release run 44011876918
+green; crates.io `0.18.3` at 2026-11-17T03:44:59Z; the GitHub release with its
+three binaries at 03:49:36Z. #594 closed by hand on its record.
+
+**The lock's other advisories and the one deny entry (#596).** The pin PR's
+`deny` was red on ten RustSec ids of three other crates that entered the
+database after 2026-11-04: `openssl` 0.10.76 (eight), `rustix` 1.1.4 (one),
+`libsqlite3-sys` 0.30.1 (RUSTSEC-2026-0459). The lock moves to `openssl`
+0.10.82 (with `openssl-sys` 0.9.118) and `rustix` 1.1.6 close nine; cargo also
+moved three Windows-only `windows-sys` lines (errno, rustix, tempfile) down to
+0.52.0, which the lane set back to v0.18.2's 0.61.2 (inside each crate's own
+requirement; `cargo metadata --locked` accepts the lock; the third read
+checked it). RUSTSEC-2026-0459 has no version to move to: no published
+`sqlx-sqlite` takes `libsqlite3-sys` 0.39 (0.8.6 asks `^0.30.1`, 0.9.0 asks
+`>=0.30.1, <0.38.0`). The owner ruled on it in session on 2026-11-17: one
+entry in this repository's `deny.toml`, in the shape RUSTSEC-2026-0387 had in
+the stack's template in October, with its reason (the wallet opens only the
+database files its operator names: `--db`, a fleet seat's `wallet.db`, the
+relay's `RELAY_DB`; every open site read by the third reviewer) and its exit
+(it leaves when `sqlx` takes `libsqlite3-sys` 0.39 or later), with
+`template/stack.toml` re-stamped (`54315a39`). The entry is this repository's
+alone and ahead of the stack's template: the keeper copies it or rules
+otherwise. #596 stays open until the entry leaves; the index is read at every
+pin.
+
+**Corrections of record.** main's branch protection requires `deny` and
+`locks` beside Test, Rustfmt, Clippy, vectors and the one Build check:
+RELEASING.md's step 2 named five and "the two Build checks", and is corrected
+in this PR; #596's body said `deny` was not required on main and is corrected
+there by a comment. main's e2e harness has no hermetic mode (a beta feature):
+on main the only e2e is the mainnet gate.
+
+**Beta: the intake and the armed pin (#565).** The intake re-read for bsv-rs
+0.9.0-beta.8 is on #565 (the comment of 2026-11-17): of the ten breaking
+changes two reach beta's tree (#817 the Beef and MerklePath writers return
+`Result`, 94 sites, 17 in production; #843 `Transaction`'s four fields behind
+accessors, 33 lines), the other eight reach no site; three tests the package
+moves are named with their lines; GHSA-82g9 does not reach beta either. Beta's
+`deny` is red today on the same ten ids AND on six bsv-rs ids
+(RUSTSEC-2026-0497 to 0501 and 0529) that only the pin clears (RustSec's
+patched range for each opens past 0.9.0-beta.7), and beta's queue runs `deny`
+in `lint`: no code PR lands on beta before the pin PR, which therefore carries
+the two lock moves, `deny.toml` and `template/stack.toml` byte for byte from
+main, and the fragment `596.md`. A lane that tried #596 on beta alone stopped
+before pushing for that reason. The pin waits on the index for the toolbox's
+`0.14.0-beta.8` (its captain's naming; `0.14.0-beta.7` was never published)
+and a `bsv-tracker` prerelease on bsv-rs `=0.9.0-beta.8` (the tracker's newest,
+`0.9.0-beta.7`, pins beta.7). The captain's launcher is armed: it fills the
+revised pin brief and the two revised read briefs and runs the lane and the
+reads on the box when the three are on the index, and stops with the PR held.
+After it: the landing through the queue, the release PR 0.19.0-beta.8 in PR
+563's shape, the mainnet gate once, the tag, and the comment on bsv-rs #101.
+main merges into beta after the pin (RELEASING.md 1a), not before.
+
+**The day's lessons.**
+- `cargo deny`, `cargo audit` and Dependabot are silent on every bsv-rs
+  advisory published after 2026-11-13 (bsv-rs files none with RustSec since
+  that day): a green `deny` says nothing about bsv-rs, and its Security tab
+  is the list a pin brief reads.
+- The advisories API of a repository the reader administers returns draft,
+  triage and closed rows beside the published ones: a brief that reads it
+  says "state published only", and the captain greps a PR for the unpublished
+  ids before anything else (PR 595 was clean).
+- The Studio's standing browsers folder was gone at the gate's hour; the
+  harness refused at its check line before any wallet started, and the gate's
+  script now runs the harness's own install step as its preflight.
+- A host's binaries can be built on the box and run on the Studio: the gate
+  compares their sha256 on both hosts and runs `--version` before the run.
+- A captain's commit pushed while cold reads are starting changes what they
+  judge: push before the reads launch, or after they end with a read of its
+  own, never between.
+
+**Open, in order.** (1) The beta.8 pin when the packages arrive (armed).
+(2) The next stable patch: bsv-rs 0.8.12 (expected within a day of
+2026-11-17, its note on #386) and the toolbox's 0.13.2 once its captain names
+it on #386, taken together if they arrive together. (3) The resume steps the
+pause left: night 5's re-dispatch, #564's read lane after the pin, night 6,
+#590 and the bucket #591. (4) #596's entry leaves when `sqlx` moves.
+(5) The certificate re-issue before 0.19.0 (unchanged). The funder daemon is
+up on 3320 since the gate (its basket 190,786; the refill rule unchanged).
