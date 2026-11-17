@@ -1,7 +1,5 @@
-# The line's [deny] table, copied from bsv-stack-lean stack.toml at 5fc6389, then
-# re-stamped here for this repository's one entry of 2026-11-17 (RUSTSEC-2026-0459,
-# the owner's word, bsv-wallet-cli #596), which is ahead of the stack's template.
+# The line's [deny] table, copied from bsv-stack-lean stack.toml at af05e991.
 [deny]
 path = "template/deny.toml"
-sha256 = "54315a3964e5abb7df96333c8a363b7177fa2ed799fb2abe6cbda852e399acc9"
-stamped = "2026-11-17T03:19:05Z"
+sha256 = "5dc5cb7955a2e83e1aa3aeb9a6019fe253a44c12b88fa715c7d7851c080f65ce"
+stamped = "2026-11-17T03:41:29Z"
