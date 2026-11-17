@@ -4,13 +4,11 @@
 //! unannounced while no chain tracker is configured (`CHAINTRACKS_URL=off`),
 //! since the wallet could not record it.
 
-use super::tests::{opts, spendable, storage, tx_bytes, At};
+use super::tests::{mined, opts, spendable, storage, At, Claim};
 use super::*;
-use crate::test_support::txid_of;
 use bsv_wallet_toolbox::services::mock::{
     error_post_beef_result, MockResponse, MockWalletServices,
 };
-use bsv_wallet_toolbox::services::GetMerklePathResult;
 
 /// A claim held as not final, as `gift-claim --force` leaves it before
 /// its lock time: the wallet (on the mock, whose tracker confirms), the
@@ -21,37 +19,21 @@ async fn a_held_claim() -> (
     bsv_wallet_cli::gift::claim::ClaimPlan,
     u64,
 ) {
-    use bsv_sdk::primitives::PrivateKey;
-    use bsv_wallet_cli::gift::claim::build_claim_tx;
-    use bsv_wallet_cli::gift::covenant::build_locking_script;
     use bsv_wallet_toolbox::services::mock::success_post_beef_result;
     use bsv_wallet_toolbox::Wallet;
 
-    let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
-    let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
-    let pay = crate::brc29::deposit_script(&root).unwrap();
-    let lock = 1_600_000_000u64;
-    let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
-    let deposit = tx_bytes(
-        &[(&"11".repeat(32), 0)],
-        &[(5000, covenant), (1000, pay.clone())],
-    );
-    let plan = build_claim_tx(&deposit, &deposit_priv, lock as u32).unwrap();
-    let claim = hex::decode(&plan.claim_raw_hex).unwrap();
+    let Claim {
+        root,
+        deposit,
+        plan,
+        claim,
+        pay,
+        lock,
+    } = Claim::new();
     let services = MockWalletServices::builder()
-        .get_merkle_path_response(MockResponse::Sequence(vec![MockResponse::Success(
-            GetMerklePathResult {
-                name: Some("Services".to_string()),
-                merkle_path: Some(
-                    MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000)
-                        .to_hex()
-                        .unwrap(),
-                ),
-                header: None,
-                error: None,
-                notes: vec![],
-            },
-        )]))
+        .get_merkle_path_response(MockResponse::Sequence(vec![MockResponse::Success(mined(
+            &deposit,
+        ))]))
         .post_beef_response(MockResponse::Sequence(vec![
             MockResponse::Success(vec![error_post_beef_result("Arcade", "476 non-final")]),
             MockResponse::Success(vec![success_post_beef_result(

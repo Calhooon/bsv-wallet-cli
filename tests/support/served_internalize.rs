@@ -22,7 +22,11 @@ use bsv_sdk::wallet::{
     Counterparty, CreateActionArgs, CreateActionOptions, CreateActionOutput, KeyDeriver, Protocol,
     SecurityLevel, WalletInterface,
 };
-use bsv_wallet_cli::server::{self, ServerConfig};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tower::ServiceExt;
+
+// The wallet engine, then the host's server over it.
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
 };
@@ -30,9 +34,8 @@ use bsv_wallet_toolbox::{
     Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletServices, WalletStorageProvider,
     WalletStorageWriter,
 };
-use serde_json::{json, Value};
-use std::sync::Arc;
-use tower::ServiceExt;
+
+use bsv_wallet_cli::server::{self, ServerConfig};
 
 /// The served wallet, as `server::make_wallet_state` returns it.
 pub(crate) type WalletState = Arc<Wallet<StorageSqlx, Services>>;
@@ -126,17 +129,14 @@ pub(crate) async fn served_with(
 /// Posts `body` to `route` of the served router: the status and the JSON
 /// answer.
 pub(crate) async fn post_to(app: &axum::Router, route: &str, body: Value) -> (StatusCode, Value) {
-    let response = app
-        .clone()
-        .oneshot(
-            axum::http::Request::post(route)
-                .header("Origin", "http://test.local")
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri(route)
+        .header("Content-Type", "application/json")
+        .header("Origin", "http://test.local")
+        .body(axum::body::Body::from(body.to_string()))
         .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -202,11 +202,9 @@ pub(crate) async fn balance(wallet: &WalletState) -> u64 {
 // The transactions
 // ---------------------------------------------------------------------------
 
+/// The P2PKH of `key`: `OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG`.
 pub(crate) fn p2pkh(key: &PublicKey) -> Vec<u8> {
-    let mut script = vec![0x76, 0xa9, 0x14];
-    script.extend_from_slice(&key.hash160());
-    script.extend_from_slice(&[0x88, 0xac]);
-    script
+    [&[0x76, 0xa9, 0x14][..], &key.hash160(), &[0x88, 0xac]].concat()
 }
 
 pub(crate) fn other_lock() -> Vec<u8> {
@@ -531,6 +529,24 @@ impl Paid {
     /// The served wallet of `root`, its tracker carrying the parent's root.
     pub(crate) async fn served(&self) -> (WalletState, axum::Router, Arc<MockWalletServices>) {
         served(&self.root, Some(&self.parent)).await
+    }
+
+    /// [`Paid::served`], the payment admitted as its sender makes it.
+    pub(crate) async fn stored(&self) -> (WalletState, axum::Router, Arc<MockWalletServices>) {
+        let (wallet, app, posts) = self.served().await;
+        admitted(&app, &self.tx, self.payment()).await;
+        (wallet, app, posts)
+    }
+
+    /// [`Paid::stored`], then the row reclassified as an earlier release's
+    /// basket insertion left it: out of the balance.
+    pub(crate) async fn reclassified(
+        &self,
+    ) -> (WalletState, axum::Router, Arc<MockWalletServices>) {
+        let (wallet, app, posts) = self.stored().await;
+        reclassify(&wallet, &self.txid, 0).await;
+        assert_eq!(balance(&wallet).await, 0);
+        (wallet, app, posts)
     }
 
     /// The wallet payment of output 0 naming `sender` as given.

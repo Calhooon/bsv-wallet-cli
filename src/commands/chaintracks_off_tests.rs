@@ -56,10 +56,8 @@ async fn off(root: &PrivateKey) -> WalletContext<NoTracker> {
 /// A proven payment of 1,000 sats to the wallet's deposit script, as a hex
 /// BEEF, and its txid.
 fn deposit(root: &PrivateKey) -> (String, String) {
-    let raw = raw_tx(
-        &[(&"11".repeat(32), 0)],
-        &[(1_000, crate::brc29::deposit_script(root).unwrap())],
-    );
+    let script = crate::brc29::deposit_script(root).unwrap();
+    let raw = raw_tx(&[(&"11".repeat(32), 0)], &[(1_000, script)]);
     let txid = txid_of(&raw);
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
@@ -95,14 +93,21 @@ fn assert_refused<T: std::fmt::Debug>(result: anyhow::Result<T>, command: &str) 
     );
 }
 
+/// Nothing was asked of the services (no post, no fetch, no lead: every
+/// call is counted, `get_chain_tracker` included) and the store holds
+/// `rows`.
+async fn nothing_asked(ctx: &WalletContext<NoTracker>, rows_held: (i64, i64)) {
+    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+    assert_eq!(rows(ctx).await, rows_held, "nothing written");
+}
+
 #[tokio::test]
 async fn fund_with_chaintracks_off_refuses_by_name_and_stores_nothing() {
     let root = PrivateKey::random();
     let ctx = off(&root).await;
     let (beef_hex, _) = deposit(&root);
     assert_refused(fund::run(&ctx, &beef_hex, 0).await, "fund");
-    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
-    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+    nothing_asked(&ctx, (0, 0)).await;
 }
 
 /// The control: the same BEEF with a tracker (the toolbox's mock services
@@ -119,23 +124,19 @@ async fn fund_with_a_tracker_is_stored() {
         .await
         .unwrap();
     assert_eq!(held, 1);
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
 }
 
+/// No courier is asked: no `get_beef`, no merkle path.
 #[tokio::test]
 async fn receive_with_chaintracks_off_refuses_before_any_courier_is_asked() {
     let root = PrivateKey::random();
     let ctx = off(&root).await;
     let (_, txid) = deposit(&root);
     assert_refused(receive::run(&ctx, &txid, Some(0)).await, "receive");
-    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
-    assert_eq!(
-        ctx.wallet.services().total_calls(),
-        0,
-        "no get_beef, no merkle path"
-    );
+    nothing_asked(&ctx, (0, 0)).await;
 }
 
+/// No explorer is asked for leads, with or without `--reconcile-spent`.
 #[tokio::test]
 async fn sync_with_chaintracks_off_refuses_before_any_explorer_is_asked() {
     let root = PrivateKey::random();
@@ -143,9 +144,7 @@ async fn sync_with_chaintracks_off_refuses_before_any_explorer_is_asked() {
     for reconcile_spent in [false, true] {
         assert_refused(sync::run(&ctx, reconcile_spent).await, "sync");
     }
-    assert_eq!(ctx.wallet.services().call_count("get_utxo_leads"), 0);
-    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
-    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+    nothing_asked(&ctx, (0, 0)).await;
 }
 
 /// A wallet holding a coin (received while it had a tracker) and then run
@@ -161,44 +160,23 @@ async fn split_with_chaintracks_off_refuses_before_any_coin_is_posted() {
     let funded = context(&root, store.clone(), MockWalletServices::new()).await;
     let (beef_hex, _) = deposit(&root);
     fund::run(&funded, &beef_hex, 0).await.expect("the coin");
-    let before = rows(&funded).await;
-    assert_eq!(before, (1, 1));
+    assert_eq!(rows(&funded).await, (1, 1));
 
     // `Wallet::new` hands the storage these services: no tracker anywhere.
     let ctx = context(&root, store, NoTracker::new()).await;
-    assert_refused(
-        split::run(&ctx, 2, AllowPending::Received, &[]).await,
-        "split",
-    );
-    assert_eq!(
-        ctx.wallet.services().call_count("post_beef"),
-        0,
-        "nothing posted"
-    );
-    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
-    assert_eq!(rows(&ctx).await, before, "nothing written");
+    let split = split::run(&ctx, 2, AllowPending::Received, &[]).await;
+    assert_refused(split, "split");
+    nothing_asked(&ctx, (1, 1)).await;
 }
 
+/// The deposit is not fetched and no claim is posted, forced or not.
 #[tokio::test]
 async fn gift_claim_with_chaintracks_off_refuses_before_the_deposit_is_fetched() {
     let root = PrivateKey::random();
     let ctx = off(&root).await;
     for force in [false, true] {
-        assert_refused(
-            gift_claim::run(&ctx, &"22".repeat(32), force).await,
-            "gift-claim",
-        );
+        let claim = gift_claim::run(&ctx, &"22".repeat(32), force).await;
+        assert_refused(claim, "gift-claim");
     }
-    assert_eq!(
-        ctx.wallet.services().call_count("get_raw_tx"),
-        0,
-        "no fetch"
-    );
-    assert_eq!(
-        ctx.wallet.services().call_count("post_beef"),
-        0,
-        "nothing posted"
-    );
-    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
-    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+    nothing_asked(&ctx, (0, 0)).await;
 }

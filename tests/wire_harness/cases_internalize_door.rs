@@ -15,17 +15,11 @@
 //! stub): `tests/chaintracks_off.rs` reads it through the served router.
 use serde_json::{json, Value};
 
+use super::cases_internalize_rules::beef;
 use super::recorder::{post, Recorded, Recorder};
-use super::worlds::{stranger_key, stranger_payment, Payment, PAYMENT_PREFIX, PAYMENT_SUFFIX};
-use crate::wire_support::ROOT_KEY;
+use super::worlds::{stranger_key, Payment, PAYMENT_PREFIX, PAYMENT_SUFFIX};
 
 const WORLD: &str = "internalize";
-
-/// A [`Payment`]'s `AtomicBEEF`.
-async fn beef(payment: Payment) -> Vec<u8> {
-    let key = bsv_sdk::primitives::PrivateKey::from_hex(ROOT_KEY).unwrap();
-    stranger_payment(payment, &key).await.1
-}
 
 /// A wallet payment of output 0 with the stranger's prefix and suffix and
 /// `sender` as given.

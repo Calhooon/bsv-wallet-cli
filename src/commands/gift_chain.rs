@@ -580,6 +580,62 @@ mod tests {
         tx.to_binary()
     }
 
+    /// A gift's deposit to the wallet of the root key `01..` and the
+    /// wallet's claim of it: the deposit pays 5,000 to the covenant locked
+    /// until `lock` and 1,000 to the wallet's deposit script `pay`.
+    pub(super) struct Claim {
+        pub(super) root: bsv_sdk::primitives::PrivateKey,
+        pub(super) deposit: Vec<u8>,
+        pub(super) plan: bsv_wallet_cli::gift::claim::ClaimPlan,
+        pub(super) claim: Vec<u8>,
+        pub(super) pay: Vec<u8>,
+        pub(super) lock: u64,
+    }
+
+    impl Claim {
+        pub(super) fn new() -> Self {
+            use bsv_wallet_cli::gift::claim::build_claim_tx;
+            use bsv_wallet_cli::gift::covenant::build_locking_script;
+            let root = bsv_sdk::primitives::PrivateKey::from_hex(&"01".repeat(32)).unwrap();
+            let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
+            let pay = crate::brc29::deposit_script(&root).unwrap();
+            // Below the mock tracker's median time past (1_700_000_000): final
+            // for the toolbox at 0.13.0 and at #163 alike, which judges
+            // finality.
+            let lock = 1_600_000_000u64;
+            let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
+            let deposit = tx_bytes(
+                &[(&"11".repeat(32), 0)],
+                &[(5000, covenant), (1000, pay.clone())],
+            );
+            let plan = build_claim_tx(&deposit, &deposit_priv, lock as u32).unwrap();
+            let claim = hex::decode(&plan.claim_raw_hex).unwrap();
+            Self {
+                root,
+                deposit,
+                plan,
+                claim,
+                pay,
+                lock,
+            }
+        }
+    }
+
+    /// The services' answer for a mined `deposit`: its one-leaf proof.
+    pub(super) fn mined(deposit: &[u8]) -> GetMerklePathResult {
+        GetMerklePathResult {
+            name: Some("Services".to_string()),
+            merkle_path: Some(
+                MerklePath::from_coinbase_txid(&txid_of(deposit), 900_000)
+                    .to_hex()
+                    .unwrap(),
+            ),
+            header: None,
+            error: None,
+            notes: vec![],
+        }
+    }
+
     /// The spendable satoshis the wallet's own storage holds.
     pub(super) async fn spendable(storage: &StorageSqlx) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(SUM(satoshis), 0) FROM outputs WHERE spendable = 1")
@@ -594,39 +650,21 @@ mod tests {
     /// after the claim, and the flow sent the user to `bsv-wallet sync`.
     #[tokio::test]
     async fn gift_claim_records_its_own_claim_and_the_flow_names_no_chain_scan() {
-        use bsv_sdk::primitives::PrivateKey;
         use bsv_sdk::wallet::WalletInterface;
-        use bsv_wallet_cli::gift::claim::build_claim_tx;
-        use bsv_wallet_cli::gift::covenant::build_locking_script;
         use bsv_wallet_toolbox::Wallet;
 
-        let root = PrivateKey::from_hex(&"01".repeat(32)).unwrap();
-        let (deposit_priv, deposit_pub) = crate::brc29::deposit_keypair(&root).unwrap();
-        let pay = crate::brc29::deposit_script(&root).unwrap();
-        // Below the mock tracker's median time past (1_700_000_000): final for
-        // the toolbox at 0.13.0 and at #163 alike, which judges finality.
-        let lock = 1_600_000_000u64;
-        let covenant = build_locking_script(&deposit_pub.to_compressed(), lock, 5000).unwrap();
-        let deposit = tx_bytes(
-            &[(&"11".repeat(32), 0)],
-            &[(5000, covenant), (1000, pay.clone())],
-        );
-        let plan = build_claim_tx(&deposit, &deposit_priv, lock as u32).unwrap();
-        let claim = hex::decode(&plan.claim_raw_hex).unwrap();
+        let Claim {
+            root,
+            deposit,
+            plan,
+            claim,
+            pay,
+            lock,
+        } = Claim::new();
 
         // The deposit is mined and its proof checks.
         let services = MockWalletServices::builder()
-            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-                name: Some("Services".to_string()),
-                merkle_path: Some(
-                    MerklePath::from_coinbase_txid(&txid_of(&deposit), 900_000)
-                        .to_hex()
-                        .unwrap(),
-                ),
-                header: None,
-                error: None,
-                notes: vec![],
-            }))
+            .get_merkle_path_response(MockResponse::Success(mined(&deposit)))
             .build();
         let wallet = Wallet::new(Some(root), storage().await, services)
             .await
