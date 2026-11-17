@@ -398,6 +398,14 @@ impl Courier {
 impl ProofFetcher for Courier {
     type Error = String;
 
+    /// The re-ask is not read: every due re-ask of every kind, a kind a
+    /// later tracker minor adds among them, is the one request this host
+    /// makes, `get_merkle_path` for the txid, read before the step and
+    /// checked by the tracker. That is the generic path, a read and never
+    /// a word: what the new kind asks beyond a proof, this host does not
+    /// do until it names it, and the kind is surfaced meanwhile by its word
+    /// in the row's `reask` column and on `/tx/:txid` ([`reask_label`];
+    /// bsv-tracker 0.9.0-beta.9, `### Hosts`; #612).
     fn fetch(
         &mut self,
         txid: &str,
@@ -480,7 +488,10 @@ struct TrackedRow {
     follow_up: Option<String>,
 }
 
-/// A node's verdict as the row keeps it.
+/// A node's verdict as the row keeps it. Its two maps over the tracker's
+/// `NodeVerdict` stay exhaustive: that enum is not `#[non_exhaustive]` and
+/// no ruled row extends it, so a kind added to it stops this build at a
+/// compile error here, the right place (#612).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum StoredVerdict {
@@ -1627,7 +1638,9 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         let _ = state.step(&params, &snapshot, Input::Hint(hint));
         report.hints += 1;
         // A word that disagrees is asked about now, not after the pause
-        // an earlier re-ask earned.
+        // an earlier re-ask earned. A re-ask kind this host does not name
+        // (a later tracker minor's) keeps the pause it has and is asked on
+        // the generic path below, shown by its word (#612).
         if matches!(state.reask(), Some(Reask::Hint(_))) {
             row.asks = 0;
             row.next_ask_at = None;
@@ -1750,6 +1763,8 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             && row.asks < MAX_ASKS_PER_TX
             && row.next_ask_at.is_none_or(|at| at <= now)
     };
+    // Only `reorg` goes ahead; every other kind, one this host does not
+    // name among them, fills the pass after it as a proof request (#612).
     let root_moved =
         |row: &&TrackedRow| matches!(states[&row.txid].reask(), Some(Reask::Reorg { .. }));
     let due: Vec<TxId> = rows
@@ -3263,6 +3278,8 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
             row.keep_chain(state, &event)?;
             if matches!(update.reask, Some(Reask::Reorg { .. })) {
                 // Asked now, not after the pause an earlier re-ask earned.
+                // Any other kind, one this host does not name among them,
+                // is stored with its pause and its word (#612).
                 row.asks = 0;
                 row.next_ask_at = None;
             }
@@ -3301,6 +3318,8 @@ pub async fn deliver_chain_event<V: WalletServices + ?Sized, C: Clock>(
                 continue;
             }
             row.keep_chain(state, &event)?;
+            // As above: `reorg` is asked now; any other kind keeps its
+            // pause and is stored by its word (#612).
             if matches!(state.reask(), Some(Reask::Reorg { .. })) {
                 row.asks = 0;
                 row.next_ask_at = None;
