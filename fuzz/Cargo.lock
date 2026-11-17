@@ -127,6 +127,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "argon2"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
+dependencies = [
+ "base64ct",
+ "blake2",
+ "cpufeatures 0.2.17",
+ "zeroize",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -238,6 +250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -275,9 +296,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-rs"
-version = "0.9.0-beta.6"
+version = "0.9.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff1e48f78dae770b13b49f6458e5ebbebc3c57f16d950e2d8ec219cb535a61e5"
+checksum = "864decc6f8d6cc9d0ae6a3b6981c2f9afa9dde6b3bac544b175ff55ff99e9fd2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -319,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "bsv-tracker"
-version = "0.9.0-beta.6"
+version = "0.9.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e5da799d9c0624cd2a020d2a28b6801bae845ef654c51bbbaaae7a2bfcca57"
+checksum = "ba93d0c93e2cf5610783b63b30b2544d1eecf11eeb2d4e3717cdfea2ed42b3f7"
 dependencies = [
  "bsv-rs",
  "serde",
@@ -370,17 +391,16 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-toolbox-rs"
-version = "0.14.0-beta.6"
+version = "0.14.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "188333077a9c763be18c81c9eecefe10b66dd4bfb35d4a8d4e695b495e65c980"
+checksum = "0df2f7482520d50bc1f9c1809f8405513818bd48a53c8a0f9bfa87512e3303d8"
 dependencies = [
- "anyhow",
+ "argon2",
  "async-trait",
  "base64",
  "bsv-rs",
  "chrono",
  "futures",
- "futures-util",
  "hex",
  "indexmap",
  "once_cell",
