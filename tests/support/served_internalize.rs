@@ -484,7 +484,7 @@ pub(crate) async fn own_change(
 }
 
 /// A payment to a fresh wallet of `root` from `sender` under `prefix` and
-/// `suffix`, locked by the key the wallet derives for it: its AtomicBEEF
+/// `suffix`, locked by the key the wallet derives for it: its `AtomicBEEF`
 /// (the toolbox's `beef_paying`), its txid and its parent's.
 pub(crate) struct Paid {
     pub(crate) root: PrivateKey,
