@@ -794,15 +794,20 @@ pub fn word_label(word: &Word) -> &'static str {
     }
 }
 
+/// The pending re-ask as the row's `reask` column and `/tx/:txid` show it:
+/// the crate's word ([`Reask::label`]), then the payload this host names
+/// (`reorg@900`, `fork@900`, `proof_failed@900`, `hint:arcade|seen`). A
+/// kind with no payload is its word alone (`recheck`, `age`, `spend`), and
+/// so is a kind a later tracker minor adds, until this host names its
+/// payload: kept and surfaced by the crate's word, never mapped to another
+/// kind and never dropped (bsv-tracker 0.9.0-beta.9, `### Hosts`; #612).
 fn reask_label(reask: &Reask) -> String {
+    let word = reask.label();
     match reask {
-        Reask::Reorg { fork_height } => format!("reorg@{fork_height}"),
-        Reask::Fork { height } => format!("fork@{height}"),
-        Reask::Hint(hint) => format!("hint:{}", hint.source),
-        Reask::ProofFailed { height } => format!("proof_failed@{height}"),
-        Reask::Recheck => "recheck".to_string(),
-        Reask::Age => "age".to_string(),
-        Reask::Spend => "spend".to_string(),
+        Reask::Reorg { fork_height } => format!("{word}@{fork_height}"),
+        Reask::Fork { height } | Reask::ProofFailed { height } => format!("{word}@{height}"),
+        Reask::Hint(hint) => format!("{word}:{}", hint.source),
+        _ => word.to_string(),
     }
 }
 
