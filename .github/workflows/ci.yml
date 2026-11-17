@@ -159,7 +159,21 @@ jobs:
           assert hashlib.sha256(pathlib.Path('deny.toml').read_bytes()).hexdigest() == stamp['sha256'], 'deny.toml differs from the adopted line'
           PY
       - run: cargo install cargo-deny --version 0.20.2 --locked --root "$RUNNER_TEMP/paved-road-tools"
-      - run: '"$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check'
+      # The ruling of 2026-11-17 (docs/DECISIONS-2026-10-19.md 27.5): a pull
+      # request is judged on what it alone decides. bans, licenses and sources
+      # are functions of the tree. advisories follow the RustSec database, an
+      # outside clock: advisories.yml reads them once a day per line and files
+      # an issue, and this job reads them on a tag, so nothing is released with
+      # an untriaged advisory. The check's name stays `deny`. A release workflow
+      # that does not call this job on its tag runs `cargo-deny --locked check`
+      # itself before it publishes.
+      - name: cargo-deny (bans, licenses, sources; all four checks on a tag)
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check
+          else
+            "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check bans licenses sources
+          fi
 
   # One bsv-rs per lock (bsv-stack-lean #182): a committed Cargo.lock holding
   # two bsv-rs entries fails, the gate a self-merging stack PR stands behind.
