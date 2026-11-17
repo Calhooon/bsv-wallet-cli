@@ -6,10 +6,10 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.18.7**, and crates.io carries the same version, **0.18.7**; the
+is the tag **v0.18.8**, and crates.io carries the same version, **0.18.8**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. It pins
-**bsv-wallet-toolbox-rs =0.13.4**, **bsv-rs =0.8.12** and **bsv-tracker =0.8.0**;
+**bsv-wallet-toolbox-rs =0.13.5**, **bsv-rs =0.8.12** and **bsv-tracker =0.8.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -17,7 +17,7 @@ published**. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.18.7 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.18.8 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -250,7 +250,12 @@ after the call), and `actions` and `/listActions` show it as `underRule:
 false`) carries the label from its creation through `signAction`; an aborted
 template keeps it. The label is the gate's alone: a caller's own
 `spend-gate:received-pending` (in any case) is stripped from `createAction`'s
-and `internalizeAction`'s labels, so it grants nothing. The records a 0.15
+and `internalizeAction`'s labels, so it grants nothing. From 0.18.8 the action
+under the word also carries the toolbox's label `underReceivedRule`
+(bsv-wallet-toolbox-rs 0.13.5's received-coin rule, without which its selection
+passes over a received coin whose transaction has no proof), stripped from a
+caller's labels in any spelling the toolbox reads as it, so without the word
+neither label is passed. The records a 0.15
 store made (`spend_gate_actions`) keep answering. There is no environment
 variable for it.
 
