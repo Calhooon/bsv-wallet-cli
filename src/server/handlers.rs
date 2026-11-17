@@ -156,6 +156,17 @@ impl AppError {
             // The toolbox's streaming reader: the offset and the kind of
             // the invalid byte (never a size or a count).
             (StatusCode::BAD_REQUEST, "INVALID_BEEF")
+        } else if clean.starts_with("Cannot read the BEEF's subject transaction")
+            && clean.contains("not found in BEEF")
+        {
+            // Toolbox 0.13.2: "Cannot read the BEEF's subject transaction to check payment outputs: transaction error: Transaction <txid> not found in BEEF".
+            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+        } else if clean.starts_with("Cannot read the BEEF's subject transaction") {
+            // Toolbox 0.13.2: "Cannot read the BEEF's subject transaction to check payment outputs: BEEF error: ..." (bytes that are not a BEEF).
+            (StatusCode::BAD_REQUEST, "INVALID_BEEF")
+        } else if clean.starts_with("The paymentRemittance parameter must be") {
+            // Toolbox 0.13.2: "The paymentRemittance parameter must be locked by script conforming to BRC-29" (the caller's parameter).
+            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
         } else if clean.starts_with("Validation error:")
             || clean.starts_with("Invalid argument:")
             || clean.starts_with("Origin header required")

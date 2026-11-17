@@ -234,13 +234,20 @@ async fn stored(wallet: &WalletState) -> (i64, i64, i64, i64, i64) {
 
 /// Posts `output` of `tx` to a fresh served wallet of `who` whose tracker
 /// carries the root `txid` at `HEIGHT`, and asserts the refusal whole: 400, the code word
-/// `ERROR`, `message`, and no row written.
-async fn assert_refused(who: &Parties, tx: &[u8], txid: &str, output: Value, message: &str) {
+/// `code`, `message`, and no row written.
+async fn assert_refused(
+    who: &Parties,
+    tx: &[u8],
+    txid: &str,
+    output: Value,
+    code: &str,
+    message: &str,
+) {
     let (wallet, app) = served(&who.root, Some(txid)).await;
     let before = stored(&wallet).await;
     let (status, body) = post(app, tx, output).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body, json!({ "code": "ERROR", "message": message }));
+    assert_eq!(body, json!({ "code": code, "message": message }));
     assert_eq!(
         stored(&wallet).await,
         before,
@@ -271,8 +278,9 @@ async fn a_payment_locked_by_the_derived_p2pkh_is_accepted_and_stored() {
     assert_eq!(after.1, before.1 + 1, "the payment output is stored");
 }
 
-/// Bytes that are not a BEEF, with a payment output: 400 `ERROR`, the
-/// subject cannot be read, nothing stored.
+/// Bytes that are not a BEEF, with a payment output: 400 `INVALID_BEEF`
+/// (the code word 0.18.3 served for these bytes), the subject cannot be
+/// read, nothing stored.
 #[tokio::test]
 async fn a_payment_in_bytes_that_are_not_a_beef_is_refused_before_storage() {
     let who = parties();
@@ -281,13 +289,15 @@ async fn a_payment_in_bytes_that_are_not_a_beef_is_refused_before_storage() {
         &[0xde, 0xad, 0xbe, 0xef],
         &"00".repeat(32),
         payment(&who.sender),
+        "INVALID_BEEF",
         &format!("{NO_SUBJECT}BEEF error: Invalid BEEF version: 0xEFBEADDE"),
     )
     .await;
 }
 
 /// An AtomicBEEF naming a subject it does not carry, with a payment output:
-/// 400 `ERROR`, the subject cannot be read, nothing stored.
+/// 400 `VALIDATION_ERROR` (the code word 0.18.3 served for this BEEF), the
+/// subject cannot be read, nothing stored.
 #[tokio::test]
 async fn a_payment_in_a_beef_naming_a_subject_it_does_not_carry_is_refused_before_storage() {
     let who = parties();
@@ -298,6 +308,7 @@ async fn a_payment_in_a_beef_naming_a_subject_it_does_not_carry_is_refused_befor
         &tx,
         &txid,
         payment(&who.sender),
+        "VALIDATION_ERROR",
         &format!(
             "{NO_SUBJECT}transaction error: Transaction {} not found in BEEF",
             "5a".repeat(32)
@@ -314,7 +325,15 @@ async fn a_payment_in_a_beef_naming_a_subject_it_does_not_carry_is_refused_befor
 async fn a_payment_to_the_p2pkh_of_another_key_is_refused_whatever_the_ancestry() {
     let who = parties();
     let (tx, txid) = proven_beef(&other_p2pkh());
-    assert_refused(&who, &tx, &txid, payment(&who.sender), &mismatch(&who)).await;
+    assert_refused(
+        &who,
+        &tx,
+        &txid,
+        payment(&who.sender),
+        "ERROR",
+        &mismatch(&who),
+    )
+    .await;
 
     // The tracker carries the root of the sweep's proven parent.
     let (tx, txid, parent_txid) = sweep_beef(&other_p2pkh());
@@ -330,13 +349,14 @@ async fn a_payment_to_the_p2pkh_of_another_key_is_refused_whatever_the_ancestry(
         &tx,
         &parent_txid,
         payment(&who.sender),
+        "ERROR",
         &mismatch(&who),
     )
     .await;
 }
 
 /// A payment output whose script is not the derived key's P2PKH, in each
-/// shape the toolbox's test names: 400 `ERROR`, the reference's sentence,
+/// shape the toolbox's test names: 400 `VALIDATION_ERROR`, the reference's sentence,
 /// nothing stored.
 #[tokio::test]
 async fn a_payment_not_locked_by_the_derived_p2pkh_is_refused_in_every_shape() {
@@ -357,7 +377,7 @@ async fn a_payment_not_locked_by_the_derived_p2pkh_is_refused_in_every_shape() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
         assert_eq!(
             body,
-            json!({ "code": "ERROR", "message": NOT_BRC29 }),
+            json!({ "code": "VALIDATION_ERROR", "message": NOT_BRC29 }),
             "{name}"
         );
         assert_eq!(stored(&wallet).await, before, "{name}: nothing is stored");
@@ -375,6 +395,7 @@ async fn a_basket_insertion_carrying_a_payment_remittance_is_held_to_the_rule() 
         &tx,
         &txid,
         insertion_with_payment(&who.sender),
+        "VALIDATION_ERROR",
         NOT_BRC29,
     )
     .await;
@@ -385,6 +406,7 @@ async fn a_basket_insertion_carrying_a_payment_remittance_is_held_to_the_rule() 
         &tx,
         &txid,
         insertion_with_payment(&who.sender),
+        "ERROR",
         &mismatch(&who),
     )
     .await;

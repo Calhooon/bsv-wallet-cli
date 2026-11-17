@@ -460,3 +460,45 @@ async fn internalize_custom_instructions_counts_four_byte_characters_as_four_byt
         }
     }
 }
+
+/// The toolbox 0.13.2 payment check's refusals at `internalizeAction`, read
+/// from their text (#81): the two unreadable BEEFs keep the code words
+/// 0.18.3 served for the same inputs, and the new parameter refusal is the
+/// caller's. A message that merely carries the words later keeps the last
+/// arm, and `Derivation mismatch` keeps the class it has had.
+#[test]
+fn the_payment_checks_refusals_are_classed_by_their_opening_words() {
+    const SUBJECT: &str = "Cannot read the BEEF's subject transaction to check payment outputs: ";
+    const NOT_BRC29: &str =
+        "The paymentRemittance parameter must be locked by script conforming to BRC-29";
+    let bad = StatusCode::BAD_REQUEST;
+    let not_carried = format!(
+        "{SUBJECT}transaction error: Transaction {} not found in BEEF",
+        "5a".repeat(32)
+    );
+    let not_a_beef = format!("{SUBJECT}BEEF error: Invalid BEEF version: 0xEFBEADDE");
+    for prefix in ["", "wallet error: "] {
+        let class = |m: &str| AppError::classify(&format!("{prefix}{m}"));
+        assert_eq!(class(&not_carried), (bad, "VALIDATION_ERROR"), "{prefix}");
+        assert_eq!(class(&not_a_beef), (bad, "INVALID_BEEF"), "{prefix}");
+        assert_eq!(class(NOT_BRC29), (bad, "VALIDATION_ERROR"), "{prefix}");
+        // What 0.13.1 said for the same two inputs, and its class.
+        assert_eq!(
+            class("Invalid BEEF at byte 0: BadVersion"),
+            (bad, "INVALID_BEEF")
+        );
+        assert_eq!(
+            class("Validation error: BEEF structure is invalid"),
+            (bad, "VALIDATION_ERROR")
+        );
+        // Near misses: the words later in the text, never at its opening.
+        assert_eq!(class(&format!("Refused: {not_carried}")), (bad, "ERROR"));
+        assert_eq!(class(&format!("Refused: {not_a_beef}")), (bad, "ERROR"));
+        assert_eq!(class(&format!("Refused: {NOT_BRC29}")), (bad, "ERROR"));
+        assert_eq!(class("Transaction 5a not found in BEEF"), (bad, "ERROR"));
+        assert_eq!(
+            class("Derivation mismatch for output 0: derived aa != script bb"),
+            (bad, "ERROR")
+        );
+    }
+}
