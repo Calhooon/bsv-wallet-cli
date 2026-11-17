@@ -1,7 +1,7 @@
 //! The worlds' names: a fixture names one, and the replay refuses any other.
 
 /// The names of the worlds (see [`super::worlds::World::build`]).
-pub(crate) const WORLDS: [&str; 22] = [
+pub(crate) const WORLDS: [&str; 23] = [
     "fresh",
     "certificate-privacy",
     "auth",
@@ -24,6 +24,7 @@ pub(crate) const WORLDS: [&str; 22] = [
     "pages",
     "shutdown",
     "spending",
+    "internalize",
 ];
 
 /// A world's name is one of [`WORLDS`]; any other is a panic naming it.
