@@ -210,6 +210,76 @@ async fn seed_funded(
     roots
 }
 
+/// The `internalize` world's outputs a basket insertion naming `default`
+/// left before the toolbox's basket insertion rules (#823): (seed of the
+/// parent's input, height mined). Each is its own mined transaction paying
+/// 7,000 to [`P2PKH`].
+pub(crate) const LEGACY_DEFAULT: [(u8, u32); 2] = [(0xee, 899_897), (0xef, 899_898)];
+
+/// A [`LEGACY_DEFAULT`] transaction, and its `AtomicBEEF` (the transaction
+/// and its one-leaf proof).
+pub(crate) fn legacy_default(i: usize) -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
+    let (seed, height) = LEGACY_DEFAULT[i];
+    let parent = parent_tx(seed, 7_000, &hex::decode(P2PKH).unwrap());
+    let mut beef = bsv_sdk::transaction::Beef::new();
+    beef.merge_bump(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
+        &parent.id(),
+        height,
+    ));
+    beef.merge_transaction(parent.clone());
+    let atomic = beef.to_binary_atomic(&parent.id()).unwrap();
+    (parent, atomic)
+}
+
+/// The `internalize` world: `funded`'s coins, and the [`LEGACY_DEFAULT`]
+/// rows, each written as a coin and then made what an earlier release's
+/// basket insertion into `default` wrote (a `custom` row, not change, no
+/// derivation, `provided_by` `storage`, `purpose` `receive`), with an SQL
+/// update, as the toolbox's own test reproduces it.
+async fn seed_internalize(
+    storage: &StorageSqlx,
+    identity: &str,
+    key: &PrivateKey,
+) -> HashMap<u32, String> {
+    let mut roots = seed_funded(storage, identity, key).await;
+    let rows = Rows::open(storage, identity).await;
+    for (i, (_, height)) in LEGACY_DEFAULT.into_iter().enumerate() {
+        let (parent, _) = legacy_default(i);
+        let txid = parent.id();
+        roots.insert(height, txid.clone());
+        let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, height);
+        let proven = rows
+            .proven(
+                &txid,
+                height,
+                &txid,
+                one_leaf.to_binary().unwrap(),
+                parent.to_binary(),
+            )
+            .await;
+        rows.coin(Coin {
+            status: "completed",
+            txid: &txid,
+            made: false,
+            proven: Some(proven),
+            satoshis: 7_000,
+            description: "an earlier insertion",
+            raw: parent.to_binary(),
+            lock: hex::decode(P2PKH).unwrap(),
+            derivation: None,
+        })
+        .await;
+        sqlx::query(
+            "UPDATE outputs SET type = 'custom', change = 0, purpose = 'receive' WHERE txid = ?",
+        )
+        .bind(&txid)
+        .execute(&rows.pool)
+        .await
+        .unwrap();
+    }
+    roots
+}
+
 /// The review fixture needs a stored caller coin, so the signed action's
 /// spender is visible to the next createAction (toolbox #245/#264).
 async fn seed_puzzle(storage: &StorageSqlx, identity: &str) {
@@ -555,6 +625,7 @@ impl World {
             "tracked" => seed(storage, &identity, true).await,
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
+            "internalize" => return seed_internalize(storage, &identity, key).await,
             "pin-spend" | "review-race" => {
                 let roots = seed_funded(storage, &identity, key).await;
                 seed_puzzle(storage, &identity).await;
@@ -614,7 +685,7 @@ impl World {
         } else {
             stub
         };
-        let arc = if matches!(name, "funded" | "pin-spend" | "spending") {
+        let arc = if matches!(name, "funded" | "pin-spend" | "spending" | "internalize") {
             arc_stub().await
         } else {
             CLOSED.to_string()

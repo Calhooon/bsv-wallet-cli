@@ -27,14 +27,41 @@ pub(crate) enum Payment {
     /// already in another application basket, as the reference does, and
     /// [`Payment::Insertion`]'s output is in `wire` by then.
     BoundInsertion,
+    /// The `internalize` world's payments (#819's and #823's rows): a
+    /// valid spend paying 9,000 to [`P2PKH`], another key than a
+    /// remittance derives, offered as a wallet payment.
+    OtherKey,
+    /// The derived key's P2PK lock (the toolbox's shapes that are not the
+    /// derived key's P2PKH, #819).
+    DerivedP2pk,
+    /// An `OP_RETURN` script.
+    OpReturn,
+    /// The derived key's P2PKH with one byte after it.
+    DerivedP2pkhAndByte,
+    /// An empty script.
+    EmptyScript,
+    /// The derived key's P2PKH, offered as a wallet payment that also
+    /// carries an insertion remittance naming `default` (#823).
+    StrayInsertion,
+    /// A valid spend paying 9,000 to [`P2PKH`], for the basket insertion
+    /// rules (#823): the default basket refused, a named basket, the same
+    /// basket again, another basket refused.
+    Insertions,
 }
 
 impl Payment {
-    pub(crate) const ALL: [Payment; 4] = [
+    pub(crate) const ALL: [Payment; 11] = [
         Payment::Insertion,
         Payment::BadUnlock,
         Payment::Wallet,
         Payment::BoundInsertion,
+        Payment::OtherKey,
+        Payment::DerivedP2pk,
+        Payment::OpReturn,
+        Payment::DerivedP2pkhAndByte,
+        Payment::EmptyScript,
+        Payment::StrayInsertion,
+        Payment::Insertions,
     ];
 
     /// The seed of the parent's input and the height it is mined at.
@@ -44,31 +71,53 @@ impl Payment {
             Payment::BadUnlock => (0xe2, 899_906),
             Payment::Wallet => (0xe3, 899_907),
             Payment::BoundInsertion => (0xe5, 899_909),
+            // At least 100 below the header stub's tip, as the others
+            // (bsv-rs #734).
+            Payment::OtherKey => (0xe6, 899_890),
+            Payment::DerivedP2pk => (0xe8, 899_891),
+            Payment::OpReturn => (0xe9, 899_892),
+            Payment::DerivedP2pkhAndByte => (0xea, 899_893),
+            Payment::EmptyScript => (0xeb, 899_894),
+            Payment::StrayInsertion => (0xec, 899_895),
+            Payment::Insertions => (0xed, 899_896),
         }
     }
 
     /// The lock the payment's one output pays.
     fn pays_to(self, wallet: &PrivateKey) -> Vec<u8> {
-        use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
+        let derived = || derived_key(wallet);
         match self {
-            Payment::Insertion | Payment::BadUnlock | Payment::BoundInsertion => {
-                hex::decode(P2PKH).unwrap()
+            Payment::Insertion
+            | Payment::BadUnlock
+            | Payment::BoundInsertion
+            | Payment::OtherKey
+            | Payment::Insertions => hex::decode(P2PKH).unwrap(),
+            Payment::Wallet | Payment::StrayInsertion => p2pkh(&derived().hash160()),
+            Payment::DerivedP2pk => [&[0x21][..], &derived().to_compressed(), &[0xac][..]].concat(),
+            Payment::OpReturn => vec![0x00, 0x6a],
+            Payment::DerivedP2pkhAndByte => {
+                let mut lock = p2pkh(&derived().hash160());
+                lock.push(0x51);
+                lock
             }
-            // As the payer derives it: the stranger's key, the wallet the
-            // counterparty.
-            Payment::Wallet => p2pkh(
-                &KeyDeriver::new(Some(stranger_key()))
-                    .derive_public_key(
-                        &Protocol::new(SecurityLevel::Counterparty, BRC29_PROTOCOL),
-                        &format!("{PAYMENT_PREFIX} {PAYMENT_SUFFIX}"),
-                        &Counterparty::Other(wallet.public_key()),
-                        false,
-                    )
-                    .unwrap()
-                    .hash160(),
-            ),
+            Payment::EmptyScript => Vec::new(),
         }
     }
+}
+
+/// The wallet's BRC-29 key for the stranger's payment, as the payer
+/// derives it: the stranger's key, the wallet the counterparty,
+/// [`PAYMENT_PREFIX`] and [`PAYMENT_SUFFIX`].
+fn derived_key(wallet: &PrivateKey) -> bsv_sdk::primitives::PublicKey {
+    use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
+    KeyDeriver::new(Some(stranger_key()))
+        .derive_public_key(
+            &Protocol::new(SecurityLevel::Counterparty, BRC29_PROTOCOL),
+            &format!("{PAYMENT_PREFIX} {PAYMENT_SUFFIX}"),
+            &Counterparty::Other(wallet.public_key()),
+            false,
+        )
+        .unwrap()
 }
 
 pub(crate) fn stranger_key() -> PrivateKey {
@@ -97,8 +146,11 @@ pub(crate) async fn stranger_payment(
             input.unlocking_script =
                 Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
         }
-        Payment::Insertion | Payment::Wallet | Payment::BoundInsertion => input
-            .set_unlocking_script_template(Template::unlock(&stranger, SignOutputs::All, false)),
+        _ => input.set_unlocking_script_template(Template::unlock(
+            &stranger,
+            SignOutputs::All,
+            false,
+        )),
     }
     child.add_input(input).unwrap();
     child
