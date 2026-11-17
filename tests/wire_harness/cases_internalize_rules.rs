@@ -7,10 +7,11 @@
 use serde_json::{json, Value};
 
 use super::cases::exact;
+use super::held_world::{held_coin, HELD_COINS};
 use super::recorder::{post, Recorded, Recorder};
 use super::worlds::{
-    funded_lock, held_coin, legacy_default, parent_tx, proven_atomic, stranger_key,
-    stranger_payment, Payment, FUNDED_COINS, HELD_COINS, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
+    funded_lock, legacy_default, parent_tx, proven_atomic, stranger_key, stranger_payment, Payment,
+    FUNDED_COINS, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 

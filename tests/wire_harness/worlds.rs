@@ -146,7 +146,7 @@ pub(crate) fn funded_lock(key: &PrivateKey, suffix: &str) -> Vec<u8> {
 }
 
 /// The wallet's BRC-29 public key for `suffix` under [`FUNDED_PREFIX`].
-fn funded_key(key: &PrivateKey, suffix: &str) -> bsv_sdk::primitives::PublicKey {
+pub(crate) fn funded_key(key: &PrivateKey, suffix: &str) -> bsv_sdk::primitives::PublicKey {
     use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
     KeyDeriver::new(Some(key.clone()))
         .derive_private_key(
@@ -249,75 +249,6 @@ async fn seed_internalize(
     roots
 }
 
-/// The `internalize-held` world's two change rows of the default basket
-/// (toolbox #823's `### Hosts`): (seed of the parent's input, height mined,
-/// satoshis, derivation suffix under [`FUNDED_PREFIX`]). Each is its own
-/// mined transaction, as [`FUNDED_COINS`] are.
-pub(crate) const HELD_COINS: [(u8, u32, u64, &str); 2] = [
-    (0xf1, 899_881, 8_000, "Rg=="),
-    (0xf2, 899_882, 6_000, "Rw=="),
-];
-
-/// A [`HELD_COINS`] transaction: coin 0 pays the P2PKH of its derived key,
-/// coin 1 that key's P2PK, a script that is not the P2PKH of its derived
-/// key.
-pub(crate) fn held_coin(key: &PrivateKey, i: usize) -> bsv_sdk::transaction::Transaction {
-    let (seed, _, satoshis, suffix) = HELD_COINS[i];
-    let lock = if i == 0 {
-        funded_lock(key, suffix)
-    } else {
-        [
-            &[0x21][..],
-            &funded_key(key, suffix).to_compressed(),
-            &[0xac][..],
-        ]
-        .concat()
-    };
-    parent_tx(seed, satoshis, &lock)
-}
-
-/// The `internalize-held` world, the two rows toolbox #823's `### Hosts`
-/// names, each a mined coin written as change of the default basket
-/// (`P2PKH`, change, its derivation) and then changed with an SQL update,
-/// as the `internalize` world's earlier insertions are: [`HELD_COINS`] 0,
-/// change with a derivation prefix and suffix and another `provided_by`
-/// and `purpose` than `storage` and `change`; and [`HELD_COINS`] 1, a
-/// payment admitted before the wallet payment rule (#819), change of the
-/// default basket whose script is not the P2PKH of its derived key.
-/// Kept apart from `internalize`, whose listings it would otherwise move.
-async fn seed_internalize_held(
-    storage: &StorageSqlx,
-    identity: &str,
-    key: &PrivateKey,
-) -> HashMap<u32, String> {
-    let rows = Rows::open(storage, identity).await;
-    let mut roots = HashMap::new();
-    for (i, (_, height, _, suffix)) in HELD_COINS.into_iter().enumerate() {
-        let txid = rows
-            .mined_coin(
-                &held_coin(key, i),
-                height,
-                "a held change row",
-                Some(suffix),
-            )
-            .await;
-        roots.insert(height, txid.clone());
-        let (provided_by, purpose) = if i == 0 {
-            ("you", "receive")
-        } else {
-            ("storage", "receive")
-        };
-        sqlx::query("UPDATE outputs SET provided_by = ?, purpose = ? WHERE txid = ?")
-            .bind(provided_by)
-            .bind(purpose)
-            .bind(&txid)
-            .execute(&rows.pool)
-            .await
-            .unwrap();
-    }
-    roots
-}
-
 /// The review fixture needs a stored caller coin, so the signed action's
 /// spender is visible to the next createAction (toolbox #245/#264).
 async fn seed_puzzle(storage: &StorageSqlx, identity: &str) {
@@ -356,8 +287,8 @@ async fn seed_puzzle(storage: &StorageSqlx, identity: &str) {
 
 /// A seeded world's way into the store: the wallet's user, its default
 /// basket, and the store's writer.
-struct Rows {
-    pool: sqlx::SqlitePool,
+pub(crate) struct Rows {
+    pub(crate) pool: sqlx::SqlitePool,
     user: i64,
     basket: i64,
 }
@@ -380,7 +311,7 @@ struct Coin<'a> {
 }
 
 impl Rows {
-    async fn open(storage: &StorageSqlx, identity: &str) -> Rows {
+    pub(crate) async fn open(storage: &StorageSqlx, identity: &str) -> Rows {
         let user = storage
             .find_or_insert_user(identity)
             .await
@@ -427,7 +358,7 @@ impl Rows {
     /// `parent` mined at `height` as a one-leaf block of its own (its root
     /// its txid), its proof stored, and its output 0 a completed coin of
     /// the wallet's, signed for under `derivation` when given. Its txid.
-    async fn mined_coin(
+    pub(crate) async fn mined_coin(
         &self,
         parent: &bsv_sdk::transaction::Transaction,
         height: u32,
@@ -702,7 +633,9 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
-            "internalize-held" => return seed_internalize_held(storage, &identity, key).await,
+            "internalize-held" => {
+                return super::held_world::seed_internalize_held(storage, &identity, key).await
+            }
             "pin-spend" | "review-race" => {
                 let roots = seed_funded(storage, &identity, key).await;
                 seed_puzzle(storage, &identity).await;
