@@ -18,8 +18,8 @@ fn wallet(dir: &TempDir) -> Command {
     cmd
 }
 
-#[test]
-fn tick_with_chaintracks_off_exits_non_zero_and_says_proofs_are_refused() {
+/// A throwaway wallet made by `init` in a temp dir (no network).
+fn initialized() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let init = wallet(&dir)
         .args(["--db", "wallet.db", "init"])
@@ -30,6 +30,12 @@ fn tick_with_chaintracks_off_exits_non_zero_and_says_proofs_are_refused() {
         "init: {}",
         String::from_utf8_lossy(&init.stderr)
     );
+    dir
+}
+
+#[test]
+fn tick_with_chaintracks_off_exits_non_zero_and_says_proofs_are_refused() {
+    let dir = initialized();
 
     let tick = wallet(&dir)
         .env("CHAINTRACKS_URL", "off")
@@ -63,16 +69,7 @@ fn tick_with_chaintracks_off_exits_non_zero_and_says_proofs_are_refused() {
 /// with WhatsOnChain behind it) is told to set one, and nothing runs.
 #[test]
 fn an_unset_header_source_stops_the_command_and_names_the_setting() {
-    let dir = TempDir::new().expect("temp dir");
-    let init = wallet(&dir)
-        .args(["--db", "wallet.db", "init"])
-        .output()
-        .expect("run init");
-    assert!(
-        init.status.success(),
-        "init: {}",
-        String::from_utf8_lossy(&init.stderr)
-    );
+    let dir = initialized();
 
     for command in ["tick", "compact"] {
         let out = wallet(&dir)
@@ -97,16 +94,7 @@ fn an_unset_header_source_stops_the_command_and_names_the_setting() {
 /// asked nothing). The stable line's 0.18.6, ported.
 #[test]
 fn the_receiving_commands_with_chaintracks_off_refuse_by_name() {
-    let dir = TempDir::new().expect("temp dir");
-    let init = wallet(&dir)
-        .args(["--db", "wallet.db", "init"])
-        .output()
-        .expect("run init");
-    assert!(
-        init.status.success(),
-        "init: {}",
-        String::from_utf8_lossy(&init.stderr)
-    );
+    let dir = initialized();
     let txid = "22".repeat(32);
     let cases: [(&str, Vec<&str>); 5] = [
         ("fund", vec!["fund", "0100beef", "--vout", "0"]),
@@ -145,16 +133,7 @@ fn the_receiving_commands_with_chaintracks_off_refuse_by_name() {
 /// reads that refusal through the binary, and that nothing was sent.
 #[test]
 fn a_send_to_the_wallets_own_address_with_chaintracks_off_is_refused_before_anything_is_built() {
-    let dir = TempDir::new().expect("temp dir");
-    let init = wallet(&dir)
-        .args(["--db", "wallet.db", "init"])
-        .output()
-        .expect("run init");
-    assert!(
-        init.status.success(),
-        "init: {}",
-        String::from_utf8_lossy(&init.stderr)
-    );
+    let dir = initialized();
     let address = wallet(&dir)
         .env("CHAINTRACKS_URL", "off")
         .args(["--db", "wallet.db", "--json", "address"])

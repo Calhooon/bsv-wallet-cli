@@ -37,6 +37,16 @@ impl NoTracker {
     pub fn call_count(&self, method: &str) -> usize {
         self.0.call_count(method)
     }
+
+    /// `Services`' answer to `get_chain_tracker` with no `chaintracks_url`:
+    /// the toolbox's not-configured text, which its doors read as no
+    /// header source.
+    fn not_configured(&self) -> Error {
+        let _ = self;
+        Error::ServiceError(
+            "ChainTracker not configured in Services (no chaintracks_url)".to_string(),
+        )
+    }
 }
 
 impl Default for NoTracker {
@@ -48,9 +58,7 @@ impl Default for NoTracker {
 #[async_trait]
 impl WalletServices for NoTracker {
     async fn get_chain_tracker(&self) -> Result<&dyn ChainTracker> {
-        Err(Error::ServiceError(
-            "ChainTracker not configured in Services (no chaintracks_url)".to_string(),
-        ))
+        Err(self.not_configured())
     }
 
     async fn get_height(&self) -> Result<u32> {

@@ -1588,14 +1588,10 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
             continue;
         }
         if row.on_accept.is_some() {
-            let present = match tracker_present {
-                Some(present) => present,
-                None => {
-                    let present = services.get_chain_tracker().await.is_ok();
-                    tracker_present = Some(present);
-                    present
-                }
-            };
+            if tracker_present.is_none() {
+                tracker_present = Some(services.get_chain_tracker().await.is_ok());
+            }
+            let present = tracker_present == Some(true);
             if !present {
                 report
                     .faults
