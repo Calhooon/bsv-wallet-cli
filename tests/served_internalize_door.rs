@@ -751,6 +751,56 @@ async fn a_reclassified_received_payment_restored_with_its_sender_signs() {
     assert_eq!(services.call_count("post_beef"), 1, "nothing posted");
 }
 
+/// A received payment written by this CLI's own flows (`fund`, `receive`,
+/// `sync`, `split`, `gift-claim` and the tracker host's record of a claim
+/// name the anyone key, `KeyDeriver::anyone_key()`, as the sender, with
+/// `src/brc29.rs`'s default prefix and suffix), reclassified as the others
+/// are: restored with that prefix, that suffix and the anyone key as the
+/// sender identity key, it is change again, counted, holds the anyone key
+/// as its sender, and a spend that selects it signs.
+#[tokio::test]
+async fn a_reclassified_payment_this_cli_wrote_restored_with_the_anyone_key_signs() {
+    // `src/brc29.rs`'s DEFAULT_DERIVATION_PREFIX and DEFAULT_DERIVATION_SUFFIX.
+    const CLI_PREFIX: &str = "SfKxPIJNgdI=";
+    const CLI_SUFFIX: &str = "NaGLC6fMH50=";
+    let who = parties();
+    let anyone = KeyDeriver::anyone_key().1;
+    let derived = KeyDeriver::new(Some(who.root.clone()))
+        .derive_public_key(
+            &Protocol::new(SecurityLevel::Counterparty, "3241645161d8"),
+            &format!("{CLI_PREFIX} {CLI_SUFFIX}"),
+            &Counterparty::Other(anyone.clone()),
+            true,
+        )
+        .unwrap();
+    let lock = p2pkh(&derived.hash160());
+    let (tx, txid, parent) = unproven_beef(&lock);
+    let (wallet, app) = served(&who.root, Some(&parent)).await;
+    let services = storage_services(&wallet, accepting(&txid));
+    let as_the_cli_wrote_it = payment_of(0, CLI_PREFIX, CLI_SUFFIX, &anyone.to_hex());
+    let (status, body) = post(app.clone(), &tx, as_the_cli_wrote_it.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        held(&wallet, &txid, 0).await,
+        (Some(anyone.to_hex()), true, None)
+    );
+    reclassify(&wallet, &txid, 0).await;
+    assert_eq!(balance(&wallet).await, 0);
+    assert_eq!(held(&wallet, &txid, 0).await, (None, true, None));
+
+    let (status, body) = post(app, &tx, as_the_cli_wrote_it).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["accepted"], true, "{body}");
+    assert_eq!(balance(&wallet).await, 1_000);
+    assert_eq!(
+        held(&wallet, &txid, 0).await,
+        (Some(anyone.to_hex()), true, None)
+    );
+    let signed = spend(&wallet).await.expect("signed");
+    assert!(verify_spend(&signed, &txid, 0, 1_000, &lock));
+    assert_eq!(services.call_count("post_beef"), 1, "posted once, stored");
+}
+
 /// A row an earlier release wrote with an empty string as its sender (the
 /// 0.13.3 own-change restore with an empty sender wrote one; reproduced by
 /// SQL as the toolbox's test does): from 0.13.4 a spend that selects it
