@@ -71,11 +71,23 @@ fn newest_source(dir: &Path, newest: &mut SystemTime) {
     }
 }
 
+/// This test and the built binary come from the same build: the folder cargo
+/// put the binary in (the build's profile directory) is an ancestor of this
+/// test's own executable. No depth is counted, so it holds at
+/// `<profile>/deps/<exe>` and at cargo 1.100.0's
+/// `<profile>/build/<package>/<hash>/out/<exe>` alike (#607), and fails for a
+/// binary of another profile or another target directory. Paths compare by
+/// component, so `debug` is never an ancestor of `debug-x/...`.
+fn same_build(built_dir: &Path, exe: &Path) -> bool {
+    exe.parent().is_some_and(|dir| dir.starts_with(built_dir))
+}
+
 /// The binary the suite drives is the one cargo built for this tree: the
-/// `BSV_WALLET_BIN` of the environment, if any, is that binary; it lies in the
-/// profile directory of this test's own executable (the current build's
-/// target directory); and it is no older than the newest source it is built
-/// from, so a binary built before a mutation was written is refused.
+/// `BSV_WALLET_BIN` of the environment, if any, is that binary; its folder,
+/// the build's profile directory, holds this test's own executable (the
+/// current build's target directory, `same_build`); and it is no older than
+/// the newest source it is built from, so a binary built before a mutation
+/// was written is refused.
 fn this_build() -> PathBuf {
     let built = PathBuf::from(env!("CARGO_BIN_EXE_bsv-wallet"));
     let built = built
@@ -94,13 +106,15 @@ fn this_build() -> PathBuf {
     }
     let exe = std::env::current_exe().expect("the test's own path");
     let exe = exe.canonicalize().unwrap_or(exe);
-    // <target>/<profile>/deps/e2e_hermetic-<hash>
-    let profile = exe.parent().and_then(Path::parent);
-    if built.parent() != profile {
+    let profile = built
+        .parent()
+        .unwrap_or_else(|| unjudged(&format!("{} has no folder", built.display())));
+    if !same_build(profile, &exe) {
         unjudged(&format!(
-            "{} is not in this build's profile directory ({})",
+            "{} is not this build's: its folder {} does not hold this test's executable {}",
             built.display(),
-            profile.map_or("none".into(), |p| p.display().to_string())
+            profile.display(),
+            exe.display()
         ));
     }
     let mut newest = SystemTime::UNIX_EPOCH;
@@ -244,4 +258,38 @@ fn hermetic_suite_judges_this_build() {
     let (status, out) = run_suite(&bin, &mcp, &node);
     assert!(status.success(), "the hermetic suite failed: {status}");
     judge(&out, scenarios);
+}
+
+/// `same_build` on both of cargo's layouts and on the builds it must refuse.
+#[test]
+fn same_build_reads_no_path_depth() {
+    let t = Path::new("/w/target");
+    let debug = t.join("debug");
+    // The layout before cargo 1.100.0.
+    assert!(same_build(&debug, &t.join("debug/deps/e2e_hermetic-0a1b")));
+    // Cargo 1.100.0's.
+    assert!(same_build(
+        &debug,
+        &t.join("debug/build/bsv-wallet-cli/0a1b/out/e2e_hermetic-0a1b")
+    ));
+    // Another profile.
+    assert!(!same_build(
+        &t.join("release"),
+        &t.join("debug/deps/e2e_hermetic-0a1b")
+    ));
+    assert!(!same_build(
+        &t.join("release"),
+        &t.join("debug/build/bsv-wallet-cli/0a1b/out/e2e_hermetic-0a1b")
+    ));
+    // Another target directory.
+    assert!(!same_build(
+        Path::new("/other/target/debug"),
+        &t.join("debug/deps/e2e_hermetic-0a1b")
+    ));
+    // A sibling whose name merely starts with the profile's.
+    assert!(!same_build(
+        &debug,
+        &t.join("debug-x/deps/e2e_hermetic-0a1b")
+    ));
+    assert!(!same_build(&debug, &t.join("debugx/e2e_hermetic-0a1b")));
 }
