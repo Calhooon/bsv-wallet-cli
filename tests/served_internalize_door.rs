@@ -79,18 +79,22 @@ async fn with_no_chain_tracker_every_internalize_is_refused() {
     assert_eq!(posts.call_count("post_beef"), 1, "stored and posted");
 }
 
-/// A wallet payment merged over an output the store holds as spent leaves
-/// it spent (`spendable` and `spent_by` as the row holds them). The
-/// control: the unspent row named again stays spendable. The opening
-/// internalize posts the unproven subject once; no merge posts again.
+/// A wallet payment merged over a custom row the store holds as spent (the
+/// payment's row reclassified to `tokens` as an earlier release's basket
+/// insertion left it, then marked spent by SQL, as the toolbox's
+/// `a_payment_merge_over_a_spent_row_leaves_it_spent` does): the merge
+/// rewrites the row to managed change of `default` (`P2PKH`, `change = 1`)
+/// and leaves `spendable` and `spent_by` as the row holds them, out of the
+/// balance. A row already change of `default` is skipped by the merge
+/// before that statement, so the test starts from the custom row. The
+/// control: the unspent custom row merged the same way becomes spendable
+/// change and the balance counts it. The opening internalize posts the
+/// unproven subject once; no merge posts again.
 #[tokio::test]
 async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     let paid = Paid::new();
-    let (wallet, app, posts) = paid.stored().await;
+    let (wallet, app, posts) = paid.reclassified().await;
     assert_eq!(posts.call_count("post_beef"), 1, "stored and posted");
-    admitted(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(spent(&wallet, &paid.txid).await, (true, None));
-
     write(
         &wallet,
         "UPDATE outputs SET spendable = 0, spent_by = transaction_id WHERE txid = ? AND vout = 0",
@@ -99,10 +103,32 @@ async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     .await;
     let held = spent(&wallet, &paid.txid).await;
     assert!(!held.0 && held.1.is_some());
+    assert_eq!(row(&wallet, &paid.txid, 0).await.1, "custom");
+
     admitted(&app, &paid.tx, paid.payment()).await;
+    merged_to_change(&wallet, &paid.txid).await;
     assert_eq!(spent(&wallet, &paid.txid).await, held, "left spent");
-    assert_eq!(balance(&wallet).await, 0);
+    assert_eq!(balance(&wallet).await, 0, "out of the balance");
     assert_eq!(posts.call_count("post_beef"), 1, "no merge posts");
+
+    let paid = Paid::new();
+    let (wallet, app, posts) = paid.reclassified().await;
+    assert_eq!(spent(&wallet, &paid.txid).await, (true, None));
+    admitted(&app, &paid.tx, paid.payment()).await;
+    merged_to_change(&wallet, &paid.txid).await;
+    assert_eq!(spent(&wallet, &paid.txid).await, (true, None), "spendable");
+    assert_eq!(balance(&wallet).await, 4_500, "counted");
+    assert_eq!(posts.call_count("post_beef"), 1, "no merge posts");
+}
+
+/// The row `txid.0` as the payment merge writes it: managed change of
+/// `default`, `P2PKH`, `change = 1`.
+async fn merged_to_change(wallet: &WalletState, txid: &str) {
+    let (basket, kind, change, ..) = row(wallet, txid, 0).await;
+    assert_eq!(
+        (basket.as_deref(), kind.as_str(), change),
+        (Some("default"), "P2PKH", 1)
+    );
 }
 
 /// The storage door's rows on the stable line (a payment with an empty
