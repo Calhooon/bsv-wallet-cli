@@ -11,6 +11,8 @@ use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 pub(crate) use super::world_names::{known_world, WORLDS};
 use crate::wire_support::{header_stub, serve_local, services, Req, CLOSED, J, ROOT_KEY};
 
+pub(crate) use super::payments::{stranger_key, stranger_payment, Payment};
+
 // ---------------------------------------------------------------------------
 // The worlds.
 // ---------------------------------------------------------------------------
@@ -46,7 +48,8 @@ pub(crate) const FUNDED_COINS: [(u8, u32, u64, &str); 4] = [
 ];
 /// The stranger's key: fixed, so each payment's signature (RFC 6979) and
 /// txid are the same on every run.
-const STRANGER_KEY: &str = "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e";
+pub(crate) const STRANGER_KEY: &str =
+    "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e";
 /// The derivation of the stranger's BRC-29 payment to the wallet (the
 /// `wallet payment` protocol's remittance).
 pub(crate) const PAYMENT_PREFIX: &str = "eDQwMg==";
@@ -70,7 +73,7 @@ pub(crate) const FEE_1_IN_1_OUT: u64 = 20;
 /// toolbox signer's (`3241645161d8`, counterparty self for a coin with no
 /// sender key).
 const FUNDED_PREFIX: &str = "d2lyZQ==";
-const BRC29_PROTOCOL: &str = "3241645161d8";
+pub(crate) const BRC29_PROTOCOL: &str = "3241645161d8";
 
 pub(crate) struct World {
     pub(super) router: Router,
@@ -359,137 +362,9 @@ impl Rows {
     }
 }
 
-/// The stranger's payments `internalizeAction` is offered in `funded`.
-/// Each is a mined parent paying the stranger's P2PKH and a child spending
-/// it.
-#[derive(Clone, Copy)]
-pub(crate) enum Payment {
-    /// A valid spend paying 9,000 to [`P2PKH`] (a basket insertion).
-    Insertion,
-    /// The same, its input's unlocking script `OP_0`: a spend whose script
-    /// fails (`OP_EQUALVERIFY`).
-    BadUnlock,
-    /// A valid spend paying 9,000 to the wallet's BRC-29 key for the
-    /// stranger, [`PAYMENT_PREFIX`] and [`PAYMENT_SUFFIX`].
-    Wallet,
-    /// A second valid spend paying 9,000 to [`P2PKH`], for the insertion at
-    /// the custom-instructions bound (fixtures 127, 128). Its own: the
-    /// toolbox at 0.14.0-beta.8 refuses a basket insertion naming an output
-    /// already in another application basket, as the reference does, and
-    /// [`Payment::Insertion`]'s output is in `wire` by then.
-    BoundInsertion,
-}
-
-impl Payment {
-    const ALL: [Payment; 4] = [
-        Payment::Insertion,
-        Payment::BadUnlock,
-        Payment::Wallet,
-        Payment::BoundInsertion,
-    ];
-
-    /// The seed of the parent's input and the height it is mined at.
-    fn parent_at(self) -> (u8, u32) {
-        match self {
-            Payment::Insertion => (0xe1, 899_905),
-            Payment::BadUnlock => (0xe2, 899_906),
-            Payment::Wallet => (0xe3, 899_907),
-            Payment::BoundInsertion => (0xe5, 899_909),
-        }
-    }
-
-    /// The lock the payment's one output pays.
-    fn pays_to(self, wallet: &PrivateKey) -> Vec<u8> {
-        use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
-        match self {
-            Payment::Insertion | Payment::BadUnlock | Payment::BoundInsertion => {
-                hex::decode(P2PKH).unwrap()
-            }
-            // As the payer derives it: the stranger's key, the wallet the
-            // counterparty.
-            Payment::Wallet => p2pkh(
-                &KeyDeriver::new(Some(stranger_key()))
-                    .derive_public_key(
-                        &Protocol::new(SecurityLevel::Counterparty, BRC29_PROTOCOL),
-                        &format!("{PAYMENT_PREFIX} {PAYMENT_SUFFIX}"),
-                        &Counterparty::Other(wallet.public_key()),
-                        false,
-                    )
-                    .unwrap()
-                    .hash160(),
-            ),
-        }
-    }
-}
-
-pub(crate) fn stranger_key() -> PrivateKey {
-    PrivateKey::from_hex(STRANGER_KEY).unwrap()
-}
-
 /// The P2PKH lock of `hash`.
-fn p2pkh(hash: &[u8]) -> Vec<u8> {
+pub(crate) fn p2pkh(hash: &[u8]) -> Vec<u8> {
     [&[0x76, 0xa9, 0x14][..], hash, &[0x88, 0xac][..]].concat()
-}
-
-/// A [`Payment`]'s mined parent and child `AtomicBEEF`, checked before serving.
-pub(crate) async fn stranger_payment(
-    payment: Payment,
-    wallet: &PrivateKey,
-) -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
-    use bsv_sdk::script::templates::P2PKH as Template;
-    use bsv_sdk::script::SignOutputs;
-    let stranger = stranger_key();
-    let (seed, at) = payment.parent_at();
-    let mut parent = parent_tx(seed, 10_000, &p2pkh(&stranger.public_key().hash160()));
-    parent.merkle_path = Some(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
-        &parent.id(),
-        at,
-    ));
-    let mut child = bsv_sdk::transaction::Transaction::new();
-    let mut input =
-        bsv_sdk::transaction::TransactionInput::with_source_transaction(parent.clone(), 0);
-    match payment {
-        Payment::BadUnlock => {
-            input.unlocking_script =
-                Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
-        }
-        Payment::Insertion | Payment::Wallet | Payment::BoundInsertion => input
-            .set_unlocking_script_template(Template::unlock(&stranger, SignOutputs::All, false)),
-    }
-    child.add_input(input).unwrap();
-    child
-        .add_output(bsv_sdk::transaction::TransactionOutput::new(
-            9_000,
-            bsv_sdk::script::LockingScript::from_binary(&payment.pays_to(wallet)).unwrap(),
-        ))
-        .unwrap();
-    child.sign().await.unwrap();
-    // Parity-mode replay checks the planted good/bad payment specimens.
-    // A node-word check needs spend-era flags plus coin-era UTXO bits per input;
-    // see docs/ARCHITECTURE.md for the combined-word rule.
-    // The tracker's tip is 100 blocks above the parent's proof: bsv-rs
-    // 0.9.0-beta.8 refuses an offset-0 proof under 100 blocks deep at
-    // `Transaction::verify` (#734: "set a mock's height 100 above its
-    // proofs"); the parent's path is a one-leaf coinbase-offset path.
-    let verified = child
-        .verify(
-            &bsv_sdk::transaction::AlwaysValidChainTracker::new(at + 100),
-            None,
-            None,
-        )
-        .await
-        .unwrap_or(false);
-    assert_eq!(
-        verified,
-        !matches!(payment, Payment::BadUnlock),
-        "the stranger's spend verifies exactly when it is meant to"
-    );
-    let mut beef = bsv_sdk::transaction::Beef::new();
-    beef.merge_bump(parent.merkle_path.clone().unwrap());
-    beef.merge_transaction(parent.clone());
-    beef.merge_transaction(child.clone());
-    let atomic = beef.to_binary_atomic(&child.id()).unwrap();
-    (parent, atomic)
 }
 
 /// The puzzle's mined parent ([`PUZZLE`]) and the BEEF carrying it with its
