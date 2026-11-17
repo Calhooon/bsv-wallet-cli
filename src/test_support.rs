@@ -15,6 +15,10 @@ use axum::response::{IntoResponse, Response};
 
 mod chain_tracker;
 pub use chain_tracker::TestChainTracker;
+mod no_tracker;
+// The binary's tests read it; the library's do not.
+#[allow(unused_imports)]
+pub use no_tracker::NoTracker;
 
 type Routes = Arc<HashMap<String, (u16, String, Vec<(String, String)>)>>;
 type Hits = Arc<Mutex<Vec<String>>>;

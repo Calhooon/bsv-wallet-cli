@@ -1,11 +1,19 @@
 use anyhow::Result;
 use bsv_sdk::wallet::{InternalizeActionArgs, InternalizeOutput, WalletInterface, WalletPayment};
+use bsv_wallet_toolbox::WalletServices;
 
 use crate::atomic_beef;
 use crate::brc29;
 use crate::context::WalletContext;
 
-pub async fn run(ctx: &WalletContext, beef_hex: &str, vout: u32) -> Result<()> {
+pub async fn run<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+    beef_hex: &str,
+    vout: u32,
+) -> Result<()> {
+    // With no chain tracker every internalizeAction is refused (toolbox
+    // 0.13.4): say so by name before anything is read.
+    ctx.require_chain_tracker_to_receive("fund").await?;
     let beef_bytes = hex::decode(beef_hex)?;
     let accepted = internalize_beef(ctx, &beef_bytes, vout).await?;
 
@@ -20,8 +28,8 @@ pub async fn run(ctx: &WalletContext, beef_hex: &str, vout: u32) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn internalize_beef(
-    ctx: &WalletContext,
+pub(crate) async fn internalize_beef<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     beef_bytes: &[u8],
     vout: u32,
 ) -> Result<bool> {

@@ -79,7 +79,7 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 
 **Environment variables consumed:**
 - `ROOT_KEY` (required) — hex-encoded private key
-- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero
+- `CHAINTRACKS_URL` (required) — header service for proof validation; unset or empty is an error, there is no default (`services_env::chaintracks_url_for`, P0-1c: no explorer in the proof path); `off` = no header service: every proof is refused (nothing marked proven) and `tick` / `reproof --execute` exit non-zero; and no payment is accepted (from toolbox 0.13.4 every `internalizeAction` is refused), so `fund`, `receive`, `sync`, `split` and `gift-claim` refuse by name before any network act (`WalletContext::require_chain_tracker_to_receive`)
 - `BREAK_GLASS_EXPLORER_HEADERS` (break-glass, off by default) — `1`/`true`/`yes` lets the toolbox ask WhatsOnChain, then Bitails, for headers when the header service gives no answer, each call logged at warn
 - `WOC_API_KEY`, `BITAILS_API_KEY` (optional) — explorer keys passed to `ServicesOptions` (`WOC_API_KEY` also to the CLI's own WhatsOnChain rung in `explorers.rs`)
 - `BANANABLOCKS_BASE` — BananaBlocks API base: unset = the chain's default, empty = off (`services_env::bananablocks_base_for`, the toolbox's `ServicesOptions::bananablocks_base`)
