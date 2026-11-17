@@ -411,73 +411,36 @@ impl ProofFetcher for Courier {
 // The stored row
 // ---------------------------------------------------------------------------
 
+/// One heard hint as the row keeps it: the hint's source, the crate's own
+/// stored form of its status flattened beside it (`HintStatus`'s serde
+/// form, tagged `status` by [`HintStatus::label`], its payload as
+/// `height`, `reason`, `competitors` or `courier`), and when it was heard.
+/// No hand map: a kind a later tracker minor adds is stored and read by the
+/// crate's words with no line of this host naming it, and a status the
+/// crate's reader refuses (a word it does not know, a kind whose payload is
+/// missing) is refused here, never read as `unknown` (bsv-tracker
+/// 0.9.0-beta.9, `### Hosts`; #612). The text is the one the hand map of
+/// 0.19.0-beta.8 wrote, key for key, so the rows already stored read as
+/// they are and write back identical (`stored_hint_tests`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredHint {
     source: String,
-    status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    height: Option<Height>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    competitors: Vec<TxId>,
-    /// The courier of a `mempool_present` hint (tracker 0.5.0).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    courier: Option<String>,
+    #[serde(flatten)]
+    status: HintStatus,
     observed: Timestamp,
 }
 
 impl StoredHint {
     fn of(hint: &Hint) -> Self {
-        let mut courier = None;
-        let (status, height, reason, competitors) = match &hint.status {
-            HintStatus::Accepted => ("accepted", None, None, vec![]),
-            HintStatus::Seen => ("seen", None, None, vec![]),
-            HintStatus::Mined { height } => ("mined", Some(*height), None, vec![]),
-            HintStatus::StaleBlock => ("stale_block", None, None, vec![]),
-            HintStatus::Rejected { reason } => ("rejected", None, Some(reason.clone()), vec![]),
-            HintStatus::DoubleSpend { competitors } => {
-                ("double_spend", None, None, competitors.clone())
-            }
-            HintStatus::OrphanMempool => ("orphan_mempool", None, None, vec![]),
-            HintStatus::Unknown => ("unknown", None, None, vec![]),
-            HintStatus::MempoolPresent { source } => {
-                courier = Some(source.clone());
-                ("mempool_present", None, None, vec![])
-            }
-        };
         Self {
             source: hint.source.clone(),
-            status: status.to_string(),
-            height,
-            reason,
-            competitors,
-            courier,
+            status: hint.status.clone(),
             observed: hint.observed,
         }
     }
 
     fn hint(&self) -> Hint {
-        let status = match self.status.as_str() {
-            "accepted" => HintStatus::Accepted,
-            "seen" => HintStatus::Seen,
-            "mined" => self
-                .height
-                .map_or(HintStatus::Unknown, |height| HintStatus::Mined { height }),
-            "stale_block" => HintStatus::StaleBlock,
-            "rejected" => HintStatus::Rejected {
-                reason: self.reason.clone().unwrap_or_default(),
-            },
-            "double_spend" => HintStatus::DoubleSpend {
-                competitors: self.competitors.clone(),
-            },
-            "orphan_mempool" => HintStatus::OrphanMempool,
-            "mempool_present" => self.courier.clone().map_or(HintStatus::Unknown, |source| {
-                HintStatus::MempoolPresent { source }
-            }),
-            _ => HintStatus::Unknown,
-        };
-        Hint::new(self.source.clone(), status, self.observed)
+        Hint::new(self.source.clone(), self.status.clone(), self.observed)
     }
 }
 
@@ -3708,7 +3671,10 @@ pub(crate) mod tests {
     }
 
     /// A courier's mempool presence (tracker 0.5.0) survives the stored row,
-    /// its courier with it; a presence row without one reads as `unknown`.
+    /// its courier with it. A presence row without one, and a `mined` row
+    /// without its height, are refused by the crate's reader; until
+    /// bsv-tracker 0.9.0-beta.9 the host's hand map read both as `unknown`
+    /// (#612; neither text was ever written by this host).
     #[test]
     fn a_mempool_presence_hint_round_trips_through_the_stored_row() {
         let hint = Hint::new(
@@ -3720,14 +3686,22 @@ pub(crate) mod tests {
         );
         let stored = StoredHint::of(&hint);
         let json = serde_json::to_string(&stored).unwrap();
+        assert_eq!(
+            json,
+            r#"{"source":"arcade","status":"mempool_present","courier":"courier-a","observed":1700000000}"#
+        );
         let back: StoredHint = serde_json::from_str(&json).unwrap();
         assert_eq!(back.hint(), hint);
 
-        let bare = StoredHint {
-            courier: None,
-            ..stored
-        };
-        assert_eq!(bare.hint().status, HintStatus::Unknown);
+        for bare in [
+            r#"{"source":"arcade","status":"mempool_present","observed":1700000000}"#,
+            r#"{"source":"arcade","status":"mined","observed":1700000000}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<StoredHint>(bare).is_err(),
+                "{bare} must be refused, never read as unknown"
+            );
+        }
     }
 
     /// Ruling (2) of 2026-10-20 19:4xZ (bsv-stack-lean
