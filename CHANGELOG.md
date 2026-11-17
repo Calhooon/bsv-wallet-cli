@@ -5,6 +5,65 @@ Releases before 0.7.0 carry their notes in the release commit's message
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-11-17
+
+A security patch: `bsv-rs` `=0.8.3` to `=0.8.11` (#594). `bsv-wallet-toolbox-rs` `=0.13.1` and `bsv-tracker` `=0.8.0` are unchanged (both ask `^0.8.0`), and `Cargo.lock` moves the `bsv-rs` row alone. Upgrade by installing 0.18.3: `cargo install bsv-wallet-cli --version 0.18.3 --locked`. Every `bsv-rs` before 0.8.11 is affected by at least one of the advisories below; `cargo install --locked` of 0.18.2 always builds 0.8.3. No CLI code moves.
+
+The advisories this pin closes, from `bsv-rs`'s Security tab (https://github.com/Calhooon/bsv-rs/security/advisories), grouped by the `bsv-rs` version that patched each:
+
+- 0.8.5:
+  - GHSA-j8hr-pjhm-6h27 (high): transaction readers accepted trailing bytes, and BEEF verdict doors answered valid for a raw entry that is not a transaction.
+- 0.8.6:
+  - GHSA-9c8r-76f3-m426 (medium): `Signature::from_der` read malformed encodings of a valid signature (bytes after it, a wrong sequence length, an unneeded zero) as that signature, so one signature verified under many byte forms.
+  - GHSA-84xq-3662-pvx5 (medium): `Transaction::from_json` held an input txid that is not 64 hex digits as given and wrote that input as spending the txid of 32 zero bytes.
+- 0.8.7:
+  - GHSA-cwxv-4866-5gq2 (critical): a Shamir backup share at x = 0 was accepted at recovery, so a supplied share could substitute the recovered private key.
+- 0.8.8:
+  - GHSA-gg5p-wgff-v3hr (medium): `Transaction::to_beef` and `to_beef_v1` write a BEEF that ends with a proven ancestor or its descendant, not the subject, when the subject's closure rests on a missing input.
+- 0.8.9:
+  - GHSA-mj2m-jxgv-r446 (high): `KVStoreInterpreter::verify_signature_legacy` answers true for every token and key, so a token no controller signed passes it.
+- 0.8.10:
+  - GHSA-4mcm-g5xq-jv3r (low): a GlobalKVStore token signed with the constant key ID kvstore-token passed this crate's signature checks, and on the stable line every door that judges a token, though its signature does not bind the key.
+  - GHSA-89w7-x33x-6m9c (high): `KVStoreInterpreter::interpret` and `interpret_script` return an entry for a KVStore token whose signature is not checked, so a peer's unsigned token reads as a controller's value.
+  - GHSA-w6jf-m9c7-6599 (high): RegistryClient's resolve functions return an unsigned definition as its named registry operator's.
+  - GHSA-crr5-gh8p-q2h2 (low): `LivePolicy::refresh` panics on a fee-policy response whose miningFee.bytes is 0, and the kilobyte fee model overflows on an out-of-range rate.
+  - GHSA-x3m6-jp5x-236c (medium): `decode_bip276` and the identity key abbreviation panic on a string with a multi-byte character at a cut.
+  - GHSA-vmgj-w2jr-c52x (medium): the P2PKH/P2PK/P2SH/multisig template classifiers accept non-minimal push encodings, so a non-standard locking script is reported as a standard template paying a given address/key.
+  - GHSA-qhj8-j8mj-9cgc (low): WhatsOnChainBroadcaster and ArcBroadcaster report the broadcast service's response text as the transaction's txid without checking it against the submitted transaction's own id.
+  - GHSA-fr33-7jw7-mwwh (medium): the default script mode does not run a pre-Genesis P2SH coin's redeem script, so a spend the node refuses is verified as valid.
+  - GHSA-h4m7-c6p8-725m (high): the default script mode judges a coin created before Genesis by the post-Genesis rules alone, so a spend those rules accept and the coin's own era refuses is verified as valid.
+- 0.8.11:
+  - GHSA-gvmh-f5gf-5vjj (high): `Beef::add_input_proof` holds a full copy of a shared parent per spending input, so an untrusted overlay answer within the lookup resolver's size bound can force multi-gigabyte heap.
+  - GHSA-cgp9-rj5h-jxw6 (medium): `HttpRequest::from_payload` and `HttpResponse::from_payload` read a message from the front of a longer payload and dropped the trailing bytes.
+  - GHSA-67vc-6c8g-7x48 (low): `sighash::parse_transaction` read a transaction from the front of a longer buffer and dropped the rest.
+- GHSA-82g9-h6jw-r99f (high), no patched version: `Transaction::from_ef` and `from_hex_ef` build each input's source outputs by the spent output's index with no bound over the transaction, so a small Extended Format transaction forces an outsized allocation. The advisory asks an application that parses Extended Format bytes from a party it does not trust to read them through `from_ef_bounded` or `from_hex_ef_bounded` (0.8.10) with a figure its memory allows; "an application that parses only Extended Format transactions it produced is not affected". This CLI is not affected: no path in it parses Extended Format bytes from anyone (no call of `from_ef`, `from_hex_ef` or their bounded forms in this crate, in `bsv-wallet-toolbox-rs` 0.13.1 or in `bsv-tracker` 0.8.0, and none in `bsv-rs` 0.8.11 outside the EF doors themselves and their tests and fuzz targets).
+- What now refuses, at a door of this CLI: `POST /verifySignature` (and the MCP `verify_signature` tool, which calls it) reaches `ProtoWallet::verify_signature` with no DER check ahead of it, so a signature with bytes after its DER sequence, a sequence length that is not its contents' length or an unneeded leading zero, which 0.8.3 verified as the signature, is now refused as `invalid signature: ...` (HTTP 400 `ERROR` by the handler's classification) where it answered `{"valid": true}` (GHSA-9c8r-76f3-m426, 0.8.6). `POST /discoverByIdentityKey` and `POST /discoverByAttributes` parse each overlay host's answer with `Transaction::from_beef` in the toolbox's lookup; an answer whose shared-parent links would re-materialize more than 16 MiB is now refused there and skipped as an invalid output (GHSA-gvmh-f5gf-5vjj, 0.8.11; bsv-rs measures the default's honest reach at 702 P2PKH outputs of one parent swept by one child). No other input 0.8.4 to 0.8.11 refuse can be met at a command or an endpoint of this CLI: the courier's and the explorers' transaction bytes are hashed to the txid before they are merged or parsed, a BEEF read from the wire is framed by the strict reader, and the CLI calls none of the KVStore, registry, Shamir, BIP-276, fee-policy, template-classifier, broadcaster, script-verification or auth-transport doors.
+
+Test-harness changes (tests only, no shipped code):
+
+- **E2E harness and CI:** Keep Playwright's Chromium in the harness's own
+  `tests/e2e/.browsers` folder (or `PLAYWRIGHT_BROWSERS_PATH`), install it with
+  `node tests/e2e/install-browsers.js` without collecting other browser builds,
+  and check the pinned headless executable before starting a wallet or asking
+  the funder. CI caches that folder and uses the same install step; missing
+  Chromium fails by name instead of failing after funding or skipping checks.
+
+- **E2E harness and CI:** Playwright's Chromium folder resolves per host: a
+  non-empty `PLAYWRIGHT_BROWSERS_PATH`, else the standing checkout's
+  `.cca/pw-browsers` (the parent of `git rev-parse --git-common-dir`, so every
+  linked worktree on a host shares its one folder), else, without git, the
+  worktree's own `tests/e2e/.browsers`. The harness's check line and the
+  install step name the folder and why; CI caches `.cca/pw-browsers`.
+  `node tests/e2e/install-browsers.js` hangs in the archive extraction under
+  Node 26.9.0 (Playwright 1.58.2's bundled extract); run it with Node 22 or 24.
+
+- **E2E harness and CI:** The browser install step refuses a Node outside
+  the proven `20 || 22 || 24` range before checking the local binary or
+  downloading anything. Its error names the Node, range and Playwright
+  version: Playwright 1.58.2's zip extractor never finishes under Node 26
+  (#366). Select a proven Node with `nvm use 22`. The run's Chromium check
+  line also names its Node; running under Node 26 remains supported.
+
 ## [0.18.2] - 2026-10-26
 
 0.18.1 was never published; its two pin moves ship here, including the SDK's typed transport fault and the toolbox's spender API. This stable patch takes the corrected pins below and moves the spend probe onto that API. `bsv-tracker` stays `=0.8.0`.
