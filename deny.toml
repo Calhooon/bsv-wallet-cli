@@ -11,8 +11,17 @@ yanked = "deny"
 unmaintained = "all"
 # unsound: fail across the graph, including dependencies below bsv-rs.
 unsound = "all"
-# ignore: no fleet-wide security exemptions or severity cutoff.
-ignore = []
+# ignore: no fleet-wide security exemptions or severity cutoff. One entry, this
+# repository's alone, ahead of the stack's template on the owner's word of
+# 2026-11-17 (bsv-wallet-cli #596; the keeper copies it or rules otherwise):
+# RUSTSEC-2026-0459 is the C SQLite bundled by libsqlite3-sys under 0.39, and no
+# published sqlx-sqlite takes 0.39 (0.8.6 asks ^0.30.1; 0.9.0 asks >=0.30.1,
+# <0.38.0). The advisory's condition is a database file and its -wal written by
+# a less trusted party; this wallet opens only the database files its operator
+# names. The entry leaves when sqlx takes libsqlite3-sys 0.39 or later.
+ignore = [
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys 0.30.1 bundles SQLite under 3.54.0; no published sqlx-sqlite takes libsqlite3-sys 0.39; the wallet opens only database files its operator names; the entry leaves when sqlx takes the fix" },
+]
 
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
