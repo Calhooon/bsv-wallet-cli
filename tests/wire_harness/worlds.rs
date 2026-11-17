@@ -175,32 +175,11 @@ async fn seed_funded(
         .unwrap();
     let mut roots = HashMap::new();
     for (seed, height, satoshis, suffix) in FUNDED_COINS {
-        let lock = funded_lock(key, suffix);
-        let parent = parent_tx(seed, satoshis, &lock);
-        let txid = parent.id();
-        roots.insert(height, txid.clone());
-        let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, height);
-        let proven = rows
-            .proven(
-                &txid,
-                height,
-                &txid,
-                one_leaf.to_binary().unwrap(),
-                parent.to_binary(),
-            )
+        let parent = parent_tx(seed, satoshis, &funded_lock(key, suffix));
+        let txid = rows
+            .mined_coin(&parent, height, "a funded coin", Some(suffix))
             .await;
-        rows.coin(Coin {
-            status: "completed",
-            txid: &txid,
-            made: false,
-            proven: Some(proven),
-            satoshis,
-            description: "a funded coin",
-            raw: parent.to_binary(),
-            lock,
-            derivation: Some(suffix),
-        })
-        .await;
+        roots.insert(height, txid);
     }
     for payment in Payment::ALL {
         let (parent, _) = stranger_payment(payment, key).await;
@@ -221,14 +200,20 @@ pub(crate) const LEGACY_DEFAULT: [(u8, u32); 2] = [(0xee, 899_897), (0xef, 899_8
 pub(crate) fn legacy_default(i: usize) -> (bsv_sdk::transaction::Transaction, Vec<u8>) {
     let (seed, height) = LEGACY_DEFAULT[i];
     let parent = parent_tx(seed, 7_000, &hex::decode(P2PKH).unwrap());
+    let atomic = proven_atomic(&parent, height);
+    (parent, atomic)
+}
+
+/// The `AtomicBEEF` of `tx` alone, mined at `height` as a one-leaf block of
+/// its own (so its root is its txid).
+pub(crate) fn proven_atomic(tx: &bsv_sdk::transaction::Transaction, height: u32) -> Vec<u8> {
     let mut beef = bsv_sdk::transaction::Beef::new();
     beef.merge_bump(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
-        &parent.id(),
+        &tx.id(),
         height,
     ));
-    beef.merge_transaction(parent.clone());
-    let atomic = beef.to_binary_atomic(&parent.id()).unwrap();
-    (parent, atomic)
+    beef.merge_transaction(tx.clone());
+    beef.to_binary_atomic(&tx.id()).unwrap()
 }
 
 /// The `internalize` world: `funded`'s coins, and the [`LEGACY_DEFAULT`]
@@ -245,30 +230,10 @@ async fn seed_internalize(
     let rows = Rows::open(storage, identity).await;
     for (i, (_, height)) in LEGACY_DEFAULT.into_iter().enumerate() {
         let (parent, _) = legacy_default(i);
-        let txid = parent.id();
-        roots.insert(height, txid.clone());
-        let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, height);
-        let proven = rows
-            .proven(
-                &txid,
-                height,
-                &txid,
-                one_leaf.to_binary().unwrap(),
-                parent.to_binary(),
-            )
+        let txid = rows
+            .mined_coin(&parent, height, "an earlier insertion", None)
             .await;
-        rows.coin(Coin {
-            status: "completed",
-            txid: &txid,
-            made: false,
-            proven: Some(proven),
-            satoshis: 7_000,
-            description: "an earlier insertion",
-            raw: parent.to_binary(),
-            lock: hex::decode(P2PKH).unwrap(),
-            derivation: None,
-        })
-        .await;
+        roots.insert(height, txid.clone());
         sqlx::query(
             "UPDATE outputs SET type = 'custom', change = 0, purpose = 'receive' WHERE txid = ?",
         )
@@ -384,6 +349,44 @@ impl Rows {
         .await
         .unwrap()
         .last_insert_rowid()
+    }
+
+    /// `parent` mined at `height` as a one-leaf block of its own (its root
+    /// its txid), its proof stored, and its output 0 a completed coin of
+    /// the wallet's, signed for under `derivation` when given. Its txid.
+    async fn mined_coin(
+        &self,
+        parent: &bsv_sdk::transaction::Transaction,
+        height: u32,
+        description: &str,
+        derivation: Option<&str>,
+    ) -> String {
+        let txid = parent.id();
+        let one_leaf = bsv_sdk::transaction::MerklePath::from_coinbase_txid(&txid, height);
+        let raw = parent.to_binary();
+        let proven = self
+            .proven(
+                &txid,
+                height,
+                &txid,
+                one_leaf.to_binary().unwrap(),
+                raw.clone(),
+            )
+            .await;
+        let output = &parent.outputs()[0];
+        self.coin(Coin {
+            status: "completed",
+            txid: &txid,
+            made: false,
+            proven: Some(proven),
+            satoshis: output.satoshis.unwrap(),
+            description,
+            raw,
+            lock: output.locking_script.to_binary(),
+            derivation,
+        })
+        .await;
+        txid
     }
 
     /// A completed transaction and its one output, the coin.
