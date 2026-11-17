@@ -361,22 +361,21 @@ async fn the_storage_door_rows_answer_the_wallet_doors_texts_here() {
 }
 
 /// A wallet payment merged over an output the store holds as spent leaves
-/// it spent (`spendable` and `spent_by` as the row holds them). The
-/// control: the unspent row named again stays spendable. The opening
+/// it spent (`spendable` and `spent_by` as the row holds them) and writes
+/// the rest of the merge: the default basket, `change = 1`, type `P2PKH`;
+/// the balance does not move. The row starts as one the merge rewrites (the
+/// toolbox's `internalize_spent_merge_tests.rs` starts from a custom row): a
+/// row already change of the default basket is skipped before the merge's
+/// statement, so the spent row here is the payment's output reclassified
+/// into "tokens" by `reclassify`, then spent by SQL. The control: the same
+/// custom row unspent becomes spendable change, counted. The opening
 /// internalize posts the unproven subject once; no merge posts again.
 #[tokio::test]
 async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     let who = parties();
     let (tx, txid, parent) = unproven_beef(&p2pkh(&who.derived.hash160()));
-    let (wallet, app) = served(&who.root, Some(&parent)).await;
-    let services = storage_services(&wallet, accepting(&txid));
-    let (status, body) = post(app.clone(), &tx, payment(&who.sender)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(services.call_count("post_beef"), 1, "stored and posted");
-    let (status, body) = post(app.clone(), &tx, payment(&who.sender)).await;
-    assert_eq!(status, StatusCode::OK, "the control: {body}");
-    assert_eq!(spent(&wallet, &txid).await, (true, None));
 
+    let (wallet, app, services) = custom_row(&who, &tx, &txid, &parent).await;
     // Spent by a transaction of the store (its own, for the test).
     sqlx::query(
         "UPDATE outputs SET spendable = 0, spent_by = transaction_id WHERE txid = ? AND vout = 0",
@@ -387,11 +386,65 @@ async fn a_payment_merged_over_a_spent_output_leaves_it_spent() {
     .unwrap();
     let row = spent(&wallet, &txid).await;
     assert!(!row.0 && row.1.is_some());
+    assert_eq!(
+        classed(&wallet, &txid).await,
+        ("tokens".into(), false, "custom".into())
+    );
     let (status, body) = post(app, &tx, payment(&who.sender)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(spent(&wallet, &txid).await, row, "left spent");
-    assert_eq!(balance(&wallet).await, 0);
+    assert_eq!(
+        classed(&wallet, &txid).await,
+        ("default".into(), true, "P2PKH".into()),
+        "the merge rewrote the row"
+    );
+    assert_eq!(balance(&wallet).await, 0, "the balance does not move");
     assert_eq!(services.call_count("post_beef"), 1, "no merge posts");
+
+    // The control: the same custom row, unspent, becomes spendable change.
+    let (wallet, app, services) = custom_row(&who, &tx, &txid, &parent).await;
+    assert_eq!(spent(&wallet, &txid).await, (true, None));
+    let (status, body) = post(app, &tx, payment(&who.sender)).await;
+    assert_eq!(status, StatusCode::OK, "the control: {body}");
+    assert_eq!(spent(&wallet, &txid).await, (true, None));
+    assert_eq!(
+        classed(&wallet, &txid).await,
+        ("default".into(), true, "P2PKH".into())
+    );
+    assert_eq!(balance(&wallet).await, 1_000, "counted");
+    assert_eq!(services.call_count("post_beef"), 1, "no merge posts");
+}
+
+/// A served wallet holding output 0 of `tx` (a wallet payment to it,
+/// internalized and posted once) as a custom row in "tokens", by
+/// `reclassify`: out of the balance.
+async fn custom_row(
+    who: &Parties,
+    tx: &[u8],
+    txid: &str,
+    parent: &str,
+) -> (WalletState, axum::Router, Arc<MockWalletServices>) {
+    let (wallet, app) = served(&who.root, Some(parent)).await;
+    let services = storage_services(&wallet, accepting(txid));
+    let (status, body) = post(app.clone(), tx, payment(&who.sender)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(services.call_count("post_beef"), 1, "stored and posted");
+    assert_eq!(balance(&wallet).await, 1_000);
+    reclassify(&wallet, txid, 0).await;
+    assert_eq!(balance(&wallet).await, 0, "a custom row is not counted");
+    (wallet, app, services)
+}
+
+/// Output 0's basket name, change flag and type.
+async fn classed(wallet: &WalletState, txid: &str) -> (String, bool, String) {
+    sqlx::query_as(
+        "SELECT b.name, o.change, o.type FROM outputs o \
+         JOIN output_baskets b ON b.basket_id = o.basket_id WHERE o.txid = ? AND o.vout = 0",
+    )
+    .bind(txid)
+    .fetch_one(wallet.storage().writer())
+    .await
+    .unwrap()
 }
 
 async fn spent(wallet: &WalletState, txid: &str) -> (bool, Option<i64>) {
