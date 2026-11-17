@@ -685,6 +685,23 @@ async fn stale_at_900() -> (StorageSqlx, String) {
     (storage, txid)
 }
 
+/// The stale T's stored bytes made one whole transaction, for the tests
+/// whose announce builds T's BEEF from them. `insert_tx` stores the four
+/// bytes `01000000`, which bsv-rs 0.9.0-beta.8 refuses to merge: "a raw
+/// entry that is not exactly one transaction" is refused at
+/// `merge_raw_tx` (bsv-rs #798, #817), so the announce of those bytes is a
+/// fault, never a post. The txid stays the fixture's; the mock's broadcast
+/// reads no id from the bytes.
+async fn with_whole_bytes(storage: &StorageSqlx, txid: &str) {
+    let raw = bsv_sdk::transaction::Transaction::new().to_binary();
+    sqlx::query("UPDATE transactions SET raw_tx = ? WHERE txid = ?")
+        .bind(raw)
+        .bind(txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+}
+
 /// Step 3, ruling (5): the reorg arrives before the header service answers
 /// the new branch (it still gives A1 at 900). The crate's recheck has no
 /// header of the new branch to read, so T stands suspect with
@@ -805,6 +822,7 @@ async fn step_4_i_a_broadcaster_that_knows_the_stale_transaction_is_not_told_aga
 #[tokio::test]
 async fn step_4_ii_a_stale_transaction_no_broadcaster_knows_is_announced_once() {
     let (storage, txid) = stale_at_900().await;
+    with_whole_bytes(&storage, &txid).await;
     let tier_before = crate::tracker_host::stored_tier(&storage, &txid)
         .await
         .unwrap();
@@ -945,6 +963,7 @@ async fn in_the_daemon_a_stale_episode_is_followed_up_once_by_the_monitor_not_tw
 #[tokio::test]
 async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
     let (storage, txid) = stale_at_900().await;
+    with_whole_bytes(&storage, &txid).await;
     let x = "d9".repeat(32);
     let services = MockWalletServices::builder()
         .get_merkle_path_response(proof_answer(None))
