@@ -9,12 +9,15 @@ use serde_json::{json, Value};
 use super::cases::exact;
 use super::recorder::{post, Recorded, Recorder};
 use super::worlds::{
-    funded_lock, legacy_default, parent_tx, proven_atomic, stranger_key, stranger_payment, Payment,
-    FUNDED_COINS, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
+    funded_lock, held_coin, legacy_default, parent_tx, proven_atomic, stranger_key,
+    stranger_payment, Payment, FUNDED_COINS, HELD_COINS, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 
 const WORLD: &str = "internalize";
+/// Toolbox #823's `### Hosts` rows: what a host holds from before, kept
+/// apart so the `internalize` world's listings do not move.
+const HELD: &str = "internalize-held";
 
 pub(crate) async fn record(r: &mut Recorder) {
     r.case(
@@ -37,6 +40,8 @@ pub(crate) async fn record(r: &mut Recorder) {
     record_baskets(r).await;
     record_managed_change(r).await;
     record_sweeps(r).await;
+    record_own_basket_spelling(r).await;
+    record_held(r).await;
 }
 
 /// A wallet payment output of `payment`'s transaction, the stranger's
@@ -55,9 +60,20 @@ fn insertion(basket: &str) -> Value {
 
 /// `POST /internalizeAction` of `tx` with one `output`.
 async fn internalize(r: &mut Recorder, name: &str, tx: &[u8], output: Value) -> Recorded {
+    internalize_in(r, WORLD, name, tx, output).await
+}
+
+/// [`internalize`] in `world`.
+async fn internalize_in(
+    r: &mut Recorder,
+    world: &str,
+    name: &str,
+    tx: &[u8],
+    output: Value,
+) -> Recorded {
     r.case(
         name,
-        WORLD,
+        world,
         post(
             "/internalizeAction",
             json!({"tx": tx, "outputs": [output], "description": "wire internalize rules"}),
@@ -148,6 +164,72 @@ async fn record_baskets(r: &mut Recorder) {
         )
         .await;
     }
+}
+
+/// Toolbox #823's `### Hosts`: the basket is matched by its name as given,
+/// so the output's own basket (`tokens`, 234) named in another spelling is
+/// refused as another basket; the output stays in `tokens` and `Tokens` is
+/// not created. Recorded after the sweeps, so no file before it moves.
+async fn record_own_basket_spelling(r: &mut Recorder) {
+    internalize(
+        r,
+        "internalizeAction.insertion.sameBasketOtherSpelling",
+        &beef(Payment::Insertions).await,
+        insertion("Tokens"),
+    )
+    .await;
+    for (name, basket) in [("tokensKept", "tokens"), ("otherSpelling", "Tokens")] {
+        r.case(
+            &format!("listOutputs.internalize.{name}"),
+            WORLD,
+            post("/listOutputs", json!({"basket": basket})),
+        )
+        .await;
+    }
+}
+
+/// `listOutputs` of `default` in the `internalize-held` world, each output
+/// with its locking script.
+async fn list_held(r: &mut Recorder, name: &str) {
+    r.case(
+        &format!("listOutputs.internalizeHeld.{name}"),
+        HELD,
+        post(
+            "/listOutputs",
+            json!({"basket": "default", "include": "locking scripts"}),
+        ),
+    )
+    .await;
+}
+
+/// Toolbox #823's `### Hosts`, in the `internalize-held` world: a change
+/// row with a derivation prefix and suffix is wallet-managed change
+/// whatever its `provided_by` and `purpose`, refused as a basket
+/// insertion; and a payment admitted before the wallet payment rule (#819),
+/// change of the default basket whose script is not the P2PKH of its
+/// derived key, found by `listOutputs` on `default` with the locking
+/// scripts and taken out by `relinquishOutput`.
+async fn record_held(r: &mut Recorder) {
+    list_held(r, "seeded").await;
+    let key = bsv_sdk::primitives::PrivateKey::from_hex(ROOT_KEY).unwrap();
+    internalize_in(
+        r,
+        HELD,
+        "internalizeAction.insertion.changeOtherPurpose",
+        &proven_atomic(&held_coin(&key, 0), HELD_COINS[0].1),
+        insertion("tokens"),
+    )
+    .await;
+    r.case(
+        "relinquishOutput.internalizeHeld.notDerivedP2pkh",
+        HELD,
+        post(
+            "/relinquishOutput",
+            json!({"basket": "default", "output": format!("{}.0", held_coin(&key, 1).id())}),
+        ),
+    )
+    .await;
+    list_held(r, "relinquished").await;
 }
 
 /// Toolbox #819's accepting side, then #823 over wallet-managed change: a
@@ -276,13 +358,20 @@ pub(crate) fn notes() -> Vec<(String, String)> {
         ("238-internalizeAction.payment.derived.json", "toolbox #819: a wallet payment output locked by the P2PKH of the derived key is admitted, 200, and stored as change of the default basket (246)."),
         ("239-internalizeAction.insertion.overReceivedPayment.json", "toolbox #823: a basket insertion over a received payment (238), wallet-managed change, is refused: InvalidParameter, 400 VALIDATION_ERROR; the payment stays in default (246)."),
         ("240-internalizeAction.insertion.overOwnChange.json", "toolbox #823: as 239, over a coin of the wallet's own change (P2PKH, change, provided_by storage, purpose change, its derivation); the coin stays in default (246)."),
-        ("241-internalizeAction.payment.strayInsertionDefault.json", "toolbox #823: a wallet payment carrying an insertion remittance that names default is refused by the argument validator, as 154 refuses the converse: InvalidParameter, 400 VALIDATION_ERROR; nothing stored (246)."),
+        ("241-internalizeAction.payment.strayInsertionDefault.json", "a wallet payment carrying an insertion remittance (here naming default) is refused by the argument validator's remittance exclusivity before toolbox #823 is reached, as 154 refuses the converse: InvalidParameter, 400 VALIDATION_ERROR; nothing stored (246)."),
         ("242-createAction.internalize.noBasket.json", "toolbox #823: an action paying its coin less the fee to P2PKH, so its output is in no basket (no change output is drawn)."),
         ("243-internalizeAction.insertion.sweepNoBasket.json", "toolbox #823: an output in no basket (242's) is swept into a named basket, 200 (247)."),
         ("244-internalizeAction.insertion.sweepDefaultNotChange.json", "toolbox #823: an output in the default basket and not change (222's earlier insertion) is swept into a named basket, 200 (247)."),
         ("245-relinquishOutput.internalize.legacyDefault.json", "toolbox #823: the other earlier insertion into default leaves it by relinquishOutput, 200 (246)."),
         ("246-listOutputs.internalize.default.json", "toolbox #819, #823: default after the rows: the three unspent funded coins and the received payment (238); the two earlier insertions gone (244, 245)."),
         ("247-listOutputs.internalize.swept.json", "toolbox #823: the two outputs swept into the named basket (243, 244)."),
+        ("248-internalizeAction.insertion.sameBasketOtherSpelling.json", "toolbox #823: the output's own basket (tokens, 234) named in another spelling, Tokens: the basket is matched by its name as given, so it is another basket: InvalidParameter, 400 VALIDATION_ERROR; the output stays in tokens (249) and Tokens is not created (250)."),
+        ("249-listOutputs.internalize.tokensKept.json", "toolbox #823: after 248, the output stays in tokens."),
+        ("250-listOutputs.internalize.otherSpelling.json", "toolbox #823: after 248, basket Tokens holds nothing."),
+        ("251-listOutputs.internalizeHeld.seeded.json", "toolbox #823: the internalize-held world, kept apart so the internalize world's listings do not move: two change rows of default with their derivation (written by SQL, as 222's rows are), listed with their locking scripts: one with another provided_by and purpose than storage and change (252), one whose script is not the P2PKH of its derived key (253). New; recorded last, so no file before it moves."),
+        ("252-internalizeAction.insertion.changeOtherPurpose.json", "toolbox #823: a change row (P2PKH, change, its derivation) whatever its provided_by and purpose is wallet-managed change, refused as a basket insertion: InvalidParameter, 400 VALIDATION_ERROR; the coin stays in default (254)."),
+        ("253-relinquishOutput.internalizeHeld.notDerivedP2pkh.json", "toolbox #819, #823: what a host holds from before, a payment admitted before the wallet payment rule, change of default whose script is not the P2PKH of its derived key (251), taken out by relinquishOutput, 200 (254)."),
+        ("254-listOutputs.internalizeHeld.relinquished.json", "toolbox #819, #823: default after 252 and 253: the change row 252 refused stays; the row 253 relinquished is gone."),
     ]
     .into_iter()
     .map(|(f, n)| (f.to_string(), n.to_string()))

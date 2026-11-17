@@ -142,16 +142,20 @@ pub(crate) fn parent_tx(seed: u8, satoshis: u64, lock: &[u8]) -> bsv_sdk::transa
 /// The P2PKH lock of the wallet's BRC-29 key for `suffix` under
 /// [`FUNDED_PREFIX`], as the toolbox's signer derives it.
 pub(crate) fn funded_lock(key: &PrivateKey, suffix: &str) -> Vec<u8> {
+    p2pkh(&funded_key(key, suffix).hash160())
+}
+
+/// The wallet's BRC-29 public key for `suffix` under [`FUNDED_PREFIX`].
+fn funded_key(key: &PrivateKey, suffix: &str) -> bsv_sdk::primitives::PublicKey {
     use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
-    let deriver = KeyDeriver::new(Some(key.clone()));
-    let signing = deriver
+    KeyDeriver::new(Some(key.clone()))
         .derive_private_key(
             &Protocol::new(SecurityLevel::Counterparty, BRC29_PROTOCOL),
             &format!("{FUNDED_PREFIX} {suffix}"),
             &Counterparty::Self_,
         )
-        .unwrap();
-    p2pkh(&signing.public_key().hash160())
+        .unwrap()
+        .public_key()
 }
 
 /// The `funded` world's coins ([`FUNDED_COINS`]): each a mined coin the
@@ -241,6 +245,65 @@ async fn seed_internalize(
         .execute(&rows.pool)
         .await
         .unwrap();
+    }
+    roots
+}
+
+/// The `internalize-held` world's two change rows of the default basket
+/// (toolbox #823's `### Hosts`): (seed of the parent's input, height mined,
+/// satoshis, derivation suffix under [`FUNDED_PREFIX`]). Each is its own
+/// mined transaction, as [`FUNDED_COINS`] are.
+pub(crate) const HELD_COINS: [(u8, u32, u64, &str); 2] = [
+    (0xf1, 899_881, 8_000, "Rg=="),
+    (0xf2, 899_882, 6_000, "Rw=="),
+];
+
+/// A [`HELD_COINS`] transaction: coin 0 pays the P2PKH of its derived key,
+/// coin 1 that key's P2PK, a script that is not the P2PKH of its derived
+/// key.
+pub(crate) fn held_coin(key: &PrivateKey, i: usize) -> bsv_sdk::transaction::Transaction {
+    let (seed, _, satoshis, suffix) = HELD_COINS[i];
+    let lock = if i == 0 {
+        funded_lock(key, suffix)
+    } else {
+        [&[0x21][..], &funded_key(key, suffix).to_compressed(), &[0xac][..]].concat()
+    };
+    parent_tx(seed, satoshis, &lock)
+}
+
+/// The `internalize-held` world, the two rows toolbox #823's `### Hosts`
+/// names, each a mined coin written as change of the default basket
+/// (`P2PKH`, change, its derivation) and then changed with an SQL update,
+/// as the `internalize` world's earlier insertions are: [`HELD_COINS`] 0,
+/// change with a derivation prefix and suffix and another `provided_by`
+/// and `purpose` than `storage` and `change`; and [`HELD_COINS`] 1, a
+/// payment admitted before the wallet payment rule (#819), change of the
+/// default basket whose script is not the P2PKH of its derived key.
+/// Kept apart from `internalize`, whose listings it would otherwise move.
+async fn seed_internalize_held(
+    storage: &StorageSqlx,
+    identity: &str,
+    key: &PrivateKey,
+) -> HashMap<u32, String> {
+    let rows = Rows::open(storage, identity).await;
+    let mut roots = HashMap::new();
+    for (i, (_, height, _, suffix)) in HELD_COINS.into_iter().enumerate() {
+        let txid = rows
+            .mined_coin(&held_coin(key, i), height, "a held change row", Some(suffix))
+            .await;
+        roots.insert(height, txid.clone());
+        let (provided_by, purpose) = if i == 0 {
+            ("you", "receive")
+        } else {
+            ("storage", "receive")
+        };
+        sqlx::query("UPDATE outputs SET provided_by = ?, purpose = ? WHERE txid = ?")
+            .bind(provided_by)
+            .bind(purpose)
+            .bind(&txid)
+            .execute(&rows.pool)
+            .await
+            .unwrap();
     }
     roots
 }
@@ -629,6 +692,7 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
+            "internalize-held" => return seed_internalize_held(storage, &identity, key).await,
             "pin-spend" | "review-race" => {
                 let roots = seed_funded(storage, &identity, key).await;
                 seed_puzzle(storage, &identity).await;
@@ -688,7 +752,10 @@ impl World {
         } else {
             stub
         };
-        let arc = if matches!(name, "funded" | "pin-spend" | "spending" | "internalize") {
+        let arc = if matches!(
+            name,
+            "funded" | "pin-spend" | "spending" | "internalize" | "internalize-held"
+        ) {
             arc_stub().await
         } else {
             CLOSED.to_string()
