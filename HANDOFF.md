@@ -3607,3 +3607,115 @@ pause left: night 5's re-dispatch, #564's read lane after the pin, night 6,
 #590 and the bucket #591. (4) #596's entry leaves when `sqlx` moves.
 (5) The certificate re-issue before 0.19.0 (unchanged). The funder daemon is
 up on 3320 since the gate (its basket 190,786; the refill rule unchanged).
+
+## 2026-11-17, the day: 0.18.4 (the toolbox's internalizeAction fix) landed, gated and published, bsv-tracker's beta line taken and its 0.9.0-beta.8 cut, the chrono notice ruled, the advisories check split from the pull request, and beta's Test under rustc 1.100.0 (#600), states as of 14:45Z
+
+**0.18.4, landed, gated and published.** PR 598 landed on main as `06967d5e`
+at 14:17Z: `bsv-wallet-toolbox-rs` `=0.13.1` to `=0.13.2` (its package's vcs
+sha equal to its tag's, `c7fc2539`), `bsv-rs` `=0.8.11` and `bsv-tracker`
+`=0.8.0` unchanged. The toolbox's 0.13.2 fixes `Wallet::internalize_action`'s
+payment check (its changelog's two Fixed entries); every door of this CLI
+goes through it (the handler, the MCP tool, `fund`, `receive`, the gift
+commands, `split`, the tracker host), and `tests/served_internalize_payment.rs`
+reads each of the toolbox's Hosts answers through the served handler, nothing
+stored on a refusal, with a control for a subject past bsv-rs's link budget
+that does pay the derived key. The one code change: three text arms in the
+handler's `classify`, so the two unreadable-subject refusals keep the code
+words 0.18.3 served (`INVALID_BEEF`, `VALIDATION_ERROR`) and the new BRC-29
+refusal is `VALIDATION_ERROR`. The lock also moves `rustls` to 0.23.46 and
+`rustls-webpki` to 0.103.16: eight RustSec ids behind the optional `tls`
+feature, which `deny` had never read (it reads default features, and no CI
+job builds that feature); RUSTSEC-2025-0134 (`rustls-pemfile`, an unmaintained
+notice) remains with `axum-server` 0.7 and leaves with 0.8 or later. 554
+tests; the feature built, linted and tested with `--features tls` by the
+lane. Three cold reads (the package, the security read, the template and the
+`tls` lock), each a fix on the release note or a test and none on the pin,
+all folded. The mainnet gate once on `06967d5e`: 23 of 23, net cost 2,170
+sats (the funder 190,786 before, 188,616 after; `gate-20261117T142150Z.log`).
+Tag `v0.18.4`; release run 44102342150 green; crates.io `0.18.4` at
+2026-11-17T14:26:18Z; the GitHub release at 14:31:45Z. The changelog's
+0.18.4 section carries the remedy for a store that ran 0.18.3 or earlier and
+how to find such an output with `listOutputs`.
+
+**The deny template, twice ruled.** The stack's template took the entry for
+RUSTSEC-2026-0459 at 03:41Z (this repository had written its own ahead of it
+on the owner's word; 0.18.4 re-stamps to the template's bytes). Its condition
+is a standing rule here: the entry holds only while no code of this
+repository opens a database file it did not create; a change that adds a
+restore or an import of a database file takes the entry out before it lands.
+At 10:14Z RustSec gained RUSTSEC-2026-0543 (chrono, an unmaintained notice:
+no vulnerability, no patched version), which turned main's required `deny`
+red again and held 0.18.4. The owner ruled a second entry (13:4xZ, through
+the keeper): the template at the stack's 3630c0ec, sha256 `fddd5bb6…a637e6`,
+`unmaintained = "all"` standing; its exit is the locks without chrono (the
+toolbox's sqlx feature and both crates' own uses to `time`; `rmcp`, which the
+MCP server builds on, requires chrono outright, so that part is upstream's).
+#596 stays open for both entries.
+
+**The advisories check is split from the pull request (the owner's ruling of
+13:4xZ, PR 601 on main as `bddb7dcb`).** A pull request's `deny` reads bans,
+licenses and sources, the functions of its tree; `.github/workflows/advisories.yml`
+(the stack's template, byte for byte) reads the advisories once a day for
+main and beta and keeps one issue per line titled `advisories: <line>`; a
+tag's run still reads all four checks through release.yml's call of ci.yml,
+so nothing is released with an untriaged advisory. Twice on this day a new
+RustSec row, no change of ours, had turned every pull request red, the
+second time holding a security fix. PR 601's own `deny` read
+`bans ok, licenses ok, sources ok`; the one dispatch of the daily workflow
+(run 44104674898) printed `clean: no issue open` for main and opened #602,
+`advisories: beta`, with beta's seventeen ids. Not yet seen: the schedule
+event (06:23Z daily), the rewrite and the close of an issue, the four-check
+path on a tag under the new step. Beta's copy of the split is PR 599.
+
+**bsv-tracker's beta line is this captain's (the owner's "yes" in session,
+13:4xZ, after the keeper's relay).** Its main is not: Dependabot moves it.
+The captain works in a clone of its own on the box, never the shared
+checkout. `bsv-tracker` 0.9.0-beta.8 is on crates.io (2026-11-17T13:43:02Z;
+Calhooon/bsv-tracker#43 on its beta as `3adda346`, six required checks, tag
+`v0.9.0-beta.8`): the pin to `bsv-rs` `=0.9.0-beta.8` with no source line
+changed. Its cold read and its re-read each found an answer that moves with
+the pin through bsv-rs #817's merkle walk, both now in its changelog and
+pinned in its tests: a path pairing a hash that is not hex is refused at
+`Proof::new` (it was built and failed at the header check, with
+`Reask::ProofFailed`), and a hex sibling of odd length is paired with a
+leading `0` where it was dropped, so `Proof::root` answers another root. No
+word moves. For this crate's pin: every site that builds a tracker `Proof`
+from a provider's path is read for what an `InvalidProof` at the constructor
+does there. The tracker's design row is bsv-tracker#44.
+
+**Beta.** The pin (#565) waits on the toolbox's `0.14.0-beta.8` alone; the
+launcher is armed on the index (36 hours from 03:4xZ; re-arm it if it ends).
+The pin PR carries #596 for beta: the lock moves, the template's bytes at
+3630c0ec, the fragment. Beta's `Test` job fails under stable rustc 1.100.0
+(2026-11-09): #600, a diagnostic step that reads `target/debug/deps`, a
+folder the new cargo layout does not make; main has no such step. Its fix
+rides PR 599 with the split, and until PR 599 lands no pull request into
+beta is green.
+
+**The day's lessons.**
+- A pin that needs no code change can still move an answer: read the pinned
+  library's entries for every call the crate makes, not its breaking list
+  alone (the tracker's two answers; 0.18.4's two code words).
+- A required check that reads an outside clock is not a function of the
+  pull request: the split is the cure, and the tag is the gate.
+- `deny` reads default features: an optional feature's dependencies were
+  never read, built or tested. The `tls` feature needs its CI job and
+  `--all-features` in the advisories run.
+- A new stable toolchain reaches a line only when its CI next runs: beta had
+  not run since the pause, and the pin would have met #600 at its hour.
+- A daemon started by another captain is restarted by that captain: its
+  binary is staged beside it and the swap is asked for (the keeper's seat on
+  3396; the funder's own restart needs `CHAINTRACKS_URL` in its environment).
+- A brief that names a version for an exit is read against the index before
+  it is written (`axum-server` 0.8, not 0.9, drops `rustls-pemfile`).
+
+**Open, in order.** (1) PR 599 on beta (the split and #600), then the pin
+when the toolbox's prerelease arrives, the release PR 0.19.0-beta.8, the gate
+once, the tag, and the comment on Calhooon/bsv-rs #101. (2) The next stable
+patch: bsv-rs 0.8.12 and any toolbox stable its captain names on #386.
+(3) Rows to file: a command that finds default-basket outputs whose script is
+not the P2PKH of their stored derivation; the `tls` feature in CI with
+`axum-server` 0.8 or later; the move from chrono to `time` on the 0.19.0
+line. (4) The resume steps the pause left (night 5's re-dispatch, #564's read
+lane, night 6, #590, #591), after the pin. The funder runs the published
+0.18.4 (basket 188,616).
