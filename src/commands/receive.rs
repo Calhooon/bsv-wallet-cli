@@ -157,14 +157,17 @@ async fn bananablocks_courier<V: WalletServices>(
             ))
         }
     };
-    let path = MerklePath::from_hex(&path)
-        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the proof does not parse: {e}"))?;
-    let mut beef = Beef::new();
-    let bump = beef.merge_bump(path);
-    beef.merge_raw_tx(raw, Some(bump))
-        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the transaction does not merge: {e}"))?;
-    beef.to_binary()
-        .map_err(|e| format!("{PROVIDER_BANANABLOCKS}: the BEEF does not write: {e}"))
+    MerklePath::from_hex(&path)
+        .map_err(|e| ("the proof does not parse", e))
+        .and_then(|path| {
+            let mut beef = Beef::new();
+            let bump = beef.merge_bump(path);
+            beef.merge_raw_tx(raw, Some(bump))
+                .map(drop)
+                .and_then(|()| beef.to_binary())
+                .map_err(|e| ("the bytes and their proof do not write as a BEEF", e))
+        })
+        .map_err(|(what, e)| format!("{PROVIDER_BANANABLOCKS}: {what}: {e}"))
 }
 
 /// The second courier: the toolbox's `get_beef`, which carries the bytes
