@@ -139,8 +139,8 @@ jobs:
 
   # The paved road's deny job, from bsv-stack-lean template/ci.yml: deny.toml is
   # the template byte for byte (its sha256 stamped in template/stack.toml), then
-  # cargo-deny 0.20.2 from a temporary root checks advisories, bans, licenses and
-  # sources against the committed lock.
+  # cargo-deny 0.20.2 from a temporary root checks bans, licenses and sources
+  # against the committed lock, and advisories too on a tag (the last step).
   deny:
     name: deny
     runs-on: ubuntu-latest
