@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use super::cases::exact;
 use super::recorder::{post, Recorded, Recorder};
 use super::worlds::{
-    funded_lock, legacy_default, parent_tx, stranger_key, stranger_payment, Payment, FUNDED_COINS,
-    P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
+    funded_lock, legacy_default, parent_tx, proven_atomic, stranger_key, stranger_payment, Payment,
+    FUNDED_COINS, P2PKH, PAYMENT_PREFIX, PAYMENT_SUFFIX,
 };
 use crate::wire_support::{BOUND, ROOT_KEY};
 
@@ -193,14 +193,10 @@ async fn record_managed_change(r: &mut Recorder) {
 fn own_change(i: usize) -> Vec<u8> {
     let key = bsv_sdk::primitives::PrivateKey::from_hex(ROOT_KEY).unwrap();
     let (seed, height, satoshis, suffix) = FUNDED_COINS[i];
-    let parent = parent_tx(seed, satoshis, &funded_lock(&key, suffix));
-    let mut beef = bsv_sdk::transaction::Beef::new();
-    beef.merge_bump(bsv_sdk::transaction::MerklePath::from_coinbase_txid(
-        &parent.id(),
+    proven_atomic(
+        &parent_tx(seed, satoshis, &funded_lock(&key, suffix)),
         height,
-    ));
-    beef.merge_transaction(parent.clone());
-    beef.to_binary_atomic(&parent.id()).unwrap()
+    )
 }
 
 /// Toolbox #823: an output in no basket (an output of the wallet's own
