@@ -18,7 +18,7 @@
     }
   },
   "response": {
-    "status": 409,
+    "status": 400,
     "headers": {
       "access-control-allow-credentials": "true",
       "access-control-allow-origin": "http://wire.test",
@@ -27,8 +27,8 @@
       "vary": "origin, access-control-request-method, access-control-request-headers"
     },
     "json": {
-      "code": "CONFLICT",
-      "message": "Unspendable coin: 6666666666666666666666666666666666666666666666666666666666666666.0: its stored ancestry is incomplete, ancestor(s) not stored: [6666666666666666666666666666666666666666666666666666666666666666]; createAction fetches none, and the wallet's other coins do not cover the action"
+      "code": "ERROR",
+      "message": "BEEF error: ReaderUint8Array read exceeds available data"
     }
   }
 }
