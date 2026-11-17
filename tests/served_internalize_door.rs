@@ -101,12 +101,13 @@ async fn balance(wallet: &WalletState) -> u64 {
 }
 
 /// The AtomicBEEF of a transaction whose subject is NOT proven: one output
-/// locked by `script`, spending a txid-only parent proven by a BUMP at
-/// `HEIGHT` (the toolbox's `tests/common/mod.rs` `beef_paying`, which its
-/// `internalize_no_outputs_tests.rs` and `internalize_sender_spend_tests.rs`
-/// use). The door posts such a subject when it stores it, so a control's
-/// success posts once and a refusal's zero means something: a proven
-/// subject's success posts nothing either. Its txid and the parent's.
+/// locked by `script`, spending a parent carried whole beside the BUMP
+/// proving it at `HEIGHT`. The door posts such a subject when it stores it,
+/// so a control's success posts once and a refusal's zero means something:
+/// a proven subject's success posts nothing either. Its txid and the
+/// parent's. From bsv-wallet-toolbox-rs 0.13.5 the parent is whole: "A
+/// BEEF that carries every ancestor whole is admitted as before", and one
+/// carried by txid alone is refused.
 fn unproven_beef(script: &[u8]) -> (Vec<u8>, String, String) {
     let mut parent = Transaction::new();
     parent.version = 1;
@@ -119,8 +120,8 @@ fn unproven_beef(script: &[u8]) -> (Vec<u8>, String, String) {
     child.outputs.push(output(1_000, script));
     let txid = child.id();
     let mut beef = Beef::new();
-    beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, HEIGHT));
-    beef.merge_txid_only(parent_txid.clone());
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, HEIGHT));
+    beef.merge_raw_tx(parent.to_binary(), Some(bump));
     beef.merge_raw_tx(child.to_binary(), None);
     (beef.to_binary_atomic(&txid).unwrap(), txid, parent_txid)
 }
