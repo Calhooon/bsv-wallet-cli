@@ -48,14 +48,14 @@ The targets are the epic's table (#106, "The scoreboard"); a target joins this t
 <!-- scoreboard:begin -->
 | row | value | measured | record |
 |---|---:|---|---|
-| ratchet `clippy_pedantic` | 823 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `unwrap_expect_outside_tests` | 4 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `files_over_800_lines` | 10 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `tests_files_over_800_lines` | 3 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `functions_over_60_lines` | 84 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `duplicated_tokens` | 32956 |  | `docs/ratchets.json` at 9d02321 |
-| ratchet `missing_docs` | 126 |  | `docs/ratchets.json` at 9d02321 |
+| ratchet `clippy_pedantic` | 823 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `unwrap_expect_outside_tests` | 4 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `files_over_800_lines` | 10 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `tests_files_over_800_lines` | 3 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `functions_over_60_lines` | 82 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `cognitive_complexity_over_25` | 19 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `duplicated_tokens` | 31644 |  | `docs/ratchets.json` at 3328456 |
+| ratchet `missing_docs` | 126 |  | `docs/ratchets.json` at 3328456 |
 | wire fixtures | 266 |  | `tests/wire/MANIFEST.json` |
 | consumers' fixtures | 48 over 7 consumers |  | `tests/wire_consumers/` |
 | architecture rules | 8 |  | `tests/arch_*.rs` |
