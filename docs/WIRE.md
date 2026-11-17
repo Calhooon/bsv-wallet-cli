@@ -422,6 +422,37 @@ faults a header service at a discover call (toolbox #521) or sends a 429
 from one (toolbox #148), and no fixture reaches a script near the door's
 100,000,000-byte stack memory figure (toolbox #395).
 
+## The beta.8 pin (#565)
+
+bsv-rs 0.9.0-beta.8, bsv-wallet-toolbox-rs 0.14.0-beta.8 and bsv-tracker
+0.9.0-beta.8 move together. The corpus keeps its 221 rows; four rows move,
+each in its own recording commit with its cause, and the packages move no
+other byte. Row 043 (`internalizeAction.invalidBeef`) keeps 400
+`VALIDATION_ERROR` in the toolbox's beta.8 words: a wallet payment's subject
+is read before storage reads the BEEF, `Cannot read the BEEF's subject
+transaction to check payment outputs: BEEF error: invalid BEEF at byte 0:
+BadVersion { word: 4022250974 }` (the toolbox's Hosts section). Row 086
+(`createAction.unspendableCoin`) moves from 409 `CONFLICT` to 400 `ERROR`,
+`BEEF error: ReaderUint8Array read exceeds available data`: the world's coin
+stores four bytes as its creator's transaction, bsv-rs's `merge_raw_tx` now
+refuses a raw entry that is not exactly one transaction (bsv-rs #798, #817),
+and the toolbox's coin-gap reader classes only a missing transaction as a
+gap (`create_action/beef.rs:610`), so the BEEF error reaches the door and is
+served by type, as every `BeefError` is (#611). Rows 127 and 128 (the insertion at
+the custom-instructions bound) take a payment of their own: the shared
+`funded` world had already put the stranger's insertion into basket `wire`,
+and the toolbox now refuses a basket insertion that moves an output between
+application baskets, as the reference does; 127 answers `{accepted: true}`
+and 128 lists the 1,000 bytes as before, under the new outpoint. In the
+consumers' corpus, low-fleet 11 and x402-skill 07 take the same internalize
+text as row 043, and low-fleet 09 and 10 (`allowPending` passes the gate)
+stop at the same BEEF error as row 086 instead of signing (500), their world's
+coins storing the same four bytes. Every recorded 200 answer of the wire and
+consumers corpora (110 wallet calls: 82 wire and 28 consumers, the
+normalized values read as values of their recorded shape) passes bsv-rs
+0.9.0-beta.8's result rows, none refused; the fifteen host-route 200 rows are
+not wallet calls.
+
 ## The browser gate (#411) and the switch (#414)
 
 The owner's word of 2026-11-01 on #411 ("yep I like your reccomendations...", through the keeper): the per-origin grant in the store is the shape (#414); step (b), a required `Origin` and an environment allow-list, landed first (PR 419). From #414's L5b (the switch, `docs/design/origin-grants.md` sections (1), (2), (6) and (7), under the owner's rulings W1 (a), W4 (a) and W15 (i) of 2026-11-03) a door admits a page for each power it asks by the owner's grant of that power to its origin, read from the store, and `ALLOWED_ORIGINS` is a seed beside the rows. Every served route but `POST /arc-callback` (Arcade's webhook, server to server, authenticated by the callback token) is gated; the order is the bearer (`AUTH_TOKEN`, when set), then the gate, then the body, then the door's powers.
