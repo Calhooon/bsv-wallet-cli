@@ -35,7 +35,7 @@ jobs:
       matrix:
         line: [main, beta]
     # A hosted runner, as every job of the template: no workflow names a
-    # self-hosted runner (the owner's word of 2026-11-04 17:2xZ). A private
+    # runner of ours (the owner's word of 2026-11-04 17:2xZ). A private
     # repository keeps Actions off and reads its advisories by hand before a tag.
     runs-on: ubuntu-latest
     steps:
@@ -131,7 +131,7 @@ jobs:
             "" \
             "No pull request is blocked by this: a pull request's \`deny\` reads bans, licenses and sources. A release tag reads advisories too, so this issue is closed before the next tag, by a lock move, a dependency change, or an entry in the stack's template ruled by the keeper with its reason, its condition and its exit. Never by an ignore written in this repository alone." \
             "" \
-            "This issue is rewritten by each daily run while the check fails and closed by the first clean one.")
+            "This issue is rewritten by each daily run while the check fails and closed by the next clean run.")
 
           if [[ -n "$num" ]]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$num" --silent -f body="$body"
