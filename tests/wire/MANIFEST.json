@@ -246,7 +246,14 @@
     "244-internalizeAction.insertion.sweepDefaultNotChange.json",
     "245-relinquishOutput.internalize.legacyDefault.json",
     "246-listOutputs.internalize.default.json",
-    "247-listOutputs.internalize.swept.json"
+    "247-listOutputs.internalize.swept.json",
+    "248-internalizeAction.insertion.sameBasketOtherSpelling.json",
+    "249-listOutputs.internalize.tokensKept.json",
+    "250-listOutputs.internalize.otherSpelling.json",
+    "251-listOutputs.internalizeHeld.seeded.json",
+    "252-internalizeAction.insertion.changeOtherPurpose.json",
+    "253-relinquishOutput.internalizeHeld.notDerivedP2pkh.json",
+    "254-listOutputs.internalizeHeld.relinquished.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -365,12 +372,19 @@
     "238-internalizeAction.payment.derived.json": "toolbox #819: a wallet payment output locked by the P2PKH of the derived key is admitted, 200, and stored as change of the default basket (246).",
     "239-internalizeAction.insertion.overReceivedPayment.json": "toolbox #823: a basket insertion over a received payment (238), wallet-managed change, is refused: InvalidParameter, 400 VALIDATION_ERROR; the payment stays in default (246).",
     "240-internalizeAction.insertion.overOwnChange.json": "toolbox #823: as 239, over a coin of the wallet's own change (P2PKH, change, provided_by storage, purpose change, its derivation); the coin stays in default (246).",
-    "241-internalizeAction.payment.strayInsertionDefault.json": "toolbox #823: a wallet payment carrying an insertion remittance that names default is refused by the argument validator, as 154 refuses the converse: InvalidParameter, 400 VALIDATION_ERROR; nothing stored (246).",
+    "241-internalizeAction.payment.strayInsertionDefault.json": "a wallet payment carrying an insertion remittance (here naming default) is refused by the argument validator's remittance exclusivity before toolbox #823 is reached, as 154 refuses the converse: InvalidParameter, 400 VALIDATION_ERROR; nothing stored (246).",
     "242-createAction.internalize.noBasket.json": "toolbox #823: an action paying its coin less the fee to P2PKH, so its output is in no basket (no change output is drawn).",
     "243-internalizeAction.insertion.sweepNoBasket.json": "toolbox #823: an output in no basket (242's) is swept into a named basket, 200 (247).",
     "244-internalizeAction.insertion.sweepDefaultNotChange.json": "toolbox #823: an output in the default basket and not change (222's earlier insertion) is swept into a named basket, 200 (247).",
     "245-relinquishOutput.internalize.legacyDefault.json": "toolbox #823: the other earlier insertion into default leaves it by relinquishOutput, 200 (246).",
     "246-listOutputs.internalize.default.json": "toolbox #819, #823: default after the rows: the three unspent funded coins and the received payment (238); the two earlier insertions gone (244, 245).",
-    "247-listOutputs.internalize.swept.json": "toolbox #823: the two outputs swept into the named basket (243, 244)."
+    "247-listOutputs.internalize.swept.json": "toolbox #823: the two outputs swept into the named basket (243, 244).",
+    "248-internalizeAction.insertion.sameBasketOtherSpelling.json": "toolbox #823: the output's own basket (tokens, 234) named in another spelling, Tokens: the basket is matched by its name as given, so it is another basket: InvalidParameter, 400 VALIDATION_ERROR; the output stays in tokens (249) and Tokens is not created (250).",
+    "249-listOutputs.internalize.tokensKept.json": "toolbox #823: after 248, the output stays in tokens.",
+    "250-listOutputs.internalize.otherSpelling.json": "toolbox #823: after 248, basket Tokens holds nothing.",
+    "251-listOutputs.internalizeHeld.seeded.json": "toolbox #823: the internalize-held world, kept apart so the internalize world's listings do not move: two change rows of default with their derivation (written by SQL, as 222's rows are), listed with their locking scripts: one with another provided_by and purpose than storage and change (252), one whose script is not the P2PKH of its derived key (253). New; recorded last, so no file before it moves.",
+    "252-internalizeAction.insertion.changeOtherPurpose.json": "toolbox #823: a change row (P2PKH, change, its derivation) whatever its provided_by and purpose is wallet-managed change, refused as a basket insertion: InvalidParameter, 400 VALIDATION_ERROR; the coin stays in default (254).",
+    "253-relinquishOutput.internalizeHeld.notDerivedP2pkh.json": "toolbox #819, #823: what a host holds from before, a payment admitted before the wallet payment rule, change of default whose script is not the P2PKH of its derived key (251), taken out by relinquishOutput, 200 (254).",
+    "254-listOutputs.internalizeHeld.relinquished.json": "toolbox #819, #823: default after 252 and 253: the change row 252 refused stays; the row 253 relinquished is gone."
   }
 }

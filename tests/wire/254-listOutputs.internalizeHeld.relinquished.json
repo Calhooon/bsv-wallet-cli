@@ -1,0 +1,35 @@
+{
+  "world": "internalize-held",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "default",
+      "include": "locking scripts"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalOutputs": 1,
+      "outputs": [
+        {
+          "satoshis": 8000,
+          "lockingScript": "76a914228acaf44520ecccbb3740cba5a4cb20e11242ee88ac",
+          "spendable": true,
+          "outpoint": "d46ebb3cf73ae483ee05d0268eba87bde9283476a508d521c8cf23bc9638d778.0"
+        }
+      ]
+    }
+  }
+}
