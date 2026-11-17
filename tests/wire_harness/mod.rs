@@ -26,6 +26,7 @@ pub(crate) mod fixture;
 pub(crate) mod judge;
 pub(crate) mod manifest;
 pub(crate) mod owner;
+pub(crate) mod payments;
 pub(crate) mod recorder;
 pub(crate) mod review_race;
 pub(crate) mod store_fault_doors;
