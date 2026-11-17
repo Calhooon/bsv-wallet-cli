@@ -15,9 +15,9 @@ use bsv_sdk::transaction::ChainTracker;
 use bsv_wallet_toolbox::services::broadcast_memory::BroadcastMemory;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::services::{
-    BlockHeader, BoundSpender, FiatCurrency, GetBeefResult, GetMerklePathResult, GetRawTxResult,
-    GetStatusForTxidsResult, GetUtxoStatusOutputFormat, GetUtxoStatusResult, NLockTimeInput,
-    PostBeefResult, ServicesCallHistory, UtxoLeads, UtxoVerdict, WalletServices,
+    BlockHeader, BoundSpender, BroadcastStatus, FiatCurrency, GetBeefResult, GetMerklePathResult,
+    GetRawTxResult, GetStatusForTxidsResult, GetUtxoStatusOutputFormat, GetUtxoStatusResult,
+    NLockTimeInput, PostBeefResult, ServicesCallHistory, UtxoLeads, UtxoVerdict, WalletServices,
 };
 use bsv_wallet_toolbox::{Error, Result};
 
@@ -29,7 +29,8 @@ impl NoTracker {
         Self(MockWalletServices::new())
     }
 
-    /// Every call the services were asked, `get_chain_tracker` included.
+    /// Every call the services forwarded to the mock: every call but
+    /// `get_chain_tracker`, which [`NoTracker`] answers itself, uncounted.
     pub fn total_calls(&self) -> usize {
         self.0.total_calls()
     }
@@ -170,5 +171,9 @@ impl WalletServices for NoTracker {
 
     fn get_services_call_history(&self, reset: bool) -> ServicesCallHistory {
         self.0.get_services_call_history(reset)
+    }
+
+    async fn get_broadcaster_statuses(&self, txid: &str) -> Vec<(String, BroadcastStatus)> {
+        self.0.get_broadcaster_statuses(txid).await
     }
 }
