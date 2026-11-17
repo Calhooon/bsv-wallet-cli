@@ -795,15 +795,22 @@ jobs:
           fi
           [ "$n" -gt 0 ] || { echo "::error::no test listed"; exit 1; }
           rustc -vV
-          # A selection without the unit tests builds no bsv_wallet_cli-*
-          # binary (#473): the newest test binary of the selection then.
-          bin=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'bsv_wallet_cli-*' | head -n 1)
-          [ -n "$bin" ] || bin=$(find target/debug/deps -maxdepth 1 -type f -executable -name '*-*' -newer Cargo.lock | head -n 1)
-          if [ -n "$bin" ]; then
-            echo "the linker of $bin:"
-            readelf -p .comment "$bin" | sed -n 's/^ *\[ *[0-9a-f]*\] *//p'
-          else
+          # The linker's name is a diagnostic and never fails the step
+          # (#600). The binary's path is nextest's word for the build above
+          # (no second build), never a directory layout: cargo 1.100.0 has no
+          # target/debug/deps. A selection without the unit tests has no
+          # bsv-wallet-cli lib binary (#473): one test binary of the
+          # selection then.
+          bin=$(cargo nextest list "${args[@]}" --locked --list-type binaries-only --message-format json --color never 2>/dev/null \
+            | jq -r '[(.["rust-binaries"] // {}) | to_entries[] | .value]
+                     | ((map(select(.["binary-id"] == "bsv-wallet-cli")) + .) | .[0]["binary-path"]) // empty' 2>/dev/null) || bin=""
+          if [ -z "$bin" ]; then
             echo "no test binary found to name the linker"
+          elif comment=$(readelf -p .comment "$bin" 2>&1); then
+            echo "the linker of $bin:"
+            sed -n 's/^ *\[ *[0-9a-f]*\] *//p' <<< "$comment" || true
+          else
+            echo "readelf could not read $bin to name the linker: $comment"
           fi
 
       # Every target of the workspace off a PR, not the synthetic integration
