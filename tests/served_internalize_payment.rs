@@ -13,7 +13,8 @@
 //! none). Where the toolbox's test spends a parent the BEEF proves, the
 //! subject here is itself proven (the shape of the #157 tests), so an
 //! accepted request posts nothing: no broadcaster and no header service is
-//! asked.
+//! asked. The one accepted sweep, whose subject is not proven, is posted to
+//! a mock broadcaster the test puts in the storage's services.
 //!
 //! All vectors are synthetic: a random throwaway key, a coinbase-style BUMP
 //! checked against a TestChainTracker.
@@ -28,8 +29,12 @@ use bsv_sdk::script::{LockingScript, UnlockingScript};
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction, TransactionInput, TransactionOutput};
 use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
 use bsv_wallet_cli::server::{self, ServerConfig};
+use bsv_wallet_toolbox::services::mock::{
+    success_post_beef_result, MockResponse, MockWalletServices,
+};
 use bsv_wallet_toolbox::{
-    Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletStorageWriter,
+    Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletServices, WalletStorageProvider,
+    WalletStorageWriter,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -353,6 +358,52 @@ async fn a_payment_to_the_p2pkh_of_another_key_is_refused_whatever_the_ancestry(
         &mismatch(&who),
     )
     .await;
+}
+
+/// The control beside the sweep's refusal: the same sweep, past bsv-rs's
+/// link budget, whose one output is locked by the derived key's P2PKH, is
+/// accepted and its payment output stored (the toolbox's Hosts row "a
+/// payment output that does pay the derived key is stored as before"). So
+/// storage takes this BEEF, and the mismatch above is refused for its
+/// script alone. The sweep's subject is not proven, so the toolbox posts it
+/// once accepted: the storage's services are a mock broadcaster here, and
+/// nothing leaves the test.
+#[tokio::test]
+async fn a_payment_to_the_derived_p2pkh_in_a_sweep_past_the_link_budget_is_stored() {
+    let who = parties();
+    // The tracker carries the root of the sweep's proven parent.
+    let (tx, txid, parent_txid) = sweep_beef(&p2pkh(&who.derived.hash160()));
+    assert!(
+        matches!(
+            Transaction::from_beef(&tx, Some(&txid)),
+            Err(bsv_sdk::Error::BeefResourceLimit(_))
+        ),
+        "the sweep is past the linking door's budget"
+    );
+    let (wallet, app) = served(&who.root, Some(&parent_txid)).await;
+    let broadcaster = Arc::new(
+        MockWalletServices::builder()
+            .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
+                "mock",
+                &[txid.as_str()],
+            )]))
+            .build(),
+    );
+    WalletStorageProvider::set_services(
+        wallet.storage(),
+        broadcaster.clone() as Arc<dyn WalletServices>,
+    );
+    let before = stored(&wallet).await;
+    let (status, body) = post(app, &tx, payment(&who.sender)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["accepted"], true, "{body}");
+    let after = stored(&wallet).await;
+    assert_eq!(after.1, before.1 + 1, "the payment output is stored");
+    assert_eq!(
+        broadcaster.call_count("post_beef"),
+        1,
+        "the unproven subject is posted to the mock alone"
+    );
 }
 
 /// A payment output whose script is not the derived key's P2PKH, in each
