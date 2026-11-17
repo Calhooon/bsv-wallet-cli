@@ -1225,7 +1225,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL]
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
     assert!(rules_of(wallet.storage()).await.unwrap().is_empty());
 
@@ -1251,7 +1251,7 @@ async fn a_template_under_the_word_carries_its_label_and_keeps_it_aborted() {
         .unwrap();
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL]
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
 }
 
@@ -1315,7 +1315,7 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec!["mine", RECEIVED_PENDING_LABEL]
+        vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
     );
 
     let mut labels = Some(vec![
@@ -2115,7 +2115,10 @@ async fn a_scoped_word_writes_the_label_and_a_mined_named_coin_passes() {
     let reference = reference_string(&result.signable_transaction.unwrap().reference);
     assert_eq!(
         labels_of(wallet.storage(), &reference).await,
-        vec![RECEIVED_PENDING_LABEL.to_string()]
+        vec![
+            RECEIVED_PENDING_LABEL.to_string(),
+            TOOLBOX_RECEIVED_LABEL.to_string()
+        ]
     );
 }
 
@@ -2436,4 +2439,410 @@ async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
     };
     assert_eq!(refusal.code(), "INPUT_NOT_OFFERED");
     assert_eq!(refusal.held.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// The toolbox's received-coin rule (bsv-wallet-toolbox-rs 0.13.5)
+// ---------------------------------------------------------------------------
+
+/// The derivation of the received payments below.
+const RECEIVED_PREFIX: &str = "cmVjZWl2ZWQtcHJlZml4";
+const RECEIVED_SUFFIX: &str = "cmVjZWl2ZWQtc3VmZml4";
+
+/// A wallet payment to `root` of `satoshis` from a random sender, as an
+/// AtomicBEEF: the parent whole beside its BUMP at 800, the payment itself
+/// unproven. (BEEF, txid, the locking script, the sender's key.)
+fn received_payment(
+    root: &PrivateKey,
+    seed: u8,
+    satoshis: u64,
+) -> (Vec<u8>, String, Vec<u8>, String) {
+    use bsv_sdk::transaction::{Beef, Transaction, TransactionInput, TransactionOutput};
+    use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
+    let sender = PrivateKey::random().public_key();
+    let derived = KeyDeriver::new(Some(root.clone()))
+        .derive_public_key(
+            &Protocol::new(SecurityLevel::Counterparty, "3241645161d8"),
+            &format!("{RECEIVED_PREFIX} {RECEIVED_SUFFIX}"),
+            &Counterparty::Other(sender.clone()),
+            true,
+        )
+        .unwrap();
+    let mut lock = vec![0x76, 0xa9, 0x14];
+    lock.extend_from_slice(&derived.hash160());
+    lock.extend_from_slice(&[0x88, 0xac]);
+    let mut parent = Transaction::new();
+    parent
+        .add_input(TransactionInput::new(hex::encode([seed; 32]), 0))
+        .unwrap();
+    parent
+        .add_output(TransactionOutput::new(
+            satoshis + 1_000,
+            bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap(),
+        ))
+        .unwrap();
+    let parent_txid = parent.id();
+    let mut child = Transaction::new();
+    child
+        .add_input(TransactionInput::new(parent_txid.clone(), 0))
+        .unwrap();
+    child
+        .add_output(TransactionOutput::new(
+            satoshis,
+            bsv_sdk::script::LockingScript::from_binary(&lock).unwrap(),
+        ))
+        .unwrap();
+    let txid = child.id();
+    let mut beef = Beef::new();
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, 800));
+    beef.merge_raw_tx(parent.to_binary(), Some(bump));
+    beef.merge_raw_tx(child.to_binary(), None);
+    (
+        beef.to_binary_atomic(&txid).unwrap(),
+        txid,
+        lock,
+        sender.to_hex(),
+    )
+}
+
+/// A wallet of `root` holding one received unproven payment per entry of
+/// `amounts`, each taken in through the toolbox's own `internalizeAction`
+/// (purpose `receive`, its transaction `unproven`), the mock's broadcasters
+/// accepting each. The header service's tip is 900 and carries none of
+/// them. The payments' txids, in order.
+async fn wallet_with_received(
+    root: &PrivateKey,
+    amounts: &[u64],
+) -> (Wallet<StorageSqlx, MockWalletServices>, Vec<String>) {
+    use bsv_sdk::wallet::{InternalizeActionArgs, InternalizeOutput, WalletPayment};
+    use bsv_wallet_toolbox::services::mock::{success_post_beef_result, MockResponse};
+    let (storage, _, _) = storage_for(&root.public_key().to_hex()).await;
+    let payments: Vec<_> = amounts
+        .iter()
+        .enumerate()
+        .map(|(i, s)| received_payment(root, 0xe0 + i as u8, *s))
+        .collect();
+    let txids: Vec<String> = payments.iter().map(|p| p.1.clone()).collect();
+    let refs: Vec<&str> = txids.iter().map(String::as_str).collect();
+    let services = MockWalletServices::builder()
+        .post_beef_response(MockResponse::Success(vec![success_post_beef_result(
+            "arc", &refs,
+        )]))
+        .build();
+    services.set_tip_header(header_with_hash(900, &"0e".repeat(32), 0));
+    let wallet = Wallet::new(Some(root.clone()), storage, services)
+        .await
+        .unwrap();
+    for (beef, _, _, sender) in payments {
+        wallet
+            .internalize_action(
+                InternalizeActionArgs {
+                    tx: beef,
+                    outputs: vec![InternalizeOutput {
+                        output_index: 0,
+                        protocol: "wallet payment".to_string(),
+                        payment_remittance: Some(WalletPayment {
+                            derivation_prefix: RECEIVED_PREFIX.to_string(),
+                            derivation_suffix: RECEIVED_SUFFIX.to_string(),
+                            sender_identity_key: sender,
+                        }),
+                        insertion_remittance: None,
+                    }],
+                    description: "a payment received".to_string(),
+                    labels: None,
+                    seek_permission: None,
+                },
+                "gate.local",
+            )
+            .await
+            .unwrap();
+    }
+    for txid in &txids {
+        let (purpose, status): (String, String) = sqlx::query_as(
+            "SELECT o.purpose, t.status FROM outputs o JOIN transactions t \
+             ON o.transaction_id = t.transaction_id WHERE o.txid = ? AND o.vout = 0",
+        )
+        .bind(txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+        assert_eq!((purpose.as_str(), status.as_str()), ("receive", "unproven"));
+    }
+    (wallet, txids)
+}
+
+/// A payment of `satoshis`, signed and not sent.
+fn pay_signed(satoshis: u64, labels: Option<Vec<String>>) -> CreateActionArgs {
+    let mut args = pay(satoshis);
+    args.labels = labels;
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(true),
+        no_send: Some(true),
+        ..Default::default()
+    });
+    args
+}
+
+/// The action holding the received coin `txid:0`, if any.
+async fn spender_of(wallet: &Wallet<StorageSqlx, MockWalletServices>, txid: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT spent_by FROM outputs WHERE txid = ? AND vout = 0")
+        .bind(txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap()
+}
+
+/// The labels stored on the action `txid`, sorted.
+async fn labels_of_txid(storage: &StorageSqlx, txid: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT l.label FROM transactions t \
+         JOIN tx_labels_map m ON m.transaction_id = t.transaction_id AND m.is_deleted = 0 \
+         JOIN tx_labels l ON l.tx_label_id = m.tx_label_id AND l.is_deleted = 0 \
+         WHERE t.txid = ? ORDER BY l.label",
+    )
+    .bind(txid)
+    .fetch_all(storage.pool())
+    .await
+    .unwrap()
+}
+
+/// The opening line of the refusal with no word over a wallet whose one
+/// coin is a received unproven payment of 9,000 (a line per held coin
+/// follows): the gate's own answer, as 0.18.7 gave it.
+const NO_WORD_REFUSAL: &str = "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 0 sats offered, 1 coin(s) held back)";
+
+fn assert_no_word_refusal(err: GateError, txid: &str) {
+    let GateError::Refused(refusal) = err else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    let message = refusal.to_string();
+    assert_eq!(message.lines().next(), Some(NO_WORD_REFUSAL), "{message}");
+    assert_eq!(message.lines().count(), 2, "{message}");
+    assert_eq!(refusal.offered_satoshis, 0);
+    assert_eq!(refusal.held.len(), 1);
+    assert!(refusal.held[0].outpoint.starts_with(txid));
+    assert_eq!(
+        refusal.held[0].reason,
+        "depth 1: 0 blocks; received, no proof; offered under allowPending: received"
+    );
+}
+
+/// bsv-wallet-toolbox-rs 0.13.5: the toolbox's selection passes over a coin
+/// received in a payment whose transaction has no proof unless the action
+/// carries `underReceivedRule`. Under the door's word the gate offers the
+/// coin and passes the label beside its own, so the coin is selected and
+/// the spend signs; with no word the gate's answer is the one 0.18.7 gave,
+/// and the coin stays spendable and unreserved. The gate's offer alone,
+/// without the toolbox's label, is refused by the toolbox: the label is
+/// what this release needs.
+#[tokio::test]
+async fn under_the_word_a_received_coin_is_selected_and_the_spend_signs() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    let received = &txids[0];
+    let gate = || opts(1, true);
+
+    let err = create_action(&wallet, pay_signed(1_000, None), "gate.local", &gate())
+        .await
+        .expect_err("held with no word");
+    assert_no_word_refusal(err, received);
+    assert_eq!(spender_of(&wallet, received).await, None);
+
+    // The gate's offer of the coin without the toolbox's label: passed over.
+    let offered = assess(
+        wallet.storage(),
+        wallet.services(),
+        &gate().with_allow_received(true),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(offered.offered.len(), 1);
+    let bare = wallet
+        .create_action_offering(
+            pay_signed(1_000, Some(vec![RECEIVED_PENDING_LABEL.to_string()])),
+            "gate.local",
+            &offered.offer(),
+        )
+        .await
+        .expect_err("the toolbox passes the coin over without its label");
+    assert_eq!(
+        bare.to_string(),
+        "wallet error: Insufficient funds: need 1005, have 0"
+    );
+    assert_eq!(spender_of(&wallet, received).await, None);
+
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, Some(vec!["mine".to_string()])),
+        "gate.local",
+        &gate().with_allow_received(true),
+    )
+    .await
+    .expect("selected under the word");
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.expect("signed"));
+    assert!(made.tx.is_some(), "the spend signs");
+    assert!(spender_of(&wallet, received).await.is_some());
+    // The caller's label is kept beside the gate's two.
+    assert_eq!(
+        labels_of_txid(wallet.storage(), &txid).await,
+        vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+    );
+}
+
+/// The scoped word offers only the named coin: the action carries the
+/// label, the named coin funds it, and the other received coin, held "not
+/// named", stays unspent; a payment the named coin cannot cover is refused
+/// with the other coin listed as not named.
+#[tokio::test]
+async fn under_the_scoped_word_only_the_named_received_coin_is_selected() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[5_000, 9_000]).await;
+    let (named, other) = (&txids[0], &txids[1]);
+    let scoped =
+        || opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(named.clone(), 0)]));
+
+    let err = create_action(&wallet, pay_signed(7_000, None), "gate.local", &scoped())
+        .await
+        .expect_err("the named coin alone does not cover 7,000");
+    let GateError::Refused(refusal) = err else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    assert_eq!(refusal.offered_satoshis, 5_000);
+    let held = refusal
+        .held
+        .iter()
+        .find(|c| c.outpoint.starts_with(other.as_str()))
+        .unwrap();
+    assert_eq!(
+        held.reason,
+        "depth 1: 0 blocks; received, no proof; not named under allowPending: received"
+    );
+
+    let made = create_action(&wallet, pay_signed(1_000, None), "gate.local", &scoped())
+        .await
+        .expect("the named coin funds it");
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.expect("signed"));
+    assert!(made.tx.is_some(), "the spend signs");
+    assert!(spender_of(&wallet, named).await.is_some());
+    assert_eq!(spender_of(&wallet, other).await, None);
+    assert_eq!(
+        labels_of_txid(wallet.storage(), &txid).await,
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+    );
+}
+
+/// A caller's own `underReceivedRule`, in any spelling the toolbox reads as
+/// the rule, without the door's word: stripped before the door, so the
+/// coin is not selected and the gate's answer is the one with no label.
+/// Under the word the label is the gate's, written once.
+#[tokio::test]
+async fn a_callers_own_received_rule_label_does_not_get_the_coin() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    let received = &txids[0];
+    let forged = || {
+        Some(vec![
+            TOOLBOX_RECEIVED_LABEL.to_string(),
+            "underreceivedrule".to_string(),
+            "UNDERRECEIVEDRULE".to_string(),
+            " underReceivedRule\t".to_string(),
+            "\u{feff}underReceivedRule\n".to_string(),
+        ])
+    };
+    let err = create_action(
+        &wallet,
+        pay_signed(1_000, forged()),
+        "gate.local",
+        &opts(1, true),
+    )
+    .await
+    .expect_err("a caller's label grants nothing");
+    assert_no_word_refusal(err, received);
+    assert_eq!(spender_of(&wallet, received).await, None);
+
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, forged()),
+        "gate.local",
+        &opts(1, true).with_allow_received(true),
+    )
+    .await
+    .expect("under the word");
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.expect("signed"));
+    assert_eq!(
+        labels_of_txid(wallet.storage(), &txid).await,
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+    );
+}
+
+/// The strip reads the toolbox's label as the toolbox does (trimmed as
+/// JavaScript trims, lowercased); a label the toolbox does not read as the
+/// rule is the caller's and is kept.
+#[test]
+fn the_strip_reads_the_received_rule_label_as_the_toolbox_does() {
+    for rule in [
+        "underReceivedRule",
+        "underreceivedrule",
+        "UNDERRECEIVEDRULE",
+        " underReceivedRule\t",
+        "\u{feff}underReceivedRule",
+        "\u{3000}underReceivedRule\u{2028}",
+    ] {
+        assert!(names_toolbox_received_rule(rule), "{rule:?}");
+        let mut labels = Some(vec![rule.to_string(), "kept".to_string()]);
+        strip_rule_label(&mut labels);
+        assert_eq!(labels, Some(vec!["kept".to_string()]), "{rule:?}");
+    }
+    // Near misses: U+0085 is not trimmed by JavaScript's `trim`, so the
+    // toolbox does not read it as the rule.
+    for near in [
+        "underReceivedRules",
+        "under ReceivedRule",
+        "underReceived",
+        "\u{85}underReceivedRule",
+        "spend-gate:underReceivedRule",
+    ] {
+        assert!(!names_toolbox_received_rule(near), "{near:?}");
+        let mut labels = Some(vec![near.to_string()]);
+        strip_rule_label(&mut labels);
+        assert_eq!(labels, Some(vec![near.to_string()]), "{near:?}");
+    }
+}
+
+/// What a caller of `listActions` sees of an action made under the word:
+/// with `includeLabels` both labels the gate passed, the caller's own
+/// beside them, and `underRule` `received-pending`, as the served route
+/// (`handlers::list_actions`, `with_rules`) shows it.
+#[tokio::test]
+async fn a_served_listing_shows_the_received_rule_label_under_the_word() {
+    let root = PrivateKey::random();
+    let (wallet, _) = wallet_with_received(&root, &[9_000]).await;
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, Some(vec!["mine".to_string()])),
+        "gate.local",
+        &opts(1, true).with_allow_received(true),
+    )
+    .await
+    .unwrap();
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.unwrap());
+    let mut args = list_args();
+    args.labels = vec![TOOLBOX_RECEIVED_LABEL.to_string()];
+    args.include_labels = Some(true);
+    let list = wallet.list_actions(args, "gate.local").await.unwrap();
+    let rules = action_rules(wallet.storage()).await.unwrap();
+    let shown = crate::server::handlers::with_rules(serde_json::to_value(&list).unwrap(), &rules);
+    let actions = shown["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 1, "{shown}");
+    assert_eq!(actions[0]["txid"], txid);
+    assert_eq!(actions[0]["underRule"], "received-pending");
+    let mut labels: Vec<String> = serde_json::from_value(actions[0]["labels"].clone()).unwrap();
+    labels.sort();
+    assert_eq!(
+        labels,
+        vec!["mine", RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+    );
 }

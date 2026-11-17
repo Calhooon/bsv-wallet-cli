@@ -45,7 +45,11 @@
 //!    [`RECEIVED_PENDING_LABEL`], appended to its labels before the door, so
 //!    the toolbox writes it inside the action's one transaction (a
 //!    deferred-signing template keeps it when `signAction` signs it); shown
-//!    by `actions` and `/listActions` as `underRule`. A 0.15 store's
+//!    by `actions` and `/listActions` as `underRule`. Beside it the action
+//!    carries the toolbox's [`TOOLBOX_RECEIVED_LABEL`] (bsv-wallet-toolbox-rs
+//!    0.13.5's received-coin rule, without which its selection passes over
+//!    such a coin); a caller's own copy of either is stripped, so without
+//!    the word the action carries neither. A 0.15 store's
 //!    records (`spend_gate_actions`, by txid or by reference) keep
 //!    answering; nothing writes them from 0.16.
 //!
@@ -151,6 +155,12 @@ pub const RECEIVED_PENDING: &str = "received-pending";
 /// action, in its one transaction (bsv-wallet-cli #44). The host writes
 /// nothing about the rule after the door.
 pub const RECEIVED_PENDING_LABEL: &str = "spend-gate:received-pending";
+/// The toolbox's label for R1 (d) (bsv-wallet-toolbox-rs 0.13.5, the
+/// received-coin rule): without it the toolbox's selection passes over a
+/// coin received in a payment whose transaction has no proof yet. The gate
+/// passes it beside [`RECEIVED_PENDING_LABEL`] where the door's word admits
+/// such a coin, and strips a caller's own copy.
+pub const TOOLBOX_RECEIVED_LABEL: &str = "underReceivedRule";
 /// The door's one value for `allowPending`.
 pub const ALLOW_PENDING_RECEIVED: &str = "received";
 /// Appended to a held received `pending` coin's reason: what would offer it.
@@ -743,9 +753,42 @@ pub async fn label_in(
 /// rule without ever naming `allowPending`. Every door a caller's labels
 /// pass (the gate's `createAction`, the served `internalizeAction`) strips
 /// it; `signAction` takes no labels.
+///
+/// The toolbox's [`TOOLBOX_RECEIVED_LABEL`] is stripped the same way, read
+/// as the toolbox reads it (trimmed as JavaScript's `trim` trims, then
+/// lowercased, toolbox 0.13.5 `names_received_rule`): a caller who could
+/// pass it would have the toolbox select a received coin the gate did not
+/// admit.
 pub fn strip_rule_label(labels: &mut Option<Vec<String>>) {
     if let Some(labels) = labels.as_mut() {
-        labels.retain(|l| !l.trim().eq_ignore_ascii_case(RECEIVED_PENDING_LABEL));
+        labels.retain(|l| {
+            !l.trim().eq_ignore_ascii_case(RECEIVED_PENDING_LABEL)
+                && !names_toolbox_received_rule(l)
+        });
+    }
+}
+
+/// Whether the toolbox reads `label` as its received-coin rule: `label`
+/// trimmed as JavaScript's `trim` trims it (Rust's whitespace less U+0085,
+/// with U+FEFF), then lowercased, is `underreceivedrule` (toolbox 0.13.5
+/// `insertion_basket::js_trim`, `create_action::names_received_rule`).
+pub fn names_toolbox_received_rule(label: &str) -> bool {
+    label
+        .trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{FEFF}')
+        .to_lowercase()
+        == TOOLBOX_RECEIVED_LABEL.to_lowercase()
+}
+
+/// The labels the door's word adds: R1 (d)'s record and the toolbox's
+/// received-coin rule, after a caller's own copies are stripped. Without
+/// the word the action carries neither, whatever the caller sent.
+fn action_rule_labels(labels: &mut Option<Vec<String>>, word: &AllowPending) {
+    strip_rule_label(labels);
+    if word.is_on() {
+        labels.get_or_insert_with(Vec::new).extend([
+            RECEIVED_PENDING_LABEL.to_string(),
+            TOOLBOX_RECEIVED_LABEL.to_string(),
+        ]);
     }
 }
 
@@ -1433,14 +1476,12 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // label: the toolbox writes it inside the action's one transaction, and
     // nothing is written after the door.
     // A caller's own copy of the label is stripped first (F4 of the #44 CLI
-    // review): only the door's word writes it.
+    // review): only the door's word writes it. The word also passes the
+    // toolbox's `underReceivedRule` (0.13.5), without which its selection
+    // passes over the received unproven coins the gate offers; the offer
+    // still bounds what it may take.
     let mut args = args;
-    strip_rule_label(&mut args.labels);
-    if opts.allow_pending.is_on() {
-        args.labels
-            .get_or_insert_with(Vec::new)
-            .push(RECEIVED_PENDING_LABEL.to_string());
-    }
+    action_rule_labels(&mut args.labels, &opts.allow_pending);
     run_gated(wallet, args, originator, opts).await
 }
 
