@@ -128,21 +128,26 @@ pub(crate) async fn record(r: &mut Recorder) {
         outputs.value(""),
         "the held row as it was"
     );
-    // One `outputIndex` named twice whatever the protocols, on the new
-    // transaction: a payment with an insertion, and two insertions, into a
-    // basket nothing holds.
+    pairs(r, &new, &actions, &outputs).await;
+}
+
+/// One `outputIndex` named twice whatever the protocols, on the new
+/// transaction `new`: a payment with an insertion, and two insertions, into
+/// a basket nothing holds (267, 268); then the listings (269 to 271), the
+/// actions and the default basket as `actions` and `outputs` listed them.
+async fn pairs(r: &mut Recorder, new: &[u8], actions: &Recorded, outputs: &Recorded) {
     let into = json!({"outputIndex": 0, "protocol": "basket insertion",
         "insertionRemittance": {"basket": "door"}});
     let pair = json!([payment(), into.clone()]);
-    internalize(r, "indexTwicePaymentInsertion", &new, pair).await;
+    internalize(r, "indexTwicePaymentInsertion", new, pair).await;
     let pair = json!([into.clone(), into]);
-    internalize(r, "indexTwiceInsertions", &new, pair).await;
+    internalize(r, "indexTwiceInsertions", new, pair).await;
     let (actions_pairs, outputs_pairs) = listings(r, "afterPairs").await;
     // 265's merge rewrote the held action's description; each action's
     // txid, status and satoshis are 255's.
     assert_eq!(
         stored_actions(&actions_pairs),
-        stored_actions(&actions),
+        stored_actions(actions),
         "no action stored"
     );
     assert_eq!(
