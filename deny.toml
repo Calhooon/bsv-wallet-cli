@@ -11,8 +11,29 @@ yanked = "deny"
 unmaintained = "all"
 # unsound: fail across the graph, including dependencies below bsv-rs.
 unsound = "all"
-# ignore: no fleet-wide security exemptions or severity cutoff.
-ignore = []
+# ignore: two entries, each with its reason, its condition and its exit (the rulings of
+# 2026-11-17, docs/RULINGS-2026-10-12.md). RUSTSEC-2026-0459 is the C SQLite that
+# libsqlite3-sys bundles below 0.39.0 (SQLite before 3.54.0). No published sqlx-sqlite
+# accepts libsqlite3-sys 0.39 (0.8.6 asks ^0.30.1; 0.9.0 asks >=0.30.1, <0.38.0); the
+# fix is on sqlx's main and its 0.9.1 is not on the index. The advisory's condition is a
+# database file, with its -wal, written by a less trusted party; the entry holds only
+# while no stack code opens a database file it did not create (no restore or import of
+# one). It covers the sqlx-sqlite path alone: a repository that reaches libsqlite3-sys
+# through rusqlite moves rusqlite to 0.41 or later. It leaves the day the lines' locks
+# carry libsqlite3-sys 0.39.0 or later, and is re-read at the 0.9.0 cut if it has not left.
+# RUSTSEC-2026-0543 is the notice that chrono is unmaintained (its maintainer's own word,
+# chronotope/chrono issue 1768; in the RustSec database since 2026-11-17). It names no
+# vulnerability and no patched version. chrono reaches the locks through the stack's own
+# calendar code, through sqlx's chrono feature, and through rmcp with schemars. The entry
+# covers the notice alone: a vulnerability filed against chrono carries its own id and
+# fails this check by itself, and the entry is re-read at once if one is filed or the
+# notice is withdrawn. It leaves the day the lines' locks no longer carry chrono: each
+# repository's own code and its sqlx feature are its captain's row (the target is `time`),
+# rmcp's dependency is upstream's. It is re-read at the 0.9.0 cut if it has not left.
+ignore = [
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys below 0.39.0 bundles SQLite before 3.54.0; no published sqlx-sqlite accepts 0.39 (the fix is on sqlx's main, its 0.9.1 unpublished); the stack opens only database files it created; the entry leaves when the lines' locks carry libsqlite3-sys 0.39.0 or later" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained by its maintainer's own notice (chronotope/chrono issue 1768); the advisory names no vulnerability and no patched version; a vulnerability filed against chrono carries its own id and is not covered; the entry leaves when the lines' locks no longer carry chrono" },
+]
 
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
