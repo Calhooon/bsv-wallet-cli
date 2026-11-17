@@ -372,10 +372,21 @@ pub(crate) enum Payment {
     /// A valid spend paying 9,000 to the wallet's BRC-29 key for the
     /// stranger, [`PAYMENT_PREFIX`] and [`PAYMENT_SUFFIX`].
     Wallet,
+    /// A second valid spend paying 9,000 to [`P2PKH`], for the insertion at
+    /// the custom-instructions bound (fixtures 127, 128). Its own: the
+    /// toolbox at 0.14.0-beta.8 refuses a basket insertion naming an output
+    /// already in another application basket, as the reference does, and
+    /// [`Payment::Insertion`]'s output is in `wire` by then.
+    BoundInsertion,
 }
 
 impl Payment {
-    const ALL: [Payment; 3] = [Payment::Insertion, Payment::BadUnlock, Payment::Wallet];
+    const ALL: [Payment; 4] = [
+        Payment::Insertion,
+        Payment::BadUnlock,
+        Payment::Wallet,
+        Payment::BoundInsertion,
+    ];
 
     /// The seed of the parent's input and the height it is mined at.
     fn parent_at(self) -> (u8, u32) {
@@ -383,6 +394,7 @@ impl Payment {
             Payment::Insertion => (0xe1, 899_905),
             Payment::BadUnlock => (0xe2, 899_906),
             Payment::Wallet => (0xe3, 899_907),
+            Payment::BoundInsertion => (0xe5, 899_909),
         }
     }
 
@@ -390,7 +402,9 @@ impl Payment {
     fn pays_to(self, wallet: &PrivateKey) -> Vec<u8> {
         use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
         match self {
-            Payment::Insertion | Payment::BadUnlock => hex::decode(P2PKH).unwrap(),
+            Payment::Insertion | Payment::BadUnlock | Payment::BoundInsertion => {
+                hex::decode(P2PKH).unwrap()
+            }
             // As the payer derives it: the stranger's key, the wallet the
             // counterparty.
             Payment::Wallet => p2pkh(
@@ -439,7 +453,7 @@ pub(crate) async fn stranger_payment(
             input.unlocking_script =
                 Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
         }
-        Payment::Insertion | Payment::Wallet => input
+        Payment::Insertion | Payment::Wallet | Payment::BoundInsertion => input
             .set_unlocking_script_template(Template::unlock(&stranger, SignOutputs::All, false)),
     }
     child.add_input(input).unwrap();

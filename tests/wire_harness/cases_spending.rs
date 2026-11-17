@@ -34,6 +34,7 @@ pub(crate) async fn record_internalize_bound(r: &mut Recorder) {
     record_internalize_instructions(
         r,
         "internalizeAction.customInstructionsBound",
+        Payment::Insertion,
         format!("{}a", "🦀".repeat(250)),
     )
     .await;
@@ -42,11 +43,12 @@ pub(crate) async fn record_internalize_bound(r: &mut Recorder) {
 async fn record_internalize_instructions(
     r: &mut Recorder,
     name: &str,
+    payment: Payment,
     instructions: String,
 ) -> Recorded {
     use serde_json::json;
     let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
-    let (_, atomic) = stranger_payment(Payment::Insertion, &key).await;
+    let (_, atomic) = stranger_payment(payment, &key).await;
     r.case(
         name,
         "funded",
@@ -69,6 +71,7 @@ pub(crate) async fn record_internalize_at_bound(r: &mut Recorder) {
     let accepted = record_internalize_instructions(
         r,
         "internalizeAction.customInstructionsAtBound",
+        Payment::BoundInsertion,
         instructions.clone(),
     )
     .await;
