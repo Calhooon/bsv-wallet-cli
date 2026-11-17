@@ -85,9 +85,8 @@ async fn with_no_chain_tracker_every_internalize_is_refused() {
 /// `a_payment_merge_over_a_spent_row_leaves_it_spent` does): the merge
 /// rewrites the row to managed change of `default` (`P2PKH`, `change = 1`)
 /// and leaves `spendable` and `spent_by` as the row holds them, out of the
-/// balance. A row already change of `default` is skipped by the merge
-/// before that statement, so the test starts from the custom row. The
-/// control: the unspent custom row merged the same way becomes spendable
+/// balance. The toolbox's Fixed entry names an existing custom output, so
+/// the test starts from one, not from a row already change. The control: the unspent custom row merged the same way becomes spendable
 /// change and the balance counts it. The opening internalize posts the
 /// unproven subject once; no merge posts again.
 #[tokio::test]
