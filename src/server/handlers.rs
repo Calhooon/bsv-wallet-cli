@@ -170,6 +170,9 @@ impl AppError {
         } else if clean.starts_with("The insertionRemittance.basket parameter must be") {
             // Toolbox 0.13.3: "The insertionRemittance.basket parameter must be a non-default basket" (the caller's parameter).
             (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+        } else if clean.starts_with("The outputs parameter must be") {
+            // Toolbox 0.13.4: "The outputs parameter must be at least one output to internalize from the transaction" (the caller's parameter, at the wallet door with no `Validation error: `).
+            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
         } else if clean.starts_with("Validation error:")
             || clean.starts_with("Invalid argument:")
             || clean.starts_with("Origin header required")

@@ -183,7 +183,8 @@ async fn a_root_the_services_tracker_refutes_is_refused() {
     assert_eq!(services.call_count("post_beef"), 0);
 }
 
-/// An empty `outputs`: refused before anything is stored or posted. The
+/// An empty `outputs`: 400 `VALIDATION_ERROR` (`classify`'s arm for this
+/// text), refused before anything is stored or posted. The
 /// control: the same transaction with its one output named is stored.
 #[tokio::test]
 async fn an_empty_outputs_is_refused() {
@@ -193,7 +194,7 @@ async fn an_empty_outputs_is_refused() {
     let services = storage_services(&wallet, MockWalletServices::new());
     let before = stored(&wallet).await;
     let (status, body) = post_to(app.clone(), "/internalizeAction", internalize(&tx, vec![])).await;
-    assert_answer(status, &body, "ERROR", NO_OUTPUTS);
+    assert_answer(status, &body, "VALIDATION_ERROR", NO_OUTPUTS);
     assert_eq!(stored(&wallet).await, before, "nothing written");
     assert_eq!(services.call_count("post_beef"), 0, "nothing posted");
 
