@@ -18,7 +18,10 @@
 //! this file. The spends are made by `Wallet::create_action` (`noSend`), as
 //! the toolbox's tests and 0.18.5's served tests make them: the served
 //! `createAction`'s spend gate asks a header service these tests do not
-//! run, and the door under test is `internalizeAction`.
+//! run, and the door under test is `internalizeAction`. From
+//! bsv-wallet-toolbox-rs 0.13.5 a restored row is a received coin, so a
+//! restore's spend carries the `underReceivedRule` label, as the gate's
+//! `allowPending` admission passes it, and without it is passed over.
 //!
 //! This host configures no permissions manager (`git grep -n -i
 //! permissions_manager -- src mcp/src` finds none), so the Hosts rows of a
@@ -535,10 +538,18 @@ async fn relinquish(app: axum::Router, txid: &str, vout: u32) {
 // The restores, through to a signed spend
 // ---------------------------------------------------------------------------
 
+/// The toolbox's received-coin rule's label (bsv-wallet-toolbox-rs 0.13.5),
+/// as the spend gate passes it where `allowPending` admits a received coin.
+const UNDER_RECEIVED_RULE: &str = "underReceivedRule";
+
+/// What an action without the label answers when its one coin is a
+/// received coin whose transaction has no proof (0.13.5's rule).
+const PASSED_OVER: &str = "wallet error: Insufficient funds: need 305, have 0";
+
 /// A `createAction` of 300 satoshis to another key, funded by the wallet's
-/// change, signed and not sent (the toolbox test's `spend`): the signed
-/// transaction, or the refusal's text.
-async fn spend(wallet: &WalletState) -> Result<Vec<u8>, String> {
+/// change, signed and not sent (the toolbox test's `spend`), carrying
+/// `labels`: the signed transaction, or the refusal's text.
+async fn spend(wallet: &WalletState, labels: Option<Vec<String>>) -> Result<Vec<u8>, String> {
     let created = wallet
         .create_action(
             CreateActionArgs {
@@ -555,7 +566,7 @@ async fn spend(wallet: &WalletState) -> Result<Vec<u8>, String> {
                 }]),
                 lock_time: None,
                 version: None,
-                labels: None,
+                labels,
                 options: Some(CreateActionOptions {
                     sign_and_process: Some(true),
                     no_send: Some(true),
@@ -665,7 +676,7 @@ async fn reclassified_change(who: &Parties) -> Reclassified {
     storage_services(&wallet, MockWalletServices::new());
     let (status, body) = post(app.clone(), &funding, payment(&who.sender)).await;
     assert_eq!(status, StatusCode::OK, "the funding: {body}");
-    let raw = spend(&wallet).await.expect("the action with change");
+    let raw = spend(&wallet, None).await.expect("the action with change");
     let txid = Transaction::from_binary(&raw).unwrap().id();
     let mut beef = Beef::from_binary(&funding).unwrap();
     beef.merge_raw_tx(raw, None);
@@ -727,7 +738,12 @@ async fn own_change_restored_with_the_wallets_identity_key_signs() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["accepted"], true, "{body}");
     assert_eq!(balance(&r.wallet).await, r.satoshis);
-    let signed = spend(&r.wallet).await.expect("signed");
+    // A restored row is stored as a received coin: until its transaction
+    // is completed an action selects it only under the label (0.13.5).
+    assert_eq!(spend(&r.wallet, None).await.unwrap_err(), PASSED_OVER);
+    let signed = spend(&r.wallet, Some(vec![UNDER_RECEIVED_RULE.to_string()]))
+        .await
+        .expect("signed");
     assert!(verify_spend(&signed, &r.txid, r.vout, r.satoshis, &r.lock));
 }
 
@@ -746,7 +762,12 @@ async fn own_change_restored_with_an_empty_sender_signs() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(balance(&r.wallet).await, r.satoshis);
     assert_eq!(held(&r.wallet, &r.txid, r.vout).await, (None, true, None));
-    let signed = spend(&r.wallet).await.expect("signed");
+    // A restored row is stored as a received coin: until its transaction
+    // is completed an action selects it only under the label (0.13.5).
+    assert_eq!(spend(&r.wallet, None).await.unwrap_err(), PASSED_OVER);
+    let signed = spend(&r.wallet, Some(vec![UNDER_RECEIVED_RULE.to_string()]))
+        .await
+        .expect("signed");
     assert!(verify_spend(&signed, &r.txid, r.vout, r.satoshis, &r.lock));
 }
 
@@ -800,7 +821,12 @@ async fn a_reclassified_received_payment_restored_with_its_sender_signs() {
     let (status, body) = post(app, &tx, payment(&who.sender)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(balance(&wallet).await, 1_000);
-    let signed = spend(&wallet).await.expect("signed");
+    // A restored row is stored as a received coin: until its transaction
+    // is completed an action selects it only under the label (0.13.5).
+    assert_eq!(spend(&wallet, None).await.unwrap_err(), PASSED_OVER);
+    let signed = spend(&wallet, Some(vec![UNDER_RECEIVED_RULE.to_string()]))
+        .await
+        .expect("signed");
     assert!(verify_spend(&signed, &txid, 0, 1_000, &lock));
     assert_eq!(services.call_count("post_beef"), 1, "nothing posted");
 }
@@ -850,7 +876,12 @@ async fn a_reclassified_payment_this_cli_wrote_restored_with_the_anyone_key_sign
         held(&wallet, &txid, 0).await,
         (Some(anyone.to_hex()), true, None)
     );
-    let signed = spend(&wallet).await.expect("signed");
+    // A restored row is stored as a received coin: until its transaction
+    // is completed an action selects it only under the label (0.13.5).
+    assert_eq!(spend(&wallet, None).await.unwrap_err(), PASSED_OVER);
+    let signed = spend(&wallet, Some(vec![UNDER_RECEIVED_RULE.to_string()]))
+        .await
+        .expect("signed");
     assert!(verify_spend(&signed, &txid, 0, 1_000, &lock));
     assert_eq!(services.call_count("post_beef"), 1, "posted once, stored");
 }
@@ -886,6 +917,7 @@ async fn a_row_holding_an_empty_sender_signs() {
         held(&wallet, &txid, 0).await,
         (Some(String::new()), true, None)
     );
-    let signed = spend(&wallet).await.expect("signed");
+    // Its transaction is proven (`completed`): selected as before, no label.
+    let signed = spend(&wallet, None).await.expect("signed");
     assert!(verify_spend(&signed, &txid, 0, 1_000, &lock));
 }
