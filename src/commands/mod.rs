@@ -2,6 +2,8 @@ pub mod actions;
 pub mod address;
 pub mod backup;
 pub mod balance;
+#[cfg(test)]
+mod chaintracks_off_tests;
 pub mod cleanup_abandoned;
 pub mod compact;
 pub mod daemon;

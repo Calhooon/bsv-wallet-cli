@@ -89,3 +89,52 @@ fn an_unset_header_source_stops_the_command_and_names_the_setting() {
         assert!(!stderr.contains("babbage"), "{command}: {stderr}");
     }
 }
+
+/// bsv-wallet-toolbox-rs 0.13.4: with no chain tracker every
+/// `internalizeAction` is refused, so each command that ends in one refuses
+/// by name, through the binary, before any network act (the unit tests in
+/// `src/commands/chaintracks_off_tests.rs` read that the services were
+/// asked nothing).
+#[test]
+fn the_receiving_commands_with_chaintracks_off_refuse_by_name() {
+    let dir = TempDir::new().expect("temp dir");
+    let init = wallet(&dir)
+        .args(["--db", "wallet.db", "init"])
+        .output()
+        .expect("run init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let txid = "22".repeat(32);
+    let cases: [(&str, Vec<&str>); 5] = [
+        ("fund", vec!["fund", "0100beef", "--vout", "0"]),
+        ("receive", vec!["receive", &txid]),
+        ("sync", vec!["sync"]),
+        ("split", vec!["split", "--count", "2"]),
+        ("gift-claim", vec!["gift-claim", &txid]),
+    ];
+    for (name, args) in cases {
+        let out = wallet(&dir)
+            .env("CHAINTRACKS_URL", "off")
+            .args(["--db", "wallet.db"])
+            .args(&args)
+            .output()
+            .expect("run the command");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{name} must fail: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "{name} refused: no chain tracker is configured (CHAINTRACKS_URL=off); with no \
+                 chain tracker no payment is accepted (every internalizeAction is refused). Set \
+                 CHAINTRACKS_URL to your header service."
+            )),
+            "{name}: {stderr}"
+        );
+        assert!(
+            stderr.contains("no payment is accepted (every internalizeAction is refused)"),
+            "the startup warning says so: {stderr}"
+        );
+    }
+}

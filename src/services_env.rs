@@ -8,7 +8,7 @@
 //!
 //! | Var | Effect |
 //! |-----|--------|
-//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven |
+//! | `CHAINTRACKS_URL` | Required: the header service that checks every merkle root (your `chaintracks-cloudflare` or rust-chaintracks deployment). Unset or empty is refused: there is no third-party default. `off` = no header service, so every proof is refused and nothing is marked proven, and no payment is accepted (every `internalizeAction` is refused): `fund`, `receive`, `sync`, `split` and `gift-claim` refuse |
 //! | `BREAK_GLASS_EXPLORER_HEADERS` | Break-glass, off by default: `1`, `true` or `yes` lets the proof path ask WhatsOnChain (then Bitails) for headers when the header service gives no answer; every such call is logged at warn level (marker `break_glass_explorer_header`) |
 //! | `ARC_MODE` | The broadcaster mode: unset, blank or `arcade` (any case) is Arcade V2 (EF-only submit, SSE status stream, push proofs), the default by the owner's word of 2026-10-27 (#300); `classic` (any case) is the toolbox's classic ARC ladder, deprecated ("arc is just deprecated, arcade is the standard"), kept for the hermetic stub until #299, never a default or a failover; any other value is refused by name |
 //! | `ARCADE` | The older switch, read when `ARC_MODE` is unset: `1`, `true` or `yes` is Arcade, `0`, `false` or `no` is classic; any other value is refused by name |
@@ -37,8 +37,8 @@ use std::sync::Once;
 /// public URL to default to.
 pub const CHAINTRACKS_URL_REQUIRED: &str = "CHAINTRACKS_URL is not set: set it to the header \
      service that checks merkle roots (your chaintracks-cloudflare or rust-chaintracks \
-     deployment), or to `off` to run with none (every merkle proof is then refused). There is \
-     no default header service.";
+     deployment), or to `off` to run with none (every merkle proof is then refused, and no \
+     payment is accepted). There is no default header service.";
 
 /// Resolve the header service from the `CHAINTRACKS_URL` value.
 ///
@@ -74,9 +74,13 @@ pub const BREAK_GLASS_WARNING: &str = "BREAK_GLASS_EXPLORER_HEADERS is on: when 
      service gives no answer, merkle roots and block headers are asked of WhatsOnChain (then \
      Bitails); every such call is logged. Turn it off once the header service is back.";
 
-/// What a wallet with `CHAINTRACKS_URL=off` is told at startup.
+/// What a wallet with `CHAINTRACKS_URL=off` is told at startup. From
+/// bsv-wallet-toolbox-rs 0.13.4 a wallet with no chain tracker has every
+/// `internalizeAction` refused, so no payment is accepted either.
 pub const CHAINTRACKS_OFF_WARNING: &str = "CHAINTRACKS_URL=off: no chain tracker, so every merkle \
-     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set";
+     proof will be refused and nothing marked proven until CHAINTRACKS_URL is set; and no \
+     payment is accepted (every internalizeAction is refused), so the commands that receive, \
+     split or claim refuse";
 
 /// Refuse a command whose job is to prove when no chain tracker is
 /// configured: it could only refuse every proof it met, so it exits
@@ -86,6 +90,25 @@ pub fn require_chain_tracker_to_prove(command: &str, has_tracker: bool) -> Resul
         anyhow::bail!(
             "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
              every merkle proof would be refused. Set CHAINTRACKS_URL to your header service."
+        );
+    }
+    Ok(())
+}
+
+/// Refuse a command that ends in `internalizeAction` when no chain tracker
+/// is configured. From bsv-wallet-toolbox-rs 0.13.4 a wallet with no chain
+/// tracker on its storage and none on its services has every
+/// `internalizeAction` refused; this host sets the storage's tracker only
+/// from the services' one, so with `CHAINTRACKS_URL=off` it has neither.
+/// The command refuses here, before it fetches, builds, signs or
+/// broadcasts anything: a split or a claim posted and then refused at the
+/// door would leave outputs on chain the wallet never records.
+pub fn require_chain_tracker_to_receive(command: &str, has_tracker: bool) -> Result<()> {
+    if !has_tracker {
+        anyhow::bail!(
+            "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); \
+             with no chain tracker no payment is accepted (every internalizeAction is \
+             refused). Set CHAINTRACKS_URL to your header service."
         );
     }
     Ok(())
@@ -515,6 +538,30 @@ mod tests {
         assert!(err.to_string().starts_with("tick refused"), "{err}");
         assert!(err.to_string().contains("CHAINTRACKS_URL=off"), "{err}");
         assert!(require_chain_tracker_to_prove("tick", true).is_ok());
+    }
+
+    #[test]
+    fn the_off_warning_says_no_payment_is_accepted() {
+        assert!(CHAINTRACKS_OFF_WARNING
+            .contains("no payment is accepted (every internalizeAction is refused)"));
+        assert!(CHAINTRACKS_OFF_WARNING.contains("receive, split or claim refuse"));
+    }
+
+    #[test]
+    fn a_receiving_command_needs_a_chain_tracker() {
+        for command in ["fund", "receive", "sync", "split", "gift-claim"] {
+            let err = require_chain_tracker_to_receive(command, false)
+                .unwrap_err()
+                .to_string();
+            assert!(err.starts_with(&format!("{command} refused: ")), "{err}");
+            assert!(err.contains("CHAINTRACKS_URL=off"), "{err}");
+            assert!(err.contains("no payment is accepted"), "{err}");
+            assert!(
+                err.ends_with("Set CHAINTRACKS_URL to your header service."),
+                "{err}"
+            );
+            assert!(require_chain_tracker_to_receive(command, true).is_ok());
+        }
     }
 
     /// `BANANABLOCKS_BASE`: unset the chain's default, empty off, a URL

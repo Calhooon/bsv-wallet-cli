@@ -14,11 +14,16 @@ const DEFAULT_DERIVATION_PREFIX: &str = "SfKxPIJNgdI=";
 const DEFAULT_DERIVATION_SUFFIX: &str = "NaGLC6fMH50=";
 const BRC29_PROTOCOL: &str = "3241645161d8";
 
-pub async fn run(
-    ctx: &WalletContext,
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     count: u32,
     allow_pending: crate::spend_gate::AllowPending,
 ) -> Result<()> {
+    // The split's outputs are recorded by internalizeAction after the
+    // broadcast; with no chain tracker every internalizeAction is refused
+    // (toolbox 0.13.4), so a split would be posted and its outputs never
+    // recorded. Refuse by name before any coin is selected or posted.
+    ctx.require_chain_tracker_to_receive("split").await?;
     if count < 2 {
         anyhow::bail!("Split count must be at least 2");
     }

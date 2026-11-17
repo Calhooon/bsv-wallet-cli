@@ -1,0 +1,188 @@
+//! The commands that end in `internalizeAction`, with no chain tracker (a
+//! wallet built with `CHAINTRACKS_URL=off`). From bsv-wallet-toolbox-rs
+//! 0.13.4 every `internalizeAction` of such a wallet is refused, so each of
+//! `fund`, `receive`, `sync`, `split` and `gift-claim` refuses by name
+//! before it fetches, builds, signs or broadcasts anything: the services
+//! were asked nothing (no post, no fetch, no lead) and nothing was stored.
+//! The control: the same `fund` with a tracker is stored.
+
+use bsv_sdk::primitives::PrivateKey;
+use bsv_sdk::transaction::{Beef, MerklePath};
+use bsv_wallet_toolbox::services::mock::MockWalletServices;
+use bsv_wallet_toolbox::{Chain, StorageSqlx, Wallet, WalletServices, WalletStorageWriter};
+
+use crate::commands::{fund, gift_claim, receive, split, sync};
+use crate::context::WalletContext;
+use crate::spend_gate::AllowPending;
+use crate::test_support::{raw_tx, txid_of, NoTracker};
+
+async fn storage(root: &PrivateKey) -> StorageSqlx {
+    let storage = StorageSqlx::in_memory().await.unwrap();
+    storage
+        .migrate("chaintracks-off", &root.public_key().to_hex())
+        .await
+        .unwrap();
+    storage.make_available().await.unwrap();
+    storage
+}
+
+async fn context<S: WalletServices + Send + Sync + 'static>(
+    root: &PrivateKey,
+    storage: StorageSqlx,
+    services: S,
+) -> WalletContext<S> {
+    let wallet = Wallet::new(Some(root.clone()), storage, services)
+        .await
+        .unwrap();
+    WalletContext {
+        wallet,
+        identity_key: root.public_key().to_hex(),
+        root_key: root.clone(),
+        chain: Chain::Main,
+        json_output: true,
+        db_path: ":memory:".into(),
+    }
+}
+
+/// A wallet as `CHAINTRACKS_URL=off` builds it: no tracker on the storage,
+/// none on the services.
+async fn off(root: &PrivateKey) -> WalletContext<NoTracker> {
+    context(root, storage(root).await, NoTracker::new()).await
+}
+
+/// A proven payment of 1,000 sats to the wallet's deposit script, as a hex
+/// BEEF, and its txid.
+fn deposit(root: &PrivateKey) -> (String, String) {
+    let raw = raw_tx(
+        &[(&"11".repeat(32), 0)],
+        &[(1_000, crate::brc29::deposit_script(root).unwrap())],
+    );
+    let txid = txid_of(&raw);
+    let mut beef = Beef::new();
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, 900_000));
+    beef.merge_raw_tx(raw, Some(bump));
+    (beef.to_hex(), txid)
+}
+
+async fn rows<S: WalletServices + Send + Sync + 'static>(ctx: &WalletContext<S>) -> (i64, i64) {
+    sqlx::query_as("SELECT (SELECT COUNT(*) FROM transactions), (SELECT COUNT(*) FROM outputs)")
+        .fetch_one(ctx.wallet.storage().pool())
+        .await
+        .unwrap()
+}
+
+/// The refusal's whole text for `command`.
+fn refused(command: &str) -> String {
+    format!(
+        "{command} refused: no chain tracker is configured (CHAINTRACKS_URL=off); with no \
+         chain tracker no payment is accepted (every internalizeAction is refused). Set \
+         CHAINTRACKS_URL to your header service."
+    )
+}
+
+fn assert_refused<T: std::fmt::Debug>(result: anyhow::Result<T>, command: &str) {
+    let err = result.expect_err("refused").to_string();
+    assert_eq!(err, refused(command));
+}
+
+#[tokio::test]
+async fn fund_with_chaintracks_off_refuses_by_name_and_stores_nothing() {
+    let root = PrivateKey::random();
+    let ctx = off(&root).await;
+    let (beef_hex, _) = deposit(&root);
+    assert_refused(fund::run(&ctx, &beef_hex, 0).await, "fund");
+    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+}
+
+/// The control: the same BEEF with a tracker (the toolbox's mock services
+/// carry one) is stored.
+#[tokio::test]
+async fn fund_with_a_tracker_is_stored() {
+    let root = PrivateKey::random();
+    let ctx = context(&root, storage(&root).await, MockWalletServices::new()).await;
+    let (beef_hex, txid) = deposit(&root);
+    fund::run(&ctx, &beef_hex, 0).await.expect("stored");
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(ctx.wallet.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(held, 1);
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
+}
+
+#[tokio::test]
+async fn receive_with_chaintracks_off_refuses_before_any_courier_is_asked() {
+    let root = PrivateKey::random();
+    let ctx = off(&root).await;
+    let (_, txid) = deposit(&root);
+    assert_refused(receive::run(&ctx, &txid, Some(0)).await, "receive");
+    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+    assert_eq!(
+        ctx.wallet.services().total_calls(),
+        0,
+        "no get_beef, no merkle path"
+    );
+}
+
+#[tokio::test]
+async fn sync_with_chaintracks_off_refuses_before_any_explorer_is_asked() {
+    let root = PrivateKey::random();
+    let ctx = off(&root).await;
+    for reconcile_spent in [false, true] {
+        assert_refused(sync::run(&ctx, reconcile_spent).await, "sync");
+    }
+    assert_eq!(ctx.wallet.services().call_count("get_utxo_leads"), 0);
+    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+}
+
+/// A wallet holding a coin (received while it had a tracker) and then run
+/// with `CHAINTRACKS_URL=off`: `split` refuses before a coin is selected,
+/// and the broadcaster is never asked.
+#[tokio::test]
+async fn split_with_chaintracks_off_refuses_before_any_coin_is_posted() {
+    let root = PrivateKey::random();
+    let store = storage(&root).await;
+    let funded = context(&root, store.clone(), MockWalletServices::new()).await;
+    let (beef_hex, _) = deposit(&root);
+    fund::run(&funded, &beef_hex, 0).await.expect("the coin");
+    let before = rows(&funded).await;
+    assert_eq!(before, (1, 1));
+
+    // `Wallet::new` hands the storage these services: no tracker anywhere.
+    let ctx = context(&root, store, NoTracker::new()).await;
+    assert_refused(split::run(&ctx, 2, AllowPending::default()).await, "split");
+    assert_eq!(
+        ctx.wallet.services().call_count("post_beef"),
+        0,
+        "nothing posted"
+    );
+    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+    assert_eq!(rows(&ctx).await, before, "nothing written");
+}
+
+#[tokio::test]
+async fn gift_claim_with_chaintracks_off_refuses_before_the_deposit_is_fetched() {
+    let root = PrivateKey::random();
+    let ctx = off(&root).await;
+    for force in [false, true] {
+        assert_refused(
+            gift_claim::run(&ctx, &"22".repeat(32), force).await,
+            "gift-claim",
+        );
+    }
+    assert_eq!(
+        ctx.wallet.services().call_count("get_raw_tx"),
+        0,
+        "no fetch"
+    );
+    assert_eq!(
+        ctx.wallet.services().call_count("post_beef"),
+        0,
+        "nothing posted"
+    );
+    assert_eq!(ctx.wallet.services().total_calls(), 0, "nothing asked");
+    assert_eq!(rows(&ctx).await, (0, 0), "nothing stored");
+}
