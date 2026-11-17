@@ -167,6 +167,9 @@ impl AppError {
         } else if clean.starts_with("The paymentRemittance parameter must be") {
             // Toolbox 0.13.2: "The paymentRemittance parameter must be locked by script conforming to BRC-29" (the caller's parameter).
             (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+        } else if clean.starts_with("The insertionRemittance.basket parameter must be") {
+            // Toolbox 0.13.3: "The insertionRemittance.basket parameter must be a non-default basket" (the caller's parameter).
+            (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
         } else if clean.starts_with("Validation error:")
             || clean.starts_with("Invalid argument:")
             || clean.starts_with("Origin header required")

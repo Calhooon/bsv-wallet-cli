@@ -130,7 +130,8 @@ fn assert_refusal(status: StatusCode, body: &Value, message: &str) {
 
 /// Rule 1: a basket insertion naming the default basket, in every spelling
 /// the toolbox's test names: 400, the reference's sentence, no row written
-/// and no basket created. The text falls to `classify`'s last arm, `ERROR`.
+/// and no basket created. 400 `VALIDATION_ERROR`: the caller's parameter,
+/// `classify`'s arm for this text.
 #[tokio::test]
 async fn a_basket_insertion_naming_the_default_basket_is_refused_in_every_spelling() {
     for spelling in DEFAULT_SPELLINGS {
@@ -143,7 +144,7 @@ async fn a_basket_insertion_naming_the_default_basket_is_refused_in_every_spelli
         assert_eq!(status, StatusCode::BAD_REQUEST, "{spelling:?}: {body}");
         assert_eq!(
             body,
-            json!({ "code": "ERROR", "message": NON_DEFAULT }),
+            json!({ "code": "VALIDATION_ERROR", "message": NON_DEFAULT }),
             "{spelling:?}"
         );
         assert_eq!(

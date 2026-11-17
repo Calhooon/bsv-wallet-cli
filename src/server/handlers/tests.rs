@@ -502,3 +502,34 @@ fn the_payment_checks_refusals_are_classed_by_their_opening_words() {
         );
     }
 }
+
+/// Toolbox 0.13.3's basket insertion refusals: the default-basket text,
+/// printed with no `Validation error: ` at the wallet door, is the caller's
+/// parameter (400 `VALIDATION_ERROR`); the two merge texts already open
+/// with `Validation error: ` after the wallet's prefix and keep that arm.
+#[test]
+fn the_basket_insertion_refusals_are_classed_by_their_opening_words() {
+    const NON_DEFAULT: &str =
+        "The insertionRemittance.basket parameter must be a non-default basket";
+    const CHANGE: &str = "Validation error: The outputs parameter must be output 1 is wallet-managed change and cannot be reclassified as a basket insertion";
+    const ELSEWHERE: &str = "Validation error: The outputs parameter must be output 0 is already assigned to a different basket and cannot be reclassified as a basket insertion into other";
+    let bad = StatusCode::BAD_REQUEST;
+    for prefix in ["", "wallet error: "] {
+        let class = |m: &str| AppError::classify(&format!("{prefix}{m}"));
+        assert_eq!(class(NON_DEFAULT), (bad, "VALIDATION_ERROR"), "{prefix}");
+        // The storage door's spelling of the same text.
+        assert_eq!(
+            class(&format!("Validation error: {NON_DEFAULT}")),
+            (bad, "VALIDATION_ERROR"),
+            "{prefix}"
+        );
+        assert_eq!(class(CHANGE), (bad, "VALIDATION_ERROR"), "{prefix}");
+        assert_eq!(class(ELSEWHERE), (bad, "VALIDATION_ERROR"), "{prefix}");
+        // Near misses: the words later in the text, never at its opening.
+        assert_eq!(class(&format!("Refused: {NON_DEFAULT}")), (bad, "ERROR"));
+        assert_eq!(
+            class("the insertionRemittance.basket parameter must be a non-default basket"),
+            (bad, "ERROR")
+        );
+    }
+}
