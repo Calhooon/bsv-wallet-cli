@@ -38,7 +38,7 @@
     },
     "json": {
       "code": "VALIDATION_ERROR",
-      "message": "Invalid BEEF at byte 0: BadVersion"
+      "message": "Cannot read the BEEF's subject transaction to check payment outputs: BEEF error: invalid BEEF at byte 0: BadVersion { word: 4022250974 }"
     }
   }
 }
