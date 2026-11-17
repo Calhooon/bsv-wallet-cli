@@ -253,7 +253,19 @@
     "251-listOutputs.internalizeHeld.seeded.json",
     "252-internalizeAction.insertion.changeOtherPurpose.json",
     "253-relinquishOutput.internalizeHeld.notDerivedP2pkh.json",
-    "254-listOutputs.internalizeHeld.relinquished.json"
+    "254-listOutputs.internalizeHeld.relinquished.json",
+    "255-listActions.internalizeDoor.before.json",
+    "256-listOutputs.internalizeDoor.before.json",
+    "257-internalizeAction.door.rootRefuted.json",
+    "258-internalizeAction.door.emptyOutputs.json",
+    "259-internalizeAction.door.indexTwiceNew.json",
+    "260-internalizeAction.door.indexTwiceHeld.json",
+    "261-internalizeAction.door.senderUncompressed.json",
+    "262-internalizeAction.door.senderEmpty.json",
+    "263-listActions.internalizeDoor.after.json",
+    "264-listOutputs.internalizeDoor.after.json",
+    "265-internalizeAction.door.heldNamedOnce.json",
+    "266-listOutputs.internalizeDoor.afterHeld.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -385,6 +397,18 @@
     "251-listOutputs.internalizeHeld.seeded.json": "toolbox #823: the internalize-held world, kept apart so the internalize world's listings do not move: two change rows of default with their derivation (written by SQL, as 222's rows are), listed with their locking scripts: one with another provided_by and purpose than storage and change (252), one whose script is not the P2PKH of its derived key (253). New; recorded last, so no file before it moves.",
     "252-internalizeAction.insertion.changeOtherPurpose.json": "toolbox #823: a change row (P2PKH, change, its derivation) whatever its provided_by and purpose is wallet-managed change, refused as a basket insertion: InvalidParameter, 400 VALIDATION_ERROR; the coin stays in default (254).",
     "253-relinquishOutput.internalizeHeld.notDerivedP2pkh.json": "toolbox #819, #823: what a host holds from before, a payment admitted before the wallet payment rule, change of default whose script is not the P2PKH of its derived key (251), taken out by relinquishOutput, 200 (254).",
-    "254-listOutputs.internalizeHeld.relinquished.json": "toolbox #819, #823: default after 252 and 253: the change row 252 refused stays; the row 253 relinquished is gone."
+    "254-listOutputs.internalizeHeld.relinquished.json": "toolbox #819, #823: default after 252 and 253: the change row 252 refused stays; the row 253 relinquished is gone.",
+    "255-listActions.internalizeDoor.before.json": "the toolbox's 0.14.0-beta.8.1 door (the stable line's 0.18.6): the internalize world's actions before rows 257 to 262. New; recorded last, so no file before it moves.",
+    "256-listOutputs.internalizeDoor.before.json": "the toolbox's 0.14.0-beta.8.1 door: the default basket before rows 257 to 262.",
+    "257-internalizeAction.door.rootRefuted.json": "the toolbox's 0.14.0-beta.8.1 door: a wallet payment whose BEEF's root the tracker refutes (its parent proven at a height the header stub answers another root for): the root is not one the tracker carries, Invalid BEEF at its byte, RootNotCarried, 400 VALIDATION_ERROR (the stable line's 0.13.4 answers Invalid merkle root, the same code); nothing stored (263, 264). Accepting side: 238.",
+    "258-internalizeAction.door.emptyOutputs.json": "toolbox 0.14.0-beta.8.1, Hosts: outputs: [] is refused, InvalidParameter, 400 VALIDATION_ERROR; nothing stored (263). Before, admitted. Accepting side: 238.",
+    "259-internalizeAction.door.indexTwiceNew.json": "toolbox 0.14.0-beta.8.1, Hosts: one outputIndex named twice on a new transaction, InvalidParameter, 400 VALIDATION_ERROR; nothing stored (263). Accepting side: 238, named once.",
+    "260-internalizeAction.door.indexTwiceHeld.json": "toolbox 0.14.0-beta.8.1, Hosts: one outputIndex named twice on the transaction the wallet holds (238's), InvalidParameter, 400 VALIDATION_ERROR; the row as it was (264, 266). Accepting side: 265.",
+    "261-internalizeAction.door.senderUncompressed.json": "toolbox 0.14.0-beta.8.1: a wallet payment whose senderIdentityKey is an uncompressed public key is refused by the argument validator, no more than 66 length, InvalidParameter, 400 VALIDATION_ERROR (the stable line's 0.13.4 refuses it at the door, the same code); nothing stored (263). Accepting side: 238, the key compressed.",
+    "262-internalizeAction.door.senderEmpty.json": "toolbox 0.14.0-beta.8.1, Hosts: an empty senderIdentityKey is refused on this line, InvalidParameter, 400 VALIDATION_ERROR; nothing stored (263). The stable line's 0.13.4 stores it as no sender.",
+    "263-listActions.internalizeDoor.after.json": "the toolbox's 0.14.0-beta.8.1 door: after rows 257 to 262 the actions are 255's: no refusal stored a transaction.",
+    "264-listOutputs.internalizeDoor.after.json": "the toolbox's 0.14.0-beta.8.1 door: after rows 257 to 262 the default basket is 256's.",
+    "265-internalizeAction.door.heldNamedOnce.json": "the toolbox's 0.14.0-beta.8.1 door: the accepting side of 260, the held payment (238's) named once, 200.",
+    "266-listOutputs.internalizeDoor.afterHeld.json": "the toolbox's 0.14.0-beta.8.1 door: after 265 the default basket is 256's: the held row unchanged."
   }
 }

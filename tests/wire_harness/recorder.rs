@@ -156,7 +156,7 @@ impl Recorder {
                 ("134-listOutputs.offsetNegative.json".into(), "A negative offset is BRC-100's newest-first paging (wallet/0100.md:911 at 5119a9b); -1 starts at the newest output and passes unchanged to the toolbox. The fresh world returns an empty page with its true total.".into()),
                 ("141-signAction.sequenceNumberAboveType.json".into(), "The u32 argument type refuses sequenceNumber 4294967296 before signAction is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
                 ("142-listActions.offsetAboveType.json".into(), "The u32 argument type refuses offset 4294967296 before listActions is entered. Since #122 item 3 the framework's refusal is the doors' 400 VALIDATION_ERROR {code, message} with axum's words (it was a 422 in text); the envelope's members stay #149's, the statuses #117's.".into()),
-            ].into_iter().chain(gate_notes()).chain(owner_notes()).chain(super::cases_internalize_rules::notes()).collect(),
+            ].into_iter().chain(gate_notes()).chain(owner_notes()).chain(super::cases_internalize_rules::notes()).chain(super::cases_internalize_door::notes()).collect(),
         })
         .unwrap();
         text.push('\n');

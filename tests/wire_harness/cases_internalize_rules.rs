@@ -43,6 +43,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     record_sweeps(r).await;
     record_own_basket_spelling(r).await;
     record_held(r).await;
+    super::cases_internalize_door::record(r).await;
 }
 
 /// A wallet payment output of `payment`'s transaction, the stranger's

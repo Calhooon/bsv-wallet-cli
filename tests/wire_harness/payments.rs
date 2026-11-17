@@ -47,6 +47,12 @@ pub(crate) enum Payment {
     /// rules (#823): the default basket refused, a named basket, the same
     /// basket again, another basket refused.
     Insertions,
+    /// The derived key's P2PKH, as [`Payment::Wallet`], whose parent is
+    /// proven at a height the header stub was not seeded with: the stub
+    /// answers another root there, so the tracker refutes the BEEF's root
+    /// (the toolbox's 0.14.0-beta.8.1 door, the stable line's 0.18.6 row).
+    /// Not in [`Payment::ALL`], whose roots the worlds seed.
+    UnknownRoot,
 }
 
 impl Payment {
@@ -80,6 +86,7 @@ impl Payment {
             Payment::EmptyScript => (0xeb, 899_894),
             Payment::StrayInsertion => (0xec, 899_895),
             Payment::Insertions => (0xed, 899_896),
+            Payment::UnknownRoot => (0xf0, 899_880),
         }
     }
 
@@ -92,7 +99,9 @@ impl Payment {
             | Payment::BoundInsertion
             | Payment::OtherKey
             | Payment::Insertions => hex::decode(P2PKH).unwrap(),
-            Payment::Wallet | Payment::StrayInsertion => p2pkh(&derived().hash160()),
+            Payment::Wallet | Payment::StrayInsertion | Payment::UnknownRoot => {
+                p2pkh(&derived().hash160())
+            }
             Payment::DerivedP2pk => [&[0x21][..], &derived().to_compressed(), &[0xac][..]].concat(),
             Payment::OpReturn => vec![0x00, 0x6a],
             Payment::DerivedP2pkhAndByte => {
