@@ -255,7 +255,9 @@ under the word also carries the toolbox's label `underReceivedRule`
 (bsv-wallet-toolbox-rs 0.13.5's received-coin rule, without which its selection
 passes over a received coin whose transaction has no proof), stripped from a
 caller's labels in any spelling the toolbox reads as it, so without the word
-neither label is passed. The records a 0.15
+neither label is passed, with one case: a received coin the gate reads as mined
+at its depth while the toolbox has not yet completed its transaction is spent
+as before, and its action carries `underReceivedRule` alone. The records a 0.15
 store made (`spend_gate_actions`) keep answering. There is no environment
 variable for it.
 
