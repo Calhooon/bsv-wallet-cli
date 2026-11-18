@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "bsv-wallet-cli"
-version = "0.18.8"
+version = "0.18.9"
 dependencies = [
  "anyhow",
  "async-trait",
