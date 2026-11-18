@@ -239,10 +239,24 @@ pub(crate) fn input(txid: &str, vout: u32) -> TransactionInput {
 /// [`PARENT_HEIGHT`], each locked by a script `00` spends. Its `AtomicBEEF`,
 /// its txid and the parent's.
 pub(crate) fn beef_paying(lock: &[u8]) -> (Vec<u8>, String, String) {
+    let (parent, child) = paying(lock, 5);
+    let parent_txid = parent.id();
+    let txid = child.id();
+    let mut beef = Beef::new();
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, PARENT_HEIGHT));
+    beef.merge_raw_tx(parent.to_binary(), Some(bump)).unwrap();
+    beef.merge_raw_tx(child.to_binary(), None).unwrap();
+    (beef.to_binary_atomic(&txid).unwrap(), txid, parent_txid)
+}
+
+/// `beef_paying`'s parent of `inputs` outputs of 1,000 satoshis, each
+/// locked by a script `00` spends, and its child spending every one to one
+/// output of 4500 locked by `lock`.
+pub(crate) fn paying(lock: &[u8], inputs: u32) -> (Transaction, Transaction) {
     let anyone = LockingScript::from_hex(&format!("14{}757551", "00".repeat(20))).unwrap();
     let mut parent = Transaction::new();
     parent.inputs_mut().push(input(&"11".repeat(32), 0));
-    for _ in 0..5 {
+    for _ in 0..inputs {
         parent.outputs_mut().push(TransactionOutput {
             satoshis: Some(1_000),
             locking_script: anyone.clone(),
@@ -252,7 +266,7 @@ pub(crate) fn beef_paying(lock: &[u8]) -> (Vec<u8>, String, String) {
     let parent_txid = parent.id();
     let mut child = Transaction::new();
     child.set_version(1);
-    for vout in 0..5 {
+    for vout in 0..inputs {
         child.inputs_mut().push(input(&parent_txid, vout));
     }
     child.outputs_mut().push(TransactionOutput {
@@ -260,12 +274,7 @@ pub(crate) fn beef_paying(lock: &[u8]) -> (Vec<u8>, String, String) {
         locking_script: LockingScript::from_binary(lock).unwrap(),
         change: false,
     });
-    let txid = child.id();
-    let mut beef = Beef::new();
-    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, PARENT_HEIGHT));
-    beef.merge_raw_tx(parent.to_binary(), Some(bump)).unwrap();
-    beef.merge_raw_tx(child.to_binary(), None).unwrap();
-    (beef.to_binary_atomic(&txid).unwrap(), txid, parent_txid)
+    (parent, child)
 }
 
 // ---------------------------------------------------------------------------

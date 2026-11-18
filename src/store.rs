@@ -51,6 +51,10 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
 /// (bsv-wallet-toolbox-rs 0.14.0-beta.9 `RECEIVED_COIN_CLAUSE`,
 /// `src/storage/sqlx/create_action/allocation.rs:30`, read on its own
 /// columns; the spend gate's offer, #627). Reads only.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
 pub async fn offer_holds_received_unproven(reader: &SqlitePool, offer: &[i64]) -> Result<bool> {
     // 500 ids a query, well under SQLite's bound on bound parameters.
     for ids in offer.chunks(500) {

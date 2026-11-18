@@ -370,33 +370,14 @@ async fn a_change_row_holding_an_empty_sender_signs() {
 // 0.18.8 row)
 // ---------------------------------------------------------------------------
 
-/// `beef_paying`'s payment with its parent carried by txid alone and no
-/// BUMP in the BEEF: its `AtomicBEEF` and its parent's txid.
+/// `beef_paying`'s payment of one input with its parent carried by txid
+/// alone and no BUMP in the BEEF: its `AtomicBEEF` and its parent's txid.
 fn unproven_stub_paying(lock: &[u8]) -> (Vec<u8>, String) {
-    use bsv_sdk::script::LockingScript;
-    use bsv_sdk::transaction::{Beef, Transaction, TransactionOutput};
-    let anyone = LockingScript::from_hex(&format!("14{}757551", "00".repeat(20))).unwrap();
-    let mut parent = Transaction::new();
-    parent.inputs_mut().push(input(&"11".repeat(32), 0));
-    parent.outputs_mut().push(TransactionOutput {
-        satoshis: Some(5_000),
-        locking_script: anyone,
-        change: false,
-    });
-    let parent_txid = parent.id();
-    let mut child = Transaction::new();
-    child.set_version(1);
-    child.inputs_mut().push(input(&parent_txid, 0));
-    child.outputs_mut().push(TransactionOutput {
-        satoshis: Some(4_500),
-        locking_script: LockingScript::from_binary(lock).unwrap(),
-        change: false,
-    });
-    let txid = child.id();
-    let mut beef = Beef::new();
-    beef.merge_txid_only(parent_txid.clone());
+    let (parent, child) = paying(lock, 1);
+    let mut beef = bsv_sdk::transaction::Beef::new();
+    beef.merge_txid_only(parent.id());
     beef.merge_raw_tx(child.to_binary(), None).unwrap();
-    (beef.to_binary_atomic(&txid).unwrap(), parent_txid)
+    (beef.to_binary_atomic(&child.id()).unwrap(), parent.id())
 }
 
 /// An entry carried by txid alone that no BUMP of the BEEF proves is

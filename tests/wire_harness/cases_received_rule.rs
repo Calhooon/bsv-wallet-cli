@@ -14,9 +14,10 @@
 //! received_rule.rs`.
 use serde_json::{json, Value};
 
+use super::cases_internalize_door::payment;
 use super::cases_internalize_rules::beef;
 use super::recorder::{post, Recorded, Recorder};
-use super::worlds::{stranger_key, Payment, PAYMENT_PREFIX, PAYMENT_SUFFIX};
+use super::worlds::Payment;
 
 const WORLD: &str = "received-rule";
 /// A payment to a key of neither party.
@@ -24,13 +25,6 @@ const LOCK: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 /// A received coin's 9,000 less the fee of one input and one output: an
 /// exact spend, so the action makes no change output.
 const EXACT: u64 = 8_980;
-
-/// The stranger's remittance for output 0.
-fn payment() -> Value {
-    json!([{"outputIndex": 0, "protocol": "wallet payment",
-        "paymentRemittance": {"derivationPrefix": PAYMENT_PREFIX, "derivationSuffix": PAYMENT_SUFFIX,
-            "senderIdentityKey": stranger_key().public_key().to_hex()}}])
-}
 
 /// The subject txid of an `AtomicBEEF`.
 fn subject(atomic: &[u8]) -> String {
@@ -70,6 +64,21 @@ async fn listed(r: &mut Recorder, name: &str, labels: Value) -> Recorded {
     .await
 }
 
+/// The `received-rule` world's rows: no coin of its own (the basket
+/// wanting none, so an exact spend makes no change) and the roots of the
+/// stranger's payments' parents; its coins are the payments [`record`]
+/// takes in.
+pub(crate) async fn world(
+    storage: &bsv_wallet_toolbox::StorageSqlx,
+    identity: &str,
+    key: &bsv_sdk::primitives::PrivateKey,
+) -> std::collections::HashMap<u32, String> {
+    super::worlds::Rows::open(storage, identity)
+        .await
+        .wanting_no_change(key)
+        .await
+}
+
 pub(crate) async fn record(r: &mut Recorder) {
     let named = beef(Payment::Wallet).await;
     let other = beef(Payment::StrayInsertion).await;
@@ -81,7 +90,7 @@ pub(crate) async fn record(r: &mut Recorder) {
         WORLD,
         post(
             "/internalizeAction",
-            json!({"tx": named, "outputs": payment(), "description": "wire received rule",
+            json!({"tx": named, "outputs": [payment()], "description": "wire received rule",
                 "labels": ["wire received", "underReceivedRule", " UNDERRECEIVEDRULE\t"]}),
         ),
     )
@@ -91,7 +100,7 @@ pub(crate) async fn record(r: &mut Recorder) {
         WORLD,
         post(
             "/internalizeAction",
-            json!({"tx": other, "outputs": payment(), "description": "wire received rule"}),
+            json!({"tx": other, "outputs": [payment()], "description": "wire received rule"}),
         ),
     )
     .await;
