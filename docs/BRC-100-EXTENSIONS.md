@@ -24,7 +24,7 @@ constraints add no JSON key and no extension-table row. Negative
 `listOutputs.offset` values pass unchanged for BRC-100's newest-first paging
 (`wallet/0100.md:911,926`): `-1` starts at the newest output.
 
-## Extensions: 21 rows
+## Extensions: 22 rows
 
 | endpoint | side | field | reason | added |
 |---|---|---|---|---|
@@ -47,10 +47,11 @@ constraints add no JSON key and no extension-table row. Negative
 | `createAction` | refusal | `reviewActionResults.competingTxs` | The competing transaction IDs. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
 | `createAction` | refusal | `reviewActionResults.competingBeef` | The competitor's BEEF, the reference's `Uint8Array` as its JSON (numeric keys, a Record here), filled from the stored competitor and its proof or ancestry since toolbox #389, txid-only for a competitor the store lacks. HTTP 400, numeric code 5 under the pinned #140 host map. | #347, toolbox #389 |
 | `createAction` | refusal | `sendWithResults` | The action send results, including an empty list. HTTP 400, numeric code 5 under the pinned #140 host map. | #277, bsv-rs #339 |
+| `listActions` | response | `actions.underRule` | The rule an action was created under, `received-pending` for an action created under `allowPending` (the gate's label `spend-gate:received-pending`); absent for an action created under no word, the toolbox's `underReceivedRule` alone included (fixture 281, #627). | 0.11.0 (#29) |
 | `listCertificates` | response | `certificates.keyring` | The stored master keyring of a verified direct certificate; its keys form a Record. | #338, toolbox #374 |
 | `listCertificates` | response | `certificates.verifier` | bsv-rs's `CertificateResult` carries the verifier beside the certificate. | the initial release, feb0dd0 |
 
-21 extensions.
+22 extensions.
 
 ## Gaps: 35 rows
 
@@ -103,13 +104,12 @@ table; attribute discovery's stay, its answer empty without an overlay. Key-link
 Privileged-request and refusal-envelope gaps retain their existing issues.
 `getVersion` answers this wallet's name and its version's core, `bsv-wallet-cli-<major>.<minor>.<patch>`, BRC-100's `[vendor]-[major].[minor].[patch]` (line 2671) and the MetaNet Client's shape; through 0.19.0-beta.4 it answered the toolbox's `bsv-wallet-toolbox-0.1.0` (#122 item 6).
 
-## Served by the source, not in the corpus: 17 rows
+## Served by the source, not in the corpus: 16 rows
 
 Fields the server's types can serve that no fixture shows. Each is an extension the day a fixture serves it: the test then fails until the row moves to the extensions table.
 
 | endpoint | side | field | why no fixture serves it | added |
 |---|---|---|---|---|
-| `listActions` | response | `actions.underRule` | The rule an action was created under (`spend-gate:received-pending`, from `allowPending`); no fixture lists an action created under the word. | 0.11.0 (#29) |
 | `createAction` | response | `broadcast` | The doors' word when the immediate post drew no accepting word (`src/server/post_word.rs`); the `funded` world's ARC stub takes every post. | 43376b8 (#66, 2026-10-10) |
 | `createAction` | response | `broadcast.word` | `built`. | 43376b8 (#66) |
 | `createAction` | response | `broadcast.request` | The proof request's status. | 43376b8 (#66) |
