@@ -378,22 +378,22 @@ fn template_to(lock: &LockingScript) -> bsv_sdk::wallet::CreateActionArgs {
 /// scripts.rs`), read on this line through the toolbox's door: a
 /// transaction one wallet's own `createAction` (`signAndProcess: false`)
 /// and `signAction` built and signed, paying a second wallet's BRC-29 key,
-/// is taken in by that second wallet, its scripts run (the first wallet's
+/// is taken in by that second wallet, its scripts run (the paying wallet's
 /// P2PKH signature against its proven coin) and passing. The served router
 /// takes a wallet over the concrete `Services` (`src/server/mod.rs`) and
 /// the wire harness serves one wallet per world, so this row is the
 /// door's, over the toolbox's mock.
 #[tokio::test]
 async fn a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another() {
-    let (first_root, second_root) = (PrivateKey::random(), PrivateKey::random());
-    let first = funded_wallet(&first_root).await;
-    let lock = p2pkh_of(&brc29_key(&first_root, &second_root.public_key(), false));
-    let created = first
+    let (sender_root, receiver_root) = (PrivateKey::random(), PrivateKey::random());
+    let sender = funded_wallet(&sender_root).await;
+    let lock = p2pkh_of(&brc29_key(&sender_root, &receiver_root.public_key(), false));
+    let created = sender
         .create_action(template_to(&lock), Some("door.local"))
         .await
         .expect("a template");
     let signable = created.signable_transaction.expect("unsigned");
-    let signed = first
+    let signed = sender
         .sign_action(
             bsv_sdk::wallet::SignActionArgs {
                 spends: HashMap::default(),
@@ -405,12 +405,12 @@ async fn a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another(
         .await
         .expect("signed");
 
-    let second = mock_wallet(&second_root).await;
-    let taken = second
+    let receiver = mock_wallet(&receiver_root).await;
+    let taken = receiver
         .internalize_action(
             wallet_payment(
                 signed.tx.expect("the signed AtomicBEEF"),
-                &first_root.public_key(),
+                &sender_root.public_key(),
             ),
             Some("door.local"),
         )
