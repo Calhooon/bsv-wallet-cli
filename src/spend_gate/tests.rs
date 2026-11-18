@@ -2913,8 +2913,11 @@ async fn tracker_proves_received(
 /// depth (the tracker's own pass, its proof handed to the storage and
 /// deferred), while the toolbox's own record of the transaction is not yet
 /// `completed`. A plain spend with no `allowPending`: the gate offers the
-/// coin, and at 2bac87e the toolbox's selection passes it over (no label),
-/// so the answer is the gate's 402 with 9,000 offered and nothing held.
+/// coin and passes the toolbox's label alone, so the coin is selected and
+/// the spend signs, as under 0.18.7. At 2bac87e (no label) the toolbox
+/// passed the coin over and the answer was the gate's 402, "Insufficient
+/// funds: no offerable coin covers the action (Insufficient funds: need
+/// 1005, have 0; 9000 sats offered, 0 coin(s) held back)".
 #[tokio::test]
 async fn a_received_coin_the_gate_reads_as_mined_with_no_word() {
     let root = PrivateKey::random();
@@ -2929,18 +2932,177 @@ async fn a_received_coin_the_gate_reads_as_mined_with_no_word() {
     assert_eq!(read.offered.len(), 1, "the gate offers it with no word");
     assert!(read.held.is_empty());
 
-    let err = create_action(&wallet, pay_signed(1_000, None), "gate.local", &gate)
+    let made = create_action(&wallet, pay_signed(1_000, None), "gate.local", &gate)
         .await
-        .expect_err("at 2bac87e the toolbox passes the offered coin over");
-    let GateError::Refused(refusal) = &err else {
-        panic!("not the gate's refusal: {err}");
-    };
-    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+        .expect("the coin the gate offers is spent with no word");
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.expect("signed"));
+    assert!(made.tx.is_some(), "the spend signs");
+    assert!(spender_of(&wallet, received).await.is_some());
+    // The toolbox's label alone: no word was given, so no record of one.
     assert_eq!(
-        err.to_string(),
-        "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 1005, have 0; 9000 sats offered, 0 coin(s) held back)"
+        labels_of_txid(wallet.storage(), &txid).await,
+        vec![TOOLBOX_RECEIVED_LABEL]
     );
-    assert_eq!(refusal.offered_satoshis, 9_000);
-    assert!(refusal.held.is_empty());
+}
+
+/// The same spend once the toolbox has completed the coin's transaction
+/// (its proof gate raised and the proof stored, as the monitor does under
+/// `daemon`): the toolbox selects the coin without its label, and the
+/// action carries none.
+#[tokio::test]
+async fn a_received_coin_the_toolbox_completed_is_spent_with_no_label() {
+    use bsv_wallet_toolbox::MonitorStorage;
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    let received = &txids[0];
+    tracker_proves_received(&wallet, received, 899).await;
+    let mut tracker = crate::test_support::TestChainTracker::new(900);
+    tracker.add_root(899, received.clone());
+    wallet
+        .storage()
+        .set_chain_tracker(std::sync::Arc::new(tracker))
+        .await;
+    wallet
+        .storage()
+        .set_max_acceptable_proof_height(899)
+        .await
+        .unwrap();
+    let outcome = wallet
+        .storage()
+        .ingest_merkle_proof(
+            received,
+            &MerklePath::from_coinbase_txid(received, 899).to_binary(),
+            899,
+            &"bb".repeat(32),
+            Some(received),
+        )
+        .await
+        .unwrap();
+    assert!(
+        format!("{outcome:?}").starts_with("Ingested"),
+        "{outcome:?}"
+    );
+
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, Some(vec!["mine".to_string()])),
+        "gate.local",
+        &opts(1, true),
+    )
+    .await
+    .expect("a completed received coin is selected as before");
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.expect("signed"));
+    assert!(spender_of(&wallet, received).await.is_some());
+    assert_eq!(labels_of_txid(wallet.storage(), &txid).await, vec!["mine"]);
+}
+
+/// An offer that holds no received coin the toolbox has not completed
+/// carries no label, whatever else the wallet holds: a mined coin is
+/// offered and funds the spend while a received unproven coin, held with
+/// no word, is outside the offer.
+#[tokio::test]
+async fn an_offer_with_no_received_unproven_coin_carries_no_label() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    let received = &txids[0];
+    let (user, _) = wallet
+        .storage()
+        .find_or_insert_user(&root.public_key().to_hex())
+        .await
+        .unwrap();
+    let basket = wallet
+        .storage()
+        .find_or_create_default_basket(user.user_id)
+        .await
+        .unwrap()
+        .basket_id;
+    let (mined, mined_id) =
+        mined_coin(wallet.storage(), (user.user_id, basket), 0xa5, 20_000, 850).await;
+    wallet
+        .services()
+        .set_header_for_height(header(850, &mined, 0));
+
+    let gate = opts(1, true);
+    let read = assess(wallet.storage(), wallet.services(), &gate, None)
+        .await
+        .unwrap();
+    assert_eq!(read.offer(), vec![mined_id]);
+    assert!(
+        reason_of(&read, received).is_some(),
+        "the received coin is held"
+    );
+
+    // A template: the mined coin's lock is no key of this wallet's.
+    let mut args = pay(1_000);
+    args.options = Some(CreateActionOptions {
+        sign_and_process: Some(false),
+        ..Default::default()
+    });
+    let made = create_action(&wallet, args, "gate.local", &gate)
+        .await
+        .expect("the mined coin funds it");
+    let reference = reference_string(&made.signable_transaction.expect("a template").reference);
+    let spent: Option<i64> = sqlx::query_scalar("SELECT spent_by FROM outputs WHERE output_id = ?")
+        .bind(mined_id)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert!(spent.is_some(), "the mined coin funds it");
     assert_eq!(spender_of(&wallet, received).await, None);
+    assert!(labels_of(wallet.storage(), &reference).await.is_empty());
+}
+
+/// Under the word, a received coin the gate reads as mined is spent with
+/// the word's two labels, the toolbox's written once.
+#[tokio::test]
+async fn under_the_word_a_received_coin_read_as_mined_carries_the_label_once() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    tracker_proves_received(&wallet, &txids[0], 899).await;
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, None),
+        "gate.local",
+        &opts(1, true).with_allow_received(true),
+    )
+    .await
+    .unwrap();
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.unwrap());
+    assert_eq!(
+        labels_of_txid(wallet.storage(), &txid).await,
+        vec![RECEIVED_PENDING_LABEL, TOOLBOX_RECEIVED_LABEL]
+    );
+}
+
+/// What a caller of `listActions` sees of such a spend, made with no word:
+/// with `includeLabels` the toolbox's label alone beside the caller's, and
+/// no `underRule` (the caller asked for no rule), as the served route
+/// (`handlers::list_actions`, `with_rules`) shows it.
+#[tokio::test]
+async fn a_served_listing_shows_the_toolbox_label_alone_with_no_word() {
+    let root = PrivateKey::random();
+    let (wallet, txids) = wallet_with_received(&root, &[9_000]).await;
+    tracker_proves_received(&wallet, &txids[0], 899).await;
+    let made = create_action(
+        &wallet,
+        pay_signed(1_000, Some(vec!["mine".to_string()])),
+        "gate.local",
+        &opts(1, true),
+    )
+    .await
+    .unwrap();
+    let txid = bsv_sdk::primitives::to_hex(&made.txid.unwrap());
+    let mut args = list_args();
+    args.labels = vec![TOOLBOX_RECEIVED_LABEL.to_string()];
+    args.include_labels = Some(true);
+    let list = wallet.list_actions(args, "gate.local").await.unwrap();
+    let rules = action_rules(wallet.storage()).await.unwrap();
+    let shown = crate::server::handlers::with_rules(serde_json::to_value(&list).unwrap(), &rules);
+    let actions = shown["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 1, "{shown}");
+    assert_eq!(actions[0]["txid"], txid);
+    assert!(actions[0].get("underRule").is_none(), "{shown}");
+    let mut labels: Vec<String> = serde_json::from_value(actions[0]["labels"].clone()).unwrap();
+    labels.sort();
+    assert_eq!(labels, vec!["mine", TOOLBOX_RECEIVED_LABEL]);
 }
