@@ -45,6 +45,33 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .map_err(anyhow::Error::from)
 }
 
+/// Whether `offer` (output ids) holds a coin the toolbox's selection passes
+/// over without the label `underReceivedRule`: a received coin (purpose
+/// `receive`) whose transaction the toolbox does not hold as `completed`
+/// (bsv-wallet-toolbox-rs 0.14.0-beta.9 `RECEIVED_COIN_CLAUSE`,
+/// `src/storage/sqlx/create_action/allocation.rs:30`, read on its own
+/// columns; the spend gate's offer, #627). Reads only.
+pub async fn offer_holds_received_unproven(reader: &SqlitePool, offer: &[i64]) -> Result<bool> {
+    // 500 ids a query, well under SQLite's bound on bound parameters.
+    for ids in offer.chunks(500) {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT EXISTS (SELECT 1 FROM outputs o \
+             JOIN transactions t ON o.transaction_id = t.transaction_id \
+             WHERE COALESCE(o.purpose, '') = 'receive' AND t.status <> 'completed' \
+             AND o.output_id IN (",
+        );
+        let mut list = query.separated(", ");
+        for id in ids {
+            list.push_bind(*id);
+        }
+        query.push("))");
+        if query.build_query_scalar::<bool>().fetch_one(reader).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// One (heir, dead ancestor) pair of the lineage walk
 /// ([`dead_lineage_rows`]).
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,8 +6,9 @@ use sqlx::Row;
 
 use super::{
     action_rule_labels, assess_inner, assess_named, check_action_scope, create_action,
-    named_refusal, offered_status, refusal, service_error, Assessment, GateError, GateOptions,
-    HeldCoin, NamedInput, Refusal, UserCoins, NAMED_INPUT_REFUSED, NOT_HELD, OFFER_CAP,
+    labelled_for_offer, named_refusal, offered_status, refusal, service_error, Assessment,
+    GateError, GateOptions, HeldCoin, NamedInput, Refusal, UserCoins, NAMED_INPUT_REFUSED,
+    NOT_HELD, OFFER_CAP,
 };
 
 /// The value of named managed coins, used to size a CLI split.
@@ -61,8 +62,12 @@ pub async fn create_action_from<V: WalletServices + Send + Sync + 'static>(
     let (assessment, ids) = assessment_from(coins, wallet.services(), opts, from).await?;
     action_rule_labels(&mut args, &opts.allow_pending);
     let outputs = args.outputs.iter().flatten().map(|o| o.satoshis).sum();
+    let offer = assessment.offer();
+    // The toolbox's label alone for a received coin of the offer it has not
+    // completed, admitted with no word (#627), as on the ordinary door.
+    let args = labelled_for_offer(wallet.storage(), args, &offer).await?;
     match wallet
-        .create_action_offering(args, Some(originator), &assessment.offer(), &ids)
+        .create_action_offering(args, Some(originator), &offer, &ids)
         .await
     {
         Ok(result) => Ok(result),
