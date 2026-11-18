@@ -4,6 +4,7 @@ pub mod broadcast_reconcile;
 pub mod broadcast_verify;
 pub mod chain_feed;
 pub mod explorers;
+pub mod genesis;
 pub mod gift;
 pub mod relay;
 pub mod retire_guard;
