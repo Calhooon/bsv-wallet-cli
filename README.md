@@ -6,10 +6,10 @@
 
 A self-hosted BSV command-line wallet and BRC-100 HTTP server, with SQLite
 storage, signing, broadcasting and transaction tracking. The release of record
-is the tag **v0.18.8**, and crates.io carries the same version, **0.18.8**; the
+is the tag **v0.18.9**, and crates.io carries the same version, **0.18.9**; the
 repository's Releases page holds a Release per tag. **0.18.1 was never
 published**. It pins
-**bsv-wallet-toolbox-rs =0.13.5**, **bsv-rs =0.8.12** and **bsv-tracker =0.8.0**;
+**bsv-wallet-toolbox-rs =0.13.7**, **bsv-rs =0.8.13** and **bsv-tracker =0.8.0**;
 [Cargo.lock](Cargo.lock) carries those versions.
 
 ## Install and inspect
@@ -17,7 +17,7 @@ published**. It pins
 Install the registry release into an explicit tool directory:
 
 ```sh
-cargo install bsv-wallet-cli --version 0.18.8 --locked --root ./wallet-tools
+cargo install bsv-wallet-cli --version 0.18.9 --locked --root ./wallet-tools
 ./wallet-tools/bin/bsv-wallet --help
 ./wallet-tools/bin/bsv-wallet respend --help
 ```
@@ -78,7 +78,11 @@ The server implements the wallet interface and serializes spending operations.
 `AUTH_TOKEN`, unless the operator explicitly supplies `--allow-no-token`.
 `CHAINTRACKS_URL` selects the header service. With `CHAINTRACKS_URL=off` there
 is no chain tracker: no merkle proof is stored and no payment is accepted, so
-`fund`, `receive`, `sync`, `split` and `gift-claim` refuse by name. Broadcaster callbacks and status
+`fund`, `receive`, `sync`, `split` and `gift-claim` refuse by name. From 0.18.9
+`internalizeAction` refuses a payment spending a coin mined before Genesis as
+not judged (bsv-wallet-toolbox-rs 0.13.7), so `split` does not spend a coin
+whose spend that door would refuse so, and `gift-claim` refuses such a claim:
+each by name, before anything is posted. Broadcaster callbacks and status
 feeds are hints until their evidence is checked. Configuration and defaults
 are defined in [src](src); [GIFT.md](GIFT.md) documents gift flows and limits.
 
