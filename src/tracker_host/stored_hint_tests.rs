@@ -182,9 +182,9 @@ fn every_text_the_hand_map_stored_reads_as_its_kind_and_writes_back_identical() 
 
 /// The answers that move on purpose (#612 (iv)): a `mined` hint with no
 /// height, a `mempool_present` hint with no courier and a `rejected` hint
-/// with no reason are refused, where the hand map read the first two as
-/// `unknown` and the third as an empty reason. 0.19.0-beta.8's `of` wrote
-/// none of the three.
+/// with no reason are refused, where the hand map read the `mined` and
+/// `mempool_present` ones as `unknown` and the `rejected` one as an empty
+/// reason. 0.19.0-beta.8's `of` wrote none of the three.
 #[test]
 fn a_kind_stored_without_its_payload_is_refused_never_read_as_unknown() {
     for text in [
