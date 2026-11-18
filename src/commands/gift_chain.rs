@@ -61,8 +61,15 @@ pub(crate) struct ClaimPost {
 /// The BEEF is the deposit and the claim. The deposit carries its merkle
 /// proof when the header service checks one for it (`get_merkle_path`
 /// returns only a checked proof); a deposit not mined yet goes as bytes.
+///
+/// Before the post, the BEEF is asked the Genesis rule alone of
+/// `internalizeAction` under `genesis`, the Genesis height of the door
+/// that records the claim (#634, [`claim_not_recordable`]): a BEEF it
+/// would refuse as not judged is refused here by name, nothing posted.
+/// `None` asks nothing (a store word the door's policy does not read).
 pub(crate) async fn broadcast_claim<V: WalletServices>(
     services: &V,
+    genesis: Option<u32>,
     deposit_raw: &[u8],
     claim_raw: &[u8],
 ) -> Result<ClaimPost> {
@@ -91,6 +98,9 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
     }
     beef.merge_raw_tx(claim_raw.to_vec(), None)?;
     let beef = beef.to_binary()?;
+    if let Some(refusal) = genesis.and_then(|g| claim_not_recordable(&beef, g)) {
+        return Err(anyhow!(refusal));
+    }
 
     let results = services
         .post_beef(&beef, std::slice::from_ref(&claim_txid))
@@ -101,6 +111,21 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
         beef,
         answer: tracker_host::read_post(&results),
     })
+}
+
+/// Why the wallet could not record a claim carried in `beef`, by the
+/// Genesis rule alone of `internalizeAction` under `genesis` (a payment
+/// spending a coin mined before the network's Genesis height is refused as
+/// not judged), or `None`. The scripts stay the door's to run.
+/// `broadcast_claim` merges the deposit (with its checked proof or without
+/// one) and the claim alone, so the transaction named is the claim and its
+/// coin the deposit.
+pub(crate) fn claim_not_recordable(beef: &[u8], genesis: u32) -> Option<String> {
+    let spend = bsv_wallet_cli::genesis::unproven_spend_of_pre_genesis_coin(beef, genesis)?;
+    Some(format!(
+        "gift-claim refused, nothing posted: the claim spends the gift's deposit {}, which its proof places at height {}, before Genesis height {}, and internalizeAction refuses a payment spending a coin mined before Genesis as not judged, so the wallet could not record the claim.",
+        spend.source_txid, spend.coin_height, spend.genesis_height
+    ))
 }
 
 /// What the wallet records for its own claim (E4, the rulings of
@@ -192,7 +217,9 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
     lock_until: u64,
     force: bool,
 ) -> Result<ClaimOutcome> {
-    let post = broadcast_claim(services, deposit_raw, claim_raw).await?;
+    // The door that records the claim judges by its store's own chain.
+    let genesis = bsv_wallet_cli::genesis::door_genesis_height(storage);
+    let post = broadcast_claim(services, genesis, deposit_raw, claim_raw).await?;
     let record = claim_record(&post.beef, claim_raw, pay_script)?;
     let now = clock.now();
     let early = now < lock_until;
@@ -362,7 +389,9 @@ mod tests {
             }))
             .build();
 
-        let post = broadcast_claim(&services, &deposit, &claim).await.unwrap();
+        let post = broadcast_claim(&services, Some(620_538), &deposit, &claim)
+            .await
+            .unwrap();
         assert_eq!(
             post.answer,
             PostAnswer::Accepted {
@@ -396,7 +425,9 @@ mod tests {
                 notes: vec![],
             }))
             .build();
-        let post = broadcast_claim(&services, &deposit, &claim).await.unwrap();
+        let post = broadcast_claim(&services, Some(620_538), &deposit, &claim)
+            .await
+            .unwrap();
         assert!(matches!(post.answer, PostAnswer::Accepted { .. }));
         assert_eq!(services.call_count("get_merkle_path"), 1);
         assert_eq!(services.call_count("post_beef"), 1);

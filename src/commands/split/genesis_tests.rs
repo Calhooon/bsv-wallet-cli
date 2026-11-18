@@ -4,6 +4,7 @@
 //! toolbox's mock broadcaster.
 
 use super::*;
+use crate::spend_gate::{GateError, PRE_GENESIS_WHY};
 use crate::test_support::Markers;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::MerklePath;
@@ -12,7 +13,8 @@ use bsv_wallet_toolbox::services::BlockHeader;
 use bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions;
 use bsv_wallet_toolbox::{Chain, StorageSqlx, Wallet, WalletStorageWriter};
 
-/// The header service's tip, and the storage's tracker's height.
+/// The header service's tip, and the storage's tracker's height, at least
+/// (ten above the highest coin when that is higher).
 const TIP: u32 = 900_000;
 
 /// A header at `height` whose merkle root is `root` (a one-transaction
@@ -63,18 +65,24 @@ pub(super) async fn wallet_with_proven(
         .await
         .unwrap();
     storage.make_available().await.unwrap();
+    let tip = coins
+        .iter()
+        .map(|(h, _)| *h + 10)
+        .max()
+        .unwrap_or(0)
+        .max(TIP);
     // The proof gate raised as the monitor raises it, so the payment's
     // checked proof is stored with it (`proven_txs`).
-    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, TIP)
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, tip)
         .await
         .unwrap();
     storage
         .set_chain_tracker(std::sync::Arc::new(
-            crate::test_support::TestChainTracker::always_valid(TIP),
+            crate::test_support::TestChainTracker::always_valid(tip),
         ))
         .await;
     let services = MockWalletServices::builder().build();
-    services.set_tip_header(header(TIP, &"0e".repeat(32), true));
+    services.set_tip_header(header(tip, &"0e".repeat(32), true));
     let wallet = Wallet::with_options(
         Some(root.clone()),
         storage,
@@ -177,4 +185,250 @@ async fn a_split_of_a_coin_mined_before_genesis_is_not_posted() {
     assert!(answer.is_err(), "{seen}");
     assert_eq!(posts, 0, "{seen}");
     assert_eq!(ledger(&ctx).await, before, "{seen}");
+    let Some(GateError::Refused(refusal)) = answer.as_ref().err().and_then(|e| e.downcast_ref())
+    else {
+        panic!("not the gate's refusal: {seen}");
+    };
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    assert_eq!(refusal.offered_satoshis, 0);
+    assert_eq!(refusal.held.len(), 1, "{refusal}");
+    assert_eq!(refusal.held[0].outpoint, format!("{}.0", txids[0]));
+    assert!(refusal.held[0].before_genesis);
+    assert_eq!(
+        refusal.held[0].reason,
+        "mined before Genesis: coin height 600000 is before Genesis height 620538; split does not offer it"
+    );
+    let message = refusal.to_string();
+    assert!(message.starts_with("Insufficient funds: "), "{message}");
+    assert!(
+        message.ends_with(&format!("\n{PRE_GENESIS_WHY}")),
+        "{message}"
+    );
+    assert_eq!(
+        refusal.to_json()["held"][0]["reason"],
+        refusal.held[0].reason
+    );
+    assert_eq!(spender(&ctx, &txids[0]).await, None);
+}
+
+/// The action that spent the coin `txid`.0, if any.
+async fn spender(ctx: &WalletContext<MockWalletServices>, txid: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT spent_by FROM outputs WHERE txid = ? AND vout = 0")
+        .bind(txid)
+        .fetch_one(ctx.wallet.storage().pool())
+        .await
+        .unwrap()
+}
+
+/// The split's outputs of `per` sats recorded through the door: those of
+/// the action that spent `txid`.0.
+async fn recorded(ctx: &WalletContext<MockWalletServices>, txid: &str, per: i64) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outputs WHERE transaction_id = \
+         (SELECT spent_by FROM outputs WHERE txid = ? AND vout = 0) \
+         AND spendable = 1 AND satoshis = ?",
+    )
+    .bind(txid)
+    .bind(per)
+    .fetch_one(ctx.wallet.storage().pool())
+    .await
+    .unwrap()
+}
+
+/// One coin one block below Genesis (620,537, the larger) and one at it
+/// (620,538): the split spends the coin at the Genesis height alone, its
+/// two outputs are recorded through the door, the old coin is left unspent.
+#[tokio::test]
+async fn a_split_spends_the_coin_at_genesis_and_leaves_the_one_below() {
+    let root = PrivateKey::random();
+    let (ctx, txids) =
+        wallet_with_proven(&root, &[(620_537, 50_000), (620_538, 30_000)], Chain::Main).await;
+    let coins = crate::spend_gate::UserCoins::from_wallet(&ctx.wallet)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::spend_gate::pre_genesis_coins(coins, 620_538)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|held| (held.outpoint, held.satoshis))
+            .collect::<Vec<_>>(),
+        vec![(format!("{}.0", txids[0]), 50_000)]
+    );
+
+    run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
+        .await
+        .expect("the split spends the coin at Genesis");
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    assert_eq!(spender(&ctx, &txids[0]).await, None, "the old coin left");
+    assert!(
+        spender(&ctx, &txids[1]).await.is_some(),
+        "the coin at Genesis spent"
+    );
+    assert_eq!(
+        recorded(&ctx, &txids[1], 14_750).await,
+        2,
+        "the split's two outputs recorded through the door"
+    );
+}
+
+/// `split --from` naming the coin mined before Genesis: the gate's refusal
+/// of a named input (`INPUT_NOT_OFFERED`), the coin under `held` with its
+/// reason, nothing posted.
+#[tokio::test]
+async fn a_split_from_the_coin_mined_before_genesis_is_refused_by_name() {
+    let root = PrivateKey::random();
+    let (ctx, txids) =
+        wallet_with_proven(&root, &[(600_000, 50_000), (620_538, 30_000)], Chain::Main).await;
+    let before = ledger(&ctx).await;
+    let err = run(
+        &ctx,
+        2,
+        crate::spend_gate::AllowPending::Off,
+        &[(txids[0].clone(), 0)],
+    )
+    .await
+    .expect_err("refused");
+    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(refusal.code(), "INPUT_NOT_OFFERED", "{refusal}");
+    assert_eq!(refusal.held.len(), 1, "{refusal}");
+    assert!(refusal.held[0].before_genesis);
+    assert!(refusal.to_string().ends_with(PRE_GENESIS_WHY));
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
+    assert_eq!(ledger(&ctx).await, before);
+}
+
+/// A send of 1,000 sats to a stranger, signed; posted unless `no_send`.
+fn send_args(no_send: bool) -> CreateActionArgs {
+    CreateActionArgs {
+        description: "a send".to_string(),
+        input_beef: None,
+        inputs: None,
+        outputs: Some(vec![CreateActionOutput {
+            locking_script: crate::test_support::p2pkh([9; 20]),
+            satoshis: 1_000,
+            output_description: "to someone".to_string(),
+            basket: None,
+            custom_instructions: None,
+            tags: None,
+        }]),
+        lock_time: None,
+        version: None,
+        labels: None,
+        options: Some(CreateActionOptions {
+            sign_and_process: Some(true),
+            no_send: Some(no_send),
+            ..Default::default()
+        }),
+    }
+}
+
+/// The hold is `split`'s alone: the gate every other command uses (a
+/// `send`'s, signed, not sent) offers the coin mined before Genesis and
+/// the spend signs.
+#[tokio::test]
+async fn a_send_of_the_coin_mined_before_genesis_is_not_held() {
+    let root = PrivateKey::random();
+    let (ctx, txids) = wallet_with_proven(&root, &[(600_000, 50_000)], Chain::Main).await;
+    let made =
+        crate::spend_gate::create_action(&ctx.wallet, send_args(true), "split.local", &ctx.gate())
+            .await
+            .expect("a send is not held for this reason");
+    assert!(made.tx.is_some(), "signed");
+    assert!(spender(&ctx, &txids[0]).await.is_some());
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 0, "not sent");
+}
+
+/// The change of a posted `send` of the coin mined before Genesis, not
+/// mined yet: a split of it would carry the send unproven, spending a coin
+/// the send's parent's proof record places at 600,000, so every change coin
+/// of the send is held with that reason and the split is refused with
+/// nothing more posted.
+#[tokio::test]
+async fn a_split_of_the_unmined_change_of_a_send_of_such_a_coin_is_refused_by_name() {
+    let root = PrivateKey::random();
+    let (ctx, _) = wallet_with_proven(&root, &[(600_000, 50_000)], Chain::Main).await;
+    let sent =
+        crate::spend_gate::create_action(&ctx.wallet, send_args(false), "split.local", &ctx.gate())
+            .await
+            .expect("the send is posted");
+    let send_txid = to_hex(&sent.txid.expect("signed"));
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    let before = ledger(&ctx).await;
+
+    let err = run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
+        .await
+        .expect_err("refused");
+    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    let change: Vec<_> = refusal
+        .held
+        .iter()
+        .filter(|c| c.outpoint.starts_with(&send_txid))
+        .collect();
+    assert!(!change.is_empty(), "{refusal}");
+    for coin in &change {
+        assert!(coin.before_genesis);
+        assert_eq!(
+            coin.reason,
+            format!(
+                "mined before Genesis: {send_txid} is not mined yet and spends a coin of height 600000, before Genesis height 620538; split does not offer it"
+            )
+        );
+    }
+    assert!(refusal.to_string().ends_with(PRE_GENESIS_WHY));
+    assert_eq!(
+        ctx.wallet.services().call_count("post_beef"),
+        1,
+        "nothing more posted"
+    );
+    assert_eq!(ledger(&ctx).await, before);
+}
+
+/// A context built as `--testnet` builds it: its store migrated on the
+/// testnet chain (the word `test`, which the door judges by), the
+/// `Wallet`'s own chain mainnet. A coin proven at 700,000 (after mainnet's
+/// Genesis, before testnet's 1,344,302) is held and the split refused,
+/// nothing posted; a coin proven at 1,344,302 is offered, and the split is
+/// posted and recorded through the door. Host and door agree; asked the
+/// `Wallet`'s chain the hold would offer the coin at 700,000 and the door
+/// would refuse its record.
+#[tokio::test]
+async fn a_testnet_context_holds_by_the_chain_its_door_judges_by() {
+    let root = PrivateKey::random();
+    let (ctx, txids) = wallet_with_proven(&root, &[(700_000, 30_000)], Chain::Test).await;
+    assert_eq!(ctx.chain, Chain::Test);
+    assert_eq!(ctx.wallet.chain(), Chain::Main, "the Wallet's own chain");
+    assert_eq!(
+        bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
+        "test",
+        "the door's chain"
+    );
+    let err = run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
+        .await
+        .expect_err("refused");
+    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
+        panic!("not the gate's refusal: {err}");
+    };
+    assert_eq!(
+        refusal.held[0].reason,
+        "mined before Genesis: coin height 700000 is before Genesis height 1344302; split does not offer it"
+    );
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
+    assert_eq!(spender(&ctx, &txids[0]).await, None);
+
+    let (ctx, txids) = wallet_with_proven(&root, &[(1_344_302, 30_000)], Chain::Test).await;
+    run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
+        .await
+        .expect("the split spends the coin at testnet's Genesis");
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    assert_eq!(
+        recorded(&ctx, &txids[0], 14_750).await,
+        2,
+        "the split's two outputs recorded through the door"
+    );
 }

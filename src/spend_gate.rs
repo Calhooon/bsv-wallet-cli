@@ -265,6 +265,8 @@ impl<'a> UserCoins<'a> {
 
 mod from;
 pub use from::{create_action_from, from_satoshis};
+mod pre_genesis;
+pub use pre_genesis::{pre_genesis_coins, PreGenesisCoin, PRE_GENESIS_WHY};
 
 mod lineage;
 pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, DEAD_LINEAGE};
@@ -335,6 +337,10 @@ pub struct GateOptions {
     /// did not answer for: [`HEADER_RETRY_PAUSE`], never configured; a test
     /// sets it short (#506).
     pub header_retry_pause: Duration,
+    /// `split`'s hold alone (#634): coins [`pre_genesis_coins`] names, held
+    /// with their reason and [`HeldCoin::before_genesis`]. Empty for every
+    /// other command, whose offer it never changes.
+    pub split_hold: Vec<PreGenesisCoin>,
 }
 
 impl Default for GateOptions {
@@ -345,6 +351,7 @@ impl Default for GateOptions {
             allow_pending: AllowPending::Off,
             tracker: TickOptions::default(),
             header_retry_pause: HEADER_RETRY_PAUSE,
+            split_hold: Vec::new(),
         }
     }
 }
@@ -517,6 +524,7 @@ impl GateOptions {
             allow_pending: AllowPending::Off,
             tracker,
             header_retry_pause: HEADER_RETRY_PAUSE,
+            split_hold: Vec::new(),
         }
     }
 
@@ -535,6 +543,18 @@ impl GateOptions {
     pub fn with_allow_pending(mut self, word: AllowPending) -> Self {
         self.allow_pending = word;
         self
+    }
+
+    /// These settings, holding `coins` for `split` alone (#634).
+    #[must_use]
+    pub fn with_split_hold(mut self, coins: Vec<PreGenesisCoin>) -> Self {
+        self.split_hold = coins;
+        self
+    }
+
+    /// `split`'s hold of the coin `output_id`, if it names it.
+    fn split_held(&self, output_id: i64) -> Option<&PreGenesisCoin> {
+        self.split_hold.iter().find(|c| c.output_id == output_id)
     }
 
     fn tick(&self) -> TickOptions {
@@ -594,6 +614,12 @@ pub struct HeldCoin {
     /// later read may offer it (#59).
     #[serde(skip)]
     pub headers_fault: Option<String>,
+    /// `split`'s hold of a coin mined before Genesis (#634,
+    /// [`GateOptions::split_hold`]): the refusal ends in
+    /// [`PRE_GENESIS_WHY`], read from this and never from the reason's
+    /// words.
+    #[serde(skip)]
+    pub before_genesis: bool,
     /// The store's output id; not in the JSON.
     #[serde(skip)]
     pub output_id: i64,
@@ -686,6 +712,9 @@ impl std::fmt::Display for Refusal {
                 c.age_minutes,
                 c.reason
             )?;
+        }
+        if self.held.iter().any(|c| c.before_genesis) {
+            write!(f, "\n{PRE_GENESIS_WHY}")?;
         }
         Ok(())
     }
@@ -1344,6 +1373,7 @@ async fn locked(coins: UserCoins<'_>) -> Result<Vec<HeldCoin>> {
                 None,
             ),
             headers_fault: None,
+            before_genesis: false,
             output_id: r.get("output_id"),
         })
         .collect())
@@ -1437,6 +1467,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 age_minutes: c.age_minutes,
                 reason: reason.to_string(),
                 headers_fault: None,
+                before_genesis: false,
                 output_id: c.output_id,
             });
             continue;
@@ -1467,10 +1498,17 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             out.unread.push(c.output_id);
             continue;
         };
-        match coin_hold(reading, &dead, c.origin, (&c.txid, c.vout as u32), opts) {
+        // The gate's own holds first; `split`'s hold (#634) after them.
+        let hold = coin_hold(reading, &dead, c.origin, (&c.txid, c.vout as u32), opts)
+            .map(|(reason, fault)| (reason, fault, false))
+            .or_else(|| {
+                opts.split_held(c.output_id)
+                    .map(|held| (held.reason.clone(), None, true))
+            });
+        match hold {
             None if !covered => out.offered.push((c.output_id, c.satoshis)),
             None => out.unread.push(c.output_id),
-            Some((reason, headers_fault)) => out.held.push(HeldCoin {
+            Some((reason, headers_fault, before_genesis)) => out.held.push(HeldCoin {
                 outpoint: format!("{}.{}", c.txid, c.vout),
                 satoshis: c.satoshis,
                 word: reading.word.to_string(),
@@ -1478,6 +1516,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 age_minutes: c.age_minutes,
                 reason,
                 headers_fault,
+                before_genesis,
                 output_id: c.output_id,
             }),
         }
@@ -1674,6 +1713,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
                 age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
                 reason,
                 headers_fault,
+                before_genesis: false,
                 output_id: r.get("output_id"),
             });
         }

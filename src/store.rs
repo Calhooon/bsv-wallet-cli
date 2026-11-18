@@ -45,6 +45,27 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .map_err(anyhow::Error::from)
 }
 
+/// A transaction's stored bytes and BEEF, `(raw_tx, input_beef)`, if the
+/// store holds it: what the toolbox builds a spend's BEEF from
+/// (`split`'s hold of a coin mined before Genesis, #634). Reads only.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn stored_tx(reader: &SqlitePool, txid: &str) -> Result<Option<StoredTx>> {
+    sqlx::query_as(
+        "SELECT raw_tx, input_beef FROM transactions WHERE lower(txid) = ? \
+         ORDER BY transaction_id LIMIT 1",
+    )
+    .bind(txid)
+    .fetch_optional(reader)
+    .await
+    .map_err(anyhow::Error::from)
+}
+
+/// A transaction's stored `(raw_tx, input_beef)` ([`stored_tx`]).
+pub type StoredTx = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 /// Whether `offer` (output ids) holds a coin the toolbox's selection passes
 /// over without the label `underReceivedRule`: a received coin (purpose
 /// `receive`) whose transaction the toolbox does not hold as `completed`
