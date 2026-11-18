@@ -11,8 +11,15 @@ is the tag **v0.18.6**, and crates.io carries the same version, **0.18.6**,
 which pins **bsv-wallet-toolbox-rs =0.13.4**, **bsv-rs =0.8.11** and
 **bsv-tracker =0.8.0**; the repository's Releases page holds a Release per
 tag. **0.18.1 was never published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.8.1**, **bsv-rs =0.9.0-beta.8** and **bsv-tracker =0.9.0-beta.8**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.9**, **bsv-rs =0.9.0-beta.9** and **bsv-tracker =0.9.0-beta.9**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
+
+The beta.9 pin moves the three onto bsv-rs's security prerelease, the fix of
+[GHSA-33fm-jcm5-4m3m](https://github.com/Calhooon/bsv-rs/security/advisories/GHSA-33fm-jcm5-4m3m)
+(a second, heap, bound on BEEF linking), and stores each tracker hint in the
+tracker's own form ([#612](https://github.com/Calhooon/bsv-wallet-cli/issues/612)):
+a stored hint the tracker cannot read holds its row as stored, never replayed
+or rewritten, and the tracker pass names it among its faults.
 
 The [beta.8 pin](https://github.com/Calhooon/bsv-wallet-cli/issues/565) uses the
 published beta.8 packages and maps ordinary refusals by their reference class

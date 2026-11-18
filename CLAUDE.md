@@ -18,7 +18,7 @@ src/
     types.rs       — MetaNet Client JSON request/response structs (the translation layer)
 ```
 
-**Dependency chain**: `bsv-wallet-cli` → `bsv-wallet-toolbox-rs` (wallet engine, SQLite storage, signing, broadcasting) → `bsv-rs` (WalletInterface trait, crypto primitives). The beta.8 pin (#565) uses published bsv-wallet-toolbox-rs =0.14.0-beta.8.1 (the `internalizeAction` door read whole against the reference), bsv-rs =0.9.0-beta.8 and bsv-tracker =0.9.0-beta.8; a caller's key argument is read by bsv-rs's `validate_public_key` (the reference wallet's `validatePublicKey`, bsv-rs #579); ordinary refusals carry their reference class (#330), the toolbox's typed faults their family (#342), and discovery reads the trust settings of `TRUST_SETTINGS` (#331). Main never pins a prerelease.
+**Dependency chain**: `bsv-wallet-cli` → `bsv-wallet-toolbox-rs` (wallet engine, SQLite storage, signing, broadcasting) → `bsv-rs` (WalletInterface trait, crypto primitives). The beta.9 pin (#612) uses published bsv-wallet-toolbox-rs =0.14.0-beta.9 (the beta.8.1 `internalizeAction` door, read whole against the reference, on the new bsv-rs pin alone), bsv-rs =0.9.0-beta.9 (the fix of GHSA-33fm-jcm5-4m3m, a heap bound on BEEF linking) and bsv-tracker =0.9.0-beta.9 (its non-exhaustive kinds; `src/tracker_host.rs` stores a hint in the crate's serde form and holds, as stored and surfaced, a row whose hints it cannot read); a caller's key argument is read by bsv-rs's `validate_public_key` (the reference wallet's `validatePublicKey`, bsv-rs #579); ordinary refusals carry their reference class (#330), the toolbox's typed faults their family (#342), and discovery reads the trust settings of `TRUST_SETTINGS` (#331). Main never pins a prerelease.
 
 ## Conventions
 
@@ -140,6 +140,6 @@ Net cost per run: ~3,000 sats (fees). Hard fail if net cost exceeds 5,000 sats.
 - **createAction signing modes**: `sign_and_process: true` + `noSend: false` = signed and broadcast (default). `noSend: true` = signed but not broadcast. `sign_and_process: false` = unsigned template for deferred signing via `signAction`. These are distinct flows — `noSend` is not a dry run.
 
 At the beta.1 pin, `post_beef` defaults to `PromiseAll`: every named
-broadcaster is asked and its word recorded. The explorer ladder above uses published toolbox =0.14.0-beta.8.1;
+broadcaster is asked and its word recorded. The explorer ladder above uses published toolbox =0.14.0-beta.9;
 GorillaPool is opt-in and the deprecated classic mode names its own endpoint. `E2E_RNG_SEED` is refused without the hermetic proxy wall; all
 production wallet and storage options leave their seed unset.
