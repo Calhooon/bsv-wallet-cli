@@ -3719,3 +3719,229 @@ not the P2PKH of their stored derivation; the `tls` feature in CI with
 line. (4) The resume steps the pause left (night 5's re-dispatch, #564's read
 lane, night 6, #590, #591), after the pin. The funder runs the published
 0.18.4 (basket 188,616).
+
+## 2026-11-17 (14:45Z) to 2026-11-18 (00:30Z): 0.18.5 to 0.18.8 landed, gated and published, the beta.8 pin and 0.19.0-beta.8 with the two ports, bsv-tracker's make-room and its 0.9.0-beta.9, the owner's rulings of the day, the beta.9 pin in its lane, states as of 00:30Z 11-18
+
+**The owner's brief of 2026-11-16 is done, all seven items.** The stable
+security pin and its patches (0.18.3 to 0.18.8); where to read; beta on bsv-rs
+`=0.9.0-beta.8` with the toolbox, both pins in one PR (613); nothing prepared
+for bsv-rs 0.9.0-beta.9 before it was published; the one comment on
+Calhooon/bsv-rs #101 (green on beta.8, what broke, 1 h 49 min from the
+packages on the index to the pin landed); builders on the box, two at most;
+needs from bsv-rs as issues.
+
+**The stable line: four more patches, each gated once on mainnet and
+published.**
+
+| Release | PR, main | The pin that moved | Tests | The gate (net cost) | crates.io |
+|---|---|---|---|---|---|
+| 0.18.5 | 610, `de5a4a9d` | `bsv-wallet-toolbox-rs` `=0.13.3` | 564 | 23 of 23 (2,170 sats) | 2026-11-17T16:43:50Z |
+| 0.18.6 | 617, `5a37b7a3` | `bsv-wallet-toolbox-rs` `=0.13.4` | 594 | 23 of 23 (2,170 sats) | 2026-11-17T19:52:10Z |
+| 0.18.7 | 625, `6c382678` | `bsv-rs` `=0.8.12` | 594 | 23 of 23 (2,200 sats) | 2026-11-17T22:58:55Z |
+| 0.18.8 | 626, `fd2891b8` | `bsv-wallet-toolbox-rs` `=0.13.5` | 606 | 23 of 23 (2,174 sats) | 2026-11-18T00:23:51Z |
+
+Each release's changelog section has every served answer; #386 carries one
+note per release. What each was:
+
+- **0.18.5** (the toolbox's basket insertion rules at `internalizeAction`): an
+  insertion cannot name the default basket, reclassify the wallet's own
+  change, or move an output between application baskets. Eight served tests
+  with a control per rule (`tests/served_internalize_insertion.rs`; the shared
+  helpers moved to `tests/support/served_internalize.rs`) and one `classify`
+  arm, so the default-basket refusal is `VALIDATION_ERROR`. Four cold reads,
+  two of which changed the release note: the restore of a reclassified
+  received payment needs the sender identity key the row held, and no restore
+  was stated for the wallet's own change until one had been run through a
+  spend (0.18.6 states it, from the toolbox's run). Read A asked for the
+  helper move to be undone; the captain's reading on the PR is that it stays
+  (the brief asked for shared helpers, no assertion moved, a pushed commit
+  stays).
+- **0.18.6** (the toolbox's `internalizeAction` door): the door always checks
+  the roots a BEEF claims and refuses when the wallet has no header source; a
+  stored empty sender key is read as the wallet itself; one `outputIndex`
+  named twice is refused. The host's half is the mode with no header service
+  (`CHAINTRACKS_URL=off`): `fund`, `receive`, `sync`, `split` and `gift-claim`
+  refuse by name before anything is posted (`split` and `gift-claim` would
+  have broadcast and then met the door's refusal), and the tracker pass holds
+  a claim it could not record (`CLAIM_HELD_WITHOUT_A_TRACKER`: both cold reads
+  found that gap, and the fix lane's three tests pin it). One `classify` arm
+  for an empty `outputs`. `tests/served_internalize_door.rs` runs each restore
+  the release note states to a signed spend.
+- **0.18.7** (the security patch): `bsv-rs` 0.8.12 counts the heap a linked
+  BEEF re-materializes (GHSA-33fm-jcm5-4m3m). The audit: 0.18.6 was affected
+  through `POST /discoverByIdentityKey` and `POST /discoverByAttributes`, the
+  two doors where another party's BEEF is linked; `internalizeAction`,
+  `createAction`'s input BEEF, the couriers and the gift commands never link.
+  No answer changed at the pin (594 of 594). What now refuses there is read,
+  not run (there is no hermetic overlay host): an overlay answer past the heap
+  budget is skipped as an invalid output and the door still answers 200. The
+  spent-merge test of 0.18.6 was rewritten to reach the line it names (#623,
+  done).
+- **0.18.8** (the toolbox's received-coin rule): the toolbox's selection
+  passes a pending received coin over unless the action carries the label
+  `underReceivedRule`, which a host passes where its gate admits one. The
+  spend gate passes it under `allowPending` (plain or scoped) beside its own
+  `spend-gate:received-pending`, and strips a caller's own copy in any
+  spelling the toolbox reads as it, so the label never passes the gate's hold.
+  The cold read of the gate found one more road by reading: the gate also
+  admits a received coin with no word once the tracker's checked proof reads
+  its creator as mined at depth, while the toolbox has not yet completed that
+  transaction (it defers a handed proof until its monitor raises its proof
+  gate: about a minute under `daemon`, never under `serve`). The fix lane
+  wrote the deciding test before any fix and the road was real: 402
+  `INSUFFICIENT_FUNDS` for a spend 0.18.7 signed. Fixed before the landing: an
+  offer holding such a coin carries the toolbox's label alone, with the
+  toolbox's selection shown bounded by the gate's offer on every road. At the
+  pin eleven of 0.18.6's door tests failed as the toolbox's notes say they
+  should (seven on a parent carried by txid alone, four restores for want of
+  the label); their assertions are kept. An AtomicBEEF that carries an
+  ancestor by txid alone beside a BUMP proving it, admitted through 0.18.7, is
+  refused at `POST /internalizeAction`. The toolbox's 0.13.6 (the floor to
+  `bsv-rs` 0.8.12 alone) rides the next stable patch.
+
+GitHub's hosted macOS runners dropped a Binaries job three times in the day
+(0.18.5's arm64 twice, 0.18.6's x86_64 once: "The job was not acquired by
+Runner of type hosted"). The crate was already published each time; `gh run
+rerun <id> --failed` re-runs the dropped job and the release page, and the tag
+scripts now loop on it. An asset is never built by hand. PR 614 (main
+`5c349e0e`) reworded two lines of this file.
+
+**Beta: the beta.8 pin, two ports, and 0.19.0-beta.8.**
+
+- PR 608 (beta `f9ae7aff`): the four lock moves of #596 and the stack's deny
+  template. PR 609 (beta `108f80e6`): #607's fix (`same_build`, an ancestor
+  rule by path component); #607 stays open for its proof on a hosted runner,
+  which is night 6's hermetic pass.
+- **The pin, PR 613 (beta `12f74a3a`, 17:58Z, #565):** `bsv-rs`
+  `=0.9.0-beta.8`, `bsv-wallet-toolbox-rs` `=0.14.0-beta.6` to
+  `=0.14.0-beta.8`, `bsv-tracker` `=0.9.0-beta.8`. 979 tests, the wire corpus
+  221, the consumers' fixtures 48, the hermetic harness 35 of 35. Two cold
+  reads, both records only. #611 is the one answer the pin left open (a coin
+  whose stored bytes are not one transaction answers a BEEF error, in the
+  fixtures' world of stub bytes).
+- **The port of 0.18.3 to 0.18.5, PR 615 (beta `0810d00f`):** the three stable
+  changelog sections word for word, and the served proof in beta's way: wire
+  rows 222 to 254 through `tests/wire_harness`, with the two lines' answers
+  side by side in `docs/WIRE.md`. On this repository "main merges into beta"
+  is a port lane, never a merge commit (the lines diverged, and the queue
+  replays by rebase).
+- **The toolbox `=0.14.0-beta.8.1` with the port of 0.18.6, PR 622 (beta
+  `d0460872`):** beta had the stable line's hazard in the mode with no header
+  service (`split` and `gift-claim` posted and then met the door); the
+  commands now refuse by name with a typed `NoChainTracker`, the tracker pass
+  holds a claim it could not record, wire rows 255 to 271, 1003 tests.
+- **The release, PR 624 (beta `2f2726c5`):** 0.19.0-beta.8, nine fragments
+  assembled. The cold read found one sentence the release made false (a
+  fragment written before the pin said the bsv-rs advisory ids stay); the
+  captain corrected it in a commit of its own on the PR. The mainnet gate once
+  on the release commit: 35 of 35, net cost 2,637 sats. Tag `v0.19.0-beta.8`;
+  crates.io 2026-11-17T23:03:00Z; release run 44194243730 green.
+- **The announcement (RELEASING 1b):** the paragraph for the tag in
+  `docs/DEPENDENTS.md`, and for LOW's fleet, which no session captains today,
+  an issue on its own tracker (Calgooon/bsv-low#1196) with its three fixtures'
+  old and new answers (rows 09 and 10: 500 to 400 in the fixtures' world; row
+  11: the text). Nothing changes for a real fleet today.
+- **Beta.9.** `bsv-rs` 0.9.0-beta.9 (the same fix as 0.8.12), `bsv-tracker`
+  0.9.0-beta.9 and the toolbox's 0.14.0-beta.9 are on the index. The CLI's one
+  pin PR of the three, with #612, is in its lane since 23:47Z. 0.19.0-beta.8
+  is on `bsv-rs` `=0.9.0-beta.8`, which the advisory names; the toolbox on
+  this line reads a looked-up BEEF's subject and does not link it.
+- **#627 (0.19.0, blocks the cut):** by reading, beta has the road 0.18.8
+  fixed at the spend gate, and 0.19.0-beta.8 shipped with it. The port of
+  0.18.7 and 0.18.8 into beta carries the fix, after the beta.9 pin lands and
+  before the 0.19.0-beta.9 release.
+
+**bsv-tracker (its beta line is this captain's; its main is not).**
+
+- **Make-room, Calhooon/bsv-tracker#49 (its beta `7bbce4fc`), on the owner's
+  ruling of 16:1xZ:** one behaviour-free PR before the crate's 0.9.0.
+  `HostAction`, `Reask`, `HintStatus`, `Verdict` and `VerdictError` are
+  non-exhaustive; `Verdict::new(status)`; `label()` and `LABELS` on
+  `HintStatus` and `Reask`, the words equal to the strings this CLI stores and
+  shows; serde on `HintStatus` alone, tagged by the label, so the CLI's stored
+  rows read as they are. Two design lanes split on the both-ways form (serde
+  against compact bytes); the captain decided serde, for no migration of
+  stored rows. The CLI's half is #612 (0.19.0, blocks the cut): the two hand
+  maps give way to the crate's labels, and a stored hint that cannot be read
+  is surfaced, where `row_of` today empties every hint of the row in silence.
+- **0.9.0-beta.9, Calhooon/bsv-tracker#52 (its beta `cbc179cc`):** the pin to
+  `bsv-rs` `=0.9.0-beta.9`, a drop-in for the crate (it links no BEEF), and
+  the prerelease that carries make-room. crates.io 2026-11-17T22:37:10Z.
+- **Design rows, no build word:** bsv-tracker #45, #46 and #47 carry the day's
+  rulings as comments (built after the cut, on a later word); #51 is the
+  mirror of the stack's `lean/Headers/Doubts.lean` (the doubts a fork opens,
+  the effective depth, the guard under two tips), with the final shapes of its
+  definitions written on it.
+
+**The owner's rulings of the day** (each through the keeper and read on the
+stack's record before anything was built on it):
+
+- 16:1xZ, "yes to all..": the tracker's make-room before its 0.9.0, with #45
+  to #47 built after the cut on a later word.
+- 16:4xZ, "I love it all.. bu talso udnerstand we dont wanna ddos ourselves or
+  our infra etc...": the rules for proofs and BEEFs while a fork is open, and
+  the load clause that binds each build of them (the stack's DECISIONS 28.11).
+  Design only.
+- 18:5xZ: every host reads the header feed by a road that adds no request; no
+  host opens a held stream until one is priced.
+- 19:2xZ, "I love all o fyour reccomendtaions....": **a build word**: the
+  CLI's daemon moves from its held stream to the feed's page read, `GET
+  /events?since=<cursor>`, at the pace of a request it already makes, in the
+  next release on each line (read with the keeper as the next that is not a
+  security patch in flight); never a pull on a timer of its own. #618. The
+  shipped daemon holds the stream on both lines today (`src/chain_feed.rs`).
+- 19:5xZ: four reorg rows for the CLI, filed as #621 (design, not built).
+- 18:3xZ, to this captain: "what everyou reccomed.... god teir rnoth star",
+  read to cover the recommendations then before him: make-room with five
+  marks, 0.18.6 ahead of the port's reads, beta's order to the tag, #616 as
+  its own PR, no yank of an earlier patch.
+
+**The funder.** It runs only inside a gate since 18:56Z (it was left up and
+held a stream for nothing): a gate starts it and stops it, so two gates never
+overlap. Its copy is the published 0.18.8, each swap verified against the
+release's digest; the basket is 177,265 sats after the five gates of this
+stretch.
+
+**Rows filed.** #611 (the stub-bytes answer at the pin), #612 (make-room at
+the CLI's pin), #616 (the published crate packages every tracked file, this
+one included: an include or exclude list, its own PR), #618 (the daemon's feed
+by the page read), #619 (the served loop logs a pass's faults as a count),
+#620 (a claim's pending record leaves its row before the wallet has recorded
+it), #621 (the reorg rows), #623 (done in 0.18.7), #627 (beta's road at the
+gate).
+
+**The day's lessons.**
+
+- The host's "mined" and the toolbox's "completed" are two records. A rule of
+  the toolbox that reads its own record needs the host to say what its gate
+  admitted, on every road the gate admits by, not only under the caller's
+  word.
+- A finding made by reading is decided by a test written before the fix. The
+  test stays as the pin either way.
+- A command that posts and then records must refuse before it posts when the
+  record cannot be made (the mode with no header service, on both lines).
+- A brief armed hours ahead goes stale where other lanes land in between. The
+  review briefs are re-read against the line's state while the lane runs.
+- A release's fragments are read for sentences the release itself makes false,
+  before the assembly.
+- A public summary is written from the lanes' reports as they stand, each
+  number checked against its report before it is posted.
+- A version that is not on the index is not named by number or date in a
+  public text of this repository when its owner asks so; this file is public,
+  and until #616 it is in the published crate.
+- One funder and one set of test ports: a gate waits for any other gate to
+  exit fully.
+- In zsh a git ref and path are written `"${ref}:path"`: `"$ref:path"` applies
+  a modifier to the variable.
+
+**Open, in order.** (1) Beta: the beta.9 pin's reads and its landing by the
+queue; the port of 0.18.7 and 0.18.8 (#627 with it); the release PR
+0.19.0-beta.9, the gate once, the tag. (2) Night 6 at the 17:00Z slot of
+2026-11-18 on the pinned commit (RELEASING 4a; it proves #607). (3) Stable:
+each stable toolbox release its captain names on #386 is a patch here, pinned
+the day it is on the index. (4) #618: a design read, then a lane, in the next
+release on each line that is not a security patch. (5) Rows with no build
+word: #604, #605, #606, #616, #619, #620, #621; bsv-tracker #45, #46, #47,
+#51. (6) What the pause left: night 5's re-dispatch, #564's read lane, #590,
+#591. (7) The one certificate's re-issue before 0.19.0. The keeper's seat on
+3396 stays on 0.18.4 until the owner says.
