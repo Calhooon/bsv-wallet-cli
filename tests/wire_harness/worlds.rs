@@ -315,6 +315,9 @@ impl Rows {
             let (parent, _) = stranger_payment(payment, key).await;
             roots.insert(payment.parent_at().1, parent.id());
         }
+        // The held spend of the port of 0.18.9's repeat (#634).
+        let (_, held) = super::payments::held_repeat(key).await;
+        roots.insert(super::payments::HELD_AT, held);
         roots
     }
 

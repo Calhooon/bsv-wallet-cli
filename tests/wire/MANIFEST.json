@@ -282,7 +282,14 @@
     "280-createAction.receivedRule.word.json",
     "281-listActions.receivedRule.labelled.json",
     "282-createAction.receivedRule.stripAtCreate.json",
-    "283-listActions.receivedRule.stripAtCreate.json"
+    "283-listActions.receivedRule.stripAtCreate.json",
+    "284-internalizeAction.scripts.ancestorBadUnlock.json",
+    "285-internalizeAction.scripts.preGenesisCoin.json",
+    "286-internalizeAction.scripts.heldProven.json",
+    "287-internalizeAction.scripts.heldRepeatUnproven.json",
+    "288-internalizeAction.scripts.heldRepeatProven.json",
+    "289-internalizeAction.scripts.ancestorsPass.json",
+    "290-listOutputs.scripts.basket.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -443,6 +450,13 @@
     "280-createAction.receivedRule.word.json": "#627: the plain word: the other received coin is selected and the spend signs and posts, 200.",
     "281-listActions.receivedRule.labelled.json": "#627: the actions labelled underReceivedRule, with includeLabels: 278 and 280, each with the caller's label, the gate's spend-gate:received-pending and the toolbox's label as the store keeps it (underreceivedrule), underRule received-pending.",
     "282-createAction.receivedRule.stripAtCreate.json": "#627: the strip at createAction where it can be seen: in the internalize world, an exact spend with no word over its 40,000-sat coin, whose transaction is completed (offered with no word), its labels carrying the caller's own beside underReceivedRule in two spellings the toolbox reads as the rule (as 272 at internalizeAction), 200, signed and posted.",
-    "283-listActions.receivedRule.stripAtCreate.json": "#627: 282's action by the caller's label, with includeLabels: the caller's own label alone, no underreceivedrule, no underRule: its copies of underReceivedRule were stripped at createAction."
+    "283-listActions.receivedRule.stripAtCreate.json": "#627: 282's action by the caller's label, with includeLabels: the caller's own label alone, no underreceivedrule, no underRule: its copies of underReceivedRule were stripped at createAction.",
+    "284-internalizeAction.scripts.ancestorBadUnlock.json": "#634 (the port of the stable line's 0.18.9): a payment whose unproven ancestor's input does not pass (the placeholder 00 against the stranger's P2PKH), its subject a valid spend of that ancestor: 400 VALIDATION_ERROR, spend refused at its offset, input 0 of the ancestor, OP_EQUALVERIFY; nothing stored (290). The subject's own failing input is 103. New; recorded last, so no file before it moves.",
+    "285-internalizeAction.scripts.preGenesisCoin.json": "#634: a valid spend of a coin its BEEF proves at 600,000 (the header stub answers its root): 400 VALIDATION_ERROR, input 0 not judged: coin height 600000 is before Genesis height 620538; nothing stored (290).",
+    "286-internalizeAction.scripts.heldProven.json": "#634: a spend whose input is the placeholder 00, carrying its own BUMP: a mined transaction is taken without its scripts run, 200, stored (290).",
+    "287-internalizeAction.scripts.heldRepeatUnproven.json": "#634: 286's transaction handed again unproven, beside its mined parent: checked the same way, 400 VALIDATION_ERROR, OP_EQUALVERIFY, input 0 of the held transaction; the row as it was (290).",
+    "288-internalizeAction.scripts.heldRepeatProven.json": "#634: 286's proven BEEF again: answered as before, 200.",
+    "289-internalizeAction.scripts.ancestorsPass.json": "#634: a payment through two unmined parents, every input a valid signature, the oldest spending a parent mined after Genesis: 200, stored (290).",
+    "290-listOutputs.scripts.basket.json": "#634: the basket after 284 to 289: 286's output and 289's alone; the refusals stored nothing."
   }
 }
