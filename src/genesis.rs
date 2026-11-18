@@ -7,24 +7,22 @@
 //! BEEF that the BEEF does not prove, and an input spending a coin the BEEF
 //! proves below the network's Genesis height is not judged and is refused:
 //! `input <i> not judged: coin height <h> is before Genesis height 620538.`
-//! A command that posts and then records (`split`, `gift-claim`) refuses by
-//! name before anything is posted when the record cannot be made (0.18.6's
-//! principle).
+//! A command that posts and then records (`split`, `send` to the wallet's
+//! own address, `gift-claim`) refuses by name before anything is posted
+//! when the record cannot be made (0.18.6's principle).
 //!
-//! The chain. On this line the door judges by its store's own `chain`
-//! setting (bsv-wallet-toolbox-rs 0.14.0-beta.9
-//! `src/storage/sqlx/internalize_action.rs:98`, `storage.get_settings().chain`),
-//! the word `init`'s `migrate` wrote from `--testnet` (`main`, `test` or
-//! `regtest`), never the `Wallet`'s `Chain`. So the host asks the same
+//! The chain. The toolbox's published CHANGELOG (0.14.0-beta.4, #440):
+//! "The live script word (#440) is bsv-rs's `input_script_flags` from the
+//! store's `chain` (`main`, `test`, `regtest`): testnet and regtest judge at
+//! their own Genesis and Chronicle heights (1,344,302 / 1,713,168; 10,000 /
+//! 15,000) where they read mainnet's". The store's `chain` is the word
+//! `init`'s `migrate` wrote from `--testnet`, so the host asks the same
 //! store ([`door_network`]).
 //!
-//! The height. The door maps that word to bsv-rs's public
-//! `ChainParams` (`beef_verification.rs:28-35` at that pin:
-//! `main` mainnet, `test` testnet, `regtest` regtest) and reads its
-//! `genesis_height`; [`genesis_height`] reads the same public item. A word
-//! the door's policy does not read answers `None`: the door refuses that
-//! store's every unproven BEEF by its own words, and this host holds
-//! nothing for this rule.
+//! The height. [`genesis_height`] reads bsv-rs's public `ChainParams` for
+//! the three words that entry names (`main` mainnet, `test` testnet,
+//! `regtest` regtest). For any other word it answers `None`, and this host
+//! holds nothing for this rule.
 
 use bsv_sdk::block::ChainParams;
 use bsv_sdk::transaction::beef_stream::{display_hex, Element};
