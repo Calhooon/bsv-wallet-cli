@@ -1,7 +1,7 @@
 //! The door's script answers at `POST /internalizeAction` (the port of the
 //! stable line's 0.18.9, #634), in the `funded` world: the toolbox runs the
 //! unlocking script of every input of every transaction of a received
-//! AtomicBEEF that the BEEF does not prove, and refuses one that does not
+//! `AtomicBEEF` that the BEEF does not prove, and refuses one that does not
 //! pass, and a spend of a coin the BEEF proves before Genesis is not
 //! judged. A failing script in the unproven subject is 103's answer, a
 //! passing payment 102's and 104's. Here: a failing script in an unproven

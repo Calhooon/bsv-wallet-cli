@@ -34,6 +34,7 @@ use std::collections::HashMap;
 
 /// The network word the door of `storage` judges by: its settings'
 /// `chain`, as `internalizeAction` reads it.
+#[must_use]
 pub fn door_network(storage: &StorageSqlx) -> String {
     storage.get_settings().chain
 }
@@ -41,6 +42,7 @@ pub fn door_network(storage: &StorageSqlx) -> String {
 /// The Genesis height of the network word `network`, as the door judges
 /// by it (a coin proven below it is not judged); `None` for a word the
 /// door's policy does not read.
+#[must_use]
 pub fn genesis_height(network: &str) -> Option<u32> {
     match network {
         "main" => Some(ChainParams::mainnet().genesis_height),
@@ -51,6 +53,7 @@ pub fn genesis_height(network: &str) -> Option<u32> {
 }
 
 /// The Genesis height the door of `storage` judges by.
+#[must_use]
 pub fn door_genesis_height(storage: &StorageSqlx) -> Option<u32> {
     genesis_height(&door_network(storage))
 }
@@ -73,11 +76,12 @@ pub struct PreGenesisSpend {
 }
 
 /// The earliest transaction, in the BEEF's order, of `beef` (BEEF or
-/// AtomicBEEF bytes) that the BEEF does not prove (no BUMP of its own, its
+/// `AtomicBEEF` bytes) that the BEEF does not prove (no BUMP of its own, its
 /// txid in no BUMP) with an input whose source the BEEF proves at a height
 /// below `genesis`; `None` when there is none, or when the bytes do not
 /// read (the door's own steps refuse those). The Genesis rule alone: the
 /// scripts are the door's to run.
+#[must_use]
 pub fn unproven_spend_of_pre_genesis_coin(beef: &[u8], genesis: u32) -> Option<PreGenesisSpend> {
     let mut heights = HashMap::new();
     let mut unproven = Vec::new();

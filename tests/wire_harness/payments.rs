@@ -244,7 +244,8 @@ async fn spend_of(
 ) -> bsv_sdk::transaction::Transaction {
     use bsv_sdk::script::templates::P2PKH as Template;
     use bsv_sdk::script::SignOutputs;
-    let mut tx = bsv_sdk::transaction::Transaction::new();
+    // `parent_tx`'s one output, its placeholder input replaced by the spend.
+    let mut tx = parent_tx(0, satoshis, lock);
     let mut input =
         bsv_sdk::transaction::TransactionInput::with_source_transaction(source.clone(), 0);
     if passes {
@@ -256,12 +257,7 @@ async fn spend_of(
     } else {
         input.unlocking_script = Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
     }
-    tx.add_input(input).unwrap();
-    tx.add_output(bsv_sdk::transaction::TransactionOutput::new(
-        satoshis,
-        bsv_sdk::script::LockingScript::from_binary(lock).unwrap(),
-    ))
-    .unwrap();
+    tx.inputs_mut()[0] = input;
     tx.sign().await.unwrap();
     tx
 }

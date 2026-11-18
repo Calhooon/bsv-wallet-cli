@@ -21,19 +21,18 @@ const TIP: u32 = 900_000;
 /// block), its hash computed when `hashed`.
 pub(super) fn header(height: u32, root: &str, hashed: bool) -> BlockHeader {
     let mut h = BlockHeader {
-        version: 1,
-        previous_hash: "00".repeat(32),
-        merkle_root: root.to_string(),
-        time: 1_700_000_000,
-        bits: 0x1d00_ffff,
-        nonce: 0,
-        hash: String::new(),
         height,
+        merkle_root: root.to_string(),
+        previous_hash: "00".repeat(32),
+        version: 1,
+        bits: 0x1d00_ffff,
+        time: 1_700_000_000,
+        hash: String::new(),
+        nonce: 0,
     };
     if hashed {
-        let mut hash = bsv_sdk::primitives::hash::sha256d(&h.to_binary()).to_vec();
-        hash.reverse();
-        h.hash = hex::encode(hash);
+        let digest = bsv_sdk::primitives::hash::sha256d(&h.to_binary());
+        h.hash = hex::encode(digest.iter().rev().copied().collect::<Vec<u8>>());
     }
     h
 }
@@ -51,85 +50,25 @@ pub(super) async fn wallet_with_proven(
     coins: &[(u32, u64)],
     store_chain: Chain,
 ) -> (WalletContext<MockWalletServices>, Vec<String>) {
-    let storage = StorageSqlx::open_with_options(
-        ":memory:",
-        StorageSqlxOptions {
-            chain: store_chain,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    storage
-        .migrate("split", &root.public_key().to_hex())
-        .await
-        .unwrap();
-    storage.make_available().await.unwrap();
     let tip = coins
         .iter()
         .map(|(h, _)| *h + 10)
         .max()
         .unwrap_or(0)
         .max(TIP);
-    // The proof gate raised as the monitor raises it, so the payment's
-    // checked proof is stored with it (`proven_txs`).
-    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, tip)
-        .await
-        .unwrap();
-    storage
-        .set_chain_tracker(std::sync::Arc::new(
-            crate::test_support::TestChainTracker::always_valid(tip),
-        ))
-        .await;
     let services = MockWalletServices::builder().build();
     services.set_tip_header(header(tip, &"0e".repeat(32), true));
     let wallet = Wallet::with_options(
         Some(root.clone()),
-        storage,
+        store(root, store_chain, tip).await,
         services,
         bsv_wallet_toolbox::WalletOptions::default(),
     )
     .await
     .unwrap();
-    let script = crate::brc29::deposit_script(root).unwrap();
-    let anyone = KeyDeriver::anyone_key().1.to_hex();
     let mut txids = Vec::new();
-    for (i, (height, satoshis)) in coins.iter().enumerate() {
-        let raw = crate::test_support::raw_tx(
-            &[(&format!("{:02x}", 0x51 + i).repeat(32), 0)],
-            &[(*satoshis, script.clone())],
-        );
-        let txid = crate::test_support::txid_of(&raw);
-        let mut beef = Beef::new();
-        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, *height));
-        beef.merge_raw_tx(raw, Some(bump)).unwrap();
-        let accepted = wallet
-            .internalize_action(
-                InternalizeActionArgs {
-                    tx: beef.to_binary_atomic(&txid).unwrap(),
-                    outputs: vec![InternalizeOutput {
-                        output_index: 0,
-                        protocol: "wallet payment".to_string(),
-                        payment_remittance: Some(WalletPayment {
-                            derivation_prefix: DEFAULT_DERIVATION_PREFIX.to_string(),
-                            derivation_suffix: DEFAULT_DERIVATION_SUFFIX.to_string(),
-                            sender_identity_key: anyone.clone(),
-                        }),
-                        insertion_remittance: None,
-                    }],
-                    description: "a mined payment".to_string(),
-                    labels: None,
-                    seek_permission: None,
-                },
-                Some("split.local"),
-            )
-            .await
-            .expect("the door takes a proven payment");
-        assert!(accepted.accepted);
-        wallet
-            .services()
-            .set_header_for_height(header(*height, &txid, false));
-        txids.push(txid);
+    for (i, coin) in coins.iter().enumerate() {
+        txids.push(take_in(&wallet, root, i, *coin).await);
     }
     let ctx = WalletContext {
         wallet,
@@ -141,6 +80,98 @@ pub(super) async fn wallet_with_proven(
         config: std::sync::Arc::default(),
     };
     (ctx, txids)
+}
+
+/// A store of `root` migrated on `chain`, its proof gate and its tracker
+/// at `tip`.
+async fn store(root: &PrivateKey, chain: Chain, tip: u32) -> StorageSqlx {
+    let options = StorageSqlxOptions {
+        chain,
+        ..Default::default()
+    };
+    let storage = StorageSqlx::open_with_options(":memory:", options)
+        .await
+        .unwrap();
+    let identity = root.public_key().to_hex();
+    storage.migrate("split-genesis", &identity).await.unwrap();
+    storage.make_available().await.unwrap();
+    // The proof gate raised as the monitor raises it, so the payment's
+    // checked proof is stored with it (`proven_txs`).
+    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, tip)
+        .await
+        .unwrap();
+    storage
+        .set_chain_tracker(std::sync::Arc::new(
+            crate::test_support::TestChainTracker::always_valid(tip),
+        ))
+        .await;
+    storage
+}
+
+/// The `i`th coin, `(height, satoshis)`: a payment to `root`'s deposit
+/// script whose BEEF proves it at `height`, taken in through the toolbox's
+/// own `internalizeAction` as `fund` takes one; the header service then
+/// carries its block. Its txid.
+async fn take_in(
+    wallet: &Wallet<StorageSqlx, MockWalletServices>,
+    root: &PrivateKey,
+    i: usize,
+    (height, satoshis): (u32, u64),
+) -> String {
+    let script = crate::brc29::deposit_script(root).unwrap();
+    let anyone = KeyDeriver::anyone_key().1.to_hex();
+    let raw = crate::test_support::raw_tx(
+        &[(&format!("{:02x}", 0x51 + i).repeat(32), 0)],
+        &[(satoshis, script)],
+    );
+    let txid = crate::test_support::txid_of(&raw);
+    let path = MerklePath::from_coinbase_txid(&txid, height);
+    let mut beef = Beef::new();
+    let index = beef.merge_bump(path);
+    beef.merge_raw_tx(raw, Some(index)).unwrap();
+    let accepted = wallet
+        .internalize_action(
+            InternalizeActionArgs {
+                tx: beef.to_binary_atomic(&txid).unwrap(),
+                outputs: vec![InternalizeOutput {
+                    insertion_remittance: None,
+                    payment_remittance: Some(WalletPayment {
+                        sender_identity_key: anyone,
+                        derivation_prefix: DEFAULT_DERIVATION_PREFIX.to_string(),
+                        derivation_suffix: DEFAULT_DERIVATION_SUFFIX.to_string(),
+                    }),
+                    protocol: "wallet payment".to_string(),
+                    output_index: 0,
+                }],
+                description: "a mined payment".to_string(),
+                labels: None,
+                seek_permission: None,
+            },
+            Some("split.local"),
+        )
+        .await
+        .expect("the door takes a proven payment");
+    assert!(accepted.accepted);
+    wallet
+        .services()
+        .set_header_for_height(header(height, &txid, false));
+    txid
+}
+
+/// `split` of two outputs, refused by the gate: its refusal.
+async fn refused_split(ctx: &WalletContext<MockWalletServices>) -> crate::spend_gate::Refusal {
+    let err = run(ctx, 2, crate::spend_gate::AllowPending::Off, &[])
+        .await
+        .expect_err("refused");
+    refusal_of(&err).clone()
+}
+
+/// The gate's refusal `err` carries.
+fn refusal_of(err: &anyhow::Error) -> &crate::spend_gate::Refusal {
+    match err.downcast_ref::<GateError>() {
+        Some(GateError::Refused(refusal)) => refusal,
+        _ => panic!("not the gate's refusal: {err}"),
+    }
 }
 
 /// (actions, unspent satoshis of the default basket).
@@ -185,10 +216,7 @@ async fn a_split_of_a_coin_mined_before_genesis_is_not_posted() {
     assert!(answer.is_err(), "{seen}");
     assert_eq!(posts, 0, "{seen}");
     assert_eq!(ledger(&ctx).await, before, "{seen}");
-    let Some(GateError::Refused(refusal)) = answer.as_ref().err().and_then(|e| e.downcast_ref())
-    else {
-        panic!("not the gate's refusal: {seen}");
-    };
+    let refusal = refusal_of(answer.as_ref().unwrap_err());
     assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
     assert_eq!(refusal.offered_satoshis, 0);
     assert_eq!(refusal.held.len(), 1, "{refusal}");
@@ -289,9 +317,7 @@ async fn a_split_from_the_coin_mined_before_genesis_is_refused_by_name() {
     )
     .await
     .expect_err("refused");
-    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
-        panic!("not the gate's refusal: {err}");
-    };
+    let refusal = refusal_of(&err);
     assert_eq!(refusal.code(), "INPUT_NOT_OFFERED", "{refusal}");
     assert_eq!(refusal.held.len(), 1, "{refusal}");
     assert!(refusal.held[0].before_genesis);
@@ -307,16 +333,16 @@ fn send_args(no_send: bool) -> CreateActionArgs {
         input_beef: None,
         inputs: None,
         outputs: Some(vec![CreateActionOutput {
-            locking_script: crate::test_support::p2pkh([9; 20]),
-            satoshis: 1_000,
-            output_description: "to someone".to_string(),
+            tags: None,
             basket: None,
             custom_instructions: None,
-            tags: None,
+            output_description: "to someone".to_string(),
+            satoshis: 1_000,
+            locking_script: crate::test_support::p2pkh([9; 20]),
         }]),
+        labels: None,
         lock_time: None,
         version: None,
-        labels: None,
         options: Some(CreateActionOptions {
             sign_and_process: Some(true),
             no_send: Some(no_send),
@@ -358,12 +384,7 @@ async fn a_split_of_the_unmined_change_of_a_send_of_such_a_coin_is_refused_by_na
     assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
     let before = ledger(&ctx).await;
 
-    let err = run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
-        .await
-        .expect_err("refused");
-    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
-        panic!("not the gate's refusal: {err}");
-    };
+    let refusal = refused_split(&ctx).await;
     assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
     let change: Vec<_> = refusal
         .held
@@ -408,12 +429,7 @@ async fn a_testnet_context_holds_by_the_chain_its_door_judges_by() {
         "test",
         "the door's chain"
     );
-    let err = run(&ctx, 2, crate::spend_gate::AllowPending::Off, &[])
-        .await
-        .expect_err("refused");
-    let Some(GateError::Refused(refusal)) = err.downcast_ref::<GateError>() else {
-        panic!("not the gate's refusal: {err}");
-    };
+    let refusal = refused_split(&ctx).await;
     assert_eq!(
         refusal.held[0].reason,
         "mined before Genesis: coin height 700000 is before Genesis height 1344302; split does not offer it"

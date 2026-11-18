@@ -26,6 +26,7 @@ pub struct PreGenesisCoin {
     pub output_id: i64,
     /// `txid.vout`.
     pub outpoint: String,
+    /// The coin's satoshis.
     pub satoshis: u64,
     /// Why, in words: `mined before Genesis: ...; split does not offer it`.
     pub reason: String,
@@ -44,6 +45,10 @@ pub struct PreGenesisCoin {
 /// it, or of an unproven ancestor of ours, whose source's record proves it
 /// below the height (at most [`PRE_GENESIS_WALK`] transactions). A coin its
 /// own record holds (frozen, lost) is the gate's already. Reads only.
+///
+/// # Errors
+///
+/// The store's read faults.
 pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec<PreGenesisCoin>> {
     let pool = coins.storage.pool();
     let mut by_creator: HashMap<String, Option<String>> = HashMap::new();
@@ -53,13 +58,12 @@ pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec
         .into_iter()
         .filter(|c| c.record_hold().is_none())
     {
-        let reason = match by_creator.get(&c.txid) {
-            Some(reason) => reason.clone(),
-            None => {
-                let reason = creator_before_genesis(pool, &c.txid, genesis).await?;
-                by_creator.insert(c.txid.clone(), reason.clone());
-                reason
-            }
+        let reason = if let Some(reason) = by_creator.get(&c.txid) {
+            reason.clone()
+        } else {
+            let reason = creator_before_genesis(pool, &c.txid, genesis).await?;
+            by_creator.insert(c.txid.clone(), reason.clone());
+            reason
         };
         if let Some(reason) = reason {
             held.push(PreGenesisCoin {

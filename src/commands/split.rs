@@ -299,11 +299,11 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
 /// outputs from `total` satoshis in `coins` coins, or `None` when they
 /// cannot fund one (the checks `run` refuses by).
 fn sized(total: u64, coins: usize, count: u32) -> Option<(u64, u64)> {
-    let reserve = ((coins as u64 * 148) + (count as u64 * 34) + 10).max(500);
+    let reserve = ((coins as u64 * 148) + (u64::from(count) * 34) + 10).max(500);
     if coins == 0 || total <= reserve {
         return None;
     }
-    let per_output = (total - reserve) / count as u64;
+    let per_output = (total - reserve) / u64::from(count);
     (per_output >= 1).then_some((reserve, per_output))
 }
 

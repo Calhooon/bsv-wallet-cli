@@ -4,7 +4,7 @@
 //! takes every post and whose header service proves the deposit at the
 //! height asked.
 
-use super::tests::{spendable, storage, Claim};
+use super::tests::{mined, spendable, storage, Claim};
 use super::*;
 use crate::context::WalletContext;
 use crate::test_support::txid_of;
@@ -15,6 +15,7 @@ use bsv_wallet_toolbox::Chain;
 /// Services that hand out `deposit`'s bytes and prove it at `height`; the
 /// mock's tip (the door's header source) above it.
 pub(super) fn proving(deposit: &[u8], height: u32) -> MockWalletServices {
+    let path = MerklePath::from_coinbase_txid(&txid_of(deposit), height);
     MockWalletServices::builder()
         .height(height.max(880_000) + 10)
         .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
@@ -25,15 +26,8 @@ pub(super) fn proving(deposit: &[u8], height: u32) -> MockWalletServices {
             could_not_look: false,
         }))
         .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-            name: Some("Services".to_string()),
-            merkle_path: Some(
-                MerklePath::from_coinbase_txid(&txid_of(deposit), height)
-                    .to_hex()
-                    .unwrap(),
-            ),
-            header: None,
-            error: None,
-            notes: vec![],
+            merkle_path: path.to_hex().ok(),
+            ..mined(deposit)
         }))
         .build()
 }
@@ -115,10 +109,8 @@ async fn store_on(chain: Chain) -> StorageSqlx {
     )
     .await
     .unwrap();
-    storage
-        .migrate("gift-tests", &("02".to_string() + &"ab".repeat(32)))
-        .await
-        .unwrap();
+    let identity = "02".to_string() + &"ab".repeat(32);
+    storage.migrate("gift-genesis", &identity).await.unwrap();
     storage.make_available().await.unwrap();
     storage
 }
@@ -148,6 +140,22 @@ fn the_claims_beef_is_asked_the_genesis_rule_alone() {
     assert_eq!(claim_not_recordable(&with(None), 620_538), None);
 }
 
+/// `gift-claim` of `gift` through `ctx`: posted, and the wallet records
+/// its claim through the door. Two posts: the command's, then the door's
+/// own share of the claim it records (the toolbox's `internalizeAction`
+/// broadcasts inside its storage step).
+async fn posted_and_recorded(ctx: &WalletContext<MockWalletServices>, gift: &Claim) {
+    crate::commands::gift_claim::run(ctx, &txid_of(&gift.deposit), false)
+        .await
+        .expect("posted");
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 2);
+    assert_eq!(
+        spendable(ctx.wallet.storage()).await.cast_unsigned(),
+        gift.plan.covenant.amount + gift.plan.change,
+        "the claim recorded through the door"
+    );
+}
+
 /// The same gift with its deposit proven at the Genesis height (620,538):
 /// posted once, and the wallet records its claim through the door.
 #[tokio::test]
@@ -160,18 +168,7 @@ async fn a_claim_of_a_deposit_mined_at_genesis_is_posted_and_recorded() {
         Chain::Main,
     )
     .await;
-    crate::commands::gift_claim::run(&ctx, &txid_of(&gift.deposit), false)
-        .await
-        .expect("posted");
-    // The command's post, then the door's own share of the claim it
-    // records (the toolbox's `internalizeAction` broadcasts inside its
-    // storage step).
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 2);
-    assert_eq!(
-        spendable(ctx.wallet.storage()).await as u64,
-        gift.plan.covenant.amount + gift.plan.change,
-        "the claim recorded through the door"
-    );
+    posted_and_recorded(&ctx, &gift).await;
 }
 
 /// A context built as `--testnet` builds it: its store on the testnet
@@ -207,16 +204,5 @@ async fn a_testnet_contexts_claim_is_asked_the_chain_its_door_judges_by() {
         Chain::Test,
     )
     .await;
-    crate::commands::gift_claim::run(&ctx, &txid_of(&gift.deposit), false)
-        .await
-        .expect("posted");
-    // The command's post, then the door's own share of the claim it
-    // records (the toolbox's `internalizeAction` broadcasts inside its
-    // storage step).
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 2);
-    assert_eq!(
-        spendable(ctx.wallet.storage()).await as u64,
-        gift.plan.covenant.amount + gift.plan.change,
-        "the claim recorded through the door"
-    );
+    posted_and_recorded(&ctx, &gift).await;
 }
