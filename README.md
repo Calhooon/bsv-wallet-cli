@@ -11,8 +11,14 @@ is the tag **v0.18.8**, and crates.io carries the same version, **0.18.8**,
 which pins **bsv-wallet-toolbox-rs =0.13.5**, **bsv-rs =0.8.12** and
 **bsv-tracker =0.8.0**; the repository's Releases page holds a Release per
 tag. **0.18.1 was never published**. This beta branch pins
-**bsv-wallet-toolbox-rs =0.14.0-beta.9**, **bsv-rs =0.9.0-beta.9** and **bsv-tracker =0.9.0-beta.9**;
+**bsv-wallet-toolbox-rs =0.14.0-beta.10**, **bsv-rs =0.9.0-beta.10** and **bsv-tracker =0.9.0-beta.10**;
 [Cargo.lock](Cargo.lock) and [fuzz/Cargo.lock](fuzz/Cargo.lock) carry those versions.
+
+The beta.10 pin moves the three onto bsv-rs's security prerelease, the fix of
+[GHSA-j4w5-4g84-q3f4](https://github.com/Calhooon/bsv-rs/security/advisories/GHSA-j4w5-4g84-q3f4)
+(the key-value store's selector reads re-check the entries a lookup host
+returns); this CLI compiles that module in and calls none of its reads, and
+no served byte moves.
 
 The beta.9 pin moves the three onto bsv-rs's security prerelease, the fix of
 [GHSA-33fm-jcm5-4m3m](https://github.com/Calhooon/bsv-rs/security/advisories/GHSA-33fm-jcm5-4m3m)
