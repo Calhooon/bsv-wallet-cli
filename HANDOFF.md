@@ -4087,3 +4087,152 @@ on each line that is not a security patch. (6) Rows with no build word: #604,
 lane, #590, #591. (8) The one certificate's re-issue before 0.19.0. The funder
 runs the published 0.18.9 and only inside a gate (basket 169,832). The
 keeper's seat on 3396 stays on 0.18.4 until the owner says.
+
+## 2026-11-18 (06:00Z to 13:30Z): the checkpoint before the Studio's restart: nothing running, the port of 0.18.9 on beta, the stack's gate vectors read (#645), the stable gate and the store's flag (#646), where the project stands, what is next, what is left and the estimates
+
+**The restart.** The owner restarts the Studio Mac (his word of 13:2xZ
+2026-11-18: commit, push, a handoff the captains start again from, and where
+the project stands overall). At 13:30Z nothing of this captain's runs: no
+lane, no chain, no gate, no timer. The funder on 3320 is stopped. No pull
+request is open on this repository or on bsv-tracker. The standing checkout is
+clean and fast-forwarded to `origin/main` with this section. The restart loses
+nothing of this captain's. What dies with it and is another's to start: the
+keeper's witness seat on 3396 (the keeper's to relaunch; it stays on 0.18.4
+until the owner says) and the owner's own daemons.
+
+**Starting the captain again, in this order.**
+
+1. Read `CLAUDE.md`, the last three sections of this file, and `cca runs
+   --project bsv-wallet-cli --open` (none is expected).
+2. Check that `/Volumes/Lanes` is mounted and that the box answers:
+   `/Volumes/Lanes/out/bsv-wallet-cli/work/mem-gate.sh box` prints the
+   builders' limit (two at most on the box, one for each captain while its
+   swap sits above half; it read 0.52 at this checkpoint). The work folder
+   `/Volumes/Lanes/out/bsv-wallet-cli/work` holds every brief, chain, gate and
+   tag script of the run; the newest of each kind is the template for the next
+   (`brief-0189*.txt`, `gate-0189.sh`, `tag-0189.sh` for a stable patch;
+   `tracker/*090b10*`, `*pin-beta10*`, `*release-beta10*`, `gate-beta10.sh`,
+   `tag-beta10.sh` for a hop; `brief-port-0189.txt` and `chain-port-0189b.sh`
+   for a port; every new chain reads the limit on each poll as
+   `chain-port-0189b.sh` does).
+3. `git fetch origin main beta --tags`: main is this section's commit over
+   `5ac83d93`; beta is `fd9fc949`; the newest tags are `v0.18.9` (main
+   `65ae90f1`) and `v0.19.0-beta.10` (beta `07d939e6`).
+4. Read #386 from its last notes. A release the bsv-rs captain or the toolbox
+   captain named there after this checkpoint is the next work: a hop on beta,
+   or a patch on the stable line.
+5. The funder stays stopped. A gate starts it and stops it, and two gates
+   never overlap. It runs the published 0.18.9; its basket holds 169,832.
+6. The owner names the work. The rows that wait on his word are listed below,
+   each with the captain's recommendation.
+
+**Landed and filed in these hours.**
+
+- PR 641 landed through the queue at 06:19Z, beta `fd9fc949`: the port of
+  0.18.9. `split`, `gift-claim` and `send` to the wallet's own address refuse
+  by name before the post for a coin mined before Genesis; wire rows 284 to
+  290. #634 is closed by hand. It is in no published prerelease yet and rides
+  the next one. Beta's tip carries everything the stable line has through
+  0.18.9.
+- The stack's wallet gate vectors moved (Calgooon/bsv-stack-lean `590ca1a5`,
+  490 rows to 560). A read-only lane replayed the new file against beta
+  `fd9fc949` in a scratch worktree: 560 rows, 554 expressed, 525 equal, 29
+  differ (234 fields), 6 cannot be built. Two causes: under `allowPending:
+  received` the gate offers a received coin whose creator no broadcaster has
+  taken (15 rows; the stable line reads the same way), and there is no held
+  door (14 rows). A gap the replay cannot see: `internalizeAction` writes no
+  tracker row for a received body, so in production such a coin's creator
+  reads `unknown` until it is mined; the replay plants the row each vector
+  names. Filed as #645 with the order of the build: P1 the door's word and the
+  take, P2 the received rule with the re-pin in the same pull request, P3 the
+  held door after #621's third row. If the rule alone changed, every immediate
+  spend of a received payment under the word would be refused, the mainnet
+  harness's own flows among them. The pin stands at the 490-row file; a re-pin
+  before the build would record 234 entries.
+- #646, found while answering the toolbox captain's question (which of this
+  host's flows spend a coin the store marks not spendable by accepting delayed
+  broadcast: none does). On the stable line the gate's candidate read does not
+  read `outputs.spendable`; #165's `lost` hold landed on beta alone. Three
+  writers of this host mark a coin not spendable with no spender, each meaning
+  never select: the spend guard, `reconcile-outputs --execute`,
+  `cleanup-abandoned --execute`. For an action posted at once the toolbox's
+  selection passes over such a coin. Under `acceptDelayedBroadcast` nothing in
+  the host holds it. Reach: the served `/createAction` alone (`send`, `drain`,
+  `gift-send` and `split` always post at once). READ and not run: the test
+  that decides rides the next stable patch, written and run at its base before
+  any pin moves.
+- Read in the same hours, for the record: the served `/createAction` reads
+  neither `sendWith` nor `noSendChange` (#147); the served `/signAction` takes
+  the SDK's arguments whole; the host reads `sendWithResults` for the action's
+  own txid alone; no test, wire fixture or mainnet scenario of this repository
+  sends a batch.
+
+**Where the project stands: completed since the resume of 2026-11-16.**
+
+| Line | From, to | What it carried |
+|---|---|---|
+| stable (`main`) | 0.18.3 to 0.18.9, seven patches | each security pin of `bsv-rs` and of the toolbox on the day it was named; the gate's own findings (#627, the commands that post and then record); each gated on mainnet (23 of 23) and published |
+| beta | 0.19.0-beta.8 to 0.19.0-beta.10, three prereleases | the three hops with the tracker and the toolbox; the port of every stable patch (the port of 0.18.9 is on beta's tip, after beta.10); #612; each gated on mainnet (35 of 35) |
+| bsv-tracker's beta line | 0.9.0-beta.8 to 0.9.0-beta.10 | the pin to each `bsv-rs` prerelease, and the room made for the host's four types |
+
+The owner's seven-item brief of 2026-11-16 is done. Both lines carry every
+security fix published to this checkpoint. No release is half made.
+
+**What is next, each on its trigger; nothing is started.**
+
+| Work | Trigger | Estimate |
+|---|---|---|
+| The complete night on beta (the night of record at the pin; it proves #607 on a hosted runner) | a 17:00Z slot: `gh workflow run nightly.yml --ref beta -f mode=complete -f cap=14 -f window_end=20:00Z` | about three hours of hosted runners, none of ours; then one read of its scores |
+| The next stable patch: the toolbox's next stable release, #635's test, #646's deciding test at the base | its captain names it on #386 | 3 to 4 hours: one builder lane, two or three reads, one gate (about 2,200 sats), the tag |
+| The next hop on beta: the tracker's pin and tag, the pin lane, the release lane (it carries PR 641), the gate, the tag | `bsv-rs` publishes its next prerelease, then the toolbox follows | the tracker about 1 hour; then 3 to 4 hours after the toolbox's prerelease is on the index; one gate (about 2,600 sats) |
+| The port of that stable patch into beta | the patch is published | 2 to 3 hours, one lane and its reads |
+| #618: the daemon reads the feed by its page endpoint (the owner's build word of 2026-11-17) | the next release on each line that is not a security patch | 1 to 2 days: a design read, then one lane on each line |
+
+**Waiting on the owner's word, each with the captain's recommendation.**
+
+| Row | Recommendation | Estimate |
+|---|---|---|
+| #645 (the gate vectors: the received rule and the take) | build P1, then P2 with the re-pin, so that the divergences list never holds them; P3 after #621's third row | P1 about 2 days, P2 about 1 day |
+| #638 (`gift-claim` of an unmined deposit posts and is not recorded at once; old; recoverable by `receive`) | the hint made right in text and JSON and the missing test on both lines; then the record held and made by the tracker pass, on beta and ported | half a day, then 1 to 2 days |
+| #639 (a `--testnet` wallet is built on mainnet's chain) | build the wallet on the context's chain on both lines, with a release note (it moves what `getNetwork` answers on testnet) | half a day to 1 day |
+| #646 (the stable gate does not read the store's flag) | port #165's hold to the stable line, whatever a library's selection reads | half a day, one lane |
+| #621's rows | with #645's P3 | not sized |
+
+**What is left to 0.19.0.**
+
+- The 0.19.0 milestone holds 28 open rows (42 closed). By a read of their
+  titles, not sized row by row: about 26 lane-days of building. The largest:
+  #414 (the per-origin grant in the store with its prompt, about 5 days), #564
+  (the browser gate beside the toolbox's permissions manager, about 3 days),
+  #147, #175 and #618 (1 to 2 days each). Eight BRC-100 divergence rows take
+  half a day to a day each (#117, #146, #147, #148, #149, #194, #321, #441);
+  eight bugs take a quarter of a day to a day each (#118, #186, #187, #327,
+  #430, #437, #483, #611); four wait on the toolbox (#194, #430, #606, #611).
+- The wall clock is set by the builders on the box, not by the pool: about two
+  and a half to three weeks at two builders, five to six weeks at one. Each
+  hop or stable patch in between takes a builder for about three hours.
+- Outside this repository: the stable releases of the three libraries beta
+  pins as prereleases (their captains' estimates, not this one's).
+- Before the tag (RELEASING 4): the complete night, `build-macos`, `bench` and
+  `differential` read green; the one live certificate re-issued; the reverify
+  read against a copy of the production store; main's `ci.yml` follows beta's
+  at the cut (#491); the advisories issue of each line settled.
+- After the cut: the hardening milestone holds 57 open rows (#645, #621, #640,
+  #630, #631, #605, #590 and #591 among them). The stable line's milestone
+  holds 9 (#604, #616, #619, #620, #635, #637, #638, #639, #646). bsv-tracker
+  holds 10 open rows; the ones this captain's beta line would build, with no
+  build word: #45, #46, #47, #51.
+- What the pause of 2026-11-04 left and is not picked up: #564's read lane,
+  #590, #591.
+
+**The lessons of these hours.**
+
+- A question about this host's flows is answered on both lines, each by
+  itself: the lines differ where a fix landed on one alone (#165).
+- A record that means never select is held by the host's own gate, by name,
+  and not by what a library's selection happens to read in one mode.
+- The standing checkout is fast-forwarded when a HANDOFF section lands: a
+  captain's start reads this file from the working tree, and the tree was 50
+  commits behind.
+- A night is dispatched by hand at its slot. A restart in the afternoon moves
+  it to the next day's slot and loses nothing.
