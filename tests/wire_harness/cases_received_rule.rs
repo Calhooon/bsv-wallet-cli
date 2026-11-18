@@ -3,8 +3,9 @@
 //! `POST /createAction` and `POST /listActions` in the `received-rule`
 //! world: two received payments taken in by the toolbox's own
 //! `internalizeAction` (purpose `receive`, unproven), a caller's own
-//! `underReceivedRule` stripped at `internalizeAction` and at
-//! `createAction`, the gate's hold with no word, the scoped word over the
+//! `underReceivedRule` stripped at `internalizeAction`, a caller's own
+//! label at `createAction` that does not lift the gate's hold with no
+//! word (275's answer), the gate's hold with no word, the scoped word over the
 //! two (the named coin spent, the other unspent), the plain word, and the
 //! listing of the labels with `underRule`. Recorded last, so no file
 //! before them moves. The answers that need the tracker's own pass (a
@@ -108,7 +109,7 @@ pub(crate) async fn record(r: &mut Recorder) {
     assert_eq!(received.value("/totalActions"), 2);
     // No word: both coins held, received with no proof.
     create(r, "noWord", 1_000, json!({})).await;
-    // A caller's own label with no word: stripped, the same hold.
+    // A caller's own label with no word does not lift the hold: 275's answer.
     create(
         r,
         "callersLabel",
@@ -150,7 +151,7 @@ pub(crate) fn notes() -> Vec<(String, String)> {
         ("273-internalizeAction.receivedRule.second.json", "#627: a second received payment, 200: two received unproven coins for the scoped word."),
         ("274-listActions.receivedRule.received.json", "#627: the two payments, unproven; 272's labels are the caller's own alone: its copies of underReceivedRule were stripped at the door."),
         ("275-createAction.receivedRule.noWord.json", "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered."),
-        ("276-createAction.receivedRule.callersLabel.json", "#627: a caller's own underReceivedRule with no word is stripped before the door: 275's answer."),
+        ("276-createAction.receivedRule.callersLabel.json", "#627: a caller's own underReceivedRule with no word does not lift the gate's hold: 275's answer, byte for byte. It pins the hold, not the strip."),
         ("277-createAction.receivedRule.scopedPast.json", "#627: the scoped word naming 272's coin, for more than it holds: 9000 offered, the other coin held not named under allowPending: received, 402 INSUFFICIENT_FUNDS."),
         ("278-createAction.receivedRule.scoped.json", "#627: the scoped word within the named coin: the toolbox selects it (the gate passes underReceivedRule beside its own label) and the spend signs and posts, 200; an exact spend, no change."),
         ("279-listOutputs.receivedRule.afterScoped.json", "#627: after 278 the default basket holds 273's coin alone, unspent."),
