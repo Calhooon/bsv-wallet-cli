@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 
+use super::dead_proof_tests::stored_bytes;
 use super::tests::{opts, wallet_storage, FixedClock};
 use super::*;
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
@@ -74,6 +75,13 @@ fn competitor() -> TxId {
 /// each of the nine kinds, a `rejected` with an empty reason, and a
 /// `double_spend` with no competitor named.
 fn beta_eight_rows() -> Vec<(String, HintStatus)> {
+    let mut rows = beta_eight_payload_rows();
+    rows.extend(beta_eight_bare_rows());
+    rows
+}
+
+/// The texts of the five kinds with no payload.
+fn beta_eight_bare_rows() -> Vec<(String, HintStatus)> {
     vec![
         (
             r#"{"source":"arc","status":"accepted","observed":1700000000}"#.to_string(),
@@ -84,12 +92,27 @@ fn beta_eight_rows() -> Vec<(String, HintStatus)> {
             HintStatus::Seen,
         ),
         (
-            r#"{"source":"arc","status":"mined","height":900,"observed":1700000000}"#.to_string(),
-            HintStatus::Mined { height: 900 },
-        ),
-        (
             r#"{"source":"arc","status":"stale_block","observed":1700000000}"#.to_string(),
             HintStatus::StaleBlock,
+        ),
+        (
+            r#"{"source":"arc","status":"orphan_mempool","observed":1700000000}"#.to_string(),
+            HintStatus::OrphanMempool,
+        ),
+        (
+            r#"{"source":"arc","status":"unknown","observed":1700000000}"#.to_string(),
+            HintStatus::Unknown,
+        ),
+    ]
+}
+
+/// The texts of the four kinds with a payload, a `rejected` with an empty
+/// reason and a `double_spend` with no competitor among them.
+fn beta_eight_payload_rows() -> Vec<(String, HintStatus)> {
+    vec![
+        (
+            r#"{"source":"arc","status":"mined","height":900,"observed":1700000000}"#.to_string(),
+            HintStatus::Mined { height: 900 },
         ),
         (
             r#"{"source":"arc","status":"rejected","reason":"r","observed":1700000000}"#
@@ -118,14 +141,6 @@ fn beta_eight_rows() -> Vec<(String, HintStatus)> {
             HintStatus::DoubleSpend {
                 competitors: vec![],
             },
-        ),
-        (
-            r#"{"source":"arc","status":"orphan_mempool","observed":1700000000}"#.to_string(),
-            HintStatus::OrphanMempool,
-        ),
-        (
-            r#"{"source":"arc","status":"unknown","observed":1700000000}"#.to_string(),
-            HintStatus::Unknown,
         ),
         (
             r#"{"source":"arc","status":"mempool_present","courier":"c","observed":1700000000}"#
@@ -205,19 +220,6 @@ fn planted(word: &str) -> String {
     serde_json::to_string(&read).unwrap()
 }
 
-/// One stored row's columns, every one, as text.
-async fn stored_bytes(storage: &StorageSqlx, txid: &str) -> String {
-    sqlx::query_scalar(
-        "SELECT json_array(txid, built, hints, bump, word, height, header_hash, reask, \
-         asks, next_ask_at, reannounce_beef, reannounce_at, on_accept, chain, verdict, \
-         follow_up, updated_at) FROM tracker_states WHERE txid = ?",
-    )
-    .bind(txid)
-    .fetch_one(storage.pool())
-    .await
-    .unwrap()
-}
-
 async fn plant_row(storage: &StorageSqlx, txid: &str, hints: &str, word: &str, reask: &str) {
     sqlx::query(
         "INSERT INTO tracker_states (txid, word, hints, reask, next_ask_at, updated_at) \
@@ -228,7 +230,7 @@ async fn plant_row(storage: &StorageSqlx, txid: &str, hints: &str, word: &str, r
     .bind(hints)
     .bind(reask)
     // No re-ask falls due in the passes below: nothing is fetched.
-    .bind((OBSERVED + 10_000_000) as i64)
+    .bind(i64::try_from(OBSERVED + 10_000_000).unwrap())
     .execute(storage.writer())
     .await
     .unwrap();
@@ -272,7 +274,8 @@ async fn every_status_word_of_the_tracker_replays_from_a_stored_row_and_is_rewri
             "`{word}` is rewritten to the identical text"
         );
         assert_eq!(
-            updated, clock.0 as i64,
+            updated,
+            i64::try_from(clock.0).unwrap(),
             "`{word}`'s row was written by the pass"
         );
     }
@@ -282,9 +285,7 @@ async fn every_status_word_of_the_tracker_replays_from_a_stored_row_and_is_rewri
 /// column that is not JSON (#612 (iii), (vi)): each row is held as stored
 /// across two passes (every column unchanged), named among each pass's
 /// faults with its txid and the parse error, while a readable row beside
-/// them is replayed and written. Its last word and re-ask are what
-/// `/tx/:txid` reads; `heard` adds nothing to it; the spend door offers
-/// nothing on it and names the hold.
+/// them is replayed and written.
 #[tokio::test]
 async fn an_unreadable_stored_hint_holds_its_row_and_is_surfaced_on_every_pass() {
     let (storage, _) = wallet_storage().await;
@@ -336,10 +337,33 @@ async fn an_unreadable_stored_hint_holds_its_row_and_is_surfaced_on_every_pass()
                 .fetch_one(storage.pool())
                 .await
                 .unwrap();
-        assert_eq!((word.as_str(), updated), ("seen", clock.0 as i64));
+        assert_eq!(
+            (word.as_str(), updated),
+            ("seen", i64::try_from(clock.0).unwrap())
+        );
     }
+}
 
-    let (txid, before) = &held[0];
+/// A held row read by every other reader (#612 (iii)): `/tx/:txid`'s read
+/// gives the word and re-ask the row last stored and no tier; `heard` adds
+/// nothing and writes nothing; the spend door offers nothing on it and
+/// names the hold; every other caller of `load_row`, the spend guard among
+/// them, gets an error naming it.
+#[tokio::test]
+async fn a_held_row_is_read_as_stored_and_offered_nothing_by_every_other_reader() {
+    let (storage, _) = wallet_storage().await;
+    ensure_tables(&storage).await.unwrap();
+    let txid = &"7a".repeat(32);
+    plant_row(
+        &storage,
+        txid,
+        r#"[{"source":"arc","status":"a_word_no_tracker_knows","observed":1700000000}]"#,
+        "announced",
+        "age",
+    )
+    .await;
+    let before = &stored_bytes(&storage, txid).await;
+    let services = MockWalletServices::builder().build();
     // `/tx/:txid` reads the columns the last readable build wrote.
     assert_eq!(
         stored_word(&storage, txid).await.unwrap().unwrap(),

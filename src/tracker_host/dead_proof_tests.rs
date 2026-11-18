@@ -56,7 +56,7 @@ async fn store_unread(storage: &StorageSqlx, row: &TrackedRow) {
     store_row(storage, row, &state, 10).await.unwrap();
 }
 
-async fn stored_bytes(storage: &StorageSqlx, txid: &str) -> String {
+pub(super) async fn stored_bytes(storage: &StorageSqlx, txid: &str) -> String {
     sqlx::query_scalar(
         "SELECT json_array(txid, built, hints, bump, word, height, header_hash, reask, \
          asks, next_ask_at, reannounce_beef, reannounce_at, on_accept, chain, verdict, \
