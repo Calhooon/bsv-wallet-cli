@@ -2449,9 +2449,25 @@ async fn a_named_input_held_on_the_fault_alone_is_could_not_verify_now() {
 const RECEIVED_PREFIX: &str = "cmVjZWl2ZWQtcHJlZml4";
 const RECEIVED_SUFFIX: &str = "cmVjZWl2ZWQtc3VmZml4";
 
+/// The height of the BUMP proving a received payment's parent: after
+/// Genesis (mainnet 620,538). From bsv-wallet-toolbox-rs 0.13.7 the door
+/// runs the payment's input against its parent's output, and its Hosts
+/// line for tests reads: "Lock each parent with a script the placeholder
+/// satisfies under the word (this crate's tests use `14 <20 zero bytes> 75
+/// 75 51`, which the input `00` spends) and prove it after Genesis."
+const RECEIVED_PARENT_HEIGHT: u32 = 900_000;
+
+/// The parent's lock the payment's input `00` spends:
+/// `14 <20 zero bytes> 75 75 51`.
+fn anyone_lock_hex() -> String {
+    format!("14{}757551", "00".repeat(20))
+}
+
 /// A wallet payment to `root` of `satoshis` from a random sender, as an
-/// AtomicBEEF: the parent whole beside its BUMP at 800, the payment itself
-/// unproven. (BEEF, txid, the locking script, the sender's key.)
+/// AtomicBEEF: the parent whole beside its BUMP at
+/// [`RECEIVED_PARENT_HEIGHT`], locked by [`anyone_lock_hex`], the payment
+/// itself unproven, its input `00`. (BEEF, txid, the locking script, the
+/// sender's key.)
 fn received_payment(
     root: &PrivateKey,
     seed: u8,
@@ -2478,14 +2494,14 @@ fn received_payment(
     parent
         .add_output(TransactionOutput::new(
             satoshis + 1_000,
-            bsv_sdk::script::LockingScript::from_hex(LOCK).unwrap(),
+            bsv_sdk::script::LockingScript::from_hex(&anyone_lock_hex()).unwrap(),
         ))
         .unwrap();
     let parent_txid = parent.id();
     let mut child = Transaction::new();
-    child
-        .add_input(TransactionInput::new(parent_txid.clone(), 0))
-        .unwrap();
+    let mut spend = TransactionInput::new(parent_txid.clone(), 0);
+    spend.unlocking_script = Some(bsv_sdk::script::UnlockingScript::from_hex("00").unwrap());
+    child.add_input(spend).unwrap();
     child
         .add_output(TransactionOutput::new(
             satoshis,
@@ -2494,7 +2510,10 @@ fn received_payment(
         .unwrap();
     let txid = child.id();
     let mut beef = Beef::new();
-    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, 800));
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(
+        &parent_txid,
+        RECEIVED_PARENT_HEIGHT,
+    ));
     beef.merge_raw_tx(parent.to_binary(), Some(bump));
     beef.merge_raw_tx(child.to_binary(), None);
     (
