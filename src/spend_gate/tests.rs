@@ -20,6 +20,7 @@ const STORED_RECEIVED_LABEL: &str = "underreceivedrule";
 mod carried;
 mod from;
 mod lineage;
+mod received_rule;
 mod user_scope;
 
 const LOCK: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
