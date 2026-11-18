@@ -431,21 +431,24 @@ async fn under_the_word_a_received_coin_is_selected_and_the_spend_signs() {
 /// The scoped word over two received unproven coins the toolbox took in:
 /// only the named coin is offered and selected; the other, held "not
 /// named", stays unspent; a payment the named coin cannot cover is the
-/// gate's refusal with the other listed as not named.
+/// gate's refusal with the other listed as not named. The named coin is
+/// the larger (9,000 beside 5,000): the toolbox prefers the amount nearest
+/// the target, so were both offered the 1,000 spend would take the other;
+/// the other left unspent shows the offer bounds the selection.
 #[tokio::test]
 async fn under_the_scoped_word_only_the_named_received_coin_is_selected() {
-    let (wallet, txids) = wallet_with_received(&PrivateKey::random(), &[5_000, 9_000]).await;
+    let (wallet, txids) = wallet_with_received(&PrivateKey::random(), &[9_000, 5_000]).await;
     let (named, other) = (&txids[0], &txids[1]);
     let scoped = no_word().with_allow_pending(AllowPending::ReceivedOnly(vec![(named.clone(), 0)]));
 
-    let err = create_action(&wallet, pay_signed(7_000, None), "gate.local", &scoped)
+    let err = create_action(&wallet, pay_signed(11_000, None), "gate.local", &scoped)
         .await
-        .expect_err("the named coin alone does not cover 7,000");
+        .expect_err("the named coin alone does not cover 11,000");
     let GateError::Refused(refusal) = err else {
         panic!("not the gate's refusal: {err}");
     };
     assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
-    assert_eq!(refusal.offered_satoshis, 5_000);
+    assert_eq!(refusal.offered_satoshis, 9_000);
     let held = refusal
         .held
         .iter()
