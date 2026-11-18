@@ -49,7 +49,10 @@
 //!    carries the toolbox's [`TOOLBOX_RECEIVED_LABEL`] (bsv-wallet-toolbox-rs
 //!    0.13.5's received-coin rule, without which its selection passes over
 //!    such a coin); a caller's own copy of either is stripped, so without
-//!    the word the action carries neither. A 0.15 store's
+//!    the word the action carries neither, with one case: a received coin
+//!    offered by 1. above (the tracker's checked proof at depth) whose
+//!    transaction the toolbox has not yet completed puts the toolbox's
+//!    label alone on the action ([`labelled_for_offer`]). A 0.15 store's
 //!    records (`spend_gate_actions`, by txid or by reference) keep
 //!    answering; nothing writes them from 0.16.
 //!
@@ -781,7 +784,9 @@ pub fn names_toolbox_received_rule(label: &str) -> bool {
 
 /// The labels the door's word adds: R1 (d)'s record and the toolbox's
 /// received-coin rule, after a caller's own copies are stripped. Without
-/// the word the action carries neither, whatever the caller sent.
+/// the word the action carries neither, whatever the caller sent; the
+/// toolbox's label alone may still be added for the offer
+/// ([`labelled_for_offer`]).
 fn action_rule_labels(labels: &mut Option<Vec<String>>, word: &AllowPending) {
     strip_rule_label(labels);
     if word.is_on() {
@@ -1394,6 +1399,62 @@ fn is_unspendable(e: &bsv_sdk::Error) -> bool {
     e.to_string().contains("Unspendable coin:")
 }
 
+/// Whether `offer` holds a coin the toolbox's selection passes over
+/// without its [`TOOLBOX_RECEIVED_LABEL`]: a received coin (purpose
+/// `receive`) whose transaction the toolbox does not hold as `completed`
+/// (bsv-wallet-toolbox-rs 0.13.5 `RECEIVED_COIN_CLAUSE`, read on its own
+/// columns). Reads only.
+async fn offer_holds_received_unproven(pool: &SqlitePool, offer: &[i64]) -> Result<bool> {
+    // 500 ids a query, well under SQLite's bound on bound parameters.
+    for ids in offer.chunks(500) {
+        let sql = format!(
+            "SELECT EXISTS (SELECT 1 FROM outputs o \
+             JOIN transactions t ON o.transaction_id = t.transaction_id \
+             WHERE o.output_id IN ({}) AND COALESCE(o.purpose, '') = 'receive' \
+               AND t.status <> 'completed')",
+            vec!["?"; ids.len()].join(", ")
+        );
+        let mut query = sqlx::query_scalar::<_, bool>(&sql);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        if query.fetch_one(pool).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The action's labels for one offer: when the offer holds a received coin
+/// the toolbox has not completed and the labels do not already name the
+/// toolbox's rule (the door's word adds it, [`action_rule_labels`]; a
+/// caller's own copy was stripped), the toolbox's label is added alone:
+/// the gate admitted the coin by its own reading of a checked proof at
+/// depth, no word was given, so no [`RECEIVED_PENDING_LABEL`] is written.
+/// The offer bounds what the toolbox may take, so the label reaches no
+/// coin outside it.
+async fn labelled_for_offer(
+    storage: &StorageSqlx,
+    mut args: CreateActionArgs,
+    assessment: &Assessment,
+) -> std::result::Result<CreateActionArgs, GateError> {
+    let named = args
+        .labels
+        .iter()
+        .flatten()
+        .any(|l| names_toolbox_received_rule(l));
+    if !named
+        && offer_holds_received_unproven(storage.pool(), &assessment.offer())
+            .await
+            .map_err(GateError::Gate)?
+    {
+        args.labels
+            .get_or_insert_with(Vec::new)
+            .push(TOOLBOX_RECEIVED_LABEL.to_string());
+    }
+    Ok(args)
+}
+
 /// One toolbox call, offered the coins the assessment offers: the door.
 async fn run_offered<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
@@ -1479,7 +1540,10 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // review): only the door's word writes it. The word also passes the
     // toolbox's `underReceivedRule` (0.13.5), without which its selection
     // passes over the received unproven coins the gate offers; the offer
-    // still bounds what it may take.
+    // still bounds what it may take. Without the word, an offer holding a
+    // received coin the gate read as mined while the toolbox has not yet
+    // completed its transaction carries the toolbox's label alone
+    // (`labelled_for_offer`, in `run_gated`).
     let mut args = args;
     action_rule_labels(&mut args.labels, &opts.allow_pending);
     run_gated(wallet, args, originator, opts).await
@@ -1564,7 +1628,8 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         .await
         .map_err(GateError::Gate)?;
     let lazy = !first.unread.is_empty();
-    match run_offered(wallet, args.clone(), originator, &first).await {
+    let offered = labelled_for_offer(storage, args.clone(), &first).await?;
+    match run_offered(wallet, offered, originator, &first).await {
         Ok(result) => return Ok(result),
         // An unspendable coin in the lazy offer: the coins not read may
         // cover without it (F7 of the #44 CLI review).
@@ -1584,6 +1649,7 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     )
     .await
     .map_err(GateError::Gate)?;
+    let args = labelled_for_offer(storage, args, &full).await?;
     match run_offered(wallet, args, originator, &full).await {
         Ok(result) => Ok(result),
         Err(e) if is_insufficient(&e) => Err(refusal(storage, &full, &e, outputs).await),
