@@ -131,24 +131,15 @@ pub async fn run<S: WalletServices + Send + Sync + 'static>(
     // The other coins are spent when they cover the send; when they do not,
     // the gate refuses by name, nothing signed or posted. A send to another
     // party's address holds nothing for this reason.
-    let before_genesis = if to.own {
-        self_send_hold(ctx).await?
-    } else {
-        Vec::new()
-    };
+    let mut gate = ctx.gate().with_allow_pending(allow_pending);
+    if to.own {
+        gate = gate.with_genesis_hold(self_send_hold(ctx).await?);
+    }
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
     let result = crate::spend_gate::refused_as_json(
-        crate::spend_gate::create_action_from(
-            &ctx.wallet,
-            args,
-            "bsv-wallet-cli",
-            &ctx.gate()
-                .with_allow_pending(allow_pending)
-                .with_genesis_hold(before_genesis),
-            from,
-        )
-        .await,
+        crate::spend_gate::create_action_from(&ctx.wallet, args, "bsv-wallet-cli", &gate, from)
+            .await,
         ctx.json_output,
     )?;
 
