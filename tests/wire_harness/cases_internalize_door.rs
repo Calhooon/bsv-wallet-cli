@@ -32,7 +32,7 @@ fn payment_from(sender: &str) -> Value {
 }
 
 /// The stranger's remittance, its key compressed (row 238's).
-fn payment() -> Value {
+pub(crate) fn payment() -> Value {
     payment_from(&stranger_key().public_key().to_hex())
 }
 

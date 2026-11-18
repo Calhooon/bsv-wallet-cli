@@ -167,17 +167,9 @@ async fn seed_funded(
     identity: &str,
     key: &PrivateKey,
 ) -> HashMap<u32, String> {
-    let rows = Rows::open(storage, identity).await;
-    // The basket wants no more coins than it has: the toolbox then makes
-    // no change output for an action that spends a coin exactly (with the
-    // default of six wanted, it adds change outputs, each with a random
-    // derivation, and the built bytes move on every run).
-    sqlx::query("UPDATE output_baskets SET number_of_desired_utxos = 0 WHERE basket_id = ?")
-        .bind(rows.basket)
-        .execute(&rows.pool)
-        .await
-        .unwrap();
     let mut roots = HashMap::new();
+    let rows = Rows::open(storage, identity).await;
+    roots.extend(rows.wanting_no_change(key).await);
     for (seed, height, satoshis, suffix) in FUNDED_COINS {
         let parent = parent_tx(seed, satoshis, &funded_lock(key, suffix));
         let txid = rows
@@ -185,37 +177,7 @@ async fn seed_funded(
             .await;
         roots.insert(height, txid);
     }
-    for payment in Payment::ALL {
-        let (parent, _) = stranger_payment(payment, key).await;
-        roots.insert(payment.parent_at().1, parent.id());
-    }
     roots.insert(PUZZLE.1, puzzle_parent().0.id());
-    roots
-}
-
-/// The `received-rule` world (the port of the stable line's 0.18.8, #627):
-/// no coin of its own, the basket wanting none (so an exact spend makes no
-/// change output, as in `funded`), and the roots of the stranger's
-/// payments' parents, so the coins it holds are the received payments its
-/// fixtures take in through `internalizeAction` (purpose `receive`, their
-/// transactions `unproven`), the coins the toolbox's received-coin rule
-/// reaches.
-async fn seed_received_rule(
-    storage: &StorageSqlx,
-    identity: &str,
-    key: &PrivateKey,
-) -> HashMap<u32, String> {
-    let rows = Rows::open(storage, identity).await;
-    sqlx::query("UPDATE output_baskets SET number_of_desired_utxos = 0 WHERE basket_id = ?")
-        .bind(rows.basket)
-        .execute(&rows.pool)
-        .await
-        .unwrap();
-    let mut roots = HashMap::new();
-    for payment in Payment::ALL {
-        let (parent, _) = stranger_payment(payment, key).await;
-        roots.insert(payment.parent_at().1, parent.id());
-    }
     roots
 }
 
@@ -337,6 +299,25 @@ struct Coin<'a> {
 }
 
 impl Rows {
+    /// The basket wanting no more coins than it has: the toolbox then makes
+    /// no change output for an action that spends a coin exactly (with the
+    /// default of six wanted, it adds change outputs, each with a random
+    /// derivation, and the built bytes move on every run). The roots of the
+    /// stranger's payments' parents, which the header stub answers.
+    pub(crate) async fn wanting_no_change(&self, key: &PrivateKey) -> HashMap<u32, String> {
+        sqlx::query("UPDATE output_baskets SET number_of_desired_utxos = 0 WHERE basket_id = ?")
+            .bind(self.basket)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        let mut roots = HashMap::new();
+        for payment in Payment::ALL {
+            let (parent, _) = stranger_payment(payment, key).await;
+            roots.insert(payment.parent_at().1, parent.id());
+        }
+        roots
+    }
+
     pub(crate) async fn open(storage: &StorageSqlx, identity: &str) -> Rows {
         let user = storage
             .find_or_insert_user(identity)
@@ -659,7 +640,9 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
-            "received-rule" => return seed_received_rule(storage, &identity, key).await,
+            "received-rule" => {
+                return super::cases_received_rule::world(storage, &identity, key).await
+            }
             "internalize-held" => {
                 return super::held_world::seed_internalize_held(storage, &identity, key).await
             }
