@@ -564,6 +564,10 @@ The two lines side by side: the stable line's status and code from its tests (`s
 
 No row or test of this line answers a 500, an `ERROR` where the stable line serves a named class, or a refusal after anything was stored or posted.
 
+## The beta.10 pin
+
+bsv-rs 0.9.0-beta.10, bsv-wallet-toolbox-rs 0.14.0-beta.10 and bsv-tracker 0.9.0-beta.10 move together. bsv-rs's prerelease carries the fix of GHSA-j4w5-4g84-q3f4: a `GlobalKVStore` selector query (`get_by_controller`, `get_by_tags`, `query`) drops a lookup host's answer entry that does not match the query's controller, protocol or tags; the toolbox's and the tracker's carry that pin alone. No route of this CLI reaches the key-value store. At the pin commit, rows 001 to 283 replay byte-identical (283 replayed, 0 differ), the consumers' 48 replay with no difference and the gate vectors show no divergence: nothing served moved, and no row is recorded for it.
+
 ## The browser gate (#411) and the switch (#414)
 
 The owner's word of 2026-11-01 on #411 ("yep I like your reccomendations...", through the keeper): the per-origin grant in the store is the shape (#414); step (b), a required `Origin` and an environment allow-list, landed first (PR 419). From #414's L5b (the switch, `docs/design/origin-grants.md` sections (1), (2), (6) and (7), under the owner's rulings W1 (a), W4 (a) and W15 (i) of 2026-11-03) a door admits a page for each power it asks by the owner's grant of that power to its origin, read from the store, and `ALLOWED_ORIGINS` is a seed beside the rows. Every served route but `POST /arc-callback` (Arcade's webhook, server to server, authenticated by the callback token) is gated; the order is the bearer (`AUTH_TOKEN`, when set), then the gate, then the body, then the door's powers.
