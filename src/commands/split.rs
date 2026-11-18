@@ -385,3 +385,7 @@ mod tests {
             .is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "split/genesis_tests.rs"]
+mod genesis_tests;

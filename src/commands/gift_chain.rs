@@ -264,6 +264,9 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
 mod hold_tests;
 
 #[cfg(test)]
+mod genesis_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::{p2pkh, raw_tx, txid_of};
