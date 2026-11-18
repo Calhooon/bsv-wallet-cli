@@ -139,7 +139,9 @@ pub(crate) async fn served_untracked(root: &PrivateKey) -> (WalletState, axum::R
     served_with(root, None).await
 }
 
-async fn served_with(
+/// The served router over a fresh wallet of `root` whose storage checks
+/// roots against `tracker` (none: as `served_untracked`).
+pub(crate) async fn served_with(
     root: &PrivateKey,
     tracker: Option<TestChainTracker>,
 ) -> (WalletState, axum::Router) {
