@@ -270,7 +270,17 @@
     "268-internalizeAction.door.indexTwiceInsertions.json",
     "269-listActions.internalizeDoor.afterPairs.json",
     "270-listOutputs.internalizeDoor.afterPairs.json",
-    "271-listOutputs.internalizeDoor.doorBasket.json"
+    "271-listOutputs.internalizeDoor.doorBasket.json",
+    "272-internalizeAction.receivedRule.callersLabel.json",
+    "273-internalizeAction.receivedRule.second.json",
+    "274-listActions.receivedRule.received.json",
+    "275-createAction.receivedRule.noWord.json",
+    "276-createAction.receivedRule.callersLabel.json",
+    "277-createAction.receivedRule.scopedPast.json",
+    "278-createAction.receivedRule.scoped.json",
+    "279-listOutputs.receivedRule.afterScoped.json",
+    "280-createAction.receivedRule.word.json",
+    "281-listActions.receivedRule.labelled.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -419,6 +429,16 @@
     "268-internalizeAction.door.indexTwiceInsertions.json": "toolbox #831: one outputIndex named by two basket insertions on a new transaction, InvalidParameter, 400 VALIDATION_ERROR; nothing stored (269, 270, 271).",
     "269-listActions.internalizeDoor.afterPairs.json": "toolbox #831: after 267 and 268 the actions are 255's, each its txid, status and satoshis (265's merge rewrote the held action's description): no refusal stored a transaction.",
     "270-listOutputs.internalizeDoor.afterPairs.json": "toolbox #831: after 267 and 268 the default basket is 256's.",
-    "271-listOutputs.internalizeDoor.doorBasket.json": "toolbox #831: after 267 and 268 basket door holds nothing."
+    "271-listOutputs.internalizeDoor.doorBasket.json": "toolbox #831: after 267 and 268 basket door holds nothing.",
+    "272-internalizeAction.receivedRule.callersLabel.json": "#627 (the stable line's 0.18.8): a received payment taken in through the toolbox's own internalizeAction (purpose receive, unproven), its labels carrying the caller's own underReceivedRule in two spellings the toolbox reads as it beside a label of its own, 200. New; recorded last, so no file before it moves.",
+    "273-internalizeAction.receivedRule.second.json": "#627: a second received payment, 200: two received unproven coins for the scoped word.",
+    "274-listActions.receivedRule.received.json": "#627: the two payments, unproven; 272's labels are the caller's own alone: its copies of underReceivedRule were stripped at the door.",
+    "275-createAction.receivedRule.noWord.json": "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered.",
+    "276-createAction.receivedRule.callersLabel.json": "#627: a caller's own underReceivedRule with no word is stripped before the door: 275's answer.",
+    "277-createAction.receivedRule.scopedPast.json": "#627: the scoped word naming 272's coin, for more than it holds: 9000 offered, the other coin held not named under allowPending: received, 402 INSUFFICIENT_FUNDS.",
+    "278-createAction.receivedRule.scoped.json": "#627: the scoped word within the named coin: the toolbox selects it (the gate passes underReceivedRule beside its own label) and the spend signs and posts, 200; an exact spend, no change.",
+    "279-listOutputs.receivedRule.afterScoped.json": "#627: after 278 the default basket holds 273's coin alone, unspent.",
+    "280-createAction.receivedRule.word.json": "#627: the plain word: the other received coin is selected and the spend signs and posts, 200.",
+    "281-listActions.receivedRule.labelled.json": "#627: the actions labelled underReceivedRule, with includeLabels: 278 and 280, each with the caller's label, the gate's spend-gate:received-pending and the toolbox's label as the store keeps it (underreceivedrule), underRule received-pending."
   }
 }
