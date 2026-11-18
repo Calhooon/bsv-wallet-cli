@@ -1,0 +1,43 @@
+{
+  "world": "internalize",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "includeLabels": true,
+      "labels": [
+        "wire strip own"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [
+        {
+          "description": "wire strip at create",
+          "isOutgoing": true,
+          "labels": [
+            "wire strip own"
+          ],
+          "lockTime": 0,
+          "satoshis": -40000,
+          "status": "unproven",
+          "txid": "305c7d1cc4dd3c4b2476f6c76b8e44582b1b0f402bc5cc1fa37847187aa93124",
+          "version": 1
+        }
+      ],
+      "totalActions": 1
+    }
+  }
+}
