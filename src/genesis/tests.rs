@@ -1,7 +1,8 @@
 //! The Genesis height and the BEEF check, on synthetic transactions; the
 //! boundary read through the toolbox's own door, on a mainnet store and on
 //! a store migrated as `--testnet` migrates it; and the one passing shape
-//! of the stable line's served proof the wire harness does not build.
+//! of the stable line's served proof the wire harness does not build, read
+//! here at the door (its served row is `tests/served_internalize_door.rs`).
 
 use super::*;
 use bsv_sdk::primitives::PrivateKey;
@@ -379,10 +380,14 @@ fn template_to(lock: &LockingScript) -> bsv_sdk::wallet::CreateActionArgs {
 /// transaction one wallet's own `createAction` (`signAndProcess: false`)
 /// and `signAction` built and signed, paying a second wallet's BRC-29 key,
 /// is taken in by that second wallet, its scripts run (the paying wallet's
-/// P2PKH signature against its proven coin) and passing. The served router
-/// takes a wallet over the concrete `Services` (`src/server/mod.rs`) and
-/// the wire harness serves one wallet per world, so this row is the
-/// door's, over the toolbox's mock.
+/// P2PKH signature against its proven coin) and passing. This is the row
+/// at the toolbox's door, over its mock; the same row served through the
+/// router, a second wallet's `POST /internalizeAction` answering 200 and
+/// storing it, is `tests/served_internalize_door.rs`'s
+/// `a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another`
+/// (the served helper `tests/support/served_internalize.rs` swaps the
+/// storage's services for the mock). The wire corpus does not carry it:
+/// its harness serves one wallet per world.
 #[tokio::test]
 async fn a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another() {
     let (sender_root, receiver_root) = (PrivateKey::random(), PrivateKey::random());

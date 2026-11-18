@@ -20,7 +20,7 @@ use bsv_sdk::script::{
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction, TransactionInput, TransactionOutput};
 use bsv_sdk::wallet::{
     Counterparty, CreateActionArgs, CreateActionOptions, CreateActionOutput, KeyDeriver, Protocol,
-    SecurityLevel, WalletInterface,
+    SecurityLevel, SignActionArgs, SignActionOptions, WalletInterface,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -396,6 +396,69 @@ pub(crate) async fn spend(wallet: &WalletState, labelled: bool) -> Result<Transa
     Ok(Transaction::from_atomic_beef(&bytes)
         .or_else(|_| Transaction::from_binary(&bytes))
         .expect("the signed transaction"))
+}
+
+/// A payment of `satoshis` locked by `lock`, built by `wallet`'s own
+/// `createAction` (`signAndProcess` false, `noSend`, the `underReceivedRule`
+/// label so its received unproven coin is selected, the outputs in order)
+/// and signed by its `signAction` (`noSend`): the stable line's
+/// create-and-sign shape (main's `tests/served_internalize_scripts.rs`,
+/// `noSend` on both as there). The signed `AtomicBEEF` and its txid.
+pub(crate) async fn create_and_sign(
+    wallet: &WalletState,
+    lock: &[u8],
+    satoshis: u64,
+) -> (Vec<u8>, String) {
+    let created = wallet
+        .create_action(
+            CreateActionArgs {
+                description: "a payment to another wallet".to_string(),
+                input_beef: None,
+                inputs: None,
+                outputs: Some(vec![CreateActionOutput {
+                    locking_script: lock.to_vec(),
+                    satoshis,
+                    output_description: "the payment".to_string(),
+                    basket: None,
+                    custom_instructions: None,
+                    tags: None,
+                }]),
+                lock_time: None,
+                version: None,
+                labels: Some(vec!["underReceivedRule".to_string()]),
+                options: Some(CreateActionOptions {
+                    sign_and_process: Some(false),
+                    no_send: Some(true),
+                    randomize_outputs: Some(false),
+                    ..Default::default()
+                }),
+            },
+            Some("test.local"),
+        )
+        .await
+        .expect("the template");
+    let signable = created
+        .signable_transaction
+        .expect("a signable transaction");
+    let signed = wallet
+        .sign_action(
+            SignActionArgs {
+                spends: std::collections::HashMap::new(),
+                // The reference as `spend_gate::reference_string` writes it.
+                reference: bsv_sdk::primitives::to_base64(&signable.reference),
+                options: Some(SignActionOptions {
+                    no_send: Some(true),
+                    ..Default::default()
+                }),
+            },
+            Some("test.local"),
+        )
+        .await
+        .expect("signed");
+    (
+        signed.tx.expect("the signed AtomicBEEF"),
+        hex::encode(signed.txid.expect("the txid")),
+    )
 }
 
 /// The input of `tx` spending `txid.vout`, its unlocking script run against

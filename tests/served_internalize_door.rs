@@ -9,7 +9,9 @@
 //! payment merged over a spent output, and the "rows written before" found
 //! and taken out; then the restores of a row an earlier release
 //! reclassified, each run through to a signed spend whose unlocking script
-//! is run against the coin's P2PKH. The helpers are
+//! is run against the coin's P2PKH; and the stable line's create-and-sign
+//! row (#634), a transaction one wallet's `createAction` and `signAction`
+//! built, taken in by a second. The helpers are
 //! `tests/support/served_internalize.rs`, in the shapes of the toolbox's
 //! published tests for this release; the spend is `Wallet::create_action`
 //! with `noSend` and the `underReceivedRule` label, as the toolbox's own
@@ -403,4 +405,49 @@ async fn a_parent_carried_by_txid_alone_with_no_bump_is_refused() {
     assert_eq!(stored(&wallet).await, before, "nothing written");
     assert_eq!(balance(&wallet).await, 0, "the balance unmoved");
     assert_eq!(posts.call_count("post_beef"), 0, "nothing posted");
+}
+
+// ---------------------------------------------------------------------------
+// The create-and-sign row (#634)
+// ---------------------------------------------------------------------------
+
+/// The stable line's last passing shape (main's
+/// `tests/served_internalize_scripts.rs`), served on this line: a
+/// transaction one wallet's own `createAction` (`signAndProcess: false`)
+/// and `signAction` built and signed, paying a second wallet's derived
+/// P2PKH, is taken in by that second wallet through its served
+/// `POST /internalizeAction`: its scripts are run (the paying wallet's
+/// P2PKH signature against its received coin, and that coin's own
+/// unproven transaction over its proven parent) and pass. 200, stored, the
+/// payee's mock posted once.
+#[tokio::test]
+async fn a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another() {
+    // The payer holds one received coin of 4,500, taken in through its door.
+    let funding = Paid::new();
+    let (payer, _payer_app, _) = funding.stored().await;
+    assert_eq!(balance(&payer).await, 4_500);
+
+    // The payee's key for the payer's remittance.
+    let payee = PrivateKey::random();
+    let payer_identity = funding.root.public_key();
+    let lock = p2pkh(&derived(&payee, &payer_identity, PREFIX, SUFFIX));
+    let (tx, txid) = create_and_sign(&payer, &lock, 300).await;
+
+    let (wallet, app, posts) = served(&payee, Some(&funding.parent)).await;
+    let (status, body) = internalize(
+        &app,
+        &tx,
+        vec![payment_of(0, PREFIX, SUFFIX, &payer_identity.to_hex())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["accepted"], true, "{body}");
+    assert_eq!(balance(&wallet).await, 300, "stored");
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outputs WHERE txid = ? AND vout = 0")
+        .bind(&txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(kept, 1, "the payment's row");
+    assert_eq!(posts.call_count("post_beef"), 1, "posted once");
 }
