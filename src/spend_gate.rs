@@ -184,6 +184,14 @@ pub const HEADERS_UNAVAILABLE: &str = "HEADERS_UNAVAILABLE";
 const HEADERS_UNAVAILABLE_PREFIX: &str = "headers unavailable: ";
 /// The refusal's toolbox line when a coin a caller named is held.
 pub const NAMED_INPUT_REFUSED: &str = "an input the spend guard does not offer";
+/// The reason prefix of a coin `split` does not offer because the wallet's
+/// own proof record places its creator below the chain's Genesis height
+/// ([`create_action_for_split`]).
+pub const PRE_GENESIS_PREFIX: &str = "mined before Genesis: ";
+/// The sentence a refusal holding such a coin ends with: why, in the
+/// toolbox's published words (bsv-wallet-toolbox-rs 0.13.7, Hosts), and
+/// what works.
+pub const PRE_GENESIS_WHY: &str = "split records its outputs through internalizeAction after it posts them, and internalizeAction refuses a payment spending a coin mined before Genesis as not judged, so split does not spend such a coin; nothing was signed or posted. A plain `send` of the coin is not held for this reason.";
 
 /// The gate's two settings.
 #[derive(Debug, Clone)]
@@ -514,6 +522,13 @@ impl std::fmt::Display for Refusal {
                 c.reason
             )?;
         }
+        if self
+            .held
+            .iter()
+            .any(|c| c.reason.starts_with(PRE_GENESIS_PREFIX))
+        {
+            write!(f, "\n{PRE_GENESIS_WHY}")?;
+        }
         Ok(())
     }
 }
@@ -675,6 +690,9 @@ struct Candidate {
     origin: Origin,
     age_minutes: i64,
     proof: Option<Vec<u8>>,
+    /// The height of the creator's proof in the wallet's own record
+    /// (`proven_txs.height`), when it has one.
+    proven_height: Option<i64>,
     frozen: bool,
 }
 
@@ -973,7 +991,7 @@ async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
     let rows = sqlx::query(
         "SELECT o.output_id, t.txid, o.vout, o.satoshis, t.is_outgoing, \
                 CAST((julianday('now') - julianday(o.created_at)) * 1440 AS INTEGER) AS age, \
-                p.merkle_path \
+                p.merkle_path, p.height AS proven_height \
          FROM outputs o \
          JOIN transactions t ON o.transaction_id = t.transaction_id \
          JOIN output_baskets b ON o.basket_id = b.basket_id AND b.name = 'default' \
@@ -998,6 +1016,7 @@ async fn candidates(storage: &StorageSqlx) -> Result<Vec<Candidate>> {
             },
             age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
             proof: r.get("merkle_path"),
+            proven_height: r.get("proven_height"),
             frozen: frozen.contains(&(
                 r.get::<String, _>("txid").to_ascii_lowercase(),
                 r.get::<i64, _>("vout"),
@@ -1072,7 +1091,7 @@ pub async fn assess<V: WalletServices + ?Sized>(
     opts: &GateOptions,
     need: Option<u64>,
 ) -> Result<Assessment> {
-    assess_inner(storage, services, opts, need, false).await
+    assess_inner(storage, services, opts, need, false, None).await
 }
 
 /// [`assess`], and when the header service did not answer for a batch's
@@ -1086,15 +1105,19 @@ pub async fn assess_retrying<V: WalletServices + ?Sized>(
     need: Option<u64>,
     retry: bool,
 ) -> Result<Assessment> {
-    assess_inner(storage, services, opts, need, retry).await
+    assess_inner(storage, services, opts, need, retry, None).await
 }
 
+/// `pre_genesis`: `split`'s hold ([`create_action_for_split`]), by output
+/// id: a coin the gate would offer that is named there is held instead,
+/// with that reason. `None` everywhere else.
 async fn assess_inner<V: WalletServices + ?Sized>(
     storage: &StorageSqlx,
     services: &V,
     opts: &GateOptions,
     need: Option<u64>,
     retry: bool,
+    pre_genesis: Option<&HashMap<i64, String>>,
 ) -> Result<Assessment> {
     let all = candidates(storage).await?;
     let tick = opts.tick();
@@ -1173,7 +1196,9 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             out.unread.push(c.output_id);
             continue;
         };
-        match hold_reason(reading, c.origin, (&c.txid, c.vout as u32), opts) {
+        let reason = hold_reason(reading, c.origin, (&c.txid, c.vout as u32), opts)
+            .or_else(|| pre_genesis.and_then(|held| held.get(&c.output_id).cloned()));
+        match reason {
             None if !covered => out.offered.push((c.output_id, c.satoshis)),
             None => out.unread.push(c.output_id),
             Some(reason) => out.held.push(HeldCoin {
@@ -1478,6 +1503,205 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     originator: &str,
     opts: &GateOptions,
 ) -> std::result::Result<CreateActionResult, GateError> {
+    create_action_holding(wallet, args, originator, opts, None).await
+}
+
+/// [`create_action`] for `split` alone: beside every hold of the gate, the
+/// coins of `held` ([`pre_genesis_coins`]) are held, each with its reason
+/// ([`PRE_GENESIS_PREFIX`]). `split` posts and then records its outputs
+/// through `internalizeAction`, which from bsv-wallet-toolbox-rs 0.13.7
+/// refuses a payment spending a coin mined before Genesis as not judged;
+/// the hold keeps the split from posting what it could not record. When
+/// the coins left do not cover the split the refusal is the gate's own
+/// (`INSUFFICIENT_FUNDS`), each such coin listed under `held` and the
+/// message ending in [`PRE_GENESIS_WHY`]: nothing signed, nothing posted.
+/// `split` names no inputs, so the hold reads the allocation's coins only.
+pub async fn create_action_for_split<V: WalletServices + Send + Sync + 'static>(
+    wallet: &Wallet<StorageSqlx, V>,
+    args: CreateActionArgs,
+    originator: &str,
+    opts: &GateOptions,
+    held: &[PreGenesisCoin],
+) -> std::result::Result<CreateActionResult, GateError> {
+    let held: HashMap<i64, String> = held
+        .iter()
+        .map(|c| (c.output_id, c.reason.clone()))
+        .collect();
+    create_action_holding(wallet, args, originator, opts, Some(&held)).await
+}
+
+/// A coin `split` does not spend ([`pre_genesis_coins`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreGenesisCoin {
+    /// The store's output id.
+    pub output_id: i64,
+    /// `txid.vout`.
+    pub outpoint: String,
+    pub satoshis: u64,
+    /// Why, beginning [`PRE_GENESIS_PREFIX`].
+    pub reason: String,
+}
+
+/// The coins of the default basket the gate could allocate whose spend
+/// `internalizeAction` would refuse as not judged on `chain` (its Genesis
+/// height, [`crate::genesis::genesis_height`]), read from
+/// the wallet's own records and never an explorer, as the toolbox builds a
+/// spend's BEEF from them (`create_action.rs` `beef_bfs_walk`): the
+/// creator's proof record (`proven_txs.height`, read with the coin in
+/// [`candidates`]); with none, a BUMP of the creator's stored BEEF
+/// (`transactions.input_beef`) proving it; with neither, the creator not
+/// mined: an unproven transaction of its stored BEEF spending a coin that
+/// BEEF proves below the height
+/// ([`crate::genesis::unproven_spend_of_pre_genesis_coin`]), or an input of
+/// it, or of an unproven ancestor of ours, whose source's record proves it
+/// below the height (at most [`PRE_GENESIS_WALK`] transactions). `split` reads
+/// them before it sizes its outputs, so the outputs are what the other
+/// coins can fund. Reads only.
+pub async fn pre_genesis_coins(
+    storage: &StorageSqlx,
+    chain: bsv_wallet_toolbox::Chain,
+) -> Result<Vec<PreGenesisCoin>> {
+    let mut by_creator: HashMap<String, Option<String>> = HashMap::new();
+    let mut held = Vec::new();
+    for c in candidates(storage).await?.into_iter().filter(|c| !c.frozen) {
+        let reason = match by_creator.get(&c.txid) {
+            Some(reason) => reason.clone(),
+            None => {
+                let reason =
+                    creator_before_genesis(storage.pool(), &c.txid, c.proven_height, chain).await?;
+                by_creator.insert(c.txid.clone(), reason.clone());
+                reason
+            }
+        };
+        if let Some(reason) = reason {
+            held.push(PreGenesisCoin {
+                output_id: c.output_id,
+                outpoint: format!("{}.{}", c.txid, c.vout),
+                satoshis: c.satoshis,
+                reason,
+            });
+        }
+    }
+    Ok(held)
+}
+
+/// A transaction's stored bytes and BEEF: `(raw_tx, input_beef)`.
+type StoredTx = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// The most unproven transactions of ours [`creator_before_genesis`] walks
+/// for one creator.
+const PRE_GENESIS_WALK: usize = 64;
+
+/// Why a spend of an output of `txid` would not be judged on `chain`, from
+/// the wallet's own records ([`pre_genesis_coins`]), or `None`.
+async fn creator_before_genesis(
+    pool: &SqlitePool,
+    txid: &str,
+    proven_height: Option<i64>,
+    chain: bsv_wallet_toolbox::Chain,
+) -> Result<Option<String>> {
+    let genesis = crate::genesis::genesis_height(chain);
+    let proven = match proven_height {
+        Some(height) => Some(height.max(0) as u64),
+        None => proof_height(pool, txid).await?,
+    };
+    if let Some(height) = proven {
+        return Ok((height < u64::from(genesis)).then(|| {
+            format!(
+                "{PRE_GENESIS_PREFIX}coin height {height} is before Genesis height {genesis}; split does not offer it"
+            )
+        }));
+    }
+    let unmined = |spender: &str, height: u64| {
+        format!(
+            "{PRE_GENESIS_PREFIX}{spender} is not mined yet and spends a coin of height {height}, before Genesis height {genesis}; split does not offer it"
+        )
+    };
+    // The creator is not mined: the BEEF of a spend of it carries it and
+    // its unproven ancestry down to the proofs, as the toolbox's walk
+    // builds it (its stored BEEF, else its inputs' records).
+    let mut walk = vec![txid.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(t) = walk.pop() {
+        if !seen.insert(t.clone()) || seen.len() > PRE_GENESIS_WALK {
+            continue;
+        }
+        let row: Option<StoredTx> = sqlx::query_as(
+            "SELECT raw_tx, input_beef FROM transactions WHERE lower(txid) = ? \
+             ORDER BY transaction_id LIMIT 1",
+        )
+        .bind(&t)
+        .fetch_optional(pool)
+        .await?;
+        let Some((Some(raw), input_beef)) = row else {
+            continue;
+        };
+        if let Some(mut beef) =
+            input_beef.and_then(|bytes| bsv_sdk::transaction::Beef::from_binary(&bytes).ok())
+        {
+            if beef.find_txid(&t).is_none() {
+                beef.merge_raw_tx(raw.clone(), None);
+            }
+            if let Some(spend) =
+                crate::genesis::unproven_spend_of_pre_genesis_coin(&beef.to_binary(), chain)
+            {
+                return Ok(Some(unmined(&spend.txid, spend.coin_height)));
+            }
+        }
+        let Ok(tx) = bsv_sdk::transaction::Transaction::from_binary(&raw) else {
+            continue;
+        };
+        for input in &tx.inputs {
+            let Some(prev) = input.source_txid.as_deref().map(str::to_ascii_lowercase) else {
+                continue;
+            };
+            match proof_height(pool, &prev).await? {
+                Some(height) if height < u64::from(genesis) => {
+                    return Ok(Some(unmined(&t, height)));
+                }
+                Some(_) => {}
+                None => walk.push(prev),
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The height the wallet's own records prove `txid` at: its proof record
+/// (`proven_txs.height`), else a BUMP of its stored BEEF that proves it.
+async fn proof_height(pool: &SqlitePool, txid: &str) -> Result<Option<u64>> {
+    let height: Option<i64> =
+        sqlx::query_scalar("SELECT height FROM proven_txs WHERE lower(txid) = ? LIMIT 1")
+            .bind(txid)
+            .fetch_optional(pool)
+            .await?;
+    if let Some(height) = height {
+        return Ok(Some(height.max(0) as u64));
+    }
+    let stored: Option<Option<Vec<u8>>> = sqlx::query_scalar(
+        "SELECT input_beef FROM transactions WHERE lower(txid) = ? ORDER BY transaction_id LIMIT 1",
+    )
+    .bind(txid)
+    .fetch_optional(pool)
+    .await?;
+    Ok(stored
+        .flatten()
+        .and_then(|bytes| bsv_sdk::transaction::Beef::from_binary(&bytes).ok())
+        .and_then(|beef| {
+            beef.bumps
+                .iter()
+                .find(|b| b.contains(txid))
+                .map(|b| u64::from(b.block_height))
+        }))
+}
+
+async fn create_action_holding<V: WalletServices + Send + Sync + 'static>(
+    wallet: &Wallet<StorageSqlx, V>,
+    args: CreateActionArgs,
+    originator: &str,
+    opts: &GateOptions,
+    pre_genesis: Option<&HashMap<i64, String>>,
+) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
     // A scoped word names coins this wallet could spend under it, or it is
     // the caller's error (#63), before anything is read for the action.
@@ -1546,7 +1770,7 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // (`labelled_for_offer`, in `run_gated`).
     let mut args = args;
     action_rule_labels(&mut args.labels, &opts.allow_pending);
-    run_gated(wallet, args, originator, opts).await
+    run_gated(wallet, args, originator, opts, pre_genesis).await
 }
 
 /// The header service's error a coin is held on, from its reason.
@@ -1616,6 +1840,7 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
     args: CreateActionArgs,
     originator: &str,
     opts: &GateOptions,
+    pre_genesis: Option<&HashMap<i64, String>>,
 ) -> std::result::Result<CreateActionResult, GateError> {
     let storage = wallet.storage();
     let outputs = args
@@ -1624,9 +1849,16 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         .map(|o| o.iter().map(|x| x.satoshis).sum::<u64>())
         .unwrap_or(0);
     let need = outputs.saturating_add(FEE_MARGIN);
-    let first = assess_inner(storage, wallet.services(), opts, Some(need), true)
-        .await
-        .map_err(GateError::Gate)?;
+    let first = assess_inner(
+        storage,
+        wallet.services(),
+        opts,
+        Some(need),
+        true,
+        pre_genesis,
+    )
+    .await
+    .map_err(GateError::Gate)?;
     let lazy = !first.unread.is_empty();
     let offered = labelled_for_offer(storage, args.clone(), &first).await?;
     match run_offered(wallet, offered, originator, &first).await {
@@ -1646,6 +1878,7 @@ async fn run_gated<V: WalletServices + Send + Sync + 'static>(
         opts,
         None,
         !first.headers_retried,
+        pre_genesis,
     )
     .await
     .map_err(GateError::Gate)?;
