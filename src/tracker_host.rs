@@ -753,6 +753,11 @@ pub const WORD_LABELS: [&str; 9] = [
     "abandoned",
 ];
 
+/// A stored word, when it is one [`word_label`] produces.
+fn known_word(stored: Option<&str>) -> Option<&'static str> {
+    stored.and_then(|stored| WORD_LABELS.into_iter().find(|label| *label == stored))
+}
+
 /// The tracker's word, as one lowercase label.
 pub fn word_label(word: &Word) -> &'static str {
     match word {
@@ -1422,6 +1427,16 @@ pub struct TickReport {
 }
 
 impl TickReport {
+    /// A row held as stored ([`HeldRow`]): logged, and named among the
+    /// faults once.
+    fn hold(&mut self, held: &HeldRow) {
+        held.warn();
+        let line = held.fault_line();
+        if !self.faults.contains(&line) {
+            self.faults.push(line);
+        }
+    }
+
     /// Nothing moved and nothing was asked.
     pub fn is_quiet(&self) -> bool {
         self.adopted == 0
@@ -1591,8 +1606,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     // written, and is named among the faults on every pass that selects it
     // (#612). Its word, height and re-ask columns stay as last written.
     for held in &held_as_stored {
-        held.warn();
-        report.faults.push(held.fault_line());
+        report.hold(held);
     }
 
     // Read: the headers the stored paths name, and the new hints.
@@ -2190,12 +2204,7 @@ async fn adopt_proven<V: WalletServices + ?Sized>(
         match proven_row(storage, r).await? {
             Some(Ok(row)) => rows.push((row, CheckRecord::of(r))),
             // Held as stored (#612): not checked, not written, named.
-            Some(Err(held)) => {
-                held.warn();
-                if !report.faults.contains(&held.fault_line()) {
-                    report.faults.push(held.fault_line());
-                }
-            }
+            Some(Err(held)) => report.hold(&held),
             None => {}
         }
     }
@@ -2662,11 +2671,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
             // fault, the word the row last stored.
             Some(Err(held)) => {
                 held.warn();
-                let word = held
-                    .stored_word
-                    .as_deref()
-                    .and_then(|stored| WORD_LABELS.into_iter().find(|label| *label == stored))
-                    .unwrap_or("unknown");
+                let word = known_word(held.stored_word.as_deref()).unwrap_or("unknown");
                 readings.insert(
                     held.txid.clone(),
                     CreatorReading {
@@ -2732,10 +2737,7 @@ pub async fn read_creators<V: WalletServices + ?Sized>(
         let split = under_split(state.word(), split_floor);
         // A failed check cannot replace the last stored word with the
         // replay's starting tier. Unknown stored strings use that tier.
-        let word = fault
-            .as_ref()
-            .and(row.stored_word.as_deref())
-            .and_then(|stored| WORD_LABELS.into_iter().find(|label| *label == stored))
+        let word = known_word(fault.as_ref().and(row.stored_word.as_deref()))
             .unwrap_or_else(|| word_label(state.word()));
         readings.insert(
             row.txid.clone(),
