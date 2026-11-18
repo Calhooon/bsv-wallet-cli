@@ -49,6 +49,7 @@ fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
         allow_pending: AllowPending::Off,
         tracker: crate::tracker_host::TickOptions::default(),
         header_retry_pause: TEST_PAUSE,
+        split_hold: Vec::new(),
     }
 }
 
@@ -2145,6 +2146,7 @@ fn the_refusal_as_json_is_the_routes_body() {
             age_minutes: 3,
             reason: "depth 1: 0 blocks; received, no proof".to_string(),
             headers_fault: None,
+            before_genesis: false,
             output_id: 1,
         }],
         capped: None,

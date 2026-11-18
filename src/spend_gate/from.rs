@@ -235,6 +235,7 @@ mod tests {
             age_minutes: 1,
             reason: "headers unavailable".into(),
             headers_fault: Some("offline".into()),
+            before_genesis: false,
             output_id: 2,
         });
         assert!(matches!(

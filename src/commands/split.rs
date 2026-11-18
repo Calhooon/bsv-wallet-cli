@@ -30,6 +30,22 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
         anyhow::bail!("Split count must be at least 2");
     }
 
+    // The coins split does not spend (#634): a coin whose creator the
+    // wallet's own records place below the Genesis height of the chain the
+    // door judges by, or the unmined change of a spend of one. The door's
+    // chain is its store's own setting (`genesis::door_network`), never
+    // `ctx.chain` nor the `Wallet`'s. The outputs are sized from the other
+    // coins; when those cannot fund a split it is sized as before and the
+    // gate refuses it by name, the coin listed under `held`, nothing signed
+    // or posted.
+    let before_genesis = match bsv_wallet_cli::genesis::door_genesis_height(ctx.wallet.storage()) {
+        Some(genesis) => {
+            let coins = crate::spend_gate::UserCoins::from_wallet(&ctx.wallet).await?;
+            crate::spend_gate::pre_genesis_coins(coins, genesis).await?
+        }
+        None => Vec::new(),
+    };
+
     let (total_sats, utxo_count) = if from.is_empty() {
         // Get current outputs to find total balance
         let list = ctx
@@ -51,10 +67,23 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
             )
             .await?;
 
-        (
+        let all = (
             list.outputs.iter().map(|o| o.satoshis).sum::<u64>(),
             list.outputs.len(),
-        )
+        );
+        let left = list
+            .outputs
+            .iter()
+            .filter(|o| {
+                let outpoint = o.outpoint.to_string();
+                !before_genesis.iter().any(|held| held.outpoint == outpoint)
+            })
+            .fold((0u64, 0usize), |(s, n), o| (s + o.satoshis, n + 1));
+        if left.1 < all.1 && sized(left.0, left.1, count).is_none() {
+            all
+        } else {
+            left
+        }
     } else {
         (
             crate::spend_gate::refused_as_json(
@@ -198,7 +227,9 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
-            &ctx.gate().with_allow_pending(allow_pending),
+            &ctx.gate()
+                .with_allow_pending(allow_pending)
+                .with_split_hold(before_genesis.clone()),
             from,
         )
         .await,
@@ -222,11 +253,30 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
     )
     .await;
 
+    // The coins left unspent for this reason, when the split chose its
+    // coins (`--from` names them).
+    let not_spent = if from.is_empty() {
+        before_genesis.as_slice()
+    } else {
+        &[]
+    };
     if ctx.json_output {
-        println!(
-            "{}",
-            split_json(&txid_hex, count, per_output, self_internalized)
-        );
+        let mut answer = split_json(&txid_hex, count, per_output, self_internalized);
+        if !not_spent.is_empty() {
+            answer["notSpent"] = serde_json::Value::Array(
+                not_spent
+                    .iter()
+                    .map(|held| {
+                        serde_json::json!({
+                            "outpoint": held.outpoint,
+                            "satoshis": held.satoshis,
+                            "reason": held.reason,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        println!("{answer}");
     } else {
         println!("Split into {} UTXOs ({} sats each)", count, per_output);
         println!("TxID: {}", txid_hex);
@@ -234,9 +284,27 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
         if !self_internalized {
             println!("Warning: the split outputs were not self-internalized (see the log)");
         }
+        for held in not_spent {
+            println!(
+                "Not spent: {} {} sats: {}",
+                held.outpoint, held.satoshis, held.reason
+            );
+        }
     }
 
     Ok(())
+}
+
+/// The fee reserve and the satoshis per output of a split of `count`
+/// outputs from `total` satoshis in `coins` coins, or `None` when they
+/// cannot fund one (the checks `run` refuses by).
+fn sized(total: u64, coins: usize, count: u32) -> Option<(u64, u64)> {
+    let reserve = ((coins as u64 * 148) + (count as u64 * 34) + 10).max(500);
+    if coins == 0 || total <= reserve {
+        return None;
+    }
+    let per_output = (total - reserve) / count as u64;
+    (per_output >= 1).then_some((reserve, per_output))
 }
 
 /// The split's answer under `--json`. The txid is the post's truth; when
