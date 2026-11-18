@@ -270,9 +270,18 @@ async fn own_change_restored_with_the_wallets_identity_key_signs() {
     assert_eq!(restored.5, Some(me), "the stored sender");
     assert!(balance(&wallet).await > 0, "counted");
 
-    let unselected = spend(&wallet, false).await.expect_err("not selected");
-    assert!(unselected.contains("Insufficient funds"), "{unselected}");
+    passed_over_without_the_label(&wallet).await;
     signs(&wallet, &txid, vout).await;
+}
+
+/// The toolbox's 0.14.0-beta.8.1 `### Hosts`: a restored row "is selected
+/// as any received coin (an unproven one only under the action's
+/// `underReceivedRule` label)". The same spend without the label is passed
+/// over, the coin the wallet's only one (the stable line's 0.18.8 pins its
+/// restores' answer the same way).
+async fn passed_over_without_the_label(wallet: &WalletState) {
+    let unselected = spend(wallet, false).await.expect_err("not selected");
+    assert_eq!(unselected, "Insufficient funds: need 1005, have 0");
 }
 
 /// A spend that selects `txid.vout` signs it, its unlocking script checked.
@@ -316,6 +325,7 @@ async fn restored_and_signs(paid: &Paid, wallet: &WalletState, app: &axum::Route
     assert_eq!(restored.0.as_deref(), Some("default"));
     assert_eq!(restored.5, Some(paid.sender.to_hex()), "the stored sender");
     assert_eq!(balance(wallet).await, 4_500);
+    passed_over_without_the_label(wallet).await;
     signs(wallet, &paid.txid, 0).await;
 }
 
