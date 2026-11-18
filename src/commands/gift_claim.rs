@@ -78,12 +78,14 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
     // the post the claim's BEEF is asked the Genesis rule of the door that
     // records it (toolbox 0.13.7): a claim the wallet could not record is
     // refused by name, nothing posted (`gift_chain::claim_not_recordable`).
+    // The chain asked is the wallet's own (`Wallet::chain`), the one the
+    // door judges the record by, never `ctx.chain`.
     let claim_raw =
         hex::decode(&plan.claim_raw_hex).map_err(|e| anyhow!("the claim is not hex: {e}"))?;
     let outcome = gift_chain::announce_claim(
         ctx.wallet.storage(),
         ctx.wallet.services(),
-        ctx.chain,
+        ctx.wallet.chain(),
         &SystemClock,
         &TickOptions::from_env(),
         &deposit_raw,

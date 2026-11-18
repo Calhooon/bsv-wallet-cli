@@ -50,11 +50,15 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
 
     // The coins split does not spend (bsv-wallet-toolbox-rs 0.13.7): a coin
     // whose creator the wallet's own proof record places below the chain's
-    // Genesis height. The outputs are sized from the other coins; when those
-    // cannot fund a split, it is sized as before and the gate refuses it by
-    // name, the coin listed under `held` (nothing signed, nothing posted).
+    // Genesis height. The chain is the wallet's own (`Wallet::chain`), the
+    // one its `internalizeAction` passes to the door, never `ctx.chain`: a
+    // wallet built with `Wallet::new` carries the toolbox's default chain
+    // whatever `--testnet` says, and the hold and the door must agree. The
+    // outputs are sized from the other coins; when those cannot fund a
+    // split, it is sized as before and the gate refuses it by name, the
+    // coin listed under `held` (nothing signed, nothing posted).
     let before_genesis =
-        crate::spend_gate::pre_genesis_coins(ctx.wallet.storage(), ctx.chain).await?;
+        crate::spend_gate::pre_genesis_coins(ctx.wallet.storage(), ctx.wallet.chain()).await?;
     let all_sats: u64 = list.outputs.iter().map(|o| o.satoshis).sum();
     let all_count = list.outputs.len();
     let (left_sats, left_count) = list
@@ -461,6 +465,17 @@ mod tests {
         root: &PrivateKey,
         coins: &[(u32, u64)],
     ) -> (WalletContext<MockWalletServices>, Vec<String>) {
+        wallet_with_mined_as(root, coins, Chain::Main).await
+    }
+
+    /// [`wallet_with_mined`], its context's `chain` set to `chain` as
+    /// `WalletContext::load_with` sets it from `--testnet`; the wallet is
+    /// built with `Wallet::new` as `load_with` builds it.
+    async fn wallet_with_mined_as(
+        root: &PrivateKey,
+        coins: &[(u32, u64)],
+        chain: Chain,
+    ) -> (WalletContext<MockWalletServices>, Vec<String>) {
         let storage = StorageSqlx::in_memory().await.unwrap();
         storage
             .migrate("split", &root.public_key().to_hex())
@@ -546,7 +561,7 @@ mod tests {
             wallet,
             identity_key: root.public_key().to_hex(),
             root_key: root.clone(),
-            chain: Chain::Main,
+            chain,
             json_output: false,
             db_path: ":memory:".into(),
         };
@@ -656,6 +671,55 @@ mod tests {
              AND spendable = 1 AND satoshis = 14750",
         )
         .bind(&txids[1])
+        .fetch_one(ctx.wallet.storage().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            recorded, 2,
+            "the split's two outputs recorded through the door"
+        );
+    }
+
+    /// A context built as `--testnet` builds it (`WalletContext::load_with`:
+    /// `ctx.chain` is `Chain::Test`, the wallet `Wallet::new`'s), its one
+    /// coin proven at 700,000: after mainnet's Genesis height (620,538),
+    /// before testnet's (1,344,302). The door judges by the wallet's own
+    /// chain, which `Wallet::new` makes the toolbox's default, mainnet, and
+    /// takes the split; the hold asks the same chain and offers the coin.
+    /// Asked `ctx.chain`, the hold would keep a coin the door takes.
+    #[tokio::test]
+    async fn a_testnet_context_holds_by_the_chain_its_door_judges_by() {
+        let root = PrivateKey::random();
+        let (ctx, txids) = wallet_with_mined_as(&root, &[(700_000, 30_000)], Chain::Test).await;
+        assert_eq!(ctx.chain, Chain::Test);
+        assert_eq!(ctx.wallet.chain(), Chain::Main, "the door's chain");
+        assert_eq!(
+            crate::spend_gate::pre_genesis_coins(ctx.wallet.storage(), ctx.wallet.chain())
+                .await
+                .unwrap(),
+            vec![],
+            "the hold offers what the door takes"
+        );
+        assert_eq!(
+            crate::spend_gate::pre_genesis_coins(ctx.wallet.storage(), ctx.chain)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the flag's chain would hold it"
+        );
+
+        run(&ctx, 2, crate::spend_gate::AllowPending::Off)
+            .await
+            .expect("the split spends the coin at 700,000");
+        assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+        assert!(spender(&ctx, &txids[0]).await.is_some(), "the coin spent");
+        let recorded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM outputs WHERE transaction_id = \
+             (SELECT spent_by FROM outputs WHERE txid = ? AND vout = 0) \
+             AND spendable = 1 AND satoshis = 14750",
+        )
+        .bind(&txids[0])
         .fetch_one(ctx.wallet.storage().pool())
         .await
         .unwrap();

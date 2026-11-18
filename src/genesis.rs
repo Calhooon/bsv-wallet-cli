@@ -17,12 +17,23 @@
 //! answers bsv-rs's public `ProtocolEra::MAINNET_GENESIS_HEIGHT` (bsv-rs
 //! 0.8.13 `src/script/flags.rs:94`), which this host reads too; for
 //! testnet it answers the literal `1_344_302` (`input_scripts.rs:85`),
-//! which bsv-rs does not publish, so it is carried here. The door is told
-//! the wallet's `Chain` (`Wallet::internalize_action`, `src/wallet/wallet.rs:2450`
-//! `with_caller_network(self.chain.as_str(), ..)`), the same `Chain` the
-//! host passes here. A test at the boundary through the door
+//! which bsv-rs does not publish, so it is carried here.
+//!
+//! The chain. The door is told the `Chain` of the toolbox `Wallet` that
+//! calls it (`Wallet::internalize_action`, `src/wallet/wallet.rs:2450`
+//! `with_caller_network(self.chain.as_str(), ..)`), so `split` and
+//! `gift-claim` pass that same `Chain`, read from the wallet itself
+//! (`Wallet::chain`, `wallet.rs:464`), never the CLI's `--testnet` flag
+//! (`WalletContext::chain`): host and door agree on every wallet however
+//! it was built. This CLI builds its wallets with `Wallet::new`, which
+//! gives the toolbox's default chain, mainnet (`wallet.rs:365-387`), so
+//! today a `--testnet` wallet's door and this host both judge by
+//! mainnet's height. A test at the boundary through the door
 //! (`the_door_refuses_a_coin_proven_one_below_genesis_and_takes_one_at_it`)
-//! holds the two numbers together.
+//! holds the two numbers together, and a `--testnet` context's coin at
+//! 700,000 holds the two chains together
+//! (`a_testnet_context_holds_by_the_chain_its_door_judges_by`,
+//! `a_testnet_contexts_claim_is_asked_the_chain_its_door_judges_by`).
 
 use bsv_sdk::script::ProtocolEra;
 use bsv_sdk::transaction::beef_stream::{display_hex, Element};
