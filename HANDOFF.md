@@ -3945,3 +3945,145 @@ word: #604, #605, #606, #616, #619, #620, #621; bsv-tracker #45, #46, #47,
 #51. (6) What the pause left: night 5's re-dispatch, #564's read lane, #590,
 #591. (7) The one certificate's re-issue before 0.19.0. The keeper's seat on
 3396 stays on 0.18.4 until the owner says.
+
+## 2026-11-18 (00:30Z to 06:00Z): 0.18.9 landed, gated and published (bsv-rs =0.8.13, the toolbox =0.13.7, and the commands that post and then record), 0.19.0-beta.9 and 0.19.0-beta.10, both stable ports to 0.18.8 on beta, bsv-tracker 0.9.0-beta.10, one wrong claim of the captain's corrected, states as of 06:00Z
+
+**Released in these hours.**
+
+| Release | PR, commit | What it is | The gate (net cost) | crates.io |
+|---|---|---|---|---|
+| 0.19.0-beta.9 | 632, beta `e3290c45` | the beta.9 pins (PR 629) with #612 | 35 of 35 (2,622 sats) | 2026-11-18T01:54:35Z |
+| 0.18.9 | 636, main `65ae90f1` | `bsv-rs` `=0.8.13`, `bsv-wallet-toolbox-rs` `=0.13.7` | 23 of 23 (2,185 sats) | 2026-11-18T03:41:49Z |
+| 0.19.0-beta.10 | 643, beta `07d939e6` | the beta.10 pins (PR 642), the port of 0.18.7 and 0.18.8 (PR 633) | 35 of 35 (2,626 sats) | 2026-11-18T05:53:52Z |
+| bsv-tracker 0.9.0-beta.10 | Calhooon/bsv-tracker#53, its beta `98397892` | the pin to `bsv-rs` `=0.9.0-beta.10`, nothing else | (its six checks) | 2026-11-18T02:59:18Z |
+
+The run since the resume: stable 0.18.3 to 0.18.9, beta 0.19.0-beta.8 to
+0.19.0-beta.10, bsv-tracker 0.9.0-beta.8 to 0.9.0-beta.10. #386 carries one
+note per release.
+
+**The beta.9 hop (PR 629, beta `e058eab3`; #612 done).** The three pins, and
+the tracker's words in place of the host's two hand maps: a stored hint is the
+crate's own serde form, a re-ask is shown by the crate's label, rows already
+stored read as they are, and a row whose stored hints do not read is held and
+reported where it was emptied in silence. Three stored shapes this host's
+writer never wrote are refused (`mined` with no height, `mempool_present` with
+no courier, `rejected` with no reason). Follow-ups: #630 (a held row named by
+a chain event is logged and not reported), #631 (the `verdict` column is still
+dropped). The audit for GHSA-33fm-jcm5-4m3m on this line: the one linking read
+is `send` to the wallet's own address, now under the heap bound. The release
+was cut from the pin, ahead of the port: a security hop does not wait on a
+port.
+
+**0.18.9, one patch with two pins in separate commits.** `bsv-rs` `=0.8.13`
+(GHSA-j4w5-4g84-q3f4, Medium, in the key-value store's selector reads: this
+CLI compiles that store in and calls none of its reads; no test changed its
+answer). `bsv-wallet-toolbox-rs` `=0.13.7`: `internalizeAction` runs the
+unlocking script of every input of every transaction of a received AtomicBEEF
+that the BEEF does not prove, and refuses with nothing written when one does
+not pass; a payment spending a coin mined before Genesis is refused as not
+judged. At that pin twenty tests were refused, each by the toolbox's published
+line on test fixtures; their fixtures moved to the shape it names with every
+assertion kept. `tests/served_internalize_scripts.rs` serves the four refusals
+and two passing shapes.
+
+**The commands that post and then record (the captain's ruling inside 0.18.9,
+in the shape of 0.18.6's).** The lane stopped, as briefed, on one finding:
+`split` posts and then takes its own outputs back in through that door, so for
+a coin mined before Genesis the split was posted and its record refused;
+`gift-claim` has the same order. The ruling: a command that posts and then
+records refuses by name before anything is posted when the record cannot be
+made. `split` does not spend such a coin (nor the unmined change of a spend of
+one): the hold has a reason of its own, and the other coins are spent when
+they cover it. `gift-claim` checks its BEEF for that one rule before the post.
+A plain `send` is untouched. Mainnet's height is bsv-rs's public constant, the
+one the door reads; a boundary test through the door pins the pair. A cold
+read then found that this CLI builds every wallet with `Wallet::new`, which
+the toolbox gives its default chain, mainnet, so on a `--testnet` wallet the
+door and the new checks judged by different heights: both checks now read the
+wallet's own chain, and the release note says which chain a `--testnet` wallet
+is judged by. Rows: #639 (build the wallet on the context's chain; it moves
+what `getNetwork` answers on testnet), #640 (the hold's residuals, and its end
+when the toolbox's door can be asked without writing).
+
+**Beta's ports.** PR 633 (beta `5f343c43`) ported 0.18.7 and 0.18.8: its own
+deciding test showed #627's road real on beta (a received coin the gate reads
+as mined, spent with no word, answered 402), the fix is in beta's shape on
+both of its roads, wire rows 272 to 283; #627 is closed and shipped in
+0.19.0-beta.10. PR 641 ports 0.18.9: its deciding tests showed #634 real on
+beta for `split` and `gift-claim`, and its cold read found a third road that
+is beta's alone, `send` to the wallet's own address; all three hold now; on
+beta the door judges by the store's chain word and bsv-rs publishes every
+chain's height, so beta's hold carries no number of its own. PR 641 conflicted
+with beta in `docs/WIRE.md` (the pin had added a section at the same anchor);
+the captain rebased it onto `07d939e6` keeping both sections, and it waits on
+its checks and one re-read. It rides the next prerelease.
+
+**One claim of the captain's that was wrong, and its correction (#638).** A
+lane read, and did not run, that `gift-claim` of a gift whose deposit is not
+mined yet is posted and then not recorded; a peer read from tags that such a
+refusal began with one toolbox release. The captain wrote on the issue, and
+told the owner, that it began with 0.18.6. A read-only lane then ran the same
+test on the trees of `v0.18.5`, `v0.18.6` and 0.18.9: the same answer on all
+three; by its read the order is as old as this CLI's pin of the toolbox
+`=0.7.6`. And the coin is not lost: both outputs of a claim pay the wallet's
+own deposit key, so once the claim is mined `receive <claim txid>` and
+`receive <claim txid> --vout 1` take it in (run on the 0.18.9 tree); the
+command's text output already says so without the second command, and its JSON
+output says nothing. #638, #620 and #386 are corrected. The Known line in
+0.18.9's changelog is true and omits that recovery. The cure is the owner's to
+name and nothing is started: a refusal before the post would make a claimer
+wait a block, where today the claim is at least posted; the captain's
+recommendation is the hint made right in text and JSON, a test of a claim of
+an unmined deposit that asserts the coin is recorded (every gift test that
+records uses a mined deposit; the mainnet gate has no gift scenario), then the
+record held and made by the tracker pass once the claim is mined.
+
+**Rows filed.** #630, #631 (the held row's two gaps); #634 (beta's
+post-then-record roads; PR 641); #635 (the stable test of the label's strip is
+answered by the hold); #637 (a test helper builds a wallet over real mainnet
+services: one lane's scratch run offered a synthetic transaction, spending a
+coin that never existed, to mainnet broadcasters once); #638; #639; #640.
+Closed: #612, #623, #627.
+
+**The lessons of these hours.**
+
+- A start date for a fault comes from a run on the release before it, never
+  from a read. Before saying a coin is not recorded, read where its output
+  pays and try the commands that take a coin in.
+- A finding made by reading is decided by a test written before the fix, on
+  each line by itself: three times the stable line's road was shown real on
+  beta by beta's own test, and once a third road was found that the stable
+  line does not have.
+- A host that builds its wallet with a constructor that takes no chain gets
+  the library's default chain. One chain word per wallet, the one its door
+  judges by.
+- A changelog fragment never states the line's pin as a present fact ("its own
+  pin of X", "no pin moves here"): a later release assembles it beside that
+  release's own pin move. The release lane now reads the fragments before the
+  assembly and stops on such a sentence.
+- A brief that tells a lane what an issue states is checked against the issue
+  before it is written.
+- A test or scratch wallet never reaches a real broadcaster or explorer; every
+  brief that asks for a spend in a test says so by name.
+- A conflicting pull request waits for everything ahead of it and is then
+  rebased once; the rebased tree is checked against the old tip by a diff of
+  the two diffs.
+- Free text passed through a quoted remote command carries no apostrophe; a
+  chain is never started with `&` inside a foreground call; one fetch takes
+  one ref into a named ref; a lease takes the full old sha.
+- Two builders at most on the box, and one per captain while its swap sits
+  above half: the chains read the memory gate's limit on every poll.
+
+**Open, in order.** (1) PR 641: its checks on the rebased head, one re-read,
+the queue; then #634 is closed by hand; it rides the next prerelease. (2)
+Night 6 at the 17:00Z slot of 2026-11-18 on the pinned commit (RELEASING 4a;
+it proves #607). (3) Waiting on the owner's word: the cure of #638, and #639.
+(4) Stable: each stable toolbox release its captain names on #386 is a patch
+here; its 0.13.8 (the floor to `bsv-rs` 0.8.13 alone) rides the next one, with
+#635's test. (5) #618: the daemon's feed by the page read, in the next release
+on each line that is not a security patch. (6) Rows with no build word: #604,
+#605, #606, #616, #619, #620, #621, #630, #631, #637, #640; bsv-tracker #45,
+#46, #47, #51. (7) What the pause left: night 5's re-dispatch, #564's read
+lane, #590, #591. (8) The one certificate's re-issue before 0.19.0. The funder
+runs the published 0.18.9 and only inside a gate (basket 169,832). The
+keeper's seat on 3396 stays on 0.18.4 until the owner says.
