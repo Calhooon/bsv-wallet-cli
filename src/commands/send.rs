@@ -123,6 +123,19 @@ pub async fn run<S: WalletServices + Send + Sync + 'static>(
         crate::spend_guard::run(ctx.wallet.storage()).await,
         ctx.json_output,
     )?;
+    // A payment to the wallet's own address is recorded through the door
+    // after the post, so it holds what split holds (#634): a coin whose
+    // creator the wallet's own records place below the Genesis height of
+    // the chain the door judges by (its store's own setting,
+    // `genesis::door_network`), or the unmined change of a spend of one.
+    // The other coins are spent when they cover the send; when they do not,
+    // the gate refuses by name, nothing signed or posted. A send to another
+    // party's address holds nothing for this reason.
+    let before_genesis = if to.own {
+        self_send_hold(ctx).await?
+    } else {
+        Vec::new()
+    };
     // The spend gate (R1 (b), R3 (b)): only offerable coins are allocated; a
     // refusal lists every coin held back.
     let result = crate::spend_gate::refused_as_json(
@@ -130,7 +143,9 @@ pub async fn run<S: WalletServices + Send + Sync + 'static>(
             &ctx.wallet,
             args,
             "bsv-wallet-cli",
-            &ctx.gate().with_allow_pending(allow_pending),
+            &ctx.gate()
+                .with_allow_pending(allow_pending)
+                .with_genesis_hold(before_genesis),
             from,
         )
         .await,
@@ -202,6 +217,25 @@ pub async fn run<S: WalletServices + Send + Sync + 'static>(
     }
 
     Ok(())
+}
+
+/// The coins a `send` to the wallet's own address does not spend (#634):
+/// [`crate::spend_gate::pre_genesis_coins_for`] under the Genesis height of
+/// the door's own store, none when the door's policy reads no height for
+/// its chain word.
+async fn self_send_hold<S: WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+) -> Result<Vec<crate::spend_gate::PreGenesisCoin>> {
+    let Some(genesis) = bsv_wallet_cli::genesis::door_genesis_height(ctx.wallet.storage()) else {
+        return Ok(Vec::new());
+    };
+    let coins = crate::spend_gate::UserCoins::from_wallet(&ctx.wallet).await?;
+    crate::spend_gate::pre_genesis_coins_for(
+        coins,
+        genesis,
+        crate::spend_gate::GenesisHolder::SelfSend,
+    )
+    .await
 }
 
 /// Internalize `txid`'s output paying `script` as a wallet payment to the

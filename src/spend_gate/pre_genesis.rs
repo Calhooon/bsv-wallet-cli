@@ -1,9 +1,11 @@
-//! `split`'s hold of a coin mined before Genesis (#634, the port of the
-//! stable line's 0.18.9). `split` posts and then records its outputs
-//! through `internalizeAction`, whose door refuses a payment spending a
-//! coin mined before Genesis as not judged; the hold keeps the split from
-//! posting what it could not record. Every other command's offer is
-//! unchanged: only `split` sets [`GateOptions::split_hold`].
+//! The hold of a coin mined before Genesis (#634, the port of the stable
+//! line's 0.18.9) by the two commands that post and then record their own
+//! outputs through `internalizeAction`: `split`, and `send` to the wallet's
+//! own address (#38). The door refuses a payment spending a coin mined
+//! before Genesis as not judged; the hold keeps the command from posting
+//! what it could not record. Every other command's offer is unchanged:
+//! only these two set [`super::GateOptions::genesis_hold`], each with its
+//! own [`GenesisHolder`].
 
 use super::{candidates, Result, UserCoins};
 use std::collections::{HashMap, HashSet};
@@ -11,15 +13,50 @@ use std::collections::{HashMap, HashSet};
 /// The reason's head of a coin `split` does not offer.
 const PRE_GENESIS_HEAD: &str = "mined before Genesis: ";
 
-/// The sentence a refusal holding such a coin ends with: why, and what
-/// works.
+/// The sentence a `split` refusal holding such a coin ends with: why, and
+/// what works.
 pub const PRE_GENESIS_WHY: &str = "split records its outputs through internalizeAction after it posts them, and internalizeAction refuses a payment spending a coin mined before Genesis as not judged, so split does not spend such a coin; nothing was signed or posted. A plain `send` of the coin is not held for this reason.";
+
+/// The sentence a refusal of a `send` to the wallet's own address holding
+/// such a coin ends with: why, and what works.
+pub const SELF_SEND_PRE_GENESIS_WHY: &str = "a send to this wallet's own address records its payment through internalizeAction after it posts it, and internalizeAction refuses a payment spending a coin mined before Genesis as not judged, so such a send does not spend such a coin; nothing was signed or posted. A send of the coin to another party's address is not held for this reason.";
+
+/// The command that holds a coin mined before Genesis: the reason's words
+/// and the refusal's closing sentence are its own, read from this type and
+/// never from the words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenesisHolder {
+    /// `split` ([`PRE_GENESIS_WHY`]).
+    Split,
+    /// `send` to the wallet's own address ([`SELF_SEND_PRE_GENESIS_WHY`]).
+    SelfSend,
+}
+
+impl GenesisHolder {
+    /// The reason's tail: who does not offer the coin.
+    fn does_not_offer(self) -> &'static str {
+        match self {
+            Self::Split => "split does not offer it",
+            Self::SelfSend => "a send to this wallet's own address does not offer it",
+        }
+    }
+
+    /// The sentence the refusal ends with.
+    #[must_use]
+    pub fn why(self) -> &'static str {
+        match self {
+            Self::Split => PRE_GENESIS_WHY,
+            Self::SelfSend => SELF_SEND_PRE_GENESIS_WHY,
+        }
+    }
+}
 
 /// The most unproven transactions of ours [`creator_before_genesis`] walks
 /// for one creator.
 const PRE_GENESIS_WALK: usize = 64;
 
-/// A coin `split` does not spend ([`pre_genesis_coins`]).
+/// A coin `split`, or a `send` to the wallet's own address, does not spend
+/// ([`pre_genesis_coins_for`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreGenesisCoin {
     /// The store's output id.
@@ -28,8 +65,20 @@ pub struct PreGenesisCoin {
     pub outpoint: String,
     /// The coin's satoshis.
     pub satoshis: u64,
-    /// Why, in words: `mined before Genesis: ...; split does not offer it`.
+    /// Why, in words: `mined before Genesis: ...; split does not offer it`
+    /// (or the self-send's words).
     pub reason: String,
+    /// The command that holds it.
+    pub holder: GenesisHolder,
+}
+
+/// `split`'s hold: [`pre_genesis_coins_for`] with [`GenesisHolder::Split`].
+///
+/// # Errors
+///
+/// The store's read faults.
+pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec<PreGenesisCoin>> {
+    pre_genesis_coins_for(coins, genesis, GenesisHolder::Split).await
 }
 
 /// The coins of the default basket the gate could allocate whose spend the
@@ -49,7 +98,11 @@ pub struct PreGenesisCoin {
 /// # Errors
 ///
 /// The store's read faults.
-pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec<PreGenesisCoin>> {
+pub async fn pre_genesis_coins_for(
+    coins: UserCoins<'_>,
+    genesis: u32,
+    holder: GenesisHolder,
+) -> Result<Vec<PreGenesisCoin>> {
     let pool = coins.storage.pool();
     let mut by_creator: HashMap<String, Option<String>> = HashMap::new();
     let mut held = Vec::new();
@@ -61,7 +114,7 @@ pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec
         let reason = if let Some(reason) = by_creator.get(&c.txid) {
             reason.clone()
         } else {
-            let reason = creator_before_genesis(pool, &c.txid, genesis).await?;
+            let reason = creator_before_genesis(pool, &c.txid, genesis, holder).await?;
             by_creator.insert(c.txid.clone(), reason.clone());
             reason
         };
@@ -71,6 +124,7 @@ pub async fn pre_genesis_coins(coins: UserCoins<'_>, genesis: u32) -> Result<Vec
                 outpoint: format!("{}.{}", c.txid, c.vout),
                 satoshis: c.satoshis,
                 reason,
+                holder,
             });
         }
     }
@@ -83,17 +137,19 @@ async fn creator_before_genesis(
     pool: &sqlx::SqlitePool,
     txid: &str,
     genesis: u32,
+    holder: GenesisHolder,
 ) -> Result<Option<String>> {
+    let tail = holder.does_not_offer();
     if let Some(height) = proof_height(pool, txid).await? {
         return Ok((height < u64::from(genesis)).then(|| {
             format!(
-                "{PRE_GENESIS_HEAD}coin height {height} is before Genesis height {genesis}; split does not offer it"
+                "{PRE_GENESIS_HEAD}coin height {height} is before Genesis height {genesis}; {tail}"
             )
         }));
     }
     let unmined = |spender: &str, height: u64| {
         format!(
-            "{PRE_GENESIS_HEAD}{spender} is not mined yet and spends a coin of height {height}, before Genesis height {genesis}; split does not offer it"
+            "{PRE_GENESIS_HEAD}{spender} is not mined yet and spends a coin of height {height}, before Genesis height {genesis}; {tail}"
         )
     };
     // The creator is not mined: the BEEF of a spend of it carries it and

@@ -510,7 +510,7 @@ async fn the_header_services_fault_is_503_headers_unavailable_with_retry_after()
             "Service error: get_chain_tip_header: no header service answered (chaintracks: timeout)"
                 .to_string(),
         ),
-        before_genesis: false,
+        before_genesis: None,
         output_id: 0,
     };
     let refusal = Refusal {

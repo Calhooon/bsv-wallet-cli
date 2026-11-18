@@ -266,7 +266,10 @@ impl<'a> UserCoins<'a> {
 mod from;
 pub use from::{create_action_from, from_satoshis};
 mod pre_genesis;
-pub use pre_genesis::{pre_genesis_coins, PreGenesisCoin, PRE_GENESIS_WHY};
+pub use pre_genesis::{
+    pre_genesis_coins, pre_genesis_coins_for, GenesisHolder, PreGenesisCoin, PRE_GENESIS_WHY,
+    SELF_SEND_PRE_GENESIS_WHY,
+};
 
 mod lineage;
 pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, DEAD_LINEAGE};
@@ -337,10 +340,11 @@ pub struct GateOptions {
     /// did not answer for: [`HEADER_RETRY_PAUSE`], never configured; a test
     /// sets it short (#506).
     pub header_retry_pause: Duration,
-    /// `split`'s hold alone (#634): coins [`pre_genesis_coins`] names, held
-    /// with their reason and [`HeldCoin::before_genesis`]. Empty for every
-    /// other command, whose offer it never changes.
-    pub split_hold: Vec<PreGenesisCoin>,
+    /// The hold of `split` and of a `send` to the wallet's own address
+    /// alone (#634): coins [`pre_genesis_coins_for`] names, held with their
+    /// reason and [`HeldCoin::before_genesis`]. Empty for every other
+    /// command, whose offer it never changes.
+    pub genesis_hold: Vec<PreGenesisCoin>,
 }
 
 impl Default for GateOptions {
@@ -351,7 +355,7 @@ impl Default for GateOptions {
             allow_pending: AllowPending::Off,
             tracker: TickOptions::default(),
             header_retry_pause: HEADER_RETRY_PAUSE,
-            split_hold: Vec::new(),
+            genesis_hold: Vec::new(),
         }
     }
 }
@@ -524,7 +528,7 @@ impl GateOptions {
             allow_pending: AllowPending::Off,
             tracker,
             header_retry_pause: HEADER_RETRY_PAUSE,
-            split_hold: Vec::new(),
+            genesis_hold: Vec::new(),
         }
     }
 
@@ -545,16 +549,17 @@ impl GateOptions {
         self
     }
 
-    /// These settings, holding `coins` for `split` alone (#634).
+    /// These settings, holding `coins` (#634): set by `split` and by a
+    /// `send` to the wallet's own address alone.
     #[must_use]
-    pub fn with_split_hold(mut self, coins: Vec<PreGenesisCoin>) -> Self {
-        self.split_hold = coins;
+    pub fn with_genesis_hold(mut self, coins: Vec<PreGenesisCoin>) -> Self {
+        self.genesis_hold = coins;
         self
     }
 
-    /// `split`'s hold of the coin `output_id`, if it names it.
-    fn split_held(&self, output_id: i64) -> Option<&PreGenesisCoin> {
-        self.split_hold.iter().find(|c| c.output_id == output_id)
+    /// The Genesis hold of the coin `output_id`, if it names it.
+    fn genesis_held(&self, output_id: i64) -> Option<&PreGenesisCoin> {
+        self.genesis_hold.iter().find(|c| c.output_id == output_id)
     }
 
     fn tick(&self) -> TickOptions {
@@ -614,12 +619,12 @@ pub struct HeldCoin {
     /// later read may offer it (#59).
     #[serde(skip)]
     pub headers_fault: Option<String>,
-    /// `split`'s hold of a coin mined before Genesis (#634,
-    /// [`GateOptions::split_hold`]): the refusal ends in
-    /// [`PRE_GENESIS_WHY`], read from this and never from the reason's
-    /// words.
+    /// The hold of a coin mined before Genesis (#634,
+    /// [`GateOptions::genesis_hold`]) and the command that holds it: the
+    /// refusal ends in its [`GenesisHolder::why`], read from this and never
+    /// from the reason's words.
     #[serde(skip)]
-    pub before_genesis: bool,
+    pub before_genesis: Option<GenesisHolder>,
     /// The store's output id; not in the JSON.
     #[serde(skip)]
     pub output_id: i64,
@@ -713,8 +718,12 @@ impl std::fmt::Display for Refusal {
                 c.reason
             )?;
         }
-        if self.held.iter().any(|c| c.before_genesis) {
-            write!(f, "\n{PRE_GENESIS_WHY}")?;
+        let mut holders: Vec<GenesisHolder> = Vec::new();
+        for holder in self.held.iter().filter_map(|c| c.before_genesis) {
+            if !holders.contains(&holder) {
+                holders.push(holder);
+                write!(f, "\n{}", holder.why())?;
+            }
         }
         Ok(())
     }
@@ -1373,7 +1382,7 @@ async fn locked(coins: UserCoins<'_>) -> Result<Vec<HeldCoin>> {
                 None,
             ),
             headers_fault: None,
-            before_genesis: false,
+            before_genesis: None,
             output_id: r.get("output_id"),
         })
         .collect())
@@ -1467,7 +1476,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
                 age_minutes: c.age_minutes,
                 reason: reason.to_string(),
                 headers_fault: None,
-                before_genesis: false,
+                before_genesis: None,
                 output_id: c.output_id,
             });
             continue;
@@ -1498,12 +1507,12 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             out.unread.push(c.output_id);
             continue;
         };
-        // The gate's own holds, then `split`'s hold (#634).
+        // The gate's own holds, then the Genesis hold (#634).
         let hold = coin_hold(reading, &dead, c.origin, (&c.txid, c.vout as u32), opts)
-            .map(|(reason, fault)| (reason, fault, false))
+            .map(|(reason, fault)| (reason, fault, None))
             .or_else(|| {
-                opts.split_held(c.output_id)
-                    .map(|held| (held.reason.clone(), None, true))
+                opts.genesis_held(c.output_id)
+                    .map(|held| (held.reason.clone(), None, Some(held.holder)))
             });
         match hold {
             None if !covered => out.offered.push((c.output_id, c.satoshis)),
@@ -1713,7 +1722,7 @@ pub async fn assess_named<V: WalletServices + ?Sized>(
                 age_minutes: r.get::<Option<i64>, _>("age").unwrap_or(0).max(0),
                 reason,
                 headers_fault,
-                before_genesis: false,
+                before_genesis: None,
                 output_id: r.get("output_id"),
             });
         }

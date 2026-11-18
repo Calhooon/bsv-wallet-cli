@@ -229,7 +229,7 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
             "bsv-wallet-cli",
             &ctx.gate()
                 .with_allow_pending(allow_pending)
-                .with_split_hold(before_genesis.clone()),
+                .with_genesis_hold(before_genesis.clone()),
             from,
         )
         .await,
