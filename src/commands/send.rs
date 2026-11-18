@@ -333,3 +333,7 @@ mod tests {
         assert!(e.contains("neither") && e.contains(&key), "{e}");
     }
 }
+
+#[cfg(test)]
+#[path = "send/genesis_tests.rs"]
+mod genesis_tests;

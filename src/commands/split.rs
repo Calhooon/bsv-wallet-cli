@@ -456,4 +456,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "split/genesis_tests.rs"]
-mod genesis_tests;
+pub(crate) mod genesis_tests;

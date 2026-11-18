@@ -45,7 +45,7 @@ pub(super) fn header(height: u32, root: &str, hashed: bool) -> BlockHeader {
 /// in through the toolbox's own `internalizeAction` as `fund` takes one.
 /// The mock's header service carries each block and the tip; the storage's
 /// tracker answers every root. The coins' txids.
-pub(super) async fn wallet_with_proven(
+pub(crate) async fn wallet_with_proven(
     root: &PrivateKey,
     coins: &[(u32, u64)],
     store_chain: Chain,
@@ -175,7 +175,7 @@ fn refusal_of(err: &anyhow::Error) -> &crate::spend_gate::Refusal {
 }
 
 /// (actions, unspent satoshis of the default basket).
-pub(super) async fn ledger(ctx: &WalletContext<MockWalletServices>) -> (i64, i64) {
+pub(crate) async fn ledger(ctx: &WalletContext<MockWalletServices>) -> (i64, i64) {
     sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM transactions), \
                 (SELECT COALESCE(SUM(o.satoshis), 0) FROM outputs o \
