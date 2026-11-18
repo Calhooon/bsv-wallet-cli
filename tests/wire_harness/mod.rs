@@ -20,6 +20,7 @@ pub(crate) mod cases_page_bounds;
 pub(crate) mod cases_probes;
 pub(crate) mod cases_received_rule;
 pub(crate) mod cases_routes;
+pub(crate) mod cases_scripts;
 pub(crate) mod cases_spending;
 pub(crate) mod cases_spending_power;
 pub(crate) mod cases_switch;

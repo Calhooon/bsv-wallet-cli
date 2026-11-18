@@ -1,0 +1,38 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/listOutputs",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "basket": "wire scripts"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "totalOutputs": 2,
+      "outputs": [
+        {
+          "satoshis": 9000,
+          "spendable": true,
+          "outpoint": "9d90013c804cc0d6a0879686c1f40525fa2619705623be7b6ee1fb7f88d67e25.0"
+        },
+        {
+          "satoshis": 9000,
+          "spendable": true,
+          "outpoint": "0a43b9662bc5e3f99478d4dedd628fffba3d904e5f48888aa953478e44e74058.0"
+        }
+      ]
+    }
+  }
+}
