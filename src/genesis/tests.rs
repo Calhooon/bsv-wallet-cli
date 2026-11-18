@@ -1,4 +1,5 @@
-//! The Genesis height, and its boundary read through the toolbox's own door.
+//! The Genesis height and the BEEF check, on synthetic transactions; the
+//! boundary read through the toolbox's own door.
 
 use super::*;
 use bsv_sdk::primitives::PrivateKey;
@@ -60,6 +61,86 @@ fn payment_over(seed: u8, height: Option<u32>) -> (Vec<u8>, String, String) {
 fn each_chain_names_the_genesis_height_the_door_judges_by() {
     assert_eq!(genesis_height(Chain::Main), 620_538);
     assert_eq!(genesis_height(Chain::Test), 1_344_302);
+}
+
+/// An unproven payment spending a coin the BEEF proves one block below
+/// mainnet's Genesis is named, with its input, its source and the height;
+/// at the Genesis height itself nothing is named.
+#[test]
+fn an_unproven_spend_of_a_coin_proven_below_genesis_is_named_and_one_at_it_is_not() {
+    let (below, parent, payment) = payment_over(0x31, Some(620_537));
+    assert_eq!(
+        unproven_spend_of_pre_genesis_coin(&below, Chain::Main),
+        Some(PreGenesisSpend {
+            txid: payment,
+            input: 0,
+            source_txid: parent,
+            coin_height: 620_537,
+            genesis_height: 620_538,
+        })
+    );
+    let (at, _, _) = payment_over(0x32, Some(620_538));
+    assert_eq!(unproven_spend_of_pre_genesis_coin(&at, Chain::Main), None);
+}
+
+/// The chain asked decides: a coin proven at 700,000 is after mainnet's
+/// Genesis and before testnet's (1,344,302).
+#[test]
+fn the_height_is_the_chain_asked() {
+    let (beef, _, _) = payment_over(0x33, Some(700_000));
+    assert_eq!(unproven_spend_of_pre_genesis_coin(&beef, Chain::Main), None);
+    let named = unproven_spend_of_pre_genesis_coin(&beef, Chain::Test).expect("named");
+    assert_eq!(
+        (named.coin_height, named.genesis_height),
+        (700_000, 1_344_302)
+    );
+    let (at, _, _) = payment_over(0x34, Some(1_344_302));
+    assert_eq!(unproven_spend_of_pre_genesis_coin(&at, Chain::Test), None);
+}
+
+/// A coin of an unproven parent is not judged by a height (the door gives
+/// it the spend's era), and a transaction the BEEF proves is not run: a
+/// mined spend of a coin mined before Genesis names nothing.
+#[test]
+fn an_unproven_parent_and_a_proven_spend_name_nothing() {
+    let (beef, _, _) = payment_over(0x35, None);
+    assert_eq!(unproven_spend_of_pre_genesis_coin(&beef, Chain::Main), None);
+
+    let parent = spending(&hex::encode([0x36; 32]), 10_000);
+    let spend = spending(&parent.id(), 9_000);
+    let mut proven = Beef::new();
+    let a = proven.merge_bump(MerklePath::from_coinbase_txid(&parent.id(), 600_000));
+    proven.merge_raw_tx(parent.to_binary(), Some(a));
+    let b = proven.merge_bump(MerklePath::from_coinbase_txid(&spend.id(), 900_000));
+    proven.merge_raw_tx(spend.to_binary(), Some(b));
+    let bytes = proven.to_binary_atomic(&spend.id()).unwrap();
+    assert_eq!(
+        unproven_spend_of_pre_genesis_coin(&bytes, Chain::Main),
+        None
+    );
+    assert_eq!(
+        unproven_spend_of_pre_genesis_coin(&[1, 2, 3], Chain::Main),
+        None
+    );
+}
+
+/// The ancestor case: an unproven parent that itself spends a coin proven
+/// below Genesis is named, the parent as the transaction.
+#[test]
+fn an_unproven_ancestor_spending_a_coin_proven_below_genesis_is_named() {
+    let grand = spending(&hex::encode([0x37; 32]), 11_000);
+    let parent = spending(&grand.id(), 10_000);
+    let payment = spending(&parent.id(), 9_000);
+    let mut beef = Beef::new();
+    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&grand.id(), 600_000));
+    beef.merge_raw_tx(grand.to_binary(), Some(bump));
+    beef.merge_raw_tx(parent.to_binary(), None);
+    beef.merge_raw_tx(payment.to_binary(), None);
+    let bytes = beef.to_binary_atomic(&payment.id()).unwrap();
+    let named = unproven_spend_of_pre_genesis_coin(&bytes, Chain::Main).expect("named");
+    assert_eq!(named.txid, parent.id());
+    assert_eq!(named.source_txid, grand.id());
+    assert_eq!(named.coin_height, 600_000);
 }
 
 /// Through the toolbox's door, a mainnet wallet: a payment whose parent is
