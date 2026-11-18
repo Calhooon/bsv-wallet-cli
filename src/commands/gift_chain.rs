@@ -1167,4 +1167,74 @@ mod tests {
         assert!(recorded.accepted);
         assert!(spendable(wallet.storage()).await > 0);
     }
+
+    /// `gift-claim` on a context built as `--testnet` builds it
+    /// (`WalletContext::load_with`: `ctx.chain` is `Chain::Test`, the wallet
+    /// `Wallet::new`'s), its deposit proven at 700,000: after mainnet's
+    /// Genesis height (620,538), before testnet's (1,344,302). The door
+    /// records the claim by the wallet's own chain, which `Wallet::new`
+    /// makes the toolbox's default, mainnet, and takes it; the command's
+    /// check asks the same chain, so the claim is posted once and recorded.
+    /// Asked `ctx.chain`, the check would refuse a claim the door takes.
+    #[tokio::test]
+    async fn a_testnet_contexts_claim_is_asked_the_chain_its_door_judges_by() {
+        use crate::context::WalletContext;
+        use bsv_wallet_toolbox::Wallet;
+        let root = bsv_sdk::primitives::PrivateKey::from_hex(&"04".repeat(32)).unwrap();
+        let (deposit, claim, _, _) = a_gift(&root);
+        let deposit_txid = txid_of(&deposit);
+        let services = MockWalletServices::builder()
+            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
+                name: "Services".to_string(),
+                txid: deposit_txid.clone(),
+                raw_tx: Some(deposit.clone()),
+                error: None,
+                could_not_look: false,
+            }))
+            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
+                name: Some("Services".to_string()),
+                merkle_path: Some(MerklePath::from_coinbase_txid(&deposit_txid, 700_000).to_hex()),
+                header: None,
+                error: None,
+                notes: vec![],
+            }))
+            .build();
+        let wallet = Wallet::new(Some(root.clone()), storage().await, services)
+            .await
+            .unwrap();
+        let ctx = WalletContext {
+            wallet,
+            identity_key: root.public_key().to_hex(),
+            root_key: root.clone(),
+            chain: Chain::Test,
+            json_output: true,
+            db_path: ":memory:".into(),
+        };
+        assert_eq!(ctx.wallet.chain(), Chain::Main, "the door's chain");
+
+        let mut beef = Beef::new();
+        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&deposit_txid, 700_000));
+        beef.merge_raw_tx(deposit.clone(), Some(bump));
+        beef.merge_raw_tx(claim.clone(), None);
+        let beef = beef.to_binary();
+        assert_eq!(
+            claim_not_recordable(&beef, ctx.wallet.chain(), &deposit_txid),
+            None,
+            "the check takes what the door takes"
+        );
+        assert!(
+            claim_not_recordable(&beef, ctx.chain, &deposit_txid).is_some(),
+            "the flag's chain would refuse it"
+        );
+
+        crate::commands::gift_claim::run(&ctx, &deposit_txid, false)
+            .await
+            .expect("claimed");
+        assert!(ctx.wallet.services().call_count("post_beef") >= 1, "posted");
+        assert_eq!(
+            spendable(ctx.wallet.storage()).await,
+            5000 + 844,
+            "the door recorded the claim: its amount and its change"
+        );
+    }
 }
