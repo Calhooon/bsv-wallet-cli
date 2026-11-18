@@ -5,10 +5,14 @@
 //! `internalizeAction` (purpose `receive`, unproven), a caller's own
 //! `underReceivedRule` stripped at `internalizeAction`, a caller's own
 //! label at `createAction` that does not lift the gate's hold with no
-//! word (275's answer), the gate's hold with no word, the scoped word over the
-//! two (the named coin spent, the other unspent), the plain word, and the
-//! listing of the labels with `underRule`. Recorded last, so no file
-//! before them moves. The answers that need the tracker's own pass (a
+//! word (275's answer), the gate's hold with no word, the scoped word
+//! over the two (the named coin spent, the other unspent), the plain word,
+//! and the listing of the labels with `underRule`; then the strip at
+//! `createAction` where it can be seen, in the `internalize` world: a
+//! spend with no word over a coin whose transaction is completed (offered
+//! with no word), its labels carrying a label of the caller's own beside
+//! two spellings of the rule, and its listing (the caller's label alone).
+//! Recorded last, so no file before them moves. The answers that need the tracker's own pass (a
 //! received coin the gate reads as mined at its depth while the toolbox has
 //! not completed its transaction, and the same once it has) are reached by
 //! no served request, so they are tests of `src/spend_gate/tests/
@@ -143,6 +147,52 @@ pub(crate) async fn record(r: &mut Recorder) {
     )
     .await;
     listed(r, "labelled", json!(["underReceivedRule"])).await;
+    record_strip_at_create(r).await;
+}
+
+/// The label a caller's own spend carries beside its copies of the rule.
+const OWN: &str = "wire strip own";
+/// The `internalize` world's 40,000-sat completed coin less the fee of one
+/// input and one output: an exact spend, so the action makes no change.
+const COMPLETED: u64 = 39_980;
+
+/// The strip at `createAction`, seen in a spend that succeeds: in the
+/// `internalize` world (its 40,000-sat mined coin, the transaction
+/// completed, offered with no word, unspent at 270), an exact spend with
+/// no word whose labels carry the caller's own beside `underReceivedRule`
+/// in two spellings the toolbox reads as the rule (as 272 does at
+/// `internalizeAction`); then the stored labels.
+async fn record_strip_at_create(r: &mut Recorder) {
+    let spent = r
+        .case(
+            "createAction.receivedRule.stripAtCreate",
+            "internalize",
+            post(
+                "/createAction",
+                json!({"description": "wire strip at create",
+                    "outputs": [{"lockingScript": LOCK, "outputDescription": "an output", "satoshis": COMPLETED}],
+                    "labels": [OWN, "underReceivedRule", " UNDERRECEIVEDRULE\t"],
+                    "options": {"randomizeOutputs": false}}),
+            ),
+        )
+        .await;
+    assert!(spent.value("/txid").is_string(), "the spend signs");
+    let listed = r
+        .case(
+            "listActions.receivedRule.stripAtCreate",
+            "internalize",
+            post(
+                "/listActions",
+                json!({"labels": [OWN], "includeLabels": true}),
+            ),
+        )
+        .await;
+    assert_eq!(listed.value("/totalActions"), 1);
+    assert_eq!(
+        listed.value("/actions/0/labels"),
+        json!([OWN]),
+        "the caller's own label alone: no underreceivedrule, no underRule"
+    );
 }
 
 pub(crate) fn notes() -> Vec<(String, String)> {
@@ -157,6 +207,8 @@ pub(crate) fn notes() -> Vec<(String, String)> {
         ("279-listOutputs.receivedRule.afterScoped.json", "#627: after 278 the default basket holds 273's coin alone, unspent."),
         ("280-createAction.receivedRule.word.json", "#627: the plain word: the other received coin is selected and the spend signs and posts, 200."),
         ("281-listActions.receivedRule.labelled.json", "#627: the actions labelled underReceivedRule, with includeLabels: 278 and 280, each with the caller's label, the gate's spend-gate:received-pending and the toolbox's label as the store keeps it (underreceivedrule), underRule received-pending."),
+        ("282-createAction.receivedRule.stripAtCreate.json", "#627: the strip at createAction where it can be seen: in the internalize world, an exact spend with no word over its 40,000-sat coin, whose transaction is completed (offered with no word), its labels carrying the caller's own beside underReceivedRule in two spellings the toolbox reads as the rule (as 272 at internalizeAction), 200, signed and posted."),
+        ("283-listActions.receivedRule.stripAtCreate.json", "#627: 282's action by the caller's label, with includeLabels: the caller's own label alone, no underreceivedrule, no underRule: its copies of underReceivedRule were stripped at createAction."),
     ]
     .into_iter()
     .map(|(f, n)| (f.to_string(), n.to_string()))
