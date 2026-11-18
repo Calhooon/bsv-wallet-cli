@@ -167,7 +167,7 @@ async fn refused_split(ctx: &WalletContext<MockWalletServices>) -> crate::spend_
 }
 
 /// The gate's refusal `err` carries.
-fn refusal_of(err: &anyhow::Error) -> &crate::spend_gate::Refusal {
+pub(crate) fn refusal_of(err: &anyhow::Error) -> &crate::spend_gate::Refusal {
     match err.downcast_ref::<GateError>() {
         Some(GateError::Refused(refusal)) => refusal,
         _ => panic!("not the gate's refusal: {err}"),
@@ -216,31 +216,44 @@ async fn a_split_of_a_coin_mined_before_genesis_is_not_posted() {
     assert!(answer.is_err(), "{seen}");
     assert_eq!(posts, 0, "{seen}");
     assert_eq!(ledger(&ctx).await, before, "{seen}");
-    let refusal = refusal_of(answer.as_ref().unwrap_err());
+    assert_held_alone(
+        refusal_of(answer.as_ref().unwrap_err()),
+        &format!("{}.0", txids[0]),
+        GenesisHolder::Split,
+        "mined before Genesis: coin height 600000 is before Genesis height 620538; split does not offer it",
+    );
+    assert_eq!(spender(&ctx, &txids[0]).await, None);
+}
+
+/// `refusal` is the gate's `INSUFFICIENT_FUNDS` with nothing offered and
+/// one coin held, `outpoint`, by `holder` for `reason`; its message ends in
+/// the holder's sentence and its JSON carries the reason.
+pub(crate) fn assert_held_alone(
+    refusal: &crate::spend_gate::Refusal,
+    outpoint: &str,
+    holder: GenesisHolder,
+    reason: &str,
+) {
     assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
     assert_eq!(refusal.offered_satoshis, 0);
     assert_eq!(refusal.held.len(), 1, "{refusal}");
-    assert_eq!(refusal.held[0].outpoint, format!("{}.0", txids[0]));
-    assert_eq!(refusal.held[0].before_genesis, Some(GenesisHolder::Split));
-    assert_eq!(
-        refusal.held[0].reason,
-        "mined before Genesis: coin height 600000 is before Genesis height 620538; split does not offer it"
-    );
+    assert_eq!(refusal.held[0].outpoint, outpoint);
+    assert_eq!(refusal.held[0].before_genesis, Some(holder));
+    assert_eq!(refusal.held[0].reason, reason);
     let message = refusal.to_string();
     assert!(message.starts_with("Insufficient funds: "), "{message}");
     assert!(
-        message.ends_with(&format!("\n{PRE_GENESIS_WHY}")),
+        message.ends_with(&format!("\n{}", holder.why())),
         "{message}"
     );
     assert_eq!(
         refusal.to_json()["held"][0]["reason"],
         refusal.held[0].reason
     );
-    assert_eq!(spender(&ctx, &txids[0]).await, None);
 }
 
 /// The action that spent the coin `txid`.0, if any.
-async fn spender(ctx: &WalletContext<MockWalletServices>, txid: &str) -> Option<i64> {
+pub(crate) async fn spender(ctx: &WalletContext<MockWalletServices>, txid: &str) -> Option<i64> {
     sqlx::query_scalar("SELECT spent_by FROM outputs WHERE txid = ? AND vout = 0")
         .bind(txid)
         .fetch_one(ctx.wallet.storage().pool())
@@ -317,13 +330,19 @@ async fn a_split_from_the_coin_mined_before_genesis_is_refused_by_name() {
     )
     .await
     .expect_err("refused");
-    let refusal = refusal_of(&err);
-    assert_eq!(refusal.code(), "INPUT_NOT_OFFERED", "{refusal}");
-    assert_eq!(refusal.held.len(), 1, "{refusal}");
-    assert_eq!(refusal.held[0].before_genesis, Some(GenesisHolder::Split));
-    assert!(refusal.to_string().ends_with(PRE_GENESIS_WHY));
+    assert_named_held(refusal_of(&err), GenesisHolder::Split);
     assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
     assert_eq!(ledger(&ctx).await, before);
+}
+
+/// `refusal` is the gate's refusal of a named input (`INPUT_NOT_OFFERED`),
+/// one coin under `held` by `holder`, its message ending in the holder's
+/// sentence.
+pub(crate) fn assert_named_held(refusal: &crate::spend_gate::Refusal, holder: GenesisHolder) {
+    assert_eq!(refusal.code(), "INPUT_NOT_OFFERED", "{refusal}");
+    assert_eq!(refusal.held.len(), 1, "{refusal}");
+    assert_eq!(refusal.held[0].before_genesis, Some(holder));
+    assert!(refusal.to_string().ends_with(holder.why()));
 }
 
 /// A send of 1,000 sats to a stranger, signed; posted unless `no_send`.

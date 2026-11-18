@@ -419,25 +419,25 @@ async fn a_parent_carried_by_txid_alone_with_no_bump_is_refused() {
 /// `POST /internalizeAction`: its scripts are run (the paying wallet's
 /// P2PKH signature against its received coin, and that coin's own
 /// unproven transaction over its proven parent) and pass. 200, stored, the
-/// payee's mock posted once.
+/// receiver's mock posted once.
 #[tokio::test]
 async fn a_transaction_a_wallets_own_create_and_sign_built_is_stored_by_another() {
-    // The payer holds one received coin of 4,500, taken in through its door.
+    // The sender holds one received coin of 4,500, taken in through its door.
     let funding = Paid::new();
-    let (payer, _payer_app, _) = funding.stored().await;
-    assert_eq!(balance(&payer).await, 4_500);
+    let (sender, _sender_app, _) = funding.stored().await;
+    assert_eq!(balance(&sender).await, 4_500);
 
-    // The payee's key for the payer's remittance.
-    let payee = PrivateKey::random();
-    let payer_identity = funding.root.public_key();
-    let lock = p2pkh(&derived(&payee, &payer_identity, PREFIX, SUFFIX));
-    let (tx, txid) = create_and_sign(&payer, &lock, 300).await;
+    // The receiver's key for the sender's remittance.
+    let receiver = PrivateKey::random();
+    let sender_identity = funding.root.public_key();
+    let lock = p2pkh(&derived(&receiver, &sender_identity, PREFIX, SUFFIX));
+    let (tx, txid) = create_and_sign(&sender, &lock, 300).await;
 
-    let (wallet, app, posts) = served(&payee, Some(&funding.parent)).await;
+    let (wallet, app, posts) = served(&receiver, Some(&funding.parent)).await;
     let (status, body) = internalize(
         &app,
         &tx,
-        vec![payment_of(0, PREFIX, SUFFIX, &payer_identity.to_hex())],
+        vec![payment_of(0, PREFIX, SUFFIX, &sender_identity.to_hex())],
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");

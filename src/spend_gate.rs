@@ -718,15 +718,23 @@ impl std::fmt::Display for Refusal {
                 c.reason
             )?;
         }
-        let mut holders: Vec<GenesisHolder> = Vec::new();
-        for holder in self.held.iter().filter_map(|c| c.before_genesis) {
-            if !holders.contains(&holder) {
-                holders.push(holder);
-                write!(f, "\n{}", holder.why())?;
-            }
+        for holder in genesis_holders(&self.held) {
+            write!(f, "\n{}", holder.why())?;
         }
         Ok(())
     }
+}
+
+/// The commands holding a coin of `held` mined before Genesis (#634), each
+/// once, in the order met: the sentences a refusal ends with.
+fn genesis_holders(held: &[HeldCoin]) -> Vec<GenesisHolder> {
+    let mut holders = Vec::new();
+    for holder in held.iter().filter_map(|c| c.before_genesis) {
+        if !holders.contains(&holder) {
+            holders.push(holder);
+        }
+    }
+    holders
 }
 
 impl std::error::Error for Refusal {}
