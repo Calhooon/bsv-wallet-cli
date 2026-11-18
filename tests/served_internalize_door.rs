@@ -110,12 +110,15 @@ async fn balance(wallet: &WalletState) -> u64 {
 /// a proven subject's success posts nothing either. Its txid and the
 /// parent's. From bsv-wallet-toolbox-rs 0.13.5 the parent is whole: "A
 /// BEEF that carries every ancestor whole is admitted as before", and one
-/// carried by txid alone is refused.
+/// carried by txid alone is refused. From bsv-wallet-toolbox-rs 0.13.7 the
+/// subject's input script is run against the parent's output, so the
+/// parent is locked by `anyone_lock()`, which the input `00` spends, and
+/// proven at `HEIGHT`, after Genesis (0.13.7's Hosts, "Test fixtures").
 fn unproven_beef(script: &[u8]) -> (Vec<u8>, String, String) {
     let mut parent = Transaction::new();
     parent.version = 1;
     parent.inputs.push(input(&"22".repeat(32), 0));
-    parent.outputs.push(output(10_000, &other_p2pkh()));
+    parent.outputs.push(output(10_000, &anyone_lock()));
     let parent_txid = parent.id();
     let mut child = Transaction::new();
     child.version = 1;
@@ -941,12 +944,13 @@ const STRUCTURE_INVALID: &str = "wallet error: Validation error: BEEF structure 
 
 /// `unproven_beef`'s payment with its parent carried by txid alone, beside
 /// the BUMP proving it (`bumped`) or with no BUMP: the BEEF 0.18.6's
-/// served tests built (8a3c7b0). Its txid and the parent's.
+/// served tests built (8a3c7b0), its parent locked as `unproven_beef`'s
+/// (0.13.7), so the two are the same payment. Its txid and the parent's.
 fn txid_only_beef(script: &[u8], bumped: bool) -> (Vec<u8>, String, String) {
     let mut parent = Transaction::new();
     parent.version = 1;
     parent.inputs.push(input(&"22".repeat(32), 0));
-    parent.outputs.push(output(10_000, &other_p2pkh()));
+    parent.outputs.push(output(10_000, &anyone_lock()));
     let parent_txid = parent.id();
     let mut child = Transaction::new();
     child.version = 1;

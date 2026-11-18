@@ -74,6 +74,20 @@ pub(crate) fn p2pk(key: &PublicKey) -> Vec<u8> {
     script
 }
 
+/// The lock of a parent the placeholder input `00` spends:
+/// `14 <20 zero bytes> 75 75 51`. From bsv-wallet-toolbox-rs 0.13.7 the
+/// door runs the unlocking script of every input of a transaction the BEEF
+/// does not prove, and its Hosts line for tests reads: "Lock each parent
+/// with a script the placeholder satisfies under the word (this crate's
+/// tests use `14 <20 zero bytes> 75 75 51`, which the input `00` spends)
+/// and prove it after Genesis."
+pub(crate) fn anyone_lock() -> Vec<u8> {
+    let mut script = vec![0x14];
+    script.extend_from_slice(&[0u8; 20]);
+    script.extend_from_slice(&[0x75, 0x75, 0x51]);
+    script
+}
+
 pub(crate) fn op_return() -> Vec<u8> {
     vec![0x00, 0x6a, 0x04, 0xde, 0xad, 0xbe, 0xef]
 }
