@@ -4,7 +4,7 @@
 //! toolbox's mock broadcaster.
 
 use super::*;
-use crate::spend_gate::{GateError, PRE_GENESIS_WHY};
+use crate::spend_gate::{GateError, GenesisHolder, PRE_GENESIS_WHY};
 use crate::test_support::Markers;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::MerklePath;
@@ -221,7 +221,7 @@ async fn a_split_of_a_coin_mined_before_genesis_is_not_posted() {
     assert_eq!(refusal.offered_satoshis, 0);
     assert_eq!(refusal.held.len(), 1, "{refusal}");
     assert_eq!(refusal.held[0].outpoint, format!("{}.0", txids[0]));
-    assert!(refusal.held[0].before_genesis);
+    assert_eq!(refusal.held[0].before_genesis, Some(GenesisHolder::Split));
     assert_eq!(
         refusal.held[0].reason,
         "mined before Genesis: coin height 600000 is before Genesis height 620538; split does not offer it"
@@ -320,7 +320,7 @@ async fn a_split_from_the_coin_mined_before_genesis_is_refused_by_name() {
     let refusal = refusal_of(&err);
     assert_eq!(refusal.code(), "INPUT_NOT_OFFERED", "{refusal}");
     assert_eq!(refusal.held.len(), 1, "{refusal}");
-    assert!(refusal.held[0].before_genesis);
+    assert_eq!(refusal.held[0].before_genesis, Some(GenesisHolder::Split));
     assert!(refusal.to_string().ends_with(PRE_GENESIS_WHY));
     assert_eq!(ctx.wallet.services().call_count("post_beef"), 0);
     assert_eq!(ledger(&ctx).await, before);
@@ -393,7 +393,7 @@ async fn a_split_of_the_unmined_change_of_a_send_of_such_a_coin_is_refused_by_na
         .collect();
     assert!(!change.is_empty(), "{refusal}");
     for coin in &change {
-        assert!(coin.before_genesis);
+        assert_eq!(coin.before_genesis, Some(GenesisHolder::Split));
         assert_eq!(
             coin.reason,
             format!(
