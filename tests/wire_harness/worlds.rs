@@ -193,6 +193,32 @@ async fn seed_funded(
     roots
 }
 
+/// The `received-rule` world (the port of the stable line's 0.18.8, #627):
+/// no coin of its own, the basket wanting none (so an exact spend makes no
+/// change output, as in `funded`), and the roots of the stranger's
+/// payments' parents, so the coins it holds are the received payments its
+/// fixtures take in through `internalizeAction` (purpose `receive`, their
+/// transactions `unproven`), the coins the toolbox's received-coin rule
+/// reaches.
+async fn seed_received_rule(
+    storage: &StorageSqlx,
+    identity: &str,
+    key: &PrivateKey,
+) -> HashMap<u32, String> {
+    let rows = Rows::open(storage, identity).await;
+    sqlx::query("UPDATE output_baskets SET number_of_desired_utxos = 0 WHERE basket_id = ?")
+        .bind(rows.basket)
+        .execute(&rows.pool)
+        .await
+        .unwrap();
+    let mut roots = HashMap::new();
+    for payment in Payment::ALL {
+        let (parent, _) = stranger_payment(payment, key).await;
+        roots.insert(payment.parent_at().1, parent.id());
+    }
+    roots
+}
+
 /// The `internalize` world's outputs a basket insertion naming `default`
 /// left before the toolbox's basket insertion rules (#823): (seed of the
 /// parent's input, height mined). Each is its own mined transaction paying
@@ -633,6 +659,7 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
+            "received-rule" => return seed_received_rule(storage, &identity, key).await,
             "internalize-held" => {
                 return super::held_world::seed_internalize_held(storage, &identity, key).await
             }
@@ -697,7 +724,12 @@ impl World {
         };
         let arc = if matches!(
             name,
-            "funded" | "pin-spend" | "spending" | "internalize" | "internalize-held"
+            "funded"
+                | "pin-spend"
+                | "spending"
+                | "internalize"
+                | "internalize-held"
+                | "received-rule"
         ) {
             arc_stub().await
         } else {

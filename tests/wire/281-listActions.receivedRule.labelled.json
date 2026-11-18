@@ -1,0 +1,61 @@
+{
+  "world": "received-rule",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "includeLabels": true,
+      "labels": [
+        "underReceivedRule"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [
+        {
+          "description": "wire received rule",
+          "isOutgoing": true,
+          "labels": [
+            "wire mine",
+            "spend-gate:received-pending",
+            "underreceivedrule"
+          ],
+          "lockTime": 0,
+          "satoshis": -9000,
+          "status": "unproven",
+          "txid": "2910c0f120cf976eb8111a40c8b270127e740720482d7834ceceebe8f8b111a8",
+          "underRule": "received-pending",
+          "version": 1
+        },
+        {
+          "description": "wire received rule",
+          "isOutgoing": true,
+          "labels": [
+            "wire mine",
+            "spend-gate:received-pending",
+            "underreceivedrule"
+          ],
+          "lockTime": 0,
+          "satoshis": -9000,
+          "status": "unproven",
+          "txid": "6ae71912c292f8663078d863bbf8fe6b8fe49bbf60601f95023dc8a389f43b26",
+          "underRule": "received-pending",
+          "version": 1
+        }
+      ],
+      "totalActions": 2
+    }
+  }
+}

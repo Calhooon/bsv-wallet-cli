@@ -1,0 +1,51 @@
+{
+  "world": "received-rule",
+  "request": {
+    "method": "POST",
+    "path": "/listActions",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "includeLabels": true,
+      "labels": []
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "actions": [
+        {
+          "description": "wire received rule",
+          "isOutgoing": false,
+          "labels": [
+            "wire received"
+          ],
+          "lockTime": 0,
+          "satoshis": 9000,
+          "status": "unproven",
+          "txid": "25172f89b86cf830b3b77933b4684b9adce548ec319a8c6d20a403f5c3285db6",
+          "version": 1
+        },
+        {
+          "description": "wire received rule",
+          "isOutgoing": false,
+          "labels": [],
+          "lockTime": 0,
+          "satoshis": 9000,
+          "status": "unproven",
+          "txid": "ed9a7d459882ce52f4cdb57a47b083a3507cdc855fdfe76a3100a064c6226592",
+          "version": 1
+        }
+      ],
+      "totalActions": 2
+    }
+  }
+}

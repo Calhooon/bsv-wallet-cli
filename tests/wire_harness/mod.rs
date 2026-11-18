@@ -18,6 +18,7 @@ pub(crate) mod cases_origin_gate;
 pub(crate) mod cases_owner_door;
 pub(crate) mod cases_page_bounds;
 pub(crate) mod cases_probes;
+pub(crate) mod cases_received_rule;
 pub(crate) mod cases_routes;
 pub(crate) mod cases_spending;
 pub(crate) mod cases_spending_power;
