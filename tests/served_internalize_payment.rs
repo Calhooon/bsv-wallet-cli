@@ -47,12 +47,16 @@ const NO_SUBJECT: &str =
 
 /// The toolbox's `sweep_beef`: a proven parent of `SWEPT` outputs and a
 /// child sweeping every one of them into one output locked by `script`.
-/// Returns the AtomicBEEF, the child's txid and the proven parent's.
+/// Returns the AtomicBEEF, the child's txid and the proven parent's. From
+/// bsv-wallet-toolbox-rs 0.13.7 the child's inputs are run against the
+/// parent's outputs, so each is locked by `anyone_lock()`, which the input
+/// `00` spends, and the parent is proven at `HEIGHT`, after Genesis (0.13.7's
+/// Hosts, "Test fixtures").
 fn sweep_beef(script: &[u8]) -> (Vec<u8>, String, String) {
     let mut parent = Transaction::new();
     parent.inputs.push(input(&"11".repeat(32), 0));
     for _ in 0..SWEPT {
-        parent.outputs.push(output(1_000, &other_p2pkh()));
+        parent.outputs.push(output(1_000, &anyone_lock()));
     }
     let parent_txid = parent.id();
     let mut child = Transaction::new();
