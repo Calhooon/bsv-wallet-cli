@@ -71,10 +71,10 @@ pub struct PreGenesisSpend {
     pub genesis_height: u32,
 }
 
-/// The first transaction of `beef` (BEEF or AtomicBEEF bytes) that the
-/// BEEF does not prove (no BUMP of its own, its txid in no BUMP) with an
-/// input whose source the BEEF proves at a height below `chain`'s Genesis
-/// height; `None` when there is none, or when the bytes do not read (the
+/// The earliest transaction, in the BEEF's order, of `beef` (BEEF or
+/// AtomicBEEF bytes) that the BEEF does not prove (no BUMP of its own, its
+/// txid in no BUMP) with an input whose source the BEEF proves at a height
+/// below `chain`'s Genesis height; `None` when there is none, or when the bytes do not read (the
 /// door's own steps refuse those). The Genesis rule alone: the scripts are
 /// the door's to run.
 pub fn unproven_spend_of_pre_genesis_coin(beef: &[u8], chain: Chain) -> Option<PreGenesisSpend> {
