@@ -1498,7 +1498,7 @@ async fn assess_inner<V: WalletServices + ?Sized>(
             out.unread.push(c.output_id);
             continue;
         };
-        // The gate's own holds first; `split`'s hold (#634) after them.
+        // The gate's own holds, then `split`'s hold (#634).
         let hold = coin_hold(reading, &dead, c.origin, (&c.txid, c.vout as u32), opts)
             .map(|(reason, fault)| (reason, fault, false))
             .or_else(|| {
