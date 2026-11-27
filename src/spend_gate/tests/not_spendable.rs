@@ -30,7 +30,7 @@ use super::{
     create_action, lose, opts, pay, AllowPending, CreateActionArgs, GateError, GateOptions,
     StorageSqlx, Wallet,
 };
-use crate::test_support::coins::{coin, storage_for};
+use crate::test_support::coins::{mined_coin_with_lock, storage_for};
 use crate::tracker_host::tests::{header, header_with_hash};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::CreateActionOptions;
@@ -47,9 +47,9 @@ const MINED_AT: u32 = 800;
 const TIP: u32 = 900;
 const LOST: &str = "lost: the store marks it not spendable";
 
-/// The mined transaction of a coin of `satoshis` that `root` can sign for
-/// (BRC-29, counterparty self): its bytes and its P2PKH lock.
-fn signable_parent(root: &PrivateKey, seed: u8, satoshis: u64) -> (Vec<u8>, String, Vec<u8>) {
+/// The P2PKH lock (hex) of the key `root` signs a coin of the derivation
+/// [`PREFIX`], [`SUFFIX`] with (BRC-29, counterparty self).
+fn signable_lock(root: &PrivateKey) -> String {
     use bsv_sdk::wallet::{Counterparty, KeyDeriver, Protocol, SecurityLevel};
     let key = KeyDeriver::new(Some(root.clone()))
         .derive_private_key(
@@ -58,23 +58,7 @@ fn signable_parent(root: &PrivateKey, seed: u8, satoshis: u64) -> (Vec<u8>, Stri
             &Counterparty::Self_,
         )
         .unwrap();
-    let mut lock = vec![0x76, 0xa9, 0x14];
-    lock.extend_from_slice(&key.public_key().hash160());
-    lock.extend([0x88, 0xac]);
-    let mut parent = bsv_sdk::transaction::Transaction::new();
-    parent
-        .add_input(bsv_sdk::transaction::TransactionInput::new(
-            hex::encode([seed; 32]),
-            0,
-        ))
-        .unwrap();
-    parent
-        .add_output(bsv_sdk::transaction::TransactionOutput::new(
-            satoshis,
-            bsv_sdk::script::LockingScript::from_binary(&lock).unwrap(),
-        ))
-        .unwrap();
-    (parent.to_binary(), parent.id(), lock)
+    format!("76a914{}88ac", hex::encode(key.public_key().hash160()))
 }
 
 /// A store of `root` whose only coin is mined at [`MINED_AT`] (its stored
@@ -82,30 +66,12 @@ fn signable_parent(root: &PrivateKey, seed: u8, satoshis: u64) -> (Vec<u8>, Stri
 /// and marked lost: `spendable = 0`, no spender. (storage, txid, id.)
 async fn a_store_with_one_lost_coin(root: &PrivateKey) -> (StorageSqlx, String, i64) {
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
-    let (raw, txid, lock) = signable_parent(root, 0xd5, 50_000);
-    let id = coin(
-        &storage,
-        (user, basket),
-        &txid,
-        false,
-        Some(MINED_AT),
-        50_000,
-        9,
-    )
-    .await;
-    for table in ["transactions", "proven_txs"] {
-        sqlx::query(&format!("UPDATE {table} SET raw_tx = ? WHERE txid = ?"))
-            .bind(&raw)
-            .bind(&txid)
-            .execute(storage.writer())
-            .await
-            .unwrap();
-    }
+    let lock = signable_lock(root);
+    let (txid, id) =
+        mined_coin_with_lock(&storage, (user, basket), 0xd5, 50_000, MINED_AT, &lock).await;
     sqlx::query(
-        "UPDATE outputs SET locking_script = ?, derivation_prefix = ?, derivation_suffix = ? \
-         WHERE output_id = ?",
+        "UPDATE outputs SET derivation_prefix = ?, derivation_suffix = ? WHERE output_id = ?",
     )
-    .bind(&lock)
     .bind(PREFIX)
     .bind(SUFFIX)
     .bind(id)
@@ -174,10 +140,11 @@ async fn records(storage: &StorageSqlx) -> Vec<String> {
 }
 
 /// The monitor's send pass over `storage` (`send_waiting_transactions`),
-/// posting through `broadcaster`: how many transactions it sent. Every
+/// posting through a mock broadcaster of its own that accepts: how many
+/// transactions it sent, and how many posts the broadcaster took. Every
 /// request the store holds is aged a day before it, so none is passed over
 /// as too recent (the control below is posted by it).
-async fn send_pass(storage: &StorageSqlx, broadcaster: &Arc<MockWalletServices>) -> usize {
+async fn send_pass(storage: &StorageSqlx) -> (usize, usize) {
     let aged = Utc::now() - chrono::Duration::days(1);
     sqlx::query("UPDATE proven_tx_reqs SET created_at = ?, updated_at = ?")
         .bind(aged)
@@ -185,6 +152,7 @@ async fn send_pass(storage: &StorageSqlx, broadcaster: &Arc<MockWalletServices>)
         .execute(storage.writer())
         .await
         .unwrap();
+    let broadcaster = Arc::new(MockWalletServices::builder().post_beef_success().build());
     WalletStorageProvider::set_services(storage, broadcaster.clone() as Arc<dyn WalletServices>);
     let sent = bsv_wallet_toolbox::MonitorStorage::send_waiting_transactions(
         storage,
@@ -193,26 +161,22 @@ async fn send_pass(storage: &StorageSqlx, broadcaster: &Arc<MockWalletServices>)
     .await
     .unwrap();
     println!("the send pass: {sent:?}");
-    sent.and_then(|s| s.send_with_results)
-        .map_or(0, |results| results.len())
+    let sent = sent
+        .and_then(|s| s.send_with_results)
+        .map_or(0, |results| results.len());
+    (sent, broadcaster.call_count("post_beef"))
 }
 
-/// The refusal's held coins: (outpoint, word, reason).
-fn held(refusal: &super::Refusal) -> Vec<(String, String, String)> {
-    refusal
-        .held
-        .iter()
-        .map(|c| (c.outpoint.clone(), c.word.clone(), c.reason.clone()))
-        .collect()
-}
-
-/// The gate's refusal of `args`, or a panic saying what was built instead.
-async fn refused(
+/// `args` through the gate's `create_action`: refused for funds with
+/// nothing offered, and `held[]` the coin `txid`.0 alone, its word `lost`
+/// and its reason [`LOST`]. A panic says what was built instead.
+async fn assert_refused_lost(
     wallet: &Wallet<StorageSqlx, MockWalletServices>,
     args: CreateActionArgs,
     gate: &GateOptions,
-) -> super::Refusal {
-    match create_action(wallet, args, "gate.local", gate).await {
+    txid: &str,
+) {
+    let refusal = match create_action(wallet, args, "gate.local", gate).await {
         Err(GateError::Refused(refusal)) => refusal,
         Ok(made) => panic!(
             "the coin was offered: txid {:?}, a template {}",
@@ -220,7 +184,14 @@ async fn refused(
             made.signable_transaction.is_some()
         ),
         Err(other) => panic!("not the gate's refusal: {other}"),
-    }
+    };
+    println!("{} {refusal}", refusal.code());
+    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
+    assert_eq!(refusal.offered_satoshis, 0, "{refusal}");
+    assert_eq!(refusal.held.len(), 1, "{refusal}");
+    let coin = &refusal.held[0];
+    assert_eq!(coin.outpoint, format!("{txid}.0"));
+    assert_eq!((coin.word.as_str(), coin.reason.as_str()), ("lost", LOST));
 }
 
 /// (1) #646, the signed form: the only coin is mined and marked not
@@ -237,14 +208,7 @@ async fn a_signed_action_under_delayed_broadcast_is_refused_lost_and_leaves_noth
     let (wallet, lost, id) = a_wallet_with_one_lost_coin().await;
     let before = records(wallet.storage()).await;
 
-    let refusal = refused(&wallet, signed(true), &opts(1, true)).await;
-    println!("signed, delayed: {} {refusal}", refusal.code());
-    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
-    assert_eq!(refusal.offered_satoshis, 0);
-    assert_eq!(
-        held(&refusal),
-        vec![(format!("{lost}.0"), "lost".to_string(), LOST.to_string())]
-    );
+    assert_refused_lost(&wallet, signed(true), &opts(1, true), &lost).await;
 
     let after = records(wallet.storage()).await;
     assert_eq!(after, before, "the transactions, the requests, the coins");
@@ -259,10 +223,8 @@ async fn a_signed_action_under_delayed_broadcast_is_refused_lost_and_leaves_noth
     assert_eq!(wallet.services().call_count("post_beef"), 0);
 
     // The monitor's send pass, its broadcaster a mock that accepts.
-    let monitor = Arc::new(MockWalletServices::builder().post_beef_success().build());
-    let sent = send_pass(wallet.storage(), &monitor).await;
-    assert_eq!(sent, 0, "the send pass sent a transaction");
-    assert_eq!(monitor.call_count("post_beef"), 0, "the send pass posted");
+    let (sent, posts) = send_pass(wallet.storage()).await;
+    assert_eq!((sent, posts), (0, 0), "the send pass sent or posted");
     assert_eq!(records(wallet.storage()).await, before);
 }
 
@@ -296,9 +258,7 @@ async fn the_control_the_same_coin_spendable_is_signed_stored_sending_and_sent_b
     assert!(after.contains(&format!("out {id} spendable=0 spent_by=2")));
     assert_eq!(wallet.services().call_count("post_beef"), 0);
 
-    let monitor = Arc::new(MockWalletServices::builder().post_beef_success().build());
-    assert_eq!(send_pass(wallet.storage(), &monitor).await, 1);
-    assert_eq!(monitor.call_count("post_beef"), 1);
+    assert_eq!(send_pass(wallet.storage()).await, (1, 1), "sent, posted");
 }
 
 /// (2) #646, posted at once: the same action with no delayed broadcast.
@@ -311,14 +271,7 @@ async fn a_signed_action_posted_at_once_is_refused_lost_by_name() {
     let (wallet, lost, _) = a_wallet_with_one_lost_coin().await;
     let before = records(wallet.storage()).await;
 
-    let refusal = refused(&wallet, signed(false), &opts(1, true)).await;
-    println!("signed, at once: {} {refusal}", refusal.code());
-    assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS");
-    assert_eq!(refusal.offered_satoshis, 0);
-    assert_eq!(
-        held(&refusal),
-        vec![(format!("{lost}.0"), "lost".to_string(), LOST.to_string())]
-    );
+    assert_refused_lost(&wallet, signed(false), &opts(1, true), &lost).await;
     assert_eq!(records(wallet.storage()).await, before);
     assert_eq!(wallet.services().call_count("post_beef"), 0);
 }
@@ -411,20 +364,9 @@ async fn a_received_coin_the_spend_guard_holds_is_refused_under_the_received_wor
 
     let word = opts(1, true).with_allow_received(true);
     assert_eq!(word.allow_pending, AllowPending::Received);
-    let named = vec![(
-        format!("{received}.0"),
-        "lost".to_string(),
-        LOST.to_string(),
-    )];
     for delayed in [false, true] {
-        let refusal = refused(&wallet, signed(delayed), &word).await;
-        println!(
-            "guard-held, delayed={delayed}: {} {refusal}",
-            refusal.code()
-        );
-        assert_eq!(refusal.code(), "INSUFFICIENT_FUNDS", "delayed={delayed}");
-        assert_eq!(refusal.offered_satoshis, 0, "delayed={delayed}");
-        assert_eq!(held(&refusal), named, "delayed={delayed}");
+        println!("guard-held, delayed={delayed}:");
+        assert_refused_lost(&wallet, signed(delayed), &word, &received).await;
         assert_eq!(records(storage).await, before, "delayed={delayed}");
         assert_eq!(guard_rows(storage).await, guarded, "delayed={delayed}");
     }
@@ -497,11 +439,9 @@ async fn post_create_action(
             "outputDescription": "payment"}],
         "options": options,
     });
-    let request = axum::http::Request::builder()
-        .method("POST")
-        .uri("/createAction")
-        .header("Content-Type", "application/json")
-        .header("Origin", "http://test.local")
+    let request = axum::http::Request::post("/createAction")
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(axum::http::header::ORIGIN, "http://test.local")
         .body(axum::body::Body::from(body.to_string()))
         .unwrap();
     let response = router.clone().oneshot(request).await.unwrap();
