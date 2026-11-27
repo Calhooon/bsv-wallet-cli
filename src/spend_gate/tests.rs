@@ -10,6 +10,8 @@ use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::WalletStorageWriter;
 use chrono::Utc;
 
+mod not_spendable;
+
 const LOCK: &str = "76a914dbc0a7c84983c5bf199b7b2d41b3acf0408ee5aa88ac";
 
 /// A migrated in-memory storage for `identity`: (storage, user, basket).
