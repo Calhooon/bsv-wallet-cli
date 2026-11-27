@@ -56,9 +56,15 @@ pub(crate) async fn internalize_beef<
         seek_permission: None,
     };
 
+    let subject = bsv_wallet_cli::server::post_word::atomic_subject(&args.tx);
     let result = ctx
         .wallet
         .internalize_action(args, Some("bsv-wallet-cli"))
         .await?;
+    // The door's word (#645): `fund`, `receive` and `sync` take a body in
+    // here, and a body with no proof gets its tracker row, `built`.
+    if let Some(txid) = &subject {
+        bsv_wallet_cli::tracker_host::door_word(ctx.wallet.storage(), txid).await;
+    }
     Ok(result.accepted)
 }

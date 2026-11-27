@@ -252,6 +252,10 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
         &sender_identity_key,
     )
     .await;
+    // The door's word (#645), as at every road a body is taken in by.
+    if self_internalized {
+        bsv_wallet_cli::tracker_host::door_word(ctx.wallet.storage(), &txid_hex).await;
+    }
 
     // The coins left unspent for this reason, when the split chose its
     // coins (`--from` names them).

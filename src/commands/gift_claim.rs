@@ -104,6 +104,11 @@ pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
         ),
         None => None,
     };
+    // The door's word (#645): the claim's row was written when it was
+    // announced (`tracker_host::heard`), so this reads it and writes nothing.
+    if matches!(recorded, Some(Ok(_))) {
+        bsv_wallet_cli::tracker_host::door_word(ctx.wallet.storage(), claim_txid).await;
+    }
 
     if ctx.json_output {
         println!(
