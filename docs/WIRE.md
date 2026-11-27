@@ -614,6 +614,23 @@ The served test's router takes the concrete `Services`, built by `test_support::
 
 One reading is left as it is: a coin the spend guard holds reads `lost` with the reason `lost: the store marks it not spendable`, the same word and reason as a coin `reconcile-outputs` or `cleanup-abandoned` relinquished, though the guard's hold ends once a status source holds the transaction. The gate reads the flag and does not read `spend_guard_holds`.
 
+## The door's word and the take (#645, P1)
+
+The stack's wallet gate vectors past this repository's pin (bsv-stack-lean `590ca1a5`, `conformance/wallet-gate-vectors.json`; its `docs/p0/reorg-proof-cut2-2026-11-18.md`, "Cut 2e′") say that a new received body with no proof is `built` at the door and that a named broadcaster taking the bytes moves it to `announced`. This host now records that. After `internalizeAction` (the served door, `fund`, `receive`, `sync`, `send` to the wallet's own address, `split`, `gift-claim`) the transaction has a tracker row, written by the tracker crate's reducer from the host act `build` (`tracker_host::door`), and the outcome of the door's own post is fed to that reducer as a broadcaster's acceptance: from the broadcast memory's rows, then from the request's status past the post (`unmined`, which `src/retire_guard.rs` already reads as a broadcaster's taking; the hint's source is `door|accepted`). A courier of `receive` that hands over the subject with no proof of its own is fed as the crate's mempool presence, which reads `announced` over `built`. The pin of `tests/vectors/wallet_gate_vectors.json` does not move: 490 rows, 0 divergences. The received rule itself (what the gate offers under `allowPending: received`) is the next piece, P2, and is not in this corpus yet.
+
+| answer | before | now | where |
+|---|---|---|---|
+| `GET /tx/{txid}` for a received payment with no proof, its post taken by a broadcaster | 404 `NOT_FOUND`, `no word stored for <txid>`, until a tracker pass; then `built` when the broadcast memory held no row for it | 200, `word` `announced` | row 294; `tests/served_internalize_door/door_word.rs`, `a_payment_a_broadcaster_took_reads_announced` |
+| the same, every broadcaster refusing, the post faulting, or no broadcaster answering | 404 until a pass, then `built` | 200, `word` `built`; `POST /internalizeAction` answers `accepted: true` with `broadcast.word` `built`, as before | `tests/served_internalize_door/door_word.rs`, the three tests named `..._reads_built` |
+| the same body a second time | as above | the row as it was: one row, the hint heard once, no second post | `a_second_internalize_of_the_same_body_leaves_the_row_as_it_was` |
+| a body that arrives with its proof | the gate reads `mined` from the stored proof; the route answers 404 until the pass adopts it | unchanged: the door writes no row for a proven body | `a_body_that_arrives_with_its_proof_reads_mined` |
+| `POST /createAction`'s 402 naming a held received coin | `word` `unknown` | `word` `announced`; the reason, the offer and the status as they were | rows 275, 276, 277 |
+| a store that held received payments before this | a pass gave each its row, `built`, and no later pass heard a take the broadcast memory held no row for | the pass feeds the take from the request, once a row | `a_pass_gives_a_received_payment_with_no_row_its_word` |
+
+Rows 275 to 277 move in one field (each held coin's `word`, and the message line that repeats it). Row 294 is new and recorded last, so rows 001 to 293 keep their names. The consumers' corpus is unchanged.
+
+`tracker_states` has one row per transaction, as the toolbox's request and its broadcast memory do. Two users of one store who receive the same transaction read one word: the word is about the transaction (who took its bytes, which block holds it), not about a user's coin.
+
 ## The browser gate (#411) and the switch (#414)
 
 The owner's word of 2026-11-01 on #411 ("yep I like your reccomendations...", through the keeper): the per-origin grant in the store is the shape (#414); step (b), a required `Origin` and an environment allow-list, landed first (PR 419). From #414's L5b (the switch, `docs/design/origin-grants.md` sections (1), (2), (6) and (7), under the owner's rulings W1 (a), W4 (a) and W15 (i) of 2026-11-03) a door admits a page for each power it asks by the owner's grant of that power to its origin, read from the store, and `ALLOWED_ORIGINS` is a seed beside the rows. Every served route but `POST /arc-callback` (Arcade's webhook, server to server, authenticated by the callback token) is gated; the order is the bearer (`AUTH_TOKEN`, when set), then the gate, then the body, then the door's powers.
