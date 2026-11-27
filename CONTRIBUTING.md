@@ -64,11 +64,11 @@ If you add or modify an endpoint handler, check that the request deserialization
 
 ## PR Process
 
-1. Fork the repo and create a feature branch off `main`.
+1. Fork the repo and create a feature branch off `beta`.
 2. Make your changes. Keep commits focused.
 3. Ensure `cargo test --test integration` passes (all 53 tests).
 4. Ensure `cargo fmt` and `cargo clippy` produce no warnings.
-5. Open a PR against `main` with a clear description of what changed and why.
+5. Open a PR against `beta` with a clear description of what changed and why.
 
 ## Finding Work
 

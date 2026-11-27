@@ -23,7 +23,7 @@ The epic's own words for the two classes (#106, "The loop"): "Cold-path PRs merg
 
 **Never without the owner's word** (#106, "Never without the owner's word"): the wire contract, spend semantics, crypto, the pins, environment variable names, the database schema, any release, any spend from a wallet. An optimization that would change a BRC-100 shape is a named deviation with its measurement, landed only on the owner's word and recorded in the extensions document (#106, "BRC-100"; #100).
 
-**The lines** (#106, "The lines"; #107): the programme lands on `beta`; `main` is the stable line; "`main` merges into `beta` after every stable patch; `beta` merges into `main` at a phase exit as the next minor, after the mainnet gate and a day of canary on a `vX.Y.0-beta.N` prerelease tag."
+**The lines** (#106, "The lines"; #107): the programme lands on `beta`; `main` is the stable line; every change is born on `beta`; `main` takes a stable roll-up of six classes; `beta` merges into `main` once, at the cut, on the owner's tag (`RELEASING.md`, "The direction rule").
 
 ## 3. The phases
 
