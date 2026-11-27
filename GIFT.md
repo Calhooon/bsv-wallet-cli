@@ -84,7 +84,8 @@ anything.
 > inspecting or claiming it. `gift-inspect` and `gift-claim` read the gift
 > by its txid. There is no step after the claim either: `gift-claim` records
 > its own claim in your wallet, so the freed coins are normal spendable
-> balance the moment a broadcaster takes it.
+> balance the moment a broadcaster takes it (or, when the gift's own
+> transaction was not mined yet, once the claim is mined: see below).
 
 ## Claiming after unlock
 
@@ -98,6 +99,49 @@ claim; the coins land at your wallet's deposit address. Then:
 bsv-wallet balance              # there it is: the claim recorded itself
 bsv-wallet send <addr> <sats>   # spend it like any other balance
 ```
+
+### If the gift's own transaction is not mined yet
+
+`gift-claim` can post the claim while the gift's deposit is still unmined.
+The claim goes out at once, but the wallet cannot record its coin yet: it has
+no checked proof of the deposit to judge the claim by. The command says so
+(`wallet: NOT recorded yet`, with what the wallet's door answered) and exits 0:
+the claim is posted, so do not claim again.
+
+The wallet keeps the claim's record and makes it by itself once the claim is
+mined. `daemon` and `serve` do that in their tracker pass, every minute by
+default (`BROADCAST_RECONCILE=0` turns that pass off). With neither running,
+`bsv-wallet tracker-tick` is one such pass: it asks for the claim's proof when
+its re-ask is due (ten minutes after the claim by default, then after a pause
+that doubles), and records the coin when the proof checks.
+
+To take the coin in by hand instead, once the claim is mined:
+
+```bash
+bsv-wallet receive <claim-txid>            # the gift
+bsv-wallet receive <claim-txid> --vout 1   # the change of the fee coin
+```
+
+Either way the coin is counted once: a pass after a `receive` by hand takes in
+what is left and changes nothing else.
+
+### What `gift-claim --json` prints
+
+| Field | Meaning |
+|-------|---------|
+| `claimTxid`, `depositTxid` | the claim and the gift's deposit |
+| `amount`, `fee`, `change`, `lockUntil` | the claim's plan, in satoshis and seconds |
+| `broadcast` | the broadcaster that took the claim, or `null` |
+| `word`, `reask`, `heldUntil`, `notFinal` | the tracker's word for the claim, its pending re-ask, the time nothing is asked before, and what a broadcaster said when it called the claim not final |
+| `recorded` | `true` when the claim's coin is in the balance now |
+| `recordError` | what the wallet's door answered when it declined the record, or `null` |
+| `recordHeld` | `true` when the coin is not recorded yet and the wallet keeps the claim's record, to make it by itself as above |
+| `recordHint` | one sentence: what happened, who makes the record, and the commands that take the coin in by hand; `null` when `recorded` |
+| `receiveCommands` | those commands, one per output of the claim that pays this wallet; empty when `recorded` |
+
+The exit code is 0 whenever the claim is posted or held, recorded or not; a
+claim no broadcaster takes is an error that says what they said, and leaves
+nothing behind.
 
 ## Timing note (important)
 
