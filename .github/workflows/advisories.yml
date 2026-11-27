@@ -1,0 +1,142 @@
+# The advisories run (bsv-stack-lean, the ruling of 2026-11-17,
+# docs/DECISIONS-2026-10-19.md 27.5). Copy to .github/workflows/advisories.yml.
+#
+# The RustSec database is an outside clock: a new advisory is no change of any
+# pull request, so it is not a required check on one. It is read here, once a
+# day for each line, and by ci.yml's `deny` job on a release tag. A finding
+# opens one issue for its line, or updates the one that is open; a clean run
+# closes it. The run stays green on a finding: the issue is the signal, and the
+# tag is the gate. The run goes red only when cargo-deny itself could not judge.
+#
+# Triage of an issue: a lock move, a dependency change, or an entry in the
+# stack's template ruled by the keeper with its reason, its condition and its
+# exit. Never an ignore written in this repository alone.
+#
+# Load: one run a day, two jobs, each one checkout, one pinned download of
+# cargo-deny, one fetch of the advisory database and at most three calls to
+# this repository's own issues.
+name: advisories
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  advisories:
+    name: advisories (${{ matrix.line }})
+    strategy:
+      fail-fast: false
+      matrix:
+        line: [main, beta]
+    # A hosted runner, as every job of the template: no workflow names a
+    # runner of ours (the owner's word of 2026-11-04 17:2xZ). A private
+    # repository keeps Actions off and reads its advisories by hand before a tag.
+    runs-on: ubuntu-latest
+    steps:
+      # A repository with one line has no beta: its job ends here, green.
+      - name: Does this line exist
+        id: line
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINE: ${{ matrix.line }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/branches/$LINE" --silent 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.line.outputs.exists == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.line }}
+      # The same pinned prebuilt release as ci.yml's `deny` job: the version
+      # and the tarball's sha256 move together, in both files, by PR only.
+      - if: steps.line.outputs.exists == 'true'
+        name: cargo-deny (the pinned prebuilt release)
+        env:
+          DENY_VERSION: "0.20.2"
+          DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/$name.tar.gz"
+          echo "${DENY_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name/cargo-deny"
+          mkdir -p "$RUNNER_TEMP/paved-road-tools/bin"
+          install -m 0755 "$RUNNER_TEMP/$name/cargo-deny" "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny"
+          "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --version
+      - if: steps.line.outputs.exists == 'true'
+        name: advisories
+        id: check
+        run: |
+          set +e
+          "$RUNNER_TEMP/paved-road-tools/bin/cargo-deny" --locked check advisories > "$RUNNER_TEMP/advisories.log" 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          tail -n 60 "$RUNNER_TEMP/advisories.log"
+      - if: steps.line.outputs.exists == 'true'
+        name: Open, update or close the line's issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINE: ${{ matrix.line }}
+          CODE: ${{ steps.check.outputs.code }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/advisories.log"
+          title="advisories: $LINE"
+          sha=$(git rev-parse --short=8 HEAD)
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # Every page of the open issues, so an old issue is found again and
+          # never opened twice; pull requests share the listing and are skipped.
+          nums=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
+            --jq ".[] | select(.pull_request == null and .title == \"$title\") | .number")
+          num=$(printf '%s\n' "$nums" | head -n 1)
+
+          if [[ "$CODE" == "0" ]]; then
+            # Every open issue of this title: the listing lags a new issue by
+            # some seconds, so two runs close together can open two.
+            for n in $nums; do
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$n/comments" --silent \
+                -f body="The advisories check is clean on \`$LINE\` at \`$sha\` ($run_url). Closing."
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$n" --silent -f state=closed
+              echo "clean: closed issue $n"
+            done
+            [[ -n "$num" ]] || echo "clean: no issue open"
+            exit 0
+          fi
+
+          # A finding is an `error[...]` block of cargo-deny. A failure with none
+          # is the run's own fault (the database could not be fetched, the lock
+          # could not be read): red, and no issue.
+          kinds=$(grep -o -E '^error\[[a-z-]+\]' "$log" | sort | uniq -c | sed -E 's/^ *([0-9]+) error\[([a-z-]+)\]/\2: \1/' | paste -sd ',' - | sed 's/,/, /g' || true)
+          if [[ -z "$kinds" ]]; then
+            echo "cargo-deny failed and named no finding: this run could not judge"
+            exit 1
+          fi
+          ids=$(grep -o -E 'ID: RUSTSEC-[0-9]{4}-[0-9]{4}' "$log" | cut -d' ' -f2 | sort -u | paste -sd ' ' - || true)
+
+          body=$(printf '%s\n' \
+            "The advisories check of cargo-deny fails on \`$LINE\` at \`$sha\`." \
+            "" \
+            "- Findings: $kinds" \
+            "- Advisory ids: ${ids:-none named (a yanked crate carries no id)}" \
+            "- The run, with cargo-deny's full text: $run_url" \
+            "" \
+            "No pull request is blocked by this: a pull request's \`deny\` reads bans, licenses and sources. A release tag reads advisories too, so this issue is closed before the next tag, by a lock move, a dependency change, or an entry in the stack's template ruled by the keeper with its reason, its condition and its exit. Never by an ignore written in this repository alone." \
+            "" \
+            "This issue is rewritten by each daily run while the check fails and closed by the next clean run.")
+
+          if [[ -n "$num" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$num" --silent -f body="$body"
+            echo "finding: updated issue $num ($kinds)"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues" --silent -f title="$title" -f body="$body"
+            echo "finding: opened an issue ($kinds)"
+          fi
