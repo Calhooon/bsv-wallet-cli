@@ -1,0 +1,27 @@
+{
+  "world": "received-rule",
+  "request": {
+    "method": "GET",
+    "path": "/tx/25172f89b86cf830b3b77933b4684b9adce548ec319a8c6d20a403f5c3285db6",
+    "headers": {
+      "origin": "http://wire.test"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "evidence": null,
+      "height": null,
+      "reask": null,
+      "txid": "25172f89b86cf830b3b77933b4684b9adce548ec319a8c6d20a403f5c3285db6",
+      "word": "announced"
+    }
+  }
+}

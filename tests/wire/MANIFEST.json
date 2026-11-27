@@ -289,7 +289,8 @@
     "287-internalizeAction.scripts.heldRepeatUnproven.json",
     "288-internalizeAction.scripts.heldRepeatProven.json",
     "289-internalizeAction.scripts.ancestorsPass.json",
-    "290-listOutputs.scripts.basket.json"
+    "290-listOutputs.scripts.basket.json",
+    "291-tx.receivedRule.doorWord.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -457,6 +458,7 @@
     "287-internalizeAction.scripts.heldRepeatUnproven.json": "#634: 286's transaction handed again unproven, beside its mined parent: checked the same way, 400 VALIDATION_ERROR, OP_EQUALVERIFY, input 0 of the held transaction; the row as it was (290).",
     "288-internalizeAction.scripts.heldRepeatProven.json": "#634: 286's proven BEEF again: answered as before, 200.",
     "289-internalizeAction.scripts.ancestorsPass.json": "#634: a payment through two unmined parents, every input a valid signature, the oldest spending a parent mined after Genesis: 200, stored (290).",
-    "290-listOutputs.scripts.basket.json": "#634: the basket after 284 to 289: 286's output and 289's alone; the refusals stored nothing."
+    "290-listOutputs.scripts.basket.json": "#634: the basket after 284 to 289: 286's output and 289's alone; the refusals stored nothing.",
+    "291-tx.receivedRule.doorWord.json": "#645 (P1, the door's word and the take): GET /tx/{txid} for 272's payment, a received body with no proof whose post the world's broadcaster took: 200, the word announced (built at the door by the tracker's reducer, then the take fed as a broadcaster's acceptance). Before, 404: the host wrote no row at the door. With it the held coins of 275, 276 and 277 carry the word announced where they carried unknown; no offer moves. New; recorded last, so no file before it moves."
   }
 }

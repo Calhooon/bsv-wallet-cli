@@ -195,6 +195,21 @@ async fn record_strip_at_create(r: &mut Recorder) {
     );
 }
 
+/// The door's word (#645): the host route's answer for 272's payment, a
+/// received body with no proof whose post the world's broadcaster took.
+/// Recorded last of all, so no file before it moves.
+pub(crate) async fn record_door_word(r: &mut Recorder) {
+    let named = subject(&beef(Payment::Wallet).await);
+    let word = r
+        .case(
+            "tx.receivedRule.doorWord",
+            WORLD,
+            super::recorder::get(&format!("/tx/{named}")),
+        )
+        .await;
+    assert_eq!(word.value("/word"), json!("announced"));
+}
+
 pub(crate) fn notes() -> Vec<(String, String)> {
     [
         ("272-internalizeAction.receivedRule.callersLabel.json", "#627 (the stable line's 0.18.8): a received payment taken in through the toolbox's own internalizeAction (purpose receive, unproven), its labels carrying the caller's own underReceivedRule in two spellings the toolbox reads as it beside a label of its own, 200. New; recorded last, so no file before it moves."),
@@ -209,6 +224,7 @@ pub(crate) fn notes() -> Vec<(String, String)> {
         ("281-listActions.receivedRule.labelled.json", "#627: the actions labelled underReceivedRule, with includeLabels: 278 and 280, each with the caller's label, the gate's spend-gate:received-pending and the toolbox's label as the store keeps it (underreceivedrule), underRule received-pending."),
         ("282-createAction.receivedRule.stripAtCreate.json", "#627: the strip at createAction where it can be seen: in the internalize world, an exact spend with no word over its 40,000-sat coin, whose transaction is completed (offered with no word), its labels carrying the caller's own beside underReceivedRule in two spellings the toolbox reads as the rule (as 272 at internalizeAction), 200, signed and posted."),
         ("283-listActions.receivedRule.stripAtCreate.json", "#627: 282's action by the caller's label, with includeLabels: the caller's own label alone, no underreceivedrule, no underRule: its copies of underReceivedRule were stripped at createAction."),
+        ("291-tx.receivedRule.doorWord.json", "#645 (P1, the door's word and the take): GET /tx/{txid} for 272's payment, a received body with no proof whose post the world's broadcaster took: 200, the word announced (built at the door by the tracker's reducer, then the take fed as a broadcaster's acceptance). Before, 404: the host wrote no row at the door. With it the held coins of 275, 276 and 277 carry the word announced where they carried unknown; no offer moves. New; recorded last, so no file before it moves."),
     ]
     .into_iter()
     .map(|(f, n)| (f.to_string(), n.to_string()))
