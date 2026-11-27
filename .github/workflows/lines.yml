@@ -1,0 +1,82 @@
+name: lines
+
+# The direction rule's two checks (RELEASING.md, "The direction rule"; the owner's ruling of
+# 2026-11-18): every change is born on beta, and nothing sits on main that beta lacks.
+# `main-in-beta` is a required check of beta, `beta-born` of main. The logic is
+# .github/ci/lines.sh; .github/ci/test_lines.py is its proof and runs here on every event.
+# This file and those two are the same bytes on both lines: born on beta, picked to main with -x.
+# A pull request runs the file of its own merge commit, so main's copy is read by a pull
+# request into main and beta's by everything else.
+on:
+  pull_request:
+    branches: [main, beta]
+  push:
+    branches: [beta]
+  # beta lands through the merge queue: a required check that does not report on the group's
+  # commit holds the queue until its timeout.
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lines-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The commit of main the rule is read from: main-in-beta reads main's commits after it.
+  MAIN_BASELINE: 9358665d1aed14147f9aa31e0a9eb001ec4ca372
+
+jobs:
+  main-in-beta:
+    name: main-in-beta
+    if: >-
+      (github.event_name == 'pull_request' && github.base_ref == 'beta') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/beta') ||
+      (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch main
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Every commit of main since the baseline is on this tree
+        run: bash .github/ci/lines.sh main-in-beta
+
+  beta-born:
+    name: beta-born
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch beta
+        run: git fetch --no-tags origin +refs/heads/beta:refs/remotes/origin/beta
+
+      - name: Every commit of the pull request was born on beta
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/ci/lines.sh beta-born
+
+  selftest:
+    name: lines-selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: The two checks judge their planted cases
+        run: python3 -B .github/ci/test_lines.py
