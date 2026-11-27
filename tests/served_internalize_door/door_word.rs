@@ -22,34 +22,19 @@
 //! its storage's services replaced by a mock before any request (#637), and
 //! every read below that needs services is handed a mock of its own.
 
-#[path = "../src/test_support/chain_tracker.rs"]
-mod chain_tracker;
-#[path = "../src/test_support/no_tracker.rs"]
-#[allow(dead_code)]
-mod no_tracker;
-#[path = "support/served_internalize.rs"]
-#[allow(dead_code)]
-mod support;
-use support::*;
+use crate::support::*;
 
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::transaction::{Beef, MerklePath};
-use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_cli::tracker_host::{self, SystemClock, TickOptions};
 use bsv_wallet_toolbox::services::mock::{
     error_post_beef_result, MockErrorKind, MockResponse, MockWalletServices,
 };
 use bsv_wallet_toolbox::services::BlockHeader;
-use bsv_wallet_toolbox::{
-    Chain, Services, ServicesOptions, StorageSqlx, Wallet, WalletServices, WalletStorageProvider,
-    WalletStorageWriter,
-};
-use chain_tracker::TestChainTracker;
+use bsv_wallet_toolbox::WalletServices;
 use serde_json::{json, Value};
-use tower::ServiceExt;
 
 /// The header service's tip in every read here.
 const TIP: u32 = 900_000;
@@ -59,43 +44,6 @@ const SUBJECT_HEIGHT: u32 = PARENT_HEIGHT + 1;
 // ---------------------------------------------------------------------------
 // The served wallet and its reads
 // ---------------------------------------------------------------------------
-
-/// [`support::served_with`], with every root the tracker carries named.
-/// `posts` is never optional: `Wallet::new` hands the storage the wallet's
-/// own `Services` (the mainnet options, real endpoints), and the toolbox's
-/// door posts through whatever the storage holds, so a served wallet whose
-/// storage is not handed a mock posts to a real broadcaster (#637).
-async fn served_over(
-    root: &PrivateKey,
-    roots: &[(u32, &str)],
-    posts: Arc<dyn WalletServices>,
-) -> (WalletState, axum::Router) {
-    let storage = StorageSqlx::in_memory().await.expect("in-memory storage");
-    storage
-        .migrate("served-door-word", &root.public_key().to_hex())
-        .await
-        .expect("migrate");
-    storage.make_available().await.expect("make available");
-    bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
-        .await
-        .expect("open the proof gate");
-    let mut tracker = TestChainTracker::new(TIP);
-    for (height, root) in roots {
-        tracker.add_root(*height, (*root).to_string());
-    }
-    storage.set_chain_tracker(Arc::new(tracker)).await;
-    let services =
-        Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
-    assert!(services.chaintracks.is_none(), "no header service");
-    let wallet = Wallet::new(Some(root.clone()), storage, services)
-        .await
-        .expect("wallet");
-    let state = server::make_wallet_state(wallet);
-    WalletStorageProvider::set_services(state.storage(), posts);
-    let config = ServerConfig::admitting(["test.local"]).expect("an originator");
-    let router = server::make_router(state.clone(), config);
-    (state, router)
-}
 
 /// A mock whose broadcasters answer `post_beef` with `response`.
 fn posting(
@@ -110,41 +58,20 @@ fn posting(
 
 /// `GET /tx/{txid}`: the status and the answer.
 async fn served_word(app: &axum::Router, txid: &str) -> (StatusCode, Value) {
-    let request = axum::http::Request::builder()
-        .method("GET")
-        .uri(format!("/tx/{txid}"))
-        .header("Origin", "http://test.local")
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
-}
-
-/// A header at `height` carrying `root`.
-fn header(height: u32, root: &str) -> BlockHeader {
-    BlockHeader {
-        version: 1,
-        previous_hash: "00".repeat(32),
-        merkle_root: root.to_string(),
-        time: 1_700_000_000,
-        bits: 0x1d00_ffff,
-        nonce: 0,
-        hash: "0e".repeat(32),
-        height,
-    }
+    get_from(app, &format!("/tx/{txid}")).await
 }
 
 /// A header service of its own for a read: the tip at [`TIP`], and at
-/// `at` the header carrying that root. A mock; it reaches nothing.
-fn headers(at: Option<(u32, &str)>) -> MockWalletServices {
-    let services = MockWalletServices::builder().build();
-    services.set_tip_header(header(TIP, &"0f".repeat(32)));
+/// `at` a header carrying that root. A mock; it reaches nothing.
+async fn headers(at: Option<(u32, &str)>) -> MockWalletServices {
+    let services = MockWalletServices::builder().height(TIP).build();
     if let Some((height, root)) = at {
-        services.set_header_for_height(header(height, root));
+        let tip = services.get_chain_tip_header().await.unwrap();
+        services.set_header_for_height(BlockHeader {
+            height,
+            merkle_root: root.to_string(),
+            ..tip
+        });
     }
     services
 }
@@ -160,7 +87,7 @@ async fn gate_word(wallet: &WalletState, txid: &str, at: Option<(u32, &str)>) ->
             .unwrap();
     let readings = tracker_host::read_creators(
         wallet.storage(),
-        &headers(at),
+        &headers(at).await,
         &TickOptions::default(),
         &[(txid.to_string(), path)],
     )
@@ -218,6 +145,20 @@ async fn door_left(wallet: &WalletState, app: &axum::Router, txid: &str) -> (u16
     (status.as_u16(), word, gate.to_string())
 }
 
+/// `POST /internalizeAction` of `tx` as `paid`'s payment, answered 200: the
+/// answer.
+async fn taken_in(app: &axum::Router, tx: &[u8], paid: &Paid) -> Value {
+    let (status, body) = internalize(app, tx, paid.payment()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// [`door_left`] is 200 with `word`, served and at the gate.
+async fn reads(wallet: &WalletState, app: &axum::Router, txid: &str, word: &str) {
+    let left = door_left(wallet, app, txid).await;
+    assert_eq!(left, (200, word.to_string(), word.to_string()));
+}
+
 // ---------------------------------------------------------------------------
 // The door's word and the take
 // ---------------------------------------------------------------------------
@@ -229,8 +170,7 @@ async fn door_left(wallet: &WalletState, app: &axum::Router, txid: &str) -> (u16
 async fn a_payment_a_broadcaster_took_reads_announced() {
     let paid = Paid::new();
     let (wallet, app, posts) = paid.served().await;
-    let (status, body) = internalize(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = taken_in(&app, &paid.tx, &paid).await;
     assert_eq!(
         body,
         json!({ "accepted": true }),
@@ -238,77 +178,62 @@ async fn a_payment_a_broadcaster_took_reads_announced() {
     );
     assert_eq!(posts.call_count("post_beef"), 1, "the door posted once");
 
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(
-        left,
-        (200, "announced".to_string(), "announced".to_string())
-    );
+    reads(&wallet, &app, &paid.txid, "announced").await;
     let (built, hints, word) = tracked(&wallet, &paid.txid).await.expect("a row");
     assert_eq!((built, word.as_str()), (1, "announced"));
     assert_eq!(hints.as_array().map(Vec::len), Some(1), "{hints}");
     assert_eq!(hints[0]["status"], "accepted", "{hints}");
 }
 
-/// Every broadcaster refuses the door's post: the answer is `accepted` with
-/// the `broadcast` word `built`, and the creator reads `built`, served and
-/// at the gate, with no hint.
-#[tokio::test]
-async fn a_payment_every_broadcaster_refused_reads_built() {
-    let paid = Paid::new();
-    let posts = posting(MockResponse::Success(vec![error_post_beef_result(
+/// The mock's answer for a post every broadcaster refused.
+fn refusing() -> Arc<MockWalletServices> {
+    posting(MockResponse::Success(vec![error_post_beef_result(
         "arc",
         "the transaction was refused",
-    )]));
+    )]))
+}
+
+/// A payment taken in over `posts`, whose broadcasters did not take it: the
+/// answer is `accepted` with the `broadcast` word `built`, the door posted
+/// once, and the creator reads `built`, served and at the gate, its row
+/// built by the host with no hint.
+async fn untaken_reads_built(posts: Arc<MockWalletServices>) {
+    let paid = Paid::new();
     let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts.clone()).await;
-    let (status, body) = internalize(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = taken_in(&app, &paid.tx, &paid).await;
     assert_eq!(body["accepted"], true, "{body}");
     assert_eq!(body["broadcast"]["word"], "built", "{body}");
     assert_eq!(posts.call_count("post_beef"), 1, "the door posted once");
 
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(left, (200, "built".to_string(), "built".to_string()));
-    let (built, hints, _) = tracked(&wallet, &paid.txid).await.expect("a row");
-    assert_eq!((built, hints), (1, json!([])));
+    reads(&wallet, &app, &paid.txid, "built").await;
+    assert_eq!(
+        tracked(&wallet, &paid.txid).await,
+        Some((1, json!([]), "built".to_string()))
+    );
+    assert_eq!(memory(&wallet, &paid.txid).await, vec![]);
+}
+
+/// Every broadcaster refuses the door's post: `built`.
+#[tokio::test]
+async fn a_payment_every_broadcaster_refused_reads_built() {
+    untaken_reads_built(refusing()).await;
 }
 
 /// The door's post faults (no broadcaster reached): `built`, as a refusal.
 #[tokio::test]
 async fn a_payment_whose_post_faulted_reads_built() {
-    let paid = Paid::new();
-    let posts = posting(MockResponse::Error(
+    untaken_reads_built(posting(MockResponse::Error(
         MockErrorKind::NetworkError,
         "connection refused".to_string(),
-    ));
-    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts.clone()).await;
-    let (status, body) = internalize(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["broadcast"]["word"], "built", "{body}");
-
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(left, (200, "built".to_string(), "built".to_string()));
+    )))
+    .await;
 }
 
 /// No broadcaster answers (the services name none: `post_beef` returns no
-/// result, as a wallet with no broadcaster configured gives): the creator
-/// reads `built`.
+/// result, as a wallet with no broadcaster configured gives): `built`.
 #[tokio::test]
 async fn a_payment_with_no_broadcaster_reads_built() {
-    let paid = Paid::new();
-    let posts = posting(MockResponse::Success(vec![]));
-    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts.clone()).await;
-    let (status, body) = internalize(&app, &paid.tx, paid.payment()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["accepted"], true, "{body}");
-    assert_eq!(body["broadcast"]["word"], "built", "{body}");
-
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(left, (200, "built".to_string(), "built".to_string()));
-    assert_eq!(
-        memory(&wallet, &paid.txid).await,
-        vec![],
-        "no broadcaster named"
-    );
+    untaken_reads_built(posting(MockResponse::Success(vec![]))).await;
 }
 
 /// The same body a second time: one row, the same word, the hint heard
@@ -324,11 +249,7 @@ async fn a_second_internalize_of_the_same_body_leaves_the_row_as_it_was() {
         posts.call_count("post_beef")
     );
 
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(
-        left,
-        (200, "announced".to_string(), "announced".to_string())
-    );
+    reads(&wallet, &app, &paid.txid, "announced").await;
     let twice = tracked(&wallet, &paid.txid).await;
     assert_eq!(twice, once, "the row is unchanged");
     let (_, hints, _) = twice.expect("a row");
@@ -350,25 +271,20 @@ async fn a_second_internalize_of_the_same_body_leaves_the_row_as_it_was() {
 /// its checked proof), so the route answers 404 until then.
 #[tokio::test]
 async fn a_body_that_arrives_with_its_proof_reads_mined() {
-    let root = PrivateKey::random();
-    let sender = PrivateKey::random().public_key();
-    let lock = p2pkh(&derived(&root, &sender, PREFIX, SUFFIX));
-    let (_, child) = paying(&lock, 5);
+    // The payment's own transaction, carried with a proof of its own.
+    let paid = Paid::new();
+    let (_, child) = paying(&paid.lock, 5);
     let txid = child.id();
+    assert_eq!(txid, paid.txid);
     let mut beef = Beef::new();
     let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, SUBJECT_HEIGHT));
     beef.merge_raw_tx(child.to_binary(), Some(bump)).unwrap();
     let tx = beef.to_binary_atomic(&txid).unwrap();
 
     let posts = Arc::new(accepting());
-    let (wallet, app) = served_over(&root, &[(SUBJECT_HEIGHT, &txid)], posts.clone()).await;
-    let (status, body) = internalize(
-        &app,
-        &tx,
-        vec![payment_of(0, PREFIX, SUFFIX, &sender.to_hex())],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    let roots = [(SUBJECT_HEIGHT, txid.as_str())];
+    let (wallet, app) = served_rooted(&paid.root, Some(&roots), posts.clone()).await;
+    let body = taken_in(&app, &tx, &paid).await;
     assert_eq!(body, json!({ "accepted": true }));
     assert_eq!(
         posts.call_count("post_beef"),
@@ -402,10 +318,7 @@ async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
         let posts = if taken {
             Arc::new(accepting())
         } else {
-            posting(MockResponse::Success(vec![error_post_beef_result(
-                "arc",
-                "the transaction was refused",
-            )]))
+            refusing()
         };
         let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts).await;
         admitted(&app, &paid.tx, paid.payment()).await;
@@ -424,7 +337,7 @@ async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
             memory(&wallet, &paid.txid).await
         );
 
-        let services = headers(None);
+        let services = headers(None).await;
         for pass in 1..=2 {
             let report = tracker_host::tick(
                 wallet.storage(),
@@ -435,12 +348,7 @@ async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
             .await
             .unwrap();
             println!("pass {pass}: {}", report.summary());
-            let left = door_left(&wallet, &app, &paid.txid).await;
-            assert_eq!(
-                left,
-                (200, word.to_string(), word.to_string()),
-                "pass {pass}, taken {taken}"
-            );
+            reads(&wallet, &app, &paid.txid, word).await;
         }
         let (built, hints, _) = tracked(&wallet, &paid.txid).await.expect("a row");
         assert_eq!(built, 1);
@@ -463,14 +371,9 @@ async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
 #[tokio::test]
 async fn a_couriers_sighting_moves_a_built_payment_to_announced() {
     let paid = Paid::new();
-    let posts = posting(MockResponse::Success(vec![error_post_beef_result(
-        "arc",
-        "the transaction was refused",
-    )]));
-    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts).await;
+    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), refusing()).await;
     admitted(&app, &paid.tx, paid.payment()).await;
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(left, (200, "built".to_string(), "built".to_string()));
+    reads(&wallet, &app, &paid.txid, "built").await;
 
     for _ in 0..2 {
         let word = tracker_host::door(
@@ -484,11 +387,7 @@ async fn a_couriers_sighting_moves_a_built_payment_to_announced() {
         .unwrap();
         assert_eq!(word.map(|w| w.0).as_deref(), Some("announced"));
     }
-    let left = door_left(&wallet, &app, &paid.txid).await;
-    assert_eq!(
-        left,
-        (200, "announced".to_string(), "announced".to_string())
-    );
+    reads(&wallet, &app, &paid.txid, "announced").await;
     let (_, hints, _) = tracked(&wallet, &paid.txid).await.expect("a row");
     assert_eq!(
         hints,
