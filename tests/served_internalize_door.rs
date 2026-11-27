@@ -36,6 +36,10 @@ mod no_tracker;
 mod support;
 use support::*;
 
+/// The door's word and the take (#645, P1).
+#[path = "served_internalize_door/door_word.rs"]
+mod door_word;
+
 use axum::http::StatusCode;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::KeyDeriver;
