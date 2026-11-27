@@ -1329,6 +1329,90 @@ pub async fn heard<C: Clock>(
 }
 
 // ---------------------------------------------------------------------------
+// The door's word for a received body
+// ---------------------------------------------------------------------------
+
+/// The door's word (#645, P1): after the wallet took in a body
+/// (`internalizeAction`), give the transaction its tracker row. A body with
+/// no proof is `built` at the door (bsv-stack-lean `590ca1a5`,
+/// `conformance/wallet-gate-vectors.json`; `lean/Wallet.lean`
+/// `onInternalize`: the tracker takes the host act `build`): the row is a
+/// new [`TrackedRow`] whose replay feeds the crate's reducer
+/// `HostAction::Build`, never a word set by hand.
+///
+/// Nothing is written, and `None` is returned, for a transaction the wallet
+/// does not hold out and unproven (a body that arrived with its proof is
+/// `completed`: the pass adopts it with its checked proof,
+/// [`adopt_proven`], and the gate reads the stored proof meanwhile). A row
+/// that exists is read, never reset: its asks, its pause and its re-announce
+/// stay; a row with a stored path, and a row held as stored ([`HeldRow`]),
+/// answer their stored word.
+///
+/// One row per transaction: `tracker_states` is keyed by the txid, as the
+/// toolbox's request (`proven_tx_reqs`) and its broadcast memory are, so two
+/// users of one store who receive the same transaction read one word. The
+/// word is about the transaction (who took its bytes, which block holds
+/// it), never about a user.
+///
+/// Returns the word and the pending re-ask.
+pub async fn door<C: Clock>(
+    storage: &StorageSqlx,
+    clock: &C,
+    opts: &TickOptions,
+    txid: &str,
+) -> Result<Option<(String, Option<String>)>> {
+    ensure_tables(storage).await?;
+    let txid = txid.to_ascii_lowercase();
+    let out: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM transactions WHERE txid = ? AND status IN ('unproven', 'sending') LIMIT 1",
+    )
+    .bind(&txid)
+    .fetch_optional(storage.pool())
+    .await?;
+    if out.is_none() {
+        return Ok(None);
+    }
+    let as_stored = |stored: Option<(String, Option<Height>, Option<String>)>| {
+        stored.map(|(word, _, reask)| (word, reask))
+    };
+    let (row, new) = match load_stored(storage, &txid).await? {
+        Some(Ok(row)) if row.bump.is_some() => {
+            return Ok(as_stored(stored_word(storage, &txid).await?));
+        }
+        Some(Err(held)) => {
+            held.warn();
+            return Ok(as_stored(stored_word(storage, &txid).await?));
+        }
+        Some(Ok(row)) => (row, false),
+        None => (TrackedRow::new(&txid), true),
+    };
+    let params = opts.params();
+    let headers = HeaderSnapshot::unread();
+    let (state, _) = row.replay(&params, &headers);
+    if new {
+        store_row(storage, &row, &state, clock.now()).await?;
+    }
+    Ok(Some((
+        word_label(state.word()).to_string(),
+        state.reask().map(reask_label),
+    )))
+}
+
+/// [`door`] on the host's clock and default parameters, for a caller that
+/// has just taken a body in: the payment is stored whatever happens here,
+/// so a fault is logged and never returned.
+pub async fn door_word(storage: &StorageSqlx, txid: &str) {
+    if let Err(fault) = door(storage, &SystemClock, &TickOptions::default(), txid).await {
+        tracing::warn!(
+            marker = "door_word_not_written",
+            %txid,
+            %fault,
+            "the received transaction's tracker row was not written at the door; the next pass writes it"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The pass
 // ---------------------------------------------------------------------------
 

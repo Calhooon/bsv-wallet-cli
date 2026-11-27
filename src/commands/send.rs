@@ -279,6 +279,10 @@ async fn keep_own_payment<S: WalletServices + Send + Sync + 'static>(
         .await
         .map(|r| r.accepted)
         .map_err(|e| e.to_string());
+    // The door's word (#645), as at every road a body is taken in by.
+    if accepted.is_ok() {
+        bsv_wallet_cli::tracker_host::door_word(ctx.wallet.storage(), txid_hex).await;
+    }
     match accepted {
         Ok(true) => Ok(vout),
         Ok(false) => Err(anyhow!("the wallet did not accept its own payment")),

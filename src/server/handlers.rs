@@ -623,6 +623,11 @@ pub async fn internalize_action(
         accepted = result.accepted,
         "internalizeAction"
     );
+    // The door's word (#645): a body taken in with no proof gets its
+    // tracker row here, `built` by the crate's reducer.
+    if let Some(txid) = &subject {
+        crate::tracker_host::door_word(wallet.storage(), txid).await;
+    }
     // From the toolbox 0.7.4 a refusal of the internalized transaction's
     // post is a hint and the answer is `accepted`; the word says so.
     let broadcast = match subject {
