@@ -451,3 +451,48 @@ async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// A courier's sighting
+// ---------------------------------------------------------------------------
+
+/// A payment every broadcaster refused is `built`; a courier that then
+/// hands this host its bytes with no proof (`receive`'s couriers) is heard
+/// as the crate's mempool presence, and the creator reads `announced`. The
+/// same courier a second time adds nothing.
+#[tokio::test]
+async fn a_couriers_sighting_moves_a_built_payment_to_announced() {
+    let paid = Paid::new();
+    let posts = posting(MockResponse::Success(vec![error_post_beef_result(
+        "arc",
+        "the transaction was refused",
+    )]));
+    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts).await;
+    admitted(&app, &paid.tx, paid.payment()).await;
+    let left = door_left(&wallet, &app, &paid.txid).await;
+    assert_eq!(left, (200, "built".to_string(), "built".to_string()));
+
+    for _ in 0..2 {
+        let word = tracker_host::door(
+            wallet.storage(),
+            &SystemClock,
+            &TickOptions::default(),
+            &paid.txid,
+            Some("WhatsOnChain"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(word.map(|w| w.0).as_deref(), Some("announced"));
+    }
+    let left = door_left(&wallet, &app, &paid.txid).await;
+    assert_eq!(
+        left,
+        (200, "announced".to_string(), "announced".to_string())
+    );
+    let (_, hints, _) = tracked(&wallet, &paid.txid).await.expect("a row");
+    assert_eq!(
+        hints,
+        json!([{ "source": "WhatsOnChain|mempool_present", "status": "mempool_present",
+                 "courier": "WhatsOnChain", "observed": hints[0]["observed"] }])
+    );
+}

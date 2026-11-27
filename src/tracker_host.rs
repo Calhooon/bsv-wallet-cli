@@ -1364,12 +1364,20 @@ pub async fn heard<C: Clock>(
 /// `announced` when a broadcaster took the bytes and stays `built` when
 /// none did (a refusal, a fault, no broadcaster).
 ///
+/// **A courier's sighting.** `sighting` names a courier that handed this
+/// host the transaction's bytes with no proof (`receive`'s couriers): a
+/// node the host did not broadcast through holds it unmined, which is the
+/// crate's `HintStatus::MempoolPresent`. Over `built` it reads `announced`,
+/// as an acceptance does (bsv-tracker 0.7.0); it never writes `seen` or a
+/// chain word.
+///
 /// Returns the word and the pending re-ask.
 pub async fn door<C: Clock>(
     storage: &StorageSqlx,
     clock: &C,
     opts: &TickOptions,
     txid: &str,
+    sighting: Option<&str>,
 ) -> Result<Option<(String, Option<String>)>> {
     ensure_tables(storage).await?;
     let txid = txid.to_ascii_lowercase();
@@ -1419,6 +1427,20 @@ pub async fn door<C: Clock>(
         let _ = state.step(&params, &headers, Input::Hint(hint));
         changed = true;
     }
+    // A courier's sighting: the crate's mempool-presence hint, heard once
+    // per courier.
+    if let Some(courier) = sighting {
+        let source = format!("{courier}|mempool_present");
+        if !row.hints.iter().any(|h| h.source == source) {
+            let status = HintStatus::MempoolPresent {
+                source: courier.to_string(),
+            };
+            let hint = Hint::new(source, status, now);
+            row.hints.push(StoredHint::of(&hint));
+            let _ = state.step(&params, &headers, Input::Hint(hint));
+            changed = true;
+        }
+    }
     if changed {
         store_row(storage, &row, &state, now).await?;
     }
@@ -1460,7 +1482,13 @@ async fn request_took(storage: &StorageSqlx, txid: &str) -> Result<bool> {
 /// has just taken a body in: the payment is stored whatever happens here,
 /// so a fault is logged and never returned.
 pub async fn door_word(storage: &StorageSqlx, txid: &str) {
-    if let Err(fault) = door(storage, &SystemClock, &TickOptions::default(), txid).await {
+    door_sighted(storage, txid, None).await;
+}
+
+/// [`door_word`], with the courier that handed the bytes over unproven.
+pub async fn door_sighted(storage: &StorageSqlx, txid: &str, sighting: Option<&str>) {
+    let opts = TickOptions::default();
+    if let Err(fault) = door(storage, &SystemClock, &opts, txid, sighting).await {
         tracing::warn!(
             marker = "door_word_not_written",
             %txid,
