@@ -1349,13 +1349,7 @@ pub async fn door<C: Clock>(
 ) -> Result<Option<(String, Option<String>)>> {
     ensure_tables(storage).await?;
     let txid = txid.to_ascii_lowercase();
-    let out: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM transactions WHERE txid = ? AND status IN ('unproven', 'sending') LIMIT 1",
-    )
-    .bind(&txid)
-    .fetch_optional(storage.pool())
-    .await?;
-    if out.is_none() {
+    if !crate::store::held_unproven(storage.pool(), &txid).await? {
         return Ok(None);
     }
     let as_stored = |stored: Option<(String, Option<Height>, Option<String>)>| {
@@ -1434,16 +1428,15 @@ pub const DOOR_TAKE_SOURCE: &str = "door|accepted";
 /// wallet made reaches `unmined` by other roads (a `noSend` merge promotes
 /// it with no post), and its take is the broadcast memory's.
 async fn request_took(storage: &StorageSqlx, txid: &str) -> Result<bool> {
-    let took: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM proven_tx_reqs r \
-         WHERE r.txid = ? AND r.status IN ('unmined', 'callback', 'unconfirmed') \
-           AND EXISTS (SELECT 1 FROM transactions t \
-                       WHERE t.txid = r.txid AND t.is_outgoing = 0) LIMIT 1",
-    )
-    .bind(txid)
-    .fetch_optional(storage.pool())
-    .await?;
-    Ok(took.is_some())
+    crate::store::received_request_took(storage.pool(), txid).await
+}
+
+/// [`request_took`] for every received transaction at once: the txids, for
+/// the pass. One read, bounded by the requests past the post and not yet
+/// proven.
+async fn requests_that_took(storage: &StorageSqlx) -> Result<std::collections::HashSet<TxId>> {
+    let took = crate::store::received_requests_that_took(storage.pool()).await?;
+    Ok(took.into_iter().collect())
 }
 
 /// [`door`] on the host's clock and default parameters, for a caller that
@@ -1828,6 +1821,29 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         if matches!(state.reask(), Some(Reask::Hint(_))) {
             row.asks = 0;
             row.next_ask_at = None;
+        }
+    }
+    // The door's take, heard on the pass (#645): a received transaction
+    // still `built` whose request the toolbox moved past the post
+    // ([`requests_that_took`]). It is the door's own post taken with no
+    // broadcast memory row to say so, the toolbox's later re-ask taken, or
+    // a store written before the door fed its take. Heard once a row.
+    if states.values().any(|s| matches!(s.word(), Word::Built)) {
+        let took = requests_that_took(storage).await?;
+        for row in rows.iter_mut() {
+            let Some(state) = states.get_mut(&row.txid) else {
+                continue;
+            };
+            if !matches!(state.word(), Word::Built)
+                || !took.contains(&row.txid)
+                || row.hints.iter().any(|h| h.source == DOOR_TAKE_SOURCE)
+            {
+                continue;
+            }
+            let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
+            row.hints.push(StoredHint::of(&hint));
+            let _ = state.step(&params, &snapshot, Input::Hint(hint));
+            report.hints += 1;
         }
     }
     // Announce again what a broadcaster called not final, at its time.
