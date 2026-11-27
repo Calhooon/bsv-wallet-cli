@@ -20,6 +20,7 @@ const STORED_RECEIVED_LABEL: &str = "underreceivedrule";
 mod carried;
 mod from;
 mod lineage;
+mod not_spendable;
 mod received_rule;
 mod user_scope;
 

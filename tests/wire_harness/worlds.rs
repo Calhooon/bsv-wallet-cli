@@ -9,6 +9,7 @@ use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 
 pub(crate) use super::world_names::{known_world, WORLDS};
+use super::{cases_not_spendable, cases_received_rule};
 use crate::wire_support::{header_stub, serve_local, services, Req, CLOSED, J, ROOT_KEY};
 
 pub(crate) use super::payments::{stranger_key, stranger_payment, Payment};
@@ -643,9 +644,8 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
-            "received-rule" => {
-                return super::cases_received_rule::world(storage, &identity, key).await
-            }
+            "received-rule" => return cases_received_rule::world(storage, &identity, key).await,
+            "not-spendable" => return cases_not_spendable::world(storage, &identity, key).await,
             "internalize-held" => {
                 return super::held_world::seed_internalize_held(storage, &identity, key).await
             }
