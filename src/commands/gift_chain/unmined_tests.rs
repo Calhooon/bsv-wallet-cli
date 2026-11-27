@@ -235,14 +235,142 @@ async fn the_door_declines_the_record_of_a_claim_whose_deposit_has_no_proof() {
     }
 }
 
-/// The command in its text mode on the same gift: posted once, exit zero,
-/// nothing in the balance yet.
+/// THE HINT (#638), in text: a claim posted and not recorded yet says
+/// what happened (the claim is posted, its coin is not in the balance, the
+/// deposit had no checked proof, the door's own words) and the commands
+/// that take the coin in once the claim is mined, one per output of the
+/// claim that pays the wallet. Exit zero: the claim is on the network.
 #[tokio::test]
-async fn the_text_mode_claim_of_an_unmined_deposit_is_posted_once_and_exits_zero() {
+async fn the_text_output_says_what_happened_and_the_commands_that_take_the_coin_in() {
     let gift = Claim::new();
+    let (claim, deposit) = (txid_of(&gift.claim), txid_of(&gift.deposit));
     let ctx = claimer(&gift, false).await;
-    let answer = crate::commands::gift_claim::run(&ctx, &txid_of(&gift.deposit), false).await;
-    assert!(answer.is_ok(), "{answer:?}");
+    let report = crate::commands::gift_claim::claim(&ctx, &deposit, false)
+        .await
+        .expect("the claim is posted: exit zero");
     assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
     assert_eq!(spendable(ctx.wallet.storage()).await, 0);
+    assert_eq!(
+        report.text(),
+        format!(
+            "🔓 Gift claim broadcast
+   amount:     5000 sats → your address
+   fee:        156 sats (change 844 sats back to you)
+   unlocks:    2020-09-13T12:26:40+00:00
+   claim txid: {claim}
+   word:       announced (the tracker's)
+   wallet:     NOT recorded yet. The claim is posted and its coin is not in your balance:
+               no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim (Invalid BEEF at byte 48: InputNamesNoElement).
+               Once the claim is mined, take it in with:
+                 bsv-wallet receive {claim}
+                 bsv-wallet receive {claim} --vout 1
+
+   `bsv-wallet tracker-tick` (or `serve`) asks for its proof; the word turns
+   `mined` when the proof checks against the header service."
+        )
+    );
+}
+
+/// THE HINT (#638), in JSON: the same as fields a caller can read.
+/// `recorded` is false and `recordError` the door's words, as before;
+/// `recordHint` says what happened and what takes the coin in, and
+/// `receiveCommands` lists the commands, one per output that pays the
+/// wallet.
+#[tokio::test]
+async fn the_json_output_carries_the_hint_and_the_commands_as_fields() {
+    let gift = Claim::new();
+    let (claim, deposit) = (txid_of(&gift.claim), txid_of(&gift.deposit));
+    let ctx = claimer(&gift, true).await;
+    let report = crate::commands::gift_claim::claim(&ctx, &deposit, false)
+        .await
+        .expect("the claim is posted: exit zero");
+    assert_eq!(
+        report.json(),
+        serde_json::json!({
+            "claimTxid": claim,
+            "depositTxid": deposit,
+            "amount": 5000,
+            "fee": 156,
+            "change": 844,
+            "lockUntil": 1_600_000_000,
+            "broadcast": "MockProvider",
+            "word": "announced",
+            "reask": null,
+            "heldUntil": null,
+            "notFinal": null,
+            "recorded": false,
+            "recordError": "Invalid BEEF at byte 48: InputNamesNoElement",
+            "recordHint": format!(
+                "the claim is posted and its coin is not in your balance yet: no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim (Invalid BEEF at byte 48: InputNamesNoElement); once the claim is mined, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
+            ),
+            "receiveCommands": [
+                format!("bsv-wallet receive {claim}"),
+                format!("bsv-wallet receive {claim} --vout 1"),
+            ],
+        })
+    );
+}
+
+/// A claim the wallet recorded at once (its deposit mined) carries no
+/// hint and no command, in either mode; a claim held as not final says
+/// when it is recorded and keeps the commands for a claim that is mined
+/// and still not in the balance.
+#[tokio::test]
+async fn a_recorded_claim_carries_no_hint_and_a_held_one_says_when_it_is_recorded() {
+    use crate::commands::gift_claim::Recorded;
+
+    let gift = Claim::new();
+    let claim = txid_of(&gift.claim);
+    let ctx = context(
+        &gift.root,
+        storage().await,
+        super::genesis_tests::proving(&gift.deposit, 900_000),
+        Chain::Main,
+    )
+    .await;
+    let mut report = crate::commands::gift_claim::claim(&ctx, &txid_of(&gift.deposit), false)
+        .await
+        .unwrap();
+    assert_eq!(report.recorded, Recorded::Yes);
+    let json = report.json();
+    assert_eq!(json["recorded"], true);
+    assert_eq!(json["recordError"], serde_json::Value::Null);
+    assert_eq!(json["recordHint"], serde_json::Value::Null);
+    assert_eq!(json["receiveCommands"], serde_json::json!([]));
+    assert!(
+        report
+            .text()
+            .contains("   wallet:     recorded; 5844 sats are in your balance\n"),
+        "{}",
+        report.text()
+    );
+    assert!(!report.text().contains("receive"), "{}", report.text());
+
+    // The same claim as `--force` leaves it when a broadcaster calls it
+    // not final: nothing is recorded before one takes it.
+    report.recorded = Recorded::WhenTaken;
+    report.outcome.not_final = Some("Arcade: 476 non-final".to_string());
+    let json = report.json();
+    assert_eq!(json["recorded"], false);
+    assert_eq!(json["recordError"], serde_json::Value::Null);
+    assert_eq!(
+        json["recordHint"],
+        format!(
+            "the claim is held as not final and nothing is recorded before a broadcaster takes it; if it is mined and still not in your balance, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
+        )
+    );
+    assert_eq!(
+        json["receiveCommands"],
+        serde_json::json!([
+            format!("bsv-wallet receive {claim}"),
+            format!("bsv-wallet receive {claim} --vout 1"),
+        ])
+    );
+    assert!(
+        report
+            .text()
+            .contains("   wallet:     recorded when a broadcaster takes the claim\n"),
+        "{}",
+        report.text()
+    );
 }
