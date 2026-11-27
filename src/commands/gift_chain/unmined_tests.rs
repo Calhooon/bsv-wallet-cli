@@ -3,36 +3,52 @@
 //! toolbox's mock services, whose broadcaster takes every post, whose
 //! header service checks every root, and which hold no proof of the
 //! deposit when the claim is made and the claim's own proof afterwards.
+//!
+//! Nothing here can reach a broadcaster or an explorer: every wallet is
+//! built on `MockWalletServices` (no HTTP client), and the one courier a
+//! test asks (`receive` by hand) is a fixture on loopback, the one rung of
+//! its ladder at that fixture's base (#637).
 
 use super::genesis_tests::context;
 use super::tests::{opts, spendable, storage, At, Claim};
 use super::*;
+use crate::commands::gift_claim::{ClaimReport, Recorded};
 use crate::context::WalletContext;
 use crate::test_support::txid_of;
-use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
+use bsv_wallet_toolbox::services::mock::{
+    MockResponse, MockWalletServices, MockWalletServicesBuilder,
+};
 use bsv_wallet_toolbox::services::{BlockHeader, GetMerklePathResult, GetRawTxResult};
 use bsv_wallet_toolbox::Chain;
+
+mod held_record;
+
+/// A wallet of a gift's recipient, on the mock services.
+type Claimer = WalletContext<MockWalletServices>;
 
 /// The height the claim is mined at; the mock's tip is five above it.
 const CLAIM_HEIGHT: u32 = 900_005;
 
-/// Services that hand out `gift`'s deposit, have no proof of it when the
-/// claim is made (the one proof request of the command), and answer every
-/// later proof request with the claim's own proof at [`CLAIM_HEIGHT`].
-fn unmined_then_mined(gift: &Claim) -> MockWalletServices {
-    let no_proof = GetMerklePathResult {
+/// The services' answer to a proof request: `raw`'s one-leaf proof at
+/// `height`, or no proof.
+fn proof_of(raw: &[u8], height: Option<u32>) -> MockResponse<GetMerklePathResult> {
+    MockResponse::Success(GetMerklePathResult {
         name: Some("Services".to_string()),
-        merkle_path: None,
+        merkle_path: height.and_then(|at| {
+            MerklePath::from_coinbase_txid(&txid_of(raw), at)
+                .to_hex()
+                .ok()
+        }),
         header: None,
         error: None,
         notes: vec![],
-    };
-    let claim_proof = GetMerklePathResult {
-        merkle_path: MerklePath::from_coinbase_txid(&txid_of(&gift.claim), CLAIM_HEIGHT)
-            .to_hex()
-            .ok(),
-        ..no_proof.clone()
-    };
+    })
+}
+
+/// Services that hand out `gift`'s deposit, have no proof of it when the
+/// claim is made (the one proof request of the command), and answer every
+/// later proof request with the claim's own proof at [`CLAIM_HEIGHT`].
+fn unmined_then_mined(gift: &Claim) -> MockWalletServicesBuilder {
     MockWalletServices::builder()
         .height(CLAIM_HEIGHT + 5)
         .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
@@ -43,10 +59,9 @@ fn unmined_then_mined(gift: &Claim) -> MockWalletServices {
             could_not_look: false,
         }))
         .get_merkle_path_response(MockResponse::Sequence(vec![
-            MockResponse::Success(no_proof),
-            MockResponse::Success(claim_proof),
+            proof_of(&gift.deposit, None),
+            proof_of(&gift.claim, Some(CLAIM_HEIGHT)),
         ]))
-        .build()
 }
 
 /// The claim is mined: the header service's header at [`CLAIM_HEIGHT`]
@@ -66,24 +81,49 @@ fn mine_the_claim(services: &MockWalletServices, claim_txid: &str) {
 
 /// A wallet of the gift's recipient whose services hold no proof of the
 /// deposit, `json` its output mode.
-async fn claimer(gift: &Claim, json: bool) -> WalletContext<MockWalletServices> {
-    let mut ctx = context(
-        &gift.root,
-        storage().await,
-        unmined_then_mined(gift),
-        Chain::Main,
-    )
-    .await;
+async fn claimer(gift: &Claim, json: bool) -> Claimer {
+    let services = unmined_then_mined(gift).build();
+    let mut ctx = context(&gift.root, storage().await, services, Chain::Main).await;
     ctx.json_output = json;
     ctx
+}
+
+/// `gift-claim <deposit txid>` through `ctx`, its report in hand.
+async fn claim_gift(ctx: &Claimer, gift: &Claim) -> Result<ClaimReport> {
+    crate::commands::gift_claim::claim(ctx, &txid_of(&gift.deposit), false).await
+}
+
+/// A gift whose deposit has no proof, claimed in the output mode `json`:
+/// the gift, the claimer's wallet and the command's report. The claim is
+/// posted once (exit zero) and not recorded yet.
+async fn claim_unmined(json: bool) -> (Claim, Claimer, ClaimReport) {
+    let gift = Claim::new();
+    let ctx = claimer(&gift, json).await;
+    let report = claim_gift(&ctx, &gift).await.expect("posted: exit zero");
+    assert!(matches!(report.recorded, Recorded::NotYet { .. }));
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    assert_eq!(spendable(ctx.wallet.storage()).await, 0);
+    (gift, ctx, report)
+}
+
+/// [`claim_unmined`]: the gift, the claim's txid and the claimer's wallet.
+async fn claimed() -> (Claim, String, Claimer) {
+    let (gift, ctx, _) = claim_unmined(true).await;
+    let claim_txid = txid_of(&gift.claim);
+    (gift, claim_txid, ctx)
 }
 
 /// What the wallet's own storage holds of the claim: the tracker's row
 /// (its word, whether it carries the wallet's pending record and a BEEF to
 /// announce again), the transactions the store holds and the spendable
 /// satoshis.
-async fn held(ctx: &WalletContext<MockWalletServices>, claim_txid: &str) -> String {
+async fn held(ctx: &Claimer, claim_txid: &str) -> String {
     let storage = ctx.wallet.storage();
+    // A claim refused before the tracker heard of it made no table yet:
+    // the tracker's own read makes its tables.
+    tracker_host::stored_word(storage, claim_txid)
+        .await
+        .unwrap();
     let row: Option<(String, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
         "SELECT word, on_accept, reannounce_beef FROM tracker_states WHERE txid = ?",
     )
@@ -91,46 +131,80 @@ async fn held(ctx: &WalletContext<MockWalletServices>, claim_txid: &str) -> Stri
     .fetch_optional(storage.pool())
     .await
     .unwrap();
-    let transactions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
-        .fetch_one(storage.pool())
-        .await
-        .unwrap();
-    let outputs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outputs")
-        .fetch_one(storage.pool())
-        .await
-        .unwrap();
+    let mut counts = Vec::new();
+    for table in ["transactions", "outputs"] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        counts.push(format!("{table}: {count}"));
+    }
     let row = row.map(|(word, record, beef)| {
+        let kept = |held: bool| if held { "held" } else { "none" };
         format!(
             "word={word} record={} beef={}",
-            if record.is_some() { "held" } else { "none" },
-            if beef.is_some() { "held" } else { "none" }
+            kept(record.is_some()),
+            kept(beef.is_some())
         )
     });
     format!(
-        "row: {row:?}; transactions: {transactions}; outputs: {outputs}; spendable: {}",
+        "row: {row:?}; {}; spendable: {}",
+        counts.join("; "),
         spendable(storage).await
     )
 }
 
 /// One pass of the tracker as `tracker-tick`, `serve` and `daemon` run
 /// it: the pass, then the records it owes the wallet.
-async fn pass(ctx: &WalletContext<MockWalletServices>, at: u64) -> crate::tracker_host::TickReport {
-    let mut report = tracker_host::tick(
-        ctx.wallet.storage(),
-        ctx.wallet.services(),
-        &At(at),
-        &opts(),
-    )
-    .await
-    .unwrap();
-    tracker_host::record_accepted(&ctx.wallet, &mut report).await;
+async fn pass(ctx: &Claimer, at: u64) -> tracker_host::TickReport {
+    let (storage, services) = (ctx.wallet.storage(), ctx.wallet.services());
+    let mut report = tracker_host::tick(storage, services, &At(at), &opts())
+        .await
+        .unwrap();
+    tracker_host::record_accepted(storage, &ctx.wallet, &mut report).await;
     report
+}
+
+/// The pass made the claim's record: its line says so, and the wallet
+/// holds the claim's one transaction, its two outputs (the gift and the
+/// change), their sum the balance, and no pending record on the row.
+async fn assert_made(report: &tracker_host::TickReport, ctx: &Claimer, gift: &Claim) {
+    let claim_txid = txid_of(&gift.claim);
+    assert!(
+        report
+            .stored
+            .contains(&format!("{claim_txid}: recorded in the wallet")),
+        "{report:?}"
+    );
+    assert_recorded_once(ctx, gift).await;
+}
+
+/// The wallet holds the claim, recorded once (see [`assert_made`]).
+async fn assert_recorded_once(ctx: &Claimer, gift: &Claim) {
+    assert_eq!(
+        held(ctx, &txid_of(&gift.claim)).await,
+        format!(
+            "row: Some(\"word=mined record=none beef=none\"); transactions: 1; outputs: 2; spendable: {}",
+            gift.plan.covenant.amount + gift.plan.change
+        )
+    );
 }
 
 /// Seconds since the epoch, as the command's own clock reads them.
 fn now() -> u64 {
     chrono::Utc::now().timestamp().cast_unsigned()
 }
+
+/// The two commands that take a mined claim's coin in by hand.
+fn receive_commands(claim_txid: &str) -> Vec<String> {
+    vec![
+        format!("bsv-wallet receive {claim_txid}"),
+        format!("bsv-wallet receive {claim_txid} --vout 1"),
+    ]
+}
+
+/// The door's words for the record of a claim whose deposit has no proof.
+const DOOR_SAID: &str = "Invalid BEEF at byte 48: InputNamesNoElement";
 
 /// THE TEST THAT DECIDES (#638): a gift whose deposit has no proof yet,
 /// claimed. The claim is posted once and the command exits zero; the door
@@ -176,6 +250,28 @@ async fn a_claim_of_an_unmined_deposit_is_recorded_by_the_pass_once_the_claim_is
         gift.plan.covenant.amount + gift.plan.change,
         "the claim's coin is recorded once the claim is mined: after the claim: {after_claim}; after the pass: {after_pass}"
     );
+    assert_eq!(services.call_count("post_beef"), 1, "posted once");
+    assert_made(&report, &ctx, &gift).await;
+}
+
+/// The claim handed to the broadcasters and the tracker through `ctx`, as
+/// the command hands it, at the time `at`.
+async fn announce(ctx: &Claimer, gift: &Claim, at: u64, force: bool) -> ClaimOutcome {
+    let (storage, services) = (ctx.wallet.storage(), ctx.wallet.services());
+    let (deposit, claim) = (&gift.deposit, &gift.claim);
+    announce_claim(
+        storage,
+        services,
+        &At(at),
+        &opts(),
+        deposit,
+        claim,
+        &gift.pay,
+        gift.lock,
+        force,
+    )
+    .await
+    .unwrap()
 }
 
 /// What the door answers when the claim's record is handed to it while
@@ -188,19 +284,7 @@ async fn the_door_declines_the_record_of_a_claim_whose_deposit_has_no_proof() {
 
     let gift = Claim::new();
     let ctx = claimer(&gift, true).await;
-    let outcome = announce_claim(
-        ctx.wallet.storage(),
-        ctx.wallet.services(),
-        &At(now()),
-        &opts(),
-        &gift.deposit,
-        &gift.claim,
-        &gift.pay,
-        gift.lock,
-        false,
-    )
-    .await
-    .unwrap();
+    let outcome = announce(&ctx, &gift, now(), false).await;
     assert_eq!(outcome.word, "announced");
     let record = outcome.record.expect("an accepted claim has a record");
     assert_eq!(record.outputs.len(), 2, "the gift and the change");
@@ -211,45 +295,30 @@ async fn the_door_declines_the_record_of_a_claim_whose_deposit_has_no_proof() {
         .await
         .expect_err("the door declines the record");
     println!("the door: {refusal}");
+    let class = bsv_sdk::WalletRefusalClass::InvalidParameter;
     assert!(
-        matches!(
-            refusal,
-            bsv_sdk::Error::WalletRefusal {
-                class: bsv_sdk::WalletRefusalClass::InvalidParameter,
-                ..
-            }
-        ),
+        matches!(&refusal, bsv_sdk::Error::WalletRefusal { class: of, .. } if *of == class),
         "{refusal:?}"
     );
-    assert_eq!(
-        refusal.to_string(),
-        "Invalid BEEF at byte 48: InputNamesNoElement"
-    );
+    assert_eq!(refusal.to_string(), DOOR_SAID);
     assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
-    for table in ["transactions", "outputs"] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(ctx.wallet.storage().pool())
-            .await
-            .unwrap();
-        assert_eq!(count, 0, "the refusal wrote {table}");
-    }
+    assert_eq!(
+        held(&ctx, &txid_of(&gift.claim)).await,
+        "row: Some(\"word=announced record=held beef=none\"); transactions: 0; outputs: 0; spendable: 0",
+        "the refusal wrote nothing, and the row keeps the record"
+    );
 }
 
 /// THE HINT (#638), in text: a claim posted and not recorded yet says
 /// what happened (the claim is posted, its coin is not in the balance, the
-/// deposit had no checked proof, the door's own words) and the commands
-/// that take the coin in once the claim is mined, one per output of the
-/// claim that pays the wallet. Exit zero: the claim is on the network.
+/// deposit had no checked proof, the door's own words), that the wallet
+/// keeps the record and who makes it, and the commands that take the coin
+/// in by hand once the claim is mined, one per output of the claim that
+/// pays the wallet. Exit zero: the claim is on the network.
 #[tokio::test]
 async fn the_text_output_says_what_happened_and_the_commands_that_take_the_coin_in() {
-    let gift = Claim::new();
+    let (gift, _, report) = claim_unmined(false).await;
     let (claim, deposit) = (txid_of(&gift.claim), txid_of(&gift.deposit));
-    let ctx = claimer(&gift, false).await;
-    let report = crate::commands::gift_claim::claim(&ctx, &deposit, false)
-        .await
-        .expect("the claim is posted: exit zero");
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
-    assert_eq!(spendable(ctx.wallet.storage()).await, 0);
     assert_eq!(
         report.text(),
         format!(
@@ -260,8 +329,10 @@ async fn the_text_output_says_what_happened_and_the_commands_that_take_the_coin_
    claim txid: {claim}
    word:       announced (the tracker's)
    wallet:     NOT recorded yet. The claim is posted and its coin is not in your balance:
-               no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim (Invalid BEEF at byte 48: InputNamesNoElement).
-               Once the claim is mined, take it in with:
+               no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim ({DOOR_SAID}).
+               The wallet keeps the claim's record and makes it once the claim is mined:
+               `daemon` and `serve` do that in their tracker pass; with neither running,
+               run `bsv-wallet tracker-tick` after the claim is mined. Or take it in by hand then:
                  bsv-wallet receive {claim}
                  bsv-wallet receive {claim} --vout 1
 
@@ -273,17 +344,14 @@ async fn the_text_output_says_what_happened_and_the_commands_that_take_the_coin_
 
 /// THE HINT (#638), in JSON: the same as fields a caller can read.
 /// `recorded` is false and `recordError` the door's words, as before;
-/// `recordHint` says what happened and what takes the coin in, and
+/// `recordHeld` says the wallet keeps the claim's record and makes it by
+/// itself, `recordHint` says what happened and what takes the coin in, and
 /// `receiveCommands` lists the commands, one per output that pays the
 /// wallet.
 #[tokio::test]
 async fn the_json_output_carries_the_hint_and_the_commands_as_fields() {
-    let gift = Claim::new();
-    let (claim, deposit) = (txid_of(&gift.claim), txid_of(&gift.deposit));
-    let ctx = claimer(&gift, true).await;
-    let report = crate::commands::gift_claim::claim(&ctx, &deposit, false)
-        .await
-        .expect("the claim is posted: exit zero");
+    let (gift, _, report) = claim_unmined(true).await;
+    let (deposit, claim) = (txid_of(&gift.deposit), txid_of(&gift.claim));
     assert_eq!(
         report.json(),
         serde_json::json!({
@@ -299,78 +367,68 @@ async fn the_json_output_carries_the_hint_and_the_commands_as_fields() {
             "heldUntil": null,
             "notFinal": null,
             "recorded": false,
-            "recordError": "Invalid BEEF at byte 48: InputNamesNoElement",
+            "recordError": DOOR_SAID,
+            "recordHeld": true,
             "recordHint": format!(
-                "the claim is posted and its coin is not in your balance yet: no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim (Invalid BEEF at byte 48: InputNamesNoElement); once the claim is mined, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
+                "the claim is posted and its coin is not in your balance yet: no checked proof of the gift's deposit {deposit} was to be had, so the wallet could not record the claim ({DOOR_SAID}); the wallet keeps the claim's record and makes it once the claim is mined: `daemon` and `serve` do that in their tracker pass, and with neither running `bsv-wallet tracker-tick` does; by hand, once the claim is mined, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
             ),
-            "receiveCommands": [
-                format!("bsv-wallet receive {claim}"),
-                format!("bsv-wallet receive {claim} --vout 1"),
-            ],
+            "receiveCommands": receive_commands(&claim),
         })
     );
 }
 
+/// `recorded` and `recordHeld` of the command's JSON, which carries no
+/// `recordError` (the door declined nothing).
+fn flags(json: &serde_json::Value) -> (bool, bool) {
+    assert_eq!(json["recordError"], serde_json::Value::Null);
+    (json["recorded"] == true, json["recordHeld"] == true)
+}
+
 /// A claim the wallet recorded at once (its deposit mined) carries no
-/// hint and no command, in either mode; a claim held as not final says
-/// when it is recorded and keeps the commands for a claim that is mined
-/// and still not in the balance.
+/// hint and no command, in either mode, and leaves no pending record; a
+/// claim held as not final says when it is recorded and keeps the commands
+/// for a claim that is mined and still not in the balance.
 #[tokio::test]
 async fn a_recorded_claim_carries_no_hint_and_a_held_one_says_when_it_is_recorded() {
-    use crate::commands::gift_claim::Recorded;
-
     let gift = Claim::new();
     let claim = txid_of(&gift.claim);
-    let ctx = context(
-        &gift.root,
-        storage().await,
-        super::genesis_tests::proving(&gift.deposit, 900_000),
-        Chain::Main,
-    )
-    .await;
-    let mut report = crate::commands::gift_claim::claim(&ctx, &txid_of(&gift.deposit), false)
-        .await
-        .unwrap();
+    let services = super::genesis_tests::proving(&gift.deposit, 900_000);
+    let ctx = context(&gift.root, storage().await, services, Chain::Main).await;
+    let mut report = claim_gift(&ctx, &gift).await.unwrap();
     assert_eq!(report.recorded, Recorded::Yes);
-    let json = report.json();
-    assert_eq!(json["recorded"], true);
-    assert_eq!(json["recordError"], serde_json::Value::Null);
+    let (json, text) = (report.json(), report.text());
+    assert_eq!(flags(&json), (true, false), "recorded, and nothing held");
     assert_eq!(json["recordHint"], serde_json::Value::Null);
     assert_eq!(json["receiveCommands"], serde_json::json!([]));
     assert!(
-        report
-            .text()
-            .contains("   wallet:     recorded; 5844 sats are in your balance\n"),
-        "{}",
-        report.text()
+        text.contains("   wallet:     recorded; 5844 sats are in your balance\n")
+            && !text.contains("receive"),
+        "{text}"
     );
-    assert!(!report.text().contains("receive"), "{}", report.text());
+    assert_eq!(
+        held(&ctx, &claim).await,
+        "row: Some(\"word=announced record=none beef=none\"); transactions: 1; outputs: 2; spendable: 5844",
+        "a claim recorded at once leaves no pending record"
+    );
 
     // The same claim as `--force` leaves it when a broadcaster calls it
     // not final: nothing is recorded before one takes it.
     report.recorded = Recorded::WhenTaken;
     report.outcome.not_final = Some("Arcade: 476 non-final".to_string());
-    let json = report.json();
-    assert_eq!(json["recorded"], false);
-    assert_eq!(json["recordError"], serde_json::Value::Null);
+    let (text, json) = (report.text(), report.json());
+    assert_eq!(flags(&json), (false, true), "not recorded, the record held");
     assert_eq!(
         json["recordHint"],
         format!(
-            "the claim is held as not final and nothing is recorded before a broadcaster takes it; if it is mined and still not in your balance, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
+            "the claim is held as not final and nothing is recorded before a broadcaster takes it; the wallet keeps the claim's record and makes it then, in the tracker pass of `daemon` and `serve` or by `bsv-wallet tracker-tick`; if the claim is mined and still not in your balance, run `bsv-wallet receive {claim}` and `bsv-wallet receive {claim} --vout 1`"
         )
     );
     assert_eq!(
         json["receiveCommands"],
-        serde_json::json!([
-            format!("bsv-wallet receive {claim}"),
-            format!("bsv-wallet receive {claim} --vout 1"),
-        ])
+        serde_json::json!(receive_commands(&claim))
     );
     assert!(
-        report
-            .text()
-            .contains("   wallet:     recorded when a broadcaster takes the claim\n"),
-        "{}",
-        report.text()
+        text.contains("   wallet:     recorded when a broadcaster takes the claim\n"),
+        "{text}"
     );
 }

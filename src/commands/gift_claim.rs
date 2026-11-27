@@ -29,10 +29,11 @@ pub(crate) enum Recorded {
     Yes,
     /// The claim is posted and the door did not take its outputs: what it
     /// said. The coin is the wallet's on the chain and is not in its
-    /// balance yet (#638).
+    /// balance yet; the tracker's row keeps the record, and the pass makes
+    /// it once the claim is mined (#638).
     NotYet { said: String },
     /// Held as not final: no broadcaster took the claim, so nothing is
-    /// recorded before one does.
+    /// recorded before one does. The row keeps the record with the claim.
     WhenTaken,
 }
 
@@ -78,11 +79,11 @@ impl ClaimReport {
         match &self.recorded {
             Recorded::Yes => None,
             Recorded::NotYet { said } => Some(format!(
-                "the claim is posted and its coin is not in your balance yet: {} ({said}); once the claim is mined, run `{by_hand}`",
+                "the claim is posted and its coin is not in your balance yet: {} ({said}); the wallet keeps the claim's record and makes it once the claim is mined: `daemon` and `serve` do that in their tracker pass, and with neither running `bsv-wallet tracker-tick` does; by hand, once the claim is mined, run `{by_hand}`",
                 self.why_not_yet()
             )),
             Recorded::WhenTaken => Some(format!(
-                "the claim is held as not final and nothing is recorded before a broadcaster takes it; if it is mined and still not in your balance, run `{by_hand}`"
+                "the claim is held as not final and nothing is recorded before a broadcaster takes it; the wallet keeps the claim's record and makes it then, in the tracker pass of `daemon` and `serve` or by `bsv-wallet tracker-tick`; if the claim is mined and still not in your balance, run `{by_hand}`"
             )),
         }
     }
@@ -118,6 +119,7 @@ impl ClaimReport {
                 Recorded::NotYet { said } => Some(said.clone()),
                 _ => None,
             },
+            "recordHeld": self.recorded != Recorded::Yes,
             "recordHint": self.record_hint(),
             "receiveCommands": match self.recorded {
                 Recorded::Yes => vec![],
@@ -151,7 +153,7 @@ impl ClaimReport {
             )),
             Recorded::NotYet { said } => {
                 lines.push(format!(
-                    "   wallet:     NOT recorded yet. The claim is posted and its coin is not in your balance:\n               {} ({said}).\n               Once the claim is mined, take it in with:",
+                    "   wallet:     NOT recorded yet. The claim is posted and its coin is not in your balance:\n               {} ({said}).\n               The wallet keeps the claim's record and makes it once the claim is mined:\n               `daemon` and `serve` do that in their tracker pass; with neither running,\n               run `bsv-wallet tracker-tick` after the claim is mined. Or take it in by hand then:",
                     self.why_not_yet()
                 ));
                 lines.extend(
@@ -266,14 +268,27 @@ pub(crate) async fn claim<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 
 
     // 6. the wallet records its own claim (E4): the BEEF is in hand, so
     // nothing scans the chain to learn what this wallet just did. A claim
-    // held as not final is recorded when its re-announce is accepted.
+    // held as not final is recorded when its re-announce is accepted. The
+    // tracker's row keeps the record from the post until it is made
+    // (#638): a door that declines it now (a deposit not mined yet) leaves
+    // it for the pass that sees the claim's own proof.
     let recorded = match outcome.record.clone() {
         Some(record) => match ctx
             .wallet
             .internalize_action(record, Some("bsv-wallet-cli"))
             .await
         {
-            Ok(result) if result.accepted => Recorded::Yes,
+            Ok(result) if result.accepted => {
+                // The record is made: it leaves the tracker's row. A row
+                // that could not be written keeps it, and the pass that
+                // hands it over again changes nothing.
+                if let Err(e) =
+                    crate::tracker_host::record_made(ctx.wallet.storage(), &plan.claim_txid).await
+                {
+                    tracing::warn!(marker = "owed_record_not_cleared", txid = %plan.claim_txid, error = %e, "the claim is recorded and its row still holds the record");
+                }
+                Recorded::Yes
+            }
             Ok(_) => Recorded::NotYet {
                 said: "the wallet did not accept its own claim".to_string(),
             },

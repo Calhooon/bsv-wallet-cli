@@ -20,7 +20,7 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
         &TickOptions::from_config(&ctx.config),
     )
     .await?;
-    tracker_host::record_accepted(&ctx.wallet, &mut report).await;
+    tracker_host::record_accepted(ctx.wallet.storage(), &ctx.wallet, &mut report).await;
     if ctx.json_output {
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
@@ -43,6 +43,9 @@ pub async fn run(ctx: &WalletContext) -> Result<()> {
     }
     for line in &report.stored {
         println!("  storage:   {line}");
+    }
+    for line in &report.owed {
+        println!("  owed:      {line}");
     }
     for line in &report.faults {
         println!("  fault:     {line}");

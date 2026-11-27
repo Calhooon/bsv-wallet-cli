@@ -84,7 +84,7 @@ mod tests {
                 now - 1,
             ),
             Some(now),
-            Some(Reannounce {
+            Keep::Reannounce(Reannounce {
                 beef: bytes.to_vec(),
                 at: now,
                 on_accept: None,
@@ -130,7 +130,7 @@ mod tests {
         for old_hex in [true, false] {
             let (wallet, txid, bytes) = seeded().await;
             let mut report = accepted(&wallet, &txid, &bytes, old_hex).await;
-            record_accepted(&wallet, &mut report).await;
+            record_accepted(wallet.storage(), &wallet, &mut report).await;
             assert_eq!(
                 report.stored,
                 vec![format!("{txid}: recorded in the wallet")]
