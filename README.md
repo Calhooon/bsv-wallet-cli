@@ -642,7 +642,7 @@ browser caller can read it.
 
 | route | reading |
 |---|---|
-| `GET /tx/{txid}` (`tx_word`, behind the same bearer as `/chain-feed`) | The last tick's stored tracker word. The next tick corrects a dead row with no path when the toolbox holds a proof the word predates and its root checks, within the pass's shared 100-creator limit. |
+| `GET /tx/{txid}` (`tx_word`, behind the same bearer as `/chain-feed`) | The stored tracker word: the last tick's, or the door's for a received payment with no proof (`built` when taken in, `announced` once a broadcaster took the door's post or a `receive` courier handed it over unmined; #645). The next tick corrects a dead row with no path when the toolbox holds a proof the word predates and its root checks, within the pass's shared 100-creator limit. |
 
 The response for one transaction is `{txid, word, height, reask,
 evidence}`, where `evidence` is, for `mined`, the stored proof's `root` and
