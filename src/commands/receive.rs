@@ -71,7 +71,19 @@ where
     let accepted = fund::internalize_beef(ctx, &beef_bytes, resolved_vout)
         .await
         .map_err(|e| anyhow!("refused tx {txid} from {courier}: {e:#}"))?;
+    // A courier's sighting (#645): a courier that handed over the bytes
+    // with no proof of the subject holds the transaction unmined, and the
+    // tracker hears it as mempool presence.
+    if accepted && subject_unproven(&beef_bytes, txid) {
+        bsv_wallet_cli::tracker_host::door_sighted(ctx.wallet.storage(), txid, Some(courier)).await;
+    }
     Ok((resolved_vout, accepted))
+}
+
+/// Does the BEEF carry `txid` with no merkle path of its own? Bytes that do
+/// not parse say nothing.
+fn subject_unproven(beef_bytes: &[u8], txid: &str) -> bool {
+    Beef::from_binary(beef_bytes).is_ok_and(|beef| beef.find_bump(txid).is_none())
 }
 
 /// The BEEF of `txid`, and the output of it that pays us: `vout` when the
