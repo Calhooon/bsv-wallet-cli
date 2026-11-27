@@ -14,6 +14,7 @@ pub(crate) mod cases_certificate_privacy;
 pub(crate) mod cases_divergences;
 pub(crate) mod cases_internalize_door;
 pub(crate) mod cases_internalize_rules;
+pub(crate) mod cases_not_spendable;
 pub(crate) mod cases_origin_gate;
 pub(crate) mod cases_owner_door;
 pub(crate) mod cases_page_bounds;
