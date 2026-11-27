@@ -990,7 +990,11 @@ jobs:
     needs: changes
     # Never skipped: see lint's. Each step skips on a docs-only change (#476).
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04 (#654): since `ubuntu-latest` became ubuntu-26.04, Playwright 1.58.2
+    # refuses Chromium there ("does not support chromium on ubuntu26.04-x64") and this job
+    # failed before any scenario ran. The pin leaves with the Playwright bump that is re-tested
+    # on each host (CLAUDE.md, Dependencies).
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     # The runner context is not available in a job's env; the wallets' tmp
     # directory is set on the step that runs the harness.
