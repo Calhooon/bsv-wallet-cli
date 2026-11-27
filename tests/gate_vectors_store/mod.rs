@@ -7,7 +7,7 @@ use bsv_sdk::primitives::hash::{sha256, sha256d};
 use bsv_sdk::transaction::MerklePath;
 use bsv_tracker::{ChainEnvelope, ChainEvent, EventHeader, Hint, HintStatus};
 use bsv_wallet_cli::spend_gate::Origin;
-use bsv_wallet_cli::tracker_host::{heard, read_creators, SystemClock, TickOptions};
+use bsv_wallet_cli::tracker_host::{heard, read_creators, Keep, SystemClock, TickOptions};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::services::BlockHeader;
 use bsv_wallet_toolbox::{StorageSqlx, WalletStorageWriter};
@@ -255,7 +255,7 @@ pub(crate) async fn hint(built: &Built, status: HintStatus) {
         &built.txid,
         hint,
         None,
-        None,
+        Keep::Nothing,
     )
     .await
     .unwrap();

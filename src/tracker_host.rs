@@ -114,6 +114,26 @@
 //! time) is kept with its BEEF and handed to the broadcasters again at the
 //! lock time ([`heard`], and the re-announce step of [`tick`]).
 //!
+//! # A record the wallet owes itself (#638, #620)
+//!
+//! A transaction the wallet built and whose outputs it has yet to take in
+//! (a `gift-claim`) keeps the `internalizeAction` arguments on its row
+//! (`on_accept`) from the moment a broadcaster takes it until the wallet
+//! has made the record, and not a step less: the record does not leave the
+//! row at the broadcaster's acceptance. The caller that holds the wallet
+//! tries the door at once with the BEEF in hand ([`record_accepted`], and
+//! `gift-claim` itself); a door that declines (a claim whose deposit is not
+//! mined yet goes without the deposit's parents) leaves the record where it
+//! is. Once the row's own proof has checked and its word is `mined`, the
+//! pass hands the record over again, its BEEF now the transaction's bytes
+//! and that checked path alone ([`owed_records`]), and the door, which
+//! checks the path against the header service itself, takes the outputs
+//! in. A try that fails waits a doubling pause, [`MAX_ASKS_PER_TX`] tries at
+//! most; with no chain tracker nothing is tried and the pass names the
+//! record in its faults. A record held and not made is named in the
+//! report's `owed`, with the row's word: a transaction the network refused
+//! leaves no coin, and its row says so.
+//!
 //! # A creator whose stored proof fails (#328)
 //!
 //! The adoption step of the pass checks the toolbox's stored proof of each
@@ -166,6 +186,13 @@ const MAX_ASKS_PER_TX: u32 = 16;
 pub const CLAIM_HELD_WITHOUT_A_TRACKER: &str = "claim held, not announced: no chain tracker \
      is configured (CHAINTRACKS_URL=off), so the wallet could not record it; it is announced \
      and recorded once CHAINTRACKS_URL names your header service";
+/// The fault a pass reports for a record the wallet owes itself and could
+/// not be handed: the transaction is mined and the door holds every
+/// `internalizeAction` while no chain tracker is configured (see
+/// [`owed_records`]).
+pub const RECORD_HELD_WITHOUT_A_TRACKER: &str = "mined, and its record in the wallet is held: no \
+     chain tracker is configured (CHAINTRACKS_URL=off), so the wallet could not record it; it is \
+     recorded once CHAINTRACKS_URL names your header service";
 /// Recent tips kept to see a moved header (without the feed).
 const TIP_RING: usize = 12;
 /// Words whose root moved (`Reask::Reorg`) asked for a proof, and
@@ -1231,11 +1258,25 @@ pub struct Reannounce {
     pub on_accept: Option<InternalizeActionArgs>,
 }
 
+/// What the host keeps on a tracked row beside what it heard.
+#[derive(Debug, Clone)]
+pub enum Keep {
+    /// Nothing more.
+    Nothing,
+    /// A broadcaster called it not final: the BEEF to hand over again, and
+    /// when.
+    Reannounce(Reannounce),
+    /// A broadcaster took it: the record the wallet owes itself for it,
+    /// kept until the wallet has made it (#638).
+    Record(InternalizeActionArgs),
+}
+
 /// Track a transaction this wallet built and just handed to a broadcaster,
 /// and feed what the broadcaster said, as a hint. `not_before` holds every
 /// re-ask until that time (a transaction that cannot be mined before its
-/// lock time has no proof to ask for before it); `reannounce` keeps the
-/// BEEF to hand over again then. Returns the tracker's word and its
+/// lock time has no proof to ask for before it); `keep` is what stays on
+/// the row beside the hint: the BEEF to hand over again then, or the
+/// record the wallet owes itself. Returns the tracker's word and its
 /// pending re-ask.
 pub async fn heard<C: Clock>(
     storage: &StorageSqlx,
@@ -1244,7 +1285,7 @@ pub async fn heard<C: Clock>(
     txid: &str,
     hint: Hint,
     not_before: Option<Timestamp>,
-    reannounce: Option<Reannounce>,
+    keep: Keep,
 ) -> Result<(String, Option<String>)> {
     ensure_tables(storage).await?;
     let mut row = match load_stored(storage, txid).await? {
@@ -1274,21 +1315,19 @@ pub async fn heard<C: Clock>(
     }
     row.asks = 0;
     row.next_ask_at = not_before;
-    match reannounce {
-        Some(again) => {
-            row.reannounce_beef = Some(again.beef);
-            row.reannounce_at = Some(again.at);
-            row.on_accept = match again.on_accept {
-                Some(args) => Some(serde_json::to_string(&args)?),
-                None => None,
-            };
-        }
-        None => {
-            row.reannounce_beef = None;
-            row.reannounce_at = None;
-            row.on_accept = None;
-        }
-    }
+    (row.reannounce_beef, row.reannounce_at, row.on_accept) = match keep {
+        Keep::Reannounce(again) => (
+            Some(again.beef),
+            Some(again.at),
+            again
+                .on_accept
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+        ),
+        Keep::Record(args) => (None, None, Some(serde_json::to_string(&args)?)),
+        Keep::Nothing => (None, None, None),
+    };
     store_row(storage, &row, &state, clock.now()).await?;
     Ok((
         word_label(state.word()).to_string(),
@@ -1405,11 +1444,16 @@ pub struct TickReport {
     /// Transactions handed over again and still called not final; each is
     /// handed over again after a pause.
     pub not_final: Vec<String>,
-    /// What the wallet is to record for each transaction accepted on a
-    /// re-announce (`txid`, the `internalizeAction` arguments): the caller
-    /// that holds the wallet runs [`record_accepted`].
+    /// What the wallet is to record this pass (`txid`, the
+    /// `internalizeAction` arguments): each transaction accepted on a
+    /// re-announce, and each mined one whose record the wallet is still
+    /// owed. The caller that holds the wallet runs [`record_accepted`].
     #[serde(skip)]
     pub on_accept: Vec<(String, String)>,
+    /// Records the wallet owes itself that this pass holds and did not
+    /// hand over (`txid: why`): a transaction not mined yet, one whose word
+    /// says the network refused it, one tried [`MAX_ASKS_PER_TX`] times.
+    pub owed: Vec<String>,
     /// `stale` words a broadcaster knows, read once this episode: no
     /// announce (ruling 7d (c)).
     pub stale_known: Vec<String>,
@@ -1716,7 +1760,10 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                 row.asks = 0;
                 row.next_ask_at = pause;
                 report.reannounced.push(row.txid.clone());
-                if let Some(args) = row.on_accept.take() {
+                // The record stays on the row until the wallet has made it
+                // (#620): the caller tries the door now, and a door that
+                // declines leaves it for the pass after the proof.
+                if let Some(args) = row.on_accept.clone() {
                     report.on_accept.push((row.txid.clone(), args));
                 }
             }
@@ -1865,6 +1912,9 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     if let Some(ring) = ring {
         write_ring(storage, &ring).await?;
     }
+    // Last, so the pass's own work is stored whatever this step meets, and
+    // a row this pass proved or adopted as `mined` is seen.
+    owed_records(storage, services, opts.age_threshold, now, &mut report).await?;
     Ok(report)
 }
 
@@ -2473,25 +2523,196 @@ fn proof_stands(row: &TrackedRow) -> String {
     )
 }
 
-/// Record in the wallet what a pass's re-announces got accepted (E4): the
-/// wallet's storage is the verdict for its own actions, so a claim the
-/// wallet made is internalized from the BEEF it already holds, and nothing
-/// scans the chain for it. Each outcome is added to `report.stored`.
-pub async fn record_accepted<W: WalletInterface>(wallet: &W, report: &mut TickReport) {
-    for (txid, args) in std::mem::take(&mut report.on_accept) {
-        let line = match stored_follow_up::read(&args) {
-            Ok(args) => match wallet.internalize_action(args, Some("bsv-wallet-cli")).await {
-                Ok(result) if result.accepted => format!("{txid}: recorded in the wallet"),
-                Ok(_) => format!("{txid}: the wallet did not accept its own transaction"),
-                Err(e) => format!(
-                    "{txid}: not recorded in the wallet ({e}); `bsv-wallet receive {txid}` records it once it is mined"
-                ),
-            },
-            Err(e) => format!("{txid}: not recorded in the wallet (stored arguments: {e})"),
-        };
-        if !line.ends_with("recorded in the wallet") {
-            tracing::warn!(marker = "own_transaction_not_recorded", "{line}");
+/// The tally of the tries the passes have made at one owed record, as
+/// `tracker_meta` keeps it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordTries {
+    /// Tries made.
+    tries: u32,
+    /// No try before this time.
+    next_at: Timestamp,
+}
+
+impl RecordTries {
+    fn read(stored: Option<&str>) -> Self {
+        stored
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default()
+    }
+
+    /// One more try, and the pause before the next: the re-ask's, doubling.
+    fn tried(self, age_threshold: Timestamp, now: Timestamp) -> Self {
+        Self {
+            tries: self.tries.saturating_add(1),
+            next_at: now.saturating_add(backoff(age_threshold, self.tries)),
         }
+    }
+}
+
+/// The words a row holds when the network refused its transaction: no
+/// record is made for one, and no coin of it is the wallet's.
+const DEAD_WORDS: [&str; 3] = ["rejected", "conflicted", "abandoned"];
+
+/// The step of the pass for the records the wallet owes itself (see the
+/// module docs): each row that keeps `on_accept` and whose word is `mined`
+/// is handed to the caller that holds the wallet (`report.on_accept`),
+/// its BEEF rebuilt from the transaction's bytes and the row's own checked
+/// path ([`proven_record`]); a try is counted when it is handed over, and
+/// [`record_made`] ends the count. A record whose transaction is not mined
+/// yet is named in `report.owed` with the row's word, unless an announce
+/// is still pending for it (the announce step's, which names it itself).
+///
+/// The row's stored word selects, and nothing is credited on it: the door
+/// checks the path against the header service before it writes anything.
+///
+/// Load: one read per pass; for a record that is due, one write.
+async fn owed_records<V: WalletServices + ?Sized>(
+    storage: &StorageSqlx,
+    services: &V,
+    age_threshold: Timestamp,
+    now: Timestamp,
+    report: &mut TickReport,
+) -> Result<()> {
+    let mut tracker_present: Option<bool> = None;
+    for (txid, word, bump, args, announce_pending, tally) in
+        crate::store::owed_records(storage.pool()).await?
+    {
+        // Accepted on this pass's re-announce: tried now, as it stands.
+        if report.on_accept.iter().any(|(held, _)| *held == txid) {
+            continue;
+        }
+        let (Some(bump), "mined") = (bump, word.as_str()) else {
+            if DEAD_WORDS.contains(&word.as_str()) {
+                report.owed.push(format!(
+                    "{txid}: its record in the wallet is not made: the transaction is {word}, and no coin of it is the wallet's"
+                ));
+            } else if !announce_pending {
+                report.owed.push(format!(
+                    "{txid}: its record in the wallet is kept and made once it is mined (its word is {word})"
+                ));
+            }
+            continue;
+        };
+        let tally = RecordTries::read(tally.as_deref());
+        if tally.tries >= MAX_ASKS_PER_TX {
+            report.owed.push(format!(
+                "{txid}: not recorded in the wallet after {MAX_ASKS_PER_TX} tries; `bsv-wallet receive {txid}` records it by hand, one output at a time (`--vout`)"
+            ));
+            continue;
+        }
+        if tally.next_at > now {
+            continue;
+        }
+        if tracker_present.is_none() {
+            tracker_present = Some(services.get_chain_tracker().await.is_ok());
+        }
+        if tracker_present != Some(true) {
+            report
+                .faults
+                .push(format!("{txid}: {RECORD_HELD_WITHOUT_A_TRACKER}"));
+            continue;
+        }
+        // A try is counted whether or not the record reads, so a record
+        // that never will is named a bounded number of times.
+        let tally = serde_json::to_string(&tally.tried(age_threshold, now))?;
+        crate::store::set_owed_tries(&mut *crate::store::writer(storage).await?, &txid, &tally)
+            .await?;
+        match proven_record(&args, &txid, &bump) {
+            Ok(args) => report.on_accept.push((txid, args)),
+            Err(e) => report.faults.push(format!(
+                "{txid}: the record the wallet is owed does not read: {e}"
+            )),
+        }
+    }
+    Ok(())
+}
+
+/// The stored record of `txid` with its BEEF rebuilt for a mined
+/// transaction: the transaction's own bytes, taken from the BEEF the
+/// record was stored with, under the row's checked merkle path. A proven
+/// transaction needs no parent, so the door can check this one whatever
+/// the stored BEEF carried of its ancestry (#638).
+fn proven_record(stored: &str, txid: &str, bump: &str) -> Result<String> {
+    let mut args = stored_follow_up::read(stored)?;
+    let held = Beef::from_binary(&args.tx)
+        .map_err(|e| anyhow::anyhow!("the stored BEEF does not parse: {e}"))?;
+    let raw = held
+        .find_txid(txid)
+        .and_then(|held| {
+            held.raw_tx()
+                .map(<[u8]>::to_vec)
+                .or_else(|| held.tx().map(bsv_sdk::transaction::Transaction::to_binary))
+        })
+        .ok_or_else(|| anyhow::anyhow!("the stored BEEF does not carry the transaction's bytes"))?;
+    let path = MerklePath::from_hex(bump)
+        .map_err(|e| anyhow::anyhow!("the stored merkle path does not parse: {e}"))?;
+    let mut beef = Beef::new();
+    let index = beef.merge_bump(path);
+    beef.merge_raw_tx(raw, Some(index))?;
+    args.tx = beef.to_binary_atomic(txid)?;
+    Ok(serde_json::to_string(&args)?)
+}
+
+/// The wallet has made the record it owed itself for `txid`: the record
+/// leaves the row, and not before (#620).
+///
+/// # Errors
+///
+/// The store's fault when the row could not be written.
+pub async fn record_made(storage: &StorageSqlx, txid: &str) -> Result<()> {
+    let mut writer = crate::store::writer(storage).await?;
+    crate::store::drop_owed_record(&mut writer, &txid.to_ascii_lowercase()).await
+}
+
+/// Hand one stored record to the wallet's door; why not, when it is not
+/// made.
+async fn make_record<W: WalletInterface>(
+    wallet: &W,
+    txid: &str,
+    stored: &str,
+) -> std::result::Result<(), String> {
+    const KEPT: &str = "its record is kept, and a pass makes it once it is mined";
+    let args = stored_follow_up::read(stored)
+        .map_err(|e| format!("{txid}: not recorded in the wallet (stored arguments: {e})"))?;
+    match wallet.internalize_action(args, Some("bsv-wallet-cli")).await {
+        Ok(result) if result.accepted => Ok(()),
+        Ok(_) => Err(format!(
+            "{txid}: the wallet did not accept its own transaction; {KEPT}"
+        )),
+        Err(e) => Err(format!(
+            "{txid}: not recorded in the wallet ({e}); {KEPT}, or `bsv-wallet receive {txid}` records it by hand then"
+        )),
+    }
+}
+
+/// Record in the wallet what a pass owes it (E4): the wallet's storage is
+/// the verdict for its own actions, so a claim the wallet made is
+/// internalized from the BEEF it already holds, and nothing scans the
+/// chain for it. A record the door takes leaves its row ([`record_made`]);
+/// one it declines stays there, and the pass hands it over again once the
+/// transaction is mined ([`owed_records`]). Each outcome is added to
+/// `report.stored`.
+pub async fn record_accepted<W: WalletInterface>(
+    storage: &StorageSqlx,
+    wallet: &W,
+    report: &mut TickReport,
+) {
+    for (txid, args) in std::mem::take(&mut report.on_accept) {
+        let line = match make_record(wallet, &txid, &args).await {
+            Ok(()) => {
+                // A row that could not be written keeps the record; the
+                // pass that hands it over again changes nothing.
+                if let Err(e) = record_made(storage, &txid).await {
+                    tracing::warn!(marker = "owed_record_not_cleared", %txid, error = %e);
+                }
+                format!("{txid}: recorded in the wallet")
+            }
+            Err(line) => {
+                tracing::warn!(marker = "own_transaction_not_recorded", "{line}");
+                line
+            }
+        };
         report.stored.push(line);
     }
 }
@@ -3725,7 +3946,7 @@ pub(crate) mod tests {
             txid,
             hint,
             Some(lock),
-            Some(again),
+            Keep::Reannounce(again),
         )
         .await
         .unwrap()

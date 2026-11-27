@@ -320,6 +320,72 @@ pub async fn end_dead_row_pauses<'e, E: sqlx::Executor<'e, Database = sqlx::Sqli
     Ok(ended.rows_affected())
 }
 
+/// A record the wallet owes itself for one of its own transactions, as
+/// the tracker's row keeps it (`tracker_states.on_accept`, #638): the row's
+/// txid, the word it last stored, its stored merkle path, the
+/// `internalizeAction` arguments, whether an announce is still pending for
+/// it, and the tally of the tries a pass has made (`tracker_meta`, key
+/// `owed:<txid>`), if any.
+pub type OwedRecord = (String, String, Option<String>, String, bool, Option<String>);
+
+/// Every record the wallet owes itself, by txid. Reads only.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn owed_records(reader: &SqlitePool) -> Result<Vec<OwedRecord>> {
+    sqlx::query_as(
+        "SELECT s.txid, s.word, s.bump, s.on_accept, s.reannounce_at IS NOT NULL, m.value \
+         FROM tracker_states s LEFT JOIN tracker_meta m ON m.key = 'owed:' || s.txid \
+         WHERE s.on_accept IS NOT NULL ORDER BY s.txid",
+    )
+    .fetch_all(reader)
+    .await
+    .map_err(anyhow::Error::from)
+}
+
+/// Keep the tally of the tries a pass has made at `txid`'s owed record.
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn set_owed_tries(
+    conn: &mut sqlx::SqliteConnection,
+    txid: &str,
+    tally: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO tracker_meta (key, value) VALUES ('owed:' || ?, ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(txid)
+    .bind(tally)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// The wallet has made the record it owed itself for `txid`: the record
+/// leaves the row, with any announce still pending for it and its tally.
+///
+/// # Errors
+///
+/// The connection's `sqlx::Error`.
+pub async fn drop_owed_record(conn: &mut sqlx::SqliteConnection, txid: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE tracker_states SET on_accept = NULL, reannounce_beef = NULL, \
+            reannounce_at = NULL WHERE txid = ?",
+    )
+    .bind(txid)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM tracker_meta WHERE key = 'owed:' || ?")
+        .bind(txid)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// The tracker's record of the adoption pass's failing checks (#328): per
 /// creator whose check of the toolbox's proof fails, the state last
 /// reported (`reported`: the fault's class and the stored path's digest),

@@ -129,7 +129,7 @@ async fn a_held_claim_is_not_announced_while_no_chain_tracker_is_configured() {
         assert!(report.faults[0].contains("no chain tracker is configured"));
         assert!(report.faults[0].contains("CHAINTRACKS_URL"));
         assert!(!report.is_quiet());
-        tracker_host::record_accepted(&wallet, &mut report).await;
+        tracker_host::record_accepted(wallet.storage(), &wallet, &mut report).await;
         assert!(report.stored.is_empty(), "{report:?}");
         assert_eq!(tracked_row(wallet.storage(), &txid).await, before);
     }
@@ -156,7 +156,7 @@ async fn a_held_claim_is_recorded_when_its_re_announce_is_accepted() {
     );
     assert_eq!(report.reannounced, vec![plan.claim_txid.clone()]);
     assert!(report.faults.is_empty(), "{report:?}");
-    tracker_host::record_accepted(&wallet, &mut report).await;
+    tracker_host::record_accepted(wallet.storage(), &wallet, &mut report).await;
     assert_eq!(
         report.stored,
         vec![format!("{}: recorded in the wallet", plan.claim_txid)]

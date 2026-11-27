@@ -15,7 +15,7 @@ use bsv_wallet_toolbox::{StorageSqlx, WalletServices};
 
 use crate::atomic_beef;
 use crate::brc29;
-use crate::tracker_host::{self, PostAnswer, Reannounce, TickOptions};
+use crate::tracker_host::{self, Keep, PostAnswer, Reannounce, TickOptions};
 
 /// The bytes of the deposit transaction `txid`.
 ///
@@ -216,7 +216,11 @@ pub(crate) struct ClaimOutcome {
 ///
 /// - Accepted: the broadcaster's acceptance is a hint and the word is
 ///   `announced`. Before the lock time no proof can exist, so nothing is
-///   asked until then.
+///   asked until then. The tracker's row keeps the wallet's record of the
+///   claim from this moment until the wallet has made it (#638): the
+///   command tries the door at once, and a door that declines (a deposit
+///   not mined yet) leaves the record for the pass that sees the claim's
+///   own proof.
 /// - Called not final, with `force`, before the lock time: not a failure.
 ///   The refusal is a hint; the claim is kept with its BEEF and announced
 ///   again at the lock time by the tracker's pass (`serve`'s loop, or
@@ -255,7 +259,7 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 &post.claim_txid,
                 hint,
                 held_until,
-                None,
+                Keep::Record(record.clone()),
             )
             .await?;
             Ok(ClaimOutcome {
@@ -288,7 +292,7 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 &post.claim_txid,
                 hint,
                 held_until,
-                Some(again),
+                Keep::Reannounce(again),
             )
             .await?;
             Ok(ClaimOutcome {

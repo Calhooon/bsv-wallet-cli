@@ -379,7 +379,7 @@ async fn a_held_row_is_read_as_stored_and_offered_nothing_by_every_other_reader(
         txid,
         Hint::new("taal|seen", HintStatus::Seen, clock.0),
         None,
-        None,
+        Keep::Nothing,
     )
     .await
     .unwrap();

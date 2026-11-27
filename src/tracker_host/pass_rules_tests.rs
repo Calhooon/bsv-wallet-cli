@@ -40,7 +40,7 @@ async fn a_hint_heard_after_a_stored_path_never_rewrites_the_mined_word() {
             clock.0,
         ),
         Some(clock.0 + 3600),
-        None,
+        Keep::Nothing,
     )
     .await
     .unwrap();
@@ -72,7 +72,7 @@ async fn heard_feeds_each_new_broadcaster_word_once_to_a_row_without_a_path() {
                 txid,
                 Hint::new(source, status, at),
                 None,
-                None,
+                Keep::Nothing,
             )
             .await
             .unwrap()

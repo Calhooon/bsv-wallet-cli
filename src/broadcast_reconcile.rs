@@ -732,7 +732,12 @@ pub fn spawn_served_loop(
             .await
             {
                 Ok(mut report) => {
-                    crate::tracker_host::record_accepted(&*wallet, &mut report.tracker).await;
+                    crate::tracker_host::record_accepted(
+                        wallet.storage(),
+                        &*wallet,
+                        &mut report.tracker,
+                    )
+                    .await;
                     if report.is_quiet() {
                         tracing::debug!("{}", report.summary());
                     } else {
