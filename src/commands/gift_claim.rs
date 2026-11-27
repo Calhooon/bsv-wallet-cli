@@ -305,6 +305,11 @@ pub(crate) async fn claim<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 
             .await
         {
             Ok(result) if result.accepted => {
+                // The door's word (#645): the claim's row was written when it
+                // was announced (`tracker_host::heard`), so this reads it and
+                // writes nothing. Written whenever the door returned Ok,
+                // accepted or not, and never on its error.
+                crate::tracker_host::door_word(ctx.wallet.storage(), &plan.claim_txid).await;
                 // The record is made: it leaves the tracker's row. A row
                 // that could not be written keeps it, and the pass that
                 // hands it over again changes nothing.
@@ -315,9 +320,13 @@ pub(crate) async fn claim<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 
                 }
                 Recorded::Yes
             }
-            Ok(_) => Recorded::NotYet {
-                said: "the wallet did not accept its own claim".to_string(),
-            },
+            Ok(_) => {
+                // The door's word (#645), as in the arm above.
+                crate::tracker_host::door_word(ctx.wallet.storage(), &plan.claim_txid).await;
+                Recorded::NotYet {
+                    said: "the wallet did not accept its own claim".to_string(),
+                }
+            }
             Err(e) => Recorded::NotYet {
                 said: e.to_string(),
             },
