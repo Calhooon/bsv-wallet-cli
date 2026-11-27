@@ -99,6 +99,23 @@ pub(crate) async fn served_with(
     proven: Option<&str>,
     posts: Arc<dyn WalletServices>,
 ) -> (WalletState, axum::Router) {
+    let roots: Vec<(u32, &str)> = proven
+        .map(|txid| (PARENT_HEIGHT, txid))
+        .into_iter()
+        .collect();
+    served_rooted(root, proven.is_some().then_some(roots.as_slice()), posts).await
+}
+
+/// [`served_with`], the tracker (when `roots` is given) carrying each named
+/// root at its height. `posts` replaces the storage's services before any
+/// request: `Wallet::new` hands the storage the wallet's own `Services`
+/// (the mainnet options, real endpoints), and the toolbox's door posts
+/// through whatever the storage holds (#637).
+pub(crate) async fn served_rooted(
+    root: &PrivateKey,
+    roots: Option<&[(u32, &str)]>,
+    posts: Arc<dyn WalletServices>,
+) -> (WalletState, axum::Router) {
     let storage = StorageSqlx::in_memory().await.expect("in-memory storage");
     storage
         .migrate("served-internalize-door", &root.public_key().to_hex())
@@ -108,9 +125,11 @@ pub(crate) async fn served_with(
     bsv_wallet_toolbox::MonitorStorage::set_max_acceptable_proof_height(&storage, u32::MAX)
         .await
         .expect("open the proof gate");
-    if let Some(txid) = proven {
+    if let Some(roots) = roots {
         let mut tracker = TestChainTracker::new(900_000);
-        tracker.add_root(PARENT_HEIGHT, txid.to_string());
+        for (height, txid) in roots {
+            tracker.add_root(*height, (*txid).to_string());
+        }
         storage.set_chain_tracker(Arc::new(tracker)).await;
     }
     let services =
@@ -136,6 +155,24 @@ pub(crate) async fn post_to(app: &axum::Router, route: &str, body: Value) -> (St
         .header("Origin", "http://test.local")
         .body(axum::body::Body::from(body.to_string()))
         .unwrap();
+    answered(app, request).await
+}
+
+/// `GET route` of the served router: the status and the JSON answer.
+pub(crate) async fn get_from(app: &axum::Router, route: &str) -> (StatusCode, Value) {
+    let request = axum::http::Request::builder()
+        .uri(route)
+        .header("Origin", "http://test.local")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    answered(app, request).await
+}
+
+/// `request` served: the status and the JSON answer.
+async fn answered(
+    app: &axum::Router,
+    request: axum::http::Request<axum::body::Body>,
+) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)

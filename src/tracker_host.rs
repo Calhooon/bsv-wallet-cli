@@ -709,6 +709,12 @@ impl TrackedRow {
         )
     }
 
+    /// Keep `hint` on the row and feed it to the row's replayed `state`.
+    fn hear<H: Headers>(&mut self, state: &mut State, params: &Params, headers: &H, hint: Hint) {
+        self.hints.push(StoredHint::of(&hint));
+        let _ = state.step(params, headers, Input::Hint(hint));
+    }
+
     /// One more ask that brought nothing: the next one waits a pause that
     /// doubles with each ask, up to [`MAX_BACKOFF_DOUBLINGS`] times.
     fn pause(&mut self, age_threshold: Timestamp, now: Timestamp) {
@@ -1303,8 +1309,7 @@ pub async fn heard<C: Clock>(
     let headers = HeaderSnapshot::unread();
     let (mut state, _) = row.replay(&params, &headers);
     if !row.hints.iter().any(|h| h.source == hint.source) {
-        row.hints.push(StoredHint::of(&hint));
-        let _ = state.step(&params, &headers, Input::Hint(hint));
+        row.hear(&mut state, &params, &headers, hint);
     }
     row.asks = 0;
     row.next_ask_at = not_before;
@@ -1372,6 +1377,10 @@ pub async fn heard<C: Clock>(
 /// chain word.
 ///
 /// Returns the word and the pending re-ask.
+///
+/// # Errors
+///
+/// A failed read or write of the store.
 pub async fn door<C: Clock>(
     storage: &StorageSqlx,
     clock: &C,
@@ -1408,8 +1417,7 @@ pub async fn door<C: Clock>(
     // `(provider, word)` heard once), then the request's own word.
     let mut memory = MemoryHints::read(storage, std::slice::from_ref(&row)).await?;
     while let Ok(Some((_, hint))) = memory.next_hint() {
-        row.hints.push(StoredHint::of(&hint));
-        let _ = state.step(&params, &headers, Input::Hint(hint));
+        row.hear(&mut state, &params, &headers, hint);
         changed = true;
     }
     if matches!(state.word(), Word::Built)
@@ -1417,8 +1425,7 @@ pub async fn door<C: Clock>(
         && request_took(storage, &txid).await?
     {
         let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
-        row.hints.push(StoredHint::of(&hint));
-        let _ = state.step(&params, &headers, Input::Hint(hint));
+        row.hear(&mut state, &params, &headers, hint);
         changed = true;
     }
     // A courier's sighting: the crate's mempool-presence hint, heard once
@@ -1430,8 +1437,7 @@ pub async fn door<C: Clock>(
                 source: courier.to_string(),
             };
             let hint = Hint::new(source, status, now);
-            row.hints.push(StoredHint::of(&hint));
-            let _ = state.step(&params, &headers, Input::Hint(hint));
+            row.hear(&mut state, &params, &headers, hint);
             changed = true;
         }
     }
@@ -1849,8 +1855,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         ) else {
             continue;
         };
-        row.hints.push(StoredHint::of(&hint));
-        let _ = state.step(&params, &snapshot, Input::Hint(hint));
+        row.hear(state, &params, &snapshot, hint);
         report.hints += 1;
         // A word that disagrees is asked about now, not after the pause
         // an earlier re-ask earned. A re-ask kind this host does not name
@@ -1868,7 +1873,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
     // a store written before the door fed its take. Heard once a row.
     if states.values().any(|s| matches!(s.word(), Word::Built)) {
         let took = requests_that_took(storage).await?;
-        for row in rows.iter_mut() {
+        for row in &mut rows {
             let Some(state) = states.get_mut(&row.txid) else {
                 continue;
             };
@@ -1879,8 +1884,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
                 continue;
             }
             let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
-            row.hints.push(StoredHint::of(&hint));
-            let _ = state.step(&params, &snapshot, Input::Hint(hint));
+            row.hear(state, &params, &snapshot, hint);
             report.hints += 1;
         }
     }
@@ -1933,8 +1937,7 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         match answer {
             Ok(PostAnswer::Accepted { provider }) => {
                 let hint = Hint::new(format!("{provider}|accepted"), HintStatus::Accepted, now);
-                row.hints.push(StoredHint::of(&hint));
-                let _ = state.step(&params, &snapshot, Input::Hint(hint));
+                row.hear(state, &params, &snapshot, hint);
                 row.reannounce_beef = None;
                 row.reannounce_at = None;
                 row.asks = 0;
