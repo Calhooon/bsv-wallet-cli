@@ -1322,6 +1322,16 @@ pub async fn heard<C: Clock>(
 /// word is about the transaction (who took its bytes, which block holds
 /// it), never about a user.
 ///
+/// **The take.** The toolbox posts a new body with no proof itself, at the
+/// door, and answers `accepted` whatever the broadcasters said. What they
+/// said is read here from the wallet's own records and fed to the reducer
+/// as the hint it takes for a broadcaster's acceptance: the broadcast
+/// memory's rows (written by the wallet's services for each broadcaster
+/// that answered, named by its provider), then the request's word
+/// ([`request_took`], fed as [`DOOR_TAKE_SOURCE`]). So the row reads
+/// `announced` when a broadcaster took the bytes and stays `built` when
+/// none did (a refusal, a fault, no broadcaster).
+///
 /// Returns the word and the pending re-ask.
 pub async fn door<C: Clock>(
     storage: &StorageSqlx,
@@ -1354,16 +1364,64 @@ pub async fn door<C: Clock>(
         Some(Ok(row)) => (row, false),
         None => (TrackedRow::new(&txid), true),
     };
+    let (mut row, mut changed) = (row, new);
     let params = opts.params();
     let headers = HeaderSnapshot::unread();
-    let (state, _) = row.replay(&params, &headers);
-    if new {
-        store_row(storage, &row, &state, clock.now()).await?;
+    let (mut state, _) = row.replay(&params, &headers);
+    let now = clock.now();
+    // The take: what the broadcasters said of the door's own post, as the
+    // toolbox's broadcast memory holds it (the pass's hints, each
+    // `(provider, word)` heard once), then the request's own word.
+    let mut memory = MemoryHints::read(storage, std::slice::from_ref(&row)).await?;
+    while let Ok(Some((_, hint))) = memory.next_hint() {
+        row.hints.push(StoredHint::of(&hint));
+        let _ = state.step(&params, &headers, Input::Hint(hint));
+        changed = true;
+    }
+    if matches!(state.word(), Word::Built)
+        && !row.hints.iter().any(|h| h.source == DOOR_TAKE_SOURCE)
+        && request_took(storage, &txid).await?
+    {
+        let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
+        row.hints.push(StoredHint::of(&hint));
+        let _ = state.step(&params, &headers, Input::Hint(hint));
+        changed = true;
+    }
+    if changed {
+        store_row(storage, &row, &state, now).await?;
     }
     Ok(Some((
         word_label(state.word()).to_string(),
         state.reask().map(reask_label),
     )))
+}
+
+/// The source of the hint the door's take is fed as when the toolbox's
+/// request is its only record ([`request_took`]).
+pub const DOOR_TAKE_SOURCE: &str = "door|accepted";
+
+/// Did the toolbox's post of a received transaction draw an accepting word,
+/// by its own request? The door (`internalizeAction`) creates the request
+/// `unsent`, posts the body, and moves the request to `unmined` only when a
+/// broadcaster took the bytes or a status source holds the transaction; a
+/// refusal, a fault and no broadcaster leave it `unsent` with the
+/// `immediateBroadcastHint` note on its history, and its later re-ask on
+/// the cadence makes the same move. `internalizeAction` returns `accepted`
+/// either way, so the request is where the outcome is read. Received
+/// transactions only (`is_outgoing = 0`): the request of a transaction this
+/// wallet made reaches `unmined` by other roads (a `noSend` merge promotes
+/// it with no post), and its take is the broadcast memory's.
+async fn request_took(storage: &StorageSqlx, txid: &str) -> Result<bool> {
+    let took: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM proven_tx_reqs r \
+         WHERE r.txid = ? AND r.status IN ('unmined', 'callback', 'unconfirmed') \
+           AND EXISTS (SELECT 1 FROM transactions t \
+                       WHERE t.txid = r.txid AND t.is_outgoing = 0) LIMIT 1",
+    )
+    .bind(txid)
+    .fetch_optional(storage.pool())
+    .await?;
+    Ok(took.is_some())
 }
 
 /// [`door`] on the host's clock and default parameters, for a caller that
