@@ -294,6 +294,9 @@ mod hold_tests;
 mod genesis_tests;
 
 #[cfg(test)]
+mod unmined_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::{p2pkh, raw_tx, txid_of};
