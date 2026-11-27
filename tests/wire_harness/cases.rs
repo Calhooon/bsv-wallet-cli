@@ -48,8 +48,16 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_internalize_rules::record(r).await;
     super::cases_received_rule::record(r).await;
     super::cases_scripts::record(r).await;
+    record_after_the_scripts(r).await;
+}
+
+/// The rows recorded after the scripts' rows, in their recorded order: the
+/// not-spendable coin (#646), `sendWith` and `noSendChange` refused (#147),
+/// and the route after the door (#645).
+async fn record_after_the_scripts(r: &mut Recorder) {
     super::cases_not_spendable::record(r).await;
     super::cases_send_with::record(r).await;
+    super::cases_received_rule::record_door_word(r).await;
 }
 
 /// The browser gate's rows, in their recorded order: the gate, the owner's
