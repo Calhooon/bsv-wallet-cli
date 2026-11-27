@@ -30,6 +30,37 @@ async fn receive_by_hand(ctx: &Claimer, gift: &Claim, vout: Option<u32>) -> (u32
         .expect("receive takes the mined claim in")
 }
 
+/// [`claimed_and_mined`], and the gift's output (5,000) taken in by hand
+/// with `receive <claim txid>`; the change is not.
+async fn gift_received_by_hand() -> (Claim, String, Claimer) {
+    let (gift, claim_txid, ctx) = claimed_and_mined().await;
+    assert_eq!(receive_by_hand(&ctx, &gift, None).await, (0, true));
+    assert_eq!(spendable(ctx.wallet.storage()).await, 5000, "the gift");
+    (gift, claim_txid, ctx)
+}
+
+/// The pass after the claim is mined makes the record ([`assert_made`]).
+async fn assert_the_pass_makes_the_record(ctx: &Claimer, gift: &Claim) {
+    let report = pass(ctx, now() + 601).await;
+    assert!(
+        report.owed.is_empty() && report.faults.is_empty(),
+        "{report:?}"
+    );
+    assert_made(&report, ctx, gift).await;
+}
+
+/// A pass after the record is made does nothing: the record has left the
+/// row, the wallet holds the claim once, and the claim was posted once.
+async fn assert_a_later_pass_does_nothing(ctx: &Claimer, gift: &Claim) {
+    let again = pass(ctx, now() + 1300).await;
+    assert!(
+        again.stored.is_empty() && again.owed.is_empty() && again.faults.is_empty(),
+        "{again:?}"
+    );
+    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    assert_recorded_once(ctx, gift).await;
+}
+
 /// While the claim is not mined the pass holds the record, names it and
 /// makes nothing; after the pass that made it, a second pass does
 /// nothing: the record has left the row, and the claim was posted once.
@@ -47,20 +78,8 @@ async fn the_pass_holds_the_record_until_the_claim_is_mined_and_a_second_pass_do
     assert_eq!(spendable(ctx.wallet.storage()).await, 0);
 
     mine_the_claim(ctx.wallet.services(), &claim_txid);
-    let report = pass(&ctx, now() + 601).await;
-    assert!(
-        report.owed.is_empty() && report.faults.is_empty(),
-        "{report:?}"
-    );
-    assert_made(&report, &ctx, &gift).await;
-
-    let again = pass(&ctx, now() + 1300).await;
-    assert!(
-        again.stored.is_empty() && again.owed.is_empty() && again.faults.is_empty(),
-        "{again:?}"
-    );
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
-    assert_recorded_once(&ctx, &gift).await;
+    assert_the_pass_makes_the_record(&ctx, &gift).await;
+    assert_a_later_pass_does_nothing(&ctx, &gift).await;
 }
 
 /// A wallet store in the file `path`, migrated when it is new.
@@ -129,25 +148,15 @@ async fn a_restart_between_the_post_and_the_proof_loses_nothing() {
 /// row, and the pass after that does nothing.
 #[tokio::test]
 async fn receive_by_hand_before_the_pass_still_works_and_the_pass_then_changes_nothing() {
-    let (gift, claim_txid, ctx) = claimed_and_mined().await;
-    assert_eq!(receive_by_hand(&ctx, &gift, None).await, (0, true));
-    assert_eq!(spendable(ctx.wallet.storage()).await, 5000, "the gift");
+    let (gift, claim_txid, ctx) = gift_received_by_hand().await;
     assert_eq!(receive_by_hand(&ctx, &gift, Some(1)).await, (1, true));
     assert_eq!(
         held(&ctx, &claim_txid).await,
         "row: Some(\"word=announced record=held beef=none\"); transactions: 1; outputs: 2; spendable: 5844",
         "both outputs by hand"
     );
-
-    let report = pass(&ctx, now() + 601).await;
-    assert_made(&report, &ctx, &gift).await;
-    let again = pass(&ctx, now() + 1300).await;
-    assert!(
-        again.stored.is_empty() && again.owed.is_empty(),
-        "{again:?}"
-    );
-    assert_recorded_once(&ctx, &gift).await;
-    assert_eq!(ctx.wallet.services().call_count("post_beef"), 1);
+    assert_the_pass_makes_the_record(&ctx, &gift).await;
+    assert_a_later_pass_does_nothing(&ctx, &gift).await;
 }
 
 /// `receive <claim txid>` alone by hand takes the gift's output in; the
@@ -155,11 +164,8 @@ async fn receive_by_hand_before_the_pass_still_works_and_the_pass_then_changes_n
 /// gift once.
 #[tokio::test]
 async fn the_pass_takes_in_the_output_a_receive_by_hand_left() {
-    let (gift, _, ctx) = claimed_and_mined().await;
-    assert_eq!(receive_by_hand(&ctx, &gift, None).await, (0, true));
-    assert_eq!(spendable(ctx.wallet.storage()).await, 5000, "the gift");
-    let report = pass(&ctx, now() + 601).await;
-    assert_made(&report, &ctx, &gift).await;
+    let (gift, _, ctx) = gift_received_by_hand().await;
+    assert_the_pass_makes_the_record(&ctx, &gift).await;
 }
 
 /// The pass never gives back a coin the wallet has spent. The gift's
@@ -169,8 +175,7 @@ async fn the_pass_takes_in_the_output_a_receive_by_hand_left() {
 /// output stays spent.
 #[tokio::test]
 async fn the_pass_leaves_an_output_the_wallet_spent_spent() {
-    let (gift, claim_txid, ctx) = claimed_and_mined().await;
-    assert_eq!(receive_by_hand(&ctx, &gift, None).await, (0, true));
+    let (_, claim_txid, ctx) = gift_received_by_hand().await;
     sqlx::query("UPDATE outputs SET spendable = 0 WHERE txid = ? AND vout = 0")
         .bind(&claim_txid)
         .execute(ctx.wallet.storage().writer())
@@ -221,8 +226,7 @@ async fn a_record_handed_to_the_door_again_counts_the_coin_once() {
     );
 
     mine_the_claim(ctx.wallet.services(), &claim_txid);
-    let report = pass(&ctx, now() + 601).await;
-    assert_made(&report, &ctx, &gift).await;
+    assert_the_pass_makes_the_record(&ctx, &gift).await;
 }
 
 /// A claim every broadcaster refuses leaves no coin, no tracked row and

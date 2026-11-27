@@ -51,11 +51,6 @@ pub(crate) struct ClaimPost {
     pub claim_txid: String,
     pub beef: Vec<u8>,
     pub answer: PostAnswer,
-    /// Whether the BEEF carries the deposit with a proof the header
-    /// service checked. Without one the deposit goes as bytes, without its
-    /// parents, and the door declines the claim's record until the claim
-    /// itself is mined (#638).
-    pub deposit_proven: bool,
 }
 
 /// Post the claim through the wallet's broadcasters (`post_beef`: the
@@ -91,7 +86,6 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
             .and_then(|hex| MerklePath::from_hex(&hex).ok()),
         Err(_) => None,
     };
-    let deposit_proven = proof.is_some();
     let mut beef = Beef::new();
     match proof {
         Some(path) => {
@@ -116,7 +110,6 @@ pub(crate) async fn broadcast_claim<V: WalletServices>(
         claim_txid,
         beef,
         answer: tracker_host::read_post(&results),
-        deposit_proven,
     })
 }
 
@@ -146,12 +139,16 @@ pub(crate) fn claim_record(
     claim_raw: &[u8],
     pay_script: &[u8],
 ) -> Result<InternalizeActionArgs> {
+    let claim = Transaction::from_binary(claim_raw).map_err(|e| anyhow!("parse claim: {e}"))?;
     let (_, anyone_pubkey) = bsv_sdk::wallet::KeyDeriver::anyone_key();
     let sender_identity_key = anyone_pubkey.to_hex();
-    let outputs: Vec<InternalizeOutput> = outputs_paying(claim_raw, pay_script)?
-        .into_iter()
-        .map(|output_index| InternalizeOutput {
-            output_index,
+    let outputs: Vec<InternalizeOutput> = claim
+        .outputs()
+        .iter()
+        .enumerate()
+        .filter(|(_, output)| output.locking_script.to_binary() == pay_script)
+        .map(|(index, _)| InternalizeOutput {
+            output_index: index as u32,
             protocol: "wallet payment".to_string(),
             payment_remittance: Some(WalletPayment {
                 derivation_prefix: brc29::DEFAULT_DERIVATION_PREFIX.to_string(),
@@ -175,20 +172,6 @@ pub(crate) fn claim_record(
     })
 }
 
-/// The outputs of the claim that pay `pay_script` (the wallet's deposit
-/// script), by index, lowest at the head: what the wallet records of its
-/// claim, and what `receive` takes in by hand.
-pub(crate) fn outputs_paying(claim_raw: &[u8], pay_script: &[u8]) -> Result<Vec<u32>> {
-    let claim = Transaction::from_binary(claim_raw).map_err(|e| anyhow!("parse claim: {e}"))?;
-    Ok(claim
-        .outputs()
-        .iter()
-        .enumerate()
-        .filter(|(_, output)| output.locking_script.to_binary() == pay_script)
-        .map(|(index, _)| index as u32)
-        .collect())
-}
-
 /// What became of a claim handed to the broadcasters.
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimOutcome {
@@ -207,9 +190,6 @@ pub(crate) struct ClaimOutcome {
     /// claim. A claim held as not final is recorded when a re-announce is
     /// accepted (`tracker_host::record_accepted`), never before.
     pub record: Option<InternalizeActionArgs>,
-    /// Whether the posted BEEF carried the deposit with a checked proof
-    /// ([`ClaimPost::deposit_proven`]).
-    pub deposit_proven: bool,
 }
 
 /// Hand the claim to the broadcasters and to the tracker.
@@ -245,7 +225,6 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
     let genesis = bsv_wallet_cli::genesis::door_genesis_height(storage);
     let post = broadcast_claim(services, genesis, deposit_raw, claim_raw).await?;
     let record = claim_record(&post.beef, claim_raw, pay_script)?;
-    let deposit_proven = post.deposit_proven;
     let now = clock.now();
     let early = now < lock_until;
     let held_until = early.then_some(lock_until);
@@ -269,7 +248,6 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 held_until,
                 not_final: None,
                 record: Some(record),
-                deposit_proven,
             })
         }
         PostAnswer::NotFinal { provider, said } if force && early => {
@@ -302,7 +280,6 @@ pub(crate) async fn announce_claim<V: WalletServices, C: Clock>(
                 held_until,
                 not_final: Some(format!("{provider}: {said}")),
                 record: None,
-                deposit_proven,
             })
         }
         PostAnswer::NotFinal { provider, said } => Err(anyhow!(

@@ -14,6 +14,7 @@
 
 use anyhow::{anyhow, Result};
 use bsv_sdk::primitives::bsv::sighash::parse_transaction;
+use bsv_sdk::transaction::{Beef, BeefTx};
 use bsv_sdk::wallet::WalletInterface;
 use bsv_wallet_cli::gift::claim::build_claim_tx;
 use bsv_wallet_cli::gift::covenant::parse_locking_script;
@@ -52,6 +53,11 @@ pub(crate) struct ClaimReport {
     pub unlocks: String,
     pub outcome: gift_chain::ClaimOutcome,
     pub recorded: Recorded,
+    /// Whether the BEEF the claim was posted in carried the deposit with a
+    /// proof the header service checked. Without one the deposit goes as
+    /// bytes, without its parents, and the door declines the claim's
+    /// record until the claim itself is mined (#638).
+    pub deposit_proven: bool,
     /// The claim's outputs that pay this wallet, lowest index at the head:
     /// what `receive` takes in.
     pub pays: Vec<u32>,
@@ -90,7 +96,7 @@ impl ClaimReport {
 
     /// What stood between the posted claim and its record.
     fn why_not_yet(&self) -> String {
-        if self.outcome.deposit_proven {
+        if self.deposit_proven {
             "the wallet could not record it".to_string()
         } else {
             format!(
@@ -178,6 +184,26 @@ impl ClaimReport {
         });
         lines.join("\n")
     }
+}
+
+/// The outputs of the claim that pay `pay_script` (the wallet's deposit
+/// script), by index, lowest at the head: what `receive` takes in by hand.
+fn outputs_paying(claim_raw: &[u8], pay_script: &[u8]) -> Result<Vec<u32>> {
+    let claim = parse_transaction(claim_raw).map_err(|e| anyhow!("parse claim: {e}"))?;
+    Ok(claim
+        .outputs
+        .iter()
+        .zip(0u32..)
+        .filter(|(output, _)| output.script == pay_script)
+        .map(|(_, index)| index)
+        .collect())
+}
+
+/// Whether `beef` carries the transaction `txid` with a merkle proof.
+fn carries_proof_of(beef: &[u8], txid: &str) -> bool {
+    Beef::from_binary(beef)
+        .ok()
+        .is_some_and(|beef| beef.find_txid(txid).is_some_and(BeefTx::has_proof))
 }
 
 /// `gift-claim`: claim the gift of deposit `txid`, and print what was done.
@@ -299,6 +325,10 @@ pub(crate) async fn claim<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 
         None => Recorded::WhenTaken,
     };
 
+    let deposit_proven = outcome
+        .record
+        .as_ref()
+        .is_some_and(|record| carries_proof_of(&record.tx, &plan.deposit_txid));
     Ok(ClaimReport {
         claim_txid: plan.claim_txid,
         deposit_txid: plan.deposit_txid,
@@ -307,7 +337,8 @@ pub(crate) async fn claim<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 
         change: plan.change,
         lock_until: plan.covenant.lock_until,
         unlocks: unlock_human,
-        pays: gift_chain::outputs_paying(&claim_raw, &pay_script)?,
+        pays: outputs_paying(&claim_raw, &pay_script)?,
+        deposit_proven,
         outcome,
         recorded,
     })
