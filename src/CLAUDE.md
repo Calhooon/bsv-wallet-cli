@@ -45,7 +45,8 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 | `send` | `<address> <satoshis>` | WalletContext | Send BSV to a P2PKH address |
 | `fund` | `<beef_hex> --vout N` | WalletContext | Internalize a BEEF transaction (receive funds) |
 | `outputs` | `--basket <name> --tag <tag>` | WalletContext | List unspent outputs with optional filters |
-| `actions` | `--label <label>` | WalletContext | List transaction history with optional filter |
+| `actions` | `--label <label>`, `--prepared` | WalletContext | List transaction history with optional filter; prepared, unsent actions marked with what they hold; `--prepared` lists them alone (#673) |
+| `abort-action` | `<txid\|reference>` | WalletContext | Abort the one action named, through the served door's guard and the wallet's `abortAction` (#673) |
 | `daemon` | — | `&cli` | Run monitor (13 background tasks) + HTTP server |
 | `serve` | — | WalletContext | Run HTTP server only (no monitor, dev mode) |
 | `split` | `--count N` (default 3) | WalletContext | Split UTXOs into multiple outputs for concurrency |

@@ -207,7 +207,7 @@ pub enum Commands {
         /// Filter by label
         #[arg(long, conflicts_with = "prepared")]
         label: Option<String>,
-        /// List only the prepared, unsent actions, every one, oldest first
+        /// List only the prepared, unsent actions, every one, from the oldest
         #[arg(long)]
         prepared: bool,
     },

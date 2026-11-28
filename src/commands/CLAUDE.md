@@ -15,7 +15,8 @@
 | `balance.rs` | `run(&WalletContext)` | Sum all spendable sats (paginates through all outputs) |
 | `address.rs` | `run(&WalletContext)` | Derive and display BRC-29 receiving address |
 | `identity.rs` | `run(&WalletContext)` | Show identity key, address, chain |
-| `actions.rs` | `run(&WalletContext, label?)` | List transaction actions, optional label filter |
+| `actions.rs` | `run(&WalletContext, label?, prepared_only)` | List transaction actions, optional label filter; each prepared, unsent (`nosend`) action marked with its hold, age, txid and reference, and a total; `--prepared` lists them alone (#673) |
+| `prepared.rs` | `abort(&WalletContext, name)` | `abort-action`: abort the one action a txid or reference names through `server::handlers::abort_guarded` (the served door's guard, then the wallet's `abortAction`); the prepared actions' words for `actions` (#673) |
 | `outputs.rs` | `run(&WalletContext, basket?, tag?)` | List UTXOs, optional basket/tag filters |
 | `services.rs` | `run(&Cli)` | Check chain services health (block height) |
 | `compact.rs` | `run(&WalletContext)` | Debug BEEF compaction on largest stored BEEF blob |

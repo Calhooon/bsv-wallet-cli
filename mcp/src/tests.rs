@@ -184,6 +184,17 @@ fn the_tools_are_the_29_the_five_and_the_owners_three() {
         let description = described(name);
         assert!(description.contains(route), "{name}: {description}");
     }
+    // What an abort is and is not, and the command line's two commands (#673).
+    let abort = described("abort_action");
+    for said in [
+        "a prepared noSend payment",
+        "never aborted (refused, 409)",
+        "a prepared transaction whose bytes were handed to someone else can still be posted by them",
+        "bsv-wallet actions --prepared",
+        "bsv-wallet abort-action <txid>",
+    ] {
+        assert!(abort.contains(said), "abort_action: {abort}");
+    }
     let answer = tools.iter().find(|t| t.name == "answer_origin").unwrap();
     let schema = serde_json::to_value(&*answer.input_schema).unwrap();
     let required = schema["required"].as_array().unwrap();
