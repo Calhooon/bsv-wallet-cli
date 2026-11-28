@@ -293,6 +293,18 @@ pub(crate) async fn probe_input_spend<V: WalletServices>(
     }
 }
 
+/// The probe of one of R9's cases (#660, `test_support::lost_bound`): the
+/// case's services asked under a stored script of ours.
+#[cfg(test)]
+pub(crate) async fn probe_case(
+    case: &crate::test_support::lost_bound::Case,
+    src: String,
+    vout: u32,
+) -> InputSpend {
+    let script = crate::test_support::p2pkh([0xdb; 20]);
+    probe_input_spend(&case.services(), &src, vout, Some(&script)).await
+}
+
 /// A candidate to abandon: `(transaction_id, txid, per-input chain answers)`.
 type DeadCandidate = (i64, String, Vec<(TrackedInput, InputSpend)>);
 
@@ -2384,21 +2396,16 @@ mod tests {
     /// written; the spender's own bytes, outpoint and root relinquish.
     #[tokio::test]
     async fn the_relinquish_moves_a_coin_only_on_a_spender_bound_by_bytes_outpoint_and_root() {
-        let script = crate::test_support::p2pkh([0xdb; 20]);
         for case in crate::test_support::lost_bound::cases() {
             let store = rule_fixture().await;
             let pool = store.writer().clone();
-            let services = case.services();
             let report = reconcile_with(
                 &store,
                 0,
                 30,
                 true,
                 |_txid| async { presence(BroadcastVerification::Confirmed) },
-                |src: String, vout: u32| {
-                    let (services, script) = (&services, script.clone());
-                    async move { probe_input_spend(services, &src, vout, Some(&script)).await }
-                },
+                |src, vout| probe_case(&case, src, vout),
             )
             .await
             .unwrap();

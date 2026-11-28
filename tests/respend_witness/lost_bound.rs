@@ -14,31 +14,32 @@ use bsv_sdk::transaction::{
     ChainTracker, ChainTrackerError, Transaction, TransactionInput, TransactionOutput,
 };
 use bsv_wallet_cli::respend::settle_proven;
-use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
-use bsv_wallet_toolbox::{
-    BroadcastStatus, GetMerklePathResult, MonitorStorage, StorageSqlx, WalletServices,
-    WalletStorageProvider,
+use bsv_wallet_toolbox::services::mock::MockWalletServices;
+use bsv_wallet_toolbox::{MonitorStorage, WalletServices, WalletStorageProvider};
+
+use crate::world::{
+    coin_state, fixture, headers_with, proof, proof_services, seen_once_absent_now, words, Fixture,
 };
 
-use crate::chain_tracker::TestChainTracker;
-use crate::world::{coin_state, fixture, headed, proof, status_source, words, Fixture};
-
-/// A tracker that cannot look: every root question is a fault.
+/// A tracker that cannot look: every root question is a fault, its text.
 #[derive(Debug)]
-struct FaultTracker;
+struct FaultTracker(&'static str);
 
 #[async_trait]
 impl ChainTracker for FaultTracker {
     async fn is_valid_root_for_height(
         &self,
-        _root: &str,
-        _height: u32,
+        root: &str,
+        height: u32,
     ) -> Result<bool, ChainTrackerError> {
-        Err(ChainTrackerError::NetworkError("planted fault".into()))
+        Err(ChainTrackerError::NetworkError(format!(
+            "{}: {root} at {height}",
+            self.0
+        )))
     }
 
     async fn current_height(&self) -> Result<u32, ChainTrackerError> {
-        Err(ChainTrackerError::NetworkError("planted fault".into()))
+        Err(ChainTrackerError::NetworkError(self.0.to_string()))
     }
 }
 
@@ -55,47 +56,19 @@ struct Settling {
 async fn settling() -> Settling {
     let f = fixture().await;
     let s = f.wallet.storage();
-    s.record_broadcast_status(
-        &f.phantom,
-        bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
-        bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
-    )
-    .await
-    .unwrap();
-    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
-    headed(&absent, &f.funding);
-    let gate = bsv_wallet_cli::spend_gate::GateOptions::default();
-    let replacement =
-        bsv_wallet_cli::respend::build_and_post(s, &absent, &f.root, &f.phantom, &["mock"], &gate)
-            .await
-            .expect("the respend builds and posts");
+    let absent = seen_once_absent_now(&f).await;
+    let replacement = crate::build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
+        .await
+        .expect("the respend builds and posts");
     let raw: Vec<u8> = sqlx::query_scalar("SELECT raw_tx FROM transactions WHERE txid=?")
         .bind(&replacement)
         .fetch_one(s.pool())
         .await
         .unwrap();
-    let services = Arc::new(
-        MockWalletServices::builder()
-            .get_raw_tx_response(MockResponse::Success(bsv_wallet_toolbox::GetRawTxResult {
-                name: "mock".into(),
-                txid: replacement.clone(),
-                raw_tx: Some(raw),
-                error: None,
-                could_not_look: false,
-            }))
-            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-                name: Some("mock".into()),
-                merkle_path: Some(hex::encode(proof(&replacement))),
-                header: None,
-                error: None,
-                notes: vec![],
-            }))
-            .is_utxo_response(MockResponse::Success(true))
-            .build(),
-    );
+    let services = proof_services(&replacement, raw);
     WalletStorageProvider::set_services(s, services.clone() as Arc<dyn WalletServices>);
     s.set_max_acceptable_proof_height(871_000).await.unwrap();
-    our_headers(s, &replacement).await;
+    s.set_chain_tracker(headers_with(&replacement)).await;
     s.synchronize_transaction_statuses().await.unwrap();
     assert_eq!(words(&f).await, ("failed".into(), "doubleSpend".into()));
     s.ingest_merkle_proof(
@@ -119,13 +92,6 @@ async fn settling() -> Settling {
         replacement_row,
         services,
     }
-}
-
-/// Our headers: the replacement's block root at 870,900.
-async fn our_headers(s: &StorageSqlx, replacement: &str) {
-    let mut tracker = TestChainTracker::new(871_000);
-    tracker.add_root(870_900, replacement.to_string());
-    s.set_chain_tracker(Arc::new(tracker)).await;
 }
 
 async fn settled(w: &Settling) -> i64 {
@@ -161,6 +127,15 @@ async fn nothing_moved(w: &Settling, free_before: (bool, Option<i64>)) {
         "a coin the replacement does not spend never moves"
     );
     assert_eq!(settled(w).await, 0, "the link stays unsettled");
+}
+
+/// Settle under `tracker`; nothing moves.
+async fn settle_moves_nothing(w: &Settling, tracker: Arc<dyn ChainTracker>) {
+    let s = w.f.wallet.storage();
+    let free_before = coin_state(&w.f, w.f.change).await;
+    s.set_chain_tracker(tracker).await;
+    settle_proven(s, w.services.as_ref()).await.ok();
+    nothing_moved(w, free_before).await;
 }
 
 /// (i) Bytes stored under the replacement's txid that are not its
@@ -200,21 +175,15 @@ async fn settle_bytes_that_do_not_hash_to_the_replacement_move_no_coin() {
 #[tokio::test]
 async fn settle_a_path_for_another_transaction_of_the_block_moves_no_coin() {
     let w = settling().await;
-    let s = w.f.wallet.storage();
-    let free_before = coin_state(&w.f, w.f.change).await;
     let other = "ab".repeat(32);
     sqlx::query("UPDATE proven_txs SET merkle_path=? WHERE txid=?")
         .bind(proof(&other))
         .bind(&w.replacement)
-        .execute(s.writer())
+        .execute(w.f.wallet.storage().writer())
         .await
         .unwrap();
     // The other transaction's root is one our headers carry.
-    let mut tracker = TestChainTracker::new(871_000);
-    tracker.add_root(870_900, other);
-    s.set_chain_tracker(Arc::new(tracker)).await;
-    settle_proven(s, w.services.as_ref()).await.ok();
-    nothing_moved(&w, free_before).await;
+    settle_moves_nothing(&w, headers_with(&other)).await;
 }
 
 /// (iv) The root computed from the replacement's txid is not one our
@@ -222,24 +191,14 @@ async fn settle_a_path_for_another_transaction_of_the_block_moves_no_coin() {
 #[tokio::test]
 async fn settle_a_root_our_headers_do_not_carry_moves_no_coin() {
     let w = settling().await;
-    let s = w.f.wallet.storage();
-    let free_before = coin_state(&w.f, w.f.change).await;
-    let mut tracker = TestChainTracker::new(871_000);
-    tracker.add_root(870_900, "cd".repeat(32));
-    s.set_chain_tracker(Arc::new(tracker)).await;
-    settle_proven(s, w.services.as_ref()).await.ok();
-    nothing_moved(&w, free_before).await;
+    settle_moves_nothing(&w, headers_with(&"cd".repeat(32))).await;
 }
 
 /// (v) The header service cannot look: a fault is no answer, no coin moves.
 #[tokio::test]
 async fn settle_a_header_fault_moves_no_coin() {
     let w = settling().await;
-    let s = w.f.wallet.storage();
-    let free_before = coin_state(&w.f, w.f.change).await;
-    s.set_chain_tracker(Arc::new(FaultTracker)).await;
-    settle_proven(s, w.services.as_ref()).await.ok();
-    nothing_moved(&w, free_before).await;
+    settle_moves_nothing(&w, Arc::new(FaultTracker("planted fault"))).await;
 }
 
 /// The honest case: the replacement's own bytes, the outpoints they spend,
