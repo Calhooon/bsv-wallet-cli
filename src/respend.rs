@@ -553,6 +553,20 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
         .fetch_all(storage.pool()).await?;
     for row in rows {
         let txid: String = row.get("txid");
+        // R9 (#660): the coins move on the replacement's own bytes alone.
+        // Bytes stored under its proof that do not hash to its txid are
+        // not the replacement: nothing is settled on them.
+        let own = row
+            .get::<Option<Vec<u8>>, _>("raw_tx")
+            .and_then(|raw| Transaction::from_binary(&raw).ok())
+            .is_some_and(|tx| tx.id().eq_ignore_ascii_case(&txid));
+        if !own {
+            tracing::warn!(
+                txid = %txid,
+                "respend settle: the stored bytes do not hash to the replacement's txid; nothing is settled"
+            );
+            continue;
+        }
         let path: Vec<u8> = row.get("merkle_path");
         let height: i64 = row.get("height");
         let block: String = row.get("block_hash");
