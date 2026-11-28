@@ -293,7 +293,11 @@
     "291-createAction.notSpendable.delayedBroadcast.json",
     "292-createAction.sendWith.json",
     "293-createAction.noSendChange.json",
-    "294-tx.receivedRule.doorWord.json"
+    "294-tx.receivedRule.doorWord.json",
+    "295-internalizeAction.receivedTaken.payment.json",
+    "296-createAction.receivedTaken.noWord.json",
+    "297-tx.receivedBuilt.doorWord.json",
+    "298-createAction.receivedBuilt.word.json"
   ],
   "notes": {
     "001-isAuthenticated.get.json": "#411 (the browser gate, step (b)): every served door but /arc-callback requires an Origin ALLOWED_ORIGINS names, as the MetaNet Client asks one of every path (bsv-desktop bcb6003 src/onWalletReady.ts:80-88). The recorder's GET now carries the harness's Origin, http://wire.test, which the worlds list; the answer is the one before with the CORS layer's echo of the listed origin (access-control-allow-origin), the body and status unmoved.",
@@ -446,7 +450,7 @@
     "272-internalizeAction.receivedRule.callersLabel.json": "#627 (the stable line's 0.18.8): a received payment taken in through the toolbox's own internalizeAction (purpose receive, unproven), its labels carrying the caller's own underReceivedRule in two spellings the toolbox reads as it beside a label of its own, 200. New; recorded last, so no file before it moves.",
     "273-internalizeAction.receivedRule.second.json": "#627: a second received payment, 200: two received unproven coins for the scoped word.",
     "274-listActions.receivedRule.received.json": "#627: the two payments, unproven; 272's labels are the caller's own alone: its copies of underReceivedRule were stripped at the door.",
-    "275-createAction.receivedRule.noWord.json": "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered.",
+    "275-createAction.receivedRule.noWord.json": "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered. Since #659 this world's host sets SPEND_RECEIVED=hold, which keeps this answer; under the default the same request is answered 200 (row 296).",
     "276-createAction.receivedRule.callersLabel.json": "#627: a caller's own underReceivedRule with no word does not lift the gate's hold: 275's answer, byte for byte. It pins the hold, not the strip.",
     "277-createAction.receivedRule.scopedPast.json": "#627: the scoped word naming 272's coin, for more than it holds: 9000 offered, the other coin held not named under allowPending: received, 402 INSUFFICIENT_FUNDS.",
     "278-createAction.receivedRule.scoped.json": "#627: the scoped word within the named coin: the toolbox selects it (the gate passes underReceivedRule beside its own label) and the spend signs and posts, 200; an exact spend, no change.",
@@ -462,6 +466,10 @@
     "288-internalizeAction.scripts.heldRepeatProven.json": "#634: 286's proven BEEF again: answered as before, 200.",
     "289-internalizeAction.scripts.ancestorsPass.json": "#634: a payment through two unmined parents, every input a valid signature, the oldest spending a parent mined after Genesis: 200, stored (290).",
     "290-listOutputs.scripts.basket.json": "#634: the basket after 284 to 289: 286's output and 289's alone; the refusals stored nothing.",
-    "294-tx.receivedRule.doorWord.json": "#645 (P1, the door's word and the take): GET /tx/{txid} for 272's payment, a received body with no proof whose post the world's broadcaster took: 200, the word announced (built at the door by the tracker's reducer, then the take fed as a broadcaster's acceptance). Before, 404: the host wrote no row at the door. With it the held coins of 275, 276 and 277 carry the word announced where they carried unknown; no offer moves. New; recorded last, so no file before it moves."
+    "294-tx.receivedRule.doorWord.json": "#645 (P1, the door's word and the take): GET /tx/{txid} for 272's payment, a received body with no proof whose post the world's broadcaster took: 200, the word announced (built at the door by the tracker's reducer, then the take fed as a broadcaster's acceptance). Before, 404: the host wrote no row at the door. With it the held coins of 275, 276 and 277 carry the word announced where they carried unknown; no offer moves. New; recorded last, so no file before it moves.",
+    "295-internalizeAction.receivedTaken.payment.json": "#659 (the offer rule under the cut's default): 272's payment taken in by a host at its defaults (the received-taken world, SPEND_RECEIVED unset), the broadcaster taking its post: 200. New; recorded last, so no file before it moves.",
+    "296-createAction.receivedTaken.noWord.json": "#659: 275's request with no allowPending, at the default, for the coin's exact value (no change output): the received coin a broadcaster took (announced) is offered with no word, and the spend signs and posts, 200. Under the word's rule (275, a host that sets SPEND_RECEIVED=hold) a spend with no word is 402 INSUFFICIENT_FUNDS.",
+    "297-tx.receivedBuilt.doorWord.json": "#659: GET /tx/{txid} in the received-built world, a host that sets SPEND_RECEIVED=hold holding one received payment of 50,000 sats that no broadcaster took (seeded as the tracker's pass leaves a payment whose take left no record): 200, the word built.",
+    "298-createAction.receivedBuilt.word.json": "#659: allowPending: received over 297's coin: 402 INSUFFICIENT_FUNDS, the coin held `built; received, not taken by a broadcaster: offered once a broadcaster takes it or once mined`. The word no longer offers a received coin no broadcaster took; before, under the word, it was offered at every unmined word."
   }
 }

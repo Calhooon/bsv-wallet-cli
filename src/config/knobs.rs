@@ -251,6 +251,10 @@ impl Config {
         vec![
             ("SPEND_DEPTH", h.spend_depth.to_string().into()),
             ("SPEND_OWN_CHANGE", Value::Switch(h.spend_own_change)),
+            (
+                "SPEND_RECEIVED",
+                Value::Text(h.spend_received.shown().to_string()),
+            ),
             ("TRACKER_AGE_SECS", h.tracker_age_secs.to_string().into()),
             ("TRACKER_MAX_ASKS", h.tracker_max_asks.to_string().into()),
             ("BROADCAST_RECONCILE", Value::Switch(r.enabled)),

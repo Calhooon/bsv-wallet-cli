@@ -523,6 +523,7 @@ pub fn quiet_environment() {
         "ROOT_KEY",
         "SPEND_DEPTH",
         "SPEND_OWN_CHANGE",
+        "SPEND_RECEIVED",
         "ARC_MODE",
         "ARCADE",
         "ARC_URL",
@@ -551,6 +552,18 @@ pub fn quiet_config() -> std::sync::Arc<bsv_wallet_cli::config::Config> {
     std::sync::Arc::new(
         bsv_wallet_cli::config::Config::from_pairs(&[("BSV_WALLET_SKIP_BROADCAST_VERIFY", "1")])
             .expect("the quiet configuration"),
+    )
+}
+
+/// [`quiet_config`] of a host that sets `SPEND_RECEIVED=hold` (#659): a
+/// received unmined coin is offered only under an action's word.
+pub fn hold_config() -> std::sync::Arc<bsv_wallet_cli::config::Config> {
+    std::sync::Arc::new(
+        bsv_wallet_cli::config::Config::from_pairs(&[
+            ("BSV_WALLET_SKIP_BROADCAST_VERIFY", "1"),
+            ("SPEND_RECEIVED", "hold"),
+        ])
+        .expect("the hold's configuration"),
     )
 }
 

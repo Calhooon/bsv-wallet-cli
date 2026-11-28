@@ -41,6 +41,7 @@ mod origins_tests;
 mod read;
 #[cfg(test)]
 mod seed_tests;
+mod spend_received;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -406,6 +407,9 @@ pub struct HostSettings {
     /// `SPEND_OWN_CHANGE`: `0`, `false`, `no` or `off` (any case) turn it
     /// off; anything else, or unset, leaves it on (R1 (b)).
     pub spend_own_change: bool,
+    /// `SPEND_RECEIVED`: `taken` (the default) or `hold` (any case); any
+    /// other value is refused at start by name (#659).
+    pub spend_received: crate::spend_gate::ReceivedSetting,
     /// `TRACKER_AGE_SECS`, default 600, at least 1.
     pub tracker_age_secs: Timestamp,
     /// `TRACKER_MAX_ASKS`, default 20.
@@ -431,6 +435,7 @@ impl HostSettings {
                 crate::spend_gate::DEFAULT_SPEND_OWN_CHANGE,
                 off,
             ),
+            spend_received: spend_received::read(raw),
             tracker_age_secs: raw
                 .number("TRACKER_AGE_SECS", "a number of seconds")
                 .unwrap_or(DEFAULT_AGE_SECS)

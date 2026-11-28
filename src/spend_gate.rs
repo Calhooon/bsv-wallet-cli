@@ -21,29 +21,38 @@
 //!    is 1). **R3 (b)**: the depth is the host's parameter, 1 the floor
 //!    ([`crate::tracker_host::read_creators`], the 0.9.0 `spend_guard` run
 //!    over many creators at once); or
-//! 2. its creator's word claims nothing about the chain (`pending`:
-//!    `unknown`, `built`, `announced`, `seen`), the creator is an action of
-//!    ours (`made`: change of a transaction this wallet created and signed),
-//!    and the config names the rule, `SPEND_OWN_CHANGE` (default `1` for
-//!    this host; `0` turns it off). **R1 (b)**: the one rule a host may name
-//!    is for its own `made` change (`Rules .made`); a received coin
-//!    (`internalizeAction`, any counterparty's payment) with no proof is
-//!    never offered by a host setting (`ruleFor` reads no `received` arm
-//!    host-wide); or
-//! 3. its creator's word is `pending`, the coin was received, and this one
-//!    action names the rule at the door: `allowPending: "received"` on the
-//!    served `/createAction`, `--allow-pending received` on `send`, `drain`,
-//!    `split` and `gift-send` ([`GateOptions::allow_received`]). **R1 (d)**
-//!    (the owner's ruling of 2026-10-18 00:1xZ; `lean/Wallet.lean`
-//!    `receivedPending`, `ruleFor`): the rule under the word is the
-//!    ruling's own, any creator word that claims nothing about the chain,
-//!    never a host setting, and there is no environment variable for it.
+//! 2. its creator is an action of ours (`made`: change of a transaction
+//!    this wallet created and signed), its word is `built`, `handed`,
+//!    `announced`, `seen` or `stale`, and the config names the rule,
+//!    `SPEND_OWN_CHANGE` (default `1` for this host; `0` turns it off).
+//!    **R1 (b)**: the rule for our own change is the words from `built` on
+//!    (the stack's `liveFromBuilt`, `lean/Wallet/Default.lean`), under
+//!    every setting: every road this host signs by writes `built` at
+//!    signing ([`crate::tracker_host::signed_word`]), so own change whose
+//!    creator reads `unknown` is an unsigned template's, or a row the next
+//!    tracker pass adopts, and is held; or
+//! 3. the coin was received (`internalizeAction`, any counterparty's
+//!    payment) and a broadcaster took its transaction (`announced`, `seen`,
+//!    or `stale`, which ranks as `seen`). **R1 (e)** (the owner's ruling of
+//!    2026-11-28, #659; the stack's one function, `offerOne`,
+//!    `lean/Wallet/OneFunction.lean`, under `Setting.cut`): offered with no
+//!    word from the action. A received coin no broadcaster took (`unknown`,
+//!    `built`, `handed`, `abandoned`) is held until one takes it or it is
+//!    mined, whatever the action says. The host's setting `SPEND_RECEIVED`
+//!    ([`ReceivedSetting`]) is `taken` by default; `hold` keeps **R1 (d)**
+//!    (the owner's ruling of 2026-10-18; `Setting.hold`): the taken coin is
+//!    offered only to an action that names the rule at the door,
+//!    `allowPending: "received"` on the served `/createAction`,
+//!    `--allow-pending received` on `send`, `drain`, `split` and
+//!    `gift-send` ([`GateOptions::allow_pending`]). Under either setting the
+//!    scoped word (#63) offers only the received coins it names.
 //!    The body of every such coin was checked at internalize: the toolbox
 //!    refuses an incomplete ancestry and checks every merkle root the BEEF
 //!    carries against the header service in Strict mode
 //!    (bsv-wallet-toolbox-rs 0.8.0 `storage/sqlx/internalize_action.rs`
 //!    96-119), and `fund` refuses an invalid BEEF; so the one trusted word
-//!    is the sender's broadcast. The action carries the word as a label,
+//!    is the sender's broadcast. An action that names the word carries it
+//!    as a label,
 //!    [`RECEIVED_PENDING_LABEL`], appended to its labels before the door, so
 //!    the toolbox writes it inside the action's one transaction (a
 //!    deferred-signing template keeps it when `signAction` signs it); shown
@@ -51,16 +60,17 @@
 //!    the toolbox's [`TOOLBOX_RECEIVED_LABEL`], without which its selection
 //!    passes over a received coin whose transaction it does not hold as
 //!    `completed`. Without the word the action carries neither, with one
-//!    case: an offer holding such a coin (offered by 1. above, the
-//!    tracker's checked proof at depth, while the toolbox has not yet
-//!    completed its transaction) carries the toolbox's label alone
+//!    case: an offer holding such a coin (offered by 3. under the
+//!    default, or by 1. above, the tracker's checked proof at depth, while
+//!    the toolbox has not yet completed its transaction) carries the
+//!    toolbox's label alone
 //!    ([`labelled_for_offer`], #627). A 0.15 store's
 //!    records (`spend_gate_actions`, by txid or by reference) keep
 //!    answering; nothing writes them from 0.16.
 //!
 //! A coin whose creator is `stale` (its proof's block left the chain, the
 //! transaction confirming again) ranks as `seen` at the door, offered under
-//! rule 2 or 3 as a `pending` creator's coin is and never with no rule (the
+//! rule 2 or 3 as a `seen` creator's coin is and never with no rule (the
 //! owner's ruling 7a of 2026-10-20, `lean/Wallet.lean` `doorWord`,
 //! `stale_ranks_as_seen`). A coin whose creator is `rejected`, `conflicted`
 //! or `abandoned` is never offered. Nor is our own coin whose creator's
@@ -277,6 +287,122 @@ pub use lineage::{join_pairs, lineage_candidates, DeadAncestor, Lineage, Pair, D
 /// `SPEND_OWN_CHANGE` when unset: this host chains payments, so its own
 /// change is offered before it is mined (R1 (b)).
 pub const DEFAULT_SPEND_OWN_CHANGE: bool = true;
+
+/// `SPEND_RECEIVED` (#659): the host's rule for a received payment whose
+/// creator is not mined. Under either, one no broadcaster took (`unknown`,
+/// `built`, `handed`, `abandoned`) is held until it is mined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReceivedSetting {
+    /// The default (the stack's `Setting.cut`, `lean/Wallet/Default.lean`):
+    /// a received payment a broadcaster took (`announced`, `seen`, and
+    /// `stale`, which ranks as `seen`) is offered with no word from the
+    /// action. A scoped word still narrows the offer to the coins it names.
+    #[default]
+    Taken,
+    /// The hold (`Setting.hold`): such a payment is offered only to an
+    /// action that says `allowPending: received`, plain or scoped.
+    Hold,
+}
+
+impl ReceivedSetting {
+    /// The setting `word` names (`taken`, `hold`), if it is one.
+    #[must_use]
+    pub fn of(word: &str) -> Option<Self> {
+        match word {
+            "taken" => Some(Self::Taken),
+            "hold" => Some(Self::Hold),
+            _ => None,
+        }
+    }
+
+    /// The setting as `bsv-wallet config` prints it.
+    #[must_use]
+    pub fn shown(self) -> &'static str {
+        match self {
+            Self::Taken => "taken (default)",
+            Self::Hold => "hold",
+        }
+    }
+}
+
+/// A creator's word as the door's rule reads it: every word the stack's
+/// wallet model names, `handed` included, which the tracker crate at this
+/// pin does not produce yet ([`crate::tracker_host::WORD_LABELS`] holds
+/// nine). The gate matches this enum with no wildcard arm, so a word is
+/// offered only where an arm names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoorWord {
+    /// No record of the creator but its action.
+    Unknown,
+    /// Signed by this host, or taken in at its door.
+    Built,
+    /// Handed to a broadcaster, its answer not heard.
+    Handed,
+    /// A broadcaster took it.
+    Announced,
+    /// Seen on the network.
+    Seen,
+    /// Its proof's block left the chain; ranks as `seen` at the door.
+    Stale,
+    /// Proven in a block.
+    Mined,
+    /// A rule's verdict against it.
+    Rejected,
+    /// A competitor of it is mined.
+    Conflicted,
+    /// Given up by its host.
+    Abandoned,
+}
+
+/// Every label the door reads, with its word. A label outside the table is
+/// held as a fault and never offered ([`hold_reason`]).
+pub const DOOR_WORDS: [(&str, DoorWord); 10] = [
+    ("unknown", DoorWord::Unknown),
+    ("built", DoorWord::Built),
+    ("handed", DoorWord::Handed),
+    ("announced", DoorWord::Announced),
+    ("seen", DoorWord::Seen),
+    ("stale", DoorWord::Stale),
+    ("mined", DoorWord::Mined),
+    ("rejected", DoorWord::Rejected),
+    ("conflicted", DoorWord::Conflicted),
+    ("abandoned", DoorWord::Abandoned),
+];
+
+impl DoorWord {
+    /// The word `label` names, if the door reads it.
+    #[must_use]
+    pub fn of(label: &str) -> Option<Self> {
+        DOOR_WORDS
+            .iter()
+            .find(|(known, _)| *known == label)
+            .map(|(_, word)| *word)
+    }
+}
+
+/// What a creator's word that is not final about the chain says of its
+/// bytes, as the setting's rule reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Live {
+    /// `unknown`, `abandoned`: no record that this host signed it or that
+    /// a broadcaster took it.
+    Unsigned,
+    /// `built`, `handed`: signed (or taken in at the door), not taken by a
+    /// broadcaster.
+    Signed,
+    /// `announced`, `seen`, and `stale`, which ranks as `seen`: a
+    /// broadcaster took the bytes.
+    Taken,
+}
+
+/// Appended to the word of our own change whose creator this host has no
+/// record of signing: the rule for our own change is the words from `built`
+/// on, under every setting.
+pub const OWN_NOT_SIGNED: &str = "own change not signed: never offered";
+/// Appended to the word of a received coin no broadcaster took.
+pub const RECEIVED_NOT_TAKEN: &str =
+    "received, not taken by a broadcaster: offered once a broadcaster takes it or once mined";
+
 /// Creators read per batch while the offered coins do not yet cover.
 const BATCH: usize = 32;
 /// Satoshis read beyond the outputs before the lazy read stops (fees).
@@ -328,8 +454,11 @@ pub struct GateOptions {
     /// `SPEND_DEPTH`, floor 1 (R3 (b)).
     pub spend_depth: Height,
     /// `SPEND_OWN_CHANGE` (R1 (b)): offer our own `made` change whose
-    /// creator's word is `pending`.
+    /// creator's word is `built`, `handed`, `announced`, `seen` or `stale`.
     pub own_change: bool,
+    /// `SPEND_RECEIVED` (#659): the rule for a received coin a broadcaster
+    /// took; the default offers it with no word.
+    pub received: ReceivedSetting,
     /// R1 (d): this one action's word at the door ([`AllowPending`]).
     /// Never read from the configuration; off unless the caller says so.
     pub allow_pending: AllowPending,
@@ -352,6 +481,7 @@ impl Default for GateOptions {
         Self {
             spend_depth: crate::tracker_host::DEFAULT_SPEND_DEPTH,
             own_change: DEFAULT_SPEND_OWN_CHANGE,
+            received: ReceivedSetting::default(),
             allow_pending: AllowPending::Off,
             tracker: TickOptions::default(),
             header_retry_pause: HEADER_RETRY_PAUSE,
@@ -515,8 +645,9 @@ pub fn parse_outpoint(text: &str) -> std::result::Result<(String, u32), String> 
 }
 
 impl GateOptions {
-    /// `SPEND_DEPTH` and `SPEND_OWN_CHANGE` (`0`, `false`, `no`, `off` turn
-    /// it off; anything else, or unset, leaves it on), as the configuration
+    /// `SPEND_DEPTH`, `SPEND_OWN_CHANGE` (`0`, `false`, `no`, `off` turn
+    /// it off; anything else, or unset, leaves it on) and `SPEND_RECEIVED`
+    /// (`taken`, the default, or `hold`), as the configuration
     /// read them at start: built once, by the server at its start or by a
     /// command, never per spend.
     #[must_use]
@@ -525,6 +656,7 @@ impl GateOptions {
         Self {
             spend_depth: tracker.spend_depth,
             own_change: config.host.spend_own_change,
+            received: config.host.spend_received,
             allow_pending: AllowPending::Off,
             tracker,
             header_retry_pause: HEADER_RETRY_PAUSE,
@@ -1164,47 +1296,104 @@ pub fn hold_reason(
     if reading.offered() {
         return None;
     }
+    // A label the table does not hold is a word this host cannot judge:
+    // held as a fault, never offered.
+    let Some(word) = DoorWord::of(reading.word) else {
+        return Some(format!(
+            "the creator's word {} is not one this host reads",
+            reading.word
+        ));
+    };
     let depth = format!(
         "depth {}: {}",
         opts.spend_depth
             .max(crate::tracker_host::DEFAULT_SPEND_DEPTH),
         blocks(reading.depth)
     );
-    match reading.word {
-        "mined" => Some(depth),
-        "rejected" | "conflicted" | "abandoned" => Some(format!("{}: never offered", reading.word)),
+    // Every word is named: no arm stands for a word not written here.
+    let live = match word {
+        DoorWord::Mined => return Some(depth),
+        DoorWord::Rejected | DoorWord::Conflicted => {
+            return Some(format!("{}: never offered", reading.word))
+        }
+        DoorWord::Unknown | DoorWord::Abandoned => Live::Unsigned,
+        DoorWord::Built | DoorWord::Handed => Live::Signed,
         // `stale` ranks as `seen` at the door (the owner's ruling 7a of
         // 2026-10-20, `lean/Wallet.lean` `doorWord`): its proof's block left
-        // the chain and the transaction is confirming again, offered under
-        // the rule a pending creator's coin is and never with no rule.
-        "stale" => rule_hold(origin, outpoint, opts, STALE, "received, confirming again"),
-        // `pending`: the word claims nothing about the chain.
-        _ => rule_hold(origin, outpoint, opts, &depth, "received, no proof"),
-    }
+        // the chain and the transaction is confirming again.
+        DoorWord::Announced | DoorWord::Seen | DoorWord::Stale => Live::Taken,
+    };
+    // The text a hold for want of a rule opens with; it offers nothing.
+    let (opens, received) = if word == DoorWord::Stale {
+        (STALE, "received, confirming again")
+    } else {
+        (depth.as_str(), "received, no proof")
+    };
+    rule_hold(
+        origin,
+        outpoint,
+        opts,
+        (live, reading.word),
+        opens,
+        received,
+    )
 }
 
 /// The word a held `stale` creator's reason opens with.
 const STALE: &str = "stale: its block left the chain";
 
-/// The door of a creator whose word claims nothing about the chain (or
-/// ranks as such): only R1's rule for our own change (b), or the action's
-/// word for a received coin (d), offers it. `word` opens the reason and
-/// `received` says what the received creator is.
+/// The door of a creator whose word is not final about the chain, by the
+/// setting's rule for its origin (#659; the stack's `offerOne`,
+/// `lean/Wallet/OneFunction.lean`, and `offerableD` under `Setting.hold`).
+///
+/// Our own change: offered under `SPEND_OWN_CHANGE` from `built` on
+/// (`liveFromBuilt`), under every setting; never at a word that says this
+/// host did not sign it.
+///
+/// A received coin: first the action's word. A scoped word offers only the
+/// coins it names, under every setting; with no word, `SPEND_RECEIVED=hold`
+/// holds the coin and the default goes on. Then the creator's word: only a
+/// coin a broadcaster took is offered, and one no broadcaster took is held
+/// until it is mined, whatever the action says.
+///
+/// `opens` opens the reason of a hold for want of a rule and `received`
+/// says what the received creator is; `label` opens the reason of a word
+/// the rule refuses.
 fn rule_hold(
     origin: Origin,
     outpoint: (&str, u32),
     opts: &GateOptions,
-    word: &str,
+    (live, label): (Live, &str),
+    opens: &str,
     received: &str,
 ) -> Option<String> {
     match origin {
-        Origin::Received if opts.allow_pending.reaches(outpoint.0, outpoint.1) => None,
-        Origin::Received if opts.allow_pending.is_on() => {
-            Some(format!("{word}; {received}; {NOT_NAMED_HINT}"))
+        Origin::Made if !opts.own_change => {
+            Some(format!("{opens}; own change, SPEND_OWN_CHANGE=0"))
         }
-        Origin::Received => Some(format!("{word}; {received}; {ALLOW_PENDING_HINT}")),
-        Origin::Made if opts.own_change => None,
-        Origin::Made => Some(format!("{word}; own change, SPEND_OWN_CHANGE=0")),
+        Origin::Made => match live {
+            Live::Signed | Live::Taken => None,
+            Live::Unsigned => Some(format!("{label}; {OWN_NOT_SIGNED}")),
+        },
+        Origin::Received => {
+            let wanting = match (&opts.allow_pending, opts.received) {
+                (AllowPending::ReceivedOnly(_), _)
+                    if !opts.allow_pending.reaches(outpoint.0, outpoint.1) =>
+                {
+                    Some(NOT_NAMED_HINT)
+                }
+                (AllowPending::Off, ReceivedSetting::Hold) => Some(ALLOW_PENDING_HINT),
+                (AllowPending::ReceivedOnly(_) | AllowPending::Received, _)
+                | (AllowPending::Off, ReceivedSetting::Taken) => None,
+            };
+            if let Some(hint) = wanting {
+                return Some(format!("{opens}; {received}; {hint}"));
+            }
+            match live {
+                Live::Taken => None,
+                Live::Unsigned | Live::Signed => Some(format!("{label}; {RECEIVED_NOT_TAKEN}")),
+            }
+        }
     }
 }
 

@@ -116,6 +116,17 @@ pub(crate) async fn served_rooted(
     roots: Option<&[(u32, &str)]>,
     posts: Arc<dyn WalletServices>,
 ) -> (WalletState, axum::Router) {
+    served_under(root, roots, posts, &[]).await
+}
+
+/// [`served_rooted`], the server's settings read from `pairs` as the
+/// environment at start gives them (`SPEND_RECEIVED`, #659).
+pub(crate) async fn served_under(
+    root: &PrivateKey,
+    roots: Option<&[(u32, &str)]>,
+    posts: Arc<dyn WalletServices>,
+    pairs: &[(&str, &str)],
+) -> (WalletState, axum::Router) {
     let storage = rooted_store(root, roots).await;
     let services =
         Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
@@ -125,7 +136,11 @@ pub(crate) async fn served_rooted(
         .expect("wallet");
     let state = server::make_wallet_state(wallet);
     WalletStorageProvider::set_services(state.storage(), posts);
-    let config = ServerConfig::admitting(["test.local"]).expect("an originator");
+    let settings = bsv_wallet_cli::config::Config::from_pairs(pairs).expect("the settings");
+    let config = ServerConfig {
+        settings: Arc::new(settings),
+        ..ServerConfig::admitting(["test.local"]).expect("an originator")
+    };
     let router = server::make_router(state.clone(), config);
     (state, router)
 }

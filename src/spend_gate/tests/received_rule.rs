@@ -129,6 +129,9 @@ pub(super) async fn wallet_with_received(
         .await
         .unwrap();
         assert_eq!((purpose.as_str(), status.as_str()), ("receive", "unproven"));
+        // The broadcaster's take, as the door hears it from the broadcast
+        // memory (the plain mock keeps none): `announced`.
+        super::taken(wallet.storage(), txid).await;
     }
     (wallet, txids)
 }

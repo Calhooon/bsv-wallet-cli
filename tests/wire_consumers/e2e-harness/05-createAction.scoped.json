@@ -52,10 +52,10 @@
           "outpoint": "8888888888888888888888888888888888888888888888888888888888888888.0",
           "reason": "depth 1: 0 blocks; received, no proof; not named under allowPending: received",
           "satoshis": 20000,
-          "word": "unknown"
+          "word": "announced"
         }
       ],
-      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 40020, have 30000; 30000 sats offered, 1 coin(s) held back)\n  8888888888888888888888888888888888888888888888888888888888888888.0 20000 sats: unknown, received, <minutes> min old: depth 1: 0 blocks; received, no proof; not named under allowPending: received",
+      "message": "Insufficient funds: no offerable coin covers the action (Insufficient funds: need 40020, have 30000; 30000 sats offered, 1 coin(s) held back)\n  8888888888888888888888888888888888888888888888888888888888888888.0 20000 sats: announced, received, <minutes> min old: depth 1: 0 blocks; received, no proof; not named under allowPending: received",
       "offeredSatoshis": 30000
     }
   }

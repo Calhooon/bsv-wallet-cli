@@ -2,7 +2,9 @@
 //! services: a header service stood in by the mock, nothing on the network.
 
 use super::*;
-use crate::test_support::coins::{coin, mined_coin, mined_coin_with_lock, storage_for};
+use crate::test_support::coins::{
+    coin as coin_unknown, mined_coin, mined_coin_with_lock, storage_for,
+};
 use crate::tracker_host::tests::{header, header_with_hash};
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::{CreateActionOptions, CreateActionOutput, WalletInterface};
@@ -21,6 +23,7 @@ mod carried;
 mod from;
 mod lineage;
 mod not_spendable;
+mod offer_rule;
 mod received_rule;
 mod user_scope;
 
@@ -43,10 +46,57 @@ fn headers_with(txid: &str, height: u32, tip: u32) -> MockWalletServices {
 /// seconds (#506). A test that the pause is NOT taken reads it served.
 const TEST_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// The planter's coin, its unmined creator given the word this host writes
+/// at its doors (#659): our own action `built` (the create door), a
+/// received payment `announced` (a broadcaster's take, [`taken`]). A
+/// creator this host holds no word for is planted with `coin_unknown`.
+async fn coin(
+    storage: &StorageSqlx,
+    ids: (i64, i64),
+    txid: &str,
+    made: bool,
+    mined_at: Option<u32>,
+    satoshis: i64,
+    minutes_old: i64,
+) -> i64 {
+    let id = coin_unknown(storage, ids, txid, made, mined_at, satoshis, minutes_old).await;
+    if mined_at.is_none() && made {
+        crate::tracker_host::signed_word(storage, txid).await;
+    } else if mined_at.is_none() {
+        taken(storage, txid).await;
+    }
+    id
+}
+
+/// A broadcaster's acceptance of `txid`, heard as the host hears a take:
+/// its creator reads `announced`.
+pub(super) async fn taken(storage: &StorageSqlx, txid: &str) {
+    use crate::tracker_host::{heard, Keep, SystemClock};
+    let hint = bsv_tracker::Hint::new("arc", bsv_tracker::HintStatus::Accepted, 1_700_000_000);
+    let opts = crate::tracker_host::TickOptions::default();
+    let (word, _) = heard(
+        storage,
+        &SystemClock,
+        &opts,
+        txid,
+        hint,
+        None,
+        Keep::Nothing,
+    )
+    .await
+    .unwrap();
+    assert_eq!(word, "announced", "{txid}");
+}
+
+/// The host's settings of these tests: `SPEND_RECEIVED=hold`, the word's
+/// rule they were written under (a received unmined coin is offered only
+/// under the action's word). The default's tests are `tests/offer_rule.rs` here,
+/// which name `ReceivedSetting::Taken`.
 fn opts(spend_depth: u32, own_change: bool) -> GateOptions {
     GateOptions {
         spend_depth,
         own_change,
+        received: ReceivedSetting::Hold,
         allow_pending: AllowPending::Off,
         tracker: crate::tracker_host::TickOptions::default(),
         header_retry_pause: TEST_PAUSE,
@@ -122,7 +172,7 @@ async fn at_depth_one_the_tip_is_offered_and_no_block_is_not() {
     let held = &a.held[0];
     assert_eq!(
         (held.word.as_str(), held.origin),
-        ("unknown", Origin::Received)
+        ("announced", Origin::Received)
     );
     assert!((3..=5).contains(&held.age_minutes), "{}", held.age_minutes);
 
@@ -1792,9 +1842,12 @@ async fn a_forged_rule_label_is_stripped_and_grants_nothing() {
     let root = PrivateKey::random();
     let (storage, user, basket) = storage_for(&root.public_key().to_hex()).await;
     let (deep, _) = mined_coin(&storage, (user, basket), 0xd1, 50_000, 800).await;
-    let (other, _) = mined_coin(&storage, (user, basket), 0xd2, 50_000, 800).await;
+    // A second mined coin, its header carried too: the template below
+    // locks one, and the action under the word spends the other.
+    let (other, _) = mined_coin(&storage, (user, basket), 0xd2, 50_000, 801).await;
     let services = MockWalletServices::builder().build();
     services.set_header_for_height(header(800, &deep, 0));
+    services.set_header_for_height(header(801, &other, 0));
     services.set_tip_header(header_with_hash(900, &other, 0));
     let wallet = Wallet::new(Some(root), storage, services).await.unwrap();
     let forged = || {
@@ -3091,7 +3144,7 @@ async fn live_statuses_at_the_named_door_read_the_received_creator() {
         assert_eq!(flag, 1, "{status}");
         let held = named_under_word(&wallet, txid, &opts(1, true)).await;
         assert_eq!(held.len(), 1, "{status}: {held:?}");
-        assert_eq!(held[0].word, "unknown", "{status}");
+        assert_eq!(held[0].word, "announced", "{status}");
         assert_eq!(
             held[0].reason,
             "depth 1: 0 blocks; received, no proof; offered under allowPending: received"
@@ -3760,9 +3813,11 @@ async fn a_stale_creator_is_offered_under_the_rule_a_pending_one_is() {
     }
 }
 
-/// The door closes on `rejected`, `conflicted` and `abandoned` only (ruling
-/// 7a; `dead_creator_never_offered`): never offered under any rule or word,
-/// for either origin, the reason byte for byte as before.
+/// The door closes on `rejected` and `conflicted` with the chain's word
+/// (ruling 7a; `dead_creator_never_offered`): never offered under any rule
+/// or word, for either origin, the reason byte for byte as before.
+/// `abandoned` is a word the rule refuses (#659): never offered either,
+/// under any setting, rule or word.
 #[test]
 fn a_dead_creator_is_never_offered_under_any_rule() {
     let txid = "f4".repeat(32);
@@ -3771,23 +3826,45 @@ fn a_dead_creator_is_never_offered_under_any_rule() {
         opts(1, true).with_allow_received(true),
         opts(1, true).with_allow_pending(AllowPending::ReceivedOnly(vec![(txid.clone(), 0)])),
     ];
-    for word in ["rejected", "conflicted", "abandoned"] {
-        let reading = CreatorReading {
-            word,
-            depth: 0,
-            suspect: false,
-            door: false,
-            fault: None,
-            headers_fault: false,
-        };
-        for (gate, origin) in gates
-            .iter()
-            .flat_map(|g| [(g, Origin::Made), (g, Origin::Received)])
-        {
+    let reading = |word| CreatorReading {
+        word,
+        depth: 0,
+        suspect: false,
+        door: false,
+        fault: None,
+        headers_fault: false,
+    };
+    let taken = |gate: &GateOptions| GateOptions {
+        received: ReceivedSetting::Taken,
+        ..gate.clone()
+    };
+    for gate in gates.iter().flat_map(|g| [g.clone(), taken(g)]) {
+        for origin in [Origin::Made, Origin::Received] {
+            for word in ["rejected", "conflicted"] {
+                assert_eq!(
+                    hold_reason(&reading(word), origin, (&txid, 0), &gate),
+                    Some(format!("{word}: never offered")),
+                    "{word}, {origin:?}, {gate:?}"
+                );
+            }
+            let abandoned = hold_reason(&reading("abandoned"), origin, (&txid, 0), &gate);
+            let refused = match origin {
+                Origin::Made => format!("abandoned; {OWN_NOT_SIGNED}"),
+                Origin::Received => format!("abandoned; {RECEIVED_NOT_TAKEN}"),
+            };
+            let no_word = "depth 1: 0 blocks; received, no proof; offered under \
+                           allowPending: received";
+            let for_want_of_the_word = origin == Origin::Received
+                && gate.received == ReceivedSetting::Hold
+                && !gate.allow_pending.is_on();
             assert_eq!(
-                hold_reason(&reading, origin, (&txid, 0), gate),
-                Some(format!("{word}: never offered")),
-                "{word}, {origin:?}, {gate:?}"
+                abandoned.as_deref(),
+                Some(if for_want_of_the_word {
+                    no_word
+                } else {
+                    refused.as_str()
+                }),
+                "abandoned, {origin:?}, {gate:?}"
             );
         }
     }

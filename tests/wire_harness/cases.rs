@@ -58,6 +58,7 @@ async fn record_after_the_scripts(r: &mut Recorder) {
     super::cases_not_spendable::record(r).await;
     super::cases_send_with::record(r).await;
     super::cases_received_rule::record_door_word(r).await;
+    super::cases_received_rule::record_setting(r).await;
 }
 
 /// The browser gate's rows, in their recorded order: the gate, the owner's

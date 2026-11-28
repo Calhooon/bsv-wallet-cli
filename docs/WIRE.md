@@ -43,7 +43,7 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
   | `busy` | a file store whose write lock another connection holds |
   | `busy-read` | a file store no reader can open: opened on SQLite's dotfile locking (no shared memory, so no WAL), its one lock held by another connection; carries the callback token and covers `abortAction`, `GET /chain-feed`, `GET /tx/{txid}` and `POST /arc-callback` answering 503 `STORE_BUSY` with `Retry-After: 1` |
   | `funded` | four mined coins the wallet can sign for (50,000, 40,000, 30,000, 20,000 sats, each a one-leaf block of its own that the header stub answers); the mined parents of the payments from a fixed stranger key and of a puzzle coin (`OP_1 OP_EQUAL`), whose blocks the header stub answers too (among them a parent at 600,000, before Genesis, and the held spend of rows 286 to 288, mined at 899,887; #634); and a local ARC that takes every post |
-  | `named-change` | one completed made change coin, offered under `SPEND_OWN_CHANGE=1`; the other worlds seed incoming coins and their spends make no change |
+  | `named-change` | one completed made change coin whose creator reads `built` (the create door's word, #659), offered under `SPEND_OWN_CHANGE=1`; the other worlds seed incoming coins and their spends make no change |
   | `trusted` | `fresh` whose wallet reads `TRUST_SETTINGS` through the CLI's typed config, naming the harness certificate's certifier (#331), and holds that certificate |
   | `stranger` | `trusted`'s certificate under settings naming another certifier |
   | `pages` | `fresh`, where a page the seed does not list is asked per power (#414 L5b): its held calls and the owner's answers, kept apart so no owner's-door fixture's rows move |
@@ -51,7 +51,9 @@ The field names are BRC-100 at `5119a9b` (2026-10-19), the line's pin of record:
   | `spending` | `funded`'s four coins and its local ARC, where a page the seed does not list spends under the spending power (#414 L6): held, answered `once`, granted with a ceiling, past the ceiling held as a renewal; kept apart so no funded fixture's coins move |
   | `internalize` | `funded`'s four coins and its local ARC, and two outputs as an earlier release's basket insertion into `default` left them (`custom`, not change; written with an SQL update, as the toolbox's own test reproduces them), where the toolbox's two `internalizeAction` rules are served (rows 222 to 250), and the door of the toolbox's 0.14.0-beta.8.1 (rows 255 to 266), and the strip at `createAction` seen in a spend of its 40,000-sat completed coin (rows 282 and 283, #627); kept apart so its listings show only what those rows stored |
   | `internalize-held` | two change rows of the default basket with their derivation, written by SQL as `internalize`'s are, each a row the toolbox's 0.14.0-beta.8 `### Hosts` names: one with another `provided_by` and `purpose` than `storage` and `change`, one whose script is not the P2PKH of its derived key (rows 251 to 254); kept apart so `internalize`'s listings do not move |
-  | `received-rule` | no coin of its own (the basket wanting none, so an exact spend makes no change), the stranger's payments' parents seeded, and a local ARC; its coins are the two received payments rows 272 and 273 take in through the toolbox's own `internalizeAction` (purpose `receive`, unproven), the coins the toolbox's received-coin rule reaches (rows 272 to 281, #627); kept apart so no other world's coins or listings move |
+  | `received-rule` | no coin of its own (the basket wanting none, so an exact spend makes no change), the stranger's payments' parents seeded, and a local ARC; its coins are the two received payments rows 272 and 273 take in through the toolbox's own `internalizeAction` (purpose `receive`, unproven), the coins the toolbox's received-coin rule reaches (rows 272 to 281, #627); kept apart so no other world's coins or listings move. Since #659 its host sets `SPEND_RECEIVED=hold`, the word's rule these rows were recorded under |
+  | `received-taken` | `received-rule`'s seed and local ARC under the host's defaults (`SPEND_RECEIVED` unset): the payment row 295 takes in is offered with no word (row 296, #659) |
+  | `received-built` | a host that sets `SPEND_RECEIVED=hold` holding one received payment of 50,000 sats that no broadcaster took, its word `built`, seeded as the tracker's pass leaves a payment whose take left no record; no broadcaster (a closed port); rows 297 and 298 (#659) |
   | `not-spendable` | one mined coin the wallet can sign for (50,000 sats, a one-leaf block of its own that the header stub answers), then marked `spendable = 0` with no spender by an SQL update, the record `reconcile-outputs --execute`, `cleanup-abandoned --execute` and the spend guard write for a coin never to be selected; no broadcaster (a closed port); row 291 (#646) |
 
 - **Order**: files run in name order, and the fixtures of one world share it, so a later file may read what an earlier one left (a certificate acquired, then listed; a template built, then signed or aborted). The permission audit is the process's, so `/permission-audit` lists every audited call of the files before it, in every world.
@@ -653,6 +655,29 @@ The stack's wallet model writes `built` when the wallet signs an action of its o
 | a second write, the internalize door's on the same transaction, and the pass | the pass adopted the row at `built` | the row as written at signing; the pass adopts nothing for it | `a_second_write_and_the_pass_change_nothing` |
 
 No wire row moves: no recorded request reads the word of an action the wallet made, and the gate's held coins in the recorded 402s are received ones (294 replayed, 0 differ; the consumers' 48, 0 differ).
+
+## The offer rule under the cut's default (#659, L2a)
+
+The stack's one function (bsv-stack-lean `lean/Wallet/OneFunction.lean`, `offerOne`; the vectors' `offerable_one`) offers a received payment once a broadcaster took it, with no word from the action; a host may keep the hold. The host's setting is `SPEND_RECEIVED`: `taken` (the default) or `hold`. This is a breaking change of a served answer (the owner's ruling of 2026-11-28).
+
+| answer of `POST /createAction` | before | now, at the default | now, under `SPEND_RECEIVED=hold` |
+|---|---|---|---|
+| no `allowPending`, a received unmined coin a broadcaster took (`announced`, `seen`, `stale`) | 402 `INSUFFICIENT_FUNDS`, the coin held `received, no proof; offered under allowPending: received` (275) | 200, the spend signs (296) | 402, the same hold (275, unmoved) |
+| `allowPending: "received"`, the same coin | 200 (280) | 200 | 200 (280, unmoved) |
+| the scoped word, a taken coin it does not name | 402, held `not named under allowPending: received` (277) | the same | the same (277, unmoved) |
+| `allowPending: "received"`, a received coin no broadcaster took (`unknown`, `built`) | 200, offered under the word | 402 `INSUFFICIENT_FUNDS`, held `<word>; received, not taken by a broadcaster: offered once a broadcaster takes it or once mined` | the same 402 (298) |
+| no `allowPending`, the same coin | 402, held for want of the word | 402, held with the reason above | 402, held for want of the word, as before |
+| our own change whose creator reads `unknown` (no tracker row) | offered under `SPEND_OWN_CHANGE=1` | held `unknown; own change not signed: never offered`; a named one is 403 `INPUT_NOT_OFFERED` | the same |
+| our own change at `built`, `announced`, `seen`, `stale` | offered under `SPEND_OWN_CHANGE=1` | the same | the same |
+
+The rows. No recorded row moves: the `received-rule` world (rows 272 to 281 and 294) is now a host that sets `SPEND_RECEIVED=hold`, and its answers are the word's rule byte for byte; the `named-change` world's coin carries the create door's word, so row 120 keeps its answer (at `unknown` the named coin would be the gate's 403 before the toolbox's 400). Four rows are new and recorded last, so rows 001 to 294 keep their names:
+
+- 295 and 296, the `received-taken` world (the host's defaults): the payment of row 272 taken in, then a spend with no `allowPending` for the coin's exact value: 200. Row 275 is the same spend's old answer and the hold's answer, 402.
+- 297 and 298, the `received-built` world (`SPEND_RECEIVED=hold`): `GET /tx/{txid}` answers `built` for a received payment no broadcaster took, and `allowPending: "received"` over it is 402 with the reason above. Before, the word offered it.
+
+A received payment whose post faults at the internalize door is stored with its coin not spendable (the gate lists it `lost: the store marks it not spendable`), so a served request reaches a spendable `built` coin only through a store that already holds one; the served tests of `tests/served_internalize_door/offer_default.rs` reach it through a broadcaster that takes the post and leaves no record.
+
+The consumers' corpus: its `pending` world's two received coins now read `announced` (a broadcaster took them), as a consumer's received payment does. Four recorded answers move with the default. `dolphinmilk/03-createAction.x402`, `low-fleet/08-createAction.stake` and `mcp/08-create_action` send no `allowPending`: before, 402 with both coins held for want of the word; now the coins are offered and the answer is the one the same request already had under the word in that world (400, the toolbox's reading of the world's stub transaction bytes). `e2e-harness/05-createAction.scoped` keeps its 402; the coin it does not name is listed with the word `announced` where it read `unknown`.
 
 ## The browser gate (#411) and the switch (#414)
 

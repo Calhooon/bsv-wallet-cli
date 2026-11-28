@@ -47,7 +47,7 @@ enum Death {
 async fn kill(storage: &StorageSqlx, txid: &str, death: Death) {
     match death {
         Death::Word(word) => {
-            sqlx::query("INSERT INTO tracker_states (txid, word) VALUES (?, ?)")
+            sqlx::query("INSERT OR REPLACE INTO tracker_states (txid, word) VALUES (?, ?)")
                 .bind(txid)
                 .bind(word)
                 .execute(storage.writer())
@@ -369,7 +369,7 @@ async fn conflicted_with_proof() -> (Store, (String, String), MockWalletServices
 /// it: beside its verdict, so a replay reads it back.
 async fn node_verdict(storage: &StorageSqlx, txid: &str, word: &str) {
     let verdict = serde_json::json!({"kind": word, "competitors": ["fd".repeat(32)]});
-    sqlx::query("INSERT INTO tracker_states (txid, word, verdict) VALUES (?, ?, ?)")
+    sqlx::query("INSERT OR REPLACE INTO tracker_states (txid, word, verdict) VALUES (?, ?, ?)")
         .bind(txid)
         .bind(word)
         .bind(verdict.to_string())

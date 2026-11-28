@@ -428,6 +428,7 @@ Two settings:
   header service's headers of the moment; the tip is depth 1. The stack's
   wallet charter **R3 (b)**: the spend depth is the host's parameter, 1 the
   floor.
+- `SPEND_RECEIVED` (default `taken`; or `hold`; any other value is refused at start): under `taken` a received payment a broadcaster took is offered with no word, and under `hold` only to an action that says `allowPending: received` (#659).
 - `SPEND_OWN_CHANGE` (default `1`; `0` turns it off): offer our own change
   (`made`: a transaction this wallet created and signed) whose transaction has
   no block yet. The charter's **R1 (b)**: the one rule a host may name for a

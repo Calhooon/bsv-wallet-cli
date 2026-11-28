@@ -41,18 +41,25 @@ fn subject(atomic: &[u8]) -> String {
 /// `POST /createAction` of one output of `satoshis`, with `extra` merged
 /// into the body.
 async fn create(r: &mut Recorder, name: &str, satoshis: u64, extra: Value) -> Recorded {
+    let case = format!("createAction.receivedRule.{name}");
+    create_in(r, WORLD, &case, satoshis, extra).await
+}
+
+/// [`create`], in `world` under the case name `case`.
+async fn create_in(
+    r: &mut Recorder,
+    world: &str,
+    case: &str,
+    satoshis: u64,
+    extra: Value,
+) -> Recorded {
     let mut body = json!({"description": "wire received rule",
         "outputs": [{"lockingScript": LOCK, "outputDescription": "an output", "satoshis": satoshis}],
         "options": {"randomizeOutputs": false}});
     for (k, v) in extra.as_object().expect("an object") {
         body[k] = v.clone();
     }
-    r.case(
-        &format!("createAction.receivedRule.{name}"),
-        WORLD,
-        post("/createAction", body),
-    )
-    .await
+    r.case(case, world, post("/createAction", body)).await
 }
 
 /// The actions labelled `labels` (every action for none), their labels
@@ -210,12 +217,94 @@ pub(crate) async fn record_door_word(r: &mut Recorder) {
     assert_eq!(word.value("/word"), json!("announced"));
 }
 
+/// The host's settings of the world `name`: the defaults, or for the worlds
+/// of the word's rule the hold (`SPEND_RECEIVED=hold`, #659).
+pub(crate) fn settings(name: &str) -> std::sync::Arc<bsv_wallet_cli::config::Config> {
+    if matches!(name, "received-rule" | "received-built") {
+        crate::wire_support::hold_config()
+    } else {
+        crate::wire_support::quiet_config()
+    }
+}
+
+/// The tracker's row of `txid` at `built`. In the named-change world, the
+/// create door's word for the action that made the coin, as every road
+/// this host signs by writes it: our own change is offered from it. In
+/// received-built, a received payment no broadcaster took, as the pass
+/// leaves one whose take left no record (#659).
+pub(crate) async fn built(storage: &bsv_wallet_toolbox::StorageSqlx, txid: &str) {
+    bsv_wallet_cli::tracker_host::stored_word(storage, txid)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO tracker_states (txid, built, hints, word) VALUES (?, 1, '[]', 'built')",
+    )
+    .bind(txid)
+    .execute(storage.writer())
+    .await
+    .unwrap();
+}
+
+/// The host's setting (#659), recorded last of all, so no file before it
+/// moves. The `received-rule` world above is a host that sets
+/// `SPEND_RECEIVED=hold`: its rows are the word's rule, as they were
+/// recorded. Here, the default in the `received-taken` world (the same
+/// payment, the broadcaster taking its post): 275's request with no word,
+/// for the coin's exact value (no change output, so every recording signs
+/// the same bytes), is answered 200. Then the `received-built` world, a hold host
+/// holding one received payment no broadcaster took (seeded as the
+/// tracker's pass leaves a payment whose take left no record): its word is
+/// `built`, and the action that says the word is refused all the same.
+pub(crate) async fn record_setting(r: &mut Recorder) {
+    let named = beef(Payment::Wallet).await;
+    let internalize = |tx: &[u8]| {
+        post(
+            "/internalizeAction",
+            json!({"tx": tx, "outputs": [payment()], "description": "wire received rule"}),
+        )
+    };
+    r.case(
+        "internalizeAction.receivedTaken.payment",
+        "received-taken",
+        internalize(&named),
+    )
+    .await;
+    let spent = create_in(
+        r,
+        "received-taken",
+        "createAction.receivedTaken.noWord",
+        EXACT,
+        json!({}),
+    )
+    .await;
+    assert!(spent.value("/txid").is_string(), "the spend signs");
+
+    let word = r
+        .case(
+            "tx.receivedBuilt.doorWord",
+            "received-built",
+            super::recorder::get(&format!("/tx/{}", super::worlds::PENDING)),
+        )
+        .await;
+    assert_eq!(word.value("/word"), json!("built"));
+    let held = create_in(
+        r,
+        "received-built",
+        "createAction.receivedBuilt.word",
+        1_000,
+        json!({"allowPending": "received"}),
+    )
+    .await;
+    assert_eq!(held.value("/code"), json!("INSUFFICIENT_FUNDS"));
+    assert_eq!(held.value("/held/0/word"), json!("built"));
+}
+
 pub(crate) fn notes() -> Vec<(String, String)> {
     [
         ("272-internalizeAction.receivedRule.callersLabel.json", "#627 (the stable line's 0.18.8): a received payment taken in through the toolbox's own internalizeAction (purpose receive, unproven), its labels carrying the caller's own underReceivedRule in two spellings the toolbox reads as it beside a label of its own, 200. New; recorded last, so no file before it moves."),
         ("273-internalizeAction.receivedRule.second.json", "#627: a second received payment, 200: two received unproven coins for the scoped word."),
         ("274-listActions.receivedRule.received.json", "#627: the two payments, unproven; 272's labels are the caller's own alone: its copies of underReceivedRule were stripped at the door."),
-        ("275-createAction.receivedRule.noWord.json", "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered."),
+        ("275-createAction.receivedRule.noWord.json", "#627: with no allowPending the gate holds both received coins (received, no proof; offered under allowPending: received), 402 INSUFFICIENT_FUNDS with the coins under held, nothing offered. Since #659 this world's host sets SPEND_RECEIVED=hold, which keeps this answer; under the default the same request is answered 200 (row 296)."),
         ("276-createAction.receivedRule.callersLabel.json", "#627: a caller's own underReceivedRule with no word does not lift the gate's hold: 275's answer, byte for byte. It pins the hold, not the strip."),
         ("277-createAction.receivedRule.scopedPast.json", "#627: the scoped word naming 272's coin, for more than it holds: 9000 offered, the other coin held not named under allowPending: received, 402 INSUFFICIENT_FUNDS."),
         ("278-createAction.receivedRule.scoped.json", "#627: the scoped word within the named coin: the toolbox selects it (the gate passes underReceivedRule beside its own label) and the spend signs and posts, 200; an exact spend, no change."),
@@ -225,6 +314,10 @@ pub(crate) fn notes() -> Vec<(String, String)> {
         ("282-createAction.receivedRule.stripAtCreate.json", "#627: the strip at createAction where it can be seen: in the internalize world, an exact spend with no word over its 40,000-sat coin, whose transaction is completed (offered with no word), its labels carrying the caller's own beside underReceivedRule in two spellings the toolbox reads as the rule (as 272 at internalizeAction), 200, signed and posted."),
         ("283-listActions.receivedRule.stripAtCreate.json", "#627: 282's action by the caller's label, with includeLabels: the caller's own label alone, no underreceivedrule, no underRule: its copies of underReceivedRule were stripped at createAction."),
         ("294-tx.receivedRule.doorWord.json", "#645 (P1, the door's word and the take): GET /tx/{txid} for 272's payment, a received body with no proof whose post the world's broadcaster took: 200, the word announced (built at the door by the tracker's reducer, then the take fed as a broadcaster's acceptance). Before, 404: the host wrote no row at the door. With it the held coins of 275, 276 and 277 carry the word announced where they carried unknown; no offer moves. New; recorded last, so no file before it moves."),
+        ("295-internalizeAction.receivedTaken.payment.json", "#659 (the offer rule under the cut's default): 272's payment taken in by a host at its defaults (the received-taken world, SPEND_RECEIVED unset), the broadcaster taking its post: 200. New; recorded last, so no file before it moves."),
+        ("296-createAction.receivedTaken.noWord.json", "#659: 275's request with no allowPending, at the default, for the coin's exact value (no change output): the received coin a broadcaster took (announced) is offered with no word, and the spend signs and posts, 200. Under the word's rule (275, a host that sets SPEND_RECEIVED=hold) a spend with no word is 402 INSUFFICIENT_FUNDS."),
+        ("297-tx.receivedBuilt.doorWord.json", "#659: GET /tx/{txid} in the received-built world, a host that sets SPEND_RECEIVED=hold holding one received payment of 50,000 sats that no broadcaster took (seeded as the tracker's pass leaves a payment whose take left no record): 200, the word built."),
+        ("298-createAction.receivedBuilt.word.json", "#659: allowPending: received over 297's coin: 402 INSUFFICIENT_FUNDS, the coin held `built; received, not taken by a broadcaster: offered once a broadcaster takes it or once mined`. The word no longer offers a received coin no broadcaster took; before, under the word, it was offered at every unmined word."),
     ]
     .into_iter()
     .map(|(f, n)| (f.to_string(), n.to_string()))
