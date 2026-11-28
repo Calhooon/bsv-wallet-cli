@@ -17,13 +17,14 @@ pub fn status_word(wire: &str) -> &str {
 }
 
 /// `actions`: one page of the wallet's actions (100, the store's
-/// oldest), each prepared, unsent one marked with its age, its txid, its reference and the
-/// satoshis its inputs hold, then a line totalling every prepared action
-/// the store holds (#673). Under `--json` the listing's object is the
-/// door's, with two ADDED keys: `prepared` on a prepared action's object,
-/// and `preparedTotal` beside `actions`; no key of the door's moves.
-/// `prepared_only` (`--prepared`) lists the prepared actions alone, every
-/// one ([`super::prepared::list`]).
+/// oldest), each prepared, unsent one marked with its age, its txid, its
+/// reference and the satoshis its inputs hold, then a line totalling every
+/// prepared action the store holds (#673). Under `--json` the listing's
+/// object is the door's, with two ADDED keys: `prepared` on a prepared
+/// action's object, and `preparedTotal` beside `actions`; no key of the
+/// door's moves ([`super::prepared::add_to_listing`]). `prepared_only`
+/// (`--prepared`) lists the prepared actions alone, every one
+/// ([`super::prepared::list`]).
 pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) -> Result<()> {
     let prepared = super::prepared::read(ctx).await?;
     let now = super::prepared::now();
@@ -31,8 +32,6 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) 
         println!("{}", super::prepared::list(&prepared, now, ctx.json_output));
         return Ok(());
     }
-    let by_txid: std::collections::HashMap<&str, &crate::store::HeldBy> =
-        prepared.iter().map(|p| (p.txid.as_str(), p)).collect();
     let args = ListActionsArgs {
         labels: label.map(|l| vec![l.to_string()]).unwrap_or_default(),
         label_query_mode: None,
@@ -53,24 +52,7 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) 
 
     if ctx.json_output {
         let mut shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);
-        if let Some(actions) = shown.get_mut("actions").and_then(|a| a.as_array_mut()) {
-            for action in actions {
-                let marked = action
-                    .get("txid")
-                    .and_then(|t| t.as_str())
-                    .and_then(|t| by_txid.get(t))
-                    .map(|p| super::prepared::added(p, now));
-                if let (Some(marked), Some(object)) = (marked, action.as_object_mut()) {
-                    object.insert("prepared".to_string(), marked);
-                }
-            }
-        }
-        if let Some(object) = shown.as_object_mut() {
-            object.insert(
-                "preparedTotal".to_string(),
-                super::prepared::added_total(&prepared),
-            );
-        }
+        super::prepared::add_to_listing(&mut shown, &prepared, now);
         println!("{}", serde_json::to_string_pretty(&shown)?);
     } else {
         println!(
@@ -79,31 +61,9 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) 
             result.total_actions
         );
         for action in &result.actions {
-            let direction = if action.is_outgoing { "OUT" } else { "IN " };
-            // A template not yet signed is listed with an all-zero txid.
-            let rule = if action.txid == [0u8; 32] {
-                let status = serde_json::to_value(action.status)?;
-                rules.by_template.get(&crate::spend_gate::template_key(
-                    status.as_str().unwrap_or_default(),
-                    &action.description,
-                    action.satoshis,
-                ))
-            } else {
-                rules.by_txid.get(&hex::encode(action.txid))
-            }
-            .map(|r| format!(" | under {r}"))
-            .unwrap_or_default();
-            let status = serde_json::to_value(action.status)?;
-            println!(
-                "  {} | {} | {} | {} sats | {}{}",
-                direction,
-                hex::encode(&action.txid[..4]),
-                status_word(status.as_str().unwrap_or_default()),
-                action.satoshis,
-                action.description,
-                rule
-            );
-            if let Some(p) = by_txid.get(hex::encode(action.txid).as_str()) {
+            println!("{}", line(action, &rules)?);
+            let txid = hex::encode(action.txid);
+            if let Some(p) = prepared.iter().find(|p| p.txid == txid) {
                 println!("{}", super::prepared::mark(p, now));
             }
         }
@@ -113,6 +73,39 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) 
     }
 
     Ok(())
+}
+
+/// An action's line: its direction, its txid's leading four bytes, its
+/// status's word, its net satoshis, its description, and the rule it was
+/// made under.
+fn line(
+    action: &bsv_sdk::wallet::WalletAction,
+    rules: &crate::spend_gate::ActionRules,
+) -> Result<String> {
+    let direction = if action.is_outgoing { "OUT" } else { "IN " };
+    let status = serde_json::to_value(action.status)?;
+    let status = status.as_str().unwrap_or_default();
+    // A template not yet signed is listed with an all-zero txid.
+    let rule = if action.txid == [0u8; 32] {
+        rules.by_template.get(&crate::spend_gate::template_key(
+            status,
+            &action.description,
+            action.satoshis,
+        ))
+    } else {
+        rules.by_txid.get(&hex::encode(action.txid))
+    }
+    .map(|r| format!(" | under {r}"))
+    .unwrap_or_default();
+    Ok(format!(
+        "  {} | {} | {} | {} sats | {}{}",
+        direction,
+        hex::encode(&action.txid[..4]),
+        status_word(status),
+        action.satoshis,
+        action.description,
+        rule
+    ))
 }
 
 #[cfg(test)]

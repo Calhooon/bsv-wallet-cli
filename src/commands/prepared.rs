@@ -17,6 +17,8 @@
 //! freed are spent by it. Abort only a payment that was not handed over.
 
 use crate::store::{self, HeldBy};
+use std::fmt::Write as _;
+
 use anyhow::{anyhow, Context, Result};
 use bsv_sdk::wallet::AbortActionArgs;
 use serde_json::{json, Value};
@@ -78,39 +80,56 @@ pub fn total(prepared: &[HeldBy]) -> Option<String> {
     if prepared.is_empty() {
         return None;
     }
-    let held: i64 = prepared.iter().map(|p| p.held_satoshis).sum();
+    let (actions, verb) = if prepared.len() == 1 {
+        ("1 prepared, unsent action".to_string(), "holds")
+    } else {
+        (
+            format!("{} prepared, unsent actions", prepared.len()),
+            "hold",
+        )
+    };
     Some(format!(
-        "{} {} {held} sats: `bsv-wallet actions --prepared` lists them, \
+        "{actions} {verb} {} sats: `bsv-wallet actions --prepared` lists them, \
          `bsv-wallet abort-action <txid>` frees one. {ABORT_IS}",
-        count(
-            prepared.len() as i64,
-            "prepared, unsent action",
-            "prepared, unsent actions"
-        ),
-        if prepared.len() == 1 { "holds" } else { "hold" },
+        held(prepared)
     ))
 }
 
-/// The fields `actions --json` adds to a prepared action's object, under
-/// `prepared`: its reference, when it was made (unix seconds), its age in
-/// seconds, and the inputs it holds.
-pub fn added(p: &HeldBy, now: i64) -> Value {
-    json!({
-        "reference": p.reference,
-        "createdAt": p.created_at,
-        "ageSeconds": age_seconds(p.created_at, now),
-        "heldInputs": p.held_inputs,
-        "heldSatoshis": p.held_satoshis,
-    })
+/// `actions --json`'s two ADDED keys, into the door's listing `shown`:
+/// on each prepared action's object `prepared` (its reference, when it was
+/// made in unix seconds, its age in seconds, the inputs it holds), and
+/// beside `actions` `preparedTotal` (how many prepared actions the store
+/// holds and the satoshis they hold). No key of the door's moves.
+pub fn add_to_listing(shown: &mut Value, prepared: &[HeldBy], now: i64) {
+    if let Some(actions) = shown.get_mut("actions").and_then(Value::as_array_mut) {
+        for action in actions {
+            let txid = action
+                .get("txid")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let added = prepared.iter().find(|p| p.txid == txid).map(|p| {
+                json!({
+                    "reference": p.reference,
+                    "createdAt": p.created_at,
+                    "ageSeconds": age_seconds(p.created_at, now),
+                    "heldInputs": p.held_inputs,
+                    "heldSatoshis": p.held_satoshis,
+                })
+            });
+            if let (Some(added), Some(object)) = (added, action.as_object_mut()) {
+                object.insert("prepared".to_string(), added);
+            }
+        }
+    }
+    if let Some(object) = shown.as_object_mut() {
+        let total = json!({"actions": prepared.len(), "heldSatoshis": held(prepared)});
+        object.insert("preparedTotal".to_string(), total);
+    }
 }
 
-/// The object `actions --json` adds beside `actions`, as `preparedTotal`:
-/// how many prepared actions the store holds and the satoshis they hold.
-pub fn added_total(prepared: &[HeldBy]) -> Value {
-    json!({
-        "actions": prepared.len(),
-        "heldSatoshis": prepared.iter().map(|p| p.held_satoshis).sum::<i64>(),
-    })
+/// The satoshis `prepared` hold.
+fn held(prepared: &[HeldBy]) -> i64 {
+    prepared.iter().map(|p| p.held_satoshis).sum()
 }
 
 /// `actions --prepared`: the prepared, unsent actions alone, every one,
@@ -132,17 +151,17 @@ pub fn list(prepared: &[HeldBy], now: i64, json_output: bool) -> String {
                 })
             })
             .collect();
-        let held: i64 = prepared.iter().map(|p| p.held_satoshis).sum();
-        return serde_json::to_string_pretty(&json!({"prepared": rows, "heldSatoshis": held}))
-            .unwrap_or_default();
+        let listed = json!({"prepared": rows, "heldSatoshis": held(prepared)});
+        return serde_json::to_string_pretty(&listed).unwrap_or_default();
     }
     let Some(total) = total(prepared) else {
         return "No prepared, unsent actions: no coin is held by one.".to_string();
     };
     let mut out = String::new();
     for p in prepared {
-        out.push_str(&format!(
-            "  {} | reference {} | {} old | holds {} sats in {} | {} sats | {}\n",
+        let _ = writeln!(
+            out,
+            "  {} | reference {} | {} old | holds {} sats in {} | {} sats | {}",
             p.txid,
             p.reference,
             age_words(age_seconds(p.created_at, now)),
@@ -150,7 +169,7 @@ pub fn list(prepared: &[HeldBy], now: i64, json_output: bool) -> String {
             count(p.held_inputs, "input", "inputs"),
             p.satoshis,
             p.description
-        ));
+        );
     }
     out.push_str(&total);
     out
@@ -184,8 +203,8 @@ pub async fn abort(ctx: &WalletContext, name: &str) -> Result<()> {
     };
     match crate::server::handlers::abort_guarded(&ctx.wallet, args, ORIGINATOR).await {
         Ok(result) => {
-            let txid = before.as_ref().map(|b| b.txid.as_str()).unwrap_or(name);
-            let reference = before.as_ref().map(|b| b.reference.as_str()).unwrap_or("");
+            let txid = before.as_ref().map_or(name, |b| b.txid.as_str());
+            let reference = before.as_ref().map_or("", |b| b.reference.as_str());
             let (inputs, sats) = before
                 .as_ref()
                 .map(|b| (b.held_inputs, b.held_satoshis))
