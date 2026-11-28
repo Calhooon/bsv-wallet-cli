@@ -1262,6 +1262,12 @@ pub async fn abort_action(
 /// until a proof, a node verdict or a competitor's checked proof
 /// (bsv-stack-lean #66; #24). One no broadcaster took is the toolbox's to
 /// abort, which frees the inputs it holds and writes it `failed`.
+///
+/// # Errors
+///
+/// 409 `CONFLICT` for a transaction a broadcaster took; the store busy
+/// (503 `STORE_BUSY`) at the guard's read; the wallet's own refusal (an
+/// unknown reference, a status it does not abort) by its class.
 pub async fn abort_guarded<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
     args: AbortActionArgs,
