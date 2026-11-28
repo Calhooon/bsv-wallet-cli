@@ -35,6 +35,7 @@ pub(crate) mod owner;
 pub(crate) mod payments;
 pub(crate) mod recorder;
 pub(crate) mod review_race;
+pub(crate) mod send_with;
 pub(crate) mod store_fault_doors;
 pub(crate) mod text_report;
 pub(crate) mod tracker_fault;
