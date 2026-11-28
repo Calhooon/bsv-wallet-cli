@@ -388,11 +388,13 @@ fn unspendable_coin(message: &str) -> Option<&str> {
         .filter(|c| !c.is_empty())
 }
 
-/// `createAction`'s `sendWith` and `noSendChange` (#147): the wallet below
-/// this host answers a `sendWith` create as a new action (one built from
-/// the wallet's coins and posted, the prepared one never sent), so until
-/// it answers the call a non-empty list in either is refused by name,
-/// before the request is mapped, asked, locked, built, stored or posted.
+/// `createAction`'s `sendWith` and `noSendChange` (#147): through 0.18.10 this
+/// door dropped both, so the reference's submitting call (`sendWith`
+/// alone, no inputs or outputs) was served as an empty `createAction`, a
+/// new transaction built from the wallet's coins and posted, the prepared
+/// one never sent. Until the wallet below this host answers the call, a
+/// non-empty list in either is refused by name, before the request is
+/// mapped, locked, built, stored or posted.
 /// Absent, `null` or `[]` is the call as before. The prepared action is
 /// never aborted here: a `noSend` transaction may already be in a
 /// counterparty's hands, and its owner's `abortAction` is the way to free

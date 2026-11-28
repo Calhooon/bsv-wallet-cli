@@ -130,8 +130,7 @@ pub struct McCreateActionOptions {
     /// The txids of prepared (`noSend`) actions to send now (#147): read
     /// only to refuse a non-empty list by name
     /// (`handlers::refuse_send_with`); absent or `[]` is the call as before.
-    /// Never passed to the wallet, which answers a `sendWith` create as a
-    /// new action.
+    /// Never passed to the wallet.
     #[serde(default)]
     pub send_with: Option<serde_json::Value>,
     /// The change outpoints of a prepared (`noSend`) action to chain from
