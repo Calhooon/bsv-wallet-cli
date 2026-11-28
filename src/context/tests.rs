@@ -246,3 +246,98 @@ async fn a_store_of_another_chain_is_refused_by_name_at_open() {
         );
     }
 }
+
+/// A testnet proof's height in the legacy store: above mainnet's tip, at
+/// a height testnet has passed.
+const LEGACY_PROOF_HEIGHT: u32 = 1_600_000;
+
+/// A store as `init --testnet` wrote it under every release that pinned
+/// the toolbox at 0.14.0-beta.3 or below (every 0.18.x and earlier,
+/// 0.19.0-beta.1 and beta.3): that toolbox's `migrate` wrote the settings'
+/// `chain` as the literal `mainnet` whatever the chain, so the row says
+/// `mainnet` and reads as `main` (the toolbox's read map); its coins are
+/// testnet's, here one proof at a testnet height.
+async fn legacy_testnet_store(db: &str, root: &PrivateKey) {
+    initialised(db, root, &configured(db, true)).await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{db}"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE settings SET chain = 'mainnet'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx) \
+         VALUES (?, ?, 0, ?, ?, X'00', X'00')",
+    )
+    .bind("aa".repeat(32))
+    .bind(i64::from(LEGACY_PROOF_HEIGHT))
+    .bind("bb".repeat(32))
+    .bind("cc".repeat(32))
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+}
+
+/// #682, the test that decides: the legacy testnet store opened with
+/// `--testnet` is refused, and the refusal tells its owner to run it
+/// without the flag.
+#[tokio::test]
+async fn a_legacy_testnet_store_opened_with_testnet_is_refused_toward_mainnet() {
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let refused =
+        WalletContext::load_with(&db, &root.to_hex(), true, false, &configured(&db, true))
+            .await
+            .err()
+            .expect("refused at open");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "the wallet database {db} was created for chain main (its settings' chain) \
+             and this command runs on chain test: run it without --testnet"
+        ),
+    );
+}
+
+/// #682, the test that decides: following that advice opens the legacy
+/// testnet store as a mainnet wallet, served as `mainnet`.
+#[tokio::test]
+async fn a_legacy_testnet_store_opened_without_testnet_is_served_as_mainnet() {
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let ctx = WalletContext::load_with(&db, &root.to_hex(), false, false, &configured(&db, false))
+        .await
+        .expect("opened as mainnet");
+    assert_eq!(ctx.chain, Chain::Main);
+    assert_eq!(
+        bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
+        "main"
+    );
+    door_mocked(&ctx, &[]).await;
+    assert_eq!(network(&served(ctx)).await, json!({"network": "mainnet"}));
+}
+
+/// #682, the test that decides: `init`'s store steps (`init.rs`: its
+/// `storage_options`, its `migrate`, `make_available`) over an existing
+/// store of the other chain run without a word, and the store keeps its
+/// own chain word.
+#[tokio::test]
+async fn init_over_a_store_of_the_other_chain_today() {
+    for (written, again, word) in [(false, true, "main"), (true, false, "test")] {
+        let (_dir, db) = temp_db();
+        let root = PrivateKey::random();
+        initialised(&db, &root, &configured(&db, written)).await;
+        initialised(&db, &root, &configured(&db, again)).await;
+        let storage =
+            StorageSqlx::open_with_options(&db, configured(&db, again).wallet.storage_options())
+                .await
+                .unwrap();
+        storage.make_available().await.unwrap();
+        use bsv_wallet_toolbox::WalletStorageReader;
+        assert_eq!(storage.get_settings().chain, word);
+    }
+}

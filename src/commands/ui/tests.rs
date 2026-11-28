@@ -376,3 +376,29 @@ fn the_origins_view_shows_the_jsons_window_end_and_holds_no_window() {
         "the view does not show abandonedUntil"
     );
 }
+
+/// #682, the test that decides: the inspector opens a store of either
+/// chain; it asks no chain word.
+#[tokio::test]
+async fn the_inspector_opens_a_store_of_either_chain_today() {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    for chain in [
+        bsv_wallet_toolbox::Chain::Main,
+        bsv_wallet_toolbox::Chain::Test,
+    ] {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("wallet.db").to_str().unwrap().to_string();
+        let options = bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
+            chain,
+            ..Default::default()
+        };
+        let seed = StorageSqlx::open_with_options(&path, options)
+            .await
+            .unwrap();
+        seed.migrate("inspector", &("02".to_string() + &"ab".repeat(32)))
+            .await
+            .unwrap();
+        drop(seed);
+        assert!(open(&path).await.is_ok(), "{}", chain.as_str());
+    }
+}
