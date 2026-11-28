@@ -104,13 +104,21 @@ pub fn sqlx_is_busy(e: &sqlx::Error) -> bool {
 /// it: how many and their satoshis. An abort gives exactly those back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeldBy {
+    /// The txid, lowercase hex; empty for a template not yet signed.
     pub txid: String,
+    /// The reference the toolbox gave it.
     pub reference: String,
+    /// The transaction's status (`nosend` for a prepared action).
     pub status: String,
+    /// The action's description.
     pub description: String,
+    /// The action's net satoshis, as the listing shows them.
     pub satoshis: i64,
+    /// When it was made, in unix seconds.
     pub created_at: i64,
+    /// How many outputs it holds as inputs.
     pub held_inputs: i64,
+    /// The satoshis of the outputs it holds.
     pub held_satoshis: i64,
 }
 

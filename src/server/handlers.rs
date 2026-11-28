@@ -338,6 +338,7 @@ impl From<(StatusCode, Json<serde_json::Value>)> for AppError {
 impl AppError {
     /// The message as the door serves it (on this line the operator's hint
     /// is already within it, `with_hint`).
+    #[must_use]
     pub fn served_message(&self) -> String {
         self.message.clone()
     }
@@ -345,6 +346,7 @@ impl AppError {
     /// The body the door serves: `{code, message}`, the gate's listing when
     /// there is one, the coin an `UNSPENDABLE_COIN` names. A command's
     /// `--json` prints the same (`abort-action`, #673).
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let mut body = json!({"code": self.code, "message": self.message});
         if let Some(refusal) = &self.refusal {
@@ -1187,6 +1189,12 @@ pub async fn abort_action(
 /// until a proof, a node verdict or a competitor's checked proof
 /// (bsv-stack-lean #66; #24). One no broadcaster took is the toolbox's to
 /// abort, which frees the inputs it holds and writes it `failed`.
+///
+/// # Errors
+///
+/// 409 `CONFLICT` for a transaction a broadcaster took; the store busy
+/// (503 `STORE_BUSY`) at the guard's read; the wallet's own refusal (an
+/// unknown reference, a status it does not abort) by its class.
 pub async fn abort_guarded<V: WalletServices + Send + Sync + 'static>(
     wallet: &Wallet<StorageSqlx, V>,
     args: AbortActionArgs,
