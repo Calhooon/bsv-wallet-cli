@@ -644,7 +644,7 @@ The stack's wallet model writes `built` when the wallet signs an action of its o
 
 | answer | before | now | where |
 |---|---|---|---|
-| `GET /tx/{txid}` for the served `createAction`, signed and posted (every broadcaster unreachable), `noSend`, or accepting delayed broadcast, and for a template signed by `signAction` | 404 `NOT_FOUND` until a tracker pass (a `noSend` action: never, the pass adopts only `unproven` and `sending`); the gate reads `unknown` | 200, `word` `built`; the gate reads `built` | `tests/served_create_door.rs` |
+| `GET /tx/{txid}` for the served `createAction`, signed and posted (every broadcaster unreachable), `noSend`, or accepting delayed broadcast, and for a template signed by `signAction` | 404 `NOT_FOUND` until a tracker pass (a `noSend` action: never, the pass adopts only `unproven` and `sending`); the gate reads `unknown` | 200, `word` `built`; the gate reads `built` | `tests/served_internalize_door/create_door.rs` |
 | the gate's door, its broadcaster taking the post | no row until a pass, `unknown` | `announced`, the take heard from the broadcast memory | `an_action_a_broadcaster_took_reads_announced` |
 | the same, every broadcaster refusing | as above | `built`: a refusal is no take | `an_action_every_broadcaster_refused_reads_built` |
 | `send` to another address, `drain`, `gift-send`, a `noSend` and a delayed action through the gate's door | no row, `unknown` | `built` | `src/commands/create_door_tests.rs` |

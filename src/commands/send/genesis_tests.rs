@@ -20,7 +20,7 @@ type Ctx = WalletContext<MockWalletServices>;
 /// proven at its height), the post-broadcast verifier off
 /// (`BSV_WALLET_SKIP_BROADCAST_VERIFY`), so `send` asks no explorer after
 /// the mock's post; and the coins' txids.
-async fn wallet(root: &PrivateKey, coins: &[(u32, u64)]) -> (Ctx, Vec<String>) {
+pub(crate) async fn wallet(root: &PrivateKey, coins: &[(u32, u64)]) -> (Ctx, Vec<String>) {
     let (mut ctx, txids) = wallet_with_proven(root, coins, Chain::Main).await;
     let mut config = crate::config::Config::default();
     config.verify.skip = true;
