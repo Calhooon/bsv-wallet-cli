@@ -9,6 +9,7 @@ use bsv_sdk::primitives::PublicKey;
 mod faults;
 mod mutants;
 mod review;
+mod send_with;
 mod spend_tally;
 mod version;
 

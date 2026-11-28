@@ -4,6 +4,7 @@
 //! the dependents gate's text report.
 //! The record, the replay and the planted cases are `tests/wire.rs`'s.
 
+pub(crate) mod arc_stub;
 pub(crate) mod cases;
 pub(crate) mod cases_beta2;
 pub(crate) mod cases_beta3;
