@@ -544,7 +544,7 @@ fn actions_in_json() {
 }
 
 /// `actions --prepared` (#673), text and JSON: the prepared actions alone,
-/// oldest first, and the total; none at all reads so. `--label` and
+/// from the oldest, and the total; none at all reads so. `--label` and
 /// `--prepared` together are refused by the parser.
 #[test]
 fn actions_prepared_lists_them_alone() {
