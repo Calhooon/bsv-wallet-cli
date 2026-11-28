@@ -59,7 +59,7 @@ const NAMES: &[&str] = &["query", "query_as", "query_scalar", "raw_sql"];
 const ALLOWED: &[(&str, usize, &str)] = &[
     (
         "src/broadcast_reconcile.rs",
-        9,
+        7,
         "the reconciler's reads of the toolbox's tables",
     ),
     (

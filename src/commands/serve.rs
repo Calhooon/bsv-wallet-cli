@@ -18,8 +18,8 @@ pub async fn run(ctx: WalletContext, port: u16) -> Result<()> {
     let wallet_state = server::make_wallet_state(ctx.wallet);
     // No monitor under `serve`: the served loop drains Arcade's SSE, runs
     // the tracker's pass (a proof asked for one named transaction when its
-    // re-ask is due, never a chain index) and sweeps the verdicts in
-    // storage, every 60 s.
+    // re-ask is due, never a chain index) and sweeps the failed
+    // transactions' unproven descendants, every 60 s.
     let reconcile =
         crate::broadcast_reconcile::spawn_serve_loop(wallet_state.clone(), &settings, &db_path);
     let result = server::run(wallet_state, port, config).await;
