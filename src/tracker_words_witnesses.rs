@@ -961,3 +961,177 @@ async fn a_refused_create_action_is_answered_with_the_word_built_and_its_hint() 
     assert_eq!(spendable, 0);
     assert!(spent_by.is_some());
 }
+
+// ---------------------------------------------------------------------------
+// A retire root on one broadcaster's refusal, and a fault counted as absence
+// ---------------------------------------------------------------------------
+
+/// T (`t_status`, its request `unsent`: no broadcaster's accepting word
+/// anywhere) spends G's coin, and the broadcast memory holds one
+/// broadcaster's `rejected` row for it. The status service does not know T
+/// and the explorers list G's coin unspent (the toolbox's mock services).
+async fn refused_once(t: &str, t_status: &str) -> (StorageSqlx, i64, i64) {
+    let (storage, coin, t_row) = spent_coin_fixture(t, t_status, "unsent").await;
+    storage
+        .record_broadcast_status(t, PROVIDER_ARCADE_V2, BROADCAST_STATUS_REJECTED)
+        .await
+        .unwrap();
+    (storage, coin, t_row)
+}
+
+/// T still holds its word `status` and G's coin stays locked by T.
+async fn assert_kept(storage: &StorageSqlx, t: &str, status: &str, coin: i64, t_row: i64) {
+    assert_eq!(tx_status(storage, t).await, status, "{status}: T's word");
+    let state = output_state(storage, coin).await;
+    assert_eq!(state, (0, Some(t_row)), "{status}: G's coin stays locked");
+}
+
+/// A retired T: `failed`, G's coin `coin_state`, and its raw bytes kept on
+/// its transaction row and its request.
+async fn assert_retired_with_its_bytes(storage: &StorageSqlx, t: &str, coin: (i64, i64)) {
+    assert_eq!(tx_status(storage, t).await, "failed");
+    assert_eq!(output_state(storage, coin.0).await.0, coin.1, "G's coin");
+    for table in ["transactions", "proven_tx_reqs"] {
+        let raw: Option<Vec<u8>> =
+            sqlx::query_scalar(&format!("SELECT raw_tx FROM {table} WHERE txid = ?"))
+                .bind(t)
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(raw, Some(vec![1, 0, 0, 0]), "{table}: the bytes kept");
+    }
+}
+
+/// `reconcile-broadcasts --execute` over a broadcaster answering
+/// `broadcaster` and a chain index answering `chain` (none configured when
+/// `None`), with the toolbox's mock services.
+async fn by_hand(
+    storage: &StorageSqlx,
+    broadcaster: (StatusCode, &'static str),
+    chain: Option<(StatusCode, &'static str)>,
+) -> crate::broadcast_reconcile::ReconcileBroadcastsReport {
+    let broadcaster = answering(broadcaster.0, broadcaster.1).await;
+    let chain = match chain {
+        Some((code, body)) => Some(answering(code, body).await),
+        None => None,
+    };
+    let verifier = BroadcastVerifier::explicit(true, &broadcaster, chain.as_deref());
+    let opts = ReconcileOptions {
+        execute: true,
+        absence_minutes: 30,
+        ..ReconcileOptions::for_command(true, 20, None)
+    };
+    let report = run_pass(storage, &MockWalletServices::new(), &verifier, &opts)
+        .await
+        .unwrap();
+    println!("{}", report.summary(true));
+    report
+}
+
+const REJECTED_WORD: (StatusCode, &str) = (StatusCode::OK, r#"{"txid":"x","txStatus":"REJECTED"}"#);
+const NO_RECORD: (StatusCode, &str) = (
+    StatusCode::NOT_FOUND,
+    r#"{"error":"transaction not found"}"#,
+);
+
+/// The served sweep (`serve`'s pass and the daemon's ticker) with one
+/// broadcaster's `rejected` memory row on T, `unproven` and `sending`. The
+/// sweep reads no chain index, so it holds no absence: the row is a hint,
+/// kept on record, and T is not a retire root. T keeps its word and G's coin
+/// stays locked by T.
+#[tokio::test]
+#[ignore = "decides the retire root: green once a root needs the definitive absence"]
+async fn the_served_sweep_retires_nothing_on_one_broadcasters_rejected_row() {
+    for (t, status) in [("f1".repeat(32), "unproven"), ("f2".repeat(32), "sending")] {
+        let (storage, coin, t_row) = refused_once(&t, status).await;
+        let sweep = run_sweep(&storage, &MockWalletServices::new(), true)
+            .await
+            .unwrap();
+        let retired = sweep
+            .poison
+            .iter()
+            .filter(|r| r.outcome == PoisonOutcome::Retired);
+        assert_eq!(retired.count(), 0, "{status}: retired");
+        assert_kept(&storage, &t, status, coin, t_row).await;
+        let row = storage.broadcast_status_of(&t, PROVIDER_ARCADE_V2).await;
+        let kept = row.unwrap().map(|r| r.status);
+        assert_eq!(
+            kept.as_deref(),
+            Some(BROADCAST_STATUS_REJECTED),
+            "kept on record"
+        );
+    }
+}
+
+/// `reconcile-broadcasts --execute` with the same `rejected` row on T, and
+/// a probe that finds no definitive absence: the broadcaster has no record
+/// of T (a JSON 404) and the chain index could not look (a 503). T is not
+/// retired and G's coin stays locked.
+#[tokio::test]
+#[ignore = "decides the retire root: green once a root needs the definitive absence"]
+async fn the_by_hand_pass_retires_nothing_on_one_broadcasters_rejected_row() {
+    for (t, status) in [("f3".repeat(32), "unproven"), ("f4".repeat(32), "sending")] {
+        let (storage, coin, t_row) = refused_once(&t, status).await;
+        let busy = (StatusCode::SERVICE_UNAVAILABLE, r#"{"error":"busy"}"#);
+        let report = by_hand(&storage, NO_RECORD, Some(busy)).await;
+        assert_eq!(report.retired_txids(), Vec::<String>::new(), "{status}");
+        assert_kept(&storage, &t, status, coin, t_row).await;
+    }
+}
+
+/// The control: the same T, with the definitive absence present (the
+/// broadcaster's own REJECTED and the chain index's clean 404). The by-hand
+/// pass retires T and G's coin comes back on the explorers' word. The
+/// retired T keeps its raw bytes, on its transaction row and its request.
+#[tokio::test]
+async fn the_by_hand_pass_retires_on_the_definitive_absence_and_keeps_the_bytes() {
+    for (t, status) in [("f5".repeat(32), "unproven"), ("f6".repeat(32), "sending")] {
+        let (storage, coin, _) = refused_once(&t, status).await;
+        let report = by_hand(&storage, REJECTED_WORD, Some(NO_RECORD)).await;
+        assert_eq!(report.retired_txids(), vec![t.clone()], "{status}");
+        assert_retired_with_its_bytes(&storage, &t, (coin, 1)).await;
+    }
+}
+
+/// The served control: the follow-up's definitive absence on the same T
+/// retires it. G's coin stays locked by T for the locked-input re-check,
+/// and the retired T keeps its bytes.
+#[tokio::test]
+async fn the_served_follow_up_retires_on_the_definitive_absence_and_keeps_the_bytes() {
+    let t = "f7".repeat(32);
+    let (storage, coin, _) = refused_once(&t, "sending").await;
+    let services = MockWalletServices::new();
+    let absent = absent_everywhere();
+    crate::server::broadcast_follow_up::apply_presence_report(
+        &storage,
+        &services,
+        &t,
+        &[],
+        &absent,
+    )
+    .await;
+    assert_retired_with_its_bytes(&storage, &t, (coin, 0)).await;
+}
+
+/// `reconcile-broadcasts --execute` on T (`sending`, no memory row) whose
+/// broadcaster answers REJECTED while the chain index could not be read: a
+/// 503, a 429, or no chain index configured. A fault is not an answer, so
+/// no clean absence completes the refusal: T is not retired, G's coin stays
+/// locked, and T is not named fatal.
+#[tokio::test]
+#[ignore = "decides the fault: green once only a clean absence counts"]
+async fn the_by_hand_pass_counts_no_faulted_chain_index_toward_absence() {
+    let could_not_look = r#"{"error":"could not look"}"#;
+    for chain in [
+        Some((StatusCode::SERVICE_UNAVAILABLE, could_not_look)),
+        Some((StatusCode::TOO_MANY_REQUESTS, could_not_look)),
+        None,
+    ] {
+        let t = "f8".repeat(32);
+        let (storage, coin, t_row) = spent_coin_fixture(&t, "sending", "unsent").await;
+        let report = by_hand(&storage, REJECTED_WORD, chain).await;
+        assert_eq!(report.retired_txids(), Vec::<String>::new(), "{chain:?}");
+        assert!(report.fatal.is_empty(), "{chain:?}: named fatal");
+        assert_kept(&storage, &t, "sending", coin, t_row).await;
+    }
+}

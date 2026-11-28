@@ -909,33 +909,125 @@ async fn in_the_daemon_a_stale_episode_is_followed_up_once_by_the_monitor_not_tw
     assert_eq!(word(&storage, &txid).await.0, "stale");
 }
 
-/// Step 8's evidence through the announce, ruling 7d (c): no broadcaster
-/// knows the `stale` T, and the one announce is refused by the node as a
-/// double spend naming X. The refusal writes the node's verdict: T is
-/// `conflicted([X])`, and the word stands on the next load.
-#[tokio::test]
-async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
+/// One broadcaster's answer on `txid` that did not take it, the node's text
+/// `data` beside it.
+fn refused_by(name: &str, txid: &str, data: &str) -> bsv_wallet_toolbox::services::PostBeefResult {
+    let mut answer =
+        bsv_wallet_toolbox::services::mock::double_spend_post_beef_result(name, txid, "");
+    let ours = &mut answer.txid_results[0];
+    (ours.double_spend, ours.competing_txs) = (false, None);
+    ours.data = Some(data.to_string());
+    answer.error = None;
+    answer
+}
+
+/// T `stale` at 900, unknown to the broadcasters, announced once with the
+/// broadcasters answering `posted` (each given T's txid): the pass's report
+/// and the services, for the next load.
+async fn stale_announced_once(
+    posted: impl FnOnce(&str) -> Vec<bsv_wallet_toolbox::services::PostBeefResult>,
+) -> (
+    StorageSqlx,
+    String,
+    MockWalletServices,
+    crate::tracker_host::TickReport,
+) {
     let (storage, txid) = stale_at_900().await;
-    let x = "d9".repeat(32);
     let services = MockWalletServices::builder()
         .get_merkle_path_response(proof_answer(None))
         .broadcaster_statuses(vec![(
             "arcade".to_string(),
             bsv_wallet_toolbox::BroadcastStatus::Unknown,
         )])
-        .post_beef_double_spend(&txid, &x)
+        .post_beef_response(bsv_wallet_toolbox::services::mock::MockResponse::Success(
+            posted(&txid),
+        ))
         .build();
     services.set_header_for_height(header(900, &"ee".repeat(32), 7));
     services.set_tip_header(header_with_hash(905, &"0a".repeat(32), 0));
-
     let report = tick(&storage, &services, &clock(), &held()).await.unwrap();
     println!("{}", report.summary());
-    assert_eq!(report.verdicts, vec![format!("{txid}: conflicted")]);
     assert_eq!(services.call_count("post_beef"), 1);
-    assert_eq!(word(&storage, &txid).await.0, "conflicted");
+    (storage, txid, services, report)
+}
 
+/// The next load of `txid`, much later: its word then, announced no more.
+async fn word_on_the_next_load(
+    storage: &StorageSqlx,
+    services: &MockWalletServices,
+    txid: &str,
+) -> String {
     let later = FixedClock(clock().0 + 10_000);
-    tick(&storage, &services, &later, &held()).await.unwrap();
+    tick(storage, services, &later, &held()).await.unwrap();
+    assert_eq!(services.call_count("post_beef"), 1, "announced once");
+    word(storage, txid).await.0
+}
+
+/// The re-post of a `stale` row under `serve`: no broadcaster knows T, the
+/// one announce is refused by one broadcaster (its refusal of T itself, or
+/// a double spend naming X) while the others fault. The refusal is fed to
+/// the tracker as a hint (`<provider>|rejected` or `<provider>|double_spend`
+/// on the row): it moves no word and writes no verdict, so T stays `stale`
+/// with its re-ask, on this load and the next, and is not announced again.
+#[tokio::test]
+#[ignore = "decides the re-post's refusal: green once it is a hint"]
+async fn a_refused_repost_of_a_stale_transaction_is_a_hint_and_no_verdict() {
+    use bsv_wallet_toolbox::services::mock::{
+        double_spend_post_beef_result, error_post_beef_result,
+    };
+    for kind in ["rejected", "double_spend"] {
+        let (storage, txid, services, _) = stale_announced_once(|txid| {
+            let refusal = if kind == "rejected" {
+                refused_by("ArcadeV2", txid, "bad-txns-inputs-missingorspent")
+            } else {
+                double_spend_post_beef_result("ArcadeV2", txid, &"d9".repeat(32))
+            };
+            let busy = error_post_beef_result("TaalArc", "503 Service Unavailable");
+            vec![
+                refusal,
+                busy,
+                error_post_beef_result("Bitails", "request timed out"),
+            ]
+        })
+        .await;
+        let (verdict, hints): (Option<String>, String) =
+            sqlx::query_as("SELECT verdict, hints FROM tracker_states WHERE txid = ?")
+                .bind(&txid)
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        println!("{kind}: verdict {verdict:?}; hints {hints}");
+        assert_eq!(word(&storage, &txid).await.0, "stale", "{kind}");
+        assert_eq!(verdict, None, "{kind}: no verdict stored");
+        let source = format!("ArcadeV2|{kind}");
+        assert!(
+            hints.contains(&source),
+            "{kind}: the refusal kept as a hint"
+        );
+        let next = word_on_the_next_load(&storage, &services, &txid).await;
+        assert_eq!(next, "stale", "{kind}: next load");
+    }
+}
+
+/// Step 8's evidence through the announce, ruling 7d (c): no broadcaster
+/// knows the `stale` T, and the one announce is refused by the node as a
+/// double spend naming X. The refusal writes the node's verdict: T is
+/// `conflicted([X])`, and the word stands on the next load.
+#[tokio::test]
+async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
+    let x = "d9".repeat(32);
+    let (storage, txid, services, report) = stale_announced_once(|txid| {
+        vec![
+            bsv_wallet_toolbox::services::mock::double_spend_post_beef_result(
+                "MockProvider",
+                txid,
+                &x,
+            ),
+        ]
+    })
+    .await;
+    assert_eq!(report.verdicts, vec![format!("{txid}: conflicted")]);
     assert_eq!(word(&storage, &txid).await.0, "conflicted");
-    assert_eq!(services.call_count("post_beef"), 1);
+    let next = word_on_the_next_load(&storage, &services, &txid).await;
+    assert_eq!(next, "conflicted");
 }
