@@ -33,30 +33,24 @@ pub(super) fn proving(deposit: &[u8], height: u32) -> MockWalletServices {
 }
 
 /// A context over `storage` and `services` as `WalletContext::load_with`
-/// builds one (`Wallet::with_options`), `chain` its `--testnet` reading.
+/// builds one (`WalletContext::on_store`), `chain` its `--testnet` reading.
 pub(super) async fn context(
     root: &bsv_sdk::primitives::PrivateKey,
     storage: StorageSqlx,
     services: MockWalletServices,
     chain: Chain,
 ) -> WalletContext<MockWalletServices> {
-    let wallet = bsv_wallet_toolbox::Wallet::with_options(
-        Some(root.clone()),
+    WalletContext::on_store(
+        root.clone(),
         storage,
         services,
-        bsv_wallet_toolbox::WalletOptions::default(),
+        chain,
+        true,
+        ":memory:",
+        &std::sync::Arc::default(),
     )
     .await
-    .unwrap();
-    WalletContext {
-        wallet,
-        identity_key: root.public_key().to_hex(),
-        root_key: root.clone(),
-        chain,
-        json_output: true,
-        db_path: ":memory:".into(),
-        config: std::sync::Arc::default(),
-    }
+    .unwrap()
 }
 
 /// THE TEST THAT DECIDES (#634), gift-claim: the gift's deposit is proven
@@ -172,7 +166,8 @@ async fn a_claim_of_a_deposit_mined_at_genesis_is_posted_and_recorded() {
 }
 
 /// A context built as `--testnet` builds it: its store on the testnet
-/// chain, which the door judges by, the `Wallet`'s own chain mainnet. A
+/// chain, which the door judges by, the `Wallet`'s own chain the same
+/// (#639). A
 /// deposit proven at 700,000 is refused by name before the post (testnet's
 /// Genesis, 1,344,302); one proven at 1,344,302 is posted and recorded.
 /// Host and door agree.
@@ -186,7 +181,7 @@ async fn a_testnet_contexts_claim_is_asked_the_chain_its_door_judges_by() {
         Chain::Test,
     )
     .await;
-    assert_eq!(ctx.wallet.chain(), Chain::Main, "the Wallet's own chain");
+    assert_eq!(ctx.wallet.chain(), Chain::Test, "the Wallet's own chain");
     let err = crate::commands::gift_claim::run(&ctx, &txid_of(&gift.deposit), false)
         .await
         .expect_err("refused before the post");

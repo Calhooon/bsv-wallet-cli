@@ -148,8 +148,8 @@ fn an_unproven_ancestor_spending_a_coin_proven_below_genesis_is_named() {
 
 /// Through the toolbox's door, on a store migrated on `chain` (as `init`
 /// migrates it from `--testnet`) and a wallet built as
-/// `WalletContext::load_with` builds it (`Wallet::with_options`, whose own
-/// chain is mainnet): the host reads the store's word, and a payment whose
+/// `WalletContext::load_with` builds it (`Wallet::with_chain` on the same
+/// chain, #639): the host reads the store's word, and a payment whose
 /// parent is proven one below that word's Genesis height is refused as not
 /// judged while one proven at it is taken. A drift between this host's
 /// number or chain and the door's turns this red.
@@ -208,15 +208,16 @@ async fn the_door_agrees_on(chain: Chain, word: &str, tip: u32) {
             &[below.2.as_str(), at.2.as_str()],
         )]))
         .build();
-    let wallet = Wallet::with_options(
+    let wallet = Wallet::with_chain(
         Some(root),
         storage,
         services,
         bsv_wallet_toolbox::WalletOptions::default(),
+        chain,
     )
     .await
     .unwrap();
-    assert_eq!(wallet.chain(), Chain::Main, "the Wallet's own chain");
+    assert_eq!(wallet.chain(), chain, "the Wallet's own chain");
 
     let refused = wallet
         .internalize_action(insertion(below.0), Some("genesis.local"))
@@ -253,7 +254,7 @@ async fn the_door_refuses_a_coin_proven_one_below_genesis_and_takes_one_at_it() 
 }
 
 /// The store `--testnet` migrates: the door judges by testnet's height
-/// (1,344,302), though the wallet's own chain is mainnet, and the host
+/// (1,344,302), the wallet's own chain is testnet (#639), and the host
 /// asks the same.
 #[tokio::test]
 async fn a_testnet_store_judges_by_testnets_height_and_the_host_asks_the_same() {
