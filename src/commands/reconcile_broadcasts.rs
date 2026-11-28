@@ -148,15 +148,11 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         );
     }
     for txid in &report.fatal {
-        println!(
-            "    REJECTED by the broadcaster and absent from every chain index: {}",
-            txid
-        );
+        println!("    REJECTED by the broadcaster and absent from every chain index: {txid}");
     }
     for txid in &report.refusal_hints {
         println!(
-            "    refused by the broadcaster, no clean absence at the chain indexes (a hint, kept): {}",
-            txid
+            "    refused by the broadcaster, no clean absence at the chain indexes (a hint, kept): {txid}"
         );
     }
 
