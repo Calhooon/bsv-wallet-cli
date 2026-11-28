@@ -402,6 +402,15 @@ pub(crate) async fn relinquish(app: &axum::Router, txid: &str, vout: u32) {
 /// `underReceivedRule` label, signed and not sent (the toolbox test's
 /// `spend_args`): the signed transaction, or the refusal's text.
 pub(crate) async fn spend(wallet: &WalletState, labelled: bool) -> Result<Transaction, String> {
+    spend_to(wallet, &other_lock(), labelled).await
+}
+
+/// [`spend`], its 1000 satoshis locked by `lock`.
+pub(crate) async fn spend_to(
+    wallet: &WalletState,
+    lock: &[u8],
+    labelled: bool,
+) -> Result<Transaction, String> {
     let made = wallet
         .create_action(
             CreateActionArgs {
@@ -409,7 +418,7 @@ pub(crate) async fn spend(wallet: &WalletState, labelled: bool) -> Result<Transa
                 input_beef: None,
                 inputs: None,
                 outputs: Some(vec![CreateActionOutput {
-                    locking_script: other_lock(),
+                    locking_script: lock.to_vec(),
                     satoshis: 1_000,
                     output_description: "a payment".to_string(),
                     basket: None,
@@ -656,6 +665,19 @@ impl Paid {
         reclassify(&wallet, &self.txid, 0).await;
         assert_eq!(balance(&wallet).await, 0);
         (wallet, app, posts)
+    }
+
+    /// The payment's own transaction carried with a proof of its own at
+    /// `height` (a coinbase-style path, its root the txid): the
+    /// `AtomicBEEF`.
+    pub(crate) fn carried_proven(&self, height: u32) -> Vec<u8> {
+        let (_, child) = paying(&self.lock, 5);
+        let txid = child.id();
+        assert_eq!(txid, self.txid);
+        let mut beef = Beef::new();
+        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, height));
+        beef.merge_raw_tx(child.to_binary(), Some(bump)).unwrap();
+        beef.to_binary_atomic(&txid).unwrap()
     }
 
     /// The wallet payment of output 0 naming `sender` as given.
