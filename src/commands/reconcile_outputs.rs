@@ -112,10 +112,21 @@ where
     report.live_txs = live.len();
     for row in &live {
         let tx_id: i64 = row.get("transaction_id");
+        let txid: String = row.get("txid");
         let raw: Vec<u8> = row.get("raw_tx");
         let Ok(tx) = Transaction::from_binary(&raw) else {
             continue; // unparseable bytes name no inputs — leave the row alone
         };
+        // R9 (#660): only the row's own transaction names its inputs. Bytes
+        // that do not hash to the txid they are stored under are not it,
+        // and spend nothing of ours.
+        if !tx.id().eq_ignore_ascii_case(&txid) {
+            tracing::warn!(
+                txid = %txid,
+                "reconcile-outputs: the stored bytes do not hash to the row's txid; its inputs are not read"
+            );
+            continue;
+        }
         for input in tx.inputs() {
             let Ok(src) = input.get_source_txid() else {
                 continue;
