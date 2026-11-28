@@ -77,7 +77,7 @@ Clap `Parser` + `Subcommand` definitions. All global flags are `#[arg(global = t
 4. Open SQLite storage at the `--db` path (`open_store`)
 5. Run `make_available()` (SQLite migrations)
 6. Configure services from the configuration's `ServicesSettings` (`services_env::services_options`), with `CHAINTRACKS_URL`
-7. Construct `Wallet::new(root_key, storage, services)`
+7. `WalletContext::on_store`: refuse the store when its settings' `chain` is not `chain`'s word (`store::require_chain`, by name, naming `--testnet`), then build the `Wallet` on `chain` (the toolbox's constructor that takes one), so `getNetwork` answers the chain the door judges by (#639)
 
 ### `config.rs` (the configuration, #80)
 
@@ -102,7 +102,7 @@ Single line: `pub mod server;`. Exists solely so integration tests can import th
 - **`init` receives `&cli.db` not a full context**: `init` must work before `ROOT_KEY` exists (it creates it), so it can't go through `WalletContext::load`. It takes only the database path and an optional key to import.
 - **`lib.rs` only re-exports `server`**: The binary's main logic lives in `main.rs`. `lib.rs` exists solely so integration tests can import the server module (Rust test binaries can't import from a `main.rs`).
 - **Tracing defaults**: Without `RUST_LOG`, tracing filters to `bsv_wallet=info,tower_http=info`. The `--verbose` flag overrides to `debug` for all crates. `dotenvy` loads `.env` before anything else.
-- **Chain selection via `--testnet` flag**: Defaults to mainnet. The flag propagates through `WalletContext.chain` to both `StorageSqlx` service configuration and `Services` construction. `ServicesOptions::mainnet()` vs `ServicesOptions::testnet()` selects the appropriate blockchain endpoints.
+- **Chain selection via `--testnet` flag**: Defaults to mainnet. The flag propagates through `WalletContext.chain` to the store's `chain` setting (which `init` writes once), the `Wallet`'s chain and `Services` construction: one chain word per wallet (#639). On a `--testnet` wallet `getNetwork` answers `testnet` and the door judges a received payment under testnet's heights (Genesis 1,344,302); a store whose `chain` setting names the other chain is refused at open (`serve`, `daemon`, `serve-fleet`, `tick` and every command with a context). `ServicesOptions::mainnet()` vs `ServicesOptions::testnet()` selects the appropriate blockchain endpoints.
 - **Chaintracks integration at context level**: `CHAINTRACKS_URL` is applied via `ServicesOptions.with_chaintracks_url()` during context construction and is the only header source the chain tracker asks (no explorer unless `BREAK_GLASS_EXPLORER_HEADERS` is on).
 
 ## Gotchas
