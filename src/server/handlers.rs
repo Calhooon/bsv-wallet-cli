@@ -414,7 +414,9 @@ fn unspendable_coin(message: &str) -> Option<&str> {
 /// Absent, `null` or `[]` is the call as before. The prepared action is
 /// never aborted here: a `noSend` transaction may already be in a
 /// counterparty's hands, and its owner's `abortAction` is the way to free
-/// its coins.
+/// its coins, at the command line `bsv-wallet abort-action` (#673). The
+/// named txid may be no prepared payment of this wallet: the text says
+/// "if any".
 fn refuse_send_with(options: Option<&McCreateActionOptions>) -> Result<(), AppError> {
     let named = |v: &Option<serde_json::Value>| {
         v.as_ref()
@@ -425,14 +427,21 @@ fn refuse_send_with(options: Option<&McCreateActionOptions>) -> Result<(), AppEr
     };
     let message = if named(&options.send_with) {
         "createAction: sendWith is not supported: this wallet cannot yet send a prepared \
-         payment. Nothing was built or sent: a prepared (noSend) transaction named in \
-         sendWith was not sent and is still reserved under its txid. abortAction with its \
-         txid as the reference frees its coins"
+         payment. Nothing was built or sent: a prepared (noSend) transaction of this wallet \
+         named in sendWith, if any, was not sent and is still reserved under its txid. \
+         abortAction with its txid as the reference frees its coins; at the wallet's command \
+         line, bsv-wallet actions --prepared lists the prepared payments and bsv-wallet \
+         abort-action <txid> aborts one. Abort only a payment that was not handed over: a \
+         prepared transaction handed to someone else can still be posted by them"
     } else if named(&options.no_send_change) {
         "createAction: noSendChange is not supported: this wallet cannot yet spend a \
-         prepared payment's change. Nothing was built or sent: the prepared (noSend) \
-         transaction whose change is named was not sent and is still reserved under its \
-         txid. abortAction with its txid as the reference frees its coins"
+         prepared payment's change. Nothing was built or sent: a prepared (noSend) \
+         transaction of this wallet whose change is named, if any, was not sent and is still \
+         reserved under its txid. abortAction with its txid as the reference frees its \
+         coins; at the wallet's command line, bsv-wallet actions --prepared lists the \
+         prepared payments and bsv-wallet abort-action <txid> aborts one. Abort only a \
+         payment that was not handed over: a prepared transaction handed to someone else \
+         can still be posted by them"
     } else {
         return Ok(());
     };
