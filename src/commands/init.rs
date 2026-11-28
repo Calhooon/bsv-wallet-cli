@@ -15,6 +15,26 @@ const TRUST_SETTINGS_NOTE: &str = "\
 # TRUST_SETTINGS='{\"trustLevel\":2,\"trustedCertifiers\":[{\"name\":\"...\",\"description\":\"...\",\"identityKey\":\"02...\",\"trust\":3,\"iconUrl\":\"https://...\"}]}'
 ";
 
+/// The store at `db_path` for `identity_key`, migrated and made available
+/// on the configuration's chain. An existing store of the other chain is
+/// refused by the chain word's check before anything is written (#682);
+/// one of its own chain is migrated as before.
+///
+/// # Errors
+///
+/// [`crate::store::ChainMismatch`], or the store's fault.
+pub async fn store_for(
+    db_path: &str,
+    identity_key: &str,
+    config: &crate::config::Config,
+) -> Result<()> {
+    let storage = StorageSqlx::open_with_options(db_path, config.wallet.storage_options()).await?;
+    crate::store::chain::require_chain_if_made(&storage, db_path, config.chain()).await?;
+    storage.migrate("bsv-wallet-cli", identity_key).await?;
+    storage.make_available().await?;
+    Ok(())
+}
+
 pub async fn run(
     db_path: &str,
     key: Option<&str>,
@@ -38,9 +58,7 @@ pub async fn run(
     let identity_key = private_key.public_key().to_hex();
     let address = brc29::deposit_address(&private_key, Chain::Main)?;
 
-    let storage = StorageSqlx::open_with_options(db_path, config.wallet.storage_options()).await?;
-    storage.migrate("bsv-wallet-cli", &identity_key).await?;
-    storage.make_available().await?;
+    store_for(db_path, &identity_key, config).await?;
 
     // The wallet's other settings are the environment's (`bsv-wallet
     // config` lists them); discovery's trust section is named here because

@@ -20,6 +20,7 @@ use super::*;
 use crate::test_support::genesis_coins::payment_over;
 use crate::test_support::{response_answer, seal_network, temp_db, TestChainTracker};
 use bsv_wallet_cli::config::Flags;
+use bsv_wallet_cli::store::chain::LEGACY_TESTNET_ADVICE;
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
 };
@@ -224,9 +225,17 @@ async fn a_mainnet_context_is_mainnet_served_held_and_judged() {
 /// refused at open, naming both words, both ways.
 #[tokio::test]
 async fn a_store_of_another_chain_is_refused_by_name_at_open() {
-    for (written, opened, word, asked, how) in [
-        (false, true, "main", "test", "without --testnet"),
-        (true, false, "test", "main", "with --testnet"),
+    let legacy = format!(
+        "main (its settings' chain) and this command runs on chain test: {LEGACY_TESTNET_ADVICE}"
+    );
+    for (written, opened, tail) in [
+        (false, true, legacy),
+        (
+            true,
+            false,
+            "test (its settings' chain) and this command runs on chain main: run it with --testnet"
+                .to_string(),
+        ),
     ] {
         let (_dir, db) = temp_db();
         let root = PrivateKey::random();
@@ -238,11 +247,184 @@ async fn a_store_of_another_chain_is_refused_by_name_at_open() {
                 .expect("refused at open");
         assert_eq!(
             refused.to_string(),
-            format!(
-                "the wallet database {db} was created for chain {word} (its settings' chain) \
-                 and this command runs on chain {asked}: run it {how}"
-            ),
+            format!("the wallet database {db} was created for chain {tail}"),
             "{refused:#}"
         );
     }
+}
+
+/// A testnet proof's height in the legacy store: above mainnet's tip, at
+/// a height testnet has passed.
+const LEGACY_PROOF_HEIGHT: u32 = 1_600_000;
+
+/// A store as `init --testnet` wrote it under every release that pinned
+/// the toolbox at 0.14.0-beta.3 or below (every 0.18.x and earlier,
+/// 0.19.0-beta.1 and beta.3): that toolbox's `migrate` wrote the settings'
+/// `chain` as the literal `mainnet` whatever the chain, so the row says
+/// `mainnet` and reads as `main` (the toolbox's read map); its coins are
+/// testnet's, here one proof at a testnet height.
+async fn legacy_testnet_store(db: &str, root: &PrivateKey) {
+    initialised(db, root, &configured(db, true)).await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{db}"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE settings SET chain = 'mainnet'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::commands::repair_chain::tests::insert_proof(
+        &pool,
+        &"aa".repeat(32),
+        LEGACY_PROOF_HEIGHT,
+        &"cc".repeat(32),
+    )
+    .await;
+    pool.close().await;
+}
+
+/// #682, the test that decides: the legacy testnet store opened with
+/// `--testnet` is refused (at the base, the refusal told its owner to run
+/// it without the flag); the refusal names the repair and says not to run
+/// it without the flag.
+#[tokio::test]
+async fn a_legacy_testnet_store_opened_with_testnet_is_refused_naming_the_repair() {
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let refused =
+        WalletContext::load_with(&db, &root.to_hex(), true, false, &configured(&db, true))
+            .await
+            .err()
+            .expect("refused at open");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "the wallet database {db} was created for chain main (its settings' chain) \
+             and this command runs on chain test: a testnet wallet made before the chain word \
+             was recorded reads so; if this wallet's coins are testnet's, do not run it without \
+             --testnet: run `bsv-wallet --testnet repair-chain` to see the evidence and repair \
+             the word"
+        ),
+    );
+}
+
+/// #682, the test that decides: following that advice opens the legacy
+/// testnet store as a mainnet wallet, served as `mainnet`.
+#[tokio::test]
+async fn a_legacy_testnet_store_opened_without_testnet_is_served_as_mainnet() {
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let ctx = WalletContext::load_with(&db, &root.to_hex(), false, false, &configured(&db, false))
+        .await
+        .expect("opened as mainnet");
+    assert_eq!(ctx.chain, Chain::Main);
+    assert_eq!(
+        bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
+        "main"
+    );
+    door_mocked(&ctx, &[]).await;
+    assert_eq!(network(&served(ctx)).await, json!({"network": "mainnet"}));
+}
+
+/// The settings row as stored, every column `migrate` rewrites.
+async fn settings_row(db: &str) -> (String, String, String, String) {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{db}"))
+        .await
+        .unwrap();
+    let row = sqlx::query_as(
+        "SELECT storage_identity_key, storage_name, chain, CAST(updated_at AS TEXT) FROM settings",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    row
+}
+
+/// #682: `init` over an existing store of the other chain is refused by
+/// the chain word's check and text before anything is written (at the
+/// base its store steps ran without a word, rewriting the row's identity
+/// key and keeping its chain word); the legacy testnet store under
+/// `init --testnet` is refused naming the repair; `init` over a store of
+/// its own chain, or a fresh file, behaves as before.
+#[tokio::test]
+async fn init_over_a_store_of_the_other_chain_is_refused_before_any_write() {
+    let legacy = format!(
+        "main (its settings' chain) and this command runs on chain test: {LEGACY_TESTNET_ADVICE}"
+    );
+    let plain =
+        "test (its settings' chain) and this command runs on chain main: run it with --testnet";
+    for (written, again, tail) in [(false, true, legacy.as_str()), (true, false, plain)] {
+        let (_dir, db) = temp_db();
+        let root = PrivateKey::random();
+        initialised(&db, &root, &configured(&db, written)).await;
+        let before = settings_row(&db).await;
+        let other = PrivateKey::random().public_key().to_hex();
+        let refused = crate::commands::init::store_for(&db, &other, &configured(&db, again))
+            .await
+            .expect_err("refused");
+        assert_eq!(
+            refused.to_string(),
+            format!("the wallet database {db} was created for chain {tail}")
+        );
+        assert_eq!(settings_row(&db).await, before, "nothing written");
+        // Its own chain: migrated as before (the identity key `init` names).
+        crate::commands::init::store_for(&db, &other, &configured(&db, written))
+            .await
+            .expect("its own chain");
+        assert_eq!(settings_row(&db).await.0, other);
+    }
+
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let refused =
+        crate::commands::init::store_for(&db, &root.public_key().to_hex(), &configured(&db, true))
+            .await
+            .expect_err("the legacy store refused");
+    assert!(
+        refused.to_string().ends_with(LEGACY_TESTNET_ADVICE),
+        "{refused}"
+    );
+    assert_eq!(settings_row(&db).await.2, "mainnet", "nothing written");
+
+    let (_dir, db) = temp_db();
+    crate::commands::init::store_for(&db, &root.public_key().to_hex(), &configured(&db, true))
+        .await
+        .expect("a fresh file");
+    assert_eq!(settings_row(&db).await.2, "test");
+}
+
+/// #682: after `repair-chain --execute` on testnet (the header service the
+/// toolbox's mock, carrying the legacy proof's root at its height), the
+/// legacy store opens with `--testnet` and `getNetwork` answers `testnet`.
+#[tokio::test]
+async fn a_repaired_legacy_store_opens_on_testnet_and_answers_testnet() {
+    use crate::commands::repair_chain::{open_unasked, repair, Outcome};
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let config = configured(&db, true);
+    let headers = MockWalletServices::new();
+    headers.set_header_for_height(crate::commands::repair_chain::tests::header(
+        LEGACY_PROOF_HEIGHT,
+        &"cc".repeat(32),
+    ));
+    let storage = open_unasked(&config, &db).await.unwrap();
+    let report = repair(&storage, &db, config.chain(), Some(&headers), true, false)
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, Outcome::Written, "{report:?}");
+    drop(storage);
+
+    let ctx = WalletContext::load_with(&db, &root.to_hex(), true, false, &config)
+        .await
+        .expect("the repaired store opens on testnet");
+    assert_eq!(
+        bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
+        "test"
+    );
+    door_mocked(&ctx, &[]).await;
+    assert_eq!(network(&served(ctx)).await, json!({"network": "testnet"}));
 }

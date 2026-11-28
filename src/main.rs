@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
         Commands::Ui { ui_port } => {
             let allowed =
                 server::AllowedOrigins::new(config.server.allowed_origins.iter().cloned())?;
-            commands::ui::run(&cli.db, *ui_port, allowed).await?;
+            commands::ui::run(&cli.db, config.chain(), *ui_port, allowed).await?;
         }
         Commands::Compact => {
             let ctx = open().await?;
@@ -280,6 +280,9 @@ async fn main() -> Result<()> {
         } => {
             let ctx = open().await?;
             commands::reconcile_outputs::run(&ctx, *execute, *max_chain_checks).await?;
+        }
+        Commands::RepairChain { execute, unchecked } => {
+            commands::repair_chain::run(&config, *execute, *unchecked, cli.json).await?;
         }
         Commands::Reproof {
             since_height,

@@ -93,7 +93,7 @@ async fn inspector() -> (tempfile::TempDir, Arc<AppState>, Router, i64) {
     };
     grants::probes::record(&seed, &[probe]).await.unwrap();
     drop(seed);
-    let state = Arc::new(open(&path).await.unwrap());
+    let state = Arc::new(open(&path, bsv_wallet_toolbox::Chain::Main).await.unwrap());
     let listed = AllowedOrigins::new(["app.example"]).unwrap();
     let app = router(Arc::clone(&state), listed);
     (dir, state, app, pending.row.pending_id)
@@ -337,7 +337,7 @@ async fn a_write_disguised_as_a_read_fails_on_the_read_only_pool() {
 async fn the_inspector_opens_no_missing_file() {
     let dir = tempfile::TempDir::new().unwrap();
     let file = dir.path().join("absent.db");
-    let Err(e) = open(file.to_str().unwrap()).await else {
+    let Err(e) = open(file.to_str().unwrap(), bsv_wallet_toolbox::Chain::Main).await else {
         panic!("a missing file opened");
     };
     assert!(e.to_string().contains("no wallet database"), "{e}");
@@ -375,4 +375,37 @@ fn the_origins_view_shows_the_jsons_window_end_and_holds_no_window() {
         HTML.contains("withdrawn at ${esc(when(p.abandonedUntil))}"),
         "the view does not show abandonedUntil"
     );
+}
+
+/// #682: the inspector asks the chain word as every command does: a store
+/// of its own chain opens, one of the other is refused with the same text
+/// (at the base it opened a store of either chain).
+#[tokio::test]
+async fn the_inspector_refuses_a_store_of_the_other_chain() {
+    use bsv_wallet_toolbox::{Chain, WalletStorageWriter};
+    for (written, other) in [(Chain::Main, Chain::Test), (Chain::Test, Chain::Main)] {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("wallet.db").to_str().unwrap().to_string();
+        let options = bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
+            chain: written,
+            ..Default::default()
+        };
+        let seed = StorageSqlx::open_with_options(&path, options)
+            .await
+            .unwrap();
+        seed.migrate("inspector", &("02".to_string() + &"ab".repeat(32)))
+            .await
+            .unwrap();
+        drop(seed);
+        assert!(open(&path, written).await.is_ok(), "{}", written.as_str());
+        let Err(e) = open(&path, other).await else {
+            panic!("a store of the other chain opened");
+        };
+        let expected = bsv_wallet_cli::store::ChainMismatch {
+            db: path.clone(),
+            stored: written.as_str().to_string(),
+            asked: other.as_str(),
+        };
+        assert_eq!(e.to_string(), expected.to_string());
+    }
 }

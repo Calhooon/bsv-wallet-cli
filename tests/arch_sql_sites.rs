@@ -4,7 +4,8 @@
 //! `src/store/origin_grants/probes.rs` (#539) and its month's tally
 //! `src/store/origin_grants/spends.rs` (#414 L6) and its window's rows
 //! `src/store/origin_grants/window.rs` and its pending table's rebuilds
-//! `src/store/origin_grants/rebuild.rs` (#534) and the toolbox itself; every other file that holds an `sqlx` query call (by
+//! `src/store/origin_grants/rebuild.rs` (#534) and its chain word's reads
+//! and write `src/store/chain.rs` (#682) and the toolbox itself; every other file that holds an `sqlx` query call (by
 //! path, `sqlx::query(`, or bare after a `use sqlx::query`, and that `use`
 //! itself) or an SQL statement in a string literal is listed with its
 //! count, and #89 moves them behind the boundary.
@@ -21,6 +22,7 @@ const BOUNDARY: &[&str] = &[
     "src/store/origin_grants/spends.rs",
     "src/store/origin_grants/window.rs",
     "src/store/origin_grants/rebuild.rs",
+    "src/store/chain.rs",
 ];
 
 /// The words that open an SQL statement, as they appear in a literal.
