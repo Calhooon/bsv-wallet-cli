@@ -259,8 +259,11 @@ toolbox's `transactions` and `proven_tx_reqs`. The served pass
 `src/broadcast_reconcile.rs:693`, from `src/commands/daemon_tenant.rs:167`
 or through `spawn_serve_loop`, `src/broadcast_reconcile.rs:679`, from
 `src/commands/serve.rs:44`) runs the tracker's pass
-(`tracker_host::tick`, `src/tracker_host.rs:1304`): every `unproven` or
-`sending` transaction of the wallet is adopted at `built`
+(`tracker_host::tick`, `src/tracker_host.rs:1304`): the action has had its
+row since its signing (`tracker_host::signed_word`, called by the spend
+gate's door after the toolbox's call, `built` and its take heard, #659);
+every `unproven` or `sending` transaction of the wallet with no row is
+adopted at `built`
 (`src/tracker_host.rs:1317-1325`), the broadcasters' words in the broadcast
 memory are fed as hints (`MemoryHints`, `src/tracker_host.rs:259`), the
 clock ticks, and for each re-ask that is due one proof is asked of the

@@ -386,8 +386,11 @@ unproven creator's is, and nothing is released or failed.
 
 Every creator of a coin we hold gets a row (the stack's wallet charter,
 section 0: "About a transaction it believes only the tracker's word: each
-action hosts one tracker state"). An `unproven` or `sending` transaction of
-the wallet is adopted at `built`. A `completed` transaction with a stored proof
+action hosts one tracker state"). An action the wallet signs has its row from
+its signing, `built` (the served `createAction` and `signAction`, `send`,
+`drain`, `split`, `gift-send`, the respend's replacement; a `noSend` action and
+a delayed one stay `built` until sent; #659), and an `unproven` or `sending`
+transaction of the wallet with no row is adopted at `built` by the pass. A `completed` transaction with a stored proof
 (`proven_tx_id` set; the toolbox's monitor proved it before the tracker did) that creates a coin
 we hold and has no row is adopted by replaying its stored path against the
 headers of the moment, as the spend guard replays it: the row's word is
