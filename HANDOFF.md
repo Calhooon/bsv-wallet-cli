@@ -4395,3 +4395,125 @@ so that the roll-up's branch stays up to date with main.
   broadcaster produced for that transaction.
 - A captain's seat spends its own account: this seat ran out for six hours of
   the night. The pool is read at the start of a day and before a lane.
+
+## 2026-11-28 (04:10Z to 11:10Z): the stable roll-up 0.18.10 landed and gated (its tag is the owner's), the direction rule on both lines, the refusal of `sendWith` (#147), a broadcaster's refusal read as a hint, prepared actions listed, #645's door landed, #639 landed, bsv-tracker's #51 whole on its beta, the offer rule's plan revised, states as of 11:10Z
+
+**In one paragraph.** `main` carries 0.18.10, landed and gated, not tagged:
+the tag is the owner's. `beta` is at `0d425dea` with five more pull requests
+of this window. bsv-tracker's `beta` is at `51ce7a24` with every planned lane
+of its #51; its next prerelease's release pull request is queued and its tag
+is the owner's. One builder runs at a time (the owner's pace rule); it is
+building lane 1 of the offer rule (#659). Three design reads run beside it. No
+pull request of this captain is open on either repository.
+
+**Landed.**
+
+| Pull request | Commit | What |
+|---|---|---|
+| 664 | main `03ba8fd2` | the stable roll-up 0.18.10: the hop to `bsv-rs` `=0.8.14` (ten advisories), the hop to `bsv-wallet-toolbox-rs` `=0.13.9`, `url` 2.5.9 in the lock (RUSTSEC-2026-0592), the gate's hold on a coin the store marks not spendable with its tests (#646), the version commit, the README's front page |
+| 668 | beta `e8ab3ca3` | the link of 0.18.10 into beta (RELEASING.md, point 14) |
+| 669, 672 | main `41f12819`, `0d0b5d8b` | the direction rule on `main`: the two checks and RELEASING.md, picked from beta; `main`'s RELEASING.md is beta's byte for byte |
+| 671 | beta `27ae8a24` | RELEASING.md's point 21 (the default branch's copy of a workflow) reads "proposed, not yet ruled": no pick is made under it before the owner's word |
+| 670 | beta `bdee8e26` | #147: `POST /createAction` refuses by name, before anything is built or posted, a call naming a non-empty `sendWith` or `noSendChange` (501 `SEND_WITH_NOT_SUPPORTED`); the prepare with `noSend` is answered as before; the host never aborts for the caller |
+| 675 | beta `504240ff` | a broadcaster's refusal of a re-post is a hint and never the node's verdict; a retire needs the definitive absence from three providers; a fault is never counted as an answer |
+| 677 | beta `f14f30b9` | #673: `actions` marks a prepared, unsent action, `actions --prepared` lists them with their age and the coins they hold, `abort-action` frees one |
+| 679 | beta `8470b7dc` | #645, P1: a received payment's creator gets a tracker row at the door (`built`); a take is read only from the broadcast memory's row, which names the broadcaster, never from a request's status; a courier's sighting is presence. It replaces pull request 656, closed |
+| 681 | beta `0d425dea` | #639: a wallet is built on the context's chain, so a `--testnet` wallet's `getNetwork` answers `testnet` and its door, its holds and its wallet agree; a store of the other chain is refused by name at open |
+| bsv-tracker 58 | its beta `3e792c19` | the direction rule and its two checks on the crate's beta |
+| bsv-tracker 59 to 63 | its beta `b271a23f`, `3b8bcae1`, `83245e88`, `32b27d11`, `51ce7a24` | #51: the test of record over the header service's two journals (private to the estate; nothing of them is committed; skipped when its two variables are unset), the keyed splits and the bound on `Params`, the effective depth with the guard, the out host and the snapshot, 31 properties each named for its Lean theorem, `docs/DOUBTS.md` with the README's compiled example and one paragraph for hosts |
+
+**The stable roll-up 0.18.10.** Every required check ran on the prepared tree
+before the push; two cold reads; landed on `main` at `03ba8fd2`; ONE mainnet
+gate: 23 of 23, net cost 2,170 sats. Not tagged and not published: the tag is
+the owner's (`work/tag-01810.sh` on the lane volume takes the commit, the
+gate's record and the advisories clause). After the tag: the funder moves to
+the published 0.18.10 and #646 is closed by hand. The commits above `03ba8fd2`
+on `main` are the direction rule's picks; the tag goes on `03ba8fd2`.
+
+**The next stable roll-up (not started).** By pick from beta: the refusal of
+#147, the commits of pull request 675, and #673. Every check on the prepared
+tree before the push, one gate, then the link.
+
+**bsv-tracker.** #51's planned lanes are all on its beta; its rows left by the
+reads are on its #57. Next: the release pull request of the prerelease that
+carries #51 (the version commit, the README's lead made true of it; the
+`bsv-rs` requirement does not move), then the owner's tag. A host takes it by
+building `Params` with `Params::new` (this repository: two literals in
+`src/tracker_host.rs`). After it, before 0.9.0: the tenth word `handed` (its
+#56) and the recheck of `conflicted` (its #47), sharing one step of the
+compact form's version; their build plan is being written.
+
+**The offer rule under the cut's default (#659, with #645's P2).** The plan is
+revised against the stack's one function and its vectors (1,314 rows, one
+deciding column, `offerable_one`): `line-plan-2026-11-27/p2-plan-v2.md` on the
+lane volume. Modelled, not replayed, beta's gate differs today on 22 rows on
+the offer (18 received coins a broadcaster took; 4 of our own change with no
+tracker row). Five lanes before the cut, 2.0 lane-days: L1 the create door
+writes `built` when the wallet signs its own action (building now); L2a the
+setting `SPEND_RECEIVED` (`taken` by default, `hold`), the gate's exhaustive
+match, the replay against `offerable_one` and the re-pin at zero divergences;
+L2b the order and the wallet's record; L2c the callers, the harness and the
+documents; L3 the mark for a payment over an unproven ancestor. Three lanes
+after the cut (the `noSend` conjunct, a contested coin, the lineage's release
+of a lock). The stack's keeper answered the plan's eight questions; the
+answers are in the captain's record and go into each lane's brief. The notes
+of the cut owe three sentences: what an upgraded store's received payments
+read as (held until mined where no take was recorded; nothing is posted
+again); that a coin freed by a dead parent stays locked until a later pin;
+that this host offers a contested coin until its row lands.
+
+**#682 blocks the cut.** Found by the lane and both cold reads of pull request
+681, read and not run: a testnet store made before the chain word was recorded
+reads `main`; it is now refused with `--testnet`, the refusal tells its owner
+to run without the flag, and no command repairs it. Its lane: the test that
+decides, the refusal's text for that case, a repair command with a dry run by
+default, and the same check in `init` and `ui`.
+
+**The 0.19.0 milestone holds nine rows:** #147 (the pass-through of
+`sendWith`, when the wallet library answers the call), #175, #194, #607, #618,
+#650, #659, #660, #682. #639 and #638 are closed. Sized: about 15 to 17
+lane-days at one builder, an estimate; #660's second half is being designed
+and may move the figure.
+
+**In flight at 11:10Z.** The builder: lane 1 of the offer rule, on the box.
+Queued behind it: bsv-tracker's release pull request. Three design reads, no
+builder: #660 (the host's side of `handed` and of the return of a conflicted
+payment), bsv-tracker's #56 and #47, and a host setting whose design is
+private until it is built.
+
+**Rows filed.** #666, #667, #673, #674, #676, #678, #680, #682; bsv-tracker
+#57 (commented with each lane's rows).
+
+**Waiting on the owner.** (1) The tag of 0.18.10 on `03ba8fd2`. (2) Two
+settings by his hand on this repository: `main-in-beta` required on `beta`,
+`beta-born` required on `main`; and the same two with `enforce_admins` on
+bsv-tracker's `beta`. (3) His word on the pick of the rule into bsv-tracker's
+`main`. (4) His word on RELEASING.md's point 21. (5) One private matter of
+2026-11-28, told to him directly, and with it the default of one host setting
+on the stable line. (6) Two rows moved after the cut that had a ruling of his
+behind them: #414's last lane (the retirement of the `ALLOWED_ORIGINS` seed)
+and #564. (7) The complete Nightly at a 17:00Z slot, not armed. (8) The tag of
+bsv-tracker's next prerelease, once its release pull request has landed. (9)
+The daemon on port 3322 has not run since the restart of 2026-11-18; this
+captain never touches that port.
+
+**The lessons of these hours.**
+
+- A launcher's test for "is a builder of mine running" was written with two
+  shell globs; in zsh an unmatched glob aborts the test and it failed open, so
+  two builders overlapped twice. The test is a `find` now, and the lock is
+  read once per attempt.
+- A launcher that takes a lane's status from the opening line of its REPORT
+  misses a status line written in bold. The REPORT itself is read before a
+  lane is called failed.
+- A row a lane leaves is read against rule 7 before it is filed: #682 arrived
+  as one of three "rows left" and blocks the cut.
+- A pull request ported onto a moved base can meet a conflict of meaning that
+  no merge tool shows (two pull requests each changing what one enum's arm
+  returns). The lane stops and the captain says which behaviour stands; the
+  continuation is a lane of its own.
+- A sentence in a ruling about what callers do is checked against the recorded
+  consumers before it is built: the recorded payers of the apps prepare with
+  `noSend` and never ask for a send, which withdrew a refusal at the prepare.
+- The hour written beside an entry is read from the clock at that moment,
+  never carried from the entry above it.
