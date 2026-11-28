@@ -5,8 +5,9 @@
 //! here at the door (its served row is `tests/served_internalize_door.rs`).
 
 use super::*;
+use crate::test_support::genesis_coins::{payment_over, spending};
 use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::script::{LockingScript, UnlockingScript};
+use bsv_sdk::script::LockingScript;
 use bsv_sdk::transaction::{Beef, MerklePath, Transaction, TransactionInput, TransactionOutput};
 use bsv_sdk::wallet::{BasketInsertion, InternalizeActionArgs, InternalizeOutput, WalletInterface};
 use bsv_wallet_toolbox::services::mock::{
@@ -14,48 +15,6 @@ use bsv_wallet_toolbox::services::mock::{
 };
 use bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions;
 use bsv_wallet_toolbox::{Chain, MonitorStorage, Wallet, WalletStorageWriter};
-
-/// The lock the placeholder input `00` spends, `14 <20 zero bytes> 75 75
-/// 51` (the toolbox's fixture for its door).
-fn anyone_lock() -> LockingScript {
-    LockingScript::from_hex(&format!("14{}757551", "00".repeat(20))).unwrap()
-}
-
-/// A transaction of one input `00` spending `txid`.0 and one output of
-/// `satoshis` locked by [`anyone_lock`].
-fn spending(txid: &str, satoshis: u64) -> Transaction {
-    let mut tx = Transaction::new();
-    let mut input = TransactionInput::new(txid.to_string(), 0);
-    input.unlocking_script = Some(UnlockingScript::from_hex("00").unwrap());
-    tx.add_input(input).unwrap();
-    tx.add_output(TransactionOutput::new(satoshis, anyone_lock()))
-        .unwrap();
-    tx
-}
-
-/// The `AtomicBEEF` of a parent proven at `height` (when given; else carried
-/// unproven, beside its own proven parent at 900,000) and the payment
-/// spending it, unproven. (bytes, parent txid, payment txid.)
-fn payment_over(seed: u8, height: Option<u32>) -> (Vec<u8>, String, String) {
-    let mut beef = Beef::new();
-    let parent = if let Some(height) = height {
-        let parent = spending(&hex::encode([seed; 32]), 10_000);
-        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent.id(), height));
-        beef.merge_raw_tx(parent.to_binary(), Some(bump)).unwrap();
-        parent
-    } else {
-        let grand = spending(&hex::encode([seed; 32]), 11_000);
-        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&grand.id(), 900_000));
-        beef.merge_raw_tx(grand.to_binary(), Some(bump)).unwrap();
-        let parent = spending(&grand.id(), 10_000);
-        beef.merge_raw_tx(parent.to_binary(), None).unwrap();
-        parent
-    };
-    let payment = spending(&parent.id(), 9_000);
-    beef.merge_raw_tx(payment.to_binary(), None).unwrap();
-    let bytes = beef.to_binary_atomic(&payment.id()).unwrap();
-    (bytes, parent.id(), payment.id())
-}
 
 const MAIN: u32 = 620_538;
 const TEST: u32 = 1_344_302;

@@ -15,6 +15,7 @@ use axum::response::{IntoResponse, Response};
 
 mod busy;
 pub(crate) mod coins;
+pub(crate) mod genesis_coins;
 pub use busy::no_busy_wait;
 
 mod chain_tracker;
@@ -338,6 +339,14 @@ pub async fn busy_holder(
     let mut holder = options.connect().await.unwrap();
     sqlx::query(table).execute(&mut holder).await.unwrap();
     holder
+}
+
+/// A fresh directory and the path of a `wallet.db` in it (the directory
+/// kept alive by the caller).
+pub fn temp_db() -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("wallet.db").to_str().unwrap().to_string();
+    (dir, db)
 }
 
 /// Read a served JSON error, keeping its status and retry header.

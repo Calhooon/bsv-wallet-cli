@@ -8,18 +8,17 @@
 //!
 //! What the concrete `Services` of `load_with` can reach (#637): the header
 //! service and the broadcaster are `CHAINTRACKS_URL` and `ARC_URL`, both a
-//! closed loopback port here; the CLI's explorer rungs and GorillaPool are
+//! closed loopback port here; the CLI's explorer rungs and `GorillaPool` are
 //! the same port or off (`BANANABLOCKS_BASE` empty, `ARC_GORILLAPOOL_URL`
-//! empty); the toolbox's own WhatsOnChain and Bitails providers take no
+//! empty); the toolbox's own `WhatsOnChain` and `Bitails` providers take no
 //! base, and every non-loopback request of this process goes to the closed
 //! port ([`seal_network`]). Before any request the door's services and
 //! tracker (the storage's) are a mock broadcaster and a tracker that
 //! answers every root, so nothing is posted anywhere.
 
 use super::*;
-use crate::test_support::{seal_network, TestChainTracker};
-use bsv_sdk::script::{LockingScript, UnlockingScript};
-use bsv_sdk::transaction::{Beef, MerklePath, Transaction, TransactionInput, TransactionOutput};
+use crate::test_support::genesis_coins::payment_over;
+use crate::test_support::{response_answer, seal_network, temp_db, TestChainTracker};
 use bsv_wallet_cli::config::Flags;
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
@@ -77,9 +76,7 @@ async fn initialised(db: &str, root: &PrivateKey, config: &Config) {
 /// A wallet `init`ed and loaded on `testnet` or mainnet, as the commands
 /// load it; its door's broadcaster the toolbox's mock (taking `takes`) and
 /// its tracker one that answers every root at [`TIP`].
-async fn loaded(dir: &tempfile::TempDir, testnet: bool, takes: &[&str]) -> WalletContext {
-    let db = dir.path().join("wallet.db");
-    let db = db.to_str().unwrap();
+async fn loaded(db: &str, testnet: bool, takes: &[&str]) -> WalletContext {
     let config = configured(db, testnet);
     let root = PrivateKey::random();
     initialised(db, &root, &config).await;
@@ -105,34 +102,6 @@ async fn door_mocked(ctx: &WalletContext, takes: &[&str]) {
     storage.set_max_acceptable_proof_height(TIP).await.unwrap();
 }
 
-/// The lock the placeholder input `00` spends (the toolbox's fixture for
-/// its door, as `src/genesis/tests.rs` reads it).
-fn anyone_lock() -> LockingScript {
-    LockingScript::from_hex(&format!("14{}757551", "00".repeat(20))).unwrap()
-}
-
-fn spending(txid: &str, satoshis: u64) -> Transaction {
-    let mut tx = Transaction::new();
-    let mut input = TransactionInput::new(txid.to_string(), 0);
-    input.unlocking_script = Some(UnlockingScript::from_hex("00").unwrap());
-    tx.add_input(input).unwrap();
-    tx.add_output(TransactionOutput::new(satoshis, anyone_lock()))
-        .unwrap();
-    tx
-}
-
-/// The `AtomicBEEF` of a coin proven at `height` and an unproven payment
-/// spending it: (bytes, payment txid).
-fn payment_over(seed: u8, height: u32) -> (Vec<u8>, String) {
-    let mut beef = Beef::new();
-    let parent = spending(&hex::encode([seed; 32]), 10_000);
-    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent.id(), height));
-    beef.merge_raw_tx(parent.to_binary(), Some(bump)).unwrap();
-    let payment = spending(&parent.id(), 9_000);
-    beef.merge_raw_tx(payment.to_binary(), None).unwrap();
-    (beef.to_binary_atomic(&payment.id()).unwrap(), payment.id())
-}
-
 /// The router `serve` builds over `ctx`'s wallet.
 fn served(ctx: WalletContext) -> axum::Router {
     bsv_wallet_cli::server::make_router(
@@ -141,23 +110,25 @@ fn served(ctx: WalletContext) -> axum::Router {
     )
 }
 
-async fn answer(app: &axum::Router, request: axum::http::Request<axum::body::Body>) -> Value {
-    let response = app.clone().oneshot(request).await.unwrap();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+/// The served body of `method` at `path` (a JSON `body` when given).
+async fn answer(app: &axum::Router, method: &str, path: &str, body: Option<&Value>) -> Value {
+    let mut request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header("Origin", "http://test.local");
+    let body = match body {
+        Some(json) => {
+            request = request.header("Content-Type", "application/json");
+            axum::body::Body::from(serde_json::to_vec(json).unwrap())
+        }
+        None => axum::body::Body::empty(),
+    };
+    let response = app.clone().oneshot(request.body(body).unwrap()).await;
+    response_answer(response.unwrap()).await.2
 }
 
 async fn network(app: &axum::Router) -> Value {
-    answer(
-        app,
-        axum::http::Request::get("/getNetwork")
-            .header("Origin", "http://test.local")
-            .body(axum::body::Body::empty())
-            .unwrap(),
-    )
-    .await
+    answer(app, "GET", "/getNetwork", None).await
 }
 
 async fn internalize(app: &axum::Router, tx: Vec<u8>) -> Value {
@@ -170,15 +141,7 @@ async fn internalize(app: &axum::Router, tx: Vec<u8>) -> Value {
         }],
         "description": "one chain word",
     });
-    answer(
-        app,
-        axum::http::Request::post("/internalizeAction")
-            .header("Origin", "http://test.local")
-            .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
-            .unwrap(),
-    )
-    .await
+    answer(app, "POST", "/internalizeAction", Some(&body)).await
 }
 
 /// Refused as not judged: the coin at `height` is before `genesis`.
@@ -198,10 +161,10 @@ fn not_judged(answer: &Value, height: u32, genesis: u32) {
 /// testnet's Genesis is taken.
 #[tokio::test]
 async fn a_testnet_context_is_one_chain_word_served_held_and_judged() {
-    let dir = tempfile::tempdir().unwrap();
-    let between = payment_over(0x51, BETWEEN);
-    let at = payment_over(0x52, TEST_GENESIS);
-    let ctx = loaded(&dir, true, &[between.1.as_str(), at.1.as_str()]).await;
+    let (_dir, db) = temp_db();
+    let between = payment_over(0x51, Some(BETWEEN));
+    let at = payment_over(0x52, Some(TEST_GENESIS));
+    let ctx = loaded(&db, true, &[between.2.as_str(), at.2.as_str()]).await;
 
     assert_eq!(ctx.chain, Chain::Test, "the context's chain");
     assert_eq!(
@@ -230,10 +193,10 @@ async fn a_testnet_context_is_one_chain_word_served_held_and_judged() {
 /// not judged.
 #[tokio::test]
 async fn a_mainnet_context_is_mainnet_served_held_and_judged() {
-    let dir = tempfile::tempdir().unwrap();
-    let between = payment_over(0x61, BETWEEN);
-    let below = payment_over(0x62, MAIN_GENESIS - 1);
-    let ctx = loaded(&dir, false, &[between.1.as_str(), below.1.as_str()]).await;
+    let (_dir, db) = temp_db();
+    let between = payment_over(0x61, Some(BETWEEN));
+    let below = payment_over(0x62, Some(MAIN_GENESIS - 1));
+    let ctx = loaded(&db, false, &[between.2.as_str(), below.2.as_str()]).await;
 
     assert_eq!(ctx.chain, Chain::Main);
     assert_eq!(
@@ -265,13 +228,11 @@ async fn a_store_of_another_chain_is_refused_by_name_at_open() {
         (false, true, "main", "test", "without --testnet"),
         (true, false, "test", "main", "with --testnet"),
     ] {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("wallet.db");
-        let db = db.to_str().unwrap();
+        let (_dir, db) = temp_db();
         let root = PrivateKey::random();
-        initialised(db, &root, &configured(db, written)).await;
+        initialised(&db, &root, &configured(&db, written)).await;
         let refused =
-            WalletContext::load_with(db, &root.to_hex(), opened, false, &configured(db, opened))
+            WalletContext::load_with(&db, &root.to_hex(), opened, false, &configured(&db, opened))
                 .await
                 .err()
                 .expect("refused at open");
