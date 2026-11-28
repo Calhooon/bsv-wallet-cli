@@ -59,7 +59,7 @@ const HOST_ROUTES: [&str; 9] = [
 /// status; each must be answered at least once. With [`UNPRODUCED`] they
 /// are every code the source writes ([`app_codes_in_source`]): a code added
 /// there without a fixture fails `every_app_error_code_is_judged`.
-pub(crate) const APP_CODES: [(u16, &str); 16] = [
+pub(crate) const APP_CODES: [(u16, &str); 17] = [
     (400, "5"),
     (400, "VALIDATION_ERROR"),
     (400, "ERROR"),
@@ -70,6 +70,7 @@ pub(crate) const APP_CODES: [(u16, &str); 16] = [
     (409, "CONFLICT"),
     (500, "INTERNAL_ERROR"),
     (501, "PRIVILEGED_NOT_SUPPORTED"),
+    (501, "SEND_WITH_NOT_SUPPORTED"),
     (502, "SERVICE_ERROR"),
     (503, "STORE_BUSY"),
     (503, "HEADERS_UNAVAILABLE"),
@@ -99,11 +100,8 @@ fn judged_codes() -> impl Iterator<Item = (u16, &'static str)> {
 
 /// `AppError` codes no in-process world produces, each named with why in
 /// docs/WIRE.md. A fixture that answers one moves it to [`APP_CODES`].
-pub(crate) const UNPRODUCED: [(u16, &str); 3] = [
-    (501, "NOT_IMPLEMENTED"),
-    (502, "BROADCAST_REJECTED"),
-    (501, "SEND_WITH_NOT_SUPPORTED"),
-];
+pub(crate) const UNPRODUCED: [(u16, &str); 2] =
+    [(501, "NOT_IMPLEMENTED"), (502, "BROADCAST_REJECTED")];
 
 /// The `(status, code)` pairs `src/server/error.rs` writes: each
 /// `(StatusCode::NAME, "CODE")` of `Kind::answer`, the served layer's one

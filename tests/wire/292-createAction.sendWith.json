@@ -1,0 +1,33 @@
+{
+  "world": "funded",
+  "request": {
+    "method": "POST",
+    "path": "/createAction",
+    "headers": {
+      "origin": "http://wire.test"
+    },
+    "json": {
+      "description": "Submit prepared HTTP payment",
+      "options": {
+        "acceptDelayedBroadcast": false,
+        "sendWith": [
+          "3333333333333333333333333333333333333333333333333333333333333333"
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 501,
+    "headers": {
+      "access-control-allow-credentials": "true",
+      "access-control-allow-origin": "http://wire.test",
+      "access-control-expose-headers": "retry-after",
+      "content-type": "application/json",
+      "vary": "origin, access-control-request-method, access-control-request-headers"
+    },
+    "json": {
+      "code": "SEND_WITH_NOT_SUPPORTED",
+      "message": "createAction: sendWith is not supported: this wallet cannot yet send a prepared payment. Nothing was built or sent: a prepared (noSend) transaction named in sendWith was not sent and is still reserved under its txid. abortAction with its txid as the reference frees its coins"
+    }
+  }
+}
