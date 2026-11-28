@@ -59,7 +59,7 @@ async fn open(db_path: &str, chain: bsv_wallet_toolbox::Chain) -> Result<AppStat
         anyhow::bail!("no wallet database at {db_path}: the inspector opens an existing one");
     }
     let store = StorageSqlx::open(db_path).await?;
-    bsv_wallet_cli::store::require_chain_if_made(&store, db_path, chain).await?;
+    bsv_wallet_cli::store::chain::require_chain_if_made(&store, db_path, chain).await?;
     let pool = read_only_pool(db_path).await?;
     Ok(AppState {
         pool,

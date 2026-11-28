@@ -45,17 +45,42 @@ fn root(byte: u8) -> String {
     format!("{byte:02x}").repeat(32)
 }
 
-fn header(height: u32, root: &str) -> BlockHeader {
+/// The header a mock header service answers at `height`, carrying `root`.
+pub(crate) fn header(height: u32, root: &str) -> BlockHeader {
     BlockHeader {
-        version: 1,
-        previous_hash: "00".repeat(32),
         merkle_root: root.to_string(),
-        time: 0,
-        bits: 0,
-        nonce: height,
-        hash: String::new(),
         height,
+        ..BlockHeader::default()
     }
+}
+
+/// One stored proof (`txid`, `height`, `root`), written as the toolbox's
+/// proof funnel writes the columns the evidence reads.
+pub(crate) async fn insert_proof(pool: &sqlx::SqlitePool, txid: &str, height: u32, root: &str) {
+    sqlx::query(
+        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx) \
+         VALUES (?, ?, 0, ?, ?, X'00', X'00')",
+    )
+    .bind(txid)
+    .bind(i64::from(height))
+    .bind("ee".repeat(32))
+    .bind(root)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The repair on testnet over `storage`, as `run` drives it.
+async fn on_testnet<H: HeaderSource>(
+    storage: &StorageSqlx,
+    db: &str,
+    headers: Option<&H>,
+    execute: bool,
+    unchecked: bool,
+) -> Report {
+    repair(storage, db, Chain::Test, headers, execute, unchecked)
+        .await
+        .unwrap()
 }
 
 /// A store whose settings row holds `raw` (the legacy `mainnet`, or a
@@ -78,17 +103,7 @@ async fn store(db: &str, raw: &str, proofs: &[(u32, String)]) -> StorageSqlx {
         .await
         .unwrap();
     for (n, (height, root)) in proofs.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx) \
-             VALUES (?, ?, 0, ?, ?, X'00', X'00')",
-        )
-        .bind(format!("{:02x}", n + 1).repeat(32))
-        .bind(i64::from(*height))
-        .bind("ee".repeat(32))
-        .bind(root)
-        .execute(&pool)
-        .await
-        .unwrap();
+        insert_proof(&pool, &format!("{:02x}", n + 1).repeat(32), *height, root).await;
     }
     pool.close().await;
     drop(storage);
@@ -112,35 +127,72 @@ async fn raw_word(db: &str) -> String {
     word
 }
 
-/// The legacy store with three testnet proofs, and a mock header service
-/// carrying each proof's root at its height.
-async fn agreeing(db: &str) -> (StorageSqlx, MockWalletServices) {
-    let proofs = [(H1, root(0x11)), (H2, root(0x22)), (H3, root(0x33))];
-    let storage = store(db, "mainnet", &proofs).await;
+/// The three testnet proofs of the legacy store.
+fn three() -> Vec<(u32, String)> {
+    vec![(H1, root(0x11)), (H2, root(0x22)), (H3, root(0x33))]
+}
+
+/// A mock header service answering `roots` at their heights.
+fn mock(roots: &[(u32, String)]) -> MockWalletServices {
     let headers = MockWalletServices::new();
-    for (h, r) in &proofs {
+    for (h, r) in roots {
         headers.set_header_for_height(header(*h, r));
     }
-    (storage, headers)
+    headers
+}
+
+/// One run: a fresh store holding `raw` and `proofs`, repaired on testnet
+/// with the flags against `headers`.
+struct Run {
+    _dir: tempfile::TempDir,
+    db: String,
+    storage: StorageSqlx,
+    report: Report,
+}
+
+impl Run {
+    async fn of<H: HeaderSource>(
+        raw: &str,
+        proofs: &[(u32, String)],
+        headers: Option<&H>,
+        flags: (bool, bool),
+    ) -> Self {
+        let (dir, db) = temp_db();
+        let storage = store(&db, raw, proofs).await;
+        let report = on_testnet(&storage, &db, headers, flags.0, flags.1).await;
+        Self {
+            _dir: dir,
+            db,
+            storage,
+            report,
+        }
+    }
+
+    fn evidence(&self) -> &Evidence {
+        self.report.evidence.as_ref().unwrap()
+    }
+
+    async fn word(&self) -> String {
+        raw_word(&self.db).await
+    }
 }
 
 /// The dry run (the default) writes nothing and says what `--execute`
 /// would write; the legacy `mainnet` reads `main`.
 #[tokio::test]
 async fn the_dry_run_writes_nothing_and_says_what_execute_would_write() {
-    let (_dir, db) = temp_db();
-    let (storage, headers) = agreeing(&db).await;
-    let report = repair(&storage, &db, Chain::Test, Some(&headers), false, false)
-        .await
-        .unwrap();
-    assert_eq!(report.stored, "main");
-    assert_eq!(report.target, "test");
-    assert_eq!(report.outcome, Outcome::WouldWrite);
-    assert!(!report.applied);
-    assert_eq!(report.evidence.as_ref().unwrap().verdict, Verdict::Agrees);
+    let headers = mock(&three());
+    let run = Run::of("mainnet", &three(), Some(&headers), (false, false)).await;
+    assert_eq!(
+        (run.report.stored.as_str(), run.report.target),
+        ("main", "test")
+    );
+    assert_eq!(run.report.outcome, Outcome::WouldWrite);
+    assert!(!run.report.applied);
+    assert_eq!(run.evidence().verdict, Verdict::Agrees);
     assert_eq!(headers.call_count("get_header_for_height"), 3);
-    assert_eq!(raw_word(&db).await, "mainnet", "nothing written");
-    let printed = lines(&report);
+    assert_eq!(run.word().await, "mainnet", "nothing written");
+    let printed = lines(&run.report);
     assert_eq!(
         printed.last().unwrap(),
         "Dry run (no write). Re-run with --execute to write the chain word test."
@@ -155,23 +207,18 @@ async fn the_dry_run_writes_nothing_and_says_what_execute_would_write() {
 /// then passes the chain word's check on testnet and no longer on mainnet.
 #[tokio::test]
 async fn agreeing_evidence_with_execute_writes_the_word() {
-    let (_dir, db) = temp_db();
-    let (storage, headers) = agreeing(&db).await;
-    let report = repair(&storage, &db, Chain::Test, Some(&headers), true, false)
-        .await
-        .unwrap();
-    assert_eq!(report.outcome, Outcome::Written);
-    assert!(report.applied);
-    assert_eq!(report.refusal, None);
-    assert_eq!(raw_word(&db).await, "test");
-    assert!(lines(&report).contains(&"  chain word written: main -> test".to_string()));
-    drop(storage);
-    let again = open_unasked(&config_for(&db), &db).await.unwrap();
+    let run = Run::of("mainnet", &three(), Some(&mock(&three())), (true, false)).await;
+    assert_eq!(run.report.outcome, Outcome::Written);
+    assert!(run.report.applied);
+    assert_eq!(run.report.refusal, None);
+    assert_eq!(run.word().await, "test");
+    assert!(lines(&run.report).contains(&"  chain word written: main -> test".to_string()));
+    let again = open_unasked(&config_for(&run.db), &run.db).await.unwrap();
     assert_eq!(
-        crate::store::require_chain(&again, &db, Chain::Test),
+        crate::store::require_chain(&again, &run.db, Chain::Test),
         Ok(())
     );
-    assert!(crate::store::require_chain(&again, &db, Chain::Main).is_err());
+    assert!(crate::store::require_chain(&again, &run.db, Chain::Main).is_err());
 }
 
 /// `none` (no proof): `--execute` alone is refused naming `--unchecked`;
@@ -180,56 +227,46 @@ async fn agreeing_evidence_with_execute_writes_the_word() {
 #[tokio::test]
 async fn no_evidence_writes_only_with_unchecked_and_says_so() {
     let headers = MockWalletServices::new();
-    for (execute, unchecked, outcome, written) in [
-        (false, false, Outcome::WouldWriteOnlyUnchecked, false),
-        (false, true, Outcome::WouldWrite, false),
-        (true, false, Outcome::Refused, false),
-        (true, true, Outcome::WrittenUnchecked, true),
+    let refused = "repair-chain refused: no evidence (the store holds no proof); \
+                   --execute --unchecked writes the word test with no evidence";
+    for (flags, outcome, word, said) in [
+        (
+            (false, false),
+            Outcome::WouldWriteOnlyUnchecked,
+            "mainnet",
+            refused,
+        ),
+        (
+            (false, true),
+            Outcome::WouldWrite,
+            "mainnet",
+            "write the chain word test with no evidence.",
+        ),
+        (
+            (true, false),
+            Outcome::Refused,
+            "mainnet",
+            "Nothing written.",
+        ),
+        (
+            (true, true),
+            Outcome::WrittenUnchecked,
+            "test",
+            "main -> test, with no evidence (--unchecked)",
+        ),
     ] {
-        let (_dir, db) = temp_db();
-        let storage = store(&db, "mainnet", &[]).await;
-        let report = repair(
-            &storage,
-            &db,
-            Chain::Test,
-            Some(&headers),
-            execute,
-            unchecked,
-        )
-        .await
-        .unwrap();
-        let evidence = report.evidence.as_ref().unwrap();
-        assert_eq!(evidence.verdict, Verdict::None);
-        assert_eq!(evidence.reason.as_deref(), Some("the store holds no proof"));
-        assert_eq!(report.outcome, outcome, "{execute} {unchecked}");
-        assert_eq!(report.applied, written);
+        let run = Run::of("mainnet", &[], Some(&headers), flags).await;
+        assert_eq!(run.evidence().verdict, Verdict::None);
         assert_eq!(
-            raw_word(&db).await,
-            if written { "test" } else { "mainnet" }
+            run.evidence().reason.as_deref(),
+            Some("the store holds no proof")
         );
-        let mut printed = lines(&report).join("\n");
+        assert_eq!(run.report.outcome, outcome, "{flags:?}");
+        assert_eq!(run.word().await, word);
+        assert!(lines(&run.report).join("\n").ends_with(said), "{flags:?}");
         if outcome == Outcome::Refused {
             // `run` prints the lines, then exits with the refusal.
-            assert!(printed.ends_with("Nothing written."), "{printed}");
-            printed = report.refusal.clone().unwrap_or_default();
-        }
-        match outcome {
-            Outcome::Refused | Outcome::WouldWriteOnlyUnchecked => assert!(
-                printed.contains(
-                    "repair-chain refused: no evidence (the store holds no proof); \
-                     --execute --unchecked writes the word test with no evidence"
-                ),
-                "{printed}"
-            ),
-            Outcome::WrittenUnchecked => assert!(
-                printed
-                    .contains("chain word written: main -> test, with no evidence (--unchecked)"),
-                "{printed}"
-            ),
-            _ => assert!(
-                printed.ends_with("write the chain word test with no evidence."),
-                "{printed}"
-            ),
+            assert_eq!(run.report.refusal.as_deref(), Some(refused));
         }
     }
     assert_eq!(headers.total_calls(), 0, "no proof, nothing asked");
@@ -238,82 +275,70 @@ async fn no_evidence_writes_only_with_unchecked_and_says_so() {
 /// `none` (no header service configured, `CHAINTRACKS_URL=off`).
 #[tokio::test]
 async fn no_header_service_is_no_evidence() {
-    let (_dir, db) = temp_db();
-    let storage = store(&db, "mainnet", &[(H1, root(0x11))]).await;
-    let report = repair::<MockWalletServices>(&storage, &db, Chain::Test, None, true, false)
-        .await
-        .unwrap();
-    let evidence = report.evidence.as_ref().unwrap();
-    assert_eq!(evidence.verdict, Verdict::None);
+    let run = Run::of::<MockWalletServices>("mainnet", &three(), None, (true, false)).await;
+    assert_eq!(run.evidence().verdict, Verdict::None);
     assert_eq!(
-        evidence.reason.as_deref(),
+        run.evidence().reason.as_deref(),
         Some("no header service is configured (CHAINTRACKS_URL=off)")
     );
-    assert_eq!(report.outcome, Outcome::Refused);
-    assert_eq!(raw_word(&db).await, "mainnet");
+    assert_eq!(run.report.outcome, Outcome::Refused);
+    assert_eq!(run.word().await, "mainnet");
 }
 
 /// `disagrees`: refused under every flag, naming the heights that
 /// disagreed; nothing written.
 #[tokio::test]
 async fn disagreeing_evidence_is_refused_under_every_flag() {
-    for (execute, unchecked) in [(false, false), (false, true), (true, false), (true, true)] {
-        let (_dir, db) = temp_db();
-        let (storage, headers) = agreeing(&db).await;
-        // Mainnet's header service at the same heights: other roots.
-        headers.set_header_for_height(header(H1, &root(0x99)));
-        headers.set_header_for_height(header(H3, &root(0x98)));
-        let report = repair(
-            &storage,
-            &db,
-            Chain::Test,
-            Some(&headers),
-            execute,
-            unchecked,
-        )
-        .await
-        .unwrap();
-        let evidence = report.evidence.as_ref().unwrap();
-        assert_eq!(evidence.verdict, Verdict::Disagrees);
-        assert_eq!(evidence.disagreeing_heights(), vec![H3, H1]);
+    // Mainnet's header service at two of the heights: other roots.
+    let headers = mock(&[(H1, root(0x99)), (H2, root(0x22)), (H3, root(0x98))]);
+    for flags in [(false, false), (false, true), (true, false), (true, true)] {
+        let run = Run::of("mainnet", &three(), Some(&headers), flags).await;
+        assert_eq!(run.evidence().verdict, Verdict::Disagrees);
+        assert_eq!(run.evidence().disagreeing_heights(), vec![H3, H1]);
+        let refused = if flags.0 {
+            Outcome::Refused
+        } else {
+            Outcome::WouldRefuse
+        };
+        assert_eq!(run.report.outcome, refused);
+        assert!(!run.report.applied);
         assert_eq!(
-            report.outcome,
-            if execute {
-                Outcome::Refused
-            } else {
-                Outcome::WouldRefuse
-            }
-        );
-        assert!(!report.applied);
-        assert_eq!(
-            report.refusal.as_deref(),
+            run.report.refusal.as_deref(),
             Some(
                 "repair-chain refused: the stored proofs at height 1600020, 1600000 do not carry \
                  the root of chain test's header at that height; this store is not shown to be \
                  chain test's, and no flag writes the word against its evidence"
             )
         );
-        assert_eq!(raw_word(&db).await, "mainnet", "{execute} {unchecked}");
+        assert_eq!(run.word().await, "mainnet", "{flags:?}");
     }
 }
 
 /// The word already right: said, nothing written, nothing asked.
 #[tokio::test]
 async fn a_word_already_right_writes_and_asks_nothing() {
-    let (_dir, db) = temp_db();
-    let storage = store(&db, "test", &[(H1, root(0x11))]).await;
     let headers = MockWalletServices::new();
-    let report = repair(&storage, &db, Chain::Test, Some(&headers), true, true)
-        .await
-        .unwrap();
-    assert_eq!(report.outcome, Outcome::Already);
-    assert_eq!(report.evidence, None);
-    assert!(!report.applied);
+    let run = Run::of("test", &three(), Some(&headers), (true, true)).await;
+    assert_eq!(run.report.outcome, Outcome::Already);
+    assert_eq!(run.report.evidence, None);
+    assert!(!run.report.applied);
     assert_eq!(headers.total_calls(), 0);
     assert_eq!(
-        lines(&report).last().unwrap(),
+        lines(&run.report).last().unwrap(),
         "The stored chain word already is test: nothing to write."
     );
+}
+
+/// Agrees at every height but [`H2`], where it faults.
+struct Half(MockWalletServices);
+
+impl HeaderSource for Half {
+    async fn header_at(&self, height: u32) -> Result<Vec<u8>> {
+        if height == H2 {
+            bail!("mock: the header service is down");
+        }
+        self.0.header_at(height).await
+    }
 }
 
 /// A header service that faults is "could not look", never an answer:
@@ -322,68 +347,47 @@ async fn a_word_already_right_writes_and_asks_nothing() {
 #[tokio::test]
 async fn a_faulting_header_service_is_never_an_answer() {
     seal_network();
-    let (_dir, db) = temp_db();
-    let storage = store(&db, "mainnet", &[(H1, root(0x11)), (H2, root(0x22))]).await;
     let closed = ChaintracksServiceClient::from_url(CLOSED);
-    let report = repair(&storage, &db, Chain::Test, Some(&closed), true, false)
-        .await
-        .unwrap();
-    let evidence = report.evidence.as_ref().unwrap();
-    assert_eq!(evidence.verdict, Verdict::None);
-    assert!(evidence
+    let run = Run::of("mainnet", &three(), Some(&closed), (true, false)).await;
+    assert_eq!(run.evidence().verdict, Verdict::None);
+    assert!(run
+        .evidence()
         .proofs
         .iter()
         .all(|p| p.answer == "could not look" && p.fault.is_some() && p.header_root.is_none()));
-    assert_eq!(report.outcome, Outcome::Refused);
-    assert_eq!(raw_word(&db).await, "mainnet");
+    assert_eq!(run.report.outcome, Outcome::Refused);
+    assert_eq!(run.word().await, "mainnet");
 
-    /// Agrees at one height, faults at the other.
-    struct Half(MockWalletServices);
-    impl HeaderSource for Half {
-        async fn header_at(&self, height: u32) -> Result<Vec<u8>> {
-            if height == H2 {
-                bail!("mock: the header service is down");
-            }
-            self.0.header_at(height).await
-        }
-    }
-    let half = Half(MockWalletServices::new());
-    half.0.set_header_for_height(header(H1, &root(0x11)));
-    let report = repair(&storage, &db, Chain::Test, Some(&half), true, false)
-        .await
-        .unwrap();
-    let evidence = report.evidence.unwrap();
-    assert_eq!(evidence.verdict, Verdict::None);
-    assert_eq!(evidence.proofs[0].answer, "could not look");
-    assert_eq!(evidence.proofs[1].answer, "agrees");
+    let half = Half(mock(&three()));
+    let report = on_testnet(&run.storage, &run.db, Some(&half), true, false).await;
+    let answers: Vec<&str> = report
+        .evidence
+        .unwrap()
+        .proofs
+        .iter()
+        .map(|p| p.answer)
+        .collect();
+    assert_eq!(answers, ["agrees", "could not look", "agrees"]);
     assert_eq!(report.outcome, Outcome::Refused);
-    assert_eq!(raw_word(&db).await, "mainnet");
+    assert_eq!(run.word().await, "mainnet");
 }
 
 /// `--json`'s fields: the same facts.
 #[tokio::test]
 async fn the_json_report_carries_the_same_facts() {
-    let (_dir, db) = temp_db();
-    let (storage, headers) = agreeing(&db).await;
-    let report = repair(&storage, &db, Chain::Test, Some(&headers), false, false)
-        .await
-        .unwrap();
-    let value = serde_json::to_value(&report).unwrap();
+    let run = Run::of("mainnet", &three(), Some(&mock(&three())), (false, false)).await;
+    let proofs = [(3u8, H3), (2, H2), (1, H1)].map(|(n, height)| {
+        let r = root(0x11 * n);
+        let txid = format!("{n:02x}").repeat(32);
+        json!({"txid": txid, "height": height, "stored_root": r, "header_root": r, "answer": "agrees", "fault": null})
+    });
     assert_eq!(
-        value,
+        serde_json::to_value(&run.report).unwrap(),
         json!({
-            "db": db,
+            "db": run.db,
             "stored": "main",
             "target": "test",
-            "evidence": {
-                "verdict": "agrees",
-                "reason": null,
-                "proofs": [
-                    {"txid": "03".repeat(32), "height": H3, "stored_root": root(0x33), "header_root": root(0x33), "answer": "agrees", "fault": null},
-                    {"txid": "02".repeat(32), "height": H2, "stored_root": root(0x22), "header_root": root(0x22), "answer": "agrees", "fault": null},
-                    {"txid": "01".repeat(32), "height": H1, "stored_root": root(0x11), "header_root": root(0x11), "answer": "agrees", "fault": null},
-                ],
-            },
+            "evidence": {"verdict": "agrees", "reason": null, "proofs": proofs},
             "execute": false,
             "unchecked": false,
             "outcome": "would_write",
@@ -396,23 +400,9 @@ async fn the_json_report_carries_the_same_facts() {
 /// Only the newest three proofs are read.
 #[tokio::test]
 async fn the_newest_three_proofs_are_read() {
-    let (_dir, db) = temp_db();
     let proofs: Vec<(u32, String)> = (0..5u8).map(|i| (H1 + u32::from(i), root(i + 1))).collect();
-    let storage = store(&db, "mainnet", &proofs).await;
-    let headers = MockWalletServices::new();
-    for (h, r) in &proofs {
-        headers.set_header_for_height(header(*h, r));
-    }
-    let report = repair(&storage, &db, Chain::Test, Some(&headers), false, false)
-        .await
-        .unwrap();
-    let heights: Vec<u32> = report
-        .evidence
-        .unwrap()
-        .proofs
-        .iter()
-        .map(|p| p.height)
-        .collect();
+    let run = Run::of("mainnet", &proofs, Some(&mock(&proofs)), (false, false)).await;
+    let heights: Vec<u32> = run.evidence().proofs.iter().map(|p| p.height).collect();
     assert_eq!(heights, vec![H1 + 4, H1 + 3, H1 + 2]);
 }
 

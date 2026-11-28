@@ -29,7 +29,7 @@ pub async fn store_for(
     config: &crate::config::Config,
 ) -> Result<()> {
     let storage = StorageSqlx::open_with_options(db_path, config.wallet.storage_options()).await?;
-    crate::store::require_chain_if_made(&storage, db_path, config.chain()).await?;
+    crate::store::chain::require_chain_if_made(&storage, db_path, config.chain()).await?;
     storage.migrate("bsv-wallet-cli", identity_key).await?;
     storage.make_available().await?;
     Ok(())

@@ -17,8 +17,8 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-mod chain;
-pub use chain::{require_chain, require_chain_if_made, ChainMismatch, LEGACY_TESTNET_ADVICE};
+pub mod chain;
+pub use chain::{require_chain, ChainMismatch};
 
 pub mod origin_grants;
 
@@ -46,61 +46,6 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .fetch_optional(reader)
         .await
         .map_err(anyhow::Error::from)
-}
-
-/// The newest stored proofs, at most `limit`, as `(txid, height, merkle
-/// root)`: the store's own evidence of its chain (`repair-chain`, #682).
-/// Reads only.
-///
-/// # Errors
-///
-/// The reader's `sqlx::Error`.
-pub async fn newest_proofs(reader: &SqlitePool, limit: u32) -> Result<Vec<(String, i64, String)>> {
-    sqlx::query_as(
-        "SELECT txid, height, merkle_root FROM proven_txs \
-         ORDER BY height DESC, proven_tx_id DESC LIMIT ?",
-    )
-    .bind(i64::from(limit))
-    .fetch_all(reader)
-    .await
-    .map_err(anyhow::Error::from)
-}
-
-/// Does the file hold a wallet's settings row, the row `init`'s `migrate`
-/// writes? A file no `init` made has no chain word to ask (#682).
-///
-/// # Errors
-///
-/// The reader's `sqlx::Error`.
-pub async fn has_settings_row(reader: &SqlitePool) -> Result<bool> {
-    if !has_column(reader, "settings", "chain").await? {
-        return Ok(false);
-    }
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM settings")
-        .fetch_one(reader)
-        .await?;
-    Ok(n > 0)
-}
-
-/// Write the store's chain word, `chain`'s, in one statement on the
-/// writer (`repair-chain --execute`, #682). The rows written: one.
-///
-/// # Errors
-///
-/// The writer's fault, or a store with no settings row.
-pub async fn write_chain_word(
-    storage: &bsv_wallet_toolbox::StorageSqlx,
-    chain: bsv_wallet_toolbox::Chain,
-) -> Result<u64> {
-    let written = sqlx::query("UPDATE settings SET chain = ? WHERE settings_id = 1")
-        .bind(chain.as_str())
-        .execute(&mut *writer(storage).await?)
-        .await?
-        .rows_affected();
-    if written != 1 {
-        anyhow::bail!("the store has no settings row to write the chain word into");
-    }
-    Ok(written)
 }
 
 /// Is `txid` out and unproven (`unproven`, `sending`), or an action of ours
@@ -757,9 +702,7 @@ mod tests {
     /// its context's store (`reconcile-outputs` once kept its own pool). A
     /// command opens the file itself only when it carries no Wallet at all:
     /// `init` (it creates the file) and `tick` (a Monitor alone), each
-    /// exactly once, `repair-chain` (#682: it opens the store without the
-    /// chain word's refusal and builds no wallet) once, and `ui` (the
-    /// inspector) twice: its store, the one
+    /// exactly once (`repair-chain` too, #682), and `ui` twice: its store, the one
     /// writer its origins view writes through (#414), and its reads' pool,
     /// opened read-only so no SQL writes through it (#440). Every file in
     /// `src/commands/` is read, so a new command is held to the rule too.

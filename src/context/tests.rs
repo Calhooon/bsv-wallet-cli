@@ -20,7 +20,7 @@ use super::*;
 use crate::test_support::genesis_coins::payment_over;
 use crate::test_support::{response_answer, seal_network, temp_db, TestChainTracker};
 use bsv_wallet_cli::config::Flags;
-use bsv_wallet_cli::store::LEGACY_TESTNET_ADVICE;
+use bsv_wallet_cli::store::chain::LEGACY_TESTNET_ADVICE;
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
 };
@@ -272,17 +272,13 @@ async fn legacy_testnet_store(db: &str, root: &PrivateKey) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO proven_txs (txid, height, idx, block_hash, merkle_root, merkle_path, raw_tx) \
-         VALUES (?, ?, 0, ?, ?, X'00', X'00')",
+    crate::commands::repair_chain::tests::insert_proof(
+        &pool,
+        &"aa".repeat(32),
+        LEGACY_PROOF_HEIGHT,
+        &"cc".repeat(32),
     )
-    .bind("aa".repeat(32))
-    .bind(i64::from(LEGACY_PROOF_HEIGHT))
-    .bind("bb".repeat(32))
-    .bind("cc".repeat(32))
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
     pool.close().await;
 }
 
@@ -411,16 +407,10 @@ async fn a_repaired_legacy_store_opens_on_testnet_and_answers_testnet() {
     legacy_testnet_store(&db, &root).await;
     let config = configured(&db, true);
     let headers = MockWalletServices::new();
-    headers.set_header_for_height(bsv_wallet_toolbox::services::BlockHeader {
-        version: 1,
-        previous_hash: "00".repeat(32),
-        merkle_root: "cc".repeat(32),
-        time: 0,
-        bits: 0,
-        nonce: 0,
-        hash: String::new(),
-        height: LEGACY_PROOF_HEIGHT,
-    });
+    headers.set_header_for_height(crate::commands::repair_chain::tests::header(
+        LEGACY_PROOF_HEIGHT,
+        &"cc".repeat(32),
+    ));
     let storage = open_unasked(&config, &db).await.unwrap();
     let report = repair(&storage, &db, config.chain(), Some(&headers), true, false)
         .await

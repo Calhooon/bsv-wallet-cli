@@ -226,15 +226,13 @@ pub fn decide(
     if stored == target {
         return Outcome::Already;
     }
-    match (verdict.unwrap_or(Verdict::None), execute) {
-        (Verdict::Disagrees, false) => Outcome::WouldRefuse,
-        (Verdict::Disagrees, true) => Outcome::Refused,
-        (Verdict::Agrees, false) => Outcome::WouldWrite,
-        (Verdict::Agrees, true) => Outcome::Written,
-        (Verdict::None, false) if unchecked => Outcome::WouldWrite,
-        (Verdict::None, false) => Outcome::WouldWriteOnlyUnchecked,
-        (Verdict::None, true) if unchecked => Outcome::WrittenUnchecked,
-        (Verdict::None, true) => Outcome::Refused,
+    match (verdict.unwrap_or(Verdict::None), execute, unchecked) {
+        (Verdict::Disagrees, false, _) => Outcome::WouldRefuse,
+        (Verdict::Agrees, false, _) | (Verdict::None, false, true) => Outcome::WouldWrite,
+        (Verdict::None, false, false) => Outcome::WouldWriteOnlyUnchecked,
+        (Verdict::Agrees, true, _) => Outcome::Written,
+        (Verdict::None, true, true) => Outcome::WrittenUnchecked,
+        (Verdict::Disagrees | Verdict::None, true, _) => Outcome::Refused,
     }
 }
 
@@ -302,7 +300,7 @@ pub async fn repair<H: HeaderSource>(
     let evidence = if stored == target.as_str() {
         None
     } else {
-        let proofs = crate::store::newest_proofs(storage.pool(), PROOFS_READ).await?;
+        let proofs = crate::store::chain::newest_proofs(storage.pool(), PROOFS_READ).await?;
         Some(evidence(&proofs, headers).await)
     };
     let outcome = decide(
@@ -314,7 +312,7 @@ pub async fn repair<H: HeaderSource>(
     );
     let applied = matches!(outcome, Outcome::Written | Outcome::WrittenUnchecked);
     if applied {
-        crate::store::write_chain_word(storage, target).await?;
+        crate::store::chain::write_chain_word(storage, target).await?;
     }
     Ok(Report {
         db: db.to_string(),
@@ -391,90 +389,76 @@ pub fn lines(report: &Report) -> Vec<String> {
         format!("Stored chain word: {}", report.stored),
         format!("Target chain word: {} (the command's chain)", report.target),
     ];
-    if report.outcome == Outcome::Already {
-        out.push(format!(
-            "The stored chain word already is {}: nothing to write.",
-            report.target
-        ));
-        return out;
-    }
     if let Some(evidence) = &report.evidence {
-        let reason = evidence
-            .reason
-            .as_deref()
-            .map(|r| format!(" ({r})"))
-            .unwrap_or_default();
-        out.push(format!(
-            "Evidence: {}{reason}: the newest stored proofs against chain {}'s header service",
-            evidence.verdict.word(),
-            report.target
-        ));
-        for p in &evidence.proofs {
-            let header = p.header_root.as_deref().map_or("-", short);
-            let fault = p
-                .fault
-                .as_deref()
-                .map(|f| format!(" ({f})"))
-                .unwrap_or_default();
-            out.push(format!(
-                "  height {}  txid {}  stored root {}  header root {}  {}{fault}",
-                p.height,
-                short(&p.txid),
-                short(&p.stored_root),
-                header,
-                p.answer
-            ));
-        }
+        evidence_lines(evidence, report.target, &mut out);
     }
-    match report.outcome {
-        Outcome::WouldWrite => {
-            out.push(String::new());
-            let how = if report.unchecked
-                && report
-                    .evidence
-                    .as_ref()
-                    .is_some_and(|e| e.verdict == Verdict::None)
-            {
-                " with no evidence"
-            } else {
-                ""
-            };
-            out.push(format!(
-                "Dry run (no write). Re-run with --execute to write the chain word {}{how}.",
-                report.target
-            ));
-        }
-        Outcome::WouldWriteOnlyUnchecked | Outcome::WouldRefuse => {
-            out.push(String::new());
-            out.push(format!(
-                "Dry run (no write). {}",
-                report.refusal.as_deref().unwrap_or_default()
-            ));
-        }
-        Outcome::Written => {
-            out.push(String::new());
-            out.push("Applied:".to_string());
-            out.push(format!(
-                "  chain word written: {} -> {}",
-                report.stored, report.target
-            ));
-        }
-        Outcome::WrittenUnchecked => {
-            out.push(String::new());
-            out.push("Applied:".to_string());
-            out.push(format!(
-                "  chain word written: {} -> {}, with no evidence (--unchecked)",
-                report.stored, report.target
-            ));
-        }
-        Outcome::Refused => {
-            out.push(String::new());
-            out.push("Nothing written.".to_string());
-        }
-        Outcome::Already => {}
-    }
+    out.extend(closing_lines(report));
     out
 }
 
+/// The evidence's lines: the verdict, then one line per proof read.
+fn evidence_lines(evidence: &Evidence, target: &str, out: &mut Vec<String>) {
+    let reason = evidence
+        .reason
+        .as_deref()
+        .map(|r| format!(" ({r})"))
+        .unwrap_or_default();
+    out.push(format!(
+        "Evidence: {}{reason}: the newest stored proofs against chain {target}'s header service",
+        evidence.verdict.word()
+    ));
+    for p in &evidence.proofs {
+        let fault = p
+            .fault
+            .as_deref()
+            .map(|f| format!(" ({f})"))
+            .unwrap_or_default();
+        out.push(format!(
+            "  height {}  txid {}  stored root {}  header root {}  {}{fault}",
+            p.height,
+            short(&p.txid),
+            short(&p.stored_root),
+            p.header_root.as_deref().map_or("-", short),
+            p.answer
+        ));
+    }
+}
+
+/// What was done, or on a dry run what `--execute` would do.
+fn closing_lines(report: &Report) -> Vec<String> {
+    let target = report.target;
+    let refusal = report.refusal.as_deref().unwrap_or_default();
+    let unchecked = report.unchecked
+        && report
+            .evidence
+            .as_ref()
+            .is_some_and(|e| e.verdict == Verdict::None);
+    let written = |how: &str| {
+        vec![
+            String::new(),
+            "Applied:".to_string(),
+            format!("  chain word written: {} -> {target}{how}", report.stored),
+        ]
+    };
+    match report.outcome {
+        Outcome::Already => vec![format!(
+            "The stored chain word already is {target}: nothing to write."
+        )],
+        Outcome::WouldWrite => {
+            let how = if unchecked { " with no evidence" } else { "" };
+            vec![
+                String::new(),
+                format!("Dry run (no write). Re-run with --execute to write the chain word {target}{how}."),
+            ]
+        }
+        Outcome::WouldWriteOnlyUnchecked | Outcome::WouldRefuse => {
+            vec![String::new(), format!("Dry run (no write). {refusal}")]
+        }
+        Outcome::Written => written(""),
+        Outcome::WrittenUnchecked => written(", with no evidence (--unchecked)"),
+        Outcome::Refused => vec![String::new(), "Nothing written.".to_string()],
+    }
+}
+
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
