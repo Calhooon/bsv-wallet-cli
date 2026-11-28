@@ -49,6 +49,7 @@ pub(crate) async fn record_all(r: &mut Recorder) {
     super::cases_received_rule::record(r).await;
     super::cases_scripts::record(r).await;
     super::cases_not_spendable::record(r).await;
+    super::cases_send_with::record(r).await;
 }
 
 /// The browser gate's rows, in their recorded order: the gate, the owner's

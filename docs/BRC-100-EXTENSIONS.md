@@ -66,8 +66,8 @@ The test checks served keys only. A response or refusal gap fails it the day a f
 | `createAction` | request | `version` | not read; the toolbox's default version | #147 |
 | `createAction` | request | `options.knownTxids` | not read | #147 |
 | `createAction` | request | `options.returnTXIDOnly` | not read | #147 |
-| `createAction` | request | `options.noSendChange` | not read (a chained `noSend` batch cannot name its change) | #147 |
-| `createAction` | request | `options.sendWith` | not read (a `noSend` batch cannot be sent through `createAction`) | #147 |
+| `createAction` | request | `options.noSendChange` | read only to refuse: a non-empty list is 501 `SEND_WITH_NOT_SUPPORTED` by name, before anything is built, stored or posted, until the wallet answers the call; absent, `null` or `[]` is the call as before | #147 |
+| `createAction` | request | `options.sendWith` | read only to refuse: a non-empty list is 501 `SEND_WITH_NOT_SUPPORTED` by name, before anything is built, stored or posted, until the wallet answers the call (the prepared `noSend` action stays reserved under its txid, and the caller's `abortAction` with that txid frees its coins); absent, `null` or `[]` is the call as before | #147 |
 | `internalizeAction` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `getPublicKey` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |
 | `encrypt` | request | `seekPermission` | not read | #145 (held unread: every originator is granted) |

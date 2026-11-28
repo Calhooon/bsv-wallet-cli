@@ -518,7 +518,8 @@ with `its transaction is <status>: not spendable until it is sent`.
 A failed or nosend coin is held even with flag 1. A live coin with flag 1 reads its
 creator under the existing own-change and received rules.
 Toolbox 0.14.0-beta.1 leaves noSend output flags spendable. The gate holds
-those coins by `nosend` status until the action is sent. This wallet does not read `sendWith` yet (#147), so a noSend output
+those coins by `nosend` status until the action is sent. This host refuses a create naming a non-empty `sendWith` or `noSendChange`
+by name until the wallet below it answers the call (#147), so a noSend output
 named as an input is held `nosend` today. Every named hold is served as
 `403 INPUT_NOT_OFFERED`. The scoped word's domain still refuses statuses
 outside `completed` and `unproven` with `400 VALIDATION_ERROR`.
@@ -596,7 +597,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 404 | `NOT_FOUND` | the host's `/tx/{txid}` has no stored word |
 | 409 | `CONFLICT` | a typed invalid operation, including a managed coin with incomplete ancestry |
 | 500 | `INTERNAL_ERROR` | a typed internal or pre-door storage fault |
-| 501 | `NOT_IMPLEMENTED`, `PRIVILEGED_NOT_SUPPORTED` | an unsupported operation or missing sign session; a privileged request when no privileged keyring is held |
+| 501 | `NOT_IMPLEMENTED`, `PRIVILEGED_NOT_SUPPORTED`, `SEND_WITH_NOT_SUPPORTED` | an unsupported operation or missing sign session; a privileged request when no privileged keyring is held; a `createAction` naming a non-empty `sendWith` or `noSendChange` (#147), refused before anything is built, stored or posted, the prepared action left reserved for its owner's `abortAction` |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | a typed transport/service fault; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
