@@ -1098,7 +1098,6 @@ async fn the_served_follow_up_retires_on_the_definitive_absence_and_keeps_the_by
 /// no clean absence completes the refusal: T is not retired, G's coin stays
 /// locked, and T is not named fatal.
 #[tokio::test]
-#[ignore = "decides the fault: green once only a clean absence counts"]
 async fn the_by_hand_pass_counts_no_faulted_chain_index_toward_absence() {
     let could_not_look = r#"{"error":"could not look"}"#;
     for chain in [
@@ -1111,6 +1110,7 @@ async fn the_by_hand_pass_counts_no_faulted_chain_index_toward_absence() {
         let report = by_hand(&storage, REJECTED_WORD, chain).await;
         assert_eq!(report.retired_txids(), Vec::<String>::new(), "{chain:?}");
         assert!(report.fatal.is_empty(), "{chain:?}: named fatal");
+        assert_eq!(report.refusal_hints, vec![t.clone()], "{chain:?}: a hint");
         assert_kept(&storage, &t, "sending", coin, t_row).await;
     }
 }

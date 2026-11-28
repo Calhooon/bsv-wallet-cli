@@ -238,8 +238,11 @@ pub struct PresenceReport {
     /// word read as a broadcaster's `SEEN` (never a proof and never chain
     /// evidence; `chain_index` is then not `Present`).
     pub chain_index_by: Option<&'static str>,
-    /// The broadcaster we submitted through reports a fatal verdict
-    /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`).
+    /// The broadcaster we submitted through reports a fatal status
+    /// (`REJECTED` / `DOUBLE_SPEND_ATTEMPTED`). Its word alone: the
+    /// reconciler retires on it only with the clean absence of every voting
+    /// chain index (`verification` `Rejected`), never beside a chain index
+    /// that could not look.
     pub broadcaster_fatal: bool,
     /// In the last probe round the chain index answered absent, the
     /// broadcaster answered (held, seen, absent or fatal) and no third-party
