@@ -625,3 +625,31 @@ async fn certificate_stub() -> (String, tokio::task::JoinHandle<()>) {
     let task = tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
     (base, task)
 }
+
+/// `get_network` is the served `GET /getNetwork`, passed through: a
+/// `--testnet` wallet's `testnet` (#639) and a mainnet wallet's `mainnet`,
+/// each sent with the configured `Origin`. The wallet's own answer on each
+/// network is `src/context/tests.rs`'s.
+#[tokio::test]
+async fn get_network_answers_the_served_network() {
+    for network in ["testnet", "mainnet"] {
+        let app = Router::new().route(
+            "/getNetwork",
+            get(move |headers: HeaderMap| async move {
+                if headers.get("origin").and_then(|v| v.to_str().ok()) != Some("http://localhost") {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"code": "ERR_PERMISSION_DENIED"})),
+                    );
+                }
+                (StatusCode::OK, Json(json!({ "network": network })))
+            }),
+        );
+        let base = serve(app).await;
+        let mcp = WalletMcp::new(base, "http://localhost".into());
+        assert_eq!(
+            text(mcp.get_network().await.unwrap()),
+            json!({ "network": network })
+        );
+    }
+}

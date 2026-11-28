@@ -38,9 +38,9 @@ pub(super) fn header(height: u32, root: &str, hashed: bool) -> BlockHeader {
 }
 
 /// A wallet of `root` whose store is migrated on `store_chain` (as `init`
-/// migrates it from `--testnet`), its context's `chain` the same, the wallet
-/// built as `WalletContext::load_with` builds it (`Wallet::with_options`,
-/// the toolbox's default chain), holding one coin per `(height, satoshis)`:
+/// migrates it from `--testnet`), its context built as
+/// `WalletContext::load_with` builds it (`WalletContext::on_store`, the
+/// `Wallet` on the same chain), holding one coin per `(height, satoshis)`:
 /// a payment to its deposit script whose BEEF proves it at `height`, taken
 /// in through the toolbox's own `internalizeAction` as `fund` takes one.
 /// The mock's header service carries each block and the tip; the storage's
@@ -58,27 +58,21 @@ pub(crate) async fn wallet_with_proven(
         .max(TIP);
     let services = MockWalletServices::builder().build();
     services.set_tip_header(header(tip, &"0e".repeat(32), true));
-    let wallet = Wallet::with_options(
-        Some(root.clone()),
+    let ctx = WalletContext::on_store(
+        root.clone(),
         store(root, store_chain, tip).await,
         services,
-        bsv_wallet_toolbox::WalletOptions::default(),
+        store_chain,
+        false,
+        ":memory:",
+        &std::sync::Arc::default(),
     )
     .await
     .unwrap();
     let mut txids = Vec::new();
     for (i, coin) in coins.iter().enumerate() {
-        txids.push(take_in(&wallet, root, i, *coin).await);
+        txids.push(take_in(&ctx.wallet, root, i, *coin).await);
     }
-    let ctx = WalletContext {
-        wallet,
-        identity_key: root.public_key().to_hex(),
-        root_key: root.clone(),
-        chain: store_chain,
-        json_output: false,
-        db_path: ":memory:".into(),
-        config: std::sync::Arc::default(),
-    };
     (ctx, txids)
 }
 
@@ -431,18 +425,16 @@ async fn a_split_of_the_unmined_change_of_a_send_of_such_a_coin_is_refused_by_na
 
 /// A context built as `--testnet` builds it: its store migrated on the
 /// testnet chain (the word `test`, which the door judges by), the
-/// `Wallet`'s own chain mainnet. A coin proven at 700,000 (after mainnet's
+/// `Wallet`'s own chain the same (#639). A coin proven at 700,000 (after mainnet's
 /// Genesis, before testnet's 1,344,302) is held and the split refused,
 /// nothing posted; a coin proven at 1,344,302 is offered, and the split is
-/// posted and recorded through the door. Host and door agree; asked the
-/// `Wallet`'s chain the hold would offer the coin at 700,000 and the door
-/// would refuse its record.
+/// posted and recorded through the door. Host, door and `Wallet` agree.
 #[tokio::test]
 async fn a_testnet_context_holds_by_the_chain_its_door_judges_by() {
     let root = PrivateKey::random();
     let (ctx, txids) = wallet_with_proven(&root, &[(700_000, 30_000)], Chain::Test).await;
     assert_eq!(ctx.chain, Chain::Test);
-    assert_eq!(ctx.wallet.chain(), Chain::Main, "the Wallet's own chain");
+    assert_eq!(ctx.wallet.chain(), Chain::Test, "the Wallet's own chain");
     assert_eq!(
         bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
         "test",
