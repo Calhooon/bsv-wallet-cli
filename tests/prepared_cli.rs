@@ -12,9 +12,9 @@
 //! The binary builds the configured services: `CHAINTRACKS_URL=off` (no
 //! header service), the broadcaster's URL and the explorers' bases at a
 //! closed local port or off, and every proxy at the same closed port, so
-//! any request the run made would fail at once. No command run here asks
-//! a service: the listings and the balance read the store, and the abort
-//! path makes no service call.
+//! any request the run made would fail at once. The listings and the
+//! balance read the store; the toolbox's abort reads its records "without
+//! a header-service or explorer call" (its CHANGELOG).
 
 use std::process::Command;
 
