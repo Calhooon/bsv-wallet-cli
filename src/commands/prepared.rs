@@ -114,7 +114,7 @@ pub fn added_total(prepared: &[HeldBy]) -> Value {
 }
 
 /// `actions --prepared`: the prepared, unsent actions alone, every one,
-/// oldest first.
+/// from the oldest.
 pub fn list(prepared: &[HeldBy], now: i64, json_output: bool) -> String {
     if json_output {
         let rows: Vec<Value> = prepared

@@ -166,4 +166,19 @@ fn the_tools_are_the_29_and_the_five() {
             "{name}: {description}"
         );
     }
+    // What an abort is and is not, and the command line's two commands (#673).
+    let abort = tools
+        .iter()
+        .find(|t| t.name == "abort_action")
+        .and_then(|t| t.description.as_deref())
+        .unwrap_or_default();
+    for said in [
+        "a prepared noSend payment",
+        "never aborted (refused, 409)",
+        "a prepared transaction whose bytes were handed to someone else can still be posted by them",
+        "bsv-wallet actions --prepared",
+        "bsv-wallet abort-action <txid>",
+    ] {
+        assert!(abort.contains(said), "abort_action: {abort}");
+    }
 }

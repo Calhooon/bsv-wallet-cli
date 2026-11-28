@@ -67,7 +67,8 @@ three relay tools answer that no relay is named and ask nothing.
 ## Use and configuration
 
 The CLI offers initialization, address and balance reads, transaction creation,
-internalization, outputs/actions queries and time-locked gifts. `daemon` runs
+internalization, outputs/actions queries, the prepared actions' listing and abort
+(`actions --prepared`, `abort-action`) and time-locked gifts. `daemon` runs
 the monitor with the HTTP server; `serve` runs the server alone. Initialization
 creates wallet state, while sends and gift actions can spend funds. Use the
 command help for arguments before operating a wallet.
@@ -348,7 +349,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 409 | `CONFLICT` | `Duplicate entity:`, `Invalid operation:` |
 | 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
 | 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
-| 501 | `SEND_WITH_NOT_SUPPORTED` | a `createAction` naming a non-empty `sendWith` or `noSendChange` (#147), refused before anything is built, stored or posted, the prepared action left reserved for its owner's `abortAction` |
+| 501 | `SEND_WITH_NOT_SUPPORTED` | a `createAction` naming a non-empty `sendWith` or `noSendChange` (#147), refused before anything is built, stored or posted, the prepared action left reserved for its owner's `abortAction` (at the command line `bsv-wallet abort-action <txid>`, #673) |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
@@ -424,6 +425,33 @@ not the wallet's reserved P2PKH outputs, changed reservations, insufficient
 fee coverage, and an already tracked replacement. Silence must be established;
 an unavailable source is not silence. A refused post of the replacement is
 still a retryable hint.
+
+## Prepared, unsent actions
+
+A `noSend` action (`createAction` with `options.noSend: true`) is signed and
+never sent: its caller hands the transaction to someone or sends it later. Until
+it is sent or aborted it keeps the coins its inputs spend reserved, and nothing
+ages it out. `bsv-wallet actions` marks each one under its line with the sats
+its inputs hold, its age, its whole txid and its reference, and a last line
+totals every prepared action the store holds; under `--json` a prepared action's
+object carries an added `prepared` key and the listing an added `preparedTotal`,
+every other key as before. `bsv-wallet actions --prepared` lists only the
+prepared actions, every one, from the oldest.
+
+`bsv-wallet abort-action <txid|reference>` aborts the one action it names
+through the host's `abortAction`, with the served door's guard: a transaction a
+broadcaster took is never aborted (`CONFLICT`). The wallet frees the inputs and
+writes the action `failed`, so it never sends it. An abort frees this wallet's
+coins and nothing more: a prepared transaction whose bytes were handed to
+someone else can still be posted by them, and then spends the freed coins. Abort
+only a payment that was not handed over. No command aborts more than the one
+action named. Under `--json` the answer names the action, what it was and what
+it freed, and a refusal prints the door's `{code, message}` and exits 1.
+
+`balance` counts neither the coins a prepared action holds nor its change:
+the change is not counted until the action is sent. While one is prepared the
+balance reads lower by the whole of the coins it holds; after the abort it
+reads the freed coins again.
 
 ## The repair passes' report
 
