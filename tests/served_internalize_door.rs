@@ -352,11 +352,14 @@ async fn the_storage_door_rows_answer_the_wallet_doors_texts_here() {
         payment_of(0, PREFIX, SUFFIX, &"05".repeat(33)),
     )
     .await;
-    assert_answer(
-        status,
-        &body,
-        "ERROR",
-        "wallet error: Invalid sender_identity_key: invalid public key: Point not on curve",
+    // The tail of this description is the key library's own words for the
+    // point, which differ between its versions: only the door's words are pinned.
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "ERROR", "{body}");
+    let said = body["message"].as_str().unwrap_or_default();
+    assert!(
+        said.starts_with("wallet error: Invalid sender_identity_key: invalid public key"),
+        "{body}"
     );
     assert_eq!(stored(&wallet).await, before, "nothing written");
     assert_eq!(services.call_count("post_beef"), 0, "nothing posted");
