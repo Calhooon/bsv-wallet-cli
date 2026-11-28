@@ -638,6 +638,22 @@ Rows 275 to 277 move in one field (each held coin's `word`, and the message line
 
 The wire rows do not move with the take's source: the wire worlds' services are the concrete `Services` against a local stub broadcaster, which write the broadcast memory, so rows 275 to 277 and 291 read `announced` from a broadcaster's record (replay, record, replay: `git status` clean after the recording).
 
+## The create door's word (#659, L1)
+
+The stack's wallet model writes `built` when the wallet signs an action of its own (bsv-stack-lean `lean/Wallet/Default.lean`, `onCreateD`: a signed action takes the tracker's host act `build`), and the keeper's answer K3 reads a signed action of ours whose creator is `unknown` as a host that did not record its own act. This host now records it: on every road it signs by, the action has its tracker row from its signing, written by the tracker crate's reducer from the host act `build` (`tracker_host::signed_word`, the internalize door's `tracker_host::door` with the same take), and the broadcast memory's row for the txid, when a broadcaster took the bytes, is heard as that broadcaster's acceptance. The roads: the spend gate's door (`spend_gate::create_action`, `create_action_from`), which the served `createAction`, `send`, `drain`, `split` and `gift-send` call; the served `signAction`; and the respend's replacement, before its post and again after it. A `noSend` action (`nosend`) and one that accepts delayed broadcast read `built` until sent. An unsigned template is not signed and has no row. `gift-claim`'s claim already had its word from its own post. A fault writing the row is logged (`signed_word_not_written`) and never fails the action. No offer moves: the gate offers our own change under `SPEND_OWN_CHANGE` at every pending word as before, and the vectors replay at their pin: 490 rows, 486 expressed, 0 divergences.
+
+| answer | before | now | where |
+|---|---|---|---|
+| `GET /tx/{txid}` for the served `createAction`, signed and posted (every broadcaster unreachable), `noSend`, or accepting delayed broadcast, and for a template signed by `signAction` | 404 `NOT_FOUND` until a tracker pass (a `noSend` action: never, the pass adopts only `unproven` and `sending`); the gate reads `unknown` | 200, `word` `built`; the gate reads `built` | `tests/served_create_door.rs` |
+| the gate's door, its broadcaster taking the post | no row until a pass, `unknown` | `announced`, the take heard from the broadcast memory | `an_action_a_broadcaster_took_reads_announced` |
+| the same, every broadcaster refusing | as above | `built`: a refusal is no take | `an_action_every_broadcaster_refused_reads_built` |
+| `send` to another address, `drain`, `gift-send`, a `noSend` and a delayed action through the gate's door | no row, `unknown` | `built` | `src/commands/create_door_tests.rs` |
+| `send` to the wallet's own address, `split` | `built` already (their record of their own payment runs the internalize door's word) | unchanged | the same |
+| the respend's replacement | no row, `unknown` | `built` | `tests/respend_witness/main.rs`, `the_replacement_reads_built_from_its_signing` |
+| a second write, the internalize door's on the same transaction, and the pass | the pass adopted the row at `built` | the row as written at signing; the pass adopts nothing for it | `a_second_write_and_the_pass_change_nothing` |
+
+No wire row moves: no recorded request reads the word of an action the wallet made, and the gate's held coins in the recorded 402s are received ones (294 replayed, 0 differ; the consumers' 48, 0 differ).
+
 ## The browser gate (#411) and the switch (#414)
 
 The owner's word of 2026-11-01 on #411 ("yep I like your reccomendations...", through the keeper): the per-origin grant in the store is the shape (#414); step (b), a required `Origin` and an environment allow-list, landed first (PR 419). From #414's L5b (the switch, `docs/design/origin-grants.md` sections (1), (2), (6) and (7), under the owner's rulings W1 (a), W4 (a) and W15 (i) of 2026-11-03) a door admits a page for each power it asks by the owner's grant of that power to its origin, read from the store, and `ALLOWED_ORIGINS` is a seed beside the rows. Every served route but `POST /arc-callback` (Arcade's webhook, server to server, authenticated by the callback token) is gated; the order is the bearer (`AUTH_TOKEN`, when set), then the gate, then the body, then the door's powers.
