@@ -1949,7 +1949,19 @@ pub async fn create_action<V: WalletServices + Send + Sync + 'static>(
     // (`labelled_for_offer`, in `run_gated`; #627).
     let mut args = args;
     action_rule_labels(&mut args, &opts.allow_pending);
-    run_gated(coins, wallet, args, originator, opts).await
+    let made = run_gated(coins, wallet, args, originator, opts).await?;
+    signed(wallet.storage(), &made).await;
+    Ok(made)
+}
+
+/// The create door's word (#659): an action the toolbox signed is `built`
+/// from its signing ([`crate::tracker_host::signed_word`]), its post's take
+/// heard from the broadcast memory. An unsigned template carries no txid
+/// and gets no row.
+pub(crate) async fn signed(storage: &StorageSqlx, made: &CreateActionResult) {
+    if let Some(txid) = made.txid.as_ref() {
+        crate::tracker_host::signed_word(storage, &bsv_sdk::primitives::to_hex(txid)).await;
+    }
 }
 
 async fn check_action_scope(

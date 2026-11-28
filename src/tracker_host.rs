@@ -1454,6 +1454,32 @@ pub async fn door_word(storage: &StorageSqlx, txid: &str) {
     door_sighted(storage, txid, None).await;
 }
 
+/// The create door's word (#659): after this wallet signed an action of
+/// its own, give the transaction its tracker row, `built` by the crate's
+/// reducer (`HostAction::Build`, the host act the stack's wallet model
+/// takes when the wallet signs: `onCreateD`), and hear what the
+/// broadcasters' memory holds of it, as [`door`] does for a received body.
+/// Called on every road this host signs by (the spend gate's door for the
+/// served `createAction`, `send`, `drain`, `split` and `gift-send`; the
+/// served `signAction`; the respend's replacement), before the post where
+/// the host posts itself and after the toolbox's call where the toolbox
+/// posts. A `noSend` action and a delayed one read `built` until sent. A
+/// row that exists (the pass's adoption, the door's word, a claim's
+/// announce) is read, never reset, so a second write changes nothing. The
+/// action is signed whatever happens here: a fault is logged and never
+/// returned.
+pub async fn signed_word(storage: &StorageSqlx, txid: &str) {
+    let opts = TickOptions::default();
+    if let Err(fault) = door(storage, &SystemClock, &opts, txid, None).await {
+        tracing::warn!(
+            marker = "signed_word_not_written",
+            %txid,
+            %fault,
+            "the signed action's tracker row was not written at signing; a pass adopts it once it is handed to a broadcaster"
+        );
+    }
+}
+
 /// [`door_word`], with the courier that handed the bytes over unproven.
 pub async fn door_sighted(storage: &StorageSqlx, txid: &str, sighting: Option<&str>) {
     let opts = TickOptions::default();

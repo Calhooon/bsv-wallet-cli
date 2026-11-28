@@ -48,15 +48,20 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .map_err(anyhow::Error::from)
 }
 
-/// Does the wallet hold `txid` out and unproven (`unproven` or `sending`)?
-/// The door's test for a body taken in with no proof (#645).
+/// Does the wallet hold `txid` out and unproven: `unproven` or `sending`,
+/// or an action of its own signed and not yet handed to a broadcaster
+/// (`nosend`, `unprocessed`)? The door's test for a body taken in with no
+/// proof (#645), and for an action this wallet signed (#659): a signed
+/// action is `built` from its signing, sent or not. An unsigned template
+/// (`unsigned`) is not signed and has no word.
 ///
 /// # Errors
 ///
 /// Propagates a failed read.
 pub async fn held_unproven(reader: &SqlitePool, txid: &str) -> Result<bool> {
     let held: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM transactions WHERE txid = ? AND status IN ('unproven', 'sending') LIMIT 1",
+        "SELECT 1 FROM transactions WHERE txid = ? AND (status IN ('unproven', 'sending') \
+         OR (is_outgoing = 1 AND status IN ('nosend', 'unprocessed'))) LIMIT 1",
     )
     .bind(txid)
     .fetch_optional(reader)
