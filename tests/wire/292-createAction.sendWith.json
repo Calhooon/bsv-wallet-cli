@@ -27,7 +27,7 @@
     },
     "json": {
       "code": "SEND_WITH_NOT_SUPPORTED",
-      "message": "createAction: sendWith is not supported: this wallet cannot yet send a prepared payment. Nothing was built or sent: a prepared (noSend) transaction named in sendWith was not sent and is still reserved under its txid. abortAction with its txid as the reference frees its coins"
+      "message": "createAction: sendWith is not supported: this wallet cannot yet send a prepared payment. Nothing was built or sent: a prepared (noSend) transaction of this wallet named in sendWith, if any, was not sent and is still reserved under its txid. abortAction with its txid as the reference frees its coins; at the wallet's command line, bsv-wallet actions --prepared lists the prepared payments and bsv-wallet abort-action <txid> aborts one. Abort only a payment that was not handed over: a prepared transaction handed to someone else can still be posted by them"
     }
   }
 }

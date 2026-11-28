@@ -162,8 +162,13 @@ async fn refused(world: &World, body: Value, option: &str) -> Value {
     );
     for said in [
         "this wallet cannot yet",
-        "was not sent and is still reserved under its txid",
+        "a prepared (noSend) transaction of this wallet ",
+        ", if any, was not sent and is still reserved under its txid",
         "abortAction with its txid as the reference frees its coins",
+        "bsv-wallet actions --prepared lists the prepared payments",
+        "bsv-wallet abort-action <txid> aborts one",
+        "Abort only a payment that was not handed over: a prepared transaction handed to \
+         someone else can still be posted by them",
     ] {
         assert!(message.contains(said), "{message}");
     }
