@@ -423,6 +423,9 @@ pub async fn build_and_post(
             },
         )
         .await?;
+    // The create door's word (#659): the replacement is signed and stored,
+    // so it is `built` before its post, whose take is heard below.
+    crate::tracker_host::signed_word(storage, &replacement_id).await;
     beef.merge_raw_tx(replacement.to_binary(), None)?;
     let outcome = match services
         .post_beef(&beef.to_binary()?, std::slice::from_ref(&replacement_id))
@@ -447,6 +450,8 @@ pub async fn build_and_post(
             "respend posted; the status write after the post failed"
         );
     }
+    // The post's take, heard on the row written at signing.
+    crate::tracker_host::signed_word(storage, &replacement_id).await;
     if let Err(e) = crate::spend_guard::run(storage).await {
         tracing::error!(
             marker = "post_broadcast_guard_failed",
@@ -548,6 +553,8 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
                 },
             )
             .await?;
+        // The create door's word (#659): the recorded act is signed now.
+        crate::tracker_host::signed_word(storage, &row.get::<String, _>("txid")).await;
     }
     let rows = sqlx::query("SELECT l.phantom_id,l.replacement_id,t.txid,p.raw_tx,p.merkle_path,p.height,p.block_hash FROM respend_links l JOIN transactions t ON t.transaction_id=l.replacement_id JOIN transactions f ON f.transaction_id=l.phantom_id JOIN proven_tx_reqs r ON r.txid=f.txid JOIN proven_txs p ON p.proven_tx_id=t.proven_tx_id WHERE l.settled=0 AND r.status='doubleSpend' AND t.status='completed'")
         .fetch_all(storage.pool()).await?;

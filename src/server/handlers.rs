@@ -1198,6 +1198,11 @@ pub async fn sign_action(
         .await
         .map_err(AppError::from_sign_action)?;
     tracing::info!(originator = %originator, reference = %reference, "signAction");
+    // The create door's word (#659): the deferred action is signed, so it
+    // is `built` from here, its post's take heard.
+    if let Some(txid) = result.txid.as_ref() {
+        crate::tracker_host::signed_word(wallet.storage(), &to_hex(txid)).await;
+    }
     // The deferred spend's tally row gains its txid (#414 L6).
     if let Some(txid) = result.txid.as_ref() {
         if let Err(e) =

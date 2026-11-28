@@ -70,7 +70,10 @@ pub async fn create_action_from<V: WalletServices + Send + Sync + 'static>(
         .create_action_offering(args, Some(originator), &offer, &ids)
         .await
     {
-        Ok(result) => Ok(result),
+        Ok(result) => {
+            super::signed(wallet.storage(), &result).await;
+            Ok(result)
+        }
         Err(
             e @ bsv_sdk::Error::WalletRefusal {
                 class: WalletRefusalClass::InsufficientFunds,
