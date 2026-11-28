@@ -8,6 +8,9 @@ mod chaintracks_off_tests;
 pub mod cleanup_abandoned;
 pub mod compact;
 pub mod config;
+/// The create door's word, by command (#659, L1).
+#[cfg(test)]
+mod create_door_tests;
 pub mod daemon;
 pub mod daemon_tenant;
 pub mod drain;

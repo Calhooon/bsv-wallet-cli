@@ -722,3 +722,35 @@ async fn a_store_fault_after_the_replacement_is_posted_is_logged_and_answers_its
         .any(|(m, t)| m == "post_broadcast_request_read_failed"
             && t.as_deref() == Some(replacement.as_str())));
 }
+
+/// The create door's word (#659, L1): the respend's replacement is an
+/// action this wallet signs, so its tracker row reads `built` from its
+/// signing, before any pass, as stored (what `GET /tx/{txid}` serves) and as
+/// the spend gate reads the creator of its change. The mock broadcaster
+/// keeps no broadcast memory, so its post leaves no take.
+#[tokio::test]
+async fn the_replacement_reads_built_from_its_signing() {
+    let f = fixture().await;
+    let storage = f.wallet.storage();
+    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    let replacement = build_and_post(storage, &absent, &f.root, &f.phantom, &["mock"])
+        .await
+        .expect("the replacement is posted");
+    assert_eq!(absent.call_count("post_beef"), 1);
+    let stored = bsv_wallet_cli::tracker_host::stored_word(storage, &replacement)
+        .await
+        .unwrap()
+        .map(|(word, ..)| word);
+    let readings = bsv_wallet_cli::tracker_host::read_creators(
+        storage,
+        &absent,
+        &bsv_wallet_cli::tracker_host::TickOptions::default(),
+        &[(replacement.clone(), None)],
+    )
+    .await
+    .unwrap();
+    let read = (stored, readings[&replacement].word);
+    println!("the replacement {replacement}: stored and at the gate {read:?}");
+    assert_eq!(read, (Some("built".to_string()), "built"));
+}
