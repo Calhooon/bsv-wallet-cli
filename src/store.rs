@@ -97,6 +97,95 @@ pub fn sqlx_is_busy(e: &sqlx::Error) -> bool {
     }
 }
 
+/// An action of this wallet as the command line shows what it holds
+/// (#673): its txid (empty for a template not yet signed), its reference,
+/// its status, its description, its net satoshis, when it was made (unix
+/// seconds), and the inputs it holds, the outputs whose `spent_by` names
+/// it: how many and their satoshis. An abort gives exactly those back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldBy {
+    pub txid: String,
+    pub reference: String,
+    pub status: String,
+    pub description: String,
+    pub satoshis: i64,
+    pub created_at: i64,
+    pub held_inputs: i64,
+    pub held_satoshis: i64,
+}
+
+/// A [`HeldBy`]'s row, in [`HELD_BY_COLUMNS`]' order.
+type HeldByRow = (String, String, String, String, i64, i64, i64, i64);
+
+impl From<HeldByRow> for HeldBy {
+    fn from(r: HeldByRow) -> Self {
+        Self {
+            txid: r.0,
+            reference: r.1,
+            status: r.2,
+            description: r.3,
+            satoshis: r.4,
+            created_at: r.5,
+            held_inputs: r.6,
+            held_satoshis: r.7,
+        }
+    }
+}
+
+/// The columns of a [`HeldBy`], over `transactions t`.
+const HELD_BY_COLUMNS: &str = "SELECT COALESCE(lower(t.txid), '') AS txid, t.reference, \
+     t.status, t.description, t.satoshis, \
+     CAST(COALESCE(strftime('%s', t.created_at), 0) AS INTEGER) AS created_at, \
+     (SELECT COUNT(*) FROM outputs o \
+      WHERE o.spent_by = t.transaction_id AND o.user_id = t.user_id) AS held_inputs, \
+     (SELECT COALESCE(SUM(o.satoshis), 0) FROM outputs o \
+      WHERE o.spent_by = t.transaction_id AND o.user_id = t.user_id) AS held_satoshis \
+     FROM transactions t WHERE t.user_id = ";
+
+/// Every prepared, unsent action of the user `user_id` (#673): a `noSend`
+/// transaction, signed and never sent (status `nosend`), oldest first,
+/// with the inputs it holds. A prepared action keeps its inputs reserved
+/// until it is sent or aborted; nothing ages it out. Reads only, every
+/// row of the store (no page).
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn prepared_actions(reader: &SqlitePool, user_id: i64) -> Result<Vec<HeldBy>> {
+    let mut query = sqlx::QueryBuilder::new(HELD_BY_COLUMNS);
+    query.push_bind(user_id);
+    query.push(" AND t.status = 'nosend' ORDER BY t.transaction_id");
+    let rows: Vec<HeldByRow> = query.build_query_as().fetch_all(reader).await?;
+    Ok(rows.into_iter().map(HeldBy::from).collect())
+}
+
+/// The action of the user `user_id` that `name` names, as the toolbox's
+/// abort resolves it: its reference, else, when `name` is a txid, its
+/// txid; with the inputs it holds. Reads only.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn held_by(reader: &SqlitePool, user_id: i64, name: &str) -> Result<Option<HeldBy>> {
+    let mut query = sqlx::QueryBuilder::new(HELD_BY_COLUMNS);
+    query.push_bind(user_id);
+    query.push(" AND t.reference = ");
+    query.push_bind(name);
+    let found: Option<HeldByRow> = query.build_query_as().fetch_optional(reader).await?;
+    if let Some(found) = found {
+        return Ok(Some(found.into()));
+    }
+    if name.len() != 64 || !name.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let mut query = sqlx::QueryBuilder::new(HELD_BY_COLUMNS);
+    query.push_bind(user_id);
+    query.push(" AND lower(t.txid) = ");
+    query.push_bind(name.to_ascii_lowercase());
+    let found: Option<HeldByRow> = query.build_query_as().fetch_optional(reader).await?;
+    Ok(found.map(HeldBy::from))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

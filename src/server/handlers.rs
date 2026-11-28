@@ -66,7 +66,7 @@ use bsv_sdk::wallet::{
     WalletRevealCounterpartyArgs,
     WalletRevealSpecificArgs,
 };
-use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet};
+use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet, WalletServices};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -335,14 +335,17 @@ impl From<(StatusCode, Json<serde_json::Value>)> for AppError {
     }
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        tracing::warn!(
-            status = self.status.as_u16(),
-            code = self.code,
-            message = %self.message,
-            "request error"
-        );
+impl AppError {
+    /// The message as the door serves it (on this line the operator's hint
+    /// is already within it, `with_hint`).
+    pub fn served_message(&self) -> String {
+        self.message.clone()
+    }
+
+    /// The body the door serves: `{code, message}`, the gate's listing when
+    /// there is one, the coin an `UNSPENDABLE_COIN` names. A command's
+    /// `--json` prints the same (`abort-action`, #673).
+    pub fn to_json(&self) -> serde_json::Value {
         let mut body = json!({"code": self.code, "message": self.message});
         if let Some(refusal) = &self.refusal {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
@@ -353,6 +356,19 @@ impl IntoResponse for AppError {
                 body["coin"] = json!(coin);
             }
         }
+        body
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        tracing::warn!(
+            status = self.status.as_u16(),
+            code = self.code,
+            message = %self.message,
+            "request error"
+        );
+        let body = self.to_json();
         if self.code == "STORE_BUSY" {
             // Nothing was written; one second is the writer's turn.
             return (
@@ -1153,10 +1169,20 @@ pub async fn abort_action(
     Json(args): Json<AbortActionArgs>,
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
-    // A transaction a broadcaster took is never aborted here, whatever the
-    // caller knows: it stays until a proof, a node verdict or a competitor's
-    // checked proof (bsv-stack-lean #66; #24). One no broadcaster took is
-    // the toolbox's to abort.
+    Ok(Json(abort_guarded(&wallet, args, &originator).await?))
+}
+
+/// `abortAction` as this host makes it, at the served door and at the
+/// command line (`bsv-wallet abort-action`, #673): a transaction a
+/// broadcaster took is never aborted, whatever the caller knows: it stays
+/// until a proof, a node verdict or a competitor's checked proof
+/// (bsv-stack-lean #66; #24). One no broadcaster took is the toolbox's to
+/// abort, which frees the inputs it holds and writes it `failed`.
+pub async fn abort_guarded<V: WalletServices + Send + Sync + 'static>(
+    wallet: &Wallet<StorageSqlx, V>,
+    args: AbortActionArgs,
+    originator: &str,
+) -> Result<AbortActionResult, AppError> {
     if let Some(txid) =
         crate::retire_guard::abort_refused_for(wallet.storage().pool(), &args.reference)
             .await
@@ -1167,7 +1193,7 @@ pub async fn abort_action(
              re-asked, until a proof, a node verdict or a competitor's checked proof decides it"
         )));
     }
-    let result = wallet.abort_action(args, &originator).await.map_err(|e| {
+    let result = wallet.abort_action(args, originator).await.map_err(|e| {
         // Since toolbox 0.3.60 a broadcast ('unproven' / 'sending') tx is
         // aborted on the caller's word when the wallet holds NO chain
         // evidence for it: inputs released, its unproven descendants retired,
@@ -1185,7 +1211,7 @@ pub async fn abort_action(
         }
         err
     })?;
-    Ok(Json(result))
+    Ok(result)
 }
 
 /// POST /listActions
