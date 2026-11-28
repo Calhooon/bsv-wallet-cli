@@ -75,7 +75,8 @@
 //! reads the transaction's status at the broadcasters; one that knows it
 //! ends the matter, and only when every one that answered does not know it
 //! is it announced, once ([`REORG_ASKS_PER_PASS`] words a pass at most). A
-//! refusal the node gave writes the node's verdict on the row. The door
+//! broadcaster's refusal of that announce is a hint on the row, never a
+//! node's verdict: the word stays `stale` with its re-ask. The door
 //! (what a coin whose creator is `stale` may do) and the action's status
 //! are the toolbox's.
 //!
@@ -463,8 +464,10 @@ struct TrackedRow {
     /// `mined` (stale, or suspect), oldest first, as their envelopes.
     /// Replayed after the proof on every load.
     chain: Vec<String>,
-    /// The node's verdict, written when a broadcaster refused the one
-    /// announce of a `stale` episode (ruling 7d (c)). Replayed last.
+    /// A node's verdict as an earlier release stored it, from a
+    /// broadcaster's refusal of the one announce of a `stale` episode.
+    /// Replayed last, as stored. Nothing writes it now: a refusal of that
+    /// announce is a hint on the row (`follow_up_stale`).
     verdict: Option<StoredVerdict>,
     /// The follow-up of the current `stale` episode: `read` once the
     /// broadcasters were asked for the transaction's status, `announced`
@@ -473,7 +476,8 @@ struct TrackedRow {
     follow_up: Option<String>,
 }
 
-/// A node's verdict as the row keeps it.
+/// A node's verdict as the row keeps it (read and replayed; this release
+/// writes none).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum StoredVerdict {
@@ -482,17 +486,6 @@ enum StoredVerdict {
 }
 
 impl StoredVerdict {
-    fn of(verdict: &NodeVerdict) -> Self {
-        match verdict {
-            NodeVerdict::Rejected { reason } => Self::Rejected {
-                reason: reason.clone(),
-            },
-            NodeVerdict::Conflicted { competitors } => Self::Conflicted {
-                competitors: competitors.clone(),
-            },
-        }
-    }
-
     fn verdict(&self) -> NodeVerdict {
         match self {
             Self::Rejected { reason } => NodeVerdict::Rejected {
@@ -1186,8 +1179,12 @@ pub struct TickReport {
     /// `stale` words whose follow-up is the toolbox's monitor's
     /// ([`TickOptions::monitor_runs`]): no status read, no announce here.
     pub stale_to_monitor: Vec<String>,
-    /// The node's verdicts written on a refused announce: `txid: word`.
-    pub verdicts: Vec<String>,
+    /// `stale` words whose one announce a broadcaster refused, the refusal
+    /// kept on the row as a hint: `txid: rejected` or `txid: double_spend`.
+    /// Served under `tracker-tick --json` as `verdicts`, the key this line's
+    /// callers read: a stable caller's key does not move in a patch.
+    #[serde(rename = "verdicts")]
+    pub stale_refused: Vec<String>,
     /// Faults the host reports: `txid: what failed`.
     pub faults: Vec<String>,
     /// What the wallet's storage did with each checked proof.
@@ -1208,14 +1205,14 @@ impl TickReport {
             && self.stale_known.is_empty()
             && self.stale_announced.is_empty()
             && self.stale_to_monitor.is_empty()
-            && self.verdicts.is_empty()
+            && self.stale_refused.is_empty()
             && self.faults.is_empty()
     }
 
     /// One line.
     pub fn summary(&self) -> String {
         format!(
-            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} stale followed up ({} known, {} announced, {} verdict(s), {} the monitor's), {} fault(s)",
+            "tracker tick: {} tracked ({} new), {} proven creator(s) adopted ({} mined, {} proof failed), {} hint(s), {} announced again ({} still not final), {} re-ask(s): {} mined, {} without a proof, {} moved, {} stale followed up ({} known, {} announced, {} refused (a hint), {} the monitor's), {} fault(s)",
             self.tracked,
             self.adopted,
             self.adopted_mined.len() + self.adopted_proof_failed.len(),
@@ -1230,11 +1227,11 @@ impl TickReport {
             self.moved.len(),
             self.stale_known.len()
                 + self.stale_announced.len()
-                + self.verdicts.len()
+                + self.stale_refused.len()
                 + self.stale_to_monitor.len(),
             self.stale_known.len(),
             self.stale_announced.len(),
-            self.verdicts.len(),
+            self.stale_refused.len(),
             self.stale_to_monitor.len(),
             self.faults.len(),
         )
@@ -1630,9 +1627,12 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
 /// transaction ends the matter, its word kept as a hint. When every one
 /// that answered does not know it, the transaction is announced once, its
 /// stored BEEF handed over (the transaction as bytes, its parents with
-/// their paths); never a second time in the same episode. A refusal the
-/// node gave writes the node's verdict (`rejected`, or `conflicted` with
-/// the competitors it names). No answer at all announces nothing. Hints
+/// their paths); never a second time in the same episode. A broadcaster's
+/// refusal of that announce is a hint on the row (`<provider>|rejected`,
+/// or `<provider>|double_spend` with the competitors it names), stepped
+/// into the tracker as its reducer takes a refusal: it moves no word and
+/// re-asks. It is never a node's verdict. No answer at all announces
+/// nothing. Hints
 /// are kept on the row and replay before the proof on the next load, so
 /// the word stays `stale` with its `Reask::Reorg` until a new proof.
 ///
@@ -1738,16 +1738,20 @@ async fn follow_up_stale<V: WalletServices + ?Sized, H: Headers>(
                 continue;
             }
         };
-        if let Some(verdict) = node_verdict(&results, &row.txid) {
-            let _ = state.step(
-                params,
-                headers,
-                Input::Evidence(Evidence::Verdict(verdict.clone())),
-            );
-            row.verdict = Some(StoredVerdict::of(&verdict));
-            report
-                .verdicts
-                .push(format!("{}: {}", row.txid, word_label(state.word())));
+        if let Some((provider, status)) = refusal_hint(&results, &row.txid) {
+            // bsv-tracker 0.8.0 has no `HintStatus::label`; `refusal_hint`
+            // answers these two kinds alone (`StoredHint::of`'s words).
+            let label = match &status {
+                HintStatus::DoubleSpend { .. } => "double_spend",
+                _ => "rejected",
+            };
+            let source = format!("{provider}|{label}");
+            if !row.hints.iter().any(|h| h.source == source) {
+                let hint = Hint::new(source, status, observed);
+                row.hints.push(StoredHint::of(&hint));
+                let _ = state.step(params, headers, Input::Hint(hint));
+            }
+            report.stale_refused.push(format!("{}: {label}", row.txid));
             continue;
         }
         match read_post(&results) {
@@ -1772,11 +1776,13 @@ async fn follow_up_stale<V: WalletServices + ?Sized, H: Headers>(
     }
 }
 
-/// The node's verdict a broadcaster relayed on `txid`, when no broadcaster
-/// accepted it: a double spend (the competitors named, `conflicted`), or a
-/// refusal of the transaction itself (`rejected`). A service fault, a
-/// missing parent (orphan mempool) and "not final" are no verdict.
-fn node_verdict(results: &[PostBeefResult], txid: &str) -> Option<NodeVerdict> {
+/// A broadcaster's refusal of `txid`, when no broadcaster accepted it, as
+/// the hint the tracker takes for it, with the broadcaster's name: a double
+/// spend (the competitors named), or a refusal of the transaction itself.
+/// A broadcaster's refusal is its word, never the node's verdict on the
+/// bytes. A service fault, a missing parent (orphan mempool) and "not
+/// final" are no refusal.
+fn refusal_hint(results: &[PostBeefResult], txid: &str) -> Option<(String, HintStatus)> {
     if results.iter().any(PostBeefResult::is_success) {
         return None;
     }
@@ -1793,8 +1799,8 @@ fn node_verdict(results: &[PostBeefResult], txid: &str) -> Option<NodeVerdict> {
         .flat_map(|(_, t)| t.competing_txs.clone().unwrap_or_default())
         .map(|c| c.to_ascii_lowercase())
         .collect();
-    if !competitors.is_empty() {
-        return Some(NodeVerdict::Conflicted { competitors });
+    if let Some((r, _)) = ours().find(|(_, t)| t.double_spend && !competitors.is_empty()) {
+        return Some((r.name.clone(), HintStatus::DoubleSpend { competitors }));
     }
     ours()
         .find(|(_, t)| {
@@ -1803,18 +1809,15 @@ fn node_verdict(results: &[PostBeefResult], txid: &str) -> Option<NodeVerdict> {
                 && !t.orphan_mempool
                 && !says_not_final(t.data.as_deref().unwrap_or_default())
         })
-        .map(|(r, t)| NodeVerdict::Rejected {
-            reason: format!(
-                "{}: {}",
-                r.name,
-                t.data.clone().unwrap_or_else(|| {
-                    if t.double_spend {
-                        "double spend".to_string()
-                    } else {
-                        t.status.clone()
-                    }
-                })
-            ),
+        .map(|(r, t)| {
+            let reason = t.data.clone().unwrap_or_else(|| {
+                if t.double_spend {
+                    "double spend".to_string()
+                } else {
+                    t.status.clone()
+                }
+            });
+            (r.name.clone(), HintStatus::Rejected { reason })
         })
 }
 
