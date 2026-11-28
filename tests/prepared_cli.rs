@@ -329,7 +329,7 @@ fn the_prepared_payment_holds_the_wallets_coin() {
 }
 
 /// A second prepared payment on the wallet `p`: a second coin of `COIN`
-/// sats, then a `noSend` payment too large for the first payment's change,
+/// sats, then a `noSend` payment too large for the earlier payment's change,
 /// so it holds the second coin alone. Its txid, its reference and the
 /// coin's txid.
 async fn another(p: &Prepared) -> (String, String, String) {
@@ -544,7 +544,7 @@ fn actions_in_json() {
 }
 
 /// `actions --prepared` (#673), text and JSON: the prepared actions alone,
-/// oldest first, and the total; none at all reads so. `--label` and
+/// from the oldest, and the total; none at all reads so. `--label` and
 /// `--prepared` together are refused by the parser.
 #[test]
 fn actions_prepared_lists_them_alone() {

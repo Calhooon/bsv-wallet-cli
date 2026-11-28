@@ -495,7 +495,7 @@ const HELD_BY_COLUMNS: &str = "SELECT COALESCE(lower(t.txid), '') AS txid, t.ref
      FROM transactions t WHERE t.user_id = ";
 
 /// Every prepared, unsent action of the user `user_id` (#673): a `noSend`
-/// transaction, signed and never sent (status `nosend`), oldest first,
+/// transaction, signed and never sent (status `nosend`), from the oldest,
 /// with the inputs it holds. A prepared action keeps its inputs reserved
 /// until it is sent or aborted; nothing ages it out. Reads only, every
 /// row of the store (no page).

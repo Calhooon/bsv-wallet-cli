@@ -16,8 +16,8 @@ pub fn status_word(wire: &str) -> &str {
     }
 }
 
-/// `actions`: the first page of the wallet's actions (100), each prepared,
-/// unsent one marked with its age, its txid, its reference and the
+/// `actions`: one page of the wallet's actions (100, the store's
+/// oldest), each prepared, unsent one marked with its age, its txid, its reference and the
 /// satoshis its inputs hold, then a line totalling every prepared action
 /// the store holds (#673). Under `--json` the listing's object is the
 /// door's, with two ADDED keys: `prepared` on a prepared action's object,

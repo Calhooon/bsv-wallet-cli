@@ -229,7 +229,8 @@ pub struct CreateActionParams {
     /// Options: {signAndProcess: bool, noSend: bool, acceptDelayedBroadcast: bool, randomizeOutputs: bool}.
     /// A non-empty `sendWith` or `noSendChange` is refused by the wallet with 501
     /// `SEND_WITH_NOT_SUPPORTED` (#147): it cannot yet send a prepared (`noSend`)
-    /// payment, which stays reserved under its txid until `abort_action` frees it.
+    /// payment, which stays reserved under its txid until `abort_action` frees it
+    /// (at the command line `bsv-wallet abort-action <txid>`, #673).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
     /// "received" offers a received coin whose creator is not yet mined (its
@@ -826,7 +827,7 @@ impl WalletMcp {
     // ── Transactions ───────────────────────────────────────────
 
     #[tool(
-        description = "Create a BSV transaction. Build, sign, broadcast. Use options.signAndProcess=false for unsigned templates (sign later with sign_action). Use options.noSend=true to sign but not broadcast. A non-empty options.sendWith or options.noSendChange is refused with 501 SEND_WITH_NOT_SUPPORTED: this wallet cannot yet send a prepared noSend payment through create_action; the payment was not sent and stays reserved under its txid, and abort_action with that txid as the reference frees its coins. A broadcaster's refusal is not an error: the answer carries sendWithResults 'sending' and broadcast {word: 'built', request, hint, inputs: 'locked'}; the inputs stay locked until a proof, a competitor's checked proof or the wallet's retire, and nothing is released."
+        description = "Create a BSV transaction. Build, sign, broadcast. Use options.signAndProcess=false for unsigned templates (sign later with sign_action). Use options.noSend=true to sign but not broadcast. A non-empty options.sendWith or options.noSendChange is refused with 501 SEND_WITH_NOT_SUPPORTED: this wallet cannot yet send a prepared noSend payment through create_action; the prepared payment, if it is this wallet's, was not sent and stays reserved under its txid, and abort_action with that txid as the reference frees its coins (abort only a payment that was not handed over). A broadcaster's refusal is not an error: the answer carries sendWithResults 'sending' and broadcast {word: 'built', request, hint, inputs: 'locked'}; the inputs stay locked until a proof, a competitor's checked proof or the wallet's retire, and nothing is released."
     )]
     async fn create_action(
         &self,
@@ -846,7 +847,7 @@ impl WalletMcp {
     }
 
     #[tool(
-        description = "Abort an unsigned transaction and release locked UTXOs. A transaction a broadcaster accepted is never aborted (refused, 409): it stays until a proof, a node verdict or a competitor's checked proof."
+        description = "Abort one action this wallet built and never sent (an unsigned template, or a prepared noSend payment) by its reference, or its txid as the reference, and release the UTXOs its inputs hold; the wallet then never sends it. A transaction a broadcaster accepted is never aborted (refused, 409): it stays until a proof, a node verdict or a competitor's checked proof. An abort frees this wallet's coins only: a prepared transaction whose bytes were handed to someone else can still be posted by them, so abort only a payment that was not handed over. At the command line, bsv-wallet actions --prepared lists the prepared payments and the coins they hold, and bsv-wallet abort-action <txid> aborts one."
     )]
     async fn abort_action(
         &self,
