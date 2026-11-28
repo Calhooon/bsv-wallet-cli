@@ -137,9 +137,13 @@ async fn main() -> Result<()> {
             let ctx = context::WalletContext::load(&cli).await?;
             commands::outputs::run(&ctx, basket.as_deref(), tag.as_deref()).await?;
         }
-        Commands::Actions { label } => {
+        Commands::Actions { label, prepared } => {
             let ctx = context::WalletContext::load(&cli).await?;
-            commands::actions::run(&ctx, label.as_deref()).await?;
+            commands::actions::run(&ctx, label.as_deref(), *prepared).await?;
+        }
+        Commands::AbortAction { action } => {
+            let ctx = context::WalletContext::load(&cli).await?;
+            commands::prepared::abort(&ctx, action).await?;
         }
         Commands::Sync { reconcile_spent } => {
             let ctx = context::WalletContext::load(&cli).await?;
