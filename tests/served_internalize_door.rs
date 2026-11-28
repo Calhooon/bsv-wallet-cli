@@ -55,6 +55,10 @@ mod door_take;
 #[path = "served_internalize_door/create_door.rs"]
 mod create_door;
 
+/// The offer rule under the cut's default and the host's hold (#659, L2a).
+#[path = "served_internalize_door/offer_default.rs"]
+mod offer_default;
+
 use axum::http::StatusCode;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::KeyDeriver;
