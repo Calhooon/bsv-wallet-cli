@@ -2376,4 +2376,49 @@ mod tests {
             None
         );
     }
+
+    /// R9's roads (#660): the relinquish on a "confirmed foreign spend"
+    /// reads the wallet library's bound spender alone. For each missing
+    /// binding (the library's answer for it, `test_support::lost_bound`)
+    /// no coin moves, the transaction is not failed and no word is
+    /// written; the spender's own bytes, outpoint and root relinquish.
+    #[tokio::test]
+    async fn the_relinquish_moves_a_coin_only_on_a_spender_bound_by_bytes_outpoint_and_root() {
+        let script = crate::test_support::p2pkh([0xdb; 20]);
+        for case in crate::test_support::lost_bound::cases() {
+            let store = rule_fixture().await;
+            let pool = store.writer().clone();
+            let services = case.services();
+            let report = reconcile_with(
+                &store,
+                0,
+                30,
+                true,
+                |_txid| async { presence(BroadcastVerification::Confirmed) },
+                |src: String, vout: u32| {
+                    let (services, script) = (&services, script.clone());
+                    async move { probe_input_spend(services, &src, vout, Some(&script)).await }
+                },
+            )
+            .await
+            .unwrap();
+            if case.honest {
+                assert_eq!(report.conflicted.len(), 1, "{}", case.name);
+                assert_eq!(lock(&pool, 1).await, (0, None), "{}", case.name);
+                assert_eq!(tx_state(&pool, 1).await.0, "failed", "{}", case.name);
+            } else {
+                assert!(report.conflicted.is_empty(), "{}", case.name);
+                assert_eq!(report.relinquished_count, 0, "{}", case.name);
+                assert_eq!(lock(&pool, 1).await, (0, Some(1)), "{}", case.name);
+                assert_eq!(lock(&pool, 2).await, (1, None), "{}", case.name);
+                assert_eq!(tx_state(&pool, 1).await.0, "unproven", "{}", case.name);
+                assert_eq!(
+                    req_state(&pool, &"ab".repeat(32)).await.0,
+                    "unmined",
+                    "{}",
+                    case.name
+                );
+            }
+        }
+    }
 }
