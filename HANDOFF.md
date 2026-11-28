@@ -4517,3 +4517,116 @@ captain never touches that port.
   `noSend` and never ask for a send, which withdrew a refusal at the prepare.
 - The hour written beside an entry is read from the clock at that moment,
   never carried from the entry above it.
+
+## 2026-11-28 (11:10Z to 14:45Z): the create door's word and two hardening changes landed, bsv-tracker's next prerelease is ready for its tag and its tenth word is on its beta, bsv-rs 0.8.15 (six advisories) and the stable roll-up 0.18.11 in preparation, the offer rule's second lane built and held, three design reads, states as of 14:45Z
+
+**In one paragraph.** `beta` is at `bc30b30a`. `main` is unchanged since the
+entry above: 0.18.10 is landed and gated at `03ba8fd2` and waits for the
+owner's tag. `bsv-rs` 0.8.15 reached crates.io at 13:11Z with six advisories;
+the stable roll-up 0.18.11 (the hop to it and three class fixes, prepared pick
+by pick) is the builder's lane now. bsv-tracker's `beta` is at `69c869d3`; its
+prerelease 0.9.0-beta.11 is ready for the owner's tag on `88d13e10`, which is
+below the tip. One pull request of this captain is open, 690, held.
+
+**Landed.**
+
+| Pull request | Commit | What |
+|---|---|---|
+| 684 | beta `9e6dd2dc` | #659, lane L1: every action this wallet signs is `built` from its signing and `announced` once a broadcaster took it, on every road (the served `createAction` and `signAction`, `send`, `drain`, `split`, `gift-send`, the respend's replacement; a `noSend` action and a delayed one too). No offer moves with it. Its rows are #686 |
+| 687 | beta `538a8e2d` | #660, lane H13, the audit of every mark that takes a coin out of offer: `reconcile-outputs` and the respend's settle read a stored transaction only when its bytes hash to its txid; the commands that ask the wallet library for a coin's spender have a test of the answer they move a coin on. Its rows are #688 |
+| 689 | beta `bc30b30a` | tests only: the receive door refuses a sender key whose leading byte is no compressed key's, pinned by this host's own validator words. The stable line picks it ahead of its hop to `bsv-rs` 0.8.15, which changes the key library's words for such a key |
+| bsv-tracker 64 | its beta `88d13e10` | the release pull request of 0.9.0-beta.11: the version commit and the README's front page; it carries its #51 whole. The tag is the owner's and names this commit |
+| bsv-tracker 65 | its beta `69c869d3` | its #56, lane 1: the tenth word `handed`, the acts `HandOver`, `Discharge`, `EndHold`, the re-ask `Reannounce`, and version 2 of the compact form (version 1 still reads) |
+
+**bsv-rs 0.8.15 and the stable roll-up 0.18.11.** The note for dependents is
+on #386. For this repository's stable line it is the version alone, and one
+test's expected words move (the key library's own text inside a served
+refusal). A hop commit may hold no test (RELEASING.md, point 12), so that
+test's row was born on beta (pull request 689) and is picked ahead of the hop;
+ruled by the stack's keeper as the road for every such case: a row born on
+beta that pins this host's own words, never a dependency's. The roll-up
+carries: that pick; the hop to `bsv-rs` `=0.8.15` (the wallet library's pin
+does not move: its requirement admits it); and the fourteen picks a read lane
+tried on `main` and resolved, kept as a bundle on the lane volume: the refusal
+of `sendWith` (#147), a broadcaster's refusal read as a hint (pull request
+675), prepared actions listed and freed (#673). On the stable line
+`tracker-tick --json` keeps its key `verdicts`. Every check runs on the
+prepared tree before the push; then two reads, the landing, one mainnet gate,
+the link on beta, the owner's tag. The prerelease line has no `bsv-rs`
+prerelease newer than the one it pins on crates.io, so nothing moves on beta
+for it yet.
+
+**The offer rule, lane L2a: built, held.** Pull request 690: the setting
+`SPEND_RECEIVED` (`taken` by default, `hold`), the gate's one rule per coin
+kind and creator word, and the re-pin of the gate vectors to the stack's file
+of 1,314 rows (1,252 expressed, 62 not, 0 divergences under both settings).
+Two required checks are red: `vectors` (the workflow greps the old count of
+rows) and `e2e-hermetic` (the hermetic funder's seed coin arrives with a proof
+the hermetic world does not let the wallet confirm, reads `built`, and is held
+by the new rule; no scene has run under the new default). The captain's
+ruling: the rule stands and the harness is made true of a real mined coin; a
+port and fix round follows as a new pull request from beta's tip and 690 is
+closed then.
+
+**New rows on the cut's milestone.** #682: a testnet store made before the
+chain word was recorded reads `main` and is refused with `--testnet`; a repair
+command, the refusal's text, and the same check in `init` and `ui`. #685: the
+spend guard reads the tracker's effective depth (the stack's 28.18.1 (b)); it
+waits on the pin of bsv-tracker's prerelease that carries the doubts. The
+milestone holds ten rows: #147, #175, #194, #607, #618, #650, #659, #660,
+#682, #685.
+
+**Design reads done** (each a page on the lane volume under
+`line-plan-2026-11-27/`; each summarised on its issue): #660 (`d660-plan.md`:
+one wrapper around the services object the host gives every `Wallet` and
+`Monitor` writes the hand-over ahead of every post; thirteen lanes before the
+cut, six after); #618 with #685 (`d618-plan.md`: the pull rides the served
+pass's own tip read; no timer of its own, with the pass off the page is pulled
+at use; the header service's captain's answers on its feed are written in);
+bsv-tracker's #56 and #47 (`tracker-56-47-plan.md`: one machine with a mode,
+the latch the default; five lanes).
+
+**The builder's chain** (one builder at a time; bsv-tracker's lanes and this
+repository's alternate, classes ahead): the roll-up 0.18.11; then lanes of
+both repositories on the rule of proof `bsv-rs` 0.8.15 enforces in its
+verifier (BRC-237's condition for a transaction of exactly 64 bytes; their
+detail stays in the captain's private record until they land); the port and
+fix round of the offer rule's lane L2a; #682; bsv-tracker's tests of record
+for `handed` and its lanes for #47; #618's pull.
+
+**For the next pin of the wallet library's prerelease.** Its captain's check
+of this repository's beta against its line's tip names twenty recorded answers
+of this repository's tests that move at that pin, and one change this host
+makes with it in `receive`, `fund` and `sync`. The table is in the captain's
+record (`work/dependents-21-2026-11-28.md` on the lane volume).
+
+**Waiting on the owner.** (1) The tag of 0.18.10 on `03ba8fd2`. (2) The tag of
+bsv-tracker's 0.9.0-beta.11 on `88d13e10` (its `beta`'s tip is past that
+commit and must not be the one tagged). (3) One word for one host setting on
+the stable line, with the private matter it belongs to; its design, tried by a
+break read before any build, is in the captain's private record. (4) Whether
+two private matters are advisories. (5) #618 reaches the stable line at the
+cut and not as a patch before it: recommended yes. (6) The two required checks
+on each repository, and RELEASING.md's point 21. (7) His word on bsv-tracker's
+`main` (the direction rule's pick, the front page, and one added constructor).
+(8) The complete Nightly at a 17:00Z slot, not armed.
+
+**The lessons of these hours.**
+
+- One line of script emptied a plan file on both hosts: a file opened for
+  writing in the same expression that reads it is truncated before it is read,
+  and the copy to the other host followed the failed edit in the same command.
+  Read, build the new text, write a temporary file and rename it; join an edit
+  and the copy after it so that the copy runs only on success; refuse to copy
+  a file of size zero.
+- A design is tried by a break read before it is built when it changes what
+  happens to coins: the break read of one setting found seven changes and two
+  sentences written for the owner that claimed too much.
+- A pull request's text is read against its tests by the cold reads: one said
+  three commands "each have a test" of a check that the wallet library makes
+  and the tests only plant its answers; it was corrected before landing.
+- A lane that stops at its bound with red checks reports "blocked" and its
+  pull request is held, never queued: the next lane ports it onto beta's tip
+  as a new pull request.
+- The clock is read by a command at each entry; three entries of the record
+  carried an hour ten to twenty minutes ahead before that was made the habit.
