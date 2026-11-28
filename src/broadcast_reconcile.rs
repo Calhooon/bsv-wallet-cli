@@ -1118,6 +1118,23 @@ mod tests {
         assert_eq!(classify(&rejected), Probe::Absent);
     }
 
+    /// The broadcaster's refusal is a retire root only with the clean
+    /// absence of every voting chain index (the verifier's `Rejected`): a
+    /// chain index that could not look leaves the refusal a hint.
+    #[test]
+    #[ignore = "decides the fault: green once only a clean absence counts"]
+    fn a_broadcasters_refusal_without_a_clean_absence_is_not_fatal() {
+        let mut faulted = PresenceReport::from_verification(BroadcastVerification::Inconclusive);
+        faulted.broadcaster_fatal = true;
+        assert_eq!(faulted.chain_index, ChainIndexAnswer::Unknown);
+        assert_ne!(classify(&faulted), Probe::Fatal);
+        let mut absent = PresenceReport::from_verification(BroadcastVerification::Rejected);
+        absent.broadcaster_fatal = true;
+        absent.chain_index = ChainIndexAnswer::Absent;
+        absent.network_absent = true;
+        assert_eq!(classify(&absent), Probe::Fatal);
+    }
+
     #[test]
     fn only_chain_evidence_exempts_an_old_transaction_from_a_probe() {
         let t = "aa".repeat(32);
