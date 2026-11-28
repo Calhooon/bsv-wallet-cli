@@ -30,7 +30,9 @@
 //! called: `Wallet::internalize_action` hands the body to the storage, the
 //! wallet's own posts of `createAction` and `signAction` run only without
 //! `noSend` (every action here is `noSend`), and `GET /tx/{txid}` reads the
-//! store alone.
+//! store alone. Should one be made all the same, it reaches nothing: each
+//! test seals the process's network before any `Services` is built
+//! ([`sealed`], the method of `src/test_support.rs`'s `seal_network`).
 
 use crate::support::*;
 
@@ -49,6 +51,21 @@ use bsv_wallet_toolbox::{
 use serde_json::{json, Value};
 
 use crate::chain_tracker::TestChainTracker;
+
+/// Every non-loopback request of this process to a closed local port,
+/// before a client is built: `src/test_support.rs`'s `seal_network` (#477),
+/// which a test target outside the crate cannot call.
+fn sealed() {
+    static SEALED: std::sync::Once = std::sync::Once::new();
+    SEALED.call_once(|| {
+        for var in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
+            std::env::set_var(var, "http://127.0.0.1:9");
+        }
+        for var in ["NO_PROXY", "no_proxy"] {
+            std::env::set_var(var, "127.0.0.1,localhost");
+        }
+    });
+}
 
 /// The header service's tip of the tracker `served_rooted` builds.
 const TIP: u32 = 900_000;
@@ -142,6 +159,7 @@ fn carried_proven(paid: &Paid, height: u32) -> Vec<u8> {
 /// the subject's txid) and whose proof gate is `gate` when given (the
 /// harness opens it to `u32::MAX` otherwise): the readings.
 async fn proven_subject(height: u32, roots: &[(u32, Option<&str>)], gate: Option<u32>) -> Readings {
+    sealed();
     let paid = Paid::new();
     let tx = carried_proven(&paid, height);
     let posts = Arc::new(accepting());
@@ -275,6 +293,7 @@ async fn own_change_back(
 /// door. Nothing is posted for it; the word is `built`.
 #[tokio::test]
 async fn the_merge_of_a_no_send_action_with_one_user() {
+    sealed();
     let funding = Paid::new();
     let (wallet, app, posts) = funding.stored().await;
     assert_eq!(posts.call_count("post_beef"), 1, "the funding's post");
@@ -353,6 +372,7 @@ async fn two_users(
 /// neither reads `announced`.
 #[tokio::test]
 async fn the_merge_of_a_no_send_action_with_two_users() {
+    sealed();
     let sender_root = PrivateKey::random();
     let receiver_root = PrivateKey::random();
     let funding = Paid::to(&sender_root);
@@ -390,4 +410,11 @@ async fn the_merge_of_a_no_send_action_with_two_users() {
     read.no_take_without_a_post();
     let (_, word) = get_from(&receiver_app, &format!("/tx/{txid}")).await;
     assert_ne!(word["word"], "announced", "{word}");
+    // One row for the transaction, both users': the word is about it.
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracker_states WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(sender.storage().pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
 }

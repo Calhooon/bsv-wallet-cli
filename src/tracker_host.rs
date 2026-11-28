@@ -1322,20 +1322,25 @@ pub async fn heard<C: Clock>(
 /// answer their stored word.
 ///
 /// One row per transaction: `tracker_states` is keyed by the txid, as the
-/// toolbox's request (`proven_tx_reqs`) and its broadcast memory are, so two
-/// users of one store who receive the same transaction read one word. The
-/// word is about the transaction (who took its bytes, which block holds
-/// it), never about a user.
+/// toolbox's broadcast memory (`broadcast_seen`, one row per txid and
+/// provider) is, so two users of one store who hold the same transaction
+/// read one word. The word is about the transaction (who took its bytes,
+/// which block holds it), never about a user, and so is its take: a
+/// broadcaster's acceptance of these bytes is the same fact whichever
+/// user's door posted them.
 ///
 /// **The take.** The toolbox posts a new body with no proof itself, at the
 /// door, and answers `accepted` whatever the broadcasters said. What they
-/// said is read here from the wallet's own records and fed to the reducer
-/// as the hint it takes for a broadcaster's acceptance: the broadcast
-/// memory's rows (written by the wallet's services for each broadcaster
-/// that answered, named by its provider), then the request's word
-/// ([`request_took`], fed as [`DOOR_TAKE_SOURCE`]). So the row reads
+/// said is read here from the one record a broadcaster's answer leaves,
+/// the broadcast memory: the wallet's services write a row for each
+/// broadcaster that accepted the bytes, named by its provider, and each is
+/// fed to the reducer as that provider's acceptance. The toolbox's request
+/// status is never a take: it reads `unmined` after an accepted post, and
+/// also with no post at all (a body whose proof the proof gate deferred is
+/// stored with its request created `unmined`; the merge of a `noSend`
+/// transaction advances its request to `unmined`). So the row reads
 /// `announced` when a broadcaster took the bytes and stays `built` when
-/// none did (a refusal, a fault, no broadcaster).
+/// none did (a refusal, a fault, no broadcaster, no post).
 ///
 /// **A courier's sighting.** `sighting` names a courier that handed this
 /// host the transaction's bytes with no proof (`receive`'s couriers): a
@@ -1380,19 +1385,11 @@ pub async fn door<C: Clock>(
     let headers = HeaderSnapshot::unread();
     let (mut state, _) = row.replay(&params, &headers);
     let now = clock.now();
-    // The take: what the broadcasters said of the door's own post, as the
+    // The take: what the broadcasters said of these bytes, as the
     // toolbox's broadcast memory holds it (the pass's hints, each
-    // `(provider, word)` heard once), then the request's own word.
+    // `(provider, word)` heard once). Nothing else is a take.
     let mut memory = MemoryHints::read(storage, std::slice::from_ref(&row)).await?;
     while let Ok(Some((_, hint))) = memory.next_hint() {
-        row.hear(&mut state, &params, &headers, hint);
-        changed = true;
-    }
-    if matches!(state.word(), Word::Built)
-        && !row.hints.iter().any(|h| h.source == DOOR_TAKE_SOURCE)
-        && request_took(storage, &txid).await?
-    {
-        let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
         row.hear(&mut state, &params, &headers, hint);
         changed = true;
     }
@@ -1416,33 +1413,6 @@ pub async fn door<C: Clock>(
         word_label(state.word()).to_string(),
         state.reask().map(reask_label),
     )))
-}
-
-/// The source of the hint the door's take is fed as when the toolbox's
-/// request is its only record ([`request_took`]).
-pub const DOOR_TAKE_SOURCE: &str = "door|accepted";
-
-/// Did the toolbox's post of a received transaction draw an accepting word,
-/// by its own request? The door (`internalizeAction`) creates the request
-/// `unsent`, posts the body, and moves the request to `unmined` only when a
-/// broadcaster took the bytes or a status source holds the transaction; a
-/// refusal, a fault and no broadcaster leave it `unsent` with the
-/// `immediateBroadcastHint` note on its history, and its later re-ask on
-/// the cadence makes the same move. `internalizeAction` returns `accepted`
-/// either way, so the request is where the outcome is read. Received
-/// transactions only (`is_outgoing = 0`): the request of a transaction this
-/// wallet made reaches `unmined` by other roads (a `noSend` merge promotes
-/// it with no post), and its take is the broadcast memory's.
-async fn request_took(storage: &StorageSqlx, txid: &str) -> Result<bool> {
-    crate::store::received_request_took(storage.pool(), txid).await
-}
-
-/// [`request_took`] for every received transaction at once: the txids, for
-/// the pass. One read, bounded by the requests past the post and not yet
-/// proven.
-async fn requests_that_took(storage: &StorageSqlx) -> Result<std::collections::HashSet<TxId>> {
-    let took = crate::store::received_requests_that_took(storage.pool()).await?;
-    Ok(took.into_iter().collect())
 }
 
 /// [`door`] on the host's clock and default parameters, for a caller that
@@ -1826,28 +1796,6 @@ pub async fn tick<V: WalletServices + ?Sized, C: Clock>(
         if matches!(state.reask(), Some(Reask::Hint(_))) {
             row.asks = 0;
             row.next_ask_at = None;
-        }
-    }
-    // The door's take, heard on the pass (#645): a received transaction
-    // still `built` whose request the toolbox moved past the post
-    // ([`requests_that_took`]). It is the door's own post taken with no
-    // broadcast memory row to say so, the toolbox's later re-ask taken, or
-    // a store written before the door fed its take. Heard once a row.
-    if states.values().any(|s| matches!(s.word(), Word::Built)) {
-        let took = requests_that_took(storage).await?;
-        for row in &mut rows {
-            let Some(state) = states.get_mut(&row.txid) else {
-                continue;
-            };
-            if !matches!(state.word(), Word::Built)
-                || !took.contains(&row.txid)
-                || row.hints.iter().any(|h| h.source == DOOR_TAKE_SOURCE)
-            {
-                continue;
-            }
-            let hint = Hint::new(DOOR_TAKE_SOURCE, HintStatus::Accepted, now);
-            row.hear(state, &params, &snapshot, hint);
-            report.hints += 1;
         }
     }
     // Announce again what a broadcaster called not final, at its time.
