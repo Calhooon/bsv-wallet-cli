@@ -290,3 +290,56 @@ fn a_capture_less_sibling_first_at_a_callsite_leaves_the_capture_its_line() {
         .count();
     assert_eq!(named, 1, "{lines:?}");
 }
+
+/// The services that answer the replacement's bytes and its proof.
+pub(crate) fn proof_services(
+    replacement: &str,
+    raw: Vec<u8>,
+) -> std::sync::Arc<MockWalletServices> {
+    std::sync::Arc::new(
+        MockWalletServices::builder()
+            .get_raw_tx_response(MockResponse::Success(bsv_wallet_toolbox::GetRawTxResult {
+                name: "mock".into(),
+                txid: replacement.to_string(),
+                raw_tx: Some(raw),
+                error: None,
+                could_not_look: false,
+            }))
+            .get_merkle_path_response(MockResponse::Success(
+                bsv_wallet_toolbox::GetMerklePathResult {
+                    name: Some("mock".into()),
+                    merkle_path: Some(hex::encode(proof(replacement))),
+                    header: None,
+                    error: None,
+                    notes: vec![],
+                },
+            ))
+            .is_utxo_response(MockResponse::Success(true))
+            .build(),
+    )
+}
+
+/// The phantom once seen by an index (a shared memory marker, not a
+/// broadcaster endpoint) and unknown to the status source now, under the
+/// funding block's header: the services a respend is built and posted on.
+pub(crate) async fn seen_once_absent_now(f: &Fixture) -> MockWalletServices {
+    f.wallet
+        .storage()
+        .record_broadcast_status(
+            &f.phantom,
+            bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
+            bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
+        )
+        .await
+        .unwrap();
+    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
+    headed(&absent, &f.funding);
+    absent
+}
+
+/// Our headers: the block at 870,900 whose root is `root`.
+pub(crate) fn headers_with(root: &str) -> std::sync::Arc<crate::chain_tracker::TestChainTracker> {
+    let mut tracker = crate::chain_tracker::TestChainTracker::new(871_000);
+    tracker.add_root(870_900, root.to_string());
+    std::sync::Arc::new(tracker)
+}

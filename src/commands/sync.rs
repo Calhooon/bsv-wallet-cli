@@ -982,10 +982,9 @@ mod tests {
     /// left alone.
     #[tokio::test]
     async fn the_reconcile_relinquishes_only_on_a_spender_bound_by_bytes_outpoint_and_root() {
-        let script = crate::test_support::p2pkh([0xdb; 20]);
         for case in crate::test_support::lost_bound::cases() {
             let answer =
-                probe_input_spend(&case.services(), &"aa".repeat(32), 0, Some(&script)).await;
+                crate::commands::cleanup_abandoned::probe_case(&case, "aa".repeat(32), 0).await;
             let step = reconcile_step(&answer);
             if case.honest {
                 assert_eq!(step, ReconcileStep::Relinquish, "{}", case.name);

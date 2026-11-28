@@ -20,13 +20,14 @@ use bsv_wallet_cli::respend::settle_proven;
 use bsv_wallet_cli::spend_gate::GateOptions;
 use bsv_wallet_toolbox::services::mock::{MockResponse, MockWalletServices};
 use bsv_wallet_toolbox::{
-    BroadcastStatus, GetMerklePathResult, GetRawTxResult, GetStatusForTxidsResult, MonitorStorage,
-    StorageSqlx, TxStatusDetail, WalletServices, WalletStorageProvider, WalletStorageWriter,
+    BroadcastStatus, GetStatusForTxidsResult, MonitorStorage, StorageSqlx, TxStatusDetail,
+    WalletServices, WalletStorageProvider, WalletStorageWriter,
 };
 use chain_tracker::TestChainTracker;
 
 use world::{
-    capture_markers, coin_state, fixture, headed, proof, status_answer, status_source, words,
+    capture_markers, coin_state, fixture, headed, headers_with, proof, proof_services,
+    seen_once_absent_now, status_answer, status_source, words,
 };
 
 /// The sweep's absence threshold: `BROADCAST_ABSENCE_MINUTES`' default.
@@ -143,17 +144,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     let s = f.wallet.storage();
     let before = words(&f).await;
     assert_eq!(before, ("unproven".into(), "unmined".into()));
-    // This shared memory marker records an old index sighting. It is not
-    // a broadcaster endpoint; current batch status below is unknown.
-    s.record_broadcast_status(
-        &f.phantom,
-        bsv_wallet_toolbox::BROADCAST_PROVIDER_NETWORK,
-        bsv_wallet_toolbox::BROADCAST_STATUS_SEEN,
-    )
-    .await
-    .unwrap();
-    let absent = status_source(&f.phantom, "unknown", BroadcastStatus::Unknown);
-    headed(&absent, &f.funding);
+    let absent = seen_once_absent_now(&f).await;
     let replacement = build_and_post(s, &absent, &f.root, &f.phantom, &["mock"])
         .await
         .expect("respend must build and post the host's competitor");
@@ -208,25 +199,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     }
     assert_eq!(t.outputs().len(), 1);
     assert!(t.outputs()[0].satoshis.unwrap() < 100_000);
-    let proof_services = Arc::new(
-        MockWalletServices::builder()
-            .get_raw_tx_response(MockResponse::Success(GetRawTxResult {
-                name: "mock".into(),
-                txid: replacement.clone(),
-                raw_tx: Some(raw),
-                error: None,
-                could_not_look: false,
-            }))
-            .get_merkle_path_response(MockResponse::Success(GetMerklePathResult {
-                name: Some("mock".into()),
-                merkle_path: Some(hex::encode(proof(&replacement))),
-                header: None,
-                error: None,
-                notes: vec![],
-            }))
-            .is_utxo_response(MockResponse::Success(true))
-            .build(),
-    );
+    let proof_services = proof_services(&replacement, raw);
     WalletStorageProvider::set_services(s, proof_services.clone() as Arc<dyn WalletServices>);
     s.set_max_acceptable_proof_height(871_000).await.unwrap();
     // Wrong active root: the same bytes and proof are no evidence yet.
@@ -236,9 +209,7 @@ async fn accepted_phantom_exits_only_when_its_deliberate_competitor_proves() {
     settle_proven(s, proof_services.as_ref()).await.unwrap();
     assert_eq!(words(&f).await, before);
     assert_eq!(coin_state(&f, f.coin).await, (false, Some(f.phantom_row)));
-    let mut tracker = TestChainTracker::new(871_000);
-    tracker.add_root(870_900, replacement.clone());
-    s.set_chain_tracker(Arc::new(tracker)).await;
+    s.set_chain_tracker(headers_with(&replacement)).await;
     s.synchronize_transaction_statuses().await.unwrap();
     // The competitor path is the sole writer of this word.
     assert_eq!(words(&f).await, ("failed".into(), "doubleSpend".into()));

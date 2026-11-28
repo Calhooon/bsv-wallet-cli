@@ -523,6 +523,16 @@ pub async fn reserve_inputs(storage: &StorageSqlx) -> Result<()> {
     Ok(())
 }
 
+/// The transaction `raw` holds, when it is the transaction of `txid`: its
+/// bytes parse and hash to that txid (R9, #660). Bytes stored under a txid
+/// they do not hash to are not that transaction and spend nothing of ours.
+#[must_use]
+pub fn own_transaction(raw: &[u8], txid: &str) -> Option<Transaction> {
+    Transaction::from_binary(raw)
+        .ok()
+        .filter(|tx| tx.id().eq_ignore_ascii_case(txid))
+}
+
 /// Reassign already locked inputs only after the existing proof funnel has
 /// checked the replacement and written doubleSpend on the phantom.
 pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices) -> Result<()> {
@@ -561,19 +571,16 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
     for row in rows {
         let txid: String = row.get("txid");
         // R9 (#660): the coins move on the replacement's own bytes alone.
-        // Bytes stored under its proof that do not hash to its txid are
-        // not the replacement: nothing is settled on them.
-        let own = row
+        let Some(own) = row
             .get::<Option<Vec<u8>>, _>("raw_tx")
-            .and_then(|raw| Transaction::from_binary(&raw).ok())
-            .is_some_and(|tx| tx.id().eq_ignore_ascii_case(&txid));
-        if !own {
+            .and_then(|raw| own_transaction(&raw, &txid))
+        else {
             tracing::warn!(
                 txid = %txid,
                 "respend settle: the stored bytes do not hash to the replacement's txid; nothing is settled"
             );
             continue;
-        }
+        };
         let path: Vec<u8> = row.get("merkle_path");
         let height: i64 = row.get("height");
         let block: String = row.get("block_hash");
@@ -588,16 +595,11 @@ pub async fn settle_proven(storage: &StorageSqlx, _services: &dyn WalletServices
         let phantom: i64 = row.get("phantom_id");
         let replacement: i64 = row.get("replacement_id");
         let mut transaction = storage.write_tx().await?;
-        let raw: Vec<u8> = row
-            .get::<Option<Vec<u8>>, _>("raw_tx")
-            .context("respend reservation bytes unavailable")?;
-        let inputs: Vec<(String, u32)> = {
-            let tx = Transaction::from_binary(&raw)?;
-            tx.inputs()
-                .iter()
-                .map(|input| Ok((input.get_source_txid()?, input.source_output_index)))
-                .collect::<bsv_sdk::Result<_>>()?
-        };
+        let inputs: Vec<(String, u32)> = own
+            .inputs()
+            .iter()
+            .map(|input| Ok((input.get_source_txid()?, input.source_output_index)))
+            .collect::<bsv_sdk::Result<_>>()?;
         for (source, vout) in inputs {
             sqlx::query("UPDATE outputs SET spent_by=?,spendable=0 WHERE (spent_by=? OR spent_by IS NULL) AND txid=? AND vout=? AND user_id=(SELECT user_id FROM transactions WHERE transaction_id=?)")
                 .bind(replacement).bind(phantom).bind(source).bind(vout as i64).bind(replacement).execute(&mut *transaction).await?;

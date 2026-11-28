@@ -34,6 +34,22 @@ impl Case {
     }
 }
 
+/// A named spender its bytes could not bear out: could not look.
+fn could_not_look() -> MockResponse<(UtxoVerdict, Option<BoundSpender>)> {
+    MockResponse::Success((UtxoVerdict::Unknown, None))
+}
+
+/// A spender bound by its bytes whose path was dropped: unconfirmed.
+fn unconfirmed() -> MockResponse<(UtxoVerdict, Option<BoundSpender>)> {
+    MockResponse::Success((
+        UtxoVerdict::SpentHint,
+        Some(BoundSpender {
+            txid: spender(),
+            confirmed: false,
+        }),
+    ))
+}
+
 /// The five plants and the honest case.
 pub(crate) fn cases() -> Vec<Case> {
     vec![
@@ -42,14 +58,14 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "(i) bytes that do not hash to the spender's txid",
             honest: false,
-            answer: || MockResponse::Success((UtxoVerdict::Unknown, None)),
+            answer: could_not_look,
         },
         // (ii) bytes that hash right and spend another outpoint:
         // `Unreadable`, could not look.
         Case {
             name: "(ii) bytes that spend another outpoint",
             honest: false,
-            answer: || MockResponse::Success((UtxoVerdict::Unknown, None)),
+            answer: could_not_look,
         },
         // (iii) the path's leaf is another transaction of the block: the
         // root from the spender's txid cannot be computed, the path is
@@ -57,30 +73,14 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "(iii) a path whose leaf is another transaction",
             honest: false,
-            answer: || {
-                MockResponse::Success((
-                    UtxoVerdict::SpentHint,
-                    Some(BoundSpender {
-                        txid: spender(),
-                        confirmed: false,
-                    }),
-                ))
-            },
+            answer: unconfirmed,
         },
         // (iv) a root our headers do not carry: the path is dropped,
         // unconfirmed.
         Case {
             name: "(iv) a root our headers do not carry",
             honest: false,
-            answer: || {
-                MockResponse::Success((
-                    UtxoVerdict::SpentHint,
-                    Some(BoundSpender {
-                        txid: spender(),
-                        confirmed: false,
-                    }),
-                ))
-            },
+            answer: unconfirmed,
         },
         // (v) a provider's fault in place of an answer.
         Case {

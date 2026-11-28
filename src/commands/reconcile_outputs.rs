@@ -30,7 +30,6 @@
 //! moving; a row phase (a) finds already off is linked and named apart.
 
 use anyhow::Result;
-use bsv_sdk::transaction::Transaction;
 use sqlx::Row;
 use std::future::Future;
 
@@ -39,6 +38,7 @@ use crate::commands::balance::{
 };
 use crate::commands::cleanup_abandoned::{probe_input_spend, stored_locking_script, InputSpend};
 use crate::context::WalletContext;
+use bsv_wallet_cli::respend::own_transaction;
 
 #[derive(Default, Debug, Clone)]
 pub struct OutputsReport {
@@ -112,21 +112,11 @@ where
     report.live_txs = live.len();
     for row in &live {
         let tx_id: i64 = row.get("transaction_id");
-        let txid: String = row.get("txid");
-        let raw: Vec<u8> = row.get("raw_tx");
-        let Ok(tx) = Transaction::from_binary(&raw) else {
-            continue; // unparseable bytes name no inputs — leave the row alone
-        };
-        // R9 (#660): only the row's own transaction names its inputs. Bytes
-        // that do not hash to the txid they are stored under are not it,
-        // and spend nothing of ours.
-        if !tx.id().eq_ignore_ascii_case(&txid) {
-            tracing::warn!(
-                txid = %txid,
-                "reconcile-outputs: the stored bytes do not hash to the row's txid; its inputs are not read"
-            );
+        // R9 (#660): only the row's own transaction names its inputs; bytes
+        // that do not hash to its txid (or do not parse) name none.
+        let Some(tx) = own_transaction(&row.get::<Vec<u8>, _>("raw_tx"), row.get("txid")) else {
             continue;
-        }
+        };
         for input in tx.inputs() {
             let Ok(src) = input.get_source_txid() else {
                 continue;
@@ -366,7 +356,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_chain_checks: usize) ->
 mod tests {
     use super::*;
     use bsv_sdk::script::{LockingScript, UnlockingScript};
-    use bsv_sdk::transaction::{TransactionInput, TransactionOutput};
+    use bsv_sdk::transaction::{Transaction, TransactionInput, TransactionOutput};
 
     async fn fixture() -> (sqlx::SqlitePool, String, Vec<u8>) {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -742,11 +732,8 @@ mod tests {
     async fn phase_b_moves_a_coin_only_on_a_spender_bound_by_bytes_outpoint_and_root() {
         for case in crate::test_support::lost_bound::cases() {
             let (pool, _, _) = fixture().await;
-            let services = case.services();
-            let script = crate::test_support::p2pkh([0xdb; 20]);
-            let r = reconcile_outputs_with(&pool, true, 100, |src: String, vout: u32| {
-                let (services, script) = (&services, script.clone());
-                async move { probe_input_spend(services, &src, vout, Some(&script)).await }
+            let r = reconcile_outputs_with(&pool, true, 100, |src, vout| {
+                crate::commands::cleanup_abandoned::probe_case(&case, src, vout)
             })
             .await
             .unwrap();
