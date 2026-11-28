@@ -120,3 +120,6 @@ pub async fn open_store(
     }
     Ok((storage, services))
 }
+
+#[cfg(test)]
+mod tests;
