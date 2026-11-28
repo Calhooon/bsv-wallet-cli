@@ -8,10 +8,18 @@
 //! reorg-proof-cut2-2026-11-18.md`, "Cut 2e′") say a new received body with
 //! no proof is `built` at the door, and a named broadcaster taking the bytes
 //! moves it to `announced`. Each test names what it reads; the cases are a
-//! payment the door's post was taken for, one every broadcaster refused, one
-//! whose post faulted, one no broadcaster answered, the same body a second time,
-//! a body that arrives with its proof, and a store that holds a received
-//! payment with no tracker row when the pass runs.
+//! payment the door's post was taken for, the same with no record of the
+//! take, one every broadcaster refused, one whose post faulted, one no
+//! broadcaster answered, the same body a second time, a body that arrives
+//! with its proof, and a store that holds a received payment with no
+//! tracker row when the pass runs.
+//!
+//! A take is the record a broadcaster's acceptance leaves: the broadcast
+//! memory's row for the txid, named by its provider, which the concrete
+//! `Services` writes after each accepting answer. The toolbox's plain mock
+//! keeps no memory, so the broadcaster here is `Remembering`
+//! (`tests/support/remembering.rs`): the mock's answers, each acceptance
+//! recorded in the memory the storage attached, as `Services` records it.
 //!
 //! All vectors are synthetic: random throwaway keys, a coinbase-style BUMP
 //! checked against a `TestChainTracker`, the toolbox's mock broadcaster.
@@ -22,6 +30,7 @@
 //! its storage's services replaced by a mock before any request (#637), and
 //! every read below that needs services is handed a mock of its own.
 
+use crate::remembering::Remembering;
 use crate::support::*;
 
 use std::sync::Arc;
@@ -45,15 +54,28 @@ const SUBJECT_HEIGHT: u32 = PARENT_HEIGHT + 1;
 // The served wallet and its reads
 // ---------------------------------------------------------------------------
 
-/// A mock whose broadcasters answer `post_beef` with `response`.
+/// A mock whose broadcasters answer `post_beef` with `response`, each
+/// acceptance recorded in the storage's broadcast memory.
 fn posting(
     response: MockResponse<Vec<bsv_wallet_toolbox::services::PostBeefResult>>,
-) -> Arc<MockWalletServices> {
-    Arc::new(
+) -> Arc<Remembering> {
+    Arc::new(Remembering::new(
         MockWalletServices::builder()
             .post_beef_response(response)
             .build(),
-    )
+    ))
+}
+
+/// The mock broadcaster accepting every post, each acceptance recorded.
+fn taking() -> Arc<Remembering> {
+    Arc::new(Remembering::new(accepting()))
+}
+
+/// A served wallet of `paid` whose broadcaster takes every post, recorded.
+async fn served_taking(paid: &Paid) -> (WalletState, axum::Router, Arc<Remembering>) {
+    let posts = taking();
+    let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts.clone()).await;
+    (wallet, app, posts)
 }
 
 /// `GET /tx/{txid}`: the status and the answer.
@@ -164,12 +186,13 @@ async fn reads(wallet: &WalletState, app: &axum::Router, txid: &str, word: &str)
 // ---------------------------------------------------------------------------
 
 /// The mock broadcaster takes the door's post: the answer is `accepted`
-/// with no `broadcast` word, and the creator reads `announced`, served and
-/// at the gate, its row built by the host with one accepting hint.
+/// with no `broadcast` word, the broadcast memory holds the broadcaster's
+/// acceptance, and the creator reads `announced`, served and at the gate,
+/// its row built by the host with one accepting hint naming the provider.
 #[tokio::test]
 async fn a_payment_a_broadcaster_took_reads_announced() {
     let paid = Paid::new();
-    let (wallet, app, posts) = paid.served().await;
+    let (wallet, app, posts) = served_taking(&paid).await;
     let body = taken_in(&app, &paid.tx, &paid).await;
     assert_eq!(
         body,
@@ -183,10 +206,33 @@ async fn a_payment_a_broadcaster_took_reads_announced() {
     assert_eq!((built, word.as_str()), (1, "announced"));
     assert_eq!(hints.as_array().map(Vec::len), Some(1), "{hints}");
     assert_eq!(hints[0]["status"], "accepted", "{hints}");
+    assert_eq!(hints[0]["source"], "arc|accepted", "the provider: {hints}");
+    assert_eq!(
+        memory(&wallet, &paid.txid).await,
+        vec![("arc".to_string(), "accepted".to_string())]
+    );
+}
+
+/// The door's post taken with no record of the take (the toolbox's plain
+/// mock keeps no broadcast memory): the toolbox's request reads `unmined`,
+/// and that status alone is not a take (it reads the same with no post at
+/// all, `door_take.rs`), so the creator stays `built`.
+#[tokio::test]
+async fn a_post_taken_with_no_record_of_the_take_reads_built() {
+    let paid = Paid::new();
+    let (wallet, app, posts) = paid.served().await;
+    taken_in(&app, &paid.tx, &paid).await;
+    assert_eq!(posts.call_count("post_beef"), 1, "the door posted once");
+    assert_eq!(
+        request(&wallet, &paid.txid).await.as_deref(),
+        Some("unmined")
+    );
+    assert_eq!(memory(&wallet, &paid.txid).await, vec![]);
+    reads(&wallet, &app, &paid.txid, "built").await;
 }
 
 /// The mock's answer for a post every broadcaster refused.
-fn refusing() -> Arc<MockWalletServices> {
+fn refusing() -> Arc<Remembering> {
     posting(MockResponse::Success(vec![error_post_beef_result(
         "arc",
         "the transaction was refused",
@@ -197,7 +243,7 @@ fn refusing() -> Arc<MockWalletServices> {
 /// answer is `accepted` with the `broadcast` word `built`, the door posted
 /// once, and the creator reads `built`, served and at the gate, its row
 /// built by the host with no hint.
-async fn untaken_reads_built(posts: Arc<MockWalletServices>) {
+async fn untaken_reads_built(posts: Arc<Remembering>) {
     let paid = Paid::new();
     let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts.clone()).await;
     let body = taken_in(&app, &paid.tx, &paid).await;
@@ -241,7 +287,8 @@ async fn a_payment_with_no_broadcaster_reads_built() {
 #[tokio::test]
 async fn a_second_internalize_of_the_same_body_leaves_the_row_as_it_was() {
     let paid = Paid::new();
-    let (wallet, app, posts) = paid.stored().await;
+    let (wallet, app, posts) = served_taking(&paid).await;
+    admitted(&app, &paid.tx, paid.payment()).await;
     let once = tracked(&wallet, &paid.txid).await;
     admitted(&app, &paid.tx, paid.payment()).await;
     println!(
@@ -308,18 +355,14 @@ async fn a_body_that_arrives_with_its_proof_reads_mined() {
 
 /// A store holding a received, unproven payment and no tracker row for it
 /// (as every store written before this door's word): one pass gives it its
-/// row. The payment a broadcaster took (its request `unmined`, no broadcast
-/// memory row: the mock keeps none) reads `announced`; the one every
-/// broadcaster refused reads `built`. A second pass changes neither.
+/// row. The payment a broadcaster took (its acceptance in the broadcast
+/// memory) reads `announced`; the one every broadcaster refused reads
+/// `built`. A second pass changes neither.
 #[tokio::test]
 async fn a_pass_gives_a_received_payment_with_no_row_its_word() {
     for (taken, word) in [(true, "announced"), (false, "built")] {
         let paid = Paid::new();
-        let posts = if taken {
-            Arc::new(accepting())
-        } else {
-            refusing()
-        };
+        let posts = if taken { taking() } else { refusing() };
         let (wallet, app) = served_with(&paid.root, Some(&paid.parent), posts).await;
         admitted(&app, &paid.tx, paid.payment()).await;
         // The store as an earlier release left it: no row.
