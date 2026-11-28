@@ -3,9 +3,8 @@
 //! (c); the second batch of `src/tracker_host.rs`'s survivors of night
 //! 41340299977): the BEEF announced once is the wallet's own stored
 //! transaction with its inputs, and a refused announce is the node's
-//! verdict only when the node judged the transaction itself (the charter's
-//! evidence rule: a verdict is evidence, a service fault is "could not
-//! look").
+//! hint, never a node's verdict, and a refusal only when the broadcaster
+//! refused the transaction itself (a service fault is "could not look").
 
 use super::tests::wallet_storage;
 use super::*;
@@ -37,13 +36,13 @@ fn refused(txid: &str, data: &str, service_error: bool, orphan_mempool: bool) ->
     }
 }
 
-/// The evidence rule's verdict (the tracker charter, section 2): a node
-/// that refused the transaction itself is the `rejected` verdict, its
-/// reason the broadcaster and the node's own words.
+/// A broadcaster's refusal of the transaction itself is the `rejected`
+/// hint under that broadcaster's name, its reason the words it relayed;
+/// never a node's verdict.
 #[test]
-fn a_nodes_refusal_of_the_transaction_is_its_rejected_verdict() {
+fn a_broadcasters_refusal_of_the_transaction_is_its_rejected_hint() {
     let txid = "c1".repeat(32);
-    let verdict = node_verdict(
+    let hint = refusal_hint(
         &[refused(
             &txid,
             "bad-txns-inputs-missingorspent",
@@ -53,19 +52,22 @@ fn a_nodes_refusal_of_the_transaction_is_its_rejected_verdict() {
         &txid,
     );
     assert_eq!(
-        verdict,
-        Some(NodeVerdict::Rejected {
-            reason: "Arcade: bad-txns-inputs-missingorspent".to_string(),
-        })
+        hint,
+        Some((
+            "Arcade".to_string(),
+            HintStatus::Rejected {
+                reason: "bad-txns-inputs-missingorspent".to_string(),
+            }
+        ))
     );
 }
 
-/// "Could not look" is never a verdict (the charter's evidence rule; the
-/// explorer ladder's fault): a broadcaster's service fault, a missing
-/// parent (orphan mempool) and "not final" each leave the word where it
-/// was, as does any broadcaster that took the transaction.
+/// "Could not look" is never a refusal (the explorer ladder's fault): a
+/// broadcaster's service fault, a missing parent (orphan mempool) and "not
+/// final" each leave the row as it was, as does any broadcaster that took
+/// the transaction.
 #[test]
-fn a_service_fault_a_missing_parent_or_not_final_is_no_verdict() {
+fn a_service_fault_a_missing_parent_or_not_final_is_no_refusal() {
     let txid = "c2".repeat(32);
     let cases = [
         (
@@ -79,13 +81,13 @@ fn a_service_fault_a_missing_parent_or_not_final_is_no_verdict() {
         ("not final", refused(&txid, "476 non-final", false, false)),
     ];
     for (what, answer) in cases {
-        assert_eq!(node_verdict(&[answer], &txid), None, "{what}");
+        assert_eq!(refusal_hint(&[answer], &txid), None, "{what}");
     }
     let taken = [
         refused(&txid, "bad-txns-inputs-missingorspent", false, false),
         success_post_beef_result("Taal", &[&txid]),
     ];
-    assert_eq!(node_verdict(&taken, &txid), None, "one broadcaster took it");
+    assert_eq!(refusal_hint(&taken, &txid), None, "one broadcaster took it");
 }
 
 /// A transaction row of the wallet's own, `raw` with its stored input BEEF.

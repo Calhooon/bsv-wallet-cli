@@ -23,7 +23,9 @@
 //! `conflicted`) are read where this host keeps them: the tracker's stored
 //! word (`tracker_states.word`) `conflicted` or `rejected`, which the
 //! tracker writes only on evidence (a node's verdict, stored beside the
-//! word so a replay reads it back; this host feeds no competitor proof);
+//! word so a replay reads it back: this release writes none, and a verdict
+//! an earlier release stored from a broadcaster's refusal is read as
+//! stored; this host feeds no competitor proof);
 //! and the toolbox's `failed` status for the abandon,
 //! since the CLI's tracker row stores no abandon (an action the host gives
 //! up is the toolbox's `failed`; `tests/gate_vectors.rs` `ABANDONED`). A
