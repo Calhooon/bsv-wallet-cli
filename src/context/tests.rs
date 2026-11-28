@@ -20,6 +20,7 @@ use super::*;
 use crate::test_support::genesis_coins::payment_over;
 use crate::test_support::{response_answer, seal_network, temp_db, TestChainTracker};
 use bsv_wallet_cli::config::Flags;
+use bsv_wallet_cli::store::LEGACY_TESTNET_ADVICE;
 use bsv_wallet_toolbox::services::mock::{
     success_post_beef_result, MockResponse, MockWalletServices,
 };
@@ -224,9 +225,17 @@ async fn a_mainnet_context_is_mainnet_served_held_and_judged() {
 /// refused at open, naming both words, both ways.
 #[tokio::test]
 async fn a_store_of_another_chain_is_refused_by_name_at_open() {
-    for (written, opened, word, asked, how) in [
-        (false, true, "main", "test", "without --testnet"),
-        (true, false, "test", "main", "with --testnet"),
+    let legacy = format!(
+        "main (its settings' chain) and this command runs on chain test: {LEGACY_TESTNET_ADVICE}"
+    );
+    for (written, opened, tail) in [
+        (false, true, legacy),
+        (
+            true,
+            false,
+            "test (its settings' chain) and this command runs on chain main: run it with --testnet"
+                .to_string(),
+        ),
     ] {
         let (_dir, db) = temp_db();
         let root = PrivateKey::random();
@@ -238,10 +247,7 @@ async fn a_store_of_another_chain_is_refused_by_name_at_open() {
                 .expect("refused at open");
         assert_eq!(
             refused.to_string(),
-            format!(
-                "the wallet database {db} was created for chain {word} (its settings' chain) \
-                 and this command runs on chain {asked}: run it {how}"
-            ),
+            format!("the wallet database {db} was created for chain {tail}"),
             "{refused:#}"
         );
     }
@@ -281,10 +287,11 @@ async fn legacy_testnet_store(db: &str, root: &PrivateKey) {
 }
 
 /// #682, the test that decides: the legacy testnet store opened with
-/// `--testnet` is refused, and the refusal tells its owner to run it
-/// without the flag.
+/// `--testnet` is refused (at the base, the refusal told its owner to run
+/// it without the flag); the refusal names the repair and says not to run
+/// it without the flag.
 #[tokio::test]
-async fn a_legacy_testnet_store_opened_with_testnet_is_refused_toward_mainnet() {
+async fn a_legacy_testnet_store_opened_with_testnet_is_refused_naming_the_repair() {
     let (_dir, db) = temp_db();
     let root = PrivateKey::random();
     legacy_testnet_store(&db, &root).await;
@@ -297,7 +304,10 @@ async fn a_legacy_testnet_store_opened_with_testnet_is_refused_toward_mainnet() 
         refused.to_string(),
         format!(
             "the wallet database {db} was created for chain main (its settings' chain) \
-             and this command runs on chain test: run it without --testnet"
+             and this command runs on chain test: a testnet wallet made before the chain word \
+             was recorded reads so; if this wallet's coins are testnet's, do not run it without \
+             --testnet: run `bsv-wallet --testnet repair-chain` to see the evidence and repair \
+             the word"
         ),
     );
 }

@@ -38,7 +38,7 @@ async fn open_shared_refuses_a_store_of_another_chain_by_name() {
         (
             Chain::Main,
             Chain::Test,
-            "was created for chain main (its settings' chain) and this command runs on chain test: run it without --testnet",
+            "was created for chain main (its settings' chain) and this command runs on chain test: a testnet wallet made before the chain word was recorded reads so; if this wallet's coins are testnet's, do not run it without --testnet: run `bsv-wallet --testnet repair-chain` to see the evidence and repair the word",
         ),
         (
             Chain::Test,

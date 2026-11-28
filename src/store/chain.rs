@@ -15,8 +15,26 @@ pub struct ChainMismatch {
     pub asked: &'static str,
 }
 
+/// The one case (#682) where the advice of the plain refusal points the
+/// wrong way: a store whose word is `main` opened on testnet. Every
+/// release pinning the toolbox at 0.14.0-beta.3 or below wrote `mainnet`
+/// (read as `main`) into a `--testnet` store, so running it without the
+/// flag would run a testnet wallet against mainnet's services: the
+/// refusal names the repair instead.
+pub const LEGACY_TESTNET_ADVICE: &str = "a testnet wallet made before the chain word was \
+     recorded reads so; if this wallet's coins are testnet's, do not run it without --testnet: \
+     run `bsv-wallet --testnet repair-chain` to see the evidence and repair the word";
+
 impl std::fmt::Display for ChainMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.stored == "main" && self.asked == "test" {
+            return write!(
+                f,
+                "the wallet database {} was created for chain main (its settings' chain) \
+                 and this command runs on chain test: {LEGACY_TESTNET_ADVICE}",
+                self.db
+            );
+        }
         let how = match self.stored.as_str() {
             "test" => "with --testnet",
             "main" => "without --testnet",

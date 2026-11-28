@@ -18,7 +18,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod chain;
-pub use chain::{require_chain, ChainMismatch};
+pub use chain::{require_chain, ChainMismatch, LEGACY_TESTNET_ADVICE};
 
 pub mod origin_grants;
 
