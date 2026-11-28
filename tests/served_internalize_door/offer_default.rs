@@ -33,12 +33,7 @@ use crate::support::*;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use bsv_sdk::primitives::PrivateKey;
-use bsv_wallet_cli::config::Config;
-use bsv_wallet_cli::server::{self, ServerConfig};
-use bsv_wallet_toolbox::{
-    Chain, Services, ServicesOptions, Wallet, WalletServices, WalletStorageProvider,
-};
+use bsv_wallet_toolbox::WalletServices;
 use serde_json::{json, Value};
 
 /// The host's settings under test: the default, and the hold.
@@ -56,31 +51,16 @@ fn not_taken(word: &str) -> String {
 /// The reason of a received unmined coin held for want of the action's word.
 const NO_WORD: &str = "depth 1: 0 blocks; received, no proof; offered under allowPending: received";
 
-/// `support::served_rooted`, the server's settings read from `pairs` as the
-/// environment at start gives them.
-async fn served_under(
-    root: &PrivateKey,
-    parent: &str,
+/// `support::served_under` for a payment's wallet: the network sealed, the
+/// tracker carrying the root of the payment's parent.
+async fn served_for(
+    paid: &Paid,
     posts: Arc<dyn WalletServices>,
     pairs: &[(&str, &str)],
 ) -> (WalletState, axum::Router) {
     seal_network();
-    let roots = [(PARENT_HEIGHT, parent)];
-    let storage = rooted_store(root, Some(&roots)).await;
-    let services =
-        Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
-    assert!(services.chaintracks.is_none(), "no header service");
-    let wallet = Wallet::new(Some(root.clone()), storage, services)
-        .await
-        .expect("wallet");
-    let state = server::make_wallet_state(wallet);
-    WalletStorageProvider::set_services(state.storage(), posts);
-    let config = ServerConfig {
-        settings: Arc::new(Config::from_pairs(pairs).expect("the settings")),
-        ..ServerConfig::admitting(["test.local"]).expect("an originator")
-    };
-    let router = server::make_router(state.clone(), config);
-    (state, router)
+    let roots = [(PARENT_HEIGHT, paid.parent.as_str())];
+    served_under(&paid.root, Some(&roots), posts, pairs).await
 }
 
 /// A served wallet under `pairs`, paid 4,500 sats through its door. When
@@ -89,19 +69,19 @@ async fn served_under(
 /// it reads `built`. The word is read back as the host serves it.
 async fn paid_under(pairs: &[(&str, &str)], taken: bool) -> (WalletState, axum::Router, String) {
     let paid = Paid::new();
-    let (wallet, app) = if taken {
-        let posts = Arc::new(Remembering::new(accepting()));
-        let served = served_under(&paid.root, &paid.parent, posts.clone(), pairs).await;
-        admitted(&served.1, &paid.tx, paid.payment()).await;
-        assert_eq!(posts.call_count("post_beef"), 1, "posted to the mock");
-        served
+    let (remembering, plain) = (
+        Arc::new(Remembering::new(accepting())),
+        Arc::new(accepting()),
+    );
+    let posts: Arc<dyn WalletServices> = if taken {
+        remembering.clone()
     } else {
-        let posts = Arc::new(accepting());
-        let served = served_under(&paid.root, &paid.parent, posts.clone(), pairs).await;
-        admitted(&served.1, &paid.tx, paid.payment()).await;
-        assert_eq!(posts.call_count("post_beef"), 1, "posted to the mock");
-        served
+        plain.clone()
     };
+    let (wallet, app) = served_for(&paid, posts, pairs).await;
+    admitted(&app, &paid.tx, paid.payment()).await;
+    let posted = remembering.call_count("post_beef") + plain.call_count("post_beef");
+    assert_eq!(posted, 1, "posted to the mock");
     assert_eq!(balance(&wallet).await, 4_500);
     let (status, body) = get_from(&app, &format!("/tx/{}", paid.txid)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -246,7 +226,7 @@ async fn under_hold_a_built_payment_is_held_even_with_the_word() {
 async fn own_change_at_unknown(pairs: &[(&str, &str)]) -> (axum::Router, String) {
     let funding = Paid::new();
     let posts = Arc::new(Remembering::new(accepting()));
-    let (wallet, app) = served_under(&funding.root, &funding.parent, posts, pairs).await;
+    let (wallet, app) = served_for(&funding, posts, pairs).await;
     admitted(&app, &funding.tx, funding.payment()).await;
     let made = spend(&wallet, true).await.expect("the action");
     let txid = made.id();

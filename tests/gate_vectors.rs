@@ -47,6 +47,8 @@
 //! in [`UNEXPRESSED`], exact too. docs/GATE-VECTORS.md is the page.
 
 mod gate_vectors_store;
+#[path = "gate_vectors_store/unexpressed.rs"]
+mod unexpressed;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -56,311 +58,14 @@ use bsv_wallet_cli::spend_gate::{
     Origin, ReceivedSetting, UserCoins,
 };
 use bsv_wallet_cli::tracker_host::{read_creators, TickOptions};
-use gate_vectors_store::{b, build, height, key_of, n, s, Built};
+use gate_vectors_store::{b, build, height, key_of, s, Built};
 use serde_json::Value;
+use unexpressed::{unexpressed, UNEXPRESSED};
 
 const VECTORS: &[u8] = include_bytes!("vectors/wallet_gate_vectors.json");
 const PIN: &str = include_str!("vectors/wallet_gate_vectors.pin");
 const DIVERGENCES: &str = include_str!("vectors/wallet_gate_divergences.json");
 const ROWS: usize = 1314;
-
-/// The rows the CLI cannot hold, by key, with why. Exact: a row that leaves
-/// this class, or a listed key no row has, fails the test.
-const UNEXPRESSED: &[(&str, &str)] = &[
-    (
-        "Wallet.Check.depth_floor | step 1 | F.0 | allow_received false",
-        ABOVE_TIP,
-    ),
-    (
-        "Wallet.Check.depth_floor | step 1 | F.0 | allow_received true",
-        ABOVE_TIP,
-    ),
-    (
-        "WalletGate.contendedSteps | step 5 | T1.0 | allow_received false",
-        ABANDONED,
-    ),
-    (
-        "WalletGate.contendedSteps | step 5 | T1.0 | allow_received true",
-        ABANDONED,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 1 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 1 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 2 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 2 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 3 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 3 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 4 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldSeen (the word, mined) | step 4 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 1 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 1 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 2 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 2 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 3 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 3 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 4 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldProofThenReorg | step 4 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldGivenUp | step 1 | B.0 | allow_received false",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldGivenUp | step 1 | B.0 | allow_received true",
-        HELD_DOOR,
-    ),
-    (
-        "Wallet.Check.heldGivenUp | step 2 | B.0 | allow_received false",
-        ABANDONED,
-    ),
-    (
-        "Wallet.Check.heldGivenUp | step 2 | B.0 | allow_received true",
-        ABANDONED,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 1 | B.0 | allow_received false",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 1 | B.0 | allow_received true",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 2 | B.0 | allow_received false",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 2 | B.0 | allow_received true",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 3 | B.0 | allow_received false",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.cutOverUnproven | step 3 | B.0 | allow_received true",
-        OVER_UNPROVEN,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 2 | T.0 | allow_received false",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 2 | T.0 | allow_received true",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 3 | T.0 | allow_received false",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 3 | T.0 | allow_received true",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 4 | T.0 | allow_received false",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 4 | T.0 | allow_received true",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 4 | U.0 | allow_received false",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.noSendT (named by a noSend action) | step 4 | U.0 | allow_received true",
-        NO_SEND,
-    ),
-    (
-        "Wallet.Default.Check.abortedParentChild | step 4 | T.0 | allow_received false",
-        ABANDONED,
-    ),
-    (
-        "Wallet.Default.Check.abortedParentChild | step 4 | T.0 | allow_received true",
-        ABANDONED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 6 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 6 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 7 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 7 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 8 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (cancel at handed) | step 8 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (same seller at handed) | step 6 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (same seller at handed) | step 6 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (same seller at handed) | step 7 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (same seller at handed) | step 7 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Forms (dead child: the offer) | step 6 | G.0 | allow_received false",
-        RELEASED_LOCK,
-    ),
-    (
-        "Wallet.Forms (dead child: the offer) | step 6 | G.0 | allow_received true",
-        RELEASED_LOCK,
-    ),
-    (
-        "Wallet.Forms (dead child: the plain release) | step 6 | G.0 | allow_received false",
-        RELEASED_LOCK,
-    ),
-    (
-        "Wallet.Forms (dead child: the plain release) | step 6 | G.0 | allow_received true",
-        RELEASED_LOCK,
-    ),
-    (
-        "Wallet.Handed (our own change) | step 3 | T.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Handed (our own change) | step 3 | T.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Handed (a received coin) | step 2 | B.0 | allow_received false",
-        HANDED,
-    ),
-    (
-        "Wallet.Handed (a received coin) | step 2 | B.0 | allow_received true",
-        HANDED,
-    ),
-    (
-        "Wallet.Contested (passed whole, the spender dead) | step 2 | F.0 | allow_received false",
-        CONTEST,
-    ),
-    (
-        "Wallet.Contested (passed whole, the spender dead) | step 2 | F.0 | allow_received true",
-        CONTEST,
-    ),
-    (
-        "Wallet.Contested (passed whole, the spender proven) | step 2 | F.0 | allow_received false",
-        CONTEST,
-    ),
-    (
-        "Wallet.Contested (passed whole, the spender proven) | step 2 | F.0 | allow_received true",
-        CONTEST,
-    ),
-
-];
-
-/// The classes of [`UNEXPRESSED`], each with the rows it holds at this pin:
-/// 62 in all. Exact, as the list is.
-const UNEXPRESSED_CLASSES: &[(&str, &str, usize)] = &[
-    ("abandoned", ABANDONED, 6),
-    ("mined above the tip", ABOVE_TIP, 2),
-    ("handed", HANDED, 14),
-    ("held door", HELD_DOOR, 18),
-    ("over an unproven ancestor", OVER_UNPROVEN, 6),
-    ("noSend creator", NO_SEND, 8),
-    ("released lock", RELEASED_LOCK, 4),
-    ("door-born contest", CONTEST, 4),
-];
-
-const ABANDONED: &str = "the creator's word is abandoned: the CLI's tracker row stores no \
-     abandon (HostAction::Abandon is never kept or replayed by tracker_host), so no store \
-     reads `abandoned`; an action the host gives up is the toolbox's `failed` status, which \
-     the allocation never reads as a candidate";
-
-const ABOVE_TIP: &str = "the creator is mined at a height above the headers' tip: the CLI \
-     checks the stored proof against the headers on every read and the tracker refuses a proof \
-     above the tip, so no store reads `mined` there (the reading is `unknown`)";
-
-const HANDED: &str = "the creator's word is handed: bsv-tracker at the pin has no `handed` \
-     word, so `read_creators` cannot read it; the gate's rule already names it \
-     (spend_gate::DOOR_WORDS)";
-
-const HELD_DOOR: &str = "the creator was taken in through the held door (`creator_held_door`): \
-     no store of this host produces `Action.held`";
-
-const OVER_UNPROVEN: &str = "the creator is a received body over an unproven ancestor \
-     (`creator_over_unproven`): the store keeps no mark of it";
-
-const NO_SEND: &str = "the creator is a `noSend` action of ours (`creator_no_send`): the \
-     replay's store plants `completed` or `unproven` creators only, and the gate has no \
-     conjunct for a `noSend` action's unsent change named by a `noSend` action";
-
-const RELEASED_LOCK: &str = "the coin is locked to an action of a released lineage, which the \
-     one function's view reads free (`offerable_one` true where `offerable_cut` is false): the \
-     store plants a lock to a live action, never the holder's dead lineage, and the gate \
-     releases no lock";
-
-const CONTEST: &str = "the coin is contested by a spender that passed a door of this wallet \
-     (`coin_contested`): the store keeps no spender that is not an action of ours";
 
 /// The answer columns the CLI's gate gives no value for, with why. The rows'
 /// inputs they read still drive the replay.
@@ -370,40 +75,6 @@ const COLUMNS_NOT_ANSWERED: &[(&str, &str)] = &[
     ("coin_word, coin_word_data", "the gate answers offered or held with a reason; HeldCoin.word is the creator's tracker word, a named unspendable or failed record's transaction status, or locked, frozen, lost, not the coin's word"),
     ("host_answer, host_answer_data", "a row names its door (createAction, internalizeAction, ...) but carries none of its arguments (no BEEF, no outputs), so the host's answer at that door cannot be replayed from the row"),
 ];
-
-/// Why the CLI cannot hold this row, or `None`: the class, read from the
-/// row's own columns, in the order the classes are named.
-fn unexpressed(row: &Value) -> Option<&'static str> {
-    let word = s(row, "creator_word");
-    if word == Some("abandoned") {
-        return Some(ABANDONED);
-    }
-    if word == Some("mined") && n(row, "creator_proof_height") > n(row, "headers_tip") {
-        return Some(ABOVE_TIP);
-    }
-    if word == Some("handed") {
-        return Some(HANDED);
-    }
-    if b(row, "creator_held_door") == Some(true) {
-        return Some(HELD_DOOR);
-    }
-    if b(row, "creator_over_unproven") == Some(true) {
-        return Some(OVER_UNPROVEN);
-    }
-    if b(row, "creator_no_send") == Some(true) {
-        return Some(NO_SEND);
-    }
-    if s(row, "coin_lock") == Some("locked")
-        && b(row, "offerable_one") == Some(true)
-        && b(row, "offerable_cut") == Some(false)
-    {
-        return Some(RELEASED_LOCK);
-    }
-    if s(row, "coin_contested").is_some() {
-        return Some(CONTEST);
-    }
-    None
-}
 
 /// The Lean clause a hold's reason names.
 fn clause_of(reason: Option<&str>) -> String {
@@ -678,15 +349,18 @@ const HOLD: Columns = Columns {
     clause: "offerable_hold_clause",
 };
 
+/// The settings a row is asked under, each with its tag and its columns.
+fn settings(row: &Value, built: &Built) -> Vec<(&'static str, GateOptions, &'static Columns)> {
+    let mut settings = vec![(" (taken)", taken(row), &CUT)];
+    let held = hold(row, built).into_iter();
+    settings.extend(held.map(|(tag, opts)| (tag, opts, &HOLD)));
+    settings
+}
+
 /// The coin through the two doors, a named input and the allocation, under
 /// the cut's default and under the hold with the row's word.
 async fn coin_checks(checks: &mut Checks<'_>, built: &Built) {
-    let mut settings = vec![(" (taken)", taken(checks.row), &CUT)];
-    settings.extend(
-        hold(checks.row, built)
-            .into_iter()
-            .map(|(tag, opts)| (tag, opts, &HOLD)),
-    );
+    let settings = settings(checks.row, built);
     let coin = [(built.txid.clone(), built.vout).into()];
     for (tag, opts, columns) in &settings {
         // A coin the wallet does not hold is refused at the gate, the
@@ -910,7 +584,7 @@ async fn every_row_is_the_gates_answer() {
 
     let listed: BTreeMap<String, &str> = UNEXPRESSED
         .iter()
-        .map(|(k, why)| (k.to_string(), *why))
+        .flat_map(|(_, why, keys)| keys.iter().map(|k| (k.to_string(), *why)))
         .collect();
     println!(
         "gate vectors: {} rows, {} expressed, {} unexpressed",
@@ -918,10 +592,10 @@ async fn every_row_is_the_gates_answer() {
         rows.len() - unexpressed_now.len(),
         unexpressed_now.len()
     );
-    for (class, why, rows) in UNEXPRESSED_CLASSES {
+    for (class, why, keys) in UNEXPRESSED {
         let now = unexpressed_now.values().filter(|w| *w == why).count();
         println!("gate vectors: unexpressed: {class}: {now}");
-        assert_eq!(now, *rows, "the unexpressed class {class}");
+        assert_eq!(now, keys.len(), "the unexpressed class {class}");
     }
     for (columns, why) in COLUMNS_NOT_ANSWERED {
         println!("gate vectors: not answered by the gate: {columns}: {why}");

@@ -37,8 +37,29 @@ pub(crate) struct World {
     router: axum::Router,
 }
 
+/// A broadcaster took the payment `txid` (#659): its creator reads
+/// `announced`, as the door hears a take. A consumer's received payment is
+/// offered from that word on.
+async fn taken(storage: &StorageSqlx, txid: &str) {
+    use bsv_wallet_cli::tracker_host::{heard, Keep, SystemClock, TickOptions};
+    let hint = bsv_tracker::Hint::new("arc", bsv_tracker::HintStatus::Accepted, 1_700_000_000);
+    let opts = TickOptions::default();
+    heard(
+        storage,
+        &SystemClock,
+        &opts,
+        txid,
+        hint,
+        None,
+        Keep::Nothing,
+    )
+    .await
+    .unwrap();
+}
+
 /// Two received coins not yet mined (no proof stored), as an
-/// `internalizeAction` of a payment leaves them: 30,000 and 20,000 sats.
+/// `internalizeAction` of a payment a broadcaster took leaves them
+/// (`announced`): 30,000 and 20,000 sats.
 async fn seed_pending(storage: &StorageSqlx, identity: &str) {
     let user = storage
         .find_or_insert_user(identity)
@@ -82,6 +103,7 @@ async fn seed_pending(storage: &StorageSqlx, identity: &str) {
         .execute(&pool)
         .await
         .unwrap();
+        taken(storage, txid).await;
     }
 }
 

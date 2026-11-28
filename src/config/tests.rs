@@ -210,57 +210,6 @@ fn unset_or_blank_is_the_default_and_numbers_are_trimmed() {
     );
 }
 
-/// `SPEND_RECEIVED` (#659): `taken`, the default, or `hold`, any case,
-/// blank as unset; any other value is refused at start by name, the
-/// configuration `config` prints holding the default and the refused row
-/// as set.
-#[test]
-fn the_received_rule_is_taken_or_hold_and_any_other_value_is_refused_by_name() {
-    use crate::spend_gate::ReceivedSetting::{Hold, Taken};
-    let received = |v| config(&[("SPEND_RECEIVED", v)]).host.spend_received;
-    assert_eq!(Config::default().host.spend_received, Taken);
-    for taken in ["taken", " Taken ", "TAKEN", "", "  "] {
-        assert_eq!(received(taken), Taken, "{taken:?}");
-    }
-    for hold in ["hold", "HOLD", " Hold\t"] {
-        assert_eq!(received(hold), Hold, "{hold:?}");
-    }
-    assert_eq!(
-        row(&Config::default(), "SPEND_RECEIVED"),
-        ("taken (default)".to_string(), Source::Default)
-    );
-    assert_eq!(
-        row(&config(&[("SPEND_RECEIVED", "hold")]), "SPEND_RECEIVED"),
-        ("hold".to_string(), Source::Env)
-    );
-    for refused in ["0", "off", "held", "received", "taken (default)"] {
-        let e = refusal(&[("SPEND_RECEIVED", refused)]);
-        assert_eq!(e.variable, "SPEND_RECEIVED");
-        assert_eq!(
-            e.to_string(),
-            format!(
-                "SPEND_RECEIVED is {refused:?}, which is not a rule for received payments that \
-                 are not mined: `taken` (the default: one a broadcaster took is offered) or \
-                 `hold` (offered only under an action's allowPending: received): set it so, or \
-                 unset it for the default"
-            )
-        );
-    }
-    let refused = Config::from_pairs(&[("SPEND_RECEIVED", "bogus")]).unwrap_err();
-    assert_eq!(refused.config.host.spend_received, Taken);
-    let k = refused
-        .config
-        .knobs()
-        .into_iter()
-        .find(|k| k.name == "SPEND_RECEIVED")
-        .unwrap();
-    assert_eq!(k.value.to_string(), "bogus");
-    assert!(k
-        .refused
-        .unwrap()
-        .starts_with("a rule for received payments"));
-}
-
 #[test]
 fn each_switch_keeps_its_words() {
     let own_change = |v| config(&[("SPEND_OWN_CHANGE", v)]).host.spend_own_change;

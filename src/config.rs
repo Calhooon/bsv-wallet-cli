@@ -41,6 +41,7 @@ mod origins_tests;
 mod read;
 #[cfg(test)]
 mod seed_tests;
+mod spend_received;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -416,28 +417,6 @@ pub struct HostSettings {
 }
 
 impl HostSettings {
-    /// `SPEND_RECEIVED`, blank as unset: `taken` or `hold` (any case), any
-    /// other value refused by name; unset, or a refused value, is the
-    /// default.
-    fn spend_received(raw: &Reader) -> crate::spend_gate::ReceivedSetting {
-        use crate::spend_gate::ReceivedSetting;
-        let setting = match raw.given("SPEND_RECEIVED") {
-            None => Ok(None),
-            Some(value) => match ReceivedSetting::of(&value.to_ascii_lowercase()) {
-                Some(setting) => Ok(Some(setting)),
-                None => Err(ConfigError {
-                    variable: "SPEND_RECEIVED",
-                    value: value.to_string(),
-                    expected: "a rule for received payments that are not mined: `taken` (the \
-                               default: one a broadcaster took is offered) or `hold` (offered \
-                               only under an action's allowPending: received)"
-                        .into(),
-                }),
-            },
-        };
-        raw.kept(setting).unwrap_or_default()
-    }
-
     fn read(raw: &Reader) -> Self {
         use crate::tracker_host::{DEFAULT_AGE_SECS, DEFAULT_MAX_ASKS, DEFAULT_SPEND_DEPTH};
         let off = |v: &str| {
@@ -456,7 +435,7 @@ impl HostSettings {
                 crate::spend_gate::DEFAULT_SPEND_OWN_CHANGE,
                 off,
             ),
-            spend_received: Self::spend_received(raw),
+            spend_received: spend_received::read(raw),
             tracker_age_secs: raw
                 .number("TRACKER_AGE_SECS", "a number of seconds")
                 .unwrap_or(DEFAULT_AGE_SECS)

@@ -506,6 +506,35 @@ pub(crate) async fn seed(storage: &StorageSqlx, identity: &str, frozen: bool) {
     .await;
 }
 
+/// The one coin of the `abort-unproven`, `named-change` and
+/// `received-built` worlds: 50,000 sats of [`PENDING`], our own change
+/// (a received payment in `received-built`), its transaction unproven
+/// (completed in `named-change`), and outside `abort-unproven` its
+/// creator's word `built`.
+async fn seed_one_coin(name: &str, storage: &StorageSqlx, identity: &str) {
+    Rows::open(storage, identity)
+        .await
+        .coin(Coin {
+            status: if name == "named-change" {
+                "completed"
+            } else {
+                "unproven"
+            },
+            txid: PENDING,
+            made: name != "received-built",
+            proven: None,
+            satoshis: 50_000,
+            description: "our change",
+            raw: vec![1, 0, 0, 0],
+            lock: hex::decode(P2PKH).unwrap(),
+            derivation: None,
+        })
+        .await;
+    if name != "abort-unproven" {
+        cases_received_rule::built(storage, PENDING).await;
+    }
+}
+
 impl World {
     /// Construct a named world from WORLDS. The ordinary worlds are empty,
     /// authenticated, tracked, received, faulty or funded. The named-change
@@ -550,7 +579,7 @@ impl World {
             keep.push(Box::new(lock));
         }
         let mut config = ServerConfig {
-            settings: crate::wire_support::quiet_config(),
+            settings: cases_received_rule::settings(name),
             // The gate's header re-read at once: `headers-down` (fixture
             // 084) answers the same bytes without the served 2 s (#506).
             header_retry_pause: std::time::Duration::ZERO,
@@ -621,7 +650,9 @@ impl World {
             "received" | "headers-down" => seed(storage, &identity, false).await,
             "funded" | "spending" => return seed_funded(storage, &identity, key).await,
             "internalize" => return seed_internalize(storage, &identity, key).await,
-            "received-rule" => return cases_received_rule::world(storage, &identity, key).await,
+            "received-rule" | "received-taken" => {
+                return cases_received_rule::world(storage, &identity, key).await
+            }
             "not-spendable" => return cases_not_spendable::world(storage, &identity, key).await,
             "internalize-held" => {
                 return super::held_world::seed_internalize_held(storage, &identity, key).await
@@ -631,25 +662,8 @@ impl World {
                 seed_puzzle(storage, &identity).await;
                 return roots;
             }
-            "abort-unproven" | "named-change" => {
-                Rows::open(storage, &identity)
-                    .await
-                    .coin(Coin {
-                        status: if name == "abort-unproven" {
-                            "unproven"
-                        } else {
-                            "completed"
-                        },
-                        txid: PENDING,
-                        made: true,
-                        proven: None,
-                        satoshis: 50_000,
-                        description: "our change",
-                        raw: vec![1, 0, 0, 0],
-                        lock: hex::decode(P2PKH).unwrap(),
-                        derivation: None,
-                    })
-                    .await;
+            "abort-unproven" | "named-change" | "received-built" => {
+                seed_one_coin(name, storage, &identity).await;
             }
             "broken" => {
                 sqlx::query("DROP TABLE outputs")
@@ -698,6 +712,7 @@ impl World {
                 | "internalize"
                 | "internalize-held"
                 | "received-rule"
+                | "received-taken"
         ) {
             arc_stub(arc_posts).await
         } else {

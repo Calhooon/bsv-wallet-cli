@@ -715,18 +715,14 @@ async fn a_made_creator_tracked_without_its_path_reads_built_and_is_offered_from
         (before.door, &before.fault, before.depth, before.suspect)
     );
     assert!(!after.door && after.fault.is_none());
-    // Our own change is offered from `built` on (#659): held while no row
-    // read `unknown`, offered once the pass adopted it; `SPEND_OWN_CHANGE=0`
-    // holds it at either word, the reason unchanged.
-    let off = Some("depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0".to_string());
+    // Our own change is offered from `built` on (#659), held at `unknown`.
+    let unsigned = Some("unknown; own change not signed: never offered".to_string());
+    assert_eq!(reasons(&before)[0], unsigned);
     assert_eq!(
-        reasons(&before),
-        [
-            Some("unknown; own change not signed: never offered".to_string()),
-            off.clone()
-        ]
+        (reasons(&after)[0].clone(), &reasons(&after)[1]),
+        (None, &reasons(&before)[1])
     );
-    assert_eq!(reasons(&after), [None, off]);
+    assert!(reasons(&after)[1].is_some());
 }
 
 /// A conflicted row at 900 whose stored proof misses the header there.

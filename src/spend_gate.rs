@@ -332,15 +332,25 @@ impl ReceivedSetting {
 /// offered only where an arm names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoorWord {
+    /// No record of the creator but its action.
     Unknown,
+    /// Signed by this host, or taken in at its door.
     Built,
+    /// Handed to a broadcaster, its answer not heard.
     Handed,
+    /// A broadcaster took it.
     Announced,
+    /// Seen on the network.
     Seen,
+    /// Its proof's block left the chain; ranks as `seen` at the door.
     Stale,
+    /// Proven in a block.
     Mined,
+    /// A rule's verdict against it.
     Rejected,
+    /// A competitor of it is mined.
     Conflicted,
+    /// Given up by its host.
     Abandoned,
 }
 
@@ -1313,17 +1323,11 @@ pub fn hold_reason(
         // the chain and the transaction is confirming again.
         DoorWord::Announced | DoorWord::Seen | DoorWord::Stale => Live::Taken,
     };
-    let (opens, received) = match word {
-        DoorWord::Stale => (STALE, "received, confirming again"),
-        DoorWord::Unknown
-        | DoorWord::Built
-        | DoorWord::Handed
-        | DoorWord::Announced
-        | DoorWord::Seen
-        | DoorWord::Mined
-        | DoorWord::Rejected
-        | DoorWord::Conflicted
-        | DoorWord::Abandoned => (depth.as_str(), "received, no proof"),
+    // The text a hold for want of a rule opens with; it offers nothing.
+    let (opens, received) = if word == DoorWord::Stale {
+        (STALE, "received, confirming again")
+    } else {
+        (depth.as_str(), "received, no proof")
     };
     rule_hold(
         origin,
