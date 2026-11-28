@@ -92,6 +92,7 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
                 "inconclusive": report.inconclusive,
                 "absent": report.absent.iter().map(|(t, m)| serde_json::json!({"txid": t, "ageMinutes": m})).collect::<Vec<_>>(),
                 "fatal": report.fatal,
+                "refusalHints": report.refusal_hints,
                 "retired": retired,
                 "lockedInputs": {
                     "adopted": report.locked.adopted,
@@ -147,7 +148,16 @@ pub async fn run(ctx: &WalletContext, execute: bool, max_probes: usize) -> Resul
         );
     }
     for txid in &report.fatal {
-        println!("    REJECTED by the broadcaster: {}", txid);
+        println!(
+            "    REJECTED by the broadcaster and absent from every chain index: {}",
+            txid
+        );
+    }
+    for txid in &report.refusal_hints {
+        println!(
+            "    refused by the broadcaster, no clean absence at the chain indexes (a hint, kept): {}",
+            txid
+        );
     }
 
     if report.retired.is_empty() {
