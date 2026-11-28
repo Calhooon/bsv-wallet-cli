@@ -61,36 +61,6 @@ pub async fn held_unproven(reader: &SqlitePool, txid: &str) -> Result<bool> {
     Ok(held.is_some())
 }
 
-/// The request statuses the toolbox writes for a received transaction only
-/// once a broadcaster took its bytes or a status source held it (#645).
-const RECEIVED_TOOK: &str = "SELECT lower(r.txid) FROM proven_tx_reqs r \
-     WHERE r.status IN ('unmined', 'callback', 'unconfirmed') \
-       AND EXISTS (SELECT 1 FROM transactions t \
-                   WHERE t.txid = r.txid AND t.is_outgoing = 0)";
-
-/// Is the request of the received transaction `txid` past its post?
-///
-/// # Errors
-///
-/// Propagates a failed read.
-pub async fn received_request_took(reader: &SqlitePool, txid: &str) -> Result<bool> {
-    let took: Option<String> =
-        sqlx::query_scalar(&format!("{RECEIVED_TOOK} AND r.txid = ? LIMIT 1"))
-            .bind(txid)
-            .fetch_optional(reader)
-            .await?;
-    Ok(took.is_some())
-}
-
-/// Every received transaction whose request is past its post, lowercase.
-///
-/// # Errors
-///
-/// Propagates a failed read.
-pub async fn received_requests_that_took(reader: &SqlitePool) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(RECEIVED_TOOK).fetch_all(reader).await?)
-}
-
 /// A transaction's stored bytes and BEEF, `(raw_tx, input_beef)`, if the
 /// store holds it: what the toolbox builds a spend's BEEF from
 /// (`split`'s hold of a coin mined before Genesis, #634). Reads only.
