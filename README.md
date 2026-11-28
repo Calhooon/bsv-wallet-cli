@@ -340,6 +340,7 @@ A refused call answers `{"code", "message"}` (the gate's refusals add
 | 409 | `CONFLICT` | `Duplicate entity:`, `Invalid operation:` |
 | 409 | `UNSPENDABLE_COIN` | the wallet's own coin covered the action but its stored ancestry is incomplete (`Unspendable coin: <txid.vout>: ...`); the body names it under `coin`. Not the caller's fault and not a shortfall |
 | 500 | `INTERNAL_ERROR` | `Storage error:` (the spend gate's and guard's own faults: `Storage error: spend gate: ...`), `Database error:`, `Internal error:` |
+| 501 | `SEND_WITH_NOT_SUPPORTED` | a `createAction` naming a non-empty `sendWith` or `noSendChange` (#147), refused before anything is built, stored or posted, the prepared action left reserved for its owner's `abortAction` |
 | 502 | `SERVICE_ERROR`, `BROADCAST_REJECTED` | `Service error:`, `Network error:`, `Broadcast failed:`; a broadcast no broadcaster took, retired |
 | 503 | `STORE_BUSY` | the store busy (#44, beside bsv-low #828): body `{"code":"STORE_BUSY","message":"<the error>"}`, header `Retry-After: 1` |
 | 503 | `HEADERS_UNAVAILABLE` | "could not verify now" (#59): the header service did not answer, twice, for coins that could have covered the action (or for every named input); body the refusal's (`message` naming the service's error, `offeredSatoshis`, `held`), header `Retry-After: 2`. Nothing written, built, locked or posted |
