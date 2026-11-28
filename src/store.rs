@@ -18,7 +18,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 mod chain;
-pub use chain::{require_chain, ChainMismatch, LEGACY_TESTNET_ADVICE};
+pub use chain::{require_chain, require_chain_if_made, ChainMismatch, LEGACY_TESTNET_ADVICE};
 
 pub mod origin_grants;
 
@@ -757,14 +757,16 @@ mod tests {
     /// its context's store (`reconcile-outputs` once kept its own pool). A
     /// command opens the file itself only when it carries no Wallet at all:
     /// `init` (it creates the file) and `tick` (a Monitor alone), each
-    /// exactly once, and `ui` (the inspector) twice: its store, the one
+    /// exactly once, `repair-chain` (#682: it opens the store without the
+    /// chain word's refusal and builds no wallet) once, and `ui` (the
+    /// inspector) twice: its store, the one
     /// writer its origins view writes through (#414), and its reads' pool,
     /// opened read-only so no SQL writes through it (#440). Every file in
     /// `src/commands/` is read, so a new command is held to the rule too.
     #[test]
     fn no_command_opens_the_wallet_file_beside_its_store() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
-        let alone = ["init.rs", "tick.rs", "ui.rs"];
+        let alone = ["init.rs", "tick.rs", "ui.rs", "repair_chain.rs"];
         let opens = |name: &str| if name == "ui.rs" { 2 } else { 1 };
         let mut read = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {

@@ -75,3 +75,26 @@ pub fn require_chain(
         })
     }
 }
+
+/// The same check for a command that opens a file `init` may not have
+/// made (`init` over an existing file, the inspector `ui`, #682): a file
+/// holding a wallet's settings row is made available and refused by
+/// [`require_chain`] when its word is another chain's; a file with no
+/// settings row has no chain word to ask. Writes nothing of the store's.
+///
+/// # Errors
+///
+/// [`ChainMismatch`], or the store's read fault.
+pub async fn require_chain_if_made(
+    storage: &bsv_wallet_toolbox::StorageSqlx,
+    db: &str,
+    chain: bsv_wallet_toolbox::Chain,
+) -> anyhow::Result<()> {
+    use bsv_wallet_toolbox::WalletStorageWriter;
+    if !super::has_settings_row(storage.pool()).await? {
+        return Ok(());
+    }
+    storage.make_available().await?;
+    require_chain(storage, db, chain)?;
+    Ok(())
+}

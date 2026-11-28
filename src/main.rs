@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
         Commands::Ui { ui_port } => {
             let allowed =
                 server::AllowedOrigins::new(config.server.allowed_origins.iter().cloned())?;
-            commands::ui::run(&cli.db, *ui_port, allowed).await?;
+            commands::ui::run(&cli.db, config.chain(), *ui_port, allowed).await?;
         }
         Commands::Compact => {
             let ctx = open().await?;

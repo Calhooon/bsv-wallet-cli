@@ -51,12 +51,15 @@ async fn read_only_pool(db_path: &str) -> Result<SqlitePool> {
 
 /// The inspector's state over the wallet's file: the store's handle for
 /// the origins view's writes, opened first (its writer sets WAL), then
-/// the read-only pool. A missing file is refused, never created.
-async fn open(db_path: &str) -> Result<AppState> {
+/// the read-only pool. A missing file is refused, never created; a store
+/// whose chain word is not `chain`'s is refused by the same check and
+/// text as every command's (#682).
+async fn open(db_path: &str, chain: bsv_wallet_toolbox::Chain) -> Result<AppState> {
     if !std::path::Path::new(db_path).is_file() {
         anyhow::bail!("no wallet database at {db_path}: the inspector opens an existing one");
     }
     let store = StorageSqlx::open(db_path).await?;
+    bsv_wallet_cli::store::require_chain_if_made(&store, db_path, chain).await?;
     let pool = read_only_pool(db_path).await?;
     Ok(AppState {
         pool,
@@ -65,8 +68,13 @@ async fn open(db_path: &str) -> Result<AppState> {
     })
 }
 
-pub async fn run(db_path: &str, port: u16, allowed: AllowedOrigins) -> Result<()> {
-    let app = router(Arc::new(open(db_path).await?), allowed);
+pub async fn run(
+    db_path: &str,
+    chain: bsv_wallet_toolbox::Chain,
+    port: u16,
+    allowed: AllowedOrigins,
+) -> Result<()> {
+    let app = router(Arc::new(open(db_path, chain).await?), allowed);
     let addr = format!("127.0.0.1:{port}");
     println!("Wallet Inspector running at http://{addr}");
     let listener = TcpListener::bind(&addr).await?;
