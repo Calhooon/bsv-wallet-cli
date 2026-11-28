@@ -36,7 +36,6 @@ use crate::support::*;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use bsv_sdk::transaction::{Beef, MerklePath};
 use bsv_wallet_cli::tracker_host::{self, SystemClock, TickOptions};
 use bsv_wallet_toolbox::services::mock::{
     error_post_beef_result, MockErrorKind, MockResponse, MockWalletServices,
@@ -320,13 +319,8 @@ async fn a_second_internalize_of_the_same_body_leaves_the_row_as_it_was() {
 async fn a_body_that_arrives_with_its_proof_reads_mined() {
     // The payment's own transaction, carried with a proof of its own.
     let paid = Paid::new();
-    let (_, child) = paying(&paid.lock, 5);
-    let txid = child.id();
-    assert_eq!(txid, paid.txid);
-    let mut beef = Beef::new();
-    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, SUBJECT_HEIGHT));
-    beef.merge_raw_tx(child.to_binary(), Some(bump)).unwrap();
-    let tx = beef.to_binary_atomic(&txid).unwrap();
+    let tx = paid.carried_proven(SUBJECT_HEIGHT);
+    let txid = paid.txid.clone();
 
     let posts = Arc::new(accepting());
     let roots = [(SUBJECT_HEIGHT, txid.as_str())];
