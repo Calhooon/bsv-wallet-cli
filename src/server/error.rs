@@ -432,6 +432,7 @@ impl From<anyhow::Error> for AppError {
 impl AppError {
     /// The message as the door serves it: the refusal's words, then the
     /// operator's hint when there is one.
+    #[must_use]
     pub fn served_message(&self) -> String {
         match &self.hint {
             Some(hint) => format!("{} (hint: {hint})", self.message),
@@ -442,6 +443,7 @@ impl AppError {
     /// The body the door serves: `{code, message}`, the reference's
     /// review-action members in their place, the gate's listing when there
     /// is one. A command's `--json` prints the same (`abort-action`, #673).
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let mut body = json!({"code": self.kind.code(), "message": self.served_message()});
         if let Some(review) = &self.review {
