@@ -40,6 +40,10 @@ use support::*;
 #[path = "served_internalize_door/door_word.rs"]
 mod door_word;
 
+/// The take's source: no take without a post (#645, P1).
+#[path = "served_internalize_door/door_take.rs"]
+mod door_take;
+
 use axum::http::StatusCode;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::KeyDeriver;
