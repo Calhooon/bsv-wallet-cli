@@ -9,8 +9,8 @@ use crate::context::WalletContext;
 const FEE_RESERVE_BASE: u64 = 50;
 const FEE_RESERVE_PER_INPUT: u64 = 25;
 
-pub async fn run(
-    ctx: &WalletContext,
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     address: &str,
     allow_pending: crate::spend_gate::AllowPending,
 ) -> Result<()> {
@@ -117,7 +117,9 @@ pub async fn run(
     Ok(())
 }
 
-async fn sum_spendable(ctx: &WalletContext) -> Result<(u64, u32)> {
+async fn sum_spendable<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
+) -> Result<(u64, u32)> {
     let mut balance: u64 = 0;
     let mut count: u32 = 0;
     let mut offset: i32 = 0;

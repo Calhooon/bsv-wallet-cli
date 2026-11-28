@@ -72,8 +72,8 @@ fn p2pkh_script(pubkey: &[u8]) -> Vec<u8> {
     s
 }
 
-pub async fn run(
-    ctx: &WalletContext,
+pub async fn run<S: bsv_wallet_toolbox::WalletServices + Send + Sync + 'static>(
+    ctx: &WalletContext<S>,
     recipient_pubkey_hex: &str,
     satoshis: u64,
     unlock: &str,
