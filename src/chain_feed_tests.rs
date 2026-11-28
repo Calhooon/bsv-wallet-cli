@@ -1018,7 +1018,6 @@ async fn word_on_the_next_load(
 /// on the row): it moves no word and writes no verdict, so T stays `stale`
 /// with its re-ask, on this load and the next, and is not announced again.
 #[tokio::test]
-#[ignore = "decides the re-post's refusal: green once it is a hint"]
 async fn a_refused_repost_of_a_stale_transaction_is_a_hint_and_no_verdict() {
     use bsv_wallet_toolbox::services::mock::{
         double_spend_post_beef_result, error_post_beef_result,
@@ -1057,12 +1056,12 @@ async fn a_refused_repost_of_a_stale_transaction_is_a_hint_and_no_verdict() {
     }
 }
 
-/// Step 8's evidence through the announce, ruling 7d (c): no broadcaster
-/// knows the `stale` T, and the one announce is refused by the node as a
-/// double spend naming X. The refusal writes the node's verdict: T is
-/// `conflicted([X])`, and the word stands on the next load.
+/// Step 8's announce, ruling 7d (c): no broadcaster knows the `stale` T,
+/// and the one announce is refused by the only broadcaster as a double
+/// spend naming X. The refusal is that broadcaster's word, kept as a hint:
+/// T stays `stale`, on the next load too.
 #[tokio::test]
-async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
+async fn a_refused_announce_of_a_stale_transaction_is_a_hint() {
     let x = "d9".repeat(32);
     let (storage, txid, services, report) = stale_announced_once(|txid| {
         vec![
@@ -1074,8 +1073,8 @@ async fn a_refused_announce_of_a_stale_transaction_writes_the_nodes_verdict() {
         ]
     })
     .await;
-    assert_eq!(report.verdicts, vec![format!("{txid}: conflicted")]);
-    assert_eq!(word(&storage, &txid).await.0, "conflicted");
+    assert_eq!(report.stale_refused, vec![format!("{txid}: double_spend")]);
+    assert_eq!(word(&storage, &txid).await.0, "stale");
     let next = word_on_the_next_load(&storage, &services, &txid).await;
-    assert_eq!(next, "conflicted");
+    assert_eq!(next, "stale");
 }

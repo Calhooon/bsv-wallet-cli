@@ -153,7 +153,7 @@ fn a_pass_is_quiet_only_when_it_did_nothing_but_read() {
         ("stale_known", |r| r.stale_known = one()),
         ("stale_announced", |r| r.stale_announced = one()),
         ("stale_to_monitor", |r| r.stale_to_monitor = one()),
-        ("verdicts", |r| r.verdicts = one()),
+        ("stale_refused", |r| r.stale_refused = one()),
         ("faults", |r| r.faults = one()),
     ];
     for (what, set) in loud {
@@ -182,7 +182,7 @@ fn the_pass_line_names_every_count() {
         not_final: n(1),
         stale_known: n(1),
         stale_announced: n(2),
-        verdicts: n(1),
+        stale_refused: n(1),
         stale_to_monitor: n(1),
         faults: n(2),
         ..TickReport::default()
@@ -191,8 +191,8 @@ fn the_pass_line_names_every_count() {
         report.summary(),
         "tracker tick: 5 tracked (1 new), 3 proven creator(s) adopted (1 mined, 2 proof failed), \
          2 hint(s), 1 announced again (1 still not final), 4 re-ask(s): 1 mined, 2 without a \
-         proof, 3 moved, 5 stale followed up (1 known, 2 announced, 1 verdict(s), 1 the \
-         monitor's), 2 fault(s)"
+         proof, 3 moved, 5 stale followed up (1 known, 2 announced, 1 refused (a hint), 1 \
+         the monitor's), 2 fault(s)"
     );
 }
 
