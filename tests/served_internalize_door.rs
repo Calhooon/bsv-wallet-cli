@@ -164,9 +164,9 @@ async fn merged_over_custom(
 
 /// The storage door's rows on the stable line (a payment with an empty
 /// derivation prefix or suffix, a sender that is 66 hex digits and not a
-/// point), through this host's wallet door: refused by the argument
-/// validator, nothing written or posted. The control: the payment made
-/// well is stored.
+/// point, a sender whose leading byte is no compressed key's), through
+/// this host's wallet door: refused by the argument validator, nothing
+/// written or posted. The control: the payment made well is stored.
 #[tokio::test]
 async fn the_storage_door_rows_are_refused_by_the_argument_validator() {
     let paid = Paid::new();
@@ -174,6 +174,10 @@ async fn the_storage_door_rows_are_refused_by_the_argument_validator() {
     let before = stored(&wallet).await;
     let me = paid.sender.to_hex();
     let not_a_point = format!("02{}", "ff".repeat(32));
+    // 33 bytes whose leading byte, 05, is neither 02 nor 03: the refusal is
+    // pinned by the validator's own words, never by the key library's words
+    // for the point, which differ between its versions.
+    let unknown_tag = "05".repeat(33);
     for (output, message) in [
         (
             payment_of(0, "", SUFFIX, &me),
@@ -185,6 +189,11 @@ async fn the_storage_door_rows_are_refused_by_the_argument_validator() {
         ),
         (
             payment_of(0, PREFIX, SUFFIX, &not_a_point),
+            "Validation error: The senderIdentityKey parameter must be a valid compressed \
+             secp256k1 public key",
+        ),
+        (
+            payment_of(0, PREFIX, SUFFIX, &unknown_tag),
             "Validation error: The senderIdentityKey parameter must be a valid compressed \
              secp256k1 public key",
         ),
