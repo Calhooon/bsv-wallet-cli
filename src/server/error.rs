@@ -68,6 +68,11 @@ pub enum Kind {
     /// #145): this wallet holds no privileged key, so the call is refused,
     /// never answered with the everyday key.
     PrivilegedNotSupported,
+    /// A `createAction` naming a non-empty `sendWith` or `noSendChange`
+    /// (#147): the wallet below this host does not yet answer the call, so
+    /// it is refused before anything is built, stored or posted; the
+    /// prepared action it names is left as it was.
+    SendWithNotSupported,
 }
 
 impl Kind {
@@ -99,6 +104,7 @@ impl Kind {
             Kind::PrivilegedNotSupported => {
                 (StatusCode::NOT_IMPLEMENTED, "PRIVILEGED_NOT_SUPPORTED")
             }
+            Kind::SendWithNotSupported => (StatusCode::NOT_IMPLEMENTED, "SEND_WITH_NOT_SUPPORTED"),
         }
     }
 

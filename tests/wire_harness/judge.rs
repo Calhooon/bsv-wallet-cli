@@ -99,8 +99,11 @@ fn judged_codes() -> impl Iterator<Item = (u16, &'static str)> {
 
 /// `AppError` codes no in-process world produces, each named with why in
 /// docs/WIRE.md. A fixture that answers one moves it to [`APP_CODES`].
-pub(crate) const UNPRODUCED: [(u16, &str); 2] =
-    [(501, "NOT_IMPLEMENTED"), (502, "BROADCAST_REJECTED")];
+pub(crate) const UNPRODUCED: [(u16, &str); 3] = [
+    (501, "NOT_IMPLEMENTED"),
+    (502, "BROADCAST_REJECTED"),
+    (501, "SEND_WITH_NOT_SUPPORTED"),
+];
 
 /// The `(status, code)` pairs `src/server/error.rs` writes: each
 /// `(StatusCode::NAME, "CODE")` of `Kind::answer`, the served layer's one

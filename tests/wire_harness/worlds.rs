@@ -8,9 +8,11 @@ use bsv_sdk::primitives::PrivateKey;
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::{Services, StorageSqlx, WalletStorageWriter};
 
+use super::arc_stub::arc_stub;
+pub(crate) use super::arc_stub::ArcPosts;
 pub(crate) use super::world_names::{known_world, WORLDS};
 use super::{cases_not_spendable, cases_received_rule};
-use crate::wire_support::{header_stub, serve_local, services, Req, CLOSED, J, ROOT_KEY};
+use crate::wire_support::{header_stub, services, Req, CLOSED, J, ROOT_KEY};
 
 pub(crate) use super::payments::{stranger_key, stranger_payment, Payment};
 
@@ -87,87 +89,6 @@ pub(crate) struct World {
     /// Held for the world's life: the stubs' tasks, a temp store, the
     /// other connection holding the write lock.
     _keep: Vec<Box<dyn std::any::Any + Send>>,
-}
-
-/// The requests a world's local ARC took: each one's path and the txids
-/// its body carried (a BEEF's transactions in order, or a raw
-/// transaction's own), read by the cases that count posts (#147).
-pub(crate) type ArcPosts = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>;
-
-/// A local ARC that takes every post (the mock services'
-/// `post_beef_success`, over the wire: the server's state holds the real
-/// `Services`): `POST /v1/tx` answers `SEEN_ON_NETWORK` for the posted
-/// transaction, the BEEF's subject or the raw transaction's own txid. Every
-/// other request is a 404. Each request is logged in `posts`.
-async fn arc_stub(posts: ArcPosts) -> String {
-    use axum::extract::State;
-    use axum::routing::post;
-    fn bytes_of(body: &[u8]) -> Vec<u8> {
-        serde_json::from_slice::<serde_json::Value>(body)
-            .ok()
-            .and_then(|v| v["rawTx"].as_str().and_then(|h| hex::decode(h).ok()))
-            .unwrap_or_else(|| body.to_vec())
-    }
-    /// The txid the stub answers: the BEEF's subject or the raw
-    /// transaction's own txid (empty for anything else, an EF among them).
-    fn answered(bytes: &[u8]) -> String {
-        match bsv_sdk::transaction::Beef::from_binary(bytes) {
-            Ok(beef) => beef
-                .txs
-                .last()
-                .map(bsv_sdk::transaction::BeefTx::txid)
-                .unwrap_or_default(),
-            Err(_) => bsv_sdk::transaction::Transaction::from_binary(bytes)
-                .as_ref()
-                .map(bsv_sdk::transaction::Transaction::id)
-                .unwrap_or_default(),
-        }
-    }
-    /// The txids the log records: a BEEF's transactions in order, else the
-    /// one transaction, raw or EF.
-    fn txids(body: &[u8]) -> Vec<String> {
-        let bytes = bytes_of(body);
-        if let Ok(beef) = bsv_sdk::transaction::Beef::from_binary(&bytes) {
-            return beef
-                .txs
-                .iter()
-                .map(bsv_sdk::transaction::BeefTx::txid)
-                .collect();
-        }
-        bsv_sdk::transaction::Transaction::from_binary(&bytes)
-            .or_else(|_| bsv_sdk::transaction::Transaction::from_ef(&bytes))
-            .as_ref()
-            .map(bsv_sdk::transaction::Transaction::id)
-            .into_iter()
-            .collect()
-    }
-    async fn take(
-        State(posts): State<ArcPosts>,
-        body: axum::body::Bytes,
-    ) -> axum::Json<serde_json::Value> {
-        let txid = answered(&bytes_of(&body));
-        posts
-            .lock()
-            .unwrap()
-            .push(("/v1/tx".to_string(), txids(&body)));
-        axum::Json(serde_json::json!({"txid": txid, "txStatus": "SEEN_ON_NETWORK"}))
-    }
-    async fn other(
-        State(posts): State<ArcPosts>,
-        uri: axum::http::Uri,
-        body: axum::body::Bytes,
-    ) -> axum::http::StatusCode {
-        posts
-            .lock()
-            .unwrap()
-            .push((uri.path().to_string(), txids(&body)));
-        axum::http::StatusCode::NOT_FOUND
-    }
-    let app = Router::new()
-        .route("/v1/tx", post(take))
-        .fallback(other)
-        .with_state(posts);
-    serve_local(app).await
 }
 
 /// The time of every seeded row: half an hour before the world is built,
