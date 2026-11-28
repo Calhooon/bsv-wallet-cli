@@ -429,22 +429,21 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let (status, code) = (self.kind.status(), self.kind.code());
-        let message = match &self.hint {
+impl AppError {
+    /// The message as the door serves it: the refusal's words, then the
+    /// operator's hint when there is one.
+    pub fn served_message(&self) -> String {
+        match &self.hint {
             Some(hint) => format!("{} (hint: {hint})", self.message),
-            None => self.message,
-        };
-        // Log the response's words too: a callback deadline cannot identify
-        // whether the store or the header service was still answering.
-        tracing::warn!(
-            status = status.as_u16(),
-            code = code,
-            message = %message,
-            "request error"
-        );
-        let mut body = json!({"code": code, "message": message});
+            None => self.message.clone(),
+        }
+    }
+
+    /// The body the door serves: `{code, message}`, the reference's
+    /// review-action members in their place, the gate's listing when there
+    /// is one. A command's `--json` prints the same (`abort-action`, #673).
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut body = json!({"code": self.kind.code(), "message": self.served_message()});
         if let Some(review) = &self.review {
             body = review_body(review);
         }
@@ -452,6 +451,22 @@ impl IntoResponse for AppError {
             body["offeredSatoshis"] = json!(refusal.offered_satoshis);
             body["held"] = refusal.held_json();
         }
+        body
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, code) = (self.kind.status(), self.kind.code());
+        // Log the response's words too: a callback deadline cannot identify
+        // whether the store or the header service was still answering.
+        tracing::warn!(
+            status = status.as_u16(),
+            code = code,
+            message = %self.served_message(),
+            "request error"
+        );
+        let body = self.to_json();
         match self.retry_after.or(self.kind.retry_after_secs()) {
             // Retry after the pause. A callback deadline can leave partial
             // status writes, which repeated delivery converges.

@@ -199,11 +199,28 @@ pub enum Commands {
         #[arg(long)]
         tag: Option<String>,
     },
-    /// List transaction history
+    /// List transaction history. A prepared, unsent action (`noSend`:
+    /// signed, never sent) is marked with its age, its txid, its reference
+    /// and the sats its inputs hold, and a line totals them: it keeps those
+    /// coins until it is sent or aborted (`abort-action`)
     Actions {
         /// Filter by label
-        #[arg(long)]
+        #[arg(long, conflicts_with = "prepared")]
         label: Option<String>,
+        /// List only the prepared, unsent actions, every one, oldest first
+        #[arg(long)]
+        prepared: bool,
+    },
+    /// Abort one action this wallet built and never sent, by its txid or
+    /// its reference (`actions --prepared` lists them), freeing the coins
+    /// its inputs hold; this wallet then never sends it. A transaction a
+    /// broadcaster took is never aborted. An abort frees this wallet's coins
+    /// only: a prepared transaction whose bytes were handed to someone else
+    /// can still be posted by them, so abort only a payment that was not
+    /// handed over
+    AbortAction {
+        /// The action's txid (hex) or reference
+        action: String,
     },
     /// List the per-origin grant rows and the open pending requests (#414).
     /// The served doors still admit by `ALLOWED_ORIGINS`; these rows are the

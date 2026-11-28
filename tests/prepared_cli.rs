@@ -96,7 +96,7 @@ async fn prepared() -> Prepared {
     let storage = StorageSqlx::open(path.to_str().unwrap()).await.unwrap();
     storage.migrate("prepared-cli", &identity).await.unwrap();
     storage.make_available().await.unwrap();
-    let coin = seed_coin(&storage, &root).await;
+    let coin = seed_coin(&storage, &root, 0).await;
     let wallet = Wallet::new(
         Some(root.clone()),
         storage,
@@ -159,8 +159,8 @@ async fn prepared() -> Prepared {
 
 /// One mined coin of `COIN` sats to the wallet's change derivation, its
 /// proof stored (the respend witness's fixture, `tests/respend_witness/`).
-/// Its txid.
-async fn seed_coin(storage: &StorageSqlx, root: &PrivateKey) -> String {
+/// The `n`th coin's funding transaction differs by its lock time. Its txid.
+async fn seed_coin(storage: &StorageSqlx, root: &PrivateKey, n: u32) -> String {
     let identity = root.public_key().to_hex();
     let (user, _) = storage.find_or_insert_user(&identity).await.unwrap();
     let basket = storage
@@ -193,13 +193,13 @@ async fn seed_coin(storage: &StorageSqlx, root: &PrivateKey) -> String {
             locking_script: lock.clone(),
             change: false,
         }],
-        0,
+        n,
     );
     let now = Utc::now();
     let row: i64 = sqlx::query_scalar(
         "INSERT INTO transactions (user_id,status,reference,is_outgoing,satoshis,version,lock_time,description,txid,raw_tx,created_at,updated_at) \
-         VALUES (?,'completed','funding',0,?,1,0,'a mined coin',?,?,?,?) RETURNING transaction_id")
-        .bind(user.user_id).bind(COIN as i64).bind(funding.id()).bind(funding.to_binary()).bind(now).bind(now)
+         VALUES (?,'completed',?,0,?,1,?,'a mined coin',?,?,?,?) RETURNING transaction_id")
+        .bind(user.user_id).bind(format!("funding-{n}")).bind(COIN as i64).bind(n).bind(funding.id()).bind(funding.to_binary()).bind(now).bind(now)
         .fetch_one(storage.writer()).await.unwrap();
     sqlx::query(
         "INSERT INTO outputs (user_id,transaction_id,basket_id,vout,satoshis,locking_script,txid,type,spendable,change,derivation_prefix,derivation_suffix,provided_by,purpose,output_description,created_at,updated_at) \
@@ -328,59 +328,167 @@ fn the_prepared_payment_holds_the_wallets_coin() {
     });
 }
 
-/// THE TEST THAT DECIDES (#673), `actions` in text: at the base the
-/// prepared payment is one line like any other action, its status the
-/// wire's word `nosend`, its txid's first eight digits, the action's net
-/// satoshis; neither its whole txid, its reference, its age nor the
-/// satoshis its input holds is printed, and no line totals a hold.
+/// A second prepared payment on the wallet `p`: a second coin of `COIN`
+/// sats, then a `noSend` payment too large for the first payment's change,
+/// so it holds the second coin alone. Its txid, its reference and the
+/// coin's txid.
+async fn another(p: &Prepared) -> (String, String, String) {
+    let storage = StorageSqlx::open(p.dir.path().join("wallet.db").to_str().unwrap())
+        .await
+        .unwrap();
+    storage.make_available().await.unwrap();
+    let coin = seed_coin(&storage, &p.root, 1).await;
+    let wallet = Wallet::new(
+        Some(p.root.clone()),
+        storage,
+        MockWalletServices::builder().build(),
+    )
+    .await
+    .unwrap();
+    let made = wallet
+        .create_action(
+            CreateActionArgs {
+                description: "a second prepared payment".into(),
+                input_beef: None,
+                inputs: None,
+                outputs: Some(vec![CreateActionOutput {
+                    locking_script: LockingScript::from_hex("51").unwrap().to_binary(),
+                    satoshis: COIN - 500,
+                    output_description: "the payment".into(),
+                    basket: None,
+                    custom_instructions: None,
+                    tags: None,
+                }]),
+                lock_time: None,
+                version: None,
+                labels: None,
+                options: Some(CreateActionOptions {
+                    no_send: Some(true),
+                    accept_delayed_broadcast: Some(false),
+                    ..Default::default()
+                }),
+            },
+            Some("app.example"),
+        )
+        .await
+        .unwrap();
+    let txid = hex::encode(made.txid.unwrap());
+    let reference: String = sqlx::query_scalar("SELECT reference FROM transactions WHERE txid = ?")
+        .bind(&txid)
+        .fetch_one(wallet.storage().pool())
+        .await
+        .unwrap();
+    (txid, reference, coin)
+}
+
+/// The command's (exit code, stdout, stderr).
+fn ran(p: &Prepared, args: &[&str]) -> (Option<i32>, String, String) {
+    let out = run(p.dir.path(), &p.root, args);
+    (out.status.code(), text(&out.stdout), text(&out.stderr))
+}
+
+/// What an abort is and is not, as every listing and the abort print it.
+const ABORT_IS: &str = "An abort frees this wallet's coins and the wallet never sends the \
+     action; a prepared transaction whose bytes were handed to someone else can still be \
+     posted by them, so abort only a payment that was not handed over";
+
+/// `actions` in text (#673): the prepared payment's line is today's, and
+/// under it a line marks it prepared and not sent, with the sats its input
+/// holds, its age, its whole txid and its reference; a last line totals
+/// the hold and names the two commands. At the base the listing was the
+/// count line and one line per action alone.
 #[test]
 fn actions_in_text() {
     on_runtime(|| async {
         let p = prepared().await;
         let out = said(&p, &["actions"]);
         eprintln!("#673 actions:\n{out}");
-        let line = out
-            .lines()
-            .find(|l| l.contains(DESCRIPTION))
+        let lines: Vec<&str> = out.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains(DESCRIPTION))
             .expect("the prepared payment is listed");
-        assert!(line.starts_with("  OUT | "), "{line}");
-        assert!(line.contains(&format!(" | {} | nosend | ", &p.txid[..8])));
         assert_eq!(
-            line,
+            lines[at],
             format!(
                 "  OUT | {} | nosend | -{} sats | {DESCRIPTION}",
                 &p.txid[..8],
                 spent(&p)
             )
         );
-        assert!(!out.contains(&p.txid), "{out}");
-        assert!(!out.contains(&p.reference), "{out}");
-        // The coin's satoshis on the mined coin's own line alone.
-        assert_eq!(out.matches(&COIN.to_string()).count(), 1, "{out}");
-        assert_eq!(out.lines().count(), 3, "{out}");
+        let mark = lines[at + 1];
+        assert!(
+            mark.starts_with(&format!(
+                "      prepared, not sent: holds {COIN} sats in 1 input, "
+            )),
+            "{mark}"
+        );
+        assert!(
+            mark.ends_with(&format!(
+                " old | txid {} | reference {}",
+                p.txid, p.reference
+            )),
+            "{mark}"
+        );
+        assert_eq!(
+            *lines.last().unwrap(),
+            format!(
+                "1 prepared, unsent action holds {COIN} sats: `bsv-wallet actions --prepared` \
+                 lists them, `bsv-wallet abort-action <txid>` frees one. {ABORT_IS}"
+            )
+        );
+        assert_eq!(lines.len(), 5, "{out}");
+        // A mined coin's line has no mark.
+        let mined = lines
+            .iter()
+            .position(|l| l.contains("a mined coin"))
+            .unwrap();
+        assert!(!lines[mined + 1].starts_with("      prepared"), "{out}");
     });
 }
 
-/// THE TEST THAT DECIDES (#673), `actions --json`: at the base the
-/// prepared payment is an action object of today's keys, its status
-/// `nosend`; nothing carries its reference or the satoshis its input
-/// holds. Today's keys, pinned: a caller that parses them keeps working.
+/// `actions --json` (#673): today's keys stay as they were, each of the
+/// same JSON type, on every action and at the top; a prepared action
+/// carries one ADDED key, `prepared` (its reference, when it was made, its
+/// age, the inputs it holds), and the listing one ADDED key,
+/// `preparedTotal`. At the base the prepared action had today's eight
+/// keys and nothing carried its reference or the hold.
 #[test]
 fn actions_in_json() {
     on_runtime(|| async {
         let p = prepared().await;
         let out: Value = serde_json::from_str(&said(&p, &["--json", "actions"])).unwrap();
         eprintln!("#673 actions --json: {out}");
-        assert_eq!(keys(&out), ["actions", "totalActions"]);
-        let action = out["actions"]
+        assert_eq!(keys(&out), ["actions", "preparedTotal", "totalActions"]);
+        assert!(out["totalActions"].is_u64());
+        assert_eq!(
+            out["preparedTotal"],
+            serde_json::json!({"actions": 1, "heldSatoshis": COIN})
+        );
+        // Today's keys and their types, on every action.
+        let today = [
+            ("description", Value::is_string as fn(&Value) -> bool),
+            ("isOutgoing", Value::is_boolean),
+            ("labels", Value::is_array),
+            ("lockTime", Value::is_u64),
+            ("satoshis", Value::is_i64),
+            ("status", Value::is_string),
+            ("txid", Value::is_string),
+            ("version", Value::is_u64),
+        ];
+        for action in out["actions"].as_array().unwrap() {
+            for (key, is) in today {
+                assert!(is(&action[key]), "{key} in {action}");
+            }
+        }
+        let mined = out["actions"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|a| a["txid"] == p.txid.as_str())
-            .expect("the prepared payment is listed");
-        assert_eq!(action["status"], "nosend");
+            .find(|a| a["txid"] == p.coin.as_str())
+            .unwrap();
         assert_eq!(
-            keys(action),
+            keys(mined),
             [
                 "description",
                 "isOutgoing",
@@ -392,16 +500,126 @@ fn actions_in_json() {
                 "version"
             ]
         );
+        let action = out["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["txid"] == p.txid.as_str())
+            .expect("the prepared payment is listed");
+        assert_eq!(action["status"], "nosend");
         assert_eq!(action["satoshis"], -(spent(&p) as i64));
-        let shown = out.to_string();
-        assert!(!shown.contains(&p.reference), "{shown}");
-        assert!(!action.to_string().contains(&COIN.to_string()), "{action}");
+        assert_eq!(
+            keys(action),
+            [
+                "description",
+                "isOutgoing",
+                "labels",
+                "lockTime",
+                "prepared",
+                "satoshis",
+                "status",
+                "txid",
+                "version"
+            ]
+        );
+        let added = &action["prepared"];
+        assert_eq!(
+            keys(added),
+            [
+                "ageSeconds",
+                "createdAt",
+                "heldInputs",
+                "heldSatoshis",
+                "reference"
+            ]
+        );
+        assert_eq!(added["reference"], p.reference.as_str());
+        assert_eq!(added["heldInputs"], 1);
+        assert_eq!(added["heldSatoshis"], COIN);
+        let now = Utc::now().timestamp();
+        let made = added["createdAt"].as_i64().unwrap();
+        assert!((now - 600..=now).contains(&made), "{added}");
+        assert!((0..600).contains(&added["ageSeconds"].as_i64().unwrap()));
     });
 }
 
-/// THE TEST THAT DECIDES (#673), `balance`: at the base the prepared
-/// payment's change is counted and its reserved coin is not; nothing says
-/// a coin is held.
+/// `actions --prepared` (#673), text and JSON: the prepared actions alone,
+/// oldest first, and the total; none at all reads so. `--label` and
+/// `--prepared` together are refused by the parser.
+#[test]
+fn actions_prepared_lists_them_alone() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        let (second, second_ref, _) = another(&p).await;
+        let out = said(&p, &["actions", "--prepared"]);
+        eprintln!("#673 actions --prepared:\n{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(
+            lines[0].starts_with(&format!("  {} | reference {} | ", p.txid, p.reference)),
+            "{out}"
+        );
+        assert!(
+            lines[0].ends_with(&format!(
+                " old | holds {COIN} sats in 1 input | -{} sats | {DESCRIPTION}",
+                spent(&p)
+            )),
+            "{out}"
+        );
+        assert!(
+            lines[1].starts_with(&format!("  {second} | reference {second_ref} | ")),
+            "{out}"
+        );
+        assert!(
+            lines[2].starts_with(&format!(
+                "2 prepared, unsent actions hold {} sats: ",
+                2 * COIN
+            )),
+            "{out}"
+        );
+        assert!(!out.contains("a mined coin"), "{out}");
+
+        let json: Value =
+            serde_json::from_str(&said(&p, &["--json", "actions", "--prepared"])).unwrap();
+        eprintln!("#673 actions --prepared --json: {json}");
+        assert_eq!(keys(&json), ["heldSatoshis", "prepared"]);
+        assert_eq!(json["heldSatoshis"], 2 * COIN);
+        let rows = json["prepared"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            keys(&rows[0]),
+            [
+                "ageSeconds",
+                "createdAt",
+                "description",
+                "heldInputs",
+                "heldSatoshis",
+                "reference",
+                "satoshis",
+                "txid"
+            ]
+        );
+        assert_eq!(
+            (
+                &rows[0]["txid"],
+                &rows[0]["reference"],
+                &rows[0]["heldSatoshis"]
+            ),
+            (
+                &Value::from(p.txid.as_str()),
+                &Value::from(p.reference.as_str()),
+                &Value::from(COIN)
+            )
+        );
+        assert_eq!(rows[1]["txid"], second.as_str());
+
+        let (code, _, err) = ran(&p, &["actions", "--prepared", "--label", "x"]);
+        assert_eq!(code, Some(2), "{err}");
+    });
+}
+
+/// THE TEST THAT DECIDES (#673), `balance`: the prepared payment's change
+/// is counted and its reserved coin is not (unchanged by #673: a row).
 #[test]
 fn balance_counts_the_change_and_not_the_held_coin() {
     on_runtime(|| async {
@@ -414,17 +632,201 @@ fn balance_counts_the_change_and_not_the_held_coin() {
     });
 }
 
-/// THE TEST THAT DECIDES (#673), the commands: at the base none of the
-/// commands `--help` lists aborts an action, and running every listing the
-/// payment appears in leaves it `nosend`, its coin reserved.
+/// `abort-action <txid>` (#673): the commands `--help` lists now hold
+/// one that aborts, `abort-action`; it aborts the named payment through
+/// this host's `abortAction`: the payment reads `failed`, its coin is
+/// spendable again with no spender, the other prepared payment is
+/// untouched, the listing shows none but that one, and `balance` counts
+/// the freed coin. At the base no command aborted it.
 #[test]
-fn no_command_aborts_it() {
+fn abort_action_by_txid_frees_the_coin_of_that_one_alone() {
     on_runtime(|| async {
         let p = prepared().await;
         let names = commands(&p);
         eprintln!("#673 commands: {names:?}");
-        assert!(names.contains(&"actions".to_string()), "{names:?}");
-        assert!(!names.iter().any(|n| n.contains("abort")), "{names:?}");
+        let aborts: Vec<&String> = names.iter().filter(|n| n.contains("abort")).collect();
+        assert_eq!(aborts, ["abort-action"], "{names:?}");
+        let (second, _, second_coin) = another(&p).await;
+
+        let out = said(&p, &["abort-action", &p.txid]);
+        eprintln!("#673 abort-action: {out}");
+        assert_eq!(
+            out.trim_end(),
+            format!(
+                "aborted {} (reference {}): 1 input holding {COIN} sats, spendable again; the \
+                 action is failed and this wallet will not send it. A transaction whose bytes \
+                 were handed to someone else can still be posted by them, and then spends \
+                 these coins",
+                p.txid, p.reference
+            )
+        );
+        let (status, coin) = store_of(&p).await;
+        assert_eq!((status.as_str(), coin), ("failed", (true, None)));
+
+        let listed = said(&p, &["actions", "--prepared"]);
+        assert_eq!(listed.lines().count(), 2, "{listed}");
+        assert!(listed.starts_with(&format!("  {second} | ")), "{listed}");
+        let storage = StorageSqlx::open(p.dir.path().join("wallet.db").to_str().unwrap())
+            .await
+            .unwrap();
+        let held: (String, bool, Option<String>) = sqlx::query_as(
+            "SELECT t.status, o.spendable, s.txid FROM outputs o \
+             JOIN transactions t ON t.txid = ? \
+             LEFT JOIN transactions s ON s.transaction_id = o.spent_by \
+             WHERE o.txid = ? AND o.vout = 0",
+        )
+        .bind(&second)
+        .bind(&second_coin)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+        assert_eq!(held, ("nosend".to_string(), false, Some(second.clone())));
+
+        // The freed coin is counted again, beside the second payment's
+        // change (the balance's own rule, unchanged).
+        let balance = said(&p, &["balance"]);
+        let sats: u64 = balance.split_whitespace().next().unwrap().parse().unwrap();
+        assert!(sats >= COIN, "{balance}");
+    });
+}
+
+/// `abort-action <reference> --json` (#673): the one action its
+/// reference names, aborted; the answer names it, what it was and what it
+/// freed. A second abort of it is the wallet's own refusal, exit 1.
+#[test]
+fn abort_action_by_reference_under_json() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        let out: Value =
+            serde_json::from_str(&said(&p, &["--json", "abort-action", &p.reference])).unwrap();
+        eprintln!("#673 abort-action --json: {out}");
+        assert_eq!(
+            out,
+            serde_json::json!({
+                "aborted": true,
+                "txid": p.txid,
+                "reference": p.reference,
+                "was": "nosend",
+                "freedInputs": 1,
+                "freedSatoshis": COIN,
+            })
+        );
+        assert_eq!(store_of(&p).await.1, (true, None));
+
+        let (code, out, err) = ran(&p, &["--json", "abort-action", &p.reference]);
+        eprintln!("#673 abort-action again: {out}{err}");
+        assert_eq!(code, Some(1));
+        let refused: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(keys(&refused), ["code", "message"]);
+        assert!(
+            refused["message"]
+                .as_str()
+                .unwrap()
+                .contains("cannot be aborted"),
+            "{refused}"
+        );
+    });
+}
+
+/// `abort-action` of a payment a broadcaster took (#673): refused by the
+/// served door's own guard, its code and words, and nothing moves: the
+/// payment stays `nosend`, its coin reserved. In text the refusal is on
+/// stderr, exit 1; under `--json` the door's body on stdout, exit 1.
+#[test]
+fn abort_action_refuses_a_payment_a_broadcaster_took() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        let storage = StorageSqlx::open(p.dir.path().join("wallet.db").to_str().unwrap())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO broadcast_seen (txid, provider, status) VALUES (?, 'arcade', 'accepted')",
+        )
+        .bind(&p.txid)
+        .execute(storage.writer())
+        .await
+        .unwrap();
+        drop(storage);
+        let guard = format!(
+            "Invalid operation: a broadcaster took transaction {}; it is not aborted. It stays, \
+             re-asked, until a proof, a node verdict or a competitor's checked proof decides it",
+            p.txid
+        );
+
+        let (code, out, err) = ran(&p, &["abort-action", &p.txid]);
+        eprintln!("#673 abort-action of a taken payment: {out}{err}");
+        assert_eq!(code, Some(1));
+        assert!(out.is_empty(), "{out}");
+        assert!(
+            err.contains(&format!("abort-action {}: {guard}", p.txid)),
+            "{err}"
+        );
+
+        let (code, out, _) = ran(&p, &["--json", "abort-action", &p.reference]);
+        assert_eq!(code, Some(1));
+        let refused: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            refused,
+            serde_json::json!({"code": "CONFLICT", "message": guard})
+        );
+        let (status, coin) = store_of(&p).await;
+        assert_eq!(status, "nosend");
+        assert_eq!(coin, (false, Some(p.txid.clone())));
+    });
+}
+
+/// `abort-action` names one action: two names are refused by the parser
+/// and nothing moves; a name that is no action of this wallet is the
+/// wallet's own refusal, exit 1, and nothing moves.
+#[test]
+fn abort_action_names_one_action() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        let (second, _, _) = another(&p).await;
+        let (code, _, err) = ran(&p, &["abort-action", &p.txid, &second]);
+        assert_eq!(code, Some(2), "{err}");
+        let (code, _, err) = ran(&p, &["abort-action", &"ab".repeat(32)]);
+        eprintln!("#673 abort-action of no action: {err}");
+        assert_eq!(code, Some(1), "{err}");
+        let listed = said(&p, &["actions", "--prepared"]);
+        assert_eq!(listed.lines().count(), 3, "{listed}");
+        assert_eq!(store_of(&p).await.0, "nosend");
+    });
+}
+
+/// The help of `abort-action` says what an abort is and is not.
+#[test]
+fn abort_actions_help_says_what_an_abort_is_not() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        let help = said(&p, &["abort-action", "--help"]).replace('\n', " ");
+        let help = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "freeing the coins its inputs hold",
+            "A transaction a broadcaster took is never aborted",
+            "a prepared transaction whose bytes were handed to someone else can still be \
+             posted by them, so abort only a payment that was not handed over",
+        ] {
+            assert!(help.contains(said), "{help}");
+        }
+    });
+}
+
+/// The store, unchanged by any listing: the prepared payment reads
+/// `nosend`, its coin reserved, after `actions`, `--json actions` and
+/// `actions --prepared`.
+#[test]
+fn no_listing_moves_the_store() {
+    on_runtime(|| async {
+        let p = prepared().await;
+        for args in [
+            &["actions"][..],
+            &["--json", "actions"],
+            &["actions", "--prepared"],
+            &["--json", "actions", "--prepared"],
+        ] {
+            said(&p, args);
+        }
         let (status, coin) = store_of(&p).await;
         assert_eq!(status, "nosend");
         assert_eq!(coin, (false, Some(p.txid.clone())));

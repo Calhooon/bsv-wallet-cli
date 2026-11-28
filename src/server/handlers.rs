@@ -65,7 +65,7 @@ use bsv_sdk::wallet::{
     WalletRevealCounterpartyArgs,
     WalletRevealSpecificArgs,
 };
-use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet};
+use bsv_wallet_toolbox::{Services, StorageSqlx, Wallet, WalletServices};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -1236,10 +1236,28 @@ pub async fn abort_action(
     Json(args): Json<AbortActionArgs>,
 ) -> Result<Json<AbortActionResult>, AppError> {
     let originator = extract_originator(&headers)?;
-    // A transaction a broadcaster took is never aborted here, whatever the
-    // caller knows: it stays until a proof, a node verdict or a competitor's
-    // checked proof (bsv-stack-lean #66; #24). One no broadcaster took is
-    // the toolbox's to abort.
+    let name = args.reference.clone();
+    let result = abort_guarded(&wallet, args, &originator).await?;
+    // The aborted spend leaves the month's tally (#414 L6): the row its
+    // reference or its txid names, of this originator.
+    if let Err(e) = crate::store::origin_grants::unspent(wallet.storage(), &originator, &name).await
+    {
+        tracing::warn!(originator = %originator, reference = %name, error = %e, "browser gate: the aborted spend was not taken from the tally");
+    }
+    Ok(Json(result))
+}
+
+/// `abortAction` as this host makes it, at the served door and at the
+/// command line (`bsv-wallet abort-action`, #673): a transaction a
+/// broadcaster took is never aborted, whatever the caller knows: it stays
+/// until a proof, a node verdict or a competitor's checked proof
+/// (bsv-stack-lean #66; #24). One no broadcaster took is the toolbox's to
+/// abort, which frees the inputs it holds and writes it `failed`.
+pub async fn abort_guarded<V: WalletServices + Send + Sync + 'static>(
+    wallet: &Wallet<StorageSqlx, V>,
+    args: AbortActionArgs,
+    originator: &str,
+) -> Result<AbortActionResult, AppError> {
     if let Some(txid) =
         crate::retire_guard::abort_refused_for(wallet.storage().pool(), &args.reference)
             .await
@@ -1253,18 +1271,10 @@ pub async fn abort_action(
             ),
         ));
     }
-    let name = args.reference.clone();
-    let result = wallet
-        .abort_action(args, Some(&originator))
+    wallet
+        .abort_action(args, Some(originator))
         .await
-        .map_err(AppError::from)?;
-    // The aborted spend leaves the month's tally (#414 L6): the row its
-    // reference or its txid names, of this originator.
-    if let Err(e) = crate::store::origin_grants::unspent(wallet.storage(), &originator, &name).await
-    {
-        tracing::warn!(originator = %originator, reference = %name, error = %e, "browser gate: the aborted spend was not taken from the tally");
-    }
-    Ok(Json(result))
+        .map_err(AppError::from)
 }
 
 /// The abort's pre-check fault: the store busy by its type
