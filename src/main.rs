@@ -281,6 +281,9 @@ async fn main() -> Result<()> {
             let ctx = open().await?;
             commands::reconcile_outputs::run(&ctx, *execute, *max_chain_checks).await?;
         }
+        Commands::RepairChain { execute, unchecked } => {
+            commands::repair_chain::run(&config, *execute, *unchecked, cli.json).await?;
+        }
         Commands::Reproof {
             since_height,
             all,

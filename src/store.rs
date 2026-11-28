@@ -48,6 +48,61 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .map_err(anyhow::Error::from)
 }
 
+/// The newest stored proofs, at most `limit`, as `(txid, height, merkle
+/// root)`: the store's own evidence of its chain (`repair-chain`, #682).
+/// Reads only.
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn newest_proofs(reader: &SqlitePool, limit: u32) -> Result<Vec<(String, i64, String)>> {
+    sqlx::query_as(
+        "SELECT txid, height, merkle_root FROM proven_txs \
+         ORDER BY height DESC, proven_tx_id DESC LIMIT ?",
+    )
+    .bind(i64::from(limit))
+    .fetch_all(reader)
+    .await
+    .map_err(anyhow::Error::from)
+}
+
+/// Does the file hold a wallet's settings row, the row `init`'s `migrate`
+/// writes? A file no `init` made has no chain word to ask (#682).
+///
+/// # Errors
+///
+/// The reader's `sqlx::Error`.
+pub async fn has_settings_row(reader: &SqlitePool) -> Result<bool> {
+    if !has_column(reader, "settings", "chain").await? {
+        return Ok(false);
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM settings")
+        .fetch_one(reader)
+        .await?;
+    Ok(n > 0)
+}
+
+/// Write the store's chain word, `chain`'s, in one statement on the
+/// writer (`repair-chain --execute`, #682). The rows written: one.
+///
+/// # Errors
+///
+/// The writer's fault, or a store with no settings row.
+pub async fn write_chain_word(
+    storage: &bsv_wallet_toolbox::StorageSqlx,
+    chain: bsv_wallet_toolbox::Chain,
+) -> Result<u64> {
+    let written = sqlx::query("UPDATE settings SET chain = ? WHERE settings_id = 1")
+        .bind(chain.as_str())
+        .execute(&mut *writer(storage).await?)
+        .await?
+        .rows_affected();
+    if written != 1 {
+        anyhow::bail!("the store has no settings row to write the chain word into");
+    }
+    Ok(written)
+}
+
 /// Is `txid` out and unproven (`unproven`, `sending`), or an action of ours
 /// signed and not handed over (`nosend`, `unprocessed`)? The door's test (#645, #659).
 ///

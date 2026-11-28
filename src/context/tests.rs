@@ -351,3 +351,42 @@ async fn init_over_a_store_of_the_other_chain_today() {
         assert_eq!(storage.get_settings().chain, word);
     }
 }
+
+/// #682: after `repair-chain --execute` on testnet (the header service the
+/// toolbox's mock, carrying the legacy proof's root at its height), the
+/// legacy store opens with `--testnet` and `getNetwork` answers `testnet`.
+#[tokio::test]
+async fn a_repaired_legacy_store_opens_on_testnet_and_answers_testnet() {
+    use crate::commands::repair_chain::{open_unasked, repair, Outcome};
+    let (_dir, db) = temp_db();
+    let root = PrivateKey::random();
+    legacy_testnet_store(&db, &root).await;
+    let config = configured(&db, true);
+    let headers = MockWalletServices::new();
+    headers.set_header_for_height(bsv_wallet_toolbox::services::BlockHeader {
+        version: 1,
+        previous_hash: "00".repeat(32),
+        merkle_root: "cc".repeat(32),
+        time: 0,
+        bits: 0,
+        nonce: 0,
+        hash: String::new(),
+        height: LEGACY_PROOF_HEIGHT,
+    });
+    let storage = open_unasked(&config, &db).await.unwrap();
+    let report = repair(&storage, &db, config.chain(), Some(&headers), true, false)
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, Outcome::Written, "{report:?}");
+    drop(storage);
+
+    let ctx = WalletContext::load_with(&db, &root.to_hex(), true, false, &config)
+        .await
+        .expect("the repaired store opens on testnet");
+    assert_eq!(
+        bsv_wallet_cli::genesis::door_network(ctx.wallet.storage()),
+        "test"
+    );
+    door_mocked(&ctx, &[]).await;
+    assert_eq!(network(&served(ctx)).await, json!({"network": "testnet"}));
+}

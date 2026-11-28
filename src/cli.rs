@@ -413,6 +413,21 @@ pub enum Commands {
         #[arg(long, default_value_t = 200)]
         max_chain_checks: usize,
     },
+    /// Set the store's chain word to this command's chain (--testnet: test), with the
+    /// store's evidence: the newest stored proofs (three at most) against the header
+    /// service's header at each proof's height (agrees, disagrees, or none). Dry-run by
+    /// default. --execute writes the word only when the evidence agrees; when there is
+    /// none, only with --unchecked too; never when it disagrees. Asks no service but the
+    /// header service and builds no wallet (#682)
+    RepairChain {
+        /// Write the chain word (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+        /// With --execute, write the word when the evidence is none (never when it
+        /// disagrees)
+        #[arg(long)]
+        unchecked: bool,
+    },
     /// Re-prove stored merkle proofs the chain no longer confirms (after a reorg).
     /// Reads the header at every stored proof's height in the window and lists the
     /// proofs whose root is not the active header's. Dry-run by default (no storage
