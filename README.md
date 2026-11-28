@@ -341,7 +341,13 @@ only when an envelope names a tracked transaction.
 ([src/broadcast_reconcile.rs](src/broadcast_reconcile.rs),
 `run_served_pass`) every `BROADCAST_RECONCILE_INTERVAL_SECS` (default 60, at least 5;
 `BROADCAST_RECONCILE=0` turns it off): the tracker's pass, the poisoned-chain
-sweep and the spend guard. Under `serve` it drains the wallet's Arcade SSE
+sweep and the spend guard. The sweep retires a failed transaction's unproven
+descendants; it reads no chain index, so a broadcaster's `rejected` row in the
+broadcast memory is a hint, kept on record, and retires nothing. A transaction
+is retired only on the definitive absence (the broadcaster's own negative and
+every voting chain index's clean 404), which the follow-up after a served
+broadcast and `reconcile-broadcasts` read; a chain index that could not be
+read completes no absence. Under `serve` it drains the wallet's Arcade SSE
 stream before the pass; under `daemon` the monitor holds that stream and the pass drains
 none. Its load: it reads the store and asks the header service for the tip and
 the header at each height a stored path names (one read per height per pass).
@@ -362,8 +368,10 @@ classic ARC `GET /v1/tx/{txid}`). A broadcaster that knows it ends the matter,
 its word kept as a hint; when every broadcaster that answered does not know
 it, the transaction is announced once (its stored BEEF: the transaction as
 bytes, its parents with their paths), never a second time in the same episode;
-a refusal the node gave writes the node's verdict (`rejected`, or `conflicted`
-with the competitors it names); no answer at all announces nothing. Load: one
+a broadcaster's refusal of that announce is a hint on the row
+(`<provider>|rejected`, or `<provider>|double_spend` with the competitors it
+names), never a node's verdict, and the word stays `stale` with its re-ask; no
+answer at all announces nothing. Load: one
 status read and at most one announce per `stale` word, at most four words a
 pass. Under `daemon` the follow-up is the toolbox's monitor's (its reorg and
 review tasks demote the proof and re-ask the courier once, toolbox 0.10.0
