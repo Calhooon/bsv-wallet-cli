@@ -16,6 +16,7 @@ pub async fn run(config: &Config, json: bool) -> Result<()> {
 
     let storage = StorageSqlx::open_with_options(db, config.wallet.storage_options()).await?;
     storage.make_available().await?;
+    crate::store::require_chain(&storage, db, chain)?;
 
     // Shared services config — see services_env.rs.
     let services = {

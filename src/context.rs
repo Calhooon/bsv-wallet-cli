@@ -47,18 +47,38 @@ impl WalletContext {
         config: &Arc<Config>,
     ) -> Result<Self> {
         let root_key = PrivateKey::from_hex(root_key_hex)?;
-        let identity_key = root_key.public_key().to_hex();
-
         let chain = if testnet { Chain::Test } else { Chain::Main };
         let (storage, services) = open_store(config, chain, db).await?;
-        let wallet = Wallet::with_options(
+        WalletContext::on_store(root_key, storage, services, chain, json, db, config).await
+    }
+}
+
+impl<S: WalletServices + Send + Sync + 'static> WalletContext<S> {
+    /// The context of a wallet on `storage` (opened and made available)
+    /// and `services`, on `chain`: the store refused when its settings'
+    /// chain is another's ([`crate::store::require_chain`]), the `Wallet`
+    /// built on `chain` (`Wallet::with_chain`), so the chain `getNetwork`
+    /// answers is the word the door judges by (#639). `load_with` builds
+    /// every command's context here; a test hands its mock services.
+    pub async fn on_store(
+        root_key: PrivateKey,
+        storage: StorageSqlx,
+        services: S,
+        chain: Chain,
+        json: bool,
+        db: &str,
+        config: &Arc<Config>,
+    ) -> Result<Self> {
+        crate::store::require_chain(&storage, db, chain)?;
+        let identity_key = root_key.public_key().to_hex();
+        let wallet = Wallet::with_chain(
             Some(root_key.clone()),
             storage,
             services,
             config.wallet.options(),
+            chain,
         )
         .await?;
-
         Ok(Self {
             wallet,
             identity_key,
@@ -69,9 +89,7 @@ impl WalletContext {
             config: config.clone(),
         })
     }
-}
 
-impl<S: WalletServices + Send + Sync + 'static> WalletContext<S> {
     /// Refuse `command`, which ends in `internalizeAction`, when the wallet
     /// has no chain tracker, before it fetches, builds, signs or
     /// broadcasts anything: the toolbox's door holds every
@@ -102,7 +120,8 @@ impl<S: WalletServices + Send + Sync + 'static> WalletContext<S> {
 
 /// The store at `db`, migrated, and the configured services for `chain`,
 /// the services' chain tracker wired into the store for merkle proof
-/// validation (Layer 1).
+/// validation (Layer 1). Its chain word is asked in
+/// [`WalletContext::on_store`].
 pub async fn open_store(
     config: &Config,
     chain: Chain,

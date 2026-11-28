@@ -49,8 +49,15 @@ pub async fn start(
 
     // One store over the file (`store::open_shared`): the wallet's handle
     // and the monitor's share one writer pool and one reservation set.
-    let (storage, storage_arc) =
-        crate::store::open_shared(db, config.wallet.storage_options()).await?;
+    // `open_shared` refuses a store whose settings' chain is not `chain`'s.
+    let (storage, storage_arc) = crate::store::open_shared(
+        db,
+        bsv_wallet_toolbox::storage::sqlx::StorageSqlxOptions {
+            chain,
+            ..config.wallet.storage_options()
+        },
+    )
+    .await?;
 
     let db_path = db.to_string();
     let make_services = |chain: Chain| -> anyhow::Result<Services> {
@@ -126,9 +133,17 @@ pub async fn start(
     // handle (its chain tracker, set above, is every handle's) and its own
     // `Services`.
     let services2 = make_services(chain)?;
-    let wallet = Wallet::with_options(Some(root_key), storage, services2, config.wallet.options())
-        .await
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    // On the tenant's chain, the store's word (`open_shared` refused any
+    // other): `getNetwork` answers the chain the door judges by (#639).
+    let wallet = Wallet::with_chain(
+        Some(root_key),
+        storage,
+        services2,
+        config.wallet.options(),
+        chain,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     let wallet_state = server::make_wallet_state(wallet);
 
     let arcade_token = arcade_rt.as_ref().map(|rt| rt.callback_token.clone());
