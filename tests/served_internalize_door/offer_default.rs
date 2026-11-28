@@ -132,17 +132,23 @@ async fn create(app: &axum::Router, allow_pending: Value) -> (StatusCode, Value)
     answer
 }
 
-/// The answer is the funds' refusal holding `outpoint` alone, for `reason`.
+/// The answer is the funds' refusal, nothing offered, holding `outpoint`
+/// for `reason` (the one coin held, or beside the coin its action spent).
 fn assert_held(answer: &(StatusCode, Value), outpoint: &str, word: &str, reason: &str) {
     let (status, body) = answer;
     assert_eq!(*status, StatusCode::PAYMENT_REQUIRED, "{body}");
     assert_eq!(body["code"], "INSUFFICIENT_FUNDS", "{body}");
     assert_eq!(body["offeredSatoshis"], 0, "{body}");
     let held = body["held"].as_array().expect("the held coins");
-    assert_eq!(held.len(), 1, "{body}");
-    assert_eq!(held[0]["outpoint"], outpoint, "{body}");
-    assert_eq!(held[0]["word"], word, "{body}");
-    assert_eq!(held[0]["reason"], reason, "{body}");
+    let coin = held
+        .iter()
+        .find(|c| c["outpoint"] == outpoint)
+        .unwrap_or_else(|| panic!("{outpoint} is not held: {body}"));
+    assert_eq!(coin["word"], word, "{body}");
+    assert_eq!(coin["reason"], reason, "{body}");
+    for other in held.iter().filter(|c| c["outpoint"] != outpoint) {
+        assert_eq!(other["word"], "locked", "{body}");
+    }
 }
 
 /// The answer is a signed action.
@@ -171,9 +177,9 @@ async fn a_taken_payment_is_spent_with_the_word_too() {
     assert_spent(&create(&app, json!("received")).await);
 }
 
-/// The default: the scoped form still narrows. A scope naming another coin
-/// than the wallet's one is the caller's error; a scope naming the coin
-/// spends it.
+/// The default: the scoped form is still read. A scope naming the taken
+/// payment spends it (the scope's narrowing over two coins is the gate's
+/// own test, `src/spend_gate/tests/offer_rule.rs`).
 #[tokio::test]
 async fn the_scoped_word_names_the_taken_payment() {
     let (_wallet, app, coin) = paid_under(DEFAULT, true).await;
@@ -186,7 +192,12 @@ async fn the_scoped_word_names_the_taken_payment() {
 #[tokio::test]
 async fn under_hold_a_taken_payment_needs_the_word() {
     let (_wallet, app, coin) = paid_under(HOLD, true).await;
-    assert_held(&create(&app, Value::Null).await, &coin, "announced", NO_WORD);
+    assert_held(
+        &create(&app, Value::Null).await,
+        &coin,
+        "announced",
+        NO_WORD,
+    );
     assert_spent(&create(&app, json!("received")).await);
 }
 

@@ -45,6 +45,11 @@ async fn build_and_post(
 
 /// Add an unproven ancestor between the next phantom and the proven coin.
 async fn descendant_phantom(f: &world::Fixture) -> String {
+    // The fixture's actions are made through the wallet library alone. The
+    // action whose change this one spends is given the create door's word,
+    // `built`, as the host writes it at signing: our own change is offered
+    // from `built` on (#659).
+    bsv_wallet_cli::tracker_host::signed_word(f.wallet.storage(), &f.phantom).await;
     let result = f
         .wallet
         .create_action(

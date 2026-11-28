@@ -122,7 +122,7 @@ async fn only_the_owner_holds_and_is_offered_the_coin() {
         serde_json::to_value(&held).unwrap(),
         serde_json::json!([{
             "outpoint": format!("{}.0", w.txid), "satoshis": 8_000,
-            "word": "unknown", "origin": "received", "age_minutes": 5,
+            "word": "announced", "origin": "received", "age_minutes": 5,
             "reason": "depth 1: 0 blocks; received, no proof; offered under allowPending: received"
         }])
     );

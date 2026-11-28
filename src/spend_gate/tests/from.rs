@@ -79,6 +79,8 @@ async fn funded_receipt() -> (Wallet<StorageSqlx, MockWalletServices>, String, i
     sqlx::query("UPDATE outputs SET type = 'P2PKH', change = 1, spendable = 1, provided_by = 'storage', purpose = 'receive', basket_id = ?, derivation_prefix = ?, derivation_suffix = ? WHERE txid = ? AND vout = 0")
         .bind(basket).bind(row.get::<String, _>("derivation_prefix")).bind(row.get::<String, _>("derivation_suffix"))
         .bind(&txid).execute(wallet.storage().writer()).await.unwrap();
+    // A broadcaster took it: the received payment reads `announced`.
+    super::taken(wallet.storage(), &txid).await;
     (wallet, txid, proven_id)
 }
 

@@ -678,7 +678,7 @@ async fn a_new_creator_tracked_without_its_path_is_adopted_after_the_toolbox_rep
 }
 
 #[tokio::test]
-async fn a_made_creator_tracked_without_its_path_reads_built_with_its_door_and_reason_unchanged() {
+async fn a_made_creator_tracked_without_its_path_reads_built_and_is_offered_from_it() {
     use crate::spend_gate::{hold_reason, GateOptions, Origin};
 
     let (storage, user) = wallet_storage().await;
@@ -715,8 +715,18 @@ async fn a_made_creator_tracked_without_its_path_reads_built_with_its_door_and_r
         (before.door, &before.fault, before.depth, before.suspect)
     );
     assert!(!after.door && after.fault.is_none());
-    assert_eq!(reasons(&after), reasons(&before));
-    assert!(reasons(&after)[1].is_some());
+    // Our own change is offered from `built` on (#659): held while no row
+    // read `unknown`, offered once the pass adopted it; `SPEND_OWN_CHANGE=0`
+    // holds it at either word, the reason unchanged.
+    let off = Some("depth 1: 0 blocks; own change, SPEND_OWN_CHANGE=0".to_string());
+    assert_eq!(
+        reasons(&before),
+        [
+            Some("unknown; own change not signed: never offered".to_string()),
+            off.clone()
+        ]
+    );
+    assert_eq!(reasons(&after), [None, off]);
 }
 
 /// A conflicted row at 900 whose stored proof misses the header there.

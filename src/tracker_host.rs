@@ -4560,7 +4560,8 @@ pub(crate) mod tests {
             "newTip": event_header(height + 1, &"b3".repeat(32), &"ee".repeat(32)),
         });
         sqlx::query(
-            "INSERT INTO tracker_states (txid, bump, word, chain) VALUES (?, ?, 'stale', ?)",
+            "INSERT OR REPLACE INTO tracker_states (txid, bump, word, chain) \
+             VALUES (?, ?, 'stale', ?)",
         )
         .bind(txid)
         .bind(path_of(txid, height))

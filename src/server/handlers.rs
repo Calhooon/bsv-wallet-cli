@@ -415,9 +415,10 @@ pub async fn create_action(
         .map_err(|e| AppError::from_pre_door(e, "spend guard"))?;
     // The spend gate (R1 (b), (d), R3 (b)): the toolbox allocates only
     // coins whose creator is mined at SPEND_DEPTH, our own change under
-    // SPEND_OWN_CHANGE, or a received pending coin under this action's
-    // `allowPending: received`; a named input passes the same judgment; a
-    // refusal lists every coin held back.
+    // SPEND_OWN_CHANGE from `built` on, or a received coin a broadcaster
+    // took (under SPEND_RECEIVED=hold, only with this action's
+    // `allowPending: received`; #659); a named input passes the same
+    // judgment; a refusal lists every coin held back.
     // The spend's row opens first (#414 L6): a write the store refuses
     // refuses the call by the store's class, with nothing built.
     let open = match tally {
