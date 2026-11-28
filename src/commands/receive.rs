@@ -649,37 +649,39 @@ pub(crate) mod tests {
         );
     }
 
-    /// A courier's sighting is heard (#645): an unproven payment `receive`
-    /// takes from WhatsOnChain's `/beef`, whose door post every broadcaster
-    /// refused, reads `announced` by the courier's mempool presence, the
-    /// row's one hint naming the courier. Fails when the sighting call
-    /// after `fund::internalize_beef` is taken out (the row stays `built`).
-    /// Hermetic: the wallet's own services and the storage's are the
-    /// toolbox's mock (the storage's set after `Wallet::new`, before any
-    /// call), and the courier is a local fixture.
-    #[tokio::test]
-    async fn a_couriers_sighting_is_heard_at_receive() {
-        use bsv_sdk::primitives::PrivateKey;
+    /// A wallet payment to `root_key`'s deposit script, unproven, over a
+    /// parent proven at a height after Genesis whose output `OP_1` locks:
+    /// its txid and its BEEF.
+    fn unproven_deposit(root_key: &bsv_sdk::primitives::PrivateKey) -> (String, Beef) {
+        let parent = raw_tx(&[(&"5e".repeat(32), 0)], &[(2_000, vec![0x51])]);
+        let parent_txid = txid_of(&parent);
+        let ours = brc29::deposit_script(root_key).unwrap();
+        let child = raw_tx(&[(&parent_txid, 0)], &[(1_000, ours)]);
+        let txid = txid_of(&child);
+        let mut beef = Beef::new();
+        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, 620_639));
+        beef.merge_raw_tx(parent, Some(bump)).unwrap();
+        beef.merge_raw_tx(child, None).unwrap();
+        (txid, beef)
+    }
+
+    /// A context of `root_key` whose wallet's own services are the
+    /// toolbox's mock and whose storage posts to a mock every broadcaster
+    /// of which refuses (set after `Wallet::new`, before any call), its
+    /// tracker valid for every root: the context and the refusing mock.
+    async fn refusing_context(
+        root_key: bsv_sdk::primitives::PrivateKey,
+    ) -> (
+        WalletContext<MockWalletServices>,
+        std::sync::Arc<MockWalletServices>,
+    ) {
         use bsv_wallet_toolbox::services::mock::error_post_beef_result;
         use bsv_wallet_toolbox::{Wallet, WalletStorageProvider};
-        const PARENT_HEIGHT: u32 = 620_639;
-
-        let root_key = PrivateKey::random();
         let identity_key = root_key.public_key().to_hex();
         let (storage, _, _) = crate::test_support::coins::storage_for(&identity_key).await;
         storage
             .set_chain_tracker(std::sync::Arc::new(TestChainTracker::always_valid(900_000)))
             .await;
-        let parent = raw_tx(&[(&"5e".repeat(32), 0)], &[(2_000, vec![0x51])]);
-        let parent_txid = txid_of(&parent);
-        let ours = brc29::deposit_script(&root_key).unwrap();
-        let child = raw_tx(&[(&parent_txid, 0)], &[(1_000, ours)]);
-        let txid = txid_of(&child);
-        let mut beef = Beef::new();
-        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, PARENT_HEIGHT));
-        beef.merge_raw_tx(parent, Some(bump)).unwrap();
-        beef.merge_raw_tx(child, None).unwrap();
-
         let wallet = Wallet::new(Some(root_key.clone()), storage, MockWalletServices::new())
             .await
             .unwrap();
@@ -701,18 +703,29 @@ pub(crate) mod tests {
             db_path: ":memory:".into(),
             config: std::sync::Arc::default(),
         };
+        (ctx, refusing)
+    }
+
+    /// A courier's sighting is heard (#645): an unproven payment `receive`
+    /// takes from the `/beef` route of `WhatsOnChain`, whose door post every
+    /// broadcaster refused, reads `announced` by the courier's mempool
+    /// presence, the row's one hint naming the courier. Fails when the
+    /// sighting call after `fund::internalize_beef` is taken out (the row
+    /// stays `built`). Hermetic: the wallet's own services and the
+    /// storage's are the toolbox's mock, and the courier is a local fixture.
+    #[tokio::test]
+    async fn a_couriers_sighting_is_heard_at_receive() {
+        let root_key = bsv_sdk::primitives::PrivateKey::random();
+        let (txid, mut beef) = unproven_deposit(&root_key);
+        let (ctx, refusing) = refusing_context(root_key).await;
         let route = format!("/tx/{txid}/beef");
         let explorer = Fixture::start(&[(&route, 200, &beef.to_hex().unwrap())], 500).await;
 
-        let (vout, accepted) = receive_txid_from(
-            &ctx,
-            &woc_only(&explorer.base),
-            &MockWalletServices::new(),
-            &txid,
-            None,
-        )
-        .await
-        .expect("received");
+        let woc = woc_only(&explorer.base);
+        let (vout, accepted) =
+            receive_txid_from(&ctx, &woc, &MockWalletServices::new(), &txid, None)
+                .await
+                .expect("received");
         assert_eq!((vout, accepted), (0, true));
         assert_eq!(refusing.call_count("post_beef"), 1, "the door posted once");
         let (word, _, _) = crate::tracker_host::stored_word(ctx.wallet.storage(), &txid)

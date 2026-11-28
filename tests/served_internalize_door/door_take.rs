@@ -32,7 +32,7 @@
 //! `noSend` (every action here is `noSend`), and `GET /tx/{txid}` reads the
 //! store alone. Should one be made all the same, it reaches nothing: each
 //! test seals the process's network before any `Services` is built
-//! ([`sealed`], the method of `src/test_support.rs`'s `seal_network`).
+//! (`seal_network`, `src/test_support/seal.rs`, #477).
 
 use crate::support::*;
 
@@ -40,8 +40,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::transaction::{Beef, MerklePath, Transaction};
-use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput, WalletInterface};
+use bsv_sdk::transaction::Beef;
 use bsv_wallet_cli::server::{self, ServerConfig};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::{
@@ -51,21 +50,7 @@ use bsv_wallet_toolbox::{
 use serde_json::{json, Value};
 
 use crate::chain_tracker::TestChainTracker;
-
-/// Every non-loopback request of this process to a closed local port,
-/// before a client is built: `src/test_support.rs`'s `seal_network` (#477),
-/// which a test target outside the crate cannot call.
-fn sealed() {
-    static SEALED: std::sync::Once = std::sync::Once::new();
-    SEALED.call_once(|| {
-        for var in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
-            std::env::set_var(var, "http://127.0.0.1:9");
-        }
-        for var in ["NO_PROXY", "no_proxy"] {
-            std::env::set_var(var, "127.0.0.1,localhost");
-        }
-    });
-}
+use crate::seal::seal_network;
 
 /// The header service's tip of the tracker `served_rooted` builds.
 const TIP: u32 = 900_000;
@@ -142,26 +127,14 @@ async fn readings(
 // (a) A subject proof the wallet cannot confirm
 // ---------------------------------------------------------------------------
 
-/// `paid`'s own transaction carried with a proof of its own at `height`
-/// (a coinbase-style path, its root the txid): the `AtomicBEEF`.
-fn carried_proven(paid: &Paid, height: u32) -> Vec<u8> {
-    let (_, child) = paying(&paid.lock, 5);
-    let txid = child.id();
-    assert_eq!(txid, paid.txid);
-    let mut beef = Beef::new();
-    let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&txid, height));
-    beef.merge_raw_tx(child.to_binary(), Some(bump)).unwrap();
-    beef.to_binary_atomic(&txid).unwrap()
-}
-
 /// A payment whose subject carries a proof at `height`, taken in by a
 /// wallet whose tracker holds `roots` (`(height, root)`; `subject` names
 /// the subject's txid) and whose proof gate is `gate` when given (the
 /// harness opens it to `u32::MAX` otherwise): the readings.
 async fn proven_subject(height: u32, roots: &[(u32, Option<&str>)], gate: Option<u32>) -> Readings {
-    sealed();
+    seal_network();
     let paid = Paid::new();
-    let tx = carried_proven(&paid, height);
+    let tx = paid.carried_proven(height);
     let posts = Arc::new(accepting());
     let roots: Vec<(u32, &str)> = roots
         .iter()
@@ -226,48 +199,16 @@ async fn a_subject_proof_the_proof_gate_defers() {
 /// `funding` (its only coin): its `AtomicBEEF` over the funding's BEEF, its
 /// txid and its change output's index.
 async fn not_sent(wallet: &WalletState, funding: &Paid, lock: &[u8]) -> (Vec<u8>, String, u32) {
-    let made = wallet
-        .create_action(
-            CreateActionArgs {
-                description: "a payment not sent".to_string(),
-                input_beef: None,
-                inputs: None,
-                outputs: Some(vec![CreateActionOutput {
-                    locking_script: lock.to_vec(),
-                    satoshis: 1_000,
-                    output_description: "the payment".to_string(),
-                    basket: None,
-                    custom_instructions: None,
-                    tags: None,
-                }]),
-                lock_time: None,
-                version: None,
-                labels: Some(vec!["underReceivedRule".to_string()]),
-                options: Some(CreateActionOptions {
-                    no_send: Some(true),
-                    sign_and_process: Some(true),
-                    randomize_outputs: Some(false),
-                    ..Default::default()
-                }),
-            },
-            Some("test.local"),
-        )
-        .await
-        .expect("the action");
-    let txid = hex::encode(made.txid.expect("the txid"));
-    let bytes = made.tx.expect("the signed transaction");
-    let signed = Transaction::from_atomic_beef(&bytes)
-        .or_else(|_| Transaction::from_binary(&bytes))
-        .expect("the signed transaction");
-    assert_eq!(signed.id(), txid);
-    let mut beef = Beef::from_binary(&funding.tx).expect("the funding's BEEF");
-    beef.merge_raw_tx(signed.to_binary(), None).unwrap();
-    let tx = beef.to_binary_atomic(&txid).unwrap();
+    let signed = spend_to(wallet, lock, true).await.expect("the action");
+    let txid = signed.id();
     let change: i64 = sqlx::query_scalar("SELECT vout FROM outputs WHERE txid = ? AND change = 1")
         .bind(&txid)
         .fetch_one(wallet.storage().pool())
         .await
         .expect("the change output");
+    let mut beef = Beef::from_binary(&funding.tx).expect("the funding's BEEF");
+    beef.merge_raw_tx(signed.to_binary(), None).unwrap();
+    let tx = beef.to_binary_atomic(&txid).unwrap();
     (tx, txid, u32::try_from(change).unwrap())
 }
 
@@ -293,7 +234,7 @@ async fn own_change_back(
 /// door. Nothing is posted for it; the word is `built`.
 #[tokio::test]
 async fn the_merge_of_a_no_send_action_with_one_user() {
-    sealed();
+    seal_network();
     let funding = Paid::new();
     let (wallet, app, posts) = funding.stored().await;
     assert_eq!(posts.call_count("post_beef"), 1, "the funding's post");
@@ -372,7 +313,7 @@ async fn two_users(
 /// neither reads `announced`.
 #[tokio::test]
 async fn the_merge_of_a_no_send_action_with_two_users() {
-    sealed();
+    seal_network();
     let sender_root = PrivateKey::random();
     let receiver_root = PrivateKey::random();
     let funding = Paid::to(&sender_root);

@@ -30,10 +30,14 @@
 mod chain_tracker;
 #[path = "../src/test_support/no_tracker.rs"]
 #[allow(dead_code)]
+#[macro_use]
 mod no_tracker;
 #[path = "support/remembering.rs"]
 #[allow(dead_code)]
 mod remembering;
+#[path = "../src/test_support/seal.rs"]
+#[allow(dead_code)]
+mod seal;
 #[path = "support/served_internalize.rs"]
 #[allow(dead_code)]
 mod support;
