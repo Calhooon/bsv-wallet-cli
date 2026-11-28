@@ -648,4 +648,88 @@ pub(crate) mod tests {
             "{text}"
         );
     }
+
+    /// A courier's sighting is heard (#645): an unproven payment `receive`
+    /// takes from WhatsOnChain's `/beef`, whose door post every broadcaster
+    /// refused, reads `announced` by the courier's mempool presence, the
+    /// row's one hint naming the courier. Fails when the sighting call
+    /// after `fund::internalize_beef` is taken out (the row stays `built`).
+    /// Hermetic: the wallet's own services and the storage's are the
+    /// toolbox's mock (the storage's set after `Wallet::new`, before any
+    /// call), and the courier is a local fixture.
+    #[tokio::test]
+    async fn a_couriers_sighting_is_heard_at_receive() {
+        use bsv_sdk::primitives::PrivateKey;
+        use bsv_wallet_toolbox::services::mock::error_post_beef_result;
+        use bsv_wallet_toolbox::{Wallet, WalletStorageProvider};
+        const PARENT_HEIGHT: u32 = 620_639;
+
+        let root_key = PrivateKey::random();
+        let identity_key = root_key.public_key().to_hex();
+        let (storage, _, _) = crate::test_support::coins::storage_for(&identity_key).await;
+        storage
+            .set_chain_tracker(std::sync::Arc::new(TestChainTracker::always_valid(900_000)))
+            .await;
+        let parent = raw_tx(&[(&"5e".repeat(32), 0)], &[(2_000, vec![0x51])]);
+        let parent_txid = txid_of(&parent);
+        let ours = brc29::deposit_script(&root_key).unwrap();
+        let child = raw_tx(&[(&parent_txid, 0)], &[(1_000, ours)]);
+        let txid = txid_of(&child);
+        let mut beef = Beef::new();
+        let bump = beef.merge_bump(MerklePath::from_coinbase_txid(&parent_txid, PARENT_HEIGHT));
+        beef.merge_raw_tx(parent, Some(bump)).unwrap();
+        beef.merge_raw_tx(child, None).unwrap();
+
+        let wallet = Wallet::new(Some(root_key.clone()), storage, MockWalletServices::new())
+            .await
+            .unwrap();
+        let refusing = std::sync::Arc::new(
+            MockWalletServices::builder()
+                .post_beef_response(MockResponse::Success(vec![error_post_beef_result(
+                    "arc",
+                    "the transaction was refused",
+                )]))
+                .build(),
+        );
+        WalletStorageProvider::set_services(wallet.storage(), refusing.clone());
+        let ctx = WalletContext {
+            wallet,
+            identity_key,
+            root_key,
+            chain: Chain::Main,
+            json_output: true,
+            db_path: ":memory:".into(),
+            config: std::sync::Arc::default(),
+        };
+        let route = format!("/tx/{txid}/beef");
+        let explorer = Fixture::start(&[(&route, 200, &beef.to_hex().unwrap())], 500).await;
+
+        let (vout, accepted) = receive_txid_from(
+            &ctx,
+            &woc_only(&explorer.base),
+            &MockWalletServices::new(),
+            &txid,
+            None,
+        )
+        .await
+        .expect("received");
+        assert_eq!((vout, accepted), (0, true));
+        assert_eq!(refusing.call_count("post_beef"), 1, "the door posted once");
+        let (word, _, _) = crate::tracker_host::stored_word(ctx.wallet.storage(), &txid)
+            .await
+            .unwrap()
+            .expect("a row");
+        assert_eq!(word, "announced");
+        let hints: String = sqlx::query_scalar("SELECT hints FROM tracker_states WHERE txid = ?")
+            .bind(&txid)
+            .fetch_one(ctx.wallet.storage().pool())
+            .await
+            .unwrap();
+        let hints: serde_json::Value = serde_json::from_str(&hints).unwrap();
+        assert_eq!(hints.as_array().map(Vec::len), Some(1), "{hints}");
+        assert_eq!(
+            hints[0]["source"], "WhatsOnChain|mempool_present",
+            "{hints}"
+        );
+    }
 }
