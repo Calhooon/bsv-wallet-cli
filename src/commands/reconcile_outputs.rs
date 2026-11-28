@@ -697,4 +697,56 @@ mod tests {
             "Balance (default basket): 6250 -> 50 (-6200 sats)"
         );
     }
+
+    /// R9 (#660), phase (a): a row whose stored bytes are not the
+    /// transaction of its txid names no input. Planted: the child's bytes
+    /// under another txid. No coin moves.
+    #[tokio::test]
+    async fn phase_a_bytes_that_do_not_hash_to_the_rows_txid_move_no_coin() {
+        let (pool, child_txid, child_raw) = fixture().await;
+        let planted = "ab".repeat(32);
+        assert_ne!(planted, child_txid);
+        sqlx::query("INSERT INTO transactions (transaction_id, txid, status, raw_tx) VALUES (2, ?, 'completed', ?)")
+            .bind(&planted)
+            .bind(&child_raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for execute in [false, true] {
+            let r =
+                reconcile_outputs_with(&pool, execute, 100, |_s, _v| async { InputSpend::Unknown })
+                    .await
+                    .unwrap();
+            assert_eq!(r.relinked_count + r.already_off_count, 0);
+            assert!(r.turned_off.is_empty(), "nothing counted turned off");
+        }
+        assert_eq!(lock(&pool, 1).await, (1, None), "the coin stays offered");
+    }
+
+    /// R9 (#660), phase (b): the relinquish reads the wallet library's
+    /// bound spender alone; for each missing binding (the library's answer
+    /// for it, `test_support::lost_bound`) no coin moves, and the spender's
+    /// own bytes, outpoint and root relinquish.
+    #[tokio::test]
+    async fn phase_b_moves_a_coin_only_on_a_spender_bound_by_bytes_outpoint_and_root() {
+        for case in crate::test_support::lost_bound::cases() {
+            let (pool, _, _) = fixture().await;
+            let services = case.services();
+            let script = crate::test_support::p2pkh([0xdb; 20]);
+            let r = reconcile_outputs_with(&pool, true, 100, |src: String, vout: u32| {
+                let (services, script) = (&services, script.clone());
+                async move { probe_input_spend(services, &src, vout, Some(&script)).await }
+            })
+            .await
+            .unwrap();
+            if case.honest {
+                assert_eq!(r.relinquished_count, 1, "{}", case.name);
+                assert_eq!(lock(&pool, 1).await, (0, None), "{}", case.name);
+            } else {
+                assert_eq!(r.relinquished_count, 0, "{}", case.name);
+                assert_eq!(r.unknown_count, 1, "{}", case.name);
+                assert_eq!(lock(&pool, 1).await, (1, None), "{}", case.name);
+            }
+        }
+    }
 }

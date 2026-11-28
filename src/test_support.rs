@@ -16,6 +16,7 @@ use axum::response::{IntoResponse, Response};
 mod busy;
 pub(crate) mod coins;
 pub(crate) mod genesis_coins;
+pub(crate) mod lost_bound;
 pub use busy::no_busy_wait;
 
 mod chain_tracker;

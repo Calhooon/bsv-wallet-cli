@@ -1,6 +1,7 @@
 //! L2-67: real SQLite, throwaway keys and the #66 mock chain/status sources.
 //! No live wallet, external HTTP, or real coin.
 
+mod lost_bound;
 mod proof_presence;
 mod world;
 
