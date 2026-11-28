@@ -82,37 +82,91 @@ pub(crate) struct World {
     pub(super) wallet: server::handlers::WalletState,
     pub(super) held: server::powers::Held,
     pub(super) probes: server::probes::Probes,
+    /// Every request the world's local ARC took, in order (#147).
+    pub(super) arc_posts: ArcPosts,
     /// Held for the world's life: the stubs' tasks, a temp store, the
     /// other connection holding the write lock.
     _keep: Vec<Box<dyn std::any::Any + Send>>,
 }
 
+/// The requests a world's local ARC took: each one's path and the txids
+/// its body carried (a BEEF's transactions in order, or a raw
+/// transaction's own), read by the cases that count posts (#147).
+pub(crate) type ArcPosts = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>;
+
 /// A local ARC that takes every post (the mock services'
 /// `post_beef_success`, over the wire: the server's state holds the real
 /// `Services`): `POST /v1/tx` answers `SEEN_ON_NETWORK` for the posted
 /// transaction, the BEEF's subject or the raw transaction's own txid. Every
-/// other request is a 404.
-async fn arc_stub() -> String {
+/// other request is a 404. Each request is logged in `posts`.
+async fn arc_stub(posts: ArcPosts) -> String {
+    use axum::extract::State;
     use axum::routing::post;
-    pub(crate) async fn take(body: axum::body::Bytes) -> axum::Json<serde_json::Value> {
-        let bytes = serde_json::from_slice::<serde_json::Value>(&body)
+    fn bytes_of(body: &[u8]) -> Vec<u8> {
+        serde_json::from_slice::<serde_json::Value>(body)
             .ok()
             .and_then(|v| v["rawTx"].as_str().and_then(|h| hex::decode(h).ok()))
-            .unwrap_or_else(|| body.to_vec());
-        let txid = match bsv_sdk::transaction::Beef::from_binary(&bytes) {
+            .unwrap_or_else(|| body.to_vec())
+    }
+    /// The txid the stub answers: the BEEF's subject or the raw
+    /// transaction's own txid (empty for anything else, an EF among them).
+    fn answered(bytes: &[u8]) -> String {
+        match bsv_sdk::transaction::Beef::from_binary(bytes) {
             Ok(beef) => beef
                 .txs
                 .last()
                 .map(bsv_sdk::transaction::BeefTx::txid)
                 .unwrap_or_default(),
-            Err(_) => bsv_sdk::transaction::Transaction::from_binary(&bytes)
+            Err(_) => bsv_sdk::transaction::Transaction::from_binary(bytes)
                 .as_ref()
                 .map(bsv_sdk::transaction::Transaction::id)
                 .unwrap_or_default(),
-        };
+        }
+    }
+    /// The txids the log records: a BEEF's transactions in order, else the
+    /// one transaction, raw or EF.
+    fn txids(body: &[u8]) -> Vec<String> {
+        let bytes = bytes_of(body);
+        if let Ok(beef) = bsv_sdk::transaction::Beef::from_binary(&bytes) {
+            return beef
+                .txs
+                .iter()
+                .map(bsv_sdk::transaction::BeefTx::txid)
+                .collect();
+        }
+        bsv_sdk::transaction::Transaction::from_binary(&bytes)
+            .or_else(|_| bsv_sdk::transaction::Transaction::from_ef(&bytes))
+            .as_ref()
+            .map(bsv_sdk::transaction::Transaction::id)
+            .into_iter()
+            .collect()
+    }
+    async fn take(
+        State(posts): State<ArcPosts>,
+        body: axum::body::Bytes,
+    ) -> axum::Json<serde_json::Value> {
+        let txid = answered(&bytes_of(&body));
+        posts
+            .lock()
+            .unwrap()
+            .push(("/v1/tx".to_string(), txids(&body)));
         axum::Json(serde_json::json!({"txid": txid, "txStatus": "SEEN_ON_NETWORK"}))
     }
-    let app = Router::new().route("/v1/tx", post(take));
+    async fn other(
+        State(posts): State<ArcPosts>,
+        uri: axum::http::Uri,
+        body: axum::body::Bytes,
+    ) -> axum::http::StatusCode {
+        posts
+            .lock()
+            .unwrap()
+            .push((uri.path().to_string(), txids(&body)));
+        axum::http::StatusCode::NOT_FOUND
+    }
+    let app = Router::new()
+        .route("/v1/tx", post(take))
+        .fallback(other)
+        .with_state(posts);
     serve_local(app).await
 }
 
@@ -545,7 +599,8 @@ impl World {
         let key = PrivateKey::from_hex(ROOT_KEY).unwrap();
         let storage = World::store(name, &mut keep).await;
         let roots = World::fill(name, &storage, &key).await;
-        let services = World::services(name, roots, &storage).await;
+        let arc_posts = ArcPosts::default();
+        let services = World::services(name, roots, &storage, arc_posts.clone()).await;
         if name == "tracked" {
             bsv_wallet_cli::tracker_host::deliver_chain_event(
                 &storage,
@@ -599,6 +654,7 @@ impl World {
             wallet,
             held,
             probes,
+            arc_posts,
             _keep: keep,
         }
     }
@@ -701,7 +757,12 @@ impl World {
     }
 
     /// The toolbox's services, pointed at the world's stubs.
-    async fn services(name: &str, roots: HashMap<u32, String>, storage: &StorageSqlx) -> Services {
+    async fn services(
+        name: &str,
+        roots: HashMap<u32, String>,
+        storage: &StorageSqlx,
+        arc_posts: ArcPosts,
+    ) -> Services {
         let stub = header_stub(name == "headers-down", roots, RECEIVED).await;
         let stub = if name == "review-race" {
             super::review_race::headers(stub, storage.writer().clone()).await
@@ -717,7 +778,7 @@ impl World {
                 | "internalize-held"
                 | "received-rule"
         ) {
-            arc_stub().await
+            arc_stub(arc_posts).await
         } else {
             CLOSED.to_string()
         };
