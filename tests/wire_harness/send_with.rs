@@ -342,12 +342,12 @@ fn a_sign_action_naming_a_prepared_payment() {
         eprintln!("#147 signAction: status {status}, body {body}");
         eprintln!("#147 signAction: posts {:?}, made {made:?}", posts(&world));
 
-        // The pin's answer (toolbox 0.14.0-beta.10, the world's classic
-        // ARC): the template's transaction is posted alone, as its EF (its
-        // parent is proven); the prepared payment in the same post's BEEF
-        // is never sent, and is marked `sending` and answered `sending`,
-        // never `unproven`. Nothing is made or posted beyond what the
-        // caller asked; the door changes nothing here (#147).
+        // This host's answer at the pin, through the world's classic ARC:
+        // the one post the ARC takes carries the template's transaction
+        // alone; the prepared payment is not posted, and is marked
+        // `sending` and answered `sending`, never `unproven`. Nothing is
+        // made or posted beyond what the caller asked; the door changes
+        // nothing here (#147).
         assert_eq!(status, 200);
         assert_eq!(
             posts(&world),
