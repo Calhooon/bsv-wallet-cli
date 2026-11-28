@@ -21,11 +21,9 @@
 //! memory, so no take is recorded and a signed action reads `built`. The
 //! post-broadcast verifier is off. Nothing reaches the network.
 
-use crate::commands::split::genesis_tests::wallet_with_proven;
 use crate::context::WalletContext;
 use crate::spend_gate::AllowPending;
 use bsv_sdk::primitives::PrivateKey;
-use bsv_sdk::wallet::{CreateActionArgs, CreateActionOptions, CreateActionOutput};
 use bsv_wallet_cli::tracker_host::{self, TickOptions};
 use bsv_wallet_toolbox::services::mock::MockWalletServices;
 use bsv_wallet_toolbox::Chain;
@@ -33,19 +31,23 @@ use bsv_wallet_toolbox::Chain;
 type Ctx = WalletContext<MockWalletServices>;
 
 /// A mainnet wallet holding one coin of 50,000 sats proven at 700,000, the
-/// post-broadcast verifier off.
+/// post-broadcast verifier off (`send`'s tests' wallet).
 async fn wallet() -> (PrivateKey, Ctx) {
     let root = PrivateKey::random();
-    let (mut ctx, _) = wallet_with_proven(&root, &[(700_000, 50_000)], Chain::Main).await;
-    let mut config = crate::config::Config::default();
-    config.verify.skip = true;
-    ctx.config = std::sync::Arc::new(config);
+    let (ctx, _) = crate::commands::send::genesis_tests::wallet(&root, &[(700_000, 50_000)]).await;
     (root, ctx)
 }
 
 /// Another party's P2PKH address.
 fn elsewhere() -> String {
     PrivateKey::random().public_key().to_address()
+}
+
+/// `send` of 1,000 sats to another party's address, which stands.
+async fn send_elsewhere(ctx: &Ctx) {
+    crate::commands::send::run(ctx, &elsewhere(), 1_000, AllowPending::Off, &[])
+        .await
+        .expect("sent");
 }
 
 /// The txid of the action the wallet made last, and its status.
@@ -81,13 +83,13 @@ async fn words(ctx: &Ctx, txid: &str) -> (Option<String>, &'static str) {
 /// are printed for the record of a run.
 async fn reads_built(ctx: &Ctx, road: &str) {
     let (txid, status) = last_made(ctx).await;
-    let read = words(ctx, &txid).await;
+    let seen = words(ctx, &txid).await;
     println!(
         "{road}: status {status}; served {:?}; the gate reads {}",
-        read.0, read.1
+        seen.0, seen.1
     );
     assert_eq!(
-        read,
+        seen,
         (Some("built".to_string()), "built"),
         "{road}: status {status}"
     );
@@ -97,9 +99,7 @@ async fn reads_built(ctx: &Ctx, road: &str) {
 #[tokio::test]
 async fn a_send_reads_built_at_signing() {
     let (_, ctx) = wallet().await;
-    crate::commands::send::run(&ctx, &elsewhere(), 1_000, AllowPending::Off, &[])
-        .await
-        .expect("sent");
+    send_elsewhere(&ctx).await;
     reads_built(&ctx, "send").await;
 }
 
@@ -146,26 +146,18 @@ async fn a_gift_send_reads_built_at_signing() {
 }
 
 /// An action through the spend gate's door with `options`: 1,000 sats to
-/// another party.
-async fn gated(ctx: &Ctx, options: CreateActionOptions) {
+/// another party, its arguments read as the served door reads a request.
+async fn gated(ctx: &Ctx, options: serde_json::Value) {
     let lock = bsv_sdk::script::templates::P2PKH::lock_from_address(&elsewhere()).unwrap();
-    let args = CreateActionArgs {
-        description: "an action of the create door's tests".to_string(),
-        input_beef: None,
-        inputs: None,
-        outputs: Some(vec![CreateActionOutput {
-            locking_script: lock.to_binary(),
-            satoshis: 1_000,
-            output_description: "a payment".to_string(),
-            basket: None,
-            custom_instructions: None,
-            tags: None,
-        }]),
-        lock_time: None,
-        version: None,
-        labels: None,
-        options: Some(options),
-    };
+    let request = serde_json::json!({
+        "outputs": [{ "satoshis": 1000, "lockingScript": lock.to_hex(), "outputDescription": "paid out" }],
+        "description": "the create door's tests",
+        "options": options,
+    });
+    let (args, _) = bsv_wallet_cli::server::handlers::create_action_args(
+        serde_json::from_value(request).unwrap(),
+    )
+    .unwrap();
     crate::spend_gate::create_action(&ctx.wallet, args, "create.door", &ctx.gate())
         .await
         .expect("the action");
@@ -176,14 +168,7 @@ async fn gated(ctx: &Ctx, options: CreateActionOptions) {
 #[tokio::test]
 async fn a_no_send_action_reads_built_at_signing() {
     let (_, ctx) = wallet().await;
-    gated(
-        &ctx,
-        CreateActionOptions {
-            no_send: Some(true),
-            ..Default::default()
-        },
-    )
-    .await;
+    gated(&ctx, serde_json::json!({ "noSend": true })).await;
     assert_eq!(
         ctx.wallet.services().call_count("post_beef"),
         0,
@@ -197,14 +182,7 @@ async fn a_no_send_action_reads_built_at_signing() {
 #[tokio::test]
 async fn a_delayed_action_reads_built_at_signing() {
     let (_, ctx) = wallet().await;
-    gated(
-        &ctx,
-        CreateActionOptions {
-            accept_delayed_broadcast: Some(true),
-            ..Default::default()
-        },
-    )
-    .await;
+    gated(&ctx, serde_json::json!({ "acceptDelayedBroadcast": true })).await;
     reads_built(&ctx, "delayed").await;
 }
 
@@ -213,14 +191,7 @@ async fn a_delayed_action_reads_built_at_signing() {
 #[tokio::test]
 async fn an_unsigned_template_has_no_row() {
     let (_, ctx) = wallet().await;
-    gated(
-        &ctx,
-        CreateActionOptions {
-            sign_and_process: Some(false),
-            ..Default::default()
-        },
-    )
-    .await;
+    gated(&ctx, serde_json::json!({ "signAndProcess": false })).await;
     let rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM tracker_states t JOIN transactions x ON lower(x.txid) = t.txid \
          WHERE x.is_outgoing = 1",
@@ -246,9 +217,7 @@ async fn row(ctx: &Ctx, txid: &str) -> Option<(i64, String, String, i64)> {
 #[tokio::test]
 async fn a_second_write_and_the_pass_change_nothing() {
     let (_, ctx) = wallet().await;
-    crate::commands::send::run(&ctx, &elsewhere(), 1_000, AllowPending::Off, &[])
-        .await
-        .expect("sent");
+    send_elsewhere(&ctx).await;
     let (txid, _) = last_made(&ctx).await;
     let written = row(&ctx, &txid).await;
     // The internalize door's word on the same transaction: nothing moves.
@@ -287,9 +256,7 @@ async fn a_fault_writing_the_row_is_logged_and_the_action_stands() {
     .execute(ctx.wallet.storage().writer())
     .await
     .unwrap();
-    crate::commands::send::run(&ctx, &elsewhere(), 1_000, AllowPending::Off, &[])
-        .await
-        .expect("the send stands");
+    send_elsewhere(&ctx).await;
     let (txid, status) = last_made(&ctx).await;
     assert_eq!(status, "unproven");
     assert_eq!(row(&ctx, &txid).await, None);

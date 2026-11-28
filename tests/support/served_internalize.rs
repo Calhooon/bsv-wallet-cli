@@ -116,6 +116,23 @@ pub(crate) async fn served_rooted(
     roots: Option<&[(u32, &str)]>,
     posts: Arc<dyn WalletServices>,
 ) -> (WalletState, axum::Router) {
+    let storage = rooted_store(root, roots).await;
+    let services =
+        Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
+    assert!(services.chaintracks.is_none(), "no header service");
+    let wallet = Wallet::new(Some(root.clone()), storage, services)
+        .await
+        .expect("wallet");
+    let state = server::make_wallet_state(wallet);
+    WalletStorageProvider::set_services(state.storage(), posts);
+    let config = ServerConfig::admitting(["test.local"]).expect("an originator");
+    let router = server::make_router(state.clone(), config);
+    (state, router)
+}
+
+/// A fresh in-memory store of `root`, its proof gate open, its tracker
+/// (when `roots` is given) carrying each named root at its height.
+pub(crate) async fn rooted_store(root: &PrivateKey, roots: Option<&[(u32, &str)]>) -> StorageSqlx {
     let storage = StorageSqlx::in_memory().await.expect("in-memory storage");
     storage
         .migrate("served-internalize-door", &root.public_key().to_hex())
@@ -132,17 +149,7 @@ pub(crate) async fn served_rooted(
         }
         storage.set_chain_tracker(Arc::new(tracker)).await;
     }
-    let services =
-        Services::with_options(Chain::Main, ServicesOptions::mainnet()).expect("services");
-    assert!(services.chaintracks.is_none(), "no header service");
-    let wallet = Wallet::new(Some(root.clone()), storage, services)
-        .await
-        .expect("wallet");
-    let state = server::make_wallet_state(wallet);
-    WalletStorageProvider::set_services(state.storage(), posts);
-    let config = ServerConfig::admitting(["test.local"]).expect("an originator");
-    let router = server::make_router(state.clone(), config);
-    (state, router)
+    storage
 }
 
 /// Posts `body` to `route` of the served router: the status and the JSON

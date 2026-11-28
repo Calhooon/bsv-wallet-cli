@@ -48,12 +48,8 @@ pub async fn stored_proof(reader: &SqlitePool, txid: &str) -> Result<Option<(Str
         .map_err(anyhow::Error::from)
 }
 
-/// Does the wallet hold `txid` out and unproven: `unproven` or `sending`,
-/// or an action of its own signed and not yet handed to a broadcaster
-/// (`nosend`, `unprocessed`)? The door's test for a body taken in with no
-/// proof (#645), and for an action this wallet signed (#659): a signed
-/// action is `built` from its signing, sent or not. An unsigned template
-/// (`unsigned`) is not signed and has no word.
+/// Is `txid` out and unproven (`unproven`, `sending`), or an action of ours
+/// signed and not handed over (`nosend`, `unprocessed`)? The door's test (#645, #659).
 ///
 /// # Errors
 ///

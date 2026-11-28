@@ -51,6 +51,10 @@ mod door_word;
 #[path = "served_internalize_door/door_take.rs"]
 mod door_take;
 
+/// The create door's word: an action this wallet signs (#659, L1).
+#[path = "served_internalize_door/create_door.rs"]
+mod create_door;
+
 use axum::http::StatusCode;
 use bsv_sdk::primitives::PrivateKey;
 use bsv_sdk::wallet::KeyDeriver;
