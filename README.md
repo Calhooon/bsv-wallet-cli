@@ -133,7 +133,8 @@ refused rows and exits 1.
 
 The CLI offers initialization, address and balance reads, transaction creation,
 internalization, outputs/actions queries, the prepared actions' listing and abort
-(`actions --prepared`, `abort-action`) and time-locked gifts. `daemon` runs
+(`actions --prepared`, `abort-action`), the store's chain word's repair
+(`repair-chain`) and time-locked gifts. `daemon` runs
 the monitor with the HTTP server; `serve` runs the server alone. Initialization
 creates wallet state, while sends and gift actions can spend funds. Use the
 command help for arguments before operating a wallet.
@@ -749,6 +750,25 @@ finds already off is linked to its spender and named on its own line, `already
 off: N rows, S sats`. A dry run prints the balance once and the `Would turn
 off` lines. The passes write the store under a running daemon; restart it to
 refresh its in-memory view.
+
+## The chain word's repair
+
+A store's `chain` setting is the chain its wallet runs on, and a store whose
+word is the other chain's is refused at open (#639). A `--testnet` store made by
+a release pinning the toolbox at 0.14.0-beta.3 or below (every 0.18.x and
+earlier, 0.19.0-beta.1 and beta.3) reads `main`: opened with `--testnet` it is
+refused, and the refusal says not to run it without `--testnet` and names the
+repair. `bsv-wallet [--testnet] repair-chain [--execute] [--unchecked] [--json]`
+sets the word to the command's chain (`--testnet`: `test`). It builds no wallet
+and asks no service but the header service (`CHAINTRACKS_URL`). Its evidence is
+the store's newest stored proofs (three at most) against the header at each
+proof's height: `agrees`, `disagrees` (any one does not), or `none` (no proof,
+`CHAINTRACKS_URL=off`, or a header that could not be read). It is a dry run by
+default. `--execute` writes the word when the evidence agrees, when it is
+`none` only with `--unchecked` too (the report says the word was written with
+no evidence), and never when it disagrees: the heights are named and nothing
+is written. `init` over a store of the other chain and the inspector `ui` are
+refused by the same check.
 
 ## Build and gate
 

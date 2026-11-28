@@ -20,7 +20,8 @@
 | `outputs.rs` | `run(&WalletContext, basket?, tag?)` | List UTXOs, optional basket/tag filters |
 | `services.rs` | `run(&Cli)` | Check chain services health (block height) |
 | `compact.rs` | `run(&WalletContext)` | Debug BEEF compaction on largest stored BEEF blob |
-| `ui.rs` | `run(db_path, port)` | Web-based wallet inspector (standalone Axum server) |
+| `ui.rs` | `run(db_path, chain, port, allowed)` | Web-based wallet inspector (standalone Axum server); refuses a store of the other chain (#682) |
+| `repair_chain.rs` | `run(&Config, execute, unchecked, json)` | Set the store's chain word to the command's chain on the evidence of its newest stored proofs against the header service; dry run by default (#682) |
 
 ## Decisions
 
