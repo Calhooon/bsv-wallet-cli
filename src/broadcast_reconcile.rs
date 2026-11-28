@@ -70,8 +70,14 @@
 //! webhook), the tracker's pass (`tracker_host::tick`: each of the wallet's
 //! unproven transactions holds a word, a broadcaster's word is a hint, and
 //! a proof is asked for one named transaction when a hint disagrees or its
-//! age is due), then the sweep of rule 3 over the verdicts already in
-//! storage and the re-checks of rule 4. It asks no chain index. Rules 1
+//! age is due), then the sweep of rule 3 over the failed transactions in
+//! storage that still have unproven spenders, and the re-checks of rule 4.
+//! It asks no chain index, so it holds no absence: a broadcaster's
+//! `rejected` memory row is a hint, kept on record, and never a retire
+//! root. A transaction is retired only on the definitive absence (the
+//! broadcaster's own negative and every voting chain index's clean 404),
+//! which the served follow-up after a broadcast and the by-hand pass read.
+//! Rules 1
 //! and 2 are the by-hand pass: `bsv-wallet reconcile-broadcasts` (dry run
 //! by default). The daemon's ticker runs the sweep and the locked-input
 //! re-checks.
@@ -379,18 +385,13 @@ pub async fn run_pass(
     let mut to_probe: Vec<(String, i64)> = Vec::new();
     let mut roots: Vec<(String, &'static str)> = Vec::new();
     for candidate in &candidates {
+        // A broadcaster's `rejected` row is a hint, never a retire root:
+        // the probe below decides, as for every candidate.
         let mine: Vec<BroadcastSeenRecord> = records
             .iter()
             .filter(|r| r.txid == candidate.txid)
             .cloned()
             .collect();
-        if mine
-            .iter()
-            .any(|r| r.ladder_status() == Some(BroadcastStatus::Rejected))
-        {
-            roots.push((candidate.txid.clone(), "rejected memory row"));
-            continue;
-        }
         let age = candidate.age_minutes(now);
         if !needs_probe(age, opts.absence_minutes, &mine, now) {
             report.fresh += 1;
@@ -498,9 +499,10 @@ pub async fn run_sweep(
     let mut poison = Vec::new();
     let mut kept_announced = Vec::new();
     let mut covered: HashSet<String> = HashSet::new();
-    let mut roots = sweep_roots(storage).await?;
-    roots.extend(rejected_roots(storage).await?);
-    for root in roots {
+    // A broadcaster's `rejected` memory row chooses no root here: the sweep
+    // reads no chain index, so it holds no definitive absence, and one
+    // broadcaster's refusal is a hint, kept on record.
+    for root in sweep_roots(storage).await? {
         if covered.contains(&root) {
             continue;
         }
@@ -642,9 +644,10 @@ impl ServedPassReport {
 /// waited for was "mined", and that is a proof. The proof arrives pushed
 /// (the Arcade webhook, the SSE drain below) or is asked for by the
 /// tracker, one named transaction at a time, when a hint disagrees or its
-/// age is due (`tracker_host::tick`). The verdicts already in storage (a
-/// rejected memory row, a failed transaction with unproven descendants) are
-/// still swept, and kept-locked inputs are still re-checked.
+/// age is due (`tracker_host::tick`). A failed transaction with unproven
+/// descendants is still swept, and kept-locked inputs are still
+/// re-checked; a broadcaster's `rejected` memory row is a hint and retires
+/// nothing here.
 ///
 /// What is no longer routine: retiring a transaction because the chain
 /// indexes do not know it. That reading is `reconcile-broadcasts`, by hand
@@ -994,19 +997,6 @@ async fn sweep_roots(storage: &StorageSqlx) -> Result<Vec<String>> {
          WHERE p.status = 'failed' AND p.txid IS NOT NULL \
            AND c.status IN ('unproven', 'sending', 'nosend') \
          ORDER BY p.transaction_id ASC",
-    )
-    .fetch_all(storage.pool())
-    .await?;
-    Ok(rows.iter().map(|r| r.get::<String, _>("txid")).collect())
-}
-
-/// Unproven transactions the memory holds a `rejected` row for.
-async fn rejected_roots(storage: &StorageSqlx) -> Result<Vec<String>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT t.txid FROM transactions t \
-         JOIN broadcast_seen b ON b.txid = t.txid \
-         WHERE t.status IN ('unproven', 'sending') AND b.status = 'rejected' \
-         ORDER BY t.transaction_id ASC",
     )
     .fetch_all(storage.pool())
     .await?;
@@ -1405,8 +1395,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rejected_roots(&storage).await.unwrap(),
-            vec!["cc".repeat(32)]
+            sweep_roots(&storage).await.unwrap(),
+            vec!["aa".repeat(32)],
+            "a broadcaster's rejected row chooses no root"
         );
     }
 
