@@ -316,25 +316,6 @@ async fn the_served_sweep_keeps_an_announced_transaction_a_broadcaster_refused_l
     assert_eq!(output_state(&storage, coin).await.0, 0);
 }
 
-/// The other way: a broadcaster refused T on its post and none took it.
-/// The sweep retires it (the host's act on `built`). Green at 0.7.2 too.
-#[tokio::test]
-async fn the_served_sweep_retires_a_refused_transaction_no_broadcaster_took() {
-    let t = "b2".repeat(32);
-    let (storage, _, _) = spent_coin_fixture(&t, "sending", "unsent").await;
-    storage
-        .record_broadcast_status(&t, PROVIDER_ARCADE_V2, BROADCAST_STATUS_REJECTED)
-        .await
-        .unwrap();
-    let services = MockWalletServices::new();
-    let sweep = run_sweep(&storage, &services, true).await.unwrap();
-    assert!(sweep
-        .poison
-        .iter()
-        .any(|r| r.outcome == PoisonOutcome::Retired));
-    assert_eq!(tx_status(&storage, &t).await, "failed");
-}
-
 // ---------------------------------------------------------------------------
 // The by-hand pass (`reconcile-broadcasts`)
 // ---------------------------------------------------------------------------
@@ -1040,7 +1021,6 @@ const NO_RECORD: (StatusCode, &str) = (
 /// kept on record, and T is not a retire root. T keeps its word and G's coin
 /// stays locked by T.
 #[tokio::test]
-#[ignore = "decides the retire root: green once a root needs the definitive absence"]
 async fn the_served_sweep_retires_nothing_on_one_broadcasters_rejected_row() {
     for (t, status) in [("f1".repeat(32), "unproven"), ("f2".repeat(32), "sending")] {
         let (storage, coin, t_row) = refused_once(&t, status).await;
@@ -1068,7 +1048,6 @@ async fn the_served_sweep_retires_nothing_on_one_broadcasters_rejected_row() {
 /// of T (a JSON 404) and the chain index could not look (a 503). T is not
 /// retired and G's coin stays locked.
 #[tokio::test]
-#[ignore = "decides the retire root: green once a root needs the definitive absence"]
 async fn the_by_hand_pass_retires_nothing_on_one_broadcasters_rejected_row() {
     for (t, status) in [("f3".repeat(32), "unproven"), ("f4".repeat(32), "sending")] {
         let (storage, coin, t_row) = refused_once(&t, status).await;
