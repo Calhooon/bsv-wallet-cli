@@ -4236,3 +4236,162 @@ security fix published to this checkpoint. No release is half made.
   commits behind.
 - A night is dispatched by hand at its slot. A restart in the afternoon moves
   it to the next day's slot and loses nothing.
+
+## 2026-11-27 (19:50Z) to 2026-11-28 (04:10Z): the lines' rule and its two checks landed on beta, HANDOFF.md moved to beta, the hermetic job's runner pinned, #638 built and landed, #645's door built and held for a fix, #646 decided by a run, the stable roll-up 0.18.10 in preparation, the tracker's #51 begun, the line plan, states as of 04:10Z
+
+**Where this file lives now.** From PR 651 (beta `cfd1979c`) HANDOFF.md lives
+on `beta` and lands there as a docs-only pull request through the queue
+(RELEASING.md, point 19). A captain's start reads `git show
+origin/beta:HANDOFF.md`, its last sections, and `cca runs --project
+bsv-wallet-cli --open`. The standing checkouts sit on `beta`. `main`'s copy
+stops at the entry of 2026-11-18 and is replaced at the cut.
+
+**The owner's words of these hours** (each is on the stack's rulings page,
+`docs/RULINGS-2026-10-12.md` of Calgooon/bsv-stack-lean, under its date).
+
+- 2026-11-18, the lines: "the whole point of beta is so we can go fast.. and
+  then only merge into main once.. it seems like we doin this back and forth
+  all th etime". The rule that follows is RELEASING.md's section "The
+  direction rule": every change is born on beta; main takes a quick fix of six
+  classes by `git cherry-pick -x`; quick fixes travel in roll-ups; a
+  prerelease is cut from beta's tip; beta merges into main once, at the cut,
+  on his tag.
+- 2026-11-27, the resume after nine days: his yes on #645 (the door's word and
+  the take, then the received rule with the re-pin), on #638 and on #639, all
+  on beta; #646's class to be said by a run; the tracker's rows ahead of this
+  repository's own (its #51 against the header service's journals, its #47
+  before 0.9.0).
+- 2026-11-27, the pace: "we wanna make the most of whta we have.. but we dont
+  wanna overlaod the system ya know.. like steady work". One builder and at
+  most three other lanes for each captain, one launch at a time, a builder
+  only when the host's memory and load allow it.
+- 2026-11-27, the standard for a decision: "understand what god tier north
+  star is.. understand whta the refence does.. and understadn this is bsv.. we
+  love zero conf.. we love proudcts.. and users.. and pseed.. and efficinety
+  and reliablity .. and maintainblity". And on 2026-11-28: "we dont alayws
+  have to match the reference.. [...] think of like trade and alice and bob":
+  a decision says what the reference does at its head that day, and whether
+  this stack matches it (a primitive two stacks must share to trade) or
+  differs on purpose, with a witness.
+- 2026-11-28, "yes to all": beta merges into main by ONE merge commit at the
+  cut (main as parent 1 of that commit, prepared on a cut branch from beta's
+  tip); and a received payment a broadcaster took is spendable at once by
+  default at the cut: `allowPending: received` is no longer what a caller must
+  ask, and the hold becomes the host's setting (#659).
+- 2026-11-28, the night: the stack's keeper rules for the captains through the
+  night and logs each ruling (`docs/handoff/night-rulings-2026-11-28.md`
+  there). Not the keeper's to decide: a publication, a tag, a machine setting,
+  money, a change to a ruling the owner gave himself.
+
+**Landed.**
+
+| Pull request | Commit | What |
+|---|---|---|
+| 655 | beta `1d5536ee` | `e2e-hermetic` runs on `ubuntu-24.04` until the Playwright bump (#654). Since `ubuntu-latest` became ubuntu-26.04 the job failed at its browser install on every pull request, and it is a required check |
+| 658 | beta `88843dca` | the tests of the hold on a coin the store marks not spendable (#646): the signed form under delayed broadcast, the action posted at once, the spend guard's hold, the served road; wire row 291 |
+| 657 | beta `52977cbc` | `url` 2.5.9 in both locks (RUSTSEC-2026-0592; #648) |
+| 652 | beta `eee632ef` | #638: `gift-claim` of a gift whose deposit is not mined yet says what happened in text and in JSON, and the claim's record is held from the post and made by the tracker pass once the claim is mined. #638 is closed; the read's rows are #662 |
+| 651 | beta `8dcf8efe` | the debt of the direction rule: HANDOFF.md whole and `advisories.yml` brought to beta once |
+| 653 | beta `1475e371` | the direction rule: `.github/workflows/lines.yml`, `.github/ci/lines.sh`, `.github/ci/test_lines.py` (the checks `main-in-beta` and `beta-born`), RELEASING.md, the documents |
+| bsv-tracker 55 | its beta `e59ce3c3` | #51, lane 1 of its plan: `src/doubts.rs`, the state and the reducer of a host's doubts, 53 cases from the stack's own rows; its rows are bsv-tracker #57 |
+
+**#646, decided by a run on the tree of v0.18.9: a wrong coin verdict.** A
+coin the store marks not spendable with no spender is offered by the stable
+gate. Under `acceptDelayedBroadcast` it is allocated, a signed transaction
+spends it, and the monitor's send pass posts it; posted at once it is refused
+for funds and the refusal does not name it. The road is `POST /createAction`
+on `daemon`; `send`, `drain`, `gift-send` and `split` post at once and do not
+reach it. `reconcile-outputs --execute`, `cleanup-abandoned --execute` and the
+spend guard write that record. The stable line takes beta's hold (#165, beta
+commit `496a245`) by `git cherry-pick -x`, with the tests of PR 658.
+
+**The stable roll-up 0.18.10, in preparation** (a lane on the box since
+03:38Z; nothing is pushed before every check has run on the prepared tree):
+the hop to `bsv-rs` `=0.8.14` (ten advisories; the note is on #386); the hop
+to `bsv-wallet-toolbox-rs` `=0.13.9` (not the version alone: by its notes the
+change selection takes only a spendable coin, a sent `noSend` action's change
+becomes spendable, `sendWith` and `abortAction` change, and one index is built
+at the open after the upgrade); the lock move `url` 2.5.9; the pick of the
+hold with its tests; the version commit. Then two cold reads, the landing on
+main, ONE mainnet gate, and the tag, which waits for the owner's word. After
+the tag: the link on beta (RELEASING.md, point 14).
+
+**PR 656 (#645, the door's word and the take) is built and HELD for a fix
+round.** A received payment's creator now gets a tracker row at the door
+(`built`), the door's own post is fed as the take (`announced`), a courier's
+sighting is fed as presence, and an existing store's received payments hear
+their take on the pass. Two cold reads: one found no class finding; one found,
+by reading, that the host takes a received request's status `unmined` as a
+broadcaster's acceptance, where the wallet library can write that status with
+no post made (a subject whose own proof cannot be confirmed; the merge of a
+`noSend` transaction). The captain's ruling: the take's source is settled by a
+run and read only from a record a broadcaster produced for that transaction,
+before this lands, because #659's default rests on that word. The received
+rule itself (P2) waits for the stack's vectors under the new default.
+
+**The payer's second call (#147).** `POST /createAction` drops `sendWith` and
+`noSendChange` on both lines. The reference's paying client, in its SDK from
+4.1.0, prepares a payment with `noSend` and then submits it with a
+`createAction` that names only `sendWith`; at this host that call becomes an
+empty action: a transaction nobody asked for is made and posted and a fee is
+spent. Ruled in the night (the keeper, option (a)): this host refuses by name,
+before anything is built or posted, a `createAction` naming a non-empty
+`sendWith` or `noSendChange`, until the wallet answers the call; the refusal
+says the prepared payment was not sent, is still reserved and can be aborted;
+the host never aborts for the payer. On beta it becomes the pass-through when
+the wallet library's prerelease answers the call; on the stable line it ships
+in the roll-up after 0.18.10 and stays until the cut.
+
+**The line plan** (asked of every captain on 2026-11-27; this captain's page
+is on the lane volume, `line-plan-2026-11-27/LINE-PLAN.md`). The debt of main
+against beta is five small items; one blocks the cut (#650). bsv-tracker's
+0.9.0 keeps #51, #47 and the tenth word `handed` (its #56): about 4.9
+lane-days. This repository's 0.19.0 keeps 14 to 16 lane-days that are sized,
+and up to 13 more by title that the remaining triage may move. At one builder:
+the tracker's rows about 2026-12-01, this repository ready for the cut between
+2026-12-10 and 2026-12-19, both estimates.
+
+**The builder's queue, one at a time:** the roll-up 0.18.10; the refusal of
+#147; bsv-tracker #51's test of record against the header service's two
+journals (private to the estate; nothing of them is committed); its keyed
+splits (the stack's cut 1f); the fix round of PR 656; #51's depth functions
+with the spend depth as a field of the tracker's parameters. Each ends with
+one cold read under the rule's point on reads (a finding stops a landing on
+beta only when it is one of the classes; every other finding is a row), the
+landing, and one issue for the read's rows.
+
+**Rows filed.** #650 (beta pins no answer for an ancestor carried by txid
+alone beside a BUMP that proves it; it blocks the cut), #654, #659, #660 (the
+host's side of `handed` and of the return of a conflicted payment), #661 (the
+callback door's 200 to a mined word with no path), #662; bsv-tracker #56 and
+#57. Commented: #147, #637, #646; bsv-tracker #47 (before 0.9.0; its milestone
+is back). Closed: #638; bsv-tracker #20 (carried since 0.7.0).
+
+**Waiting on the owner.** (1) The tag of 0.18.10, once its gate has passed.
+(2) `main-in-beta` added to beta's required checks: it is ready, the check
+read green on PR 653's own run, on its queue group and on the push. (3)
+`beta-born` added to main's required checks, after the pick of the checks into
+main. (4) His word on bsv-tracker's `main`: the rule's pick there. The pick of
+the checks and RELEASING.md into this repository's main follows the roll-up,
+so that the roll-up's branch stays up to date with main.
+
+**The lessons of these hours.**
+
+- Ten lanes launched three seconds apart, by each of five captains, filled the
+  box's queue of new connections. One launch at a time, 25 seconds apart, a
+  launch that dies at once retried with a growing pause; a waiting builder
+  reads its host once per attempt.
+- A pull request opened before a workflow fix landed keeps running the old
+  workflow: its merge ref is not refreshed by a reopen. An empty commit on its
+  head refreshes it, and the queue's rebase drops that commit.
+- A storage or a wallet built in a test with no services set reaches the real
+  default services. Two lanes have each posted one synthetic transaction to a
+  real broadcaster that way (no sats; #637). A brief now asks for the proof,
+  by file and line, that a new test's services are the mock, before it is run.
+- What a client "does after a refusal" is read at the reference's head before
+  it is written into a brief: the captain's sentence that the paying client
+  aborts its prepared payment was wrong, and the keeper's read corrected it.
+- A status word is not a record of a post. The take is read from what a
+  broadcaster produced for that transaction.
+- A captain's seat spends its own account: this seat ran out for six hours of
+  the night. The pool is read at the start of a day and before a lane.
