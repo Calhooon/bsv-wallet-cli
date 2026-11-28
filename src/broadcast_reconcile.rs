@@ -233,8 +233,12 @@ pub struct ReconcileBroadcastsReport {
     /// Absent from the chain index while the broadcaster holds it:
     /// `(txid, age in minutes)`.
     pub absent: Vec<(String, i64)>,
-    /// Fatal verdict from the broadcaster (txids).
+    /// The broadcaster's refusal with the clean absence of every voting
+    /// chain index: the definitive absence, a retire root (txids).
     pub fatal: Vec<String>,
+    /// The broadcaster's refusal with no clean absence at the chain indexes
+    /// (one could not look, or none is configured): a hint, kept (txids).
+    pub refusal_hints: Vec<String>,
     /// The poison retirements run (or, on a dry run, simulated), in order.
     pub retired: Vec<PoisonReport>,
     /// Retires refused because a broadcaster took a transaction of the set:
@@ -290,7 +294,7 @@ impl ReconcileBroadcastsReport {
             .filter(|r| matches!(r.outcome, PoisonOutcome::Refused { .. }))
             .count();
         format!(
-            "reconcile-broadcasts{}: sse_events={} candidates={} fresh={} probed={} chain_seen={} chain_mined={} held={} inconclusive={} absent={} fatal={} retired_roots={} retired_txs={} climbed={} restored={} ({} sats) kept_locked={} invalidated={} ({} sats) internalized={} alive={} refused={} kept_announced={} locked_due={} locked_restored={} ({} sats) locked_spent={} locked_unknown={}",
+            "reconcile-broadcasts{}: sse_events={} candidates={} fresh={} probed={} chain_seen={} chain_mined={} held={} inconclusive={} absent={} fatal={} refusal_hints={} retired_roots={} retired_txs={} climbed={} restored={} ({} sats) kept_locked={} invalidated={} ({} sats) internalized={} alive={} refused={} kept_announced={} locked_due={} locked_restored={} ({} sats) locked_spent={} locked_unknown={}",
             if execute { "" } else { " (dry run)" },
             self.sse_events,
             self.candidates,
@@ -302,6 +306,7 @@ impl ReconcileBroadcastsReport {
             self.inconclusive.len(),
             self.absent.len(),
             self.fatal.len(),
+            self.refusal_hints.len(),
             retired.len(),
             txs,
             climbed,
@@ -422,8 +427,12 @@ pub async fn run_pass(
             }
             Probe::Fatal => {
                 report.fatal.push(txid.clone());
-                roots.push((txid.clone(), "fatal verdict from the broadcaster"));
+                roots.push((
+                    txid.clone(),
+                    "refused by the broadcaster, absent from every chain index",
+                ));
             }
+            Probe::Refused => report.refusal_hints.push(txid.clone()),
             Probe::Absent => {
                 // The broadcaster holds or has seen it: a broadcaster took
                 // it, so the absence is named and never a retire (rule 5).
@@ -758,8 +767,13 @@ pub fn spawn_served_loop(
 enum Probe {
     /// The chain index holds it.
     Chain(NetworkEvidence),
-    /// The broadcaster reports a fatal verdict.
+    /// The broadcaster refuses it and every voting chain index answered a
+    /// clean 404: the verifier's definitive absence (`Rejected`).
     Fatal,
+    /// The broadcaster refuses it, and no clean absence completes the
+    /// refusal: a chain index could not look (a fault, a 429, a timeout) or
+    /// none is configured. A hint, never a retire root.
+    Refused,
     /// The chain index answered 404 while the broadcaster holds or has seen
     /// it, and no peer node vouches for it.
     Absent,
@@ -774,7 +788,13 @@ fn classify(report: &PresenceReport) -> Probe {
         return Probe::Chain(evidence);
     }
     if report.broadcaster_fatal {
-        return Probe::Fatal;
+        // A chain index that could not be read is not an answer, so only
+        // the clean absence of every voting index completes the refusal.
+        return if report.verification == BroadcastVerification::Rejected {
+            Probe::Fatal
+        } else {
+            Probe::Refused
+        };
     }
     if report.network_absent {
         return Probe::Absent;
@@ -1098,6 +1118,12 @@ mod tests {
             "seen by the broadcaster, absent from the chain index"
         );
         r.broadcaster_fatal = true;
+        assert_eq!(
+            classify(&r),
+            Probe::Refused,
+            "a refusal beside a holding store is no definitive absence"
+        );
+        r.verification = BroadcastVerification::Rejected;
         assert_eq!(classify(&r), Probe::Fatal);
         r.chain_index = ChainIndexAnswer::Present(NetworkEvidence::Seen);
         assert_eq!(classify(&r), Probe::Chain(NetworkEvidence::Seen));
@@ -1112,7 +1138,6 @@ mod tests {
     /// absence of every voting chain index (the verifier's `Rejected`): a
     /// chain index that could not look leaves the refusal a hint.
     #[test]
-    #[ignore = "decides the fault: green once only a clean absence counts"]
     fn a_broadcasters_refusal_without_a_clean_absence_is_not_fatal() {
         let mut faulted = PresenceReport::from_verification(BroadcastVerification::Inconclusive);
         faulted.broadcaster_fatal = true;
