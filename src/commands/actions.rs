@@ -16,7 +16,23 @@ pub fn status_word(wire: &str) -> &str {
     }
 }
 
-pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
+/// `actions`: the first page of the wallet's actions (100), each prepared,
+/// unsent one marked with its age, its txid, its reference and the
+/// satoshis its inputs hold, then a line totalling every prepared action
+/// the store holds (#673). Under `--json` the listing's object is the
+/// door's, with two ADDED keys: `prepared` on a prepared action's object,
+/// and `preparedTotal` beside `actions`; no key of the door's moves.
+/// `prepared_only` (`--prepared`) lists the prepared actions alone, every
+/// one ([`super::prepared::list`]).
+pub async fn run(ctx: &WalletContext, label: Option<&str>, prepared_only: bool) -> Result<()> {
+    let prepared = super::prepared::read(ctx).await?;
+    let now = super::prepared::now();
+    if prepared_only {
+        println!("{}", super::prepared::list(&prepared, now, ctx.json_output));
+        return Ok(());
+    }
+    let by_txid: std::collections::HashMap<&str, &crate::store::HeldBy> =
+        prepared.iter().map(|p| (p.txid.as_str(), p)).collect();
     let args = ListActionsArgs {
         labels: label.map(|l| vec![l.to_string()]).unwrap_or_default(),
         label_query_mode: None,
@@ -40,7 +56,25 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
     let rules = crate::spend_gate::action_rules(ctx.wallet.storage(), user.user_id()).await?;
 
     if ctx.json_output {
-        let shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);
+        let mut shown = crate::server::handlers::with_rules(serde_json::to_value(&result)?, &rules);
+        if let Some(actions) = shown.get_mut("actions").and_then(|a| a.as_array_mut()) {
+            for action in actions {
+                let marked = action
+                    .get("txid")
+                    .and_then(|t| t.as_str())
+                    .and_then(|t| by_txid.get(t))
+                    .map(|p| super::prepared::added(p, now));
+                if let (Some(marked), Some(object)) = (marked, action.as_object_mut()) {
+                    object.insert("prepared".to_string(), marked);
+                }
+            }
+        }
+        if let Some(object) = shown.as_object_mut() {
+            object.insert(
+                "preparedTotal".to_string(),
+                super::prepared::added_total(&prepared),
+            );
+        }
         println!("{}", serde_json::to_string_pretty(&shown)?);
     } else {
         println!(
@@ -73,6 +107,12 @@ pub async fn run(ctx: &WalletContext, label: Option<&str>) -> Result<()> {
                 action.description,
                 rule
             );
+            if let Some(p) = by_txid.get(hex::encode(action.txid).as_str()) {
+                println!("{}", super::prepared::mark(p, now));
+            }
+        }
+        if let Some(total) = super::prepared::total(&prepared) {
+            println!("{total}");
         }
     }
 

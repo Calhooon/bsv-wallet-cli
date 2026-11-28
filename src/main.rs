@@ -169,9 +169,12 @@ async fn main() -> Result<()> {
             let ctx = open().await?;
             commands::outputs::run(&ctx, basket.as_deref(), tag.as_deref()).await?;
         }
-        Commands::Actions { label } => {
+        Commands::Actions { label, prepared } => {
             let ctx = open().await?;
-            commands::actions::run(&ctx, label.as_deref()).await?;
+            commands::actions::run(&ctx, label.as_deref(), *prepared).await?;
+        }
+        Commands::AbortAction { action } => {
+            commands::prepared::abort(&open().await?, action).await?;
         }
         Commands::Origins { all } => {
             commands::origins::list(&open().await?, *all).await?;
