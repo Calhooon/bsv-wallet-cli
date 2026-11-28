@@ -5,6 +5,8 @@
 use super::*;
 use bsv_wallet_toolbox::WalletStorageWriter;
 
+mod send_with;
+
 async fn answer(e: AppError) -> (StatusCode, Option<String>, serde_json::Value) {
     let response = e.into_response();
     let status = response.status();
