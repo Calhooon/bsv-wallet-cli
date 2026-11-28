@@ -4630,3 +4630,117 @@ on each repository, and RELEASING.md's point 21. (7) His word on bsv-tracker's
   as a new pull request.
 - The clock is read by a command at each entry; three entries of the record
   carried an hour ten to twenty minutes ahead before that was made the habit.
+
+## 2026-11-28 (14:45Z to 17:50Z): the stable roll-up 0.18.11 landed and gated (both stable tags wait for the owner), the direction rule gains an item, builders go by the gate, RELEASING.md's point 21 ruled, bsv-tracker measures a transaction's length, states as of 17:50Z
+
+**In one paragraph.** `main` is at `17a25655`: the stable roll-up 0.18.11,
+landed at 17:44Z and gated once on mainnet (23 of 23, net cost 2,170 sats).
+Neither 0.18.10 (`03ba8fd2`) nor 0.18.11 is tagged: the tags are the owner's,
+0.18.10 before 0.18.11. `beta` is at `9d984f74` with the link of 0.18.11.
+bsv-tracker's `beta` is at `bd95b1e3`. Three builders of this captain run at
+once now, by the hosts' gate. One pull request of this captain is open: 690,
+held for its port and fix round.
+
+**Landed.**
+
+| Pull request | Commit | What |
+|---|---|---|
+| 693 | main `17a25655` | the stable roll-up 0.18.11, seventeen commits: the pick of beta's test row for a sender key led by `05` (ahead of the hop: a hop commit holds no test); the hop `bsv-rs` `=0.8.14` to `=0.8.15` (six advisories; the wallet library's pin does not move); three picks of pull request 670 (#147: the served `/createAction` refuses a non-empty `sendWith` or `noSendChange` by name; `/signAction` hands its arguments to the wallet as before); six picks of pull request 675 (a broadcaster's refusal is a hint; a retire needs the definitive absence; a fault is not an answer; `tracker-tick --json` keeps its key `verdicts`); five picks of pull request 677 (#673: prepared actions listed and freed); the version commit |
+| 695 | beta `9d984f74` | the link of 0.18.11 (RELEASING.md, point 14) |
+| 694 | beta `4ac1c5d0` | RELEASING.md's point 21 (the default branch's copy of a workflow takes a change by a pick, in a pull request of workflow files alone) is ruled, by the owner's word of 2026-11-28 |
+| bsv-tracker 66 | its beta `bd95b1e3` | a transaction's length measured on the tracked state and kept as the last field of version 2 of the compact form; a state measured at exactly 64 bytes refuses every proof (BRC-237's condition: the rule `bsv-rs` enforces in its verifier since 0.8.15) |
+
+**The roll-up 0.18.11, as it went.** A read lane had tried all the picks on
+`main` and resolved them; the builder stopped where its brief told it to, at
+one picked test, and the captain ruled it: this line's pinned wallet library
+writes a prepared (`noSend`) action's change not spendable until it is sent,
+so on this line `balance` counts neither the coin a prepared payment holds nor
+its unsent change (by run: 0 while prepared, 98,962 once sent, 100,000 after
+`abort-action`); the picked test and words were resolved inside their picks to
+say so. Two cold reads said fix; a fix round added, inside its pick, a test
+that drives the `createAction` handler itself for the refusal (planted: red
+with the call removed), scoped the section's sentences and restored a commit
+message that had lost a line (a line of a commit message that begins with `#`
+is stripped by git's default cleanup). Two more reads: one said merge; the
+other asked two sentences of the pull request's body; two sentences were added
+to the section by an amend of the version commit alone (an entry of the
+`verdicts` list for a refusal that names a double spend reads `double_spend`
+where it read `conflicted`; a key that opens with the byte `05` is refused
+where it was read before). Then the landing, the gate, the link.
+
+**For the owner's two tags, in this order** (each script checks its commit and
+its pins, pushes the annotated tag, watches the release run and reads the
+index; both are on the lane volume under this captain's `work/`, with copies
+on the internal disk under the checkout's `.cca/backup-1128/`): `tag-01810.sh
+03ba8fd2 "23 of 23, net cost 2,170 sats" "ten advisories of bsv-rs 0.8.14"`,
+then `tag-01811.sh 17a25655 "23 of 23, net cost 2,170 sats" "six advisories of
+bsv-rs 0.8.15"`. 0.18.10's release body opens with one sentence: it does not
+yet pin the `bsv-rs` version that fixes GHSA-jjhc-7hvh-c3hm, and 0.18.11
+follows with it. After the tags: the funder moves to the published 0.18.11,
+and #646 and #673 are closed by hand.
+
+**The owner's words of these hours** (verbatim on the stack's rulings page,
+under 2026-11-28). "I like the rcccomendation.... how we doin overall man..
+and is tehre anyting we can do to speed it up", and "I like your
+rreccomendaitons": read by his rule of 2026-11-17 as a yes to each
+recommendation then before him. For this repository: hold is the default for a
+refused payment that a seller may still hold, on beta and on the stable line
+(the setting is to be built; the stable tag for each host stays his click);
+RELEASING.md's point 21 is ruled; the two stable tags as a pair. For every
+seat:
+
+- **Builders by the gate, not a count** (it replaces "one builder a captain"):
+  a builder starts on either host whose gate reads ok; at most three of a
+  captain's at once; two builder launches five minutes or more apart; a hold
+  is a hold. Other lanes as before: three, 25 seconds apart.
+- **A new item of the direction rule** (to be written into RELEASING.md on
+  both lines): a change to what a library's verdict says to its callers
+  reaches a stable release only after each dependent has run it at its own
+  door, the run ending in the rows that door stores (against the prerelease on
+  the beta line; against the prepared tree on the stable line); an emergency
+  fix never carries such a change and never waits for one.
+
+**New on the cut's milestone.** #692: a payment retired later than the refusal
+handler keeps its row in the origin's spending tally, so the month counts a
+spend that never happened (it fails closed); with the next pin of the wallet
+library's prerelease. The milestone holds eleven rows: #147, #175, #194, #607,
+#618, #650, #659, #660, #682, #685, #692.
+
+**In flight at 17:50Z.** Builders: on beta, a check this host makes ahead of
+the wallet library's doors for BRC-237's rule, with a helper where this host
+builds a proof for the tracker (born on beta; it rides the stable roll-up
+after 0.18.11); #682, the legacy testnet store's repair; and on bsv-tracker's
+beta the two constructors of a proof (from a transaction's bytes; from a
+length the host states). Queued behind them by what each needs landed: the
+port and fix round of the offer rule's lane L2a (pull request 690),
+bsv-tracker's length properties and its tests of record for `handed`, #618's
+pull. Owed: bsv-tracker's two lanes for #47 and its page; the hold setting's
+lanes; the offer rule's lanes L2b, L2c and L3; the pin of the wallet library's
+next prerelease, whose list is in the captain's record.
+
+**The lane volume.** The Studio's lane volume dropped from about 17:00Z to
+17:04Z. Nothing was lost; one builder's local output file was dead after it,
+and its report was read from the box's own record of the lane (`cca runs
+--show <lane>` on the host that ran it). This profile's project folder and
+`$TMPDIR` are links into that volume, and so is `~/bsv/targets` on both hosts.
+The builders' gate script has a copy on each host's internal disk
+(`~/bsv/bsv-wallet-cli/.cca/mem-gate.sh`), and this captain's launchers,
+briefs and reports are copied under the same folder.
+
+**The lessons of these hours.**
+
+- A lane that ends blocked writes a report too: a queue that starts the next
+  lane when a report file exists starts it after a blocked one. Markers are
+  files the captain writes at a landing.
+- A cold read's brief is written for the pull request it reads: the launcher
+  for a stable read carried the text of the roll-up before, and both readers
+  had to transpose it. It now refuses to run without that pull request's own
+  description and stances.
+- "On the internal disk" is read, not assumed: print the real path and `df`
+  it. A folder named for the internal disk was a link into the volume that had
+  just dropped; another captain caught it within minutes.
+- A run at a door outranks a read of it. A ruling made on a reading of what a
+  door would do with a new library version was withdrawn within the hour when
+  the door was run, on the prepared tree, with its rows.
+- A sentence about a dependency that its published notes do not say is written
+  about this host's own test instead.
